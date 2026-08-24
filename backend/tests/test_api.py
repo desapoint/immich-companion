@@ -136,3 +136,67 @@ def test_immich_http_failure_is_reported_without_leaking_key() -> None:
     assert payload["status"] == "degraded"
     assert payload["dependencies"]["immich"]["detail"] == "Immich returned HTTP 401."
     assert "test-key" not in response.text
+
+
+def test_asset_detail_and_preview_are_proxied_without_exposing_credentials() -> None:
+    asset_id = "11111111-1111-4111-8111-111111111111"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "test-key"
+        if request.url.path == f"/api/assets/{asset_id}":
+            return httpx.Response(
+                200,
+                json={
+                    "id": asset_id,
+                    "type": "IMAGE",
+                    "originalFileName": "viewer.jpg",
+                    "originalPath": "upload/viewer.jpg",
+                    "fileCreatedAt": "2026-08-20T12:00:00Z",
+                    "fileModifiedAt": "2026-08-20T12:00:00Z",
+                    "isFavorite": False,
+                    "isArchived": False,
+                    "isTrashed": False,
+                    "isOffline": False,
+                    "isEdited": False,
+                    "hasMetadata": True,
+                    "visibility": "timeline",
+                    "people": [],
+                    "tags": [],
+                },
+            )
+        if request.url.path == f"/api/assets/{asset_id}/thumbnail":
+            return httpx.Response(
+                200,
+                content=b"preview-bytes",
+                headers={"content-type": "image/webp"},
+            )
+        assert request.url.path == f"/api/assets/{asset_id}/original"
+        return httpx.Response(
+            200,
+            content=b"original-image-bytes",
+            headers={"content-type": "image/png"},
+        )
+
+    configured = settings(immich_public_url="https://photos.example.test")
+    with TestClient(create_app(configured, httpx.MockTransport(handler))) as client:
+        detail = client.get(f"/api/assets/{asset_id}")
+        preview = client.get(f"/api/assets/{asset_id}/thumbnail?size=preview")
+        original = client.get(f"/api/assets/{asset_id}/original")
+
+    assert detail.status_code == 200
+    assert detail.json()["original_file_name"] == "viewer.jpg"
+    assert detail.json()["immich_url"].endswith(f"/photos/{asset_id}")
+    assert preview.status_code == 200
+    assert preview.content == b"preview-bytes"
+    assert preview.headers["content-type"] == "image/webp"
+    assert original.content == b"original-image-bytes"
+    assert original.headers["content-type"] == "image/png"
+    assert "test-key" not in detail.text
+
+
+def test_asset_search_requires_companion_database_configuration() -> None:
+    with TestClient(create_app(settings(), pong_transport())) as client:
+        response = client.get("/api/assets")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The companion database is not configured."

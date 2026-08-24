@@ -9,16 +9,18 @@ no media mount and performs no direct database access.
 
 1. Copy `compose.companion.yml` beside the production `compose.yaml`.
 2. Set `COMPANION_IMMICH_API_KEY` through the stack's secret/environment
-   management and optionally set `IMMICH_COMPANION_VERSION` to an immutable
-   release or SHA tag.
+   management, set a strong `IMMICH_COMPANION_DB_PASSWORD`, set
+   `IMMICH_COMPANION_PUBLIC_IMMICH_URL` to the URL browsers use for Immich, and
+   optionally set `IMMICH_COMPANION_VERSION` to an immutable release or SHA tag.
 3. Load the original file and the overlay together in the deployment UI or
    Compose command used by the host.
 4. Confirm the companion reports `ready: true` before exposing port 8090 beyond
    a trusted network.
 
-The only new service is `immich-companion`. Existing Immich, Tailscale,
-PostgreSQL, Valkey, machine-learning, and power-tools definitions remain
-unchanged.
+The overlay adds `immich-companion` and its isolated `immich-companion-database`.
+Existing Immich, Tailscale, Immich PostgreSQL, Valkey, machine-learning, and
+power-tools definitions remain unchanged. Alembic upgrades the isolated schema
+when the companion starts.
 
 ## Replacing old services
 
@@ -39,9 +41,10 @@ Later, make the production change narrowly:
 This preserves the requested production migration shape: add the companion,
 then turn off only a service whose behavior has actually been replaced.
 
-## Companion database later
+## Companion database
 
-The bootstrap has no application database. When schema work lands, provision a
-separate `immich_companion` database and least-privilege role on the existing
-PostgreSQL server, then add only that connection to this overlay. Never point
-the companion's application models at the `immich` database.
+The overlay provisions a dedicated PostgreSQL service and volume for companion
+metadata, search indexes, and future jobs. It is intentionally separate from
+Immich's PostgreSQL service. Never point `COMPANION_DATABASE_URL` at the `immich`
+database. Operators who already provision databases externally may replace only
+the overlay database service and connection URL while preserving that boundary.

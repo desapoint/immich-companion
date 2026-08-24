@@ -6,8 +6,10 @@ integrity analysis, and people/album workflows without modifying Immich's
 database or media files directly.
 
 The current vertical slice includes a FastAPI service, a componentized Svelte
-status dashboard, dependency health reporting, a container build, and a
-reproducible integration environment backed by real Immich v3.1.0. Production
+status dashboard and asset workspace, typed Immich asset/album synchronization,
+nested PostgreSQL search, image cards, and a full-size fullscreen viewer. The
+reproducible integration environment is backed by real Immich v3.1.0 and seeds
+66 unique images so the default 48-card result view has a second page. Production
 defaults remain safe; action capability is enabled only in the disposable test
 environment.
 
@@ -27,7 +29,8 @@ Immich media, API key, and model cache:
 ./scripts/test-env.sh start
 ```
 
-Open <http://localhost:8090> for the built companion dashboard and
+Open <http://localhost:8090> for the built companion dashboard,
+<http://localhost:8090/assets> for search/cards/viewer, and
 <http://localhost:22830> for Immich. Inspect the companion API with:
 
 ```bash
@@ -35,6 +38,7 @@ curl http://localhost:8090/api/health
 curl http://localhost:8090/api/version
 curl http://localhost:8090/api/capabilities
 curl http://localhost:8090/api/test-state
+curl http://localhost:8090/api/assets
 ```
 
 The helper generates ignored local credentials in
@@ -62,10 +66,24 @@ Inspect or stop it without writing Compose commands manually:
 ./scripts/test-env.sh stop
 ```
 
-The environment runs pinned Immich server, machine-learning, Valkey, and Immich
+The helper refreshes the companion asset index through the Immich API after each
+successful start, so the deterministic cards are immediately available. The
+environment runs pinned Immich server, machine-learning, Valkey, and Immich
 PostgreSQL services plus a separate PostgreSQL service owned by the companion.
 Deterministic media is uploaded through the supported Immich API; the companion
 does not mount Immich media or access Immich's database.
+
+The seed includes exact-byte and pixel-identical variants, crops, edits,
+occlusions, alpha images, aspect-ratio and dimension variants, negative controls,
+overlapping albums, stacks, favorites, archived assets, and trashed assets. A
+plain start converges those fixtures without duplicating them; `--reset` proves
+the same corpus can be recreated from empty volumes.
+
+The asset page supports recursive AND/OR groups and whole-group NOT, including
+album membership/exclusion, favorite/archive/trash state, filename, media type,
+taken date, width/height bounds, and aspect-ratio bounds. Cards use thumbnails;
+the dialog requests the original Immich asset and provides fit/actual-size,
+wheel/button zoom, collection navigation, selection, details, and shortcuts.
 
 ## Fast frontend iteration against the integration environment
 

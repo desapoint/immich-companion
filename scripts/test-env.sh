@@ -65,7 +65,14 @@ smoke() {
   compose exec -T companion-database \
     pg_isready --dbname=immich_companion --username=companion >/dev/null
   curl --fail --silent --show-error "${BASE_URL}/api/capabilities" >/dev/null
-  echo "Smoke check passed: companion, real Immich, both PostgreSQL services, and seed state"
+  curl --fail --silent --show-error "${BASE_URL}/api/assets?page_size=1" >/dev/null
+  echo "Smoke check passed: companion, real Immich, both PostgreSQL services, migrations, and seed state"
+}
+
+sync_companion_assets() {
+  local result
+  result="$(curl --fail --silent --show-error --request POST "${BASE_URL}/api/assets/sync")"
+  echo "Companion asset index refreshed: ${result}"
 }
 
 wait_until_ready() {
@@ -134,6 +141,7 @@ start_environment() {
   COMPANION_TEST_RESET_MODE="${reset_mode}" compose run --rm --no-deps immich-bootstrap
   compose up --detach companion
   wait_until_ready
+  sync_companion_assets
   show_access_urls
 }
 

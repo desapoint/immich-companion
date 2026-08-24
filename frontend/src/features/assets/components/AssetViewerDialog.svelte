@@ -1,0 +1,358 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+
+  import { assetOriginalUrl } from '../api/assetApi';
+  import { nextViewerIndex } from '../state/assetViewModel';
+  import type { AssetDetail, AssetSummary, ViewerScaleMode } from '../types/assets';
+  import AssetInfoPanel from './AssetInfoPanel.svelte';
+  import AssetViewerFooter from './AssetViewerFooter.svelte';
+  import AssetViewerHeader from './AssetViewerHeader.svelte';
+
+  interface Props {
+    assets: AssetSummary[];
+    initialIndex: number;
+    selectedIds: Set<string>;
+    detail: AssetDetail | null;
+    detailLoading: boolean;
+    detailError: string | null;
+    onnavigate: (index: number) => void;
+    ontoggleselection: (assetId: string) => void;
+    onclose: () => void;
+  }
+
+  let {
+    assets,
+    initialIndex,
+    selectedIds,
+    detail,
+    detailLoading,
+    detailError,
+    onnavigate,
+    ontoggleselection,
+    onclose,
+  }: Props = $props();
+
+  let dialogElement: HTMLDialogElement;
+  let viewerContent: HTMLElement;
+  let scaleMode = $state<ViewerScaleMode>('fit');
+  let zoom = $state(1);
+  let viewportWidth = $state(1);
+  let viewportHeight = $state(1);
+  let imageLoading = $state(true);
+  let imageError = $state(false);
+  let infoOpen = $state(false);
+  let helpOpen = $state(false);
+  const currentIndex = $derived(initialIndex);
+  const currentAsset = $derived(assets[currentIndex]);
+  const hasPrevious = $derived(currentIndex > 0);
+  const hasNext = $derived(currentIndex < assets.length - 1);
+  const naturalWidth = $derived(currentAsset.width ?? 1);
+  const naturalHeight = $derived(currentAsset.height ?? 1);
+  const fitScale = $derived(
+    Math.max(0.01, Math.min((viewportWidth - 144) / naturalWidth, (viewportHeight - 32) / naturalHeight)),
+  );
+  const effectiveScale = $derived((scaleMode === 'fit' ? fitScale : 1) * zoom);
+  const displayWidth = $derived(Math.max(1, naturalWidth * effectiveScale));
+  const displayHeight = $derived(Math.max(1, naturalHeight * effectiveScale));
+  const zoomPercent = $derived(Math.round(zoom * 100));
+
+  function setZoom(value: number): void {
+    zoom = Math.min(8, Math.max(0.25, Math.round(value * 100) / 100));
+  }
+
+  function toggleScale(): void {
+    scaleMode = scaleMode === 'fit' ? 'actual' : 'fit';
+    zoom = 1;
+  }
+
+  function closeViewer(): void {
+    if (dialogElement.open) dialogElement.close();
+    onclose();
+  }
+
+  function navigate(direction: 'previous' | 'next'): void {
+    const nextIndex = nextViewerIndex(currentIndex, direction, assets.length);
+    if (nextIndex === currentIndex) return;
+    onnavigate(nextIndex);
+  }
+
+  function handleKeydown(event: KeyboardEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    const key = event.key.toLowerCase();
+
+    if (event.key === 'ArrowLeft' || key === 'h') {
+      event.preventDefault();
+      navigate('previous');
+    } else if (event.key === 'ArrowRight' || key === 'l') {
+      event.preventDefault();
+      navigate('next');
+    } else if (event.key === ' ' && !target?.closest('button, a, summary')) {
+      event.preventDefault();
+      ontoggleselection(currentAsset.id);
+    } else if (key === 'i') {
+      event.preventDefault();
+      infoOpen = !infoOpen;
+    } else if (key === 'm') {
+      event.preventDefault();
+      toggleScale();
+    } else if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      setZoom(zoom * 1.2);
+    } else if (event.key === '-') {
+      event.preventDefault();
+      setZoom(zoom / 1.2);
+    } else if (event.key === '0') {
+      event.preventDefault();
+      zoom = 1;
+    } else if (event.key === '?') {
+      event.preventDefault();
+      helpOpen = !helpOpen;
+    } else if (event.key === 'Escape' || key === 'q') {
+      event.preventDefault();
+      closeViewer();
+    }
+  }
+
+  function handleCancel(event: Event): void {
+    event.preventDefault();
+    closeViewer();
+  }
+
+  function handleWheel(event: WheelEvent): void {
+    event.preventDefault();
+    setZoom(event.deltaY < 0 ? zoom * 1.12 : zoom / 1.12);
+  }
+
+  $effect(() => {
+    currentAsset.id;
+    zoom = 1;
+    imageLoading = true;
+    imageError = false;
+  });
+
+  onMount(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    dialogElement.showModal();
+    window.addEventListener('keydown', handleKeydown);
+    const resizeObserver = new ResizeObserver(([entry]) => {
+      viewportWidth = entry.contentRect.width;
+      viewportHeight = entry.contentRect.height;
+    });
+    resizeObserver.observe(viewerContent);
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('keydown', handleKeydown);
+      document.body.style.overflow = previousOverflow;
+    };
+  });
+</script>
+
+<dialog bind:this={dialogElement} class="asset-viewer" aria-labelledby="asset-viewer-title" oncancel={handleCancel}>
+  <AssetViewerHeader
+    filename={currentAsset.original_file_name}
+    selected={selectedIds.has(currentAsset.id)}
+    {scaleMode}
+    {infoOpen}
+    {helpOpen}
+    {zoomPercent}
+    ontoggleselection={() => ontoggleselection(currentAsset.id)}
+    ontogglescale={toggleScale}
+    onzoomout={() => setZoom(zoom / 1.2)}
+    onzoomreset={() => (zoom = 1)}
+    onzoomin={() => setZoom(zoom * 1.2)}
+    ontoggleinfo={() => (infoOpen = !infoOpen)}
+    ontogglehelp={() => (helpOpen = !helpOpen)}
+    onclose={closeViewer}
+  />
+
+  <section bind:this={viewerContent} class="viewer-content" aria-label="Full-size image">
+    <div class="viewer-scroll">
+      <div
+        class="viewer-stage"
+        style={`width: max(100%, ${displayWidth + 144}px); min-height: max(100%, ${displayHeight + 32}px);`}
+        onwheel={handleWheel}
+      >
+        {#if imageLoading}
+          <div class="image-status" role="status">Loading full-size image…</div>
+        {/if}
+        {#if imageError}
+          <div class="image-status error" role="alert">The full-size image could not be loaded.</div>
+        {/if}
+        <img
+          src={assetOriginalUrl(currentAsset.id)}
+          alt={currentAsset.original_file_name}
+          draggable="false"
+          class:hidden={imageLoading || imageError}
+          style={`width: ${displayWidth}px; height: ${displayHeight}px;`}
+          onload={() => (imageLoading = false)}
+          onerror={() => {
+            imageLoading = false;
+            imageError = true;
+          }}
+          ondblclick={toggleScale}
+        />
+      </div>
+    </div>
+
+    <button
+      class="viewer-nav previous"
+      type="button"
+      onclick={() => navigate('previous')}
+      disabled={!hasPrevious}
+      aria-label="Previous image"
+      title="Previous image (Left arrow or H)"
+    >
+      ‹
+    </button>
+    <button
+      class="viewer-nav next"
+      type="button"
+      onclick={() => navigate('next')}
+      disabled={!hasNext}
+      aria-label="Next image"
+      title="Next image (Right arrow or L)"
+    >
+      ›
+    </button>
+
+    {#if infoOpen}
+      <AssetInfoPanel {detail} loading={detailLoading} error={detailError} />
+    {/if}
+  </section>
+
+  <AssetViewerFooter asset={currentAsset} position={currentIndex + 1} total={assets.length} />
+</dialog>
+
+<style>
+  .asset-viewer {
+    width: 100vw;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 0;
+    color: var(--color-ink-strong);
+    background: var(--color-canvas);
+  }
+
+  .asset-viewer[open] {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .asset-viewer::backdrop {
+    background: rgb(0 0 0 / 82%);
+    backdrop-filter: blur(0.45rem);
+  }
+
+  .viewer-content {
+    position: relative;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+    background-color: #111713;
+    background-image:
+      linear-gradient(45deg, #263029 25%, transparent 25%),
+      linear-gradient(-45deg, #263029 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #263029 75%),
+      linear-gradient(-45deg, transparent 75%, #263029 75%);
+    background-position: 0 0, 0 0.75rem, 0.75rem -0.75rem, -0.75rem 0;
+    background-size: 1.5rem 1.5rem;
+  }
+
+  .viewer-scroll {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+
+  .viewer-stage {
+    display: grid;
+    position: relative;
+    place-items: center;
+    padding: 1rem clamp(3.5rem, 7vw, 6rem);
+  }
+
+  .viewer-stage img {
+    display: block;
+    max-width: none;
+    max-height: none;
+    user-select: none;
+  }
+
+  .viewer-stage img.hidden {
+    visibility: hidden;
+  }
+
+  .image-status {
+    position: absolute;
+    z-index: 2;
+    max-width: min(24rem, calc(100vw - 4rem));
+    padding: 0.7rem 0.9rem;
+    border: 1px solid rgb(255 255 255 / 22%);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    background: rgb(0 0 0 / 70%);
+    font-size: 0.78rem;
+  }
+
+  .image-status.error {
+    color: #ffd6d6;
+  }
+
+  .viewer-nav {
+    position: absolute;
+    z-index: 3;
+    top: 50%;
+    display: grid;
+    width: clamp(2.6rem, 5vw, 3.6rem);
+    height: clamp(3.8rem, 9vh, 5.5rem);
+    padding: 0;
+    place-items: center;
+    border: 1px solid rgb(255 255 255 / 24%);
+    border-radius: var(--radius-sm);
+    color: #fff;
+    background: rgb(0 0 0 / 64%);
+    box-shadow: 0 0.7rem 2rem rgb(0 0 0 / 25%);
+    cursor: pointer;
+    font-size: 2rem;
+    transform: translateY(-50%);
+    backdrop-filter: blur(0.4rem);
+  }
+
+  .viewer-nav.previous {
+    left: 0.7rem;
+  }
+
+  .viewer-nav.next {
+    right: 0.7rem;
+  }
+
+  .viewer-nav:disabled {
+    cursor: default;
+    opacity: 0.22;
+  }
+
+  @media (max-width: 38rem) {
+    .viewer-stage {
+      padding-inline: 2.8rem;
+    }
+
+    .viewer-nav.previous {
+      left: 0.25rem;
+    }
+
+    .viewer-nav.next {
+      right: 0.25rem;
+    }
+  }
+</style>

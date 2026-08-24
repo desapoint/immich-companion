@@ -28,6 +28,7 @@ RUN pip install /build/backend
 FROM builder AS test
 
 COPY backend/tests /build/backend/tests
+COPY tools/generate_test_media.py /build/tools/generate_test_media.py
 RUN pip install "/build/backend[dev]"
 WORKDIR /build/backend
 RUN pytest && ruff check companion tests

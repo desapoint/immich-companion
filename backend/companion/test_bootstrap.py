@@ -97,7 +97,7 @@ def resolve_api_key(client: httpx.Client, access_token: str, path: Path) -> str:
 def load_manifest(seed_root: Path) -> tuple[dict[str, Any], Path]:
     manifest_path = seed_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != 1 or not isinstance(manifest.get("files"), list):
+    if manifest.get("schema_version") != 2 or not isinstance(manifest.get("files"), list):
         raise RuntimeError("Unsupported or invalid deterministic media manifest")
     return manifest, manifest_path
 
@@ -107,9 +107,10 @@ def upload_assets(
     api_key: str,
     seed_root: Path,
     manifest: dict[str, Any],
-) -> dict[str, int]:
+) -> dict[str, Any]:
     created = 0
     duplicates = 0
+    asset_ids: dict[str, str] = {}
     for record in manifest["files"]:
         relative_path = record.get("path")
         if not isinstance(relative_path, str):
@@ -131,24 +132,238 @@ def upload_assets(
                 files={"assetData": (media_path.name, media, content_type)},
             )
         response.raise_for_status()
-        status = response.json().get("status")
+        payload = response.json()
+        status = payload.get("status")
+        asset_id = payload.get("id")
+        if not isinstance(asset_id, str) or not asset_id:
+            raise RuntimeError("Immich upload response did not contain an asset ID")
+        asset_ids[relative_path] = asset_id
         if status == "created":
             created += 1
         elif status == "duplicate":
             duplicates += 1
         else:
             raise RuntimeError(f"Immich returned an unexpected upload status: {status!r}")
-    return {"created": created, "duplicates": duplicates}
+    return {"created": created, "duplicates": duplicates, "asset_ids": asset_ids}
+
+
+def manifest_relationships(manifest: dict[str, Any]) -> dict[str, Any]:
+    relationships = manifest.get("relationships")
+    if not isinstance(relationships, dict):
+        raise RuntimeError("Media manifest does not define relationships")
+    return relationships
+
+
+def resolve_paths(asset_ids: dict[str, str], paths: object, label: str) -> list[str]:
+    if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+        raise RuntimeError(f"Media manifest contains invalid {label} paths")
+    try:
+        return list(dict.fromkeys(asset_ids[path] for path in paths))
+    except KeyError as error:
+        raise RuntimeError(f"Media manifest {label} references an unknown path") from error
+
+
+def reconcile_albums(
+    client: httpx.Client,
+    api_key: str,
+    relationships: dict[str, Any],
+    asset_ids: dict[str, str],
+) -> int:
+    headers = {"x-api-key": api_key}
+    configured = relationships.get("albums")
+    if not isinstance(configured, list):
+        raise RuntimeError("Media manifest albums must be a list")
+
+    response = client.get("/api/albums", headers=headers, params={"isOwned": "true"})
+    response.raise_for_status()
+    existing = {
+        album.get("albumName"): album
+        for album in response.json()
+        if isinstance(album, dict) and isinstance(album.get("albumName"), str)
+    }
+
+    desired_by_name: dict[str, set[str]] = {}
+    album_ids_by_name: dict[str, str] = {}
+    for album in configured:
+        if not isinstance(album, dict):
+            raise RuntimeError("Media manifest contains an invalid album")
+        name = album.get("name")
+        description = album.get("description", "")
+        if not isinstance(name, str) or not isinstance(description, str):
+            raise RuntimeError("Media manifest contains invalid album metadata")
+        desired_ids = resolve_paths(asset_ids, album.get("paths"), f"album {name}")
+        desired_by_name[name] = set(desired_ids)
+        current = existing.get(name)
+        if current is None:
+            created = client.post(
+                "/api/albums",
+                headers=headers,
+                json={"albumName": name, "description": description, "assetIds": desired_ids},
+            )
+            created.raise_for_status()
+            album_id = created.json().get("id")
+        else:
+            album_id = current.get("id")
+            if isinstance(album_id, str):
+                updated = client.patch(
+                    f"/api/albums/{album_id}",
+                    headers=headers,
+                    json={"albumName": name, "description": description},
+                )
+                updated.raise_for_status()
+                if desired_ids:
+                    added = client.put(
+                        f"/api/albums/{album_id}/assets",
+                        headers=headers,
+                        json={"ids": desired_ids},
+                    )
+                    added.raise_for_status()
+        if not isinstance(album_id, str):
+            raise RuntimeError(f"Immich album {name!r} did not provide an ID")
+        album_ids_by_name[name] = album_id
+
+    # Remove seed assets from a managed album when the manifest does not assign
+    # them there, preserving unrelated user albums even in the disposable stack.
+    for asset_id in set(asset_ids.values()):
+        membership = client.get("/api/albums", headers=headers, params={"assetId": asset_id})
+        membership.raise_for_status()
+        for album in membership.json():
+            name = album.get("albumName") if isinstance(album, dict) else None
+            album_id = album.get("id") if isinstance(album, dict) else None
+            if (
+                isinstance(name, str)
+                and isinstance(album_id, str)
+                and name in desired_by_name
+                and asset_id not in desired_by_name[name]
+            ):
+                removed = client.request(
+                    "DELETE",
+                    f"/api/albums/{album_id}/assets",
+                    headers=headers,
+                    json={"ids": [asset_id]},
+                )
+                removed.raise_for_status()
+    return len(album_ids_by_name)
+
+
+def reconcile_stacks(
+    client: httpx.Client,
+    api_key: str,
+    relationships: dict[str, Any],
+    asset_ids: dict[str, str],
+) -> int:
+    configured = relationships.get("stacks")
+    if not isinstance(configured, list):
+        raise RuntimeError("Media manifest stacks must be a list")
+    desired = [
+        resolve_paths(asset_ids, stack.get("paths"), "stack")
+        for stack in configured
+        if isinstance(stack, dict)
+    ]
+    if len(desired) != len(configured) or any(len(stack) < 2 for stack in desired):
+        raise RuntimeError("Media manifest contains an invalid stack")
+
+    headers = {"x-api-key": api_key}
+    response = client.get("/api/stacks", headers=headers)
+    response.raise_for_status()
+    seed_ids = set(asset_ids.values())
+    managed: list[dict[str, Any]] = []
+    existing_sets: list[frozenset[str]] = []
+    for stack in response.json():
+        if not isinstance(stack, dict):
+            continue
+        members = {
+            asset.get("id")
+            for asset in stack.get("assets", [])
+            if isinstance(asset, dict) and isinstance(asset.get("id"), str)
+        }
+        if members & seed_ids:
+            managed.append(stack)
+            existing_sets.append(frozenset(members))
+
+    desired_sets = [frozenset(stack) for stack in desired]
+    if sorted(existing_sets, key=sorted) == sorted(desired_sets, key=sorted):
+        return len(desired)
+
+    stack_ids = [stack.get("id") for stack in managed if isinstance(stack.get("id"), str)]
+    if stack_ids:
+        deleted = client.request(
+            "DELETE",
+            "/api/stacks",
+            headers=headers,
+            json={"ids": stack_ids},
+        )
+        deleted.raise_for_status()
+    for member_ids in desired:
+        created = client.post(
+            "/api/stacks",
+            headers=headers,
+            json={"assetIds": member_ids},
+        )
+        created.raise_for_status()
+    return len(desired)
+
+
+def reconcile_asset_states(
+    client: httpx.Client,
+    api_key: str,
+    relationships: dict[str, Any],
+    asset_ids: dict[str, str],
+) -> dict[str, int]:
+    headers = {"x-api-key": api_key}
+    all_ids = list(dict.fromkeys(asset_ids.values()))
+    restored = client.post(
+        "/api/trash/restore/assets",
+        headers=headers,
+        json={"ids": all_ids},
+    )
+    restored.raise_for_status()
+    reset = client.put(
+        "/api/assets",
+        headers=headers,
+        json={"ids": all_ids, "isFavorite": False, "visibility": "timeline"},
+    )
+    reset.raise_for_status()
+
+    favorites = resolve_paths(asset_ids, relationships.get("favorite_paths"), "favorite")
+    archived = resolve_paths(asset_ids, relationships.get("archived_paths"), "archived")
+    trashed = resolve_paths(asset_ids, relationships.get("trashed_paths"), "trashed")
+    if favorites:
+        response = client.put(
+            "/api/assets", headers=headers, json={"ids": favorites, "isFavorite": True}
+        )
+        response.raise_for_status()
+    if archived:
+        response = client.put(
+            "/api/assets", headers=headers, json={"ids": archived, "visibility": "archive"}
+        )
+        response.raise_for_status()
+    if trashed:
+        response = client.request(
+            "DELETE", "/api/assets", headers=headers, json={"ids": trashed, "force": False}
+        )
+        response.raise_for_status()
+    return {"favorite": len(favorites), "archived": len(archived), "trashed": len(trashed)}
 
 
 def asset_statistics(client: httpx.Client, api_key: str) -> dict[str, int]:
-    response = client.get("/api/assets/statistics", headers={"x-api-key": api_key})
-    response.raise_for_status()
-    payload = response.json()
+    headers = {"x-api-key": api_key}
+    active_response = client.get(
+        "/api/assets/statistics", headers=headers, params={"isTrashed": "false"}
+    )
+    active_response.raise_for_status()
+    trashed_response = client.get(
+        "/api/assets/statistics", headers=headers, params={"isTrashed": "true"}
+    )
+    trashed_response.raise_for_status()
+    active = active_response.json()
+    trashed = trashed_response.json()
     return {
-        "total": int(payload["total"]),
-        "images": int(payload["images"]),
-        "videos": int(payload["videos"]),
+        "total": int(active["total"]) + int(trashed["total"]),
+        "active": int(active["total"]),
+        "trashed": int(trashed["total"]),
+        "images": int(active["images"]) + int(trashed["images"]),
+        "videos": int(active["videos"]) + int(trashed["videos"]),
     }
 
 
@@ -174,6 +389,7 @@ def main() -> None:
     clean_reset = os.environ.get("COMPANION_TEST_RESET_MODE", "false").lower() == "true"
 
     manifest, manifest_path = load_manifest(seed_root)
+    relationships = manifest_relationships(manifest)
     expected = manifest.get("expected", {})
     expected_assets = int(expected.get("unique_assets", 0))
     source_files = int(expected.get("source_files", 0))
@@ -185,6 +401,11 @@ def main() -> None:
         access_token = login(client, email, password, name)
         api_key = resolve_api_key(client, access_token, api_key_path)
         upload_result = upload_assets(client, api_key, seed_root, manifest)
+        resolved_ids = upload_result["asset_ids"]
+        assert isinstance(resolved_ids, dict)
+        album_count = reconcile_albums(client, api_key, relationships, resolved_ids)
+        stack_count = reconcile_stacks(client, api_key, relationships, resolved_ids)
+        state_counts = reconcile_asset_states(client, api_key, relationships, resolved_ids)
         statistics = asset_statistics(client, api_key)
 
     if statistics["total"] < expected_assets:
@@ -201,7 +422,15 @@ def main() -> None:
         "source_files": source_files,
         "expected_seed_assets": expected_assets,
         "immich_assets": statistics,
-        "upload_result": upload_result,
+        "upload_result": {
+            "created": upload_result["created"],
+            "duplicates": upload_result["duplicates"],
+        },
+        "fixture_relations": {
+            "albums": album_count,
+            "stacks": stack_count,
+            **state_counts,
+        },
     }
     write_state(state_path, state)
     print(

@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import Any
 
 import psycopg
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
 from companion.config import Settings
 
@@ -54,3 +55,23 @@ class PostgresHealthClient:
             "configured": True,
             "latency_ms": elapsed_ms,
         }
+
+
+class DatabaseManager:
+    """Own the SQLAlchemy engine and short-lived async sessions."""
+
+    def __init__(self, settings: Settings) -> None:
+        database_url = settings.sqlalchemy_database_url
+        if database_url is None:
+            raise RuntimeError("The companion database is not configured")
+        self.engine: AsyncEngine = create_async_engine(
+            database_url,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": math.ceil(settings.database_timeout_seconds)},
+        )
+        self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+
+    async def dispose(self) -> None:
+        """Close pooled database connections during application shutdown."""
+
+        await self.engine.dispose()

@@ -114,6 +114,7 @@ services:
       COMPANION_ENV: test
       COMPANION_VERSION: local-test
       IMMICH_URL: http://immich-server:2283
+      IMMICH_PUBLIC_URL: http://localhost:${IMMICH_TEST_PORT:-22830}
       IMMICH_API_KEY_FILE: /run/immich-companion/immich-api-key
       IMMICH_TIMEOUT_SECONDS: "5"
       COMPANION_DATABASE_URL: postgresql://companion:${COMPANION_DB_PASSWORD}@companion-database:5432/immich_companion

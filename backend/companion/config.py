@@ -20,9 +20,12 @@ class Settings(BaseSettings):
     companion_version: str = "0.1.0"
     companion_frontend_dir: Path | None = None
     immich_url: HttpUrl | None = None
+    immich_public_url: HttpUrl | None = None
     immich_api_key: SecretStr | None = None
     immich_api_key_file: Path | None = None
     immich_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    immich_retry_attempts: int = Field(default=3, ge=1, le=5)
+    immich_retry_backoff_seconds: float = Field(default=0.15, ge=0, le=5)
     companion_database_url: SecretStr | None = None
     database_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     companion_test_state_file: Path | None = None
@@ -44,6 +47,27 @@ class Settings(BaseSettings):
         """Return whether both required Immich connection values exist."""
 
         return self.immich_url is not None and self.resolve_immich_api_key() is not None
+
+    @property
+    def database_url(self) -> str | None:
+        """Return the secret database URL for internal connection setup only."""
+
+        if self.companion_database_url is None:
+            return None
+        return self.companion_database_url.get_secret_value()
+
+    @property
+    def sqlalchemy_database_url(self) -> str | None:
+        """Return a SQLAlchemy psycopg URL without changing the stored secret."""
+
+        database_url = self.database_url
+        if database_url is None:
+            return None
+        if database_url.startswith("postgresql://"):
+            return database_url.replace("postgresql://", "postgresql+psycopg://", 1)
+        if database_url.startswith("postgres://"):
+            return database_url.replace("postgres://", "postgresql+psycopg://", 1)
+        return database_url
 
 
 @lru_cache

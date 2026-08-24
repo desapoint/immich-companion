@@ -6,14 +6,15 @@
 
   interface Props {
     children: Snippet;
+    activePath?: string;
   }
 
-  let { children }: Props = $props();
+  let { children, activePath = '/' }: Props = $props();
 </script>
 
-<a class="skip-link" href="#main-content">Skip to companion status</a>
+<a class="skip-link" href="#main-content">Skip to main content</a>
 <div class="app-shell">
-  <AppHeader />
+  <AppHeader {activePath} />
   <main id="main-content" class="app-main">
     {@render children()}
   </main>
@@ -45,7 +46,7 @@
   }
 
   .app-main {
-    width: min(72rem, calc(100% - 2rem));
+    width: min(96rem, calc(100% - 2rem));
     margin: 0 auto;
     padding: clamp(2.5rem, 6vw, 5.5rem) 0;
   }

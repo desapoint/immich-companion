@@ -1,5 +1,11 @@
 <script lang="ts">
   const homePath = '/';
+
+  interface Props {
+    activePath?: string;
+  }
+
+  let { activePath = '/' }: Props = $props();
 </script>
 
 <header class="app-header">
@@ -10,12 +16,16 @@
       <small>Operational workspace</small>
     </span>
   </a>
-  <a class="api-link" href="/api/docs">API documentation</a>
+  <nav aria-label="Primary navigation">
+    <a class:active={activePath === '/'} href="/">Status</a>
+    <a class:active={activePath.startsWith('/assets')} href="/assets">Assets</a>
+    <a href="/api/docs">API docs</a>
+  </nav>
 </header>
 
 <style>
   .app-header {
-    width: min(72rem, calc(100% - 2rem));
+    width: min(96rem, calc(100% - 2rem));
     margin: 0 auto;
     padding: 1rem 0;
     display: flex;
@@ -63,15 +73,25 @@
     font-size: 0.72rem;
   }
 
-  .api-link {
-    color: var(--color-ink-muted);
-    font-size: 0.82rem;
-    font-weight: 700;
-    text-underline-offset: 0.25rem;
+  nav {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
   }
 
-  .api-link:hover {
+  nav a {
+    padding: 0.5rem 0.65rem;
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-muted);
+    text-decoration: none;
+    font-size: 0.82rem;
+    font-weight: 700;
+  }
+
+  nav a:hover,
+  nav a.active {
     color: var(--color-accent-strong);
+    background: var(--color-surface-soft);
   }
 
   @media (max-width: 34rem) {
@@ -79,8 +99,8 @@
       align-items: flex-start;
     }
 
-    .api-link {
-      padding-top: 0.35rem;
+    nav {
+      overflow-x: auto;
     }
 
     small {

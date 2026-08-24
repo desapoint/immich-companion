@@ -8,7 +8,7 @@
 
 <style>
   .app-footer {
-    width: min(72rem, calc(100% - 2rem));
+    width: min(96rem, calc(100% - 2rem));
     margin: 0 auto;
     padding: 1.25rem 0 2rem;
     border-top: 1px solid var(--color-border-subtle);

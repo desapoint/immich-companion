@@ -4,15 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+from datetime import datetime
+from typing import Literal
+from uuid import UUID
 
 import httpx
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from companion.asset_repository import AssetRepository
+from companion.asset_schema import (
+    AlbumOption,
+    AssetDetail,
+    AssetSearchQuery,
+    AssetSearchResponse,
+    AssetSyncResult,
+    StructuredAssetSearchQuery,
+)
+from companion.asset_service import AssetSyncService
 from companion.config import Settings, get_settings
-from companion.database import PostgresHealthClient
-from companion.immich import ImmichHealthClient
+from companion.database import DatabaseManager, PostgresHealthClient
+from companion.immich import ImmichApiClient, ImmichApiError
+from companion.migrate import run_migrations
 
 
 def create_app(
@@ -22,19 +38,40 @@ def create_app(
     """Create an application with injectable settings/transport for tests."""
 
     runtime_settings = settings or get_settings()
-    immich = ImmichHealthClient(runtime_settings, transport=immich_transport)
-    database = PostgresHealthClient(runtime_settings)
+    immich = ImmichApiClient(runtime_settings, transport=immich_transport)
+    database_health = PostgresHealthClient(runtime_settings)
+    database = (
+        DatabaseManager(runtime_settings)
+        if runtime_settings.companion_database_url is not None
+        else None
+    )
+    asset_repository = AssetRepository(database) if database is not None else None
+    asset_sync = (
+        AssetSyncService(immich, asset_repository) if asset_repository is not None else None
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if database is not None:
+            await asyncio.to_thread(run_migrations, runtime_settings)
+        try:
+            yield
+        finally:
+            if database is not None:
+                await database.dispose()
+
     app = FastAPI(
         title="Immich Companion",
         version=runtime_settings.companion_version,
         docs_url="/api/docs",
         openapi_url="/api/openapi.json",
+        lifespan=lifespan,
     )
 
     async def health_payload() -> dict[str, object]:
         immich_status, database_status = await asyncio.gather(
             immich.check(),
-            database.check(),
+            database_health.check(),
         )
         database_ready = database_status["status"] in {"ok", "not_configured"}
         ready = immich_status["status"] == "ok" and database_ready
@@ -81,10 +118,18 @@ def create_app(
             "destructive_actions": runtime_settings.allow_destructive_actions,
             "immich_api": runtime_settings.immich_configured,
             "companion_database": runtime_settings.companion_database_url is not None,
-            "implemented": ["health", "version", "capabilities"],
+            "implemented": [
+                "health",
+                "version",
+                "capabilities",
+                "asset_sync",
+                "asset_search",
+                "asset_details",
+                "asset_previews",
+                "structured_asset_search",
+                "album_filters",
+            ],
             "planned": [
-                "sync",
-                "search",
                 "actions",
                 "integrity",
                 "exact_dedupe",
@@ -92,6 +137,131 @@ def create_app(
                 "visual_similarity",
             ],
         }
+
+    def require_asset_repository() -> AssetRepository:
+        if asset_repository is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return asset_repository
+
+    def map_immich_error(error: ImmichApiError) -> HTTPException:
+        if error.status_code == status.HTTP_404_NOT_FOUND:
+            return HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The Immich asset was not found.",
+            )
+        if error.status_code in {status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN}:
+            return HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Immich rejected the companion asset request.",
+            )
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Immich could not complete the asset request.",
+        )
+
+    @app.post("/api/assets/sync", response_model=AssetSyncResult)
+    async def synchronize_assets() -> AssetSyncResult:
+        require_asset_repository()
+        assert asset_sync is not None
+        try:
+            return await asset_sync.synchronize()
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
+    @app.get("/api/assets", response_model=AssetSearchResponse)
+    async def search_assets(
+        query: str | None = Query(default=None, max_length=500),
+        asset_type: Literal["IMAGE", "VIDEO", "AUDIO", "OTHER"] | None = Query(
+            default=None,
+            alias="type",
+        ),
+        taken_after: datetime | None = None,
+        taken_before: datetime | None = None,
+        min_width: int | None = Query(default=None, ge=1),
+        max_width: int | None = Query(default=None, ge=1),
+        min_height: int | None = Query(default=None, ge=1),
+        max_height: int | None = Query(default=None, ge=1),
+        min_aspect_ratio: float | None = Query(default=None, gt=0),
+        max_aspect_ratio: float | None = Query(default=None, gt=0),
+        favorite: bool | None = None,
+        archived: bool | None = None,
+        trashed: bool | None = None,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=48, ge=1, le=200),
+    ) -> AssetSearchResponse:
+        repository = require_asset_repository()
+        criteria = AssetSearchQuery(
+            query=query,
+            asset_type=asset_type,
+            taken_after=taken_after,
+            taken_before=taken_before,
+            min_width=min_width,
+            max_width=max_width,
+            min_height=min_height,
+            max_height=max_height,
+            min_aspect_ratio=min_aspect_ratio,
+            max_aspect_ratio=max_aspect_ratio,
+            favorite=favorite,
+            archived=archived,
+            trashed=trashed,
+            page=page,
+            page_size=page_size,
+        )
+        return await repository.search(criteria)
+
+    @app.post("/api/assets/search", response_model=AssetSearchResponse)
+    async def search_assets_structured(
+        criteria: StructuredAssetSearchQuery,
+    ) -> AssetSearchResponse:
+        repository = require_asset_repository()
+        return await repository.search_structured(criteria)
+
+    @app.get("/api/albums", response_model=list[AlbumOption])
+    async def search_album_options() -> list[AlbumOption]:
+        repository = require_asset_repository()
+        return await repository.list_albums()
+
+    @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
+    async def asset_detail(asset_id: UUID) -> AssetDetail:
+        try:
+            asset = await immich.get_asset(asset_id)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
+
+    @app.get("/api/assets/{asset_id}/thumbnail", response_class=Response)
+    async def asset_thumbnail(
+        asset_id: UUID,
+        size: Literal["thumbnail", "preview"] = "thumbnail",
+    ) -> Response:
+        try:
+            media = await immich.get_thumbnail(asset_id, size=size)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        headers = {
+            "Cache-Control": media.cache_control or "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if media.etag:
+            headers["ETag"] = media.etag
+        return Response(content=media.content, media_type=media.media_type, headers=headers)
+
+    @app.get("/api/assets/{asset_id}/original", response_class=Response)
+    async def asset_original(asset_id: UUID) -> Response:
+        try:
+            media = await immich.get_original(asset_id)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        headers = {
+            "Cache-Control": media.cache_control or "private, max-age=300",
+            "X-Content-Type-Options": "nosniff",
+        }
+        if media.etag:
+            headers["ETag"] = media.etag
+        return Response(content=media.content, media_type=media.media_type, headers=headers)
 
     if runtime_settings.companion_env == "test":
 
