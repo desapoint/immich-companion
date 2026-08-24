@@ -42,6 +42,37 @@ The test environment is isolated under the Compose project name
 `immich-companion-test`, does not connect to a real Immich instance, and is
 recreated from a clean stateless container set on every `start`.
 
+### Windows access when Docker runs inside WSL 2
+
+The test port binds to `0.0.0.0` inside WSL by default so Windows can reach it.
+After `start`, the helper prints both:
+
+- `http://localhost:8090`
+- a fallback URL using the current WSL virtual-machine IP
+
+Use plain `http://`, not `https://`. If Windows localhost forwarding is disabled,
+create or update `%UserProfile%\.wslconfig` from Windows with:
+
+```ini
+[wsl2]
+localhostForwarding=true
+```
+
+Then run `wsl --shutdown` in PowerShell and restart WSL. This stops all running
+WSL distributions and containers. On Windows 11 22H2 or newer, mirrored
+networking is another option:
+
+```ini
+[wsl2]
+networkingMode=mirrored
+```
+
+Do not combine networking changes casually with a production Tailscale setup;
+try the wildcard bind and printed WSL-IP fallback first. Binding to `0.0.0.0`
+may also make the test port reachable from the local network, subject to WSL
+and Windows firewall rules. To restore WSL-only access, export
+`COMPANION_TEST_BIND=127.0.0.1` before starting.
+
 ## Local backend development
 
 The project targets Python 3.12 or newer.

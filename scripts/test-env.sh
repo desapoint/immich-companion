@@ -47,6 +47,18 @@ wait_until_ready() {
   return 1
 }
 
+show_access_urls() {
+  echo "WSL/Linux URL: ${BASE_URL}"
+  if grep --quiet --ignore-case microsoft /proc/version 2>/dev/null; then
+    local wsl_ip
+    wsl_ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
+    echo "Windows URL: http://localhost:${TEST_PORT}"
+    if [[ -n "${wsl_ip}" ]]; then
+      echo "Windows fallback: http://${wsl_ip}:${TEST_PORT}"
+    fi
+  fi
+}
+
 start_environment() {
   # The test stack is intentionally stateless. Removing stale containers first
   # also avoids docker-compose 1.29's ContainerConfig recreation failure with
@@ -54,6 +66,7 @@ start_environment() {
   compose down --remove-orphans
   compose up --detach --build
   wait_until_ready
+  show_access_urls
 }
 
 usage() {
