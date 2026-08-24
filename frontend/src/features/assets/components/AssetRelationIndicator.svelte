@@ -8,10 +8,11 @@
     kind: 'album' | 'tag' | 'stack' | 'external';
     label: string;
     count?: number;
+    popoverSizing?: 'default' | 'content';
     children: Snippet;
   }
 
-  let { kind, label, count, children }: Props = $props();
+  let { kind, label, count, popoverSizing = 'default', children }: Props = $props();
   let pinned = $state(false);
   const componentId = $props.id();
 </script>
@@ -32,7 +33,12 @@
     <AssetIcon {kind} />
     {#if count !== undefined}<span>{count}</span>{/if}
   </button>
-  <aside id={`${componentId}-details`} class="relation-popover" aria-label={`${label} details`}>
+  <aside
+    id={`${componentId}-details`}
+    class:content-sized={popoverSizing === 'content'}
+    class="relation-popover"
+    aria-label={`${label} details`}
+  >
     <strong>{label}</strong>
     <div class="popover-content">{@render children()}</div>
   </aside>
@@ -95,6 +101,11 @@
     pointer-events: none;
     transform: translateY(-0.2rem);
     transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+  }
+
+  .relation-popover.content-sized {
+    width: max-content;
+    max-width: min(24rem, calc(100vw - 2rem));
   }
 
   .relation-indicator:hover .relation-popover,

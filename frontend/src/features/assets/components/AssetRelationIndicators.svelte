@@ -41,10 +41,22 @@
   {/if}
 
   {#if showTags && asset.tags.length}
-    <AssetRelationIndicator kind="tag" label="Tags" count={asset.tags.length}>
+    <AssetRelationIndicator
+      kind="tag"
+      label="Tags"
+      count={asset.tags.length}
+      popoverSizing="content"
+    >
       <ul class="tag-list">
         {#each asset.tags as tag (tag.id)}
-          <li><span style:background={safeAssetTagColor(tag.color)} aria-hidden="true"></span>{tag.name}</li>
+          <li>
+            <span
+              class="tag-color"
+              style:background={safeAssetTagColor(tag.color)}
+              aria-hidden="true"
+            ></span>
+            <span class="tag-name">{tag.name}</span>
+          </li>
         {/each}
       </ul>
     </AssetRelationIndicator>
@@ -108,11 +120,23 @@
 
   .name-list,
   .tag-list {
-    display: grid;
-    gap: 0.35rem;
     margin: 0;
     padding: 0;
     list-style: none;
+  }
+
+  .name-list {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .tag-list {
+    display: flex;
+    width: max-content;
+    max-width: 100%;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.35rem;
   }
 
   .name-list li,
@@ -125,15 +149,25 @@
 
   .tag-list li {
     display: flex;
+    max-width: 100%;
+    flex: 0 0 auto;
     align-items: center;
     gap: 0.38rem;
   }
 
-  .tag-list li span {
+  .tag-list .tag-color {
+    flex: 0 0 auto;
     width: 0.52rem;
     height: 0.52rem;
     border-radius: 50%;
     background: var(--color-accent-strong);
+  }
+
+  .tag-list .tag-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   p {
