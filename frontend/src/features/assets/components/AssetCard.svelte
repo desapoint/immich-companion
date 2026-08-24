@@ -4,6 +4,7 @@
   import type { AssetCardIndicatorConfig, AssetSummary } from '../types/assets';
   import AssetRelationIndicators from './AssetRelationIndicators.svelte';
   import AssetStateChips from './AssetStateChips.svelte';
+  import AssetTagChips from './AssetTagChips.svelte';
 
   interface Props {
     asset: AssetSummary;
@@ -40,6 +41,8 @@
       <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
       <span>{formatAssetDate(asset.taken_at)}</span>
     </div>
+
+    <AssetTagChips tags={asset.tags} />
 
     <AssetRelationIndicators
       {asset}

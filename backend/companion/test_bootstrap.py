@@ -304,6 +304,86 @@ def reconcile_stacks(
     return len(desired)
 
 
+def reconcile_tags(
+    client: httpx.Client,
+    api_key: str,
+    relationships: dict[str, Any],
+    asset_ids: dict[str, str],
+) -> dict[str, int]:
+    """Create managed demo tags and converge their seed-asset assignments."""
+
+    configured = relationships.get("tags")
+    if not isinstance(configured, list):
+        raise RuntimeError("Media manifest tags must be a list")
+
+    headers = {"x-api-key": api_key}
+    response = client.get("/api/tags", headers=headers)
+    response.raise_for_status()
+    existing = {
+        tag.get("name"): tag
+        for tag in response.json()
+        if isinstance(tag, dict) and isinstance(tag.get("name"), str)
+    }
+    all_seed_ids = set(asset_ids.values())
+    tagged_asset_ids: set[str] = set()
+    assignment_count = 0
+
+    for fixture in configured:
+        if not isinstance(fixture, dict):
+            raise RuntimeError("Media manifest contains an invalid tag")
+        name = fixture.get("name")
+        color = fixture.get("color")
+        if not isinstance(name, str) or not isinstance(color, str):
+            raise RuntimeError("Media manifest contains invalid tag metadata")
+        desired_ids = set(
+            resolve_paths(asset_ids, fixture.get("paths"), f"tag {name}")
+        )
+        current = existing.get(name)
+        if current is None:
+            created = client.post(
+                "/api/tags",
+                headers=headers,
+                json={"name": name, "color": color},
+            )
+            created.raise_for_status()
+            current = created.json()
+        tag_id = current.get("id") if isinstance(current, dict) else None
+        if not isinstance(tag_id, str):
+            raise RuntimeError(f"Immich tag {name!r} did not provide an ID")
+        if current.get("color") != color:
+            updated = client.patch(
+                f"/api/tags/{tag_id}",
+                headers=headers,
+                json={"color": color},
+            )
+            updated.raise_for_status()
+
+        if desired_ids:
+            added = client.put(
+                f"/api/tags/{tag_id}/assets",
+                headers=headers,
+                json={"ids": sorted(desired_ids)},
+            )
+            added.raise_for_status()
+        undesired_ids = all_seed_ids - desired_ids
+        if undesired_ids:
+            removed = client.request(
+                "DELETE",
+                f"/api/tags/{tag_id}/assets",
+                headers=headers,
+                json={"ids": sorted(undesired_ids)},
+            )
+            removed.raise_for_status()
+        tagged_asset_ids.update(desired_ids)
+        assignment_count += len(desired_ids)
+
+    return {
+        "tags": len(configured),
+        "tagged_assets": len(tagged_asset_ids),
+        "tag_assignments": assignment_count,
+    }
+
+
 def reconcile_asset_states(
     client: httpx.Client,
     api_key: str,
@@ -393,7 +473,9 @@ def main() -> None:
     expected = manifest.get("expected", {})
     expected_assets = int(expected.get("unique_assets", 0))
     source_files = int(expected.get("source_files", 0))
-    if expected_assets <= 0 or source_files <= 0:
+    expected_tags = int(expected.get("tags", 0))
+    expected_tagged_assets = int(expected.get("tagged_assets", 0))
+    if min(expected_assets, source_files, expected_tags, expected_tagged_assets) <= 0:
         raise RuntimeError("Media manifest has invalid expected counts")
 
     with httpx.Client(base_url=base_url, timeout=60, follow_redirects=False) as client:
@@ -405,6 +487,7 @@ def main() -> None:
         assert isinstance(resolved_ids, dict)
         album_count = reconcile_albums(client, api_key, relationships, resolved_ids)
         stack_count = reconcile_stacks(client, api_key, relationships, resolved_ids)
+        tag_counts = reconcile_tags(client, api_key, relationships, resolved_ids)
         state_counts = reconcile_asset_states(client, api_key, relationships, resolved_ids)
         statistics = asset_statistics(client, api_key)
 
@@ -412,6 +495,10 @@ def main() -> None:
         raise RuntimeError("Immich asset count is smaller than the deterministic seed")
     if clean_reset and statistics["total"] != expected_assets:
         raise RuntimeError("A clean reset did not produce the exact deterministic asset count")
+    if tag_counts["tags"] != expected_tags:
+        raise RuntimeError("Immich tag count does not match the deterministic manifest")
+    if tag_counts["tagged_assets"] != expected_tagged_assets:
+        raise RuntimeError("Immich tagged asset count does not match the deterministic manifest")
 
     manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     state = {
@@ -429,6 +516,7 @@ def main() -> None:
         "fixture_relations": {
             "albums": album_count,
             "stacks": stack_count,
+            **tag_counts,
             **state_counts,
         },
     }

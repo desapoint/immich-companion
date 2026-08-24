@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -10,6 +12,27 @@ from pydantic import BaseModel, Field, model_validator
 
 from companion.immich import ImmichAsset
 from companion.models import AssetRecord
+
+
+def parse_aspect_ratio(value: str | int | float) -> float:
+    """Parse a positive decimal or fraction without accepting partial values."""
+
+    if isinstance(value, bool):
+        raise ValueError("'aspect_ratio' requires a positive decimal or fraction")
+    parts = [str(part).strip() for part in str(value).strip().split("/")]
+    if len(parts) not in {1, 2} or any(
+        re.fullmatch(r"(?:\d+(?:\.\d*)?|\.\d+)", part) is None for part in parts
+    ):
+        raise ValueError("'aspect_ratio' requires a positive decimal or fraction")
+    try:
+        numbers = [Decimal(part) for part in parts]
+    except InvalidOperation as error:
+        raise ValueError("'aspect_ratio' requires a positive decimal or fraction") from error
+    if any(not number.is_finite() or number <= 0 for number in numbers):
+        raise ValueError("'aspect_ratio' requires a positive decimal or fraction")
+    if len(numbers) == 2:
+        return float(numbers[0] / numbers[1])
+    return float(numbers[0])
 
 
 class AssetSearchQuery(BaseModel):
@@ -92,10 +115,7 @@ class SearchCondition(BaseModel):
         ):
             raise ValueError(f"{self.field!r} requires a positive integer")
         if self.field == "aspect_ratio":
-            if isinstance(self.value, bool) or not isinstance(self.value, int | float):
-                raise ValueError("'aspect_ratio' requires a positive number")
-            if float(self.value) <= 0:
-                raise ValueError("'aspect_ratio' requires a positive number")
+            self.value = parse_aspect_ratio(self.value)
         if self.field == "taken_at":
             if not isinstance(self.value, str):
                 raise ValueError("'taken_at' requires an ISO date-time string")

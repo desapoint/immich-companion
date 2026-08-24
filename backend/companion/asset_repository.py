@@ -23,6 +23,8 @@ from companion.database import DatabaseManager
 from companion.immich import ImmichAlbum, ImmichAsset
 from companion.models import AlbumAssetRecord, AlbumRecord, AssetRecord
 
+ASPECT_RATIO_RELATIVE_TOLERANCE = 0.001
+
 
 class AssetRepository:
     """Persist and search synchronized assets through SQLAlchemy 2."""
@@ -224,7 +226,10 @@ class AssetRepository:
                 return ratio >= numeric
             if condition.operator == "at_most":
                 return ratio <= numeric
-            return func.abs(ratio - numeric) <= 0.005
+            return (
+                func.abs(ratio - numeric)
+                <= numeric * ASPECT_RATIO_RELATIVE_TOLERANCE
+            )
         if condition.field in {"favorite", "archived", "trashed"}:
             column = {
                 "favorite": AssetRecord.is_favorite,

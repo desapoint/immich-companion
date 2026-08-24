@@ -91,6 +91,17 @@ class ImmichStack(ImmichModel):
     assets: list[ImmichAsset]
 
 
+class ImmichTag(ImmichModel):
+    """Tag metadata plus memberships resolved through supported Immich APIs."""
+
+    id: UUID
+    name: str
+    value: str
+    color: str | None = None
+    parent_id: UUID | None = Field(default=None, alias="parentId")
+    asset_ids: list[UUID] = Field(default_factory=list, exclude=True)
+
+
 class ImmichAssetSearchPage(ImmichModel):
     """Asset portion of an Immich metadata search response."""
 
@@ -207,6 +218,7 @@ class ImmichApiClient:
         *,
         size: int = 250,
         album_ids: list[UUID] | None = None,
+        tag_ids: list[UUID] | None = None,
     ) -> ImmichAssetSearchPage:
         """Retrieve one stable metadata-search page with useful related data."""
 
@@ -221,6 +233,8 @@ class ImmichApiClient:
         }
         if album_ids:
             payload["albumIds"] = [str(album_id) for album_id in album_ids]
+        if tag_ids:
+            payload["tagIds"] = [str(tag_id) for tag_id in tag_ids]
         response = await self._request(
             "POST",
             "/api/search/metadata",
@@ -333,6 +347,38 @@ class ImmichApiClient:
 
         response = await self._request("GET", "/api/stacks", operation="list stacks")
         return [ImmichStack.model_validate(payload) for payload in response.json()]
+
+    async def list_tags(self, assets: list[ImmichAsset]) -> list[ImmichTag]:
+        """List tags and resolve memberships omitted by general asset traversal."""
+
+        response = await self._request("GET", "/api/tags", operation="list tags")
+        tags = [ImmichTag.model_validate(payload) for payload in response.json()]
+        synchronized_ids = {asset.id for asset in assets}
+        resolved: list[ImmichTag] = []
+        for tag in tags:
+            asset_ids: list[UUID] = []
+            page_number = 1
+            seen_tokens: set[str] = set()
+            while True:
+                page = await self.search_assets_page(
+                    page_number,
+                    size=1000,
+                    tag_ids=[tag.id],
+                )
+                asset_ids.extend(
+                    asset.id for asset in page.items if asset.id in synchronized_ids
+                )
+                if page.next_page is None:
+                    break
+                if page.next_page in seen_tokens:
+                    raise ImmichApiError("tag membership pagination")
+                seen_tokens.add(page.next_page)
+                try:
+                    page_number = int(page.next_page)
+                except ValueError as error:
+                    raise ImmichApiError("tag membership pagination") from error
+            resolved.append(tag.model_copy(update={"asset_ids": asset_ids}))
+        return resolved
 
     def public_asset_url(self, asset_id: UUID) -> str | None:
         """Build an optional browser-facing link without exposing the API key."""

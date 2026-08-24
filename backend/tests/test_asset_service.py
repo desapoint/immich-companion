@@ -3,11 +3,12 @@ from uuid import UUID
 import pytest
 
 from companion.asset_service import AssetSyncService
-from companion.immich import ImmichAsset, ImmichStack
+from companion.immich import ImmichAsset, ImmichStack, ImmichTag
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
 STACK_ID = UUID("55555555-5555-4555-8555-555555555555")
+TAG_ID = UUID("66666666-6666-4666-8666-666666666666")
 
 
 def asset(asset_id: UUID, filename: str) -> ImmichAsset:
@@ -40,6 +41,17 @@ class FakeImmich:
     async def list_albums(self, _assets: list[ImmichAsset]) -> list[object]:
         return []
 
+    async def list_tags(self, _assets: list[ImmichAsset]) -> list[ImmichTag]:
+        return [
+            ImmichTag(
+                id=TAG_ID,
+                name="Review",
+                value="Review",
+                color="#d97706",
+                asset_ids=[ASSET_ONE],
+            )
+        ]
+
 
 class FakeRepository:
     def __init__(self) -> None:
@@ -71,3 +83,12 @@ async def test_sync_retains_compact_stack_members_for_card_previews() -> None:
         str(ASSET_TWO),
     ]
     assert repository.assets[0].stack["assets"][1]["originalFileName"] == "child.png"
+    assert repository.assets[0].tags == [
+        {
+            "id": str(TAG_ID),
+            "name": "Review",
+            "value": "Review",
+            "color": "#d97706",
+        }
+    ]
+    assert repository.assets[1].tags == []

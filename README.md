@@ -76,20 +76,24 @@ does not mount Immich media or access Immich's database.
 The seed includes exact-byte and pixel-identical variants, crops, edits,
 occlusions, alpha images, aspect-ratio and dimension variants, negative controls,
 overlapping albums, stacks, favorites, archived assets, and trashed assets. A
-plain start converges those fixtures without duplicating them; `--reset` proves
-the same corpus can be recreated from empty volumes.
+four-tag taxonomy is assigned across 48 assets with intentional overlap. A plain
+start converges those fixtures without duplicating them; `--reset` proves the
+same corpus and tag assignments can be recreated from empty volumes.
 
 The asset page opens in Simple mode with filename, media-type, favorite,
 archive, and trash filters; trashed assets are excluded by default. Its
-collapsible Advanced zone adds taken-date,
-width/height, and aspect-ratio bounds. The Expert switch exposes recursive
-AND/OR groups, whole-group NOT, and album membership/exclusion. Results use a
+collapsible Advanced zone adds taken-date, width/height, and aspect-ratio bounds.
+Aspect-ratio fields accept decimals or fractions such as `16/9`; Expert equality
+uses an explicit approximate match with a 0.1% relative tolerance. The Expert
+switch exposes recursive AND/OR groups, whole-group NOT, and album
+membership/exclusion. Results use a
 four-column desktop grid and full numbered pagination with first/last
 navigation, nearby-page windows, and 24/48/96/192 item page sizes. Cards use
-thumbnails and expose album, tag, stack, external-source, and Open in Immich
-indicators when their metadata is available. Indicator popovers list relation
-details, and stack popovers preview their member images. The dialog requests
-the original Immich asset and provides fit/actual-size, wheel/button zoom,
+thumbnails, render compact tag chips directly, and expose album, tag, stack,
+external-source, and Open in Immich indicators when their metadata is available.
+Indicator popovers list relation details, and stack popovers preview their member
+images. The dialog requests the original Immich asset and provides
+fit/actual-size, wheel/button zoom,
 collection navigation, selection, details, and shortcuts. Its reusable bottom
 comparison strip defaults to stack members and click activation, while also
 supporting future similar-image collections and hover or press-and-hold

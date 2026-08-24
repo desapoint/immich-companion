@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AspectRatioField from '../../../lib/components/ui/AspectRatioField.svelte';
   import DateTimePicker from '../../../lib/components/ui/DateTimePicker.svelte';
   import SelectField, { type SelectOption } from '../../../lib/components/ui/SelectField.svelte';
   import { resetSearchConditionField } from '../state/assetViewModel';
@@ -49,7 +50,12 @@
       { value: 'in_album', label: 'is in' },
       { value: 'not_in_album', label: 'is not in' },
     ];
-    if (condition.field === 'width' || condition.field === 'height' || condition.field === 'aspect_ratio') return [
+    if (condition.field === 'aspect_ratio') return [
+      { value: 'at_least', label: 'is at least' },
+      { value: 'at_most', label: 'is at most' },
+      { value: 'equals', label: 'is approximately' },
+    ];
+    if (condition.field === 'width' || condition.field === 'height') return [
       { value: 'at_least', label: 'is at least' },
       { value: 'at_most', label: 'is at most' },
       { value: 'equals', label: 'is equal to' },
@@ -137,6 +143,16 @@
       required
       onchange={(value) => (condition.value = value)}
     />
+  {:else if condition.field === 'aspect_ratio'}
+    <AspectRatioField
+      id={`${condition.id}-value`}
+      label="Value"
+      value={condition.value}
+      {disabled}
+      required
+      compact
+      onchange={(value) => (condition.value = value)}
+    />
   {:else}
     <label class="value-field">
       <span>Value</span>
@@ -144,8 +160,8 @@
         id={`${condition.id}-value`}
         type={condition.field === 'filename' ? 'text' : 'number'}
         min={condition.field === 'filename' ? undefined : '0.01'}
-        step={condition.field === 'aspect_ratio' ? '0.01' : condition.field === 'filename' ? undefined : '1'}
-        placeholder={condition.field === 'aspect_ratio' ? '1.78' : condition.field === 'filename' ? 'IMG_2026' : '1920'}
+        step={condition.field === 'filename' ? undefined : '1'}
+        placeholder={condition.field === 'filename' ? 'IMG_2026' : '1920'}
         bind:value={condition.value}
         {disabled}
         required
@@ -160,7 +176,7 @@
   .condition-row {
     display: grid;
     grid-template-columns: minmax(8rem, 0.8fr) minmax(9rem, 0.9fr) minmax(10rem, 1.5fr) auto;
-    align-items: end;
+    align-items: start;
     gap: 0.55rem;
     padding: 0.65rem;
     border: 1px solid var(--color-border-subtle);
@@ -207,6 +223,11 @@
     font-size: 1.1rem;
   }
 
+  .remove {
+    align-self: start;
+    margin-top: 1.42rem;
+  }
+
   @media (max-width: 52rem) {
     .condition-row {
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -214,6 +235,7 @@
 
     .remove {
       justify-self: end;
+      margin-top: 0;
     }
   }
 

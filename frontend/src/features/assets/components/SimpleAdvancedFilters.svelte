@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AspectRatioField from '../../../lib/components/ui/AspectRatioField.svelte';
   import DateTimePicker from '../../../lib/components/ui/DateTimePicker.svelte';
   import type { SimpleAssetSearchFilters } from '../types/assets';
 
@@ -6,9 +7,7 @@
     | 'minWidth'
     | 'maxWidth'
     | 'minHeight'
-    | 'maxHeight'
-    | 'minAspectRatio'
-    | 'maxAspectRatio';
+    | 'maxHeight';
 
   interface Props {
     filters: SimpleAssetSearchFilters;
@@ -79,8 +78,20 @@
     {@render numberField('maxWidth', 'Maximum width', '4096', '1', '1')}
     {@render numberField('minHeight', 'Minimum height', '720', '1', '1')}
     {@render numberField('maxHeight', 'Maximum height', '2160', '1', '1')}
-    {@render numberField('minAspectRatio', 'Minimum aspect ratio', '1.33', '0.01', '0.01')}
-    {@render numberField('maxAspectRatio', 'Maximum aspect ratio', '1.78', '0.01', '0.01')}
+    <AspectRatioField
+      id={`${componentId}-minAspectRatio`}
+      label="Minimum aspect ratio"
+      value={filters.minAspectRatio}
+      {disabled}
+      onchange={(value) => onchange({ ...filters, minAspectRatio: value })}
+    />
+    <AspectRatioField
+      id={`${componentId}-maxAspectRatio`}
+      label="Maximum aspect ratio"
+      value={filters.maxAspectRatio}
+      {disabled}
+      onchange={(value) => onchange({ ...filters, maxAspectRatio: value })}
+    />
   </div>
 </details>
 
@@ -146,6 +157,7 @@
   .advanced-fields {
     display: grid;
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    align-items: start;
     gap: 0.65rem;
     padding: 0.75rem;
     border-top: 1px solid var(--color-border-subtle);

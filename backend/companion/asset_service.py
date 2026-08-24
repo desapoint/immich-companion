@@ -1,5 +1,6 @@
 """Asset synchronization service."""
 
+import asyncio
 from datetime import UTC, datetime
 
 from companion.asset_repository import AssetRepository
@@ -18,7 +19,11 @@ class AssetSyncService:
         """Run one complete, idempotent asset metadata reconciliation."""
 
         assets = [asset async for asset in self._immich.iter_assets()]
-        stacks = await self._immich.list_stacks()
+        stacks, albums, tags = await asyncio.gather(
+            self._immich.list_stacks(),
+            self._immich.list_albums(assets),
+            self._immich.list_tags(assets),
+        )
         stack_by_asset = {}
         for stack in stacks:
             stack_members = [
@@ -45,7 +50,20 @@ class AssetSyncService:
             asset.model_copy(update={"stack": stack_by_asset.get(asset.id, asset.stack)})
             for asset in assets
         ]
-        albums = await self._immich.list_albums(assets)
+        tags_by_asset = {}
+        for tag in tags:
+            payload = {
+                "id": str(tag.id),
+                "name": tag.name,
+                "value": tag.value,
+                "color": tag.color,
+            }
+            for asset_id in tag.asset_ids:
+                tags_by_asset.setdefault(asset_id, []).append(payload)
+        assets = [
+            asset.model_copy(update={"tags": tags_by_asset.get(asset.id, asset.tags)})
+            for asset in assets
+        ]
         created, updated, removed = await self._repository.reconcile(assets, albums)
         return AssetSyncResult(
             seen=len(assets),

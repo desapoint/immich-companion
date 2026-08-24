@@ -283,6 +283,41 @@ def generate(output: Path) -> dict[str, object]:
     dimensions_album = [
         str(record["path"]) for record in records if record["family"] == "resize"
     ]
+    alpha_paths = [
+        str(record["path"]) for record in records if record["family"] == "alpha"
+    ]
+    tag_fixtures = [
+        {
+            "name": "Similar candidate",
+            "color": "#2a9d8f",
+            "paths": base_family,
+        },
+        {
+            "name": "Transparent",
+            "color": "#7c3aed",
+            "paths": alpha_paths,
+        },
+        {
+            "name": "Review",
+            "color": "#d97706",
+            "paths": unique_paths[::5],
+        },
+        {
+            "name": "Exact duplicate",
+            "color": "#dc2626",
+            "paths": ["images/base-scene.png", "images/base-scene-copy.png"],
+        },
+    ]
+    tagged_paths = {
+        str(path)
+        for fixture in tag_fixtures
+        for path in fixture["paths"]
+    }
+    tagged_sha1 = {
+        str(record["sha1"])
+        for record in records
+        if str(record["path"]) in tagged_paths
+    }
     unique_sha1 = {str(record["sha1"]) for record in records}
 
     manifest: dict[str, object] = {
@@ -328,6 +363,7 @@ def generate(output: Path) -> dict[str, object]:
                 {"paths": base_family[12:16]},
                 {"paths": album_c[0:4]},
             ],
+            "tags": tag_fixtures,
             "favorite_paths": unique_paths[4:12],
             "archived_paths": unique_paths[20:27],
             "trashed_paths": unique_paths[-6:],
@@ -337,6 +373,8 @@ def generate(output: Path) -> dict[str, object]:
             "unique_assets": len(unique_sha1),
             "albums": 5,
             "stacks": 3,
+            "tags": len(tag_fixtures),
+            "tagged_assets": len(tagged_sha1),
             "favorited_assets": 8,
             "archived_assets": 7,
             "trashed_assets": 6,

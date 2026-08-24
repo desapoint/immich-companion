@@ -2,6 +2,7 @@
   import AssetPreviewStrip from '../../../lib/components/domain/AssetPreviewStrip.svelte';
   import { buildAssetPreviewItems } from '../api/assetApi';
   import { stackMembersForAsset } from '../state/assetViewModel';
+  import { safeAssetTagColor } from '../state/assetTagViewModel';
   import type { AssetSummary } from '../types/assets';
   import AssetIcon from './AssetIcon.svelte';
   import AssetRelationIndicator from './AssetRelationIndicator.svelte';
@@ -43,7 +44,7 @@
     <AssetRelationIndicator kind="tag" label="Tags" count={asset.tags.length}>
       <ul class="tag-list">
         {#each asset.tags as tag (tag.id)}
-          <li><span aria-hidden="true"></span>{tag.name}</li>
+          <li><span style:background={safeAssetTagColor(tag.color)} aria-hidden="true"></span>{tag.name}</li>
         {/each}
       </ul>
     </AssetRelationIndicator>

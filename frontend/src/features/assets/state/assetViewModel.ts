@@ -9,6 +9,7 @@ import type {
   SearchNode,
   SearchOperator,
 } from '../types/assets';
+import { parseAspectRatioInput } from '../../../lib/utils/aspectRatio';
 
 export interface AssetComparisonState {
   selectedId: string;
@@ -144,7 +145,7 @@ function serializeNode(node: SearchNode): Record<string, unknown> {
   }
   let value: string | number | boolean = node.value;
   if (node.field === 'width' || node.field === 'height') value = Number.parseInt(node.value, 10);
-  if (node.field === 'aspect_ratio') value = Number.parseFloat(node.value);
+  if (node.field === 'aspect_ratio') value = parseAspectRatioInput(node.value);
   if (node.field === 'favorite' || node.field === 'archived' || node.field === 'trashed') {
     value = node.value === 'true';
   }

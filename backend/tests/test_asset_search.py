@@ -7,7 +7,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
-from companion.asset_repository import AssetRepository
+from companion.asset_repository import ASPECT_RATIO_RELATIVE_TOLERANCE, AssetRepository
 from companion.asset_schema import SearchCondition, SearchGroup, StructuredAssetSearchQuery
 from companion.models import AssetRecord
 
@@ -73,11 +73,24 @@ def test_dimensions_aspect_ratio_and_states_compile() -> None:
     assert "assets.is_trashed = false" in sql
 
 
+def test_fractional_aspect_ratio_uses_small_relative_approximation() -> None:
+    condition = SearchCondition(field="aspect_ratio", operator="equals", value="16/9")
+
+    sql = compiled_sql(SearchGroup(children=[condition]))
+
+    assert condition.value == pytest.approx(16 / 9)
+    assert "abs(" in sql
+    assert str((16 / 9) * ASPECT_RATIO_RELATIVE_TOLERANCE) in sql
+
+
 def test_invalid_field_operator_and_values_are_rejected() -> None:
     with pytest.raises(ValidationError):
         SearchCondition(field="album", operator="contains", value="not-a-uuid")
     with pytest.raises(ValidationError):
         SearchCondition(field="width", operator="at_least", value="wide")
+    for value in ["0", "-1", "16/0", "16/9/2", "wide"]:
+        with pytest.raises(ValidationError):
+            SearchCondition(field="aspect_ratio", operator="equals", value=value)
     with pytest.raises(ValidationError):
         StructuredAssetSearchQuery.model_validate(
             {

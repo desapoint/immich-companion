@@ -134,8 +134,8 @@ describe('asset view model', () => {
     filters.maxWidth = '4096';
     filters.minHeight = '720';
     filters.maxHeight = '2160';
-    filters.minAspectRatio = '1.33';
-    filters.maxAspectRatio = '1.78';
+    filters.minAspectRatio = '4/3';
+    filters.maxAspectRatio = '16/9';
 
     expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
       operator: 'and',
@@ -154,8 +154,8 @@ describe('asset view model', () => {
         { field: 'width', operator: 'at_most', value: 4096 },
         { field: 'height', operator: 'at_least', value: 720 },
         { field: 'height', operator: 'at_most', value: 2160 },
-        { field: 'aspect_ratio', operator: 'at_least', value: 1.33 },
-        { field: 'aspect_ratio', operator: 'at_most', value: 1.78 },
+        { field: 'aspect_ratio', operator: 'at_least', value: 4 / 3 },
+        { field: 'aspect_ratio', operator: 'at_most', value: 16 / 9 },
       ],
     });
   });

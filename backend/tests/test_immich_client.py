@@ -221,3 +221,45 @@ async def test_stack_contract_includes_all_typed_members() -> None:
     assert len(stacks) == 1
     assert stacks[0].primary_asset_id == ASSET_ONE
     assert [asset.id for asset in stacks[0].assets] == [ASSET_ONE, ASSET_TWO]
+
+
+@pytest.mark.asyncio
+async def test_tag_memberships_use_paged_metadata_search() -> None:
+    tag_id = UUID("66666666-6666-4666-8666-666666666666")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            assert request.url.path == "/api/tags"
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": str(tag_id),
+                        "name": "Review",
+                        "value": "Review",
+                        "color": "#d97706",
+                    }
+                ],
+            )
+        body = json.loads(request.content)
+        assert body["tagIds"] == [str(tag_id)]
+        assert body["size"] == 1000
+        return httpx.Response(
+            200,
+            json={
+                "assets": {
+                    "count": 1,
+                    "total": 1,
+                    "items": [asset_payload(ASSET_ONE, "tagged.png")],
+                    "nextPage": None,
+                }
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    asset = ImmichAsset.model_validate(asset_payload(ASSET_ONE, "tagged.png"))
+    tags = await client.list_tags([asset])
+
+    assert len(tags) == 1
+    assert tags[0].name == "Review"
+    assert tags[0].asset_ids == [ASSET_ONE]
