@@ -358,7 +358,7 @@
     </button>
 
     {#if infoOpen}
-      <AssetInfoPanel {detail} loading={detailLoading} error={detailError} />
+      <AssetInfoPanel asset={currentAsset} {detail} loading={detailLoading} error={detailError} />
     {/if}
 
     {#if previewItems.length > 1}

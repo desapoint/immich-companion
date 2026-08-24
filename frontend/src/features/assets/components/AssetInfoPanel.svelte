@@ -1,14 +1,16 @@
 <script lang="ts">
   import { formatAssetDate } from '../state/assetViewModel';
-  import type { AssetDetail } from '../types/assets';
+  import type { AssetDetail, AssetSummary } from '../types/assets';
+  import AssetInfoRelationships from './AssetInfoRelationships.svelte';
 
   interface Props {
+    asset: AssetSummary;
     detail: AssetDetail | null;
     loading: boolean;
     error: string | null;
   }
 
-  let { detail, loading, error }: Props = $props();
+  let { asset, detail, loading, error }: Props = $props();
 
   function displayValue(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -21,8 +23,12 @@
 <aside class="info-panel" aria-label="Image details">
   <header>
     <span>More info</span>
-    <strong>Immich metadata</strong>
+    <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
   </header>
+
+  <AssetInfoRelationships {asset} />
+
+  <h3>Immich metadata</h3>
 
   {#if loading}
     <p role="status">Loading image details…</p>
@@ -96,7 +102,16 @@
   }
 
   header strong {
+    overflow: hidden;
     font-size: 0.9rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  h3 {
+    margin: 0.8rem 0 0;
+    color: var(--color-accent-strong);
+    font-size: 0.72rem;
   }
 
   dl {
