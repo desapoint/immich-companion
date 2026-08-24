@@ -155,8 +155,9 @@ backend/.venv/bin/ruff check backend
 
 When the backend runs without compiled frontend assets, `/` intentionally
 returns a diagnostic 503 response. Run the Vite development server below for
-the local UI; its `/api` requests proxy to `http://127.0.0.1:8000` by default.
-Set `VITE_BACKEND_PROXY_TARGET` to use another backend target.
+the local UI. Vite targets the integration backend at `http://127.0.0.1:8090`
+by default; set `VITE_BACKEND_PROXY_TARGET=http://127.0.0.1:8000` when using the
+standalone backend command above.
 
 ## Local frontend development
 
@@ -169,7 +170,12 @@ npm ci
 npm run dev
 ```
 
-Open <http://localhost:5173>. Run the deterministic frontend checks with:
+Open <http://localhost:5173>. The dev server binds to `0.0.0.0` for
+Windows-to-WSL access and reserves port
+5173 with strict-port handling. Startup fails visibly instead of silently
+opening Immich Companion on another port when 5173 is already occupied.
+
+Run the deterministic frontend checks with:
 
 ```bash
 npm run check
