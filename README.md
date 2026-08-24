@@ -80,7 +80,8 @@ plain start converges those fixtures without duplicating them; `--reset` proves
 the same corpus can be recreated from empty volumes.
 
 The asset page opens in Simple mode with filename, media-type, favorite,
-archive, and trash filters. Its collapsible Advanced zone adds taken-date,
+archive, and trash filters; trashed assets are excluded by default. Its
+collapsible Advanced zone adds taken-date,
 width/height, and aspect-ratio bounds. The Expert switch exposes recursive
 AND/OR groups, whole-group NOT, and album membership/exclusion. Results use a
 four-column desktop grid and full numbered pagination with first/last

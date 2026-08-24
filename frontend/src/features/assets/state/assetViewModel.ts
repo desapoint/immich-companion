@@ -68,7 +68,7 @@ export function createSimpleAssetSearchFilters(): SimpleAssetSearchFilters {
     assetType: '',
     favorite: 'any',
     archived: 'any',
-    trashed: 'any',
+    trashed: 'false',
     takenAfter: '',
     takenBefore: '',
     minWidth: '',

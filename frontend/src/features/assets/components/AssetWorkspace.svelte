@@ -9,7 +9,8 @@
   } from '../api/assetApi';
   import {
     copySearchGroup,
-    createSearchGroup,
+    createSimpleAssetSearchFilters,
+    simpleFiltersToSearchGroup,
     toggleSelectedAsset,
   } from '../state/assetViewModel';
   import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
@@ -28,7 +29,9 @@
   import AssetSearchToolbar from './AssetSearchToolbar.svelte';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
 
-  let expression = $state<SearchGroup>(createSearchGroup());
+  let expression = $state<SearchGroup>(
+    simpleFiltersToSearchGroup(createSimpleAssetSearchFilters()),
+  );
   let albums = $state<AlbumOption[]>([]);
   let results = $state<AssetSearchResponse | null>(null);
   let page = $state(1);

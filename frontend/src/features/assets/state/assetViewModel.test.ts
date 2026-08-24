@@ -13,6 +13,15 @@ import {
 } from './assetViewModel';
 
 describe('asset view model', () => {
+  it('excludes trashed assets from the default simple search', () => {
+    const filters = createSimpleAssetSearchFilters();
+
+    expect(filters.trashed).toBe('false');
+    expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
+      children: [{ field: 'trashed', operator: 'equals', value: false }],
+    });
+  });
+
   it('keeps viewer navigation inside result boundaries', () => {
     expect(nextViewerIndex(0, 'previous', 3)).toBe(0);
     expect(nextViewerIndex(0, 'next', 3)).toBe(1);
@@ -68,6 +77,7 @@ describe('asset view model', () => {
 
   it('restores typed date, dimension, and aspect-ratio ranges in simple search', () => {
     const filters = createSimpleAssetSearchFilters();
+    filters.trashed = 'any';
     filters.takenAfter = '2026-01-01T08:30';
     filters.takenBefore = '2026-06-30T17:45';
     filters.minWidth = '1280';

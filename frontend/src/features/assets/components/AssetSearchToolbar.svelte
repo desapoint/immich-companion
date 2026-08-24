@@ -31,8 +31,9 @@
   }
 
   function resetSimple(): void {
-    simpleFilters = createSimpleAssetSearchFilters();
-    onsearch(createSearchGroup());
+    const defaultFilters = createSimpleAssetSearchFilters();
+    simpleFilters = defaultFilters;
+    onsearch(simpleFiltersToSearchGroup(defaultFilters));
   }
 
   function searchExpert(): void {
