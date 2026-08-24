@@ -33,4 +33,7 @@ coverage/
 /generated_dataset/
 *.log
 *.pid
+*.swp
+*.swo
+*~
 .DS_Store
