@@ -12,19 +12,19 @@
 <div class="mode-control">
   <div class="mode-copy">
     <span>Search mode</span>
-    <strong>{mode === 'advanced' ? 'Advanced rules' : 'Simple filters'}</strong>
+    <strong>{mode === 'expert' ? 'Expert rules' : 'Simple filters'}</strong>
   </div>
   <label class="mode-switch">
     <span>Simple</span>
     <input
       type="checkbox"
       role="switch"
-      aria-label="Use advanced search mode"
-      checked={mode === 'advanced'}
-      onchange={(event) => onchange(event.currentTarget.checked ? 'advanced' : 'simple')}
+      aria-label="Use expert search mode"
+      checked={mode === 'expert'}
+      onchange={(event) => onchange(event.currentTarget.checked ? 'expert' : 'simple')}
     />
     <span class="switch-track" aria-hidden="true"><span></span></span>
-    <span>Advanced</span>
+    <span>Expert</span>
   </label>
 </div>
 

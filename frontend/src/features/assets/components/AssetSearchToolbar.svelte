@@ -11,8 +11,8 @@
     SearchMode,
     SimpleAssetSearchFilters,
   } from '../types/assets';
-  import AdvancedAssetSearch from './AdvancedAssetSearch.svelte';
   import AssetSearchModeSwitch from './AssetSearchModeSwitch.svelte';
+  import ExpertAssetSearch from './ExpertAssetSearch.svelte';
   import SimpleAssetSearch from './SimpleAssetSearch.svelte';
 
   interface Props {
@@ -24,7 +24,7 @@
   let { albums, disabled = false, onsearch }: Props = $props();
   let mode = $state<SearchMode>('simple');
   let simpleFilters = $state<SimpleAssetSearchFilters>(createSimpleAssetSearchFilters());
-  let advancedExpression = $state<SearchGroup>(createSearchGroup());
+  let expertExpression = $state<SearchGroup>(createSearchGroup());
 
   function searchSimple(): void {
     onsearch(simpleFiltersToSearchGroup(simpleFilters));
@@ -35,13 +35,13 @@
     onsearch(createSearchGroup());
   }
 
-  function searchAdvanced(): void {
-    onsearch(copySearchGroup(advancedExpression));
+  function searchExpert(): void {
+    onsearch(copySearchGroup(expertExpression));
   }
 
-  function resetAdvanced(): void {
-    advancedExpression = createSearchGroup();
-    onsearch(copySearchGroup(advancedExpression));
+  function resetExpert(): void {
+    expertExpression = createSearchGroup();
+    onsearch(copySearchGroup(expertExpression));
   }
 </script>
 
@@ -57,12 +57,12 @@
       onreset={resetSimple}
     />
   {:else}
-    <AdvancedAssetSearch
-      expression={advancedExpression}
+    <ExpertAssetSearch
+      expression={expertExpression}
       {albums}
       {disabled}
-      onsearch={searchAdvanced}
-      onreset={resetAdvanced}
+      onsearch={searchExpert}
+      onreset={resetExpert}
     />
   {/if}
 </section>

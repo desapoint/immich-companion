@@ -79,14 +79,15 @@ overlapping albums, stacks, favorites, archived assets, and trashed assets. A
 plain start converges those fixtures without duplicating them; `--reset` proves
 the same corpus can be recreated from empty volumes.
 
-The asset page opens with compact filename, media-type, favorite, archive, and
-trash filters. Its Advanced switch exposes recursive AND/OR groups and
-whole-group NOT, including album membership/exclusion, taken date,
-width/height bounds, and aspect-ratio bounds. Results use a four-column desktop
-grid and full numbered pagination with first/last navigation, nearby-page
-windows, and 24/48/96/192 item page sizes. Cards use thumbnails; the dialog
-requests the original Immich asset and provides fit/actual-size, wheel/button
-zoom, collection navigation, selection, details, and shortcuts.
+The asset page opens in Simple mode with filename, media-type, favorite,
+archive, and trash filters. Its collapsible Advanced zone adds taken-date,
+width/height, and aspect-ratio bounds. The Expert switch exposes recursive
+AND/OR groups, whole-group NOT, and album membership/exclusion. Results use a
+four-column desktop grid and full numbered pagination with first/last
+navigation, nearby-page windows, and 24/48/96/192 item page sizes. Cards use
+thumbnails; the dialog requests the original Immich asset and provides
+fit/actual-size, wheel/button zoom, collection navigation, selection, details,
+and shortcuts.
 
 ## Fast frontend iteration against the integration environment
 

@@ -69,6 +69,14 @@ export function createSimpleAssetSearchFilters(): SimpleAssetSearchFilters {
     favorite: 'any',
     archived: 'any',
     trashed: 'any',
+    takenAfter: '',
+    takenBefore: '',
+    minWidth: '',
+    maxWidth: '',
+    minHeight: '',
+    maxHeight: '',
+    minAspectRatio: '',
+    maxAspectRatio: '',
   };
 }
 
@@ -90,6 +98,26 @@ export function simpleFiltersToSearchGroup(filters: SimpleAssetSearchFilters): S
     const value = filters[field];
     if (value === 'any') continue;
     const condition = createSearchCondition(field);
+    condition.value = value;
+    group.children.push(condition);
+  }
+
+  const ranges = [
+    ['taken_at', 'after', filters.takenAfter],
+    ['taken_at', 'before', filters.takenBefore],
+    ['width', 'at_least', filters.minWidth],
+    ['width', 'at_most', filters.maxWidth],
+    ['height', 'at_least', filters.minHeight],
+    ['height', 'at_most', filters.maxHeight],
+    ['aspect_ratio', 'at_least', filters.minAspectRatio],
+    ['aspect_ratio', 'at_most', filters.maxAspectRatio],
+  ] as const;
+
+  for (const [field, operator, rawValue] of ranges) {
+    const value = rawValue.trim();
+    if (!value) continue;
+    const condition = createSearchCondition(field);
+    condition.operator = operator;
     condition.value = value;
     group.children.push(condition);
   }

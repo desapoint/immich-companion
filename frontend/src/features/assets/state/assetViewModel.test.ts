@@ -7,6 +7,7 @@ import {
   createSearchGroup,
   formatAssetBytes,
   nextViewerIndex,
+  serializeSearchGroup,
   simpleFiltersToSearchGroup,
   toggleSelectedAsset,
 } from './assetViewModel';
@@ -63,5 +64,39 @@ describe('asset view model', () => {
       { field: 'favorite', operator: 'equals', value: 'true' },
       { field: 'trashed', operator: 'equals', value: 'false' },
     ]);
+  });
+
+  it('restores typed date, dimension, and aspect-ratio ranges in simple search', () => {
+    const filters = createSimpleAssetSearchFilters();
+    filters.takenAfter = '2026-01-01T08:30';
+    filters.takenBefore = '2026-06-30T17:45';
+    filters.minWidth = '1280';
+    filters.maxWidth = '4096';
+    filters.minHeight = '720';
+    filters.maxHeight = '2160';
+    filters.minAspectRatio = '1.33';
+    filters.maxAspectRatio = '1.78';
+
+    expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
+      operator: 'and',
+      children: [
+        {
+          field: 'taken_at',
+          operator: 'after',
+          value: new Date(filters.takenAfter).toISOString(),
+        },
+        {
+          field: 'taken_at',
+          operator: 'before',
+          value: new Date(filters.takenBefore).toISOString(),
+        },
+        { field: 'width', operator: 'at_least', value: 1280 },
+        { field: 'width', operator: 'at_most', value: 4096 },
+        { field: 'height', operator: 'at_least', value: 720 },
+        { field: 'height', operator: 'at_most', value: 2160 },
+        { field: 'aspect_ratio', operator: 'at_least', value: 1.33 },
+        { field: 'aspect_ratio', operator: 'at_most', value: 1.78 },
+      ],
+    });
   });
 });

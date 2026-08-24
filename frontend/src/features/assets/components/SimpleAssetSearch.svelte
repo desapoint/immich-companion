@@ -6,6 +6,7 @@
     SimpleAssetSearchFilters,
   } from '../types/assets';
   import AssetSearchFormHeader from './AssetSearchFormHeader.svelte';
+  import SimpleAdvancedFilters from './SimpleAdvancedFilters.svelte';
 
   interface Props {
     filters: SimpleAssetSearchFilters;
@@ -33,7 +34,7 @@
   <AssetSearchFormHeader
     eyebrow="Library search"
     title="Find assets quickly"
-    description="Search filenames and narrow common media states without building rules."
+    description="Use flat filters for quick searches; open Advanced for dates and dimensions."
     {disabled}
     {onreset}
   />
@@ -88,6 +89,8 @@
       onchange={(value) => onchange({ ...filters, trashed: value as SearchBooleanFilter })}
     />
   </div>
+
+  <SimpleAdvancedFilters {filters} {disabled} {onchange} />
 </form>
 
 <style>

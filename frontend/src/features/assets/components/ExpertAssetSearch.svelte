@@ -19,10 +19,10 @@
   }
 </script>
 
-<form aria-label="Advanced Immich asset search" onsubmit={submit}>
+<form aria-label="Expert Immich asset search" onsubmit={submit}>
   <AssetSearchFormHeader
-    eyebrow="Advanced search"
-    title="Build album and metadata rules"
+    eyebrow="Expert search"
+    title="Build boolean album and metadata rules"
     description="Combine conditions with AND or OR, nest groups, and negate any whole group."
     {disabled}
     {onreset}
@@ -36,5 +36,4 @@
     display: grid;
     gap: 0.85rem;
   }
-
 </style>
