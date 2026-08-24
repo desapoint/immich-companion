@@ -86,7 +86,7 @@
 
 <style>
   details {
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-sm);
     background: var(--color-surface-soft);

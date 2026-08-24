@@ -90,6 +90,10 @@ thumbnails; the dialog requests the original Immich asset and provides
 fit/actual-size, wheel/button zoom, collection navigation, selection, details,
 and shortcuts.
 
+Search, Expert rules, and pagination share fully styled Svelte select controls.
+Search date-times use the shared custom calendar and hour/minute picker rather
+than browser-native select or date-time inputs.
+
 ## Fast frontend iteration against the integration environment
 
 Keep Immich and the backend running in Docker, then launch only Vite in WSL:
