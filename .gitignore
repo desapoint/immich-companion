@@ -1,0 +1,36 @@
+# Local repository guidance and source/reference documents
+/AGENTS.md
+/docs/
+/.agents/
+/.codex
+
+# Local task graph and task workspaces
+/TASKS.md
+*.local/
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+coverage/
+
+# Generated test data and local state
+/generated_dataset/
+*.log
+*.pid
+.DS_Store

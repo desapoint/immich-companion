@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+  immich-companion:
+    image: ghcr.io/desapoint/immich-companion:${IMMICH_COMPANION_VERSION:-latest}
+    container_name: immich_companion
+    environment:
+      COMPANION_ENV: production
+      COMPANION_VERSION: ${IMMICH_COMPANION_VERSION:-latest}
+      IMMICH_URL: http://tailscale:2283
+      IMMICH_API_KEY: ${COMPANION_IMMICH_API_KEY}
+      IMMICH_TIMEOUT_SECONDS: "5"
+      ALLOW_DESTRUCTIVE_ACTIONS: "false"
+    ports:
+      - "${IMMICH_COMPANION_PORT:-8090}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

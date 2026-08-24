@@ -1,0 +1,56 @@
+version: "3.8"
+
+services:
+  immich-mock:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "companion.mock_immich"]
+    environment:
+      MOCK_IMMICH_PORT: "8081"
+    expose:
+      - "8081"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=2)",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+    restart: unless-stopped
+
+  companion:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    environment:
+      COMPANION_ENV: test
+      COMPANION_VERSION: local-test
+      IMMICH_URL: http://immich-mock:8081
+      IMMICH_API_KEY: local-test-key
+      IMMICH_TIMEOUT_SECONDS: "3"
+      ALLOW_DESTRUCTIVE_ACTIONS: "false"
+    ports:
+      - "127.0.0.1:${COMPANION_TEST_PORT:-8090}:8080"
+    depends_on:
+      immich-mock:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
