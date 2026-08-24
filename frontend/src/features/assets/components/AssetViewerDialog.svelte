@@ -11,8 +11,11 @@
   import {
     anchoredScrollOffset,
     captureImageZoomAnchor,
+    captureViewerPanOrigin,
     captureVisibleImageCenter,
+    draggedScrollOffset,
     type ImageZoomAnchor,
+    type ViewerPanOrigin,
   } from '../state/viewerZoom';
   import type {
     AssetComparisonActivation,
@@ -60,7 +63,6 @@
   }: Props = $props();
 
   let dialogElement: HTMLDialogElement;
-  let viewerContent: HTMLElement;
   let viewerScroll: HTMLDivElement;
   let viewerImage: HTMLImageElement;
   let scaleMode = $state<ViewerScaleMode>('fit');
@@ -72,6 +74,7 @@
   let infoOpen = $state(false);
   let helpOpen = $state(false);
   let visibleAssetId = $state('');
+  let panOrigin = $state<ViewerPanOrigin | null>(null);
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(assets[currentIndex]);
   const comparisonMembers = $derived(
@@ -204,6 +207,7 @@
   }
 
   function handleWheel(event: WheelEvent): void {
+    if (!event.ctrlKey) return;
     event.preventDefault();
     const imageRect = viewerImage.getBoundingClientRect();
     const anchor = imageLoading || imageError
@@ -211,6 +215,38 @@
       : captureImageZoomAnchor(event.clientX, event.clientY, imageRect)
         ?? captureVisibleImageCenter(imageRect, viewerScroll.getBoundingClientRect());
     changeZoom(event.deltaY < 0 ? zoom * 1.12 : zoom / 1.12, anchor);
+  }
+
+  function startPan(event: PointerEvent): void {
+    if (!event.isPrimary || event.button !== 0) return;
+    if (
+      viewerScroll.scrollWidth <= viewerScroll.clientWidth
+      && viewerScroll.scrollHeight <= viewerScroll.clientHeight
+    ) return;
+    panOrigin = captureViewerPanOrigin(
+      event.pointerId,
+      event.clientX,
+      event.clientY,
+      viewerScroll.scrollLeft,
+      viewerScroll.scrollTop,
+    );
+    const target = event.currentTarget as HTMLDivElement | null;
+    target?.setPointerCapture(event.pointerId);
+  }
+
+  function movePan(event: PointerEvent): void {
+    if (!panOrigin || panOrigin.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    const offset = draggedScrollOffset(panOrigin, event.clientX, event.clientY);
+    viewerScroll.scrollLeft = offset.left;
+    viewerScroll.scrollTop = offset.top;
+  }
+
+  function finishPan(event: PointerEvent): void {
+    if (!panOrigin || panOrigin.pointerId !== event.pointerId) return;
+    const target = event.currentTarget as HTMLDivElement | null;
+    if (target?.hasPointerCapture(event.pointerId)) target.releasePointerCapture(event.pointerId);
+    panOrigin = null;
   }
 
   $effect(() => {
@@ -234,7 +270,7 @@
       viewportWidth = entry.contentRect.width;
       viewportHeight = entry.contentRect.height;
     });
-    resizeObserver.observe(viewerContent);
+    resizeObserver.observe(viewerScroll);
     return () => {
       resizeObserver.disconnect();
       window.removeEventListener('keydown', handleKeydown);
@@ -262,12 +298,20 @@
     onclose={closeViewer}
   />
 
-  <section bind:this={viewerContent} class="viewer-content" aria-label="Full-size image">
+  <section class="viewer-content" aria-label="Full-size image">
     <div bind:this={viewerScroll} class="viewer-scroll">
       <div
         class="viewer-stage"
+        class:dragging={panOrigin !== null}
+        role="group"
+        aria-label="Image pan and zoom surface"
         style={`width: max(100%, ${displayWidth + 144}px); min-height: max(100%, ${displayHeight + 32}px);`}
         onwheel={handleWheel}
+        onpointerdown={startPan}
+        onpointermove={movePan}
+        onpointerup={finishPan}
+        onpointercancel={finishPan}
+        onlostpointercapture={finishPan}
       >
         {#if imageLoading}
           <div class="image-status" role="status">Loading full-size image…</div>
@@ -385,10 +429,10 @@
     height: 100%;
     min-width: 0;
     min-height: 0;
-    overflow: auto;
+    overflow: scroll;
     overscroll-behavior: contain;
     overflow-anchor: none;
-    scrollbar-gutter: stable;
+    scrollbar-gutter: stable both-edges;
   }
 
   .viewer-stage {
@@ -396,6 +440,13 @@
     position: relative;
     place-items: center;
     padding: 1rem clamp(3.5rem, 7vw, 6rem);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+
+  .viewer-stage.dragging {
+    cursor: grabbing;
   }
 
   .viewer-stage img {

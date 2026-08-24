@@ -19,6 +19,14 @@ export interface ViewerScrollOffset {
   top: number;
 }
 
+export interface ViewerPanOrigin {
+  pointerId: number;
+  clientX: number;
+  clientY: number;
+  scrollLeft: number;
+  scrollTop: number;
+}
+
 export function captureImageZoomAnchor(
   clientX: number,
   clientY: number,
@@ -54,5 +62,26 @@ export function anchoredScrollOffset(
   return {
     left: Math.max(0, currentLeft + resizedClientX - anchor.clientX),
     top: Math.max(0, currentTop + resizedClientY - anchor.clientY),
+  };
+}
+
+export function captureViewerPanOrigin(
+  pointerId: number,
+  clientX: number,
+  clientY: number,
+  scrollLeft: number,
+  scrollTop: number,
+): ViewerPanOrigin {
+  return { pointerId, clientX, clientY, scrollLeft, scrollTop };
+}
+
+export function draggedScrollOffset(
+  origin: ViewerPanOrigin,
+  clientX: number,
+  clientY: number,
+): ViewerScrollOffset {
+  return {
+    left: Math.max(0, origin.scrollLeft - (clientX - origin.clientX)),
+    top: Math.max(0, origin.scrollTop - (clientY - origin.clientY)),
   };
 }

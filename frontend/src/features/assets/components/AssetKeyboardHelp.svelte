@@ -11,7 +11,9 @@
     <div><dt><kbd>M</kbd></dt><dd>Toggle image size</dd></div>
     <div><dt><kbd>+</kbd> / <kbd>−</kbd></dt><dd>Zoom in or out</dd></div>
     <div><dt><kbd>0</kbd></dt><dd>Reset zoom</dd></div>
-    <div><dt>Wheel</dt><dd>Zoom at the image</dd></div>
+    <div><dt>Wheel</dt><dd>Scroll the image</dd></div>
+    <div><dt><kbd>Ctrl</kbd> + Wheel</dt><dd>Zoom at the pointer</dd></div>
+    <div><dt>Drag</dt><dd>Pan the zoomed image</dd></div>
     <div><dt><kbd>?</kbd></dt><dd>Toggle shortcuts</dd></div>
     <div><dt><kbd>Esc</kbd> / <kbd>Q</kbd></dt><dd>Close viewer</dd></div>
   </dl>

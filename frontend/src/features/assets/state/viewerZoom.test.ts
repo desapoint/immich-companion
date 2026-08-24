@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest';
 import {
   anchoredScrollOffset,
   captureImageZoomAnchor,
+  captureViewerPanOrigin,
   captureVisibleImageCenter,
+  draggedScrollOffset,
   type ViewerRect,
 } from './viewerZoom';
 
@@ -42,5 +44,12 @@ describe('viewer zoom anchors', () => {
       left: 172,
       top: 116,
     });
+  });
+
+  it('moves scroll offsets opposite to a captured drag gesture', () => {
+    const origin = captureViewerPanOrigin(7, 400, 300, 260, 180);
+
+    expect(draggedScrollOffset(origin, 340, 220)).toEqual({ left: 320, top: 260 });
+    expect(draggedScrollOffset(origin, 800, 700)).toEqual({ left: 0, top: 0 });
   });
 });
