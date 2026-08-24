@@ -30,13 +30,14 @@ class ImmichHealthClient:
             }
 
         assert self._settings.immich_url is not None
-        assert self._settings.immich_api_key is not None
+        api_key = self._settings.resolve_immich_api_key()
+        assert api_key is not None
         started = perf_counter()
 
         try:
             async with httpx.AsyncClient(
                 base_url=str(self._settings.immich_url).rstrip("/"),
-                headers={"x-api-key": self._settings.immich_api_key.get_secret_value()},
+                headers={"x-api-key": api_key},
                 timeout=self._settings.immich_timeout_seconds,
                 transport=self._transport,
                 follow_redirects=False,

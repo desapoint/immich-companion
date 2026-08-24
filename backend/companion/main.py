@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import json
+
 import httpx
 from fastapi import FastAPI, HTTPException, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from companion.config import Settings, get_settings
+from companion.database import PostgresHealthClient
 from companion.immich import ImmichHealthClient
 
 
@@ -19,6 +23,7 @@ def create_app(
 
     runtime_settings = settings or get_settings()
     immich = ImmichHealthClient(runtime_settings, transport=immich_transport)
+    database = PostgresHealthClient(runtime_settings)
     app = FastAPI(
         title="Immich Companion",
         version=runtime_settings.companion_version,
@@ -27,14 +32,21 @@ def create_app(
     )
 
     async def health_payload() -> dict[str, object]:
-        immich_status = await immich.check()
-        ready = immich_status["status"] == "ok"
+        immich_status, database_status = await asyncio.gather(
+            immich.check(),
+            database.check(),
+        )
+        database_ready = database_status["status"] in {"ok", "not_configured"}
+        ready = immich_status["status"] == "ok" and database_ready
         return {
             "status": "ok" if ready else "degraded",
             "ready": ready,
             "environment": runtime_settings.companion_env,
             "safe_mode": not runtime_settings.allow_destructive_actions,
-            "dependencies": {"immich": immich_status},
+            "dependencies": {
+                "immich": immich_status,
+                "companion_database": database_status,
+            },
         }
 
     @app.get("/api/live")
@@ -68,6 +80,7 @@ def create_app(
         return {
             "destructive_actions": runtime_settings.allow_destructive_actions,
             "immich_api": runtime_settings.immich_configured,
+            "companion_database": runtime_settings.companion_database_url is not None,
             "implemented": ["health", "version", "capabilities"],
             "planned": [
                 "sync",
@@ -79,6 +92,30 @@ def create_app(
                 "visual_similarity",
             ],
         }
+
+    if runtime_settings.companion_env == "test":
+
+        @app.get("/api/test-state")
+        async def test_state() -> dict[str, object]:
+            state_file = runtime_settings.companion_test_state_file
+            if state_file is None or not state_file.is_file():
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="The disposable environment has not completed its seed bootstrap.",
+                )
+            try:
+                payload = json.loads(state_file.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as error:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="The disposable environment seed state is unreadable.",
+                ) from error
+            if not isinstance(payload, dict):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="The disposable environment seed state is invalid.",
+                )
+            return payload
 
     frontend_dir = runtime_settings.companion_frontend_dir
     frontend_index = frontend_dir / "index.html" if frontend_dir else None

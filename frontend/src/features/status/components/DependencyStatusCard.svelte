@@ -9,15 +9,16 @@
   import type { DependencyStatus } from '../types/status';
 
   interface Props {
+    title: string;
     dependency: DependencyStatus;
   }
 
-  let { dependency }: Props = $props();
+  let { title, dependency }: Props = $props();
   const label = $derived(dependencyLabel(dependency));
   const tone = $derived(dependencyTone(dependency));
 </script>
 
-<SurfaceCard eyebrow="Dependency" title="Immich API">
+<SurfaceCard eyebrow="Dependency" {title}>
   <div class="dependency-content">
     <StatusBadge {label} {tone} />
     <dl>

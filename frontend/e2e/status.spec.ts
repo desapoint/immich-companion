@@ -10,7 +10,10 @@ async function mockHealthyStatus(page: Page): Promise<void> {
         ready: true,
         environment: 'test',
         safe_mode: true,
-        dependencies: { immich: { status: 'ok', configured: true, latency_ms: 3.2 } },
+        dependencies: {
+          immich: { status: 'ok', configured: true, latency_ms: 3.2 },
+          companion_database: { status: 'not_configured', configured: false },
+        },
       },
     });
   });
@@ -24,6 +27,7 @@ async function mockHealthyStatus(page: Page): Promise<void> {
       json: {
         destructive_actions: false,
         immich_api: true,
+        companion_database: false,
         implemented: ['health', 'version', 'capabilities'],
         planned: ['sync', 'search'],
       },
@@ -38,9 +42,11 @@ test('shows a healthy, safe companion status', async ({ page }) => {
 
   await expect(page.getByRole('heading', { level: 1, name: 'Companion status' })).toBeVisible();
   await expect(page.getByText('test environment', { exact: true })).toBeVisible();
-  await expect(page.getByText('Safe mode', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText(useLiveApi ? 'Actions enabled' : 'Safe mode', { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText('Operational', { exact: true })).toBeVisible();
-  await expect(page.getByText('Connected', { exact: true })).toBeVisible();
+  await expect(page.getByText('Connected', { exact: true }).first()).toBeVisible();
 });
 
 test('shows a recoverable backend error', async ({ page }) => {

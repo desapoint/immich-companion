@@ -38,6 +38,7 @@ def test_health_is_ready_when_immich_ping_succeeds() -> None:
     assert response.json()["status"] == "ok"
     assert response.json()["ready"] is True
     assert response.json()["dependencies"]["immich"]["status"] == "ok"
+    assert response.json()["dependencies"]["companion_database"]["status"] == "not_configured"
 
 
 def test_readiness_fails_without_immich_configuration() -> None:
@@ -56,7 +57,43 @@ def test_safety_and_capability_defaults_are_visible() -> None:
 
     assert capabilities["destructive_actions"] is False
     assert capabilities["immich_api"] is True
+    assert capabilities["companion_database"] is False
     assert health["safe_mode"] is True
+
+
+def test_file_backed_immich_key_is_used_without_exposing_it(tmp_path: Path) -> None:
+    key_file = tmp_path / "immich-api-key"
+    key_file.write_text("file-backed-test-key\n")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "file-backed-test-key"
+        return httpx.Response(200, json={"res": "pong"})
+
+    configured = settings(immich_api_key=None, immich_api_key_file=key_file)
+    with TestClient(create_app(configured, httpx.MockTransport(handler))) as client:
+        response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["ready"] is True
+    assert "file-backed-test-key" not in response.text
+
+
+def test_disposable_seed_state_is_available_only_in_test_environment(tmp_path: Path) -> None:
+    state_file = tmp_path / "bootstrap-state.json"
+    state_file.write_text('{"ready": true, "expected_seed_assets": 5}')
+
+    configured = settings(companion_test_state_file=state_file)
+    with TestClient(create_app(configured, pong_transport())) as client:
+        response = client.get("/api/test-state")
+
+    assert response.status_code == 200
+    assert response.json() == {"ready": True, "expected_seed_assets": 5}
+
+    production = settings(companion_env="production", companion_test_state_file=state_file)
+    with TestClient(create_app(production, pong_transport())) as client:
+        missing = client.get("/api/test-state")
+
+    assert missing.status_code == 404
 
 
 def test_frontend_assets_are_served_without_shadowing_api_routes(tmp_path: Path) -> None:

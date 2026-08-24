@@ -21,14 +21,29 @@ class Settings(BaseSettings):
     companion_frontend_dir: Path | None = None
     immich_url: HttpUrl | None = None
     immich_api_key: SecretStr | None = None
+    immich_api_key_file: Path | None = None
     immich_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    companion_database_url: SecretStr | None = None
+    database_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    companion_test_state_file: Path | None = None
     allow_destructive_actions: bool = False
+
+    def resolve_immich_api_key(self) -> str | None:
+        """Resolve a direct or file-backed API key without exposing it."""
+
+        if self.immich_api_key is not None:
+            value = self.immich_api_key.get_secret_value().strip()
+            return value or None
+        if self.immich_api_key_file is not None and self.immich_api_key_file.is_file():
+            value = self.immich_api_key_file.read_text(encoding="utf-8").strip()
+            return value or None
+        return None
 
     @property
     def immich_configured(self) -> bool:
         """Return whether both required Immich connection values exist."""
 
-        return self.immich_url is not None and self.immich_api_key is not None
+        return self.immich_url is not None and self.resolve_immich_api_key() is not None
 
 
 @lru_cache

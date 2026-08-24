@@ -5,31 +5,54 @@ built to provide advanced search, safe bulk actions, duplicate review, tagging,
 integrity analysis, and people/album workflows without modifying Immich's
 database or media files directly.
 
-The current vertical slice is intentionally small: a FastAPI service, a
-componentized Svelte status dashboard, dependency health reporting, a mock
-Immich service, a container build, and an on-demand test environment.
-Destructive actions are disabled.
+The current vertical slice includes a FastAPI service, a componentized Svelte
+status dashboard, dependency health reporting, a container build, and a
+reproducible integration environment backed by real Immich v3.1.0. Production
+defaults remain safe; action capability is enabled only in the disposable test
+environment.
 
 ## Quick start
 
 Requirements:
 
-- Docker with either `docker compose` or `docker-compose`
+- Docker with either `docker compose` or `docker-compose` (the current Compose
+  plugin is preferred by Immich)
 - `curl` for the smoke check
+- Python 3 for deterministic local configuration and media generation
 
-Start the isolated test environment:
+Start or update the isolated test environment while preserving its databases,
+Immich media, API key, and model cache:
 
 ```bash
 ./scripts/test-env.sh start
 ```
 
-Open <http://localhost:8090> for the status dashboard or inspect the API:
+Open <http://localhost:8090> for the built companion dashboard and
+<http://localhost:22830> for Immich. Inspect the companion API with:
 
 ```bash
 curl http://localhost:8090/api/health
 curl http://localhost:8090/api/version
 curl http://localhost:8090/api/capabilities
+curl http://localhost:8090/api/test-state
 ```
+
+The helper generates ignored local credentials in
+`.local/test-environment/compose.env`. The Immich test administrator is
+`companion-test@example.invalid`; inspect that local file when you need its
+password for the Immich UI. The generated companion API key remains in an
+isolated Docker volume and is never printed.
+
+To intentionally discard both PostgreSQL databases, uploaded Immich media, the
+generated API key, and the model cache, then recreate the same deterministic
+seed:
+
+```bash
+./scripts/test-env.sh start --reset
+```
+
+Only volumes in the `immich-companion-test` Compose project are removed. Plain
+`start`, `restart`, `stop`, and a later `start` preserve them.
 
 Inspect or stop it without writing Compose commands manually:
 
@@ -39,17 +62,37 @@ Inspect or stop it without writing Compose commands manually:
 ./scripts/test-env.sh stop
 ```
 
-The test environment is isolated under the Compose project name
-`immich-companion-test`, does not connect to a real Immich instance, and is
-recreated from a clean stateless container set on every `start`.
+The environment runs pinned Immich server, machine-learning, Valkey, and Immich
+PostgreSQL services plus a separate PostgreSQL service owned by the companion.
+Deterministic media is uploaded through the supported Immich API; the companion
+does not mount Immich media or access Immich's database.
+
+## Fast frontend iteration against the integration environment
+
+Keep Immich and the backend running in Docker, then launch only Vite in WSL:
+
+```bash
+./scripts/test-env.sh start
+./scripts/test-env.sh frontend
+```
+
+Or start everything and enter the frontend loop in one command:
+
+```bash
+./scripts/test-env.sh start --frontend
+```
+
+Open <http://localhost:5173> from Windows. Vite binds to `0.0.0.0`, proxies
+`/api` to the companion on port 8090, and applies Svelte/CSS changes with native
+hot-module replacement. `Ctrl+C` stops Vite only; Immich and the backend keep
+running. The helper installs locked frontend dependencies only when missing or
+when the lockfile changed. Apply backend changes with another plain `start`,
+which rebuilds containers while retaining environment state.
 
 ### Windows access when Docker runs inside WSL 2
 
-The test port binds to `0.0.0.0` inside WSL by default so Windows can reach it.
-After `start`, the helper prints both:
-
-- `http://localhost:8090`
-- a fallback URL using the current WSL virtual-machine IP
+The companion, Immich, and Vite ports bind to `0.0.0.0` inside WSL by default so
+Windows can reach them. The helper prints localhost and WSL-IP fallback URLs.
 
 Use plain `http://`, not `https://`. If Windows localhost forwarding is disabled,
 create or update `%UserProfile%\.wslconfig` from Windows with:
@@ -70,9 +113,10 @@ networkingMode=mirrored
 
 Do not combine networking changes casually with a production Tailscale setup;
 try the wildcard bind and printed WSL-IP fallback first. Binding to `0.0.0.0`
-may also make the test port reachable from the local network, subject to WSL
-and Windows firewall rules. To restore WSL-only access, export
-`COMPANION_TEST_BIND=127.0.0.1` before starting.
+may also make the test ports reachable from the local network, subject to WSL
+and Windows firewall rules. For WSL-only access, set `COMPANION_TEST_BIND`,
+`IMMICH_TEST_BIND`, and `COMPANION_FRONTEND_BIND` to `127.0.0.1` before starting
+their processes.
 
 ## Local backend development
 
@@ -93,7 +137,8 @@ backend/.venv/bin/ruff check backend
 
 When the backend runs without compiled frontend assets, `/` intentionally
 returns a diagnostic 503 response. Run the Vite development server below for
-the local UI; its `/api` requests proxy to `http://127.0.0.1:8000`.
+the local UI; its `/api` requests proxy to `http://127.0.0.1:8000` by default.
+Set `VITE_BACKEND_PROXY_TARGET` to use another backend target.
 
 ## Local frontend development
 
@@ -141,7 +186,7 @@ only after their corresponding parity tasks have passed staging validation.
 - Immich API is the normal integration boundary.
 - Direct writes to the Immich database are forbidden.
 - Direct mutation of Immich-managed media files is forbidden.
-- The future companion database is separate from the Immich application DB.
+- Companion-owned state uses a database separate from the Immich application DB.
 - Destructive operations use plan, review, execute, and verify stages.
 - Qdrant is reserved for vectors; it is not required by the bootstrap.
 - No LLM is required by the project.

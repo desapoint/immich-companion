@@ -17,7 +17,11 @@
   <EnvironmentBanner health={snapshot.health} />
   <section class="status-grid" aria-label="Companion service details">
     <HealthOverview health={snapshot.health} />
-    <DependencyStatusCard dependency={snapshot.health.dependencies.immich} />
+    <DependencyStatusCard title="Immich API" dependency={snapshot.health.dependencies.immich} />
+    <DependencyStatusCard
+      title="Companion PostgreSQL"
+      dependency={snapshot.health.dependencies.companion_database}
+    />
     <VersionCard version={snapshot.version} />
     <CapabilitiesCard capabilities={snapshot.capabilities} />
   </section>

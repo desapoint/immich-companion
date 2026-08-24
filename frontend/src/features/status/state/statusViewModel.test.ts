@@ -15,7 +15,10 @@ const health: HealthResponse = {
   ready: true,
   environment: 'test',
   safe_mode: true,
-  dependencies: { immich: { status: 'ok', configured: true, latency_ms: 4.25 } },
+  dependencies: {
+    immich: { status: 'ok', configured: true, latency_ms: 4.25 },
+    companion_database: { status: 'ok', configured: true, latency_ms: 1.5 },
+  },
 };
 
 describe('status view model', () => {

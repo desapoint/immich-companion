@@ -12,6 +12,7 @@ export interface HealthResponse {
   safe_mode: boolean;
   dependencies: {
     immich: DependencyStatus;
+    companion_database: DependencyStatus;
   };
 }
 
@@ -24,6 +25,7 @@ export interface VersionResponse {
 export interface CapabilitiesResponse {
   destructive_actions: boolean;
   immich_api: boolean;
+  companion_database: boolean;
   implemented: string[];
   planned: string[];
 }

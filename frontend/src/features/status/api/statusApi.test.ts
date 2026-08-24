@@ -8,12 +8,16 @@ const payloads: Record<string, object> = {
     ready: true,
     environment: 'test',
     safe_mode: true,
-    dependencies: { immich: { status: 'ok', configured: true, latency_ms: 2.5 } },
+    dependencies: {
+      immich: { status: 'ok', configured: true, latency_ms: 2.5 },
+      companion_database: { status: 'ok', configured: true, latency_ms: 1.2 },
+    },
   },
   '/api/version': { name: 'immich-companion', version: 'test-version', environment: 'test' },
   '/api/capabilities': {
     destructive_actions: false,
     immich_api: true,
+    companion_database: true,
     implemented: ['health'],
     planned: ['search'],
   },
