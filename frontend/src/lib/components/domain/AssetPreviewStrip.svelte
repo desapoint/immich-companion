@@ -141,22 +141,21 @@
     border-color: var(--color-accent-hover);
   }
 
-  button.selected {
-    border-color: var(--color-accent-strong);
-    box-shadow: 0 0 0 0.12rem var(--color-surface-raised), 0 0 0 0.28rem var(--color-accent-strong);
-  }
-
-  button.visible {
-    outline: 0.16rem solid var(--color-warning-ink);
-    outline-offset: -0.34rem;
-  }
-
-  button.selected.visible {
-    outline-color: var(--color-ink-inverse);
-  }
-
+  button.selected,
   .preview-item.selected {
-    border-color: color-mix(in srgb, var(--color-accent-strong) 55%, var(--color-border-strong));
+    border-color: color-mix(in srgb, var(--color-accent-strong) 72%, var(--color-border-strong));
+    box-shadow: 0 0 0 0.12rem color-mix(in srgb, var(--color-accent-strong) 42%, transparent);
+  }
+
+  button.visible,
+  .preview-item.visible {
+    outline: 0.12rem solid color-mix(in srgb, var(--color-warning-ink) 72%, transparent);
+    outline-offset: -0.28rem;
+  }
+
+  button.selected.visible,
+  .preview-item.selected.visible {
+    outline-color: color-mix(in srgb, var(--color-ink-inverse) 72%, transparent);
   }
 
   img {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { flushSync, onMount } from 'svelte';
 
   import { assetOriginalUrl, buildAssetPreviewItems } from '../api/assetApi';
   import {
@@ -8,6 +8,12 @@
     nextViewerIndex,
     stackMembersForAsset,
   } from '../state/assetViewModel';
+  import {
+    anchoredScrollOffset,
+    captureImageZoomAnchor,
+    captureVisibleImageCenter,
+    type ImageZoomAnchor,
+  } from '../state/viewerZoom';
   import type {
     AssetComparisonActivation,
     AssetComparisonSource,
@@ -55,6 +61,8 @@
 
   let dialogElement: HTMLDialogElement;
   let viewerContent: HTMLElement;
+  let viewerScroll: HTMLDivElement;
+  let viewerImage: HTMLImageElement;
   let scaleMode = $state<ViewerScaleMode>('fit');
   let zoom = $state(1);
   let viewportWidth = $state(1);
@@ -86,8 +94,37 @@
   const displayHeight = $derived(Math.max(1, naturalHeight * effectiveScale));
   const zoomPercent = $derived(Math.round(zoom * 100));
 
-  function setZoom(value: number): void {
-    zoom = Math.min(8, Math.max(0.25, Math.round(value * 100) / 100));
+  function normalizedZoom(value: number): number {
+    return Math.min(8, Math.max(0.25, Math.round(value * 100) / 100));
+  }
+
+  function currentVisibleCenterAnchor(): ImageZoomAnchor | null {
+    if (imageLoading || imageError) return null;
+    return captureVisibleImageCenter(
+      viewerImage.getBoundingClientRect(),
+      viewerScroll.getBoundingClientRect(),
+    );
+  }
+
+  function changeZoom(value: number, anchor: ImageZoomAnchor | null): void {
+    const nextZoom = normalizedZoom(value);
+    if (nextZoom === zoom) return;
+    flushSync(() => {
+      zoom = nextZoom;
+    });
+    if (!anchor) return;
+    const offset = anchoredScrollOffset(
+      anchor,
+      viewerImage.getBoundingClientRect(),
+      viewerScroll.scrollLeft,
+      viewerScroll.scrollTop,
+    );
+    viewerScroll.scrollLeft = offset.left;
+    viewerScroll.scrollTop = offset.top;
+  }
+
+  function changeZoomFromVisibleCenter(value: number): void {
+    changeZoom(value, currentVisibleCenterAnchor());
   }
 
   function toggleScale(): void {
@@ -145,13 +182,13 @@
       toggleScale();
     } else if (event.key === '+' || event.key === '=') {
       event.preventDefault();
-      setZoom(zoom * 1.2);
+      changeZoomFromVisibleCenter(zoom * 1.2);
     } else if (event.key === '-') {
       event.preventDefault();
-      setZoom(zoom / 1.2);
+      changeZoomFromVisibleCenter(zoom / 1.2);
     } else if (event.key === '0') {
       event.preventDefault();
-      zoom = 1;
+      changeZoomFromVisibleCenter(1);
     } else if (event.key === '?') {
       event.preventDefault();
       helpOpen = !helpOpen;
@@ -168,7 +205,12 @@
 
   function handleWheel(event: WheelEvent): void {
     event.preventDefault();
-    setZoom(event.deltaY < 0 ? zoom * 1.12 : zoom / 1.12);
+    const imageRect = viewerImage.getBoundingClientRect();
+    const anchor = imageLoading || imageError
+      ? null
+      : captureImageZoomAnchor(event.clientX, event.clientY, imageRect)
+        ?? captureVisibleImageCenter(imageRect, viewerScroll.getBoundingClientRect());
+    changeZoom(event.deltaY < 0 ? zoom * 1.12 : zoom / 1.12, anchor);
   }
 
   $effect(() => {
@@ -212,16 +254,16 @@
     {zoomPercent}
     ontoggleselection={() => ontoggleselection(currentAsset.id)}
     ontogglescale={toggleScale}
-    onzoomout={() => setZoom(zoom / 1.2)}
-    onzoomreset={() => (zoom = 1)}
-    onzoomin={() => setZoom(zoom * 1.2)}
+    onzoomout={() => changeZoomFromVisibleCenter(zoom / 1.2)}
+    onzoomreset={() => changeZoomFromVisibleCenter(1)}
+    onzoomin={() => changeZoomFromVisibleCenter(zoom * 1.2)}
     ontoggleinfo={() => (infoOpen = !infoOpen)}
     ontogglehelp={() => (helpOpen = !helpOpen)}
     onclose={closeViewer}
   />
 
   <section bind:this={viewerContent} class="viewer-content" aria-label="Full-size image">
-    <div class="viewer-scroll">
+    <div bind:this={viewerScroll} class="viewer-scroll">
       <div
         class="viewer-stage"
         style={`width: max(100%, ${displayWidth + 144}px); min-height: max(100%, ${displayHeight + 32}px);`}
@@ -234,6 +276,7 @@
           <div class="image-status error" role="alert">The full-size image could not be loaded.</div>
         {/if}
         <img
+          bind:this={viewerImage}
           src={assetOriginalUrl(visibleAsset.id)}
           alt={visibleAsset.original_file_name}
           draggable="false"
@@ -344,6 +387,7 @@
     min-height: 0;
     overflow: auto;
     overscroll-behavior: contain;
+    overflow-anchor: none;
     scrollbar-gutter: stable;
   }
 
