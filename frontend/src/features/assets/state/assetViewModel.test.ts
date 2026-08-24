@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import {
   copySearchGroup,
+  createSimpleAssetSearchFilters,
   createSearchCondition,
   createSearchGroup,
   formatAssetBytes,
   nextViewerIndex,
+  simpleFiltersToSearchGroup,
   toggleSelectedAsset,
 } from './assetViewModel';
 
@@ -43,5 +45,23 @@ describe('asset view model', () => {
     expect(copied).toEqual(root);
     (copied.children[0] as typeof nested).negate = true;
     expect(nested.negate).toBe(false);
+  });
+
+  it('converts only active simple filters into an AND search group', () => {
+    const filters = createSimpleAssetSearchFilters();
+    filters.query = '  family trip  ';
+    filters.assetType = 'IMAGE';
+    filters.favorite = 'true';
+    filters.trashed = 'false';
+
+    const group = simpleFiltersToSearchGroup(filters);
+
+    expect(group.operator).toBe('and');
+    expect(group.children).toMatchObject([
+      { field: 'filename', operator: 'contains', value: 'family trip' },
+      { field: 'type', operator: 'equals', value: 'IMAGE' },
+      { field: 'favorite', operator: 'equals', value: 'true' },
+      { field: 'trashed', operator: 'equals', value: 'false' },
+    ]);
   });
 });

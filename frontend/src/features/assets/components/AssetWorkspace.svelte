@@ -146,7 +146,7 @@
 </script>
 
 <section class="asset-workspace" aria-label="Asset search workspace">
-  <AssetSearchToolbar {expression} {albums} disabled={loading || syncing} onsearch={applySearch} />
+  <AssetSearchToolbar {albums} disabled={loading || syncing} onsearch={applySearch} />
 
   <AssetResultStatus
     total={results?.total ?? 0}

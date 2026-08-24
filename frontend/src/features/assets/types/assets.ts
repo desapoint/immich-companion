@@ -1,5 +1,16 @@
 export type AssetType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'OTHER';
 
+export type SearchMode = 'simple' | 'advanced';
+export type SearchBooleanFilter = 'any' | 'true' | 'false';
+
+export interface SimpleAssetSearchFilters {
+  query: string;
+  assetType: '' | AssetType;
+  favorite: SearchBooleanFilter;
+  archived: SearchBooleanFilter;
+  trashed: SearchBooleanFilter;
+}
+
 export interface AssetSummary {
   id: string;
   type: string;

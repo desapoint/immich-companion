@@ -1,5 +1,6 @@
 import type {
   SearchCondition,
+  SimpleAssetSearchFilters,
   SearchField,
   SearchGroup,
   SearchNode,
@@ -59,6 +60,41 @@ export function createSearchGroup(operator: 'and' | 'or' = 'and'): SearchGroup {
 
 export function copySearchGroup(group: SearchGroup): SearchGroup {
   return JSON.parse(JSON.stringify(group)) as SearchGroup;
+}
+
+export function createSimpleAssetSearchFilters(): SimpleAssetSearchFilters {
+  return {
+    query: '',
+    assetType: '',
+    favorite: 'any',
+    archived: 'any',
+    trashed: 'any',
+  };
+}
+
+export function simpleFiltersToSearchGroup(filters: SimpleAssetSearchFilters): SearchGroup {
+  const group = createSearchGroup();
+  const query = filters.query.trim();
+
+  if (query) {
+    const condition = createSearchCondition('filename');
+    condition.value = query;
+    group.children.push(condition);
+  }
+  if (filters.assetType) {
+    const condition = createSearchCondition('type');
+    condition.value = filters.assetType;
+    group.children.push(condition);
+  }
+  for (const field of ['favorite', 'archived', 'trashed'] as const) {
+    const value = filters[field];
+    if (value === 'any') continue;
+    const condition = createSearchCondition(field);
+    condition.value = value;
+    group.children.push(condition);
+  }
+
+  return group;
 }
 
 function serializeNode(node: SearchNode): Record<string, unknown> {
