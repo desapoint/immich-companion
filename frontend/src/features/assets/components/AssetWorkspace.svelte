@@ -16,6 +16,9 @@
   import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
   import type {
     AlbumOption,
+    AssetCardIndicatorConfig,
+    AssetComparisonActivation,
+    AssetComparisonSource,
     AssetDetail,
     AssetSearchResponse,
     SearchGroup,
@@ -48,6 +51,15 @@
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   const detailCache = new Map<string, AssetDetail>();
+  const cardIndicatorConfig: AssetCardIndicatorConfig = {
+    albums: true,
+    tags: true,
+    stack: true,
+    external: true,
+    immich: true,
+  };
+  const viewerComparisonSource: AssetComparisonSource = 'stack';
+  const viewerComparisonActivation: AssetComparisonActivation = 'click';
 
   async function loadAssets(): Promise<void> {
     searchController?.abort();
@@ -181,6 +193,7 @@
     <AssetGrid
       assets={results.items}
       {selectedIds}
+      indicatorConfig={cardIndicatorConfig}
       onopen={openViewer}
       ontoggle={toggleSelection}
     />
@@ -204,6 +217,8 @@
     {detail}
     {detailLoading}
     {detailError}
+    comparisonSource={viewerComparisonSource}
+    comparisonActivation={viewerComparisonActivation}
     onnavigate={navigateViewer}
     ontoggleselection={toggleSelection}
     onclose={() => (viewerIndex = null)}

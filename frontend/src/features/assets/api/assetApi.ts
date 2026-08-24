@@ -4,7 +4,9 @@ import type {
   AssetSearchResponse,
   AssetSyncResult,
   SearchGroup,
+  AssetViewerMedia,
 } from '../types/assets';
+import type { MediaPreviewItem } from '../../../lib/types/media';
 import { serializeSearchGroup } from '../state/assetViewModel';
 import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
 
@@ -21,6 +23,22 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   return (await response.json()) as T;
 }
 
+export function normalizeAssetSearchResponse(response: AssetSearchResponse): AssetSearchResponse {
+  return {
+    ...response,
+    items: response.items.map((asset) => ({
+      ...asset,
+      albums: asset.albums ?? [],
+      tags: asset.tags ?? [],
+      stack: asset.stack
+        ? { ...asset.stack, assets: asset.stack.assets ?? [] }
+        : null,
+      source: asset.source ?? { kind: 'upload', library_id: null, original_path: null },
+      immich_url: asset.immich_url ?? null,
+    })),
+  };
+}
+
 export function buildAssetSearchRequest(
   expression: SearchGroup,
   page: number,
@@ -29,18 +47,19 @@ export function buildAssetSearchRequest(
   return { expression: serializeSearchGroup(expression), page, page_size: pageSize };
 }
 
-export function searchAssets(
+export async function searchAssets(
   expression: SearchGroup,
   page: number,
   pageSize = DEFAULT_ASSET_PAGE_SIZE,
   signal?: AbortSignal,
 ): Promise<AssetSearchResponse> {
-  return requestJson('/api/assets/search', {
+  const response = await requestJson<AssetSearchResponse>('/api/assets/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize)),
     signal,
   });
+  return normalizeAssetSearchResponse(response);
 }
 
 export function getAlbumOptions(signal?: AbortSignal): Promise<AlbumOption[]> {
@@ -61,4 +80,13 @@ export function assetMediaUrl(assetId: string, size: 'thumbnail' | 'preview'): s
 
 export function assetOriginalUrl(assetId: string): string {
   return `/api/assets/${encodeURIComponent(assetId)}/original`;
+}
+
+export function buildAssetPreviewItems(assets: AssetViewerMedia[]): MediaPreviewItem[] {
+  return assets.map((asset) => ({
+    id: asset.id,
+    label: asset.original_file_name,
+    thumbnailUrl: assetMediaUrl(asset.id, 'thumbnail'),
+    meta: asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.type,
+  }));
 }

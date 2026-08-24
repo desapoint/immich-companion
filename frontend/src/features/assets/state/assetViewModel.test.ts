@@ -2,15 +2,19 @@ import { describe, expect, it } from 'vitest';
 
 import {
   copySearchGroup,
+  comparisonPreviewState,
   createSimpleAssetSearchFilters,
   createSearchCondition,
   createSearchGroup,
   formatAssetBytes,
   nextViewerIndex,
+  restoreComparisonState,
   serializeSearchGroup,
   simpleFiltersToSearchGroup,
+  stackMembersForAsset,
   toggleSelectedAsset,
 } from './assetViewModel';
+import type { AssetSummary } from '../types/assets';
 
 describe('asset view model', () => {
   it('excludes trashed assets from the default simple search', () => {
@@ -26,6 +30,52 @@ describe('asset view model', () => {
     expect(nextViewerIndex(0, 'previous', 3)).toBe(0);
     expect(nextViewerIndex(0, 'next', 3)).toBe(1);
     expect(nextViewerIndex(2, 'next', 3)).toBe(2);
+  });
+
+  it('keeps stack selection independent while similar navigation links both states', () => {
+    expect(comparisonPreviewState('stack', 'selected', 'preview')).toEqual({
+      selectedId: 'selected',
+      visibleId: 'preview',
+    });
+    expect(comparisonPreviewState('similar', 'selected', 'similar')).toEqual({
+      selectedId: 'similar',
+      visibleId: 'similar',
+    });
+    expect(restoreComparisonState('selected')).toEqual({
+      selectedId: 'selected',
+      visibleId: 'selected',
+    });
+  });
+
+  it('keeps the selected asset available when stack metadata omits it', () => {
+    const asset = {
+      id: 'selected',
+      type: 'IMAGE',
+      original_file_name: 'selected.png',
+      original_mime_type: 'image/png',
+      width: 1920,
+      height: 1080,
+      taken_at: '2026-08-24T12:00:00Z',
+      stack: {
+        id: 'stack',
+        primary_asset_id: 'other',
+        asset_count: 2,
+        assets: [{
+          id: 'other',
+          type: 'IMAGE',
+          original_file_name: 'other.png',
+          original_mime_type: 'image/png',
+          width: 1280,
+          height: 720,
+          taken_at: '2026-08-24T12:01:00Z',
+        }],
+      },
+    } as AssetSummary;
+
+    expect(stackMembersForAsset(asset).map((member) => member.id)).toEqual([
+      'other',
+      'selected',
+    ]);
   });
 
   it('toggles selection without mutating the previous set', () => {

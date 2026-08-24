@@ -86,9 +86,14 @@ width/height, and aspect-ratio bounds. The Expert switch exposes recursive
 AND/OR groups, whole-group NOT, and album membership/exclusion. Results use a
 four-column desktop grid and full numbered pagination with first/last
 navigation, nearby-page windows, and 24/48/96/192 item page sizes. Cards use
-thumbnails; the dialog requests the original Immich asset and provides
-fit/actual-size, wheel/button zoom, collection navigation, selection, details,
-and shortcuts.
+thumbnails and expose album, tag, stack, external-source, and Open in Immich
+indicators when their metadata is available. Indicator popovers list relation
+details, and stack popovers preview their member images. The dialog requests
+the original Immich asset and provides fit/actual-size, wheel/button zoom,
+collection navigation, selection, details, and shortcuts. Its reusable bottom
+comparison strip defaults to stack members and click activation, while also
+supporting future similar-image collections and hover or press-and-hold
+comparison behavior.
 
 Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather

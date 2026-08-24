@@ -19,15 +19,28 @@ class AssetSyncService:
 
         assets = [asset async for asset in self._immich.iter_assets()]
         stacks = await self._immich.list_stacks()
-        stack_by_asset = {
-            member.id: {
+        stack_by_asset = {}
+        for stack in stacks:
+            stack_members = [
+                {
+                    "id": str(member.id),
+                    "type": member.asset_type,
+                    "originalFileName": member.original_file_name,
+                    "originalMimeType": member.original_mime_type,
+                    "width": member.width,
+                    "height": member.height,
+                    "fileCreatedAt": member.file_created_at.isoformat(),
+                }
+                for member in stack.assets
+            ]
+            stack_payload = {
                 "id": str(stack.id),
                 "primaryAssetId": str(stack.primary_asset_id),
                 "assetCount": len(stack.assets),
+                "assets": stack_members,
             }
-            for stack in stacks
-            for member in stack.assets
-        }
+            for member in stack.assets:
+                stack_by_asset[member.id] = stack_payload
         assets = [
             asset.model_copy(update={"stack": stack_by_asset.get(asset.id, asset.stack)})
             for asset in assets

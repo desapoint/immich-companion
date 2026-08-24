@@ -19,6 +19,48 @@ export interface SimpleAssetSearchFilters {
   maxAspectRatio: string;
 }
 
+export interface AssetAlbumSummary {
+  id: string;
+  name: string;
+}
+
+export interface AssetTagSummary {
+  id: string;
+  name: string;
+  color: string | null;
+}
+
+export interface AssetStackMember {
+  id: string;
+  type: string;
+  original_file_name: string;
+  original_mime_type: string | null;
+  width: number | null;
+  height: number | null;
+  taken_at: string | null;
+}
+
+export interface AssetStackSummary {
+  id: string;
+  primary_asset_id: string;
+  asset_count: number;
+  assets: AssetStackMember[];
+}
+
+export interface AssetSourceSummary {
+  kind: 'upload' | 'external';
+  library_id: string | null;
+  original_path: string | null;
+}
+
+export interface AssetCardIndicatorConfig {
+  albums: boolean;
+  tags: boolean;
+  stack: boolean;
+  external: boolean;
+  immich: boolean;
+}
+
 export interface AssetSummary {
   id: string;
   type: string;
@@ -41,6 +83,11 @@ export interface AssetSummary {
   people_count: number;
   tag_count: number;
   stack_count: number;
+  albums: AssetAlbumSummary[];
+  tags: AssetTagSummary[];
+  stack: AssetStackSummary | null;
+  source: AssetSourceSummary;
+  immich_url: string | null;
 }
 
 export interface AssetSearchResponse {
@@ -136,3 +183,15 @@ export interface AssetSyncResult {
 }
 
 export type ViewerScaleMode = 'fit' | 'actual';
+export type AssetComparisonSource = 'stack' | 'similar';
+export type AssetComparisonActivation = 'click' | 'hover' | 'press';
+
+export interface AssetViewerMedia {
+  id: string;
+  type: string;
+  original_file_name: string;
+  width: number | null;
+  height: number | null;
+  taken_at: string | null;
+  file_size_bytes?: number | null;
+}

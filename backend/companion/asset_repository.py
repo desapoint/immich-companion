@@ -11,6 +11,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from companion.asset_schema import (
     AlbumOption,
+    AssetAlbumSummary,
     AssetSearchQuery,
     AssetSearchResponse,
     AssetSummary,
@@ -280,9 +281,34 @@ class AssetRepository:
         async with self._database.sessions() as session:
             total = int(await session.scalar(count_statement) or 0)
             records = list((await session.scalars(result_statement)).all())
+            album_map: dict[UUID, list[AssetAlbumSummary]] = {
+                record.id: [] for record in records
+            }
+            if records:
+                album_statement = (
+                    select(
+                        AlbumAssetRecord.asset_id,
+                        AlbumRecord.id.label("album_id"),
+                        AlbumRecord.album_name,
+                    )
+                    .join(AlbumRecord, AlbumRecord.id == AlbumAssetRecord.album_id)
+                    .where(AlbumAssetRecord.asset_id.in_([record.id for record in records]))
+                    .order_by(
+                        AlbumAssetRecord.asset_id,
+                        func.lower(AlbumRecord.album_name),
+                        AlbumRecord.id,
+                    )
+                )
+                for asset_id, album_id, album_name in (await session.execute(album_statement)):
+                    album_map[asset_id].append(
+                        AssetAlbumSummary(id=album_id, name=album_name)
+                    )
 
         return AssetSearchResponse(
-            items=[AssetSummary.from_record(record) for record in records],
+            items=[
+                AssetSummary.from_record(record, album_map.get(record.id, []))
+                for record in records
+            ],
             total=total,
             page=page,
             page_size=page_size,

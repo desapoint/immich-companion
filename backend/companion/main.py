@@ -162,6 +162,18 @@ def create_app(
             detail="Immich could not complete the asset request.",
         )
 
+    def add_public_asset_urls(response: AssetSearchResponse) -> AssetSearchResponse:
+        """Attach only the configured browser-safe Immich URL to card results."""
+
+        return response.model_copy(
+            update={
+                "items": [
+                    item.model_copy(update={"immich_url": immich.public_asset_url(item.id)})
+                    for item in response.items
+                ]
+            }
+        )
+
     @app.post("/api/assets/sync", response_model=AssetSyncResult)
     async def synchronize_assets() -> AssetSyncResult:
         require_asset_repository()
@@ -210,14 +222,14 @@ def create_app(
             page=page,
             page_size=page_size,
         )
-        return await repository.search(criteria)
+        return add_public_asset_urls(await repository.search(criteria))
 
     @app.post("/api/assets/search", response_model=AssetSearchResponse)
     async def search_assets_structured(
         criteria: StructuredAssetSearchQuery,
     ) -> AssetSearchResponse:
         repository = require_asset_repository()
-        return await repository.search_structured(criteria)
+        return add_public_asset_urls(await repository.search_structured(criteria))
 
     @app.get("/api/albums", response_model=list[AlbumOption])
     async def search_album_options() -> list[AlbumOption]:

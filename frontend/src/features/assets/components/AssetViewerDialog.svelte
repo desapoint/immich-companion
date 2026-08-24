@@ -1,10 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { assetOriginalUrl } from '../api/assetApi';
-  import { nextViewerIndex } from '../state/assetViewModel';
-  import type { AssetDetail, AssetSummary, ViewerScaleMode } from '../types/assets';
+  import { assetOriginalUrl, buildAssetPreviewItems } from '../api/assetApi';
+  import {
+    assetAsStackMember,
+    comparisonPreviewState,
+    nextViewerIndex,
+    stackMembersForAsset,
+  } from '../state/assetViewModel';
+  import type {
+    AssetComparisonActivation,
+    AssetComparisonSource,
+    AssetDetail,
+    AssetStackMember,
+    AssetSummary,
+    ViewerScaleMode,
+  } from '../types/assets';
   import AssetInfoPanel from './AssetInfoPanel.svelte';
+  import AssetViewerComparisonTray from './AssetViewerComparisonTray.svelte';
   import AssetViewerFooter from './AssetViewerFooter.svelte';
   import AssetViewerHeader from './AssetViewerHeader.svelte';
 
@@ -15,6 +28,10 @@
     detail: AssetDetail | null;
     detailLoading: boolean;
     detailError: string | null;
+    comparisonSource?: AssetComparisonSource;
+    comparisonActivation?: AssetComparisonActivation;
+    comparisonAssets?: AssetStackMember[];
+    oncomparisonnavigate?: (assetId: string) => void;
     onnavigate: (index: number) => void;
     ontoggleselection: (assetId: string) => void;
     onclose: () => void;
@@ -27,6 +44,10 @@
     detail,
     detailLoading,
     detailError,
+    comparisonSource = 'stack',
+    comparisonActivation = 'click',
+    comparisonAssets = [],
+    oncomparisonnavigate,
     onnavigate,
     ontoggleselection,
     onclose,
@@ -42,12 +63,21 @@
   let imageError = $state(false);
   let infoOpen = $state(false);
   let helpOpen = $state(false);
+  let visibleAssetId = $state('');
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(assets[currentIndex]);
+  const comparisonMembers = $derived(
+    comparisonSource === 'stack' ? stackMembersForAsset(currentAsset) : comparisonAssets,
+  );
+  const previewItems = $derived(buildAssetPreviewItems(comparisonMembers));
+  const visibleAsset = $derived(
+    comparisonMembers.find((asset) => asset.id === visibleAssetId)
+      ?? assetAsStackMember(currentAsset),
+  );
   const hasPrevious = $derived(currentIndex > 0);
   const hasNext = $derived(currentIndex < assets.length - 1);
-  const naturalWidth = $derived(currentAsset.width ?? 1);
-  const naturalHeight = $derived(currentAsset.height ?? 1);
+  const naturalWidth = $derived(visibleAsset.width ?? 1);
+  const naturalHeight = $derived(visibleAsset.height ?? 1);
   const fitScale = $derived(
     Math.max(0.01, Math.min((viewportWidth - 144) / naturalWidth, (viewportHeight - 32) / naturalHeight)),
   );
@@ -74,6 +104,23 @@
     const nextIndex = nextViewerIndex(currentIndex, direction, assets.length);
     if (nextIndex === currentIndex) return;
     onnavigate(nextIndex);
+  }
+
+  function previewComparison(assetId: string): void {
+    visibleAssetId = assetId;
+  }
+
+  function restoreComparison(): void {
+    visibleAssetId = currentAsset.id;
+  }
+
+  function commitComparison(assetId: string): void {
+    const nextState = comparisonPreviewState(comparisonSource, currentAsset.id, assetId);
+    visibleAssetId = nextState.visibleId;
+    if (nextState.selectedId === currentAsset.id) return;
+    const resultIndex = assets.findIndex((asset) => asset.id === nextState.selectedId);
+    if (resultIndex >= 0) onnavigate(resultIndex);
+    else oncomparisonnavigate?.(nextState.selectedId);
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -126,6 +173,11 @@
 
   $effect(() => {
     currentAsset.id;
+    visibleAssetId = currentAsset.id;
+  });
+
+  $effect(() => {
+    visibleAsset.id;
     zoom = 1;
     imageLoading = true;
     imageError = false;
@@ -151,7 +203,8 @@
 
 <dialog bind:this={dialogElement} class="asset-viewer" aria-labelledby="asset-viewer-title" oncancel={handleCancel}>
   <AssetViewerHeader
-    filename={currentAsset.original_file_name}
+    filename={visibleAsset.original_file_name}
+    selectedFilename={currentAsset.original_file_name}
     selected={selectedIds.has(currentAsset.id)}
     {scaleMode}
     {infoOpen}
@@ -181,8 +234,8 @@
           <div class="image-status error" role="alert">The full-size image could not be loaded.</div>
         {/if}
         <img
-          src={assetOriginalUrl(currentAsset.id)}
-          alt={currentAsset.original_file_name}
+          src={assetOriginalUrl(visibleAsset.id)}
+          alt={visibleAsset.original_file_name}
           draggable="false"
           class:hidden={imageLoading || imageError}
           style={`width: ${displayWidth}px; height: ${displayHeight}px;`}
@@ -220,9 +273,28 @@
     {#if infoOpen}
       <AssetInfoPanel {detail} loading={detailLoading} error={detailError} />
     {/if}
+
+    {#if previewItems.length > 1}
+      <AssetViewerComparisonTray
+        items={previewItems}
+        source={comparisonSource}
+        activation={comparisonActivation}
+        selectedId={currentAsset.id}
+        visibleId={visibleAsset.id}
+        onpreview={previewComparison}
+        onrestore={restoreComparison}
+        oncommit={commitComparison}
+      />
+    {/if}
   </section>
 
-  <AssetViewerFooter asset={currentAsset} position={currentIndex + 1} total={assets.length} />
+  <AssetViewerFooter
+    asset={visibleAsset}
+    position={currentIndex + 1}
+    total={assets.length}
+    selectedId={currentAsset.id}
+    visibleId={visibleAsset.id}
+  />
 </dialog>
 
 <style>

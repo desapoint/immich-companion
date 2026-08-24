@@ -1,4 +1,7 @@
 import type {
+  AssetComparisonSource,
+  AssetStackMember,
+  AssetSummary,
   SearchCondition,
   SimpleAssetSearchFilters,
   SearchField,
@@ -6,6 +9,11 @@ import type {
   SearchNode,
   SearchOperator,
 } from '../types/assets';
+
+export interface AssetComparisonState {
+  selectedId: string;
+  visibleId: string;
+}
 
 let nextSearchNodeId = 0;
 
@@ -162,6 +170,40 @@ export function toggleSelectedAsset(selectedIds: Set<string>, assetId: string): 
   if (next.has(assetId)) next.delete(assetId);
   else next.add(assetId);
   return next;
+}
+
+export function assetAsStackMember(asset: AssetSummary): AssetStackMember {
+  return {
+    id: asset.id,
+    type: asset.type,
+    original_file_name: asset.original_file_name,
+    original_mime_type: asset.original_mime_type,
+    width: asset.width,
+    height: asset.height,
+    taken_at: asset.taken_at,
+  };
+}
+
+export function stackMembersForAsset(asset: AssetSummary): AssetStackMember[] {
+  const members = asset.stack?.assets ?? [];
+  const unique = new Map(members.map((member) => [member.id, member]));
+  if (!unique.has(asset.id)) unique.set(asset.id, assetAsStackMember(asset));
+  return [...unique.values()];
+}
+
+export function comparisonPreviewState(
+  source: AssetComparisonSource,
+  selectedId: string,
+  targetId: string,
+): AssetComparisonState {
+  return {
+    selectedId: source === 'similar' ? targetId : selectedId,
+    visibleId: targetId,
+  };
+}
+
+export function restoreComparisonState(selectedId: string): AssetComparisonState {
+  return { selectedId, visibleId: selectedId };
 }
 
 export function formatAssetBytes(value: number | null): string | null {

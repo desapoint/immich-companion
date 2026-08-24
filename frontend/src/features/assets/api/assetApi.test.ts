@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { createSearchCondition, createSearchGroup } from '../state/assetViewModel';
-import { assetOriginalUrl, buildAssetSearchRequest } from './assetApi';
+import {
+  assetOriginalUrl,
+  buildAssetPreviewItems,
+  buildAssetSearchRequest,
+  normalizeAssetSearchResponse,
+} from './assetApi';
 
 describe('structured asset API', () => {
   it('serializes nested conditions and stable pagination', () => {
@@ -39,5 +44,39 @@ describe('structured asset API', () => {
 
   it('uses a distinct original-media endpoint for the fullscreen viewer', () => {
     expect(assetOriginalUrl('asset id')).toBe('/api/assets/asset%20id/original');
+  });
+
+  it('builds reusable thumbnail-strip items from comparable assets', () => {
+    expect(buildAssetPreviewItems([{
+      id: 'stack member',
+      type: 'IMAGE',
+      original_file_name: 'stack.png',
+      width: 800,
+      height: 600,
+      taken_at: null,
+    }])).toEqual([{
+      id: 'stack member',
+      label: 'stack.png',
+      thumbnailUrl: '/api/assets/stack%20member/thumbnail?size=thumbnail',
+      meta: '800 × 600',
+    }]);
+  });
+
+  it('normalizes relation fields while an older backend is being restarted', () => {
+    const response = normalizeAssetSearchResponse({
+      items: [{ id: 'asset' } as never],
+      total: 1,
+      page: 1,
+      page_size: 24,
+      pages: 1,
+    });
+
+    expect(response.items[0]).toMatchObject({
+      albums: [],
+      tags: [],
+      stack: null,
+      source: { kind: 'upload', library_id: null, original_path: null },
+      immich_url: null,
+    });
   });
 });

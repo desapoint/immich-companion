@@ -4,6 +4,7 @@
 
   interface Props {
     filename: string;
+    selectedFilename: string;
     selected: boolean;
     scaleMode: ViewerScaleMode;
     infoOpen: boolean;
@@ -21,6 +22,7 @@
 
   let {
     filename,
+    selectedFilename,
     selected,
     scaleMode,
     infoOpen,
@@ -39,7 +41,7 @@
 
 <header class="viewer-header">
   <div class="viewer-identity">
-    <span>Asset viewer</span>
+    <span>{filename === selectedFilename ? 'Asset viewer' : `Stack preview · selected ${selectedFilename}`}</span>
     <h2 id="asset-viewer-title" title={filename}>{filename}</h2>
   </div>
 

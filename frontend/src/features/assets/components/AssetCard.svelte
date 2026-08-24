@@ -1,17 +1,19 @@
 <script lang="ts">
   import { assetMediaUrl } from '../api/assetApi';
   import { formatAssetBytes, formatAssetDate } from '../state/assetViewModel';
-  import type { AssetSummary } from '../types/assets';
+  import type { AssetCardIndicatorConfig, AssetSummary } from '../types/assets';
+  import AssetRelationIndicators from './AssetRelationIndicators.svelte';
   import AssetStateChips from './AssetStateChips.svelte';
 
   interface Props {
     asset: AssetSummary;
     selected: boolean;
+    indicatorConfig: AssetCardIndicatorConfig;
     onopen: () => void;
     ontoggle: () => void;
   }
 
-  let { asset, selected, onopen, ontoggle }: Props = $props();
+  let { asset, selected, indicatorConfig, onopen, ontoggle }: Props = $props();
   const fileSize = $derived(formatAssetBytes(asset.file_size_bytes));
 </script>
 
@@ -39,6 +41,15 @@
       <span>{formatAssetDate(asset.taken_at)}</span>
     </div>
 
+    <AssetRelationIndicators
+      {asset}
+      showAlbums={indicatorConfig.albums}
+      showTags={indicatorConfig.tags}
+      showStack={indicatorConfig.stack}
+      showExternal={indicatorConfig.external}
+      showImmich={indicatorConfig.immich}
+    />
+
     <AssetStateChips {asset} />
 
     <details>
@@ -55,8 +66,9 @@
 
 <style>
   .asset-card {
+    position: relative;
     min-width: 0;
-    overflow: hidden;
+    overflow: visible;
     border: 1px solid var(--color-border-subtle);
     border-radius: var(--radius-md);
     background: var(--color-surface-raised);
@@ -65,6 +77,7 @@
   }
 
   .asset-card:hover {
+    z-index: 10;
     border-color: var(--color-border-strong);
     transform: translateY(-0.1rem);
   }
@@ -117,6 +130,7 @@
     color: white;
     background: #080b09;
     cursor: zoom-in;
+    border-radius: 0;
   }
 
   .media-stage img {

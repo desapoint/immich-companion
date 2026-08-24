@@ -148,6 +148,50 @@ class AlbumOption(BaseModel):
     asset_count: int
 
 
+class AssetAlbumSummary(BaseModel):
+    """Album membership displayed on an asset card."""
+
+    id: UUID
+    name: str
+
+
+class AssetTagSummary(BaseModel):
+    """Compact Immich tag displayed on an asset card."""
+
+    id: str
+    name: str
+    color: str | None = None
+
+
+class AssetStackMemberSummary(BaseModel):
+    """Compact stack member sufficient for thumbnails and fullscreen comparison."""
+
+    id: UUID
+    type: str
+    original_file_name: str
+    original_mime_type: str | None = None
+    width: int | None = None
+    height: int | None = None
+    taken_at: datetime | None = None
+
+
+class AssetStackSummary(BaseModel):
+    """Current stack identity and previewable member list."""
+
+    id: UUID
+    primary_asset_id: UUID
+    asset_count: int
+    assets: list[AssetStackMemberSummary]
+
+
+class AssetSourceSummary(BaseModel):
+    """Safe source metadata used to distinguish external-library assets."""
+
+    kind: Literal["upload", "external"]
+    library_id: UUID | None
+    original_path: str | None
+
+
 class AssetSummary(BaseModel):
     """Compact asset representation consumed by cards and the viewer footer."""
 
@@ -172,9 +216,18 @@ class AssetSummary(BaseModel):
     people_count: int
     tag_count: int
     stack_count: int
+    albums: list[AssetAlbumSummary]
+    tags: list[AssetTagSummary]
+    stack: AssetStackSummary | None
+    source: AssetSourceSummary
+    immich_url: str | None = None
 
     @classmethod
-    def from_record(cls, asset: AssetRecord) -> AssetSummary:
+    def from_record(
+        cls,
+        asset: AssetRecord,
+        albums: list[AssetAlbumSummary] | None = None,
+    ) -> AssetSummary:
         exif = asset.exif_info or {}
         file_size = exif.get("fileSizeInByte")
         stack = asset.stack or {}
@@ -182,6 +235,64 @@ class AssetSummary(BaseModel):
         stack_asset_count = stack.get("assetCount")
         if not isinstance(stack_asset_count, int):
             stack_asset_count = len(stack_assets) if isinstance(stack_assets, list) else 0
+        compact_tags: list[AssetTagSummary] = []
+        for index, tag in enumerate(asset.tags or []):
+            if not isinstance(tag, dict):
+                continue
+            name = tag.get("name") or tag.get("value")
+            if not isinstance(name, str) or not name.strip():
+                continue
+            identifier = tag.get("id")
+            compact_tags.append(
+                AssetTagSummary(
+                    id=str(identifier) if identifier is not None else f"tag-{index}-{name}",
+                    name=name,
+                    color=tag.get("color") if isinstance(tag.get("color"), str) else None,
+                )
+            )
+
+        compact_stack: AssetStackSummary | None = None
+        stack_id = stack.get("id")
+        primary_asset_id = stack.get("primaryAssetId")
+        if stack_id and primary_asset_id:
+            compact_members: list[AssetStackMemberSummary] = []
+            if isinstance(stack_assets, list):
+                for member in stack_assets:
+                    if not isinstance(member, dict):
+                        continue
+                    member_id = member.get("id")
+                    filename = member.get("originalFileName")
+                    if not member_id or not isinstance(filename, str):
+                        continue
+                    compact_members.append(
+                        AssetStackMemberSummary(
+                            id=member_id,
+                            type=str(member.get("type") or "IMAGE"),
+                            original_file_name=filename,
+                            original_mime_type=(
+                                member.get("originalMimeType")
+                                if isinstance(member.get("originalMimeType"), str)
+                                else None
+                            ),
+                            width=(
+                                member.get("width")
+                                if isinstance(member.get("width"), int)
+                                else None
+                            ),
+                            height=(
+                                member.get("height")
+                                if isinstance(member.get("height"), int)
+                                else None
+                            ),
+                            taken_at=member.get("fileCreatedAt"),
+                        )
+                    )
+            compact_stack = AssetStackSummary(
+                id=stack_id,
+                primary_asset_id=primary_asset_id,
+                asset_count=max(stack_asset_count, len(compact_members)),
+                assets=compact_members,
+            )
         return cls(
             id=asset.id,
             type=asset.asset_type,
@@ -202,8 +313,18 @@ class AssetSummary(BaseModel):
             live_photo_video_id=asset.live_photo_video_id,
             file_size_bytes=file_size if isinstance(file_size, int) else None,
             people_count=len(asset.people or []),
-            tag_count=len(asset.tags or []),
-            stack_count=stack_asset_count,
+            tag_count=len(compact_tags),
+            stack_count=compact_stack.asset_count if compact_stack else stack_asset_count,
+            albums=albums or [],
+            tags=compact_tags,
+            stack=compact_stack,
+            source=AssetSourceSummary(
+                kind="external" if asset.library_id is not None else "upload",
+                library_id=asset.library_id,
+                original_path=(
+                    asset.original_path if asset.library_id is not None else None
+                ),
+            ),
         )
 
 

@@ -1,21 +1,23 @@
 <script lang="ts">
-  import type { AssetSummary } from '../types/assets';
+  import type { AssetCardIndicatorConfig, AssetSummary } from '../types/assets';
   import AssetCard from './AssetCard.svelte';
 
   interface Props {
     assets: AssetSummary[];
     selectedIds: Set<string>;
+    indicatorConfig: AssetCardIndicatorConfig;
     onopen: (index: number) => void;
     ontoggle: (assetId: string) => void;
   }
 
-  let { assets, selectedIds, onopen, ontoggle }: Props = $props();
+  let { assets, selectedIds, indicatorConfig, onopen, ontoggle }: Props = $props();
 </script>
 
 <div class="asset-grid" aria-label="Asset search results">
   {#each assets as asset, index (asset.id)}
     <AssetCard
       {asset}
+      {indicatorConfig}
       selected={selectedIds.has(asset.id)}
       onopen={() => onopen(index)}
       ontoggle={() => ontoggle(asset.id)}

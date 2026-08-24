@@ -1,38 +1,57 @@
 <script lang="ts">
   import { formatAssetBytes, formatAssetDate } from '../state/assetViewModel';
-  import type { AssetSummary } from '../types/assets';
+  import type { AssetViewerMedia } from '../types/assets';
 
   interface Props {
-    asset: AssetSummary;
+    asset: AssetViewerMedia;
     position: number;
     total: number;
+    selectedId: string;
+    visibleId: string;
   }
 
-  let { asset, position, total }: Props = $props();
-  const fileSize = $derived(formatAssetBytes(asset.file_size_bytes));
+  let {
+    asset,
+    position,
+    total,
+    selectedId,
+    visibleId,
+  }: Props = $props();
+  const fileSize = $derived(formatAssetBytes(asset.file_size_bytes ?? null));
 </script>
 
 <footer class="viewer-footer">
-  <div class="footer-facts" aria-label="Current image information">
-    <span>{asset.type}</span>
-    {#if asset.width && asset.height}<span>{asset.width} × {asset.height}</span>{/if}
-    {#if fileSize}<span>{fileSize}</span>{/if}
-    <span>{formatAssetDate(asset.taken_at)}</span>
+  <div class="footer-summary">
+    <div class="footer-facts" aria-label="Visible image information">
+      <span>{asset.type}</span>
+      {#if asset.width && asset.height}<span>{asset.width} × {asset.height}</span>{/if}
+      {#if fileSize}<span>{fileSize}</span>{/if}
+      {#if asset.taken_at}<span>{formatAssetDate(asset.taken_at)}</span>{/if}
+      {#if selectedId !== visibleId}<span class="comparison-state">Previewing stack member</span>{/if}
+    </div>
+    <strong>{position} of {total} images</strong>
   </div>
-  <strong>{position} of {total} images</strong>
 </footer>
 
 <style>
   .viewer-footer {
-    display: flex;
+    display: grid;
     flex: none;
+    min-width: 0;
+    border-top: 1px solid var(--color-border-subtle);
+    background: var(--color-surface-raised);
+  }
+
+  .footer-summary {
+    display: flex;
     align-items: center;
+  }
+
+  .footer-summary {
     justify-content: space-between;
     gap: 1rem;
     min-height: 3rem;
     padding: 0.62rem 0.9rem;
-    border-top: 1px solid var(--color-border-subtle);
-    background: var(--color-surface-raised);
   }
 
   .footer-facts {
@@ -50,13 +69,19 @@
     font-size: 0.65rem;
   }
 
-  strong {
+  .footer-facts .comparison-state {
+    color: var(--color-warning-ink);
+    border-color: var(--color-warning-border);
+    background: var(--color-warning-surface);
+  }
+
+  .footer-summary > strong {
     flex: 0 0 auto;
     font-size: 0.72rem;
   }
 
   @media (max-width: 38rem) {
-    .viewer-footer {
+    .footer-summary {
       align-items: flex-start;
       flex-direction: column;
       gap: 0.45rem;

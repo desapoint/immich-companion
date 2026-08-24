@@ -16,8 +16,6 @@
   {#if asset.is_edited}<span>Edited</span>{/if}
   {#if asset.live_photo_video_id}<span>Live photo</span>{/if}
   {#if asset.people_count}<span>{asset.people_count} people</span>{/if}
-  {#if asset.tag_count}<span>{asset.tag_count} tags</span>{/if}
-  {#if asset.stack_count}<span>{asset.stack_count} stacked</span>{/if}
 </div>
 
 <style>
