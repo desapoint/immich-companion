@@ -26,7 +26,14 @@ describe('structured asset API', () => {
         ],
       },
       page: 2,
-      page_size: 48,
+      page_size: 24,
+    });
+  });
+
+  it('allows callers to override the default number of results per page', () => {
+    expect(buildAssetSearchRequest(createSearchGroup(), 3, 96)).toMatchObject({
+      page: 3,
+      page_size: 96,
     });
   });
 

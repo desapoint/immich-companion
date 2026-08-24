@@ -12,6 +12,7 @@
     createSearchGroup,
     toggleSelectedAsset,
   } from '../state/assetViewModel';
+  import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
   import type {
     AlbumOption,
     AssetDetail,
@@ -31,6 +32,7 @@
   let albums = $state<AlbumOption[]>([]);
   let results = $state<AssetSearchResponse | null>(null);
   let page = $state(1);
+  let pageSize = $state(DEFAULT_ASSET_PAGE_SIZE);
   let loading = $state(true);
   let error = $state<string | null>(null);
   let syncing = $state(false);
@@ -50,7 +52,7 @@
     loading = true;
     error = null;
     try {
-      results = await searchAssets(expression, page, searchController.signal);
+      results = await searchAssets(expression, page, pageSize, searchController.signal);
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
@@ -97,6 +99,15 @@
 
   function changePage(nextPage: number): void {
     page = nextPage;
+    viewerIndex = null;
+    void loadAssets();
+    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function changePageSize(nextPageSize: number): void {
+    if (nextPageSize === pageSize) return;
+    pageSize = nextPageSize;
+    page = 1;
     viewerIndex = null;
     void loadAssets();
     document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
@@ -170,7 +181,15 @@
       onopen={openViewer}
       ontoggle={toggleSelection}
     />
-    <AssetPagination page={results.page} pages={results.pages} disabled={loading} onpage={changePage} />
+    <AssetPagination
+      page={results.page}
+      pages={results.pages}
+      total={results.total}
+      pageSize={results.page_size}
+      disabled={loading}
+      onpage={changePage}
+      onpagesizechange={changePageSize}
+    />
   {/if}
 </section>
 

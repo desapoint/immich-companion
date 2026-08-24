@@ -1,0 +1,4 @@
+export const DEFAULT_ASSET_PAGE_SIZE = 24;
+export const ASSET_PAGE_SIZE_OPTIONS = [24, 48, 96, 192] as const;
+export const ASSET_PAGINATION_SIBLING_COUNT = 2;
+export const ASSET_PAGINATION_BOUNDARY_COUNT = 1;

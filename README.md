@@ -9,9 +9,9 @@ The current vertical slice includes a FastAPI service, a componentized Svelte
 status dashboard and asset workspace, typed Immich asset/album synchronization,
 nested PostgreSQL search, image cards, and a full-size fullscreen viewer. The
 reproducible integration environment is backed by real Immich v3.1.0 and seeds
-66 unique images so the default 48-card result view has a second page. Production
-defaults remain safe; action capability is enabled only in the disposable test
-environment.
+66 unique images, producing three pages at the frontend's default 24-card size
+and still a second page at the 48-card option. Production defaults remain safe;
+action capability is enabled only in the disposable test environment.
 
 ## Quick start
 
@@ -82,7 +82,9 @@ the same corpus can be recreated from empty volumes.
 The asset page opens with compact filename, media-type, favorite, archive, and
 trash filters. Its Advanced switch exposes recursive AND/OR groups and
 whole-group NOT, including album membership/exclusion, taken date,
-width/height bounds, and aspect-ratio bounds. Cards use thumbnails; the dialog
+width/height bounds, and aspect-ratio bounds. Results use a four-column desktop
+grid and full numbered pagination with first/last navigation, nearby-page
+windows, and 24/48/96/192 item page sizes. Cards use thumbnails; the dialog
 requests the original Immich asset and provides fit/actual-size, wheel/button
 zoom, collection navigation, selection, details, and shortcuts.
 

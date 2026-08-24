@@ -6,6 +6,7 @@ import type {
   SearchGroup,
 } from '../types/assets';
 import { serializeSearchGroup } from '../state/assetViewModel';
+import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
 
 async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
@@ -23,7 +24,7 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
 export function buildAssetSearchRequest(
   expression: SearchGroup,
   page: number,
-  pageSize = 48,
+  pageSize = DEFAULT_ASSET_PAGE_SIZE,
 ): Record<string, unknown> {
   return { expression: serializeSearchGroup(expression), page, page_size: pageSize };
 }
@@ -31,12 +32,13 @@ export function buildAssetSearchRequest(
 export function searchAssets(
   expression: SearchGroup,
   page: number,
+  pageSize = DEFAULT_ASSET_PAGE_SIZE,
   signal?: AbortSignal,
 ): Promise<AssetSearchResponse> {
   return requestJson('/api/assets/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildAssetSearchRequest(expression, page)),
+    body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize)),
     signal,
   });
 }
