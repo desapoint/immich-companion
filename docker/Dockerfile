@@ -1,5 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
+FROM node:22-alpine AS frontend-builder
+
+WORKDIR /build/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run check
+RUN npm test
+RUN npm run build
+
+
 FROM python:3.12-slim AS builder
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
@@ -31,12 +42,14 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     COMPANION_ENV=production \
+    COMPANION_FRONTEND_DIR=/opt/immich-companion/frontend \
     ALLOW_DESTRUCTIVE_ACTIONS=false
 
 RUN groupadd --gid "$APP_GID" companion \
     && useradd --uid "$APP_UID" --gid "$APP_GID" --no-create-home --shell /usr/sbin/nologin companion
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=frontend-builder --chown=companion:companion /build/frontend/dist /opt/immich-companion/frontend
 
 USER companion
 EXPOSE 8080

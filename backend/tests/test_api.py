@@ -1,5 +1,7 @@
 """Regression tests for the bootstrap API and safety defaults."""
 
+from pathlib import Path
+
 import httpx
 from fastapi.testclient import TestClient
 
@@ -50,12 +52,40 @@ def test_readiness_fails_without_immich_configuration() -> None:
 def test_safety_and_capability_defaults_are_visible() -> None:
     with TestClient(create_app(settings(), pong_transport())) as client:
         capabilities = client.get("/api/capabilities").json()
-        page = client.get("/")
+        health = client.get("/api/health").json()
 
     assert capabilities["destructive_actions"] is False
     assert capabilities["immich_api"] is True
+    assert health["safe_mode"] is True
+
+
+def test_frontend_assets_are_served_without_shadowing_api_routes(tmp_path: Path) -> None:
+    (tmp_path / "assets").mkdir()
+    (tmp_path / "index.html").write_text("<h1>Compiled companion frontend</h1>")
+    (tmp_path / "assets" / "app.js").write_text("console.log('companion')")
+
+    configured = settings(companion_frontend_dir=tmp_path)
+    with TestClient(create_app(configured, pong_transport())) as client:
+        page = client.get("/")
+        nested_page = client.get("/future/search")
+        asset = client.get("/assets/app.js")
+        health = client.get("/api/health")
+        missing_api = client.get("/api/not-implemented")
+
     assert page.status_code == 200
-    assert "SAFE MODE" in page.text
+    assert "Compiled companion frontend" in page.text
+    assert nested_page.text == page.text
+    assert asset.text == "console.log('companion')"
+    assert health.status_code == 200
+    assert missing_api.status_code == 404
+
+
+def test_root_reports_missing_frontend_assets_during_backend_only_development() -> None:
+    with TestClient(create_app(settings(), pong_transport())) as client:
+        response = client.get("/")
+
+    assert response.status_code == 503
+    assert response.json()["detail"].startswith("Frontend assets are not installed")
 
 
 def test_immich_http_failure_is_reported_without_leaking_key() -> None:

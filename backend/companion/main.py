@@ -1,12 +1,11 @@
-"""FastAPI entrypoint for the minimal Immich Companion service."""
+"""FastAPI entrypoint for Immich Companion."""
 
 from __future__ import annotations
 
-from html import escape
-
 import httpx
 from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from companion.config import Settings, get_settings
 from companion.immich import ImmichHealthClient
@@ -37,41 +36,6 @@ def create_app(
             "safe_mode": not runtime_settings.allow_destructive_actions,
             "dependencies": {"immich": immich_status},
         }
-
-    @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-    async def index() -> str:
-        environment = escape(runtime_settings.companion_env)
-        safety = (
-            "SAFE MODE"
-            if not runtime_settings.allow_destructive_actions
-            else "ACTIONS ENABLED"
-        )
-        return f"""<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Immich Companion</title>
-    <style>
-      body {{ font: 16px system-ui, sans-serif; max-width: 48rem; margin: 4rem auto;
-             padding: 0 1rem; color: #e5e7eb; background: #111827; }}
-      .card {{ padding: 1.5rem; border: 1px solid #374151; border-radius: .75rem;
-               background: #1f2937; }}
-      .safe {{ color: #86efac; font-weight: 700; }}
-      a {{ color: #93c5fd; }}
-      code {{ color: #fde68a; }}
-    </style>
-  </head>
-  <body>
-    <main class="card">
-      <h1>Immich Companion</h1>
-      <p>Minimal API bootstrap is running in <code>{environment}</code>.</p>
-      <p class="safe">{safety}</p>
-      <p><a href="/api/health">Health</a> · <a href="/api/capabilities">Capabilities</a>
-         · <a href="/api/docs">API docs</a></p>
-    </main>
-  </body>
-</html>"""
 
     @app.get("/api/live")
     async def live() -> dict[str, str]:
@@ -115,6 +79,36 @@ def create_app(
                 "visual_similarity",
             ],
         }
+
+    frontend_dir = runtime_settings.companion_frontend_dir
+    frontend_index = frontend_dir / "index.html" if frontend_dir else None
+
+    if frontend_index and frontend_index.is_file():
+        frontend_assets = frontend_dir / "assets"
+        if frontend_assets.is_dir():
+            app.mount(
+                "/assets",
+                StaticFiles(directory=frontend_assets),
+                name="frontend-assets",
+            )
+
+        @app.get("/", response_class=FileResponse, include_in_schema=False)
+        async def frontend_index_route() -> FileResponse:
+            return FileResponse(frontend_index)
+
+        @app.get("/{frontend_path:path}", response_class=FileResponse, include_in_schema=False)
+        async def frontend_fallback(frontend_path: str) -> FileResponse:
+            if frontend_path == "api" or frontend_path.startswith("api/"):
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+            return FileResponse(frontend_index)
+    else:
+
+        @app.get("/", include_in_schema=False)
+        async def frontend_unavailable() -> None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Frontend assets are not installed. Run the Vite development server.",
+            )
 
     return app
 

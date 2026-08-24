@@ -5,9 +5,10 @@ built to provide advanced search, safe bulk actions, duplicate review, tagging,
 integrity analysis, and people/album workflows without modifying Immich's
 database or media files directly.
 
-The current bootstrap is intentionally small: a FastAPI service, dependency
-health reporting, a mock Immich service, a container build, and an on-demand
-test environment. Destructive actions are disabled.
+The current vertical slice is intentionally small: a FastAPI service, a
+componentized Svelte status dashboard, dependency health reporting, a mock
+Immich service, a container build, and an on-demand test environment.
+Destructive actions are disabled.
 
 ## Quick start
 
@@ -22,7 +23,7 @@ Start the isolated test environment:
 ./scripts/test-env.sh start
 ```
 
-Open <http://localhost:8090> or inspect the API:
+Open <http://localhost:8090> for the status dashboard or inspect the API:
 
 ```bash
 curl http://localhost:8090/api/health
@@ -90,6 +91,39 @@ backend/.venv/bin/pytest backend/tests
 backend/.venv/bin/ruff check backend
 ```
 
+When the backend runs without compiled frontend assets, `/` intentionally
+returns a diagnostic 503 response. Run the Vite development server below for
+the local UI; its `/api` requests proxy to `http://127.0.0.1:8000`.
+
+## Local frontend development
+
+The frontend requires Node.js 22 or newer. Install its locked dependencies and
+start Vite:
+
+```bash
+cd frontend
+npm ci
+npm run dev
+```
+
+Open <http://localhost:5173>. Run the deterministic frontend checks with:
+
+```bash
+npm run check
+npm test
+npm run build
+npm run test:browser
+```
+
+The browser test uses a built preview and mocked read-only API responses by
+default. To test an already-running companion test environment instead:
+
+```bash
+PLAYWRIGHT_BASE_URL=http://127.0.0.1:8090 \
+PLAYWRIGHT_USE_LIVE_API=1 \
+npm run test:browser
+```
+
 ## Container image and production stack
 
 The GitHub Actions workflow builds the same image used by the test environment
@@ -98,7 +132,7 @@ overlay for the existing Immich stack is in
 [`deploy/compose.companion.yml`](deploy/compose.companion.yml), with deployment
 notes in [`deploy/README.md`](deploy/README.md).
 
-The bootstrap image is safe to add alongside the existing services, but it does
+The companion image is safe to add alongside the existing services, but it does
 not yet replace the current tagger or deduper. Those services should be disabled
 only after their corresponding parity tasks have passed staging validation.
 
