@@ -39,7 +39,8 @@ Inspect or stop it without writing Compose commands manually:
 ```
 
 The test environment is isolated under the Compose project name
-`immich-companion-test` and does not connect to a real Immich instance.
+`immich-companion-test`, does not connect to a real Immich instance, and is
+recreated from a clean stateless container set on every `start`.
 
 ## Local backend development
 

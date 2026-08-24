@@ -47,22 +47,28 @@ wait_until_ready() {
   return 1
 }
 
+start_environment() {
+  # The test stack is intentionally stateless. Removing stale containers first
+  # also avoids docker-compose 1.29's ContainerConfig recreation failure with
+  # current Docker Engine releases.
+  compose down --remove-orphans
+  compose up --detach --build
+  wait_until_ready
+}
+
 usage() {
   echo "Usage: $0 {start|stop|restart|status|logs|smoke|config}"
 }
 
 case "${1:-}" in
   start)
-    compose up --detach --build
-    wait_until_ready
+    start_environment
     ;;
   stop)
     compose down --remove-orphans
     ;;
   restart)
-    compose down --remove-orphans
-    compose up --detach --build
-    wait_until_ready
+    start_environment
     ;;
   status)
     compose ps
