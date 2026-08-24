@@ -7,6 +7,7 @@
     searchAssets,
     synchronizeAssets,
   } from '../api/assetApi';
+  import { createDefaultAssetSort } from '../state/assetSort';
   import {
     copySearchGroup,
     createSimpleAssetSearchFilters,
@@ -21,6 +22,7 @@
     AssetComparisonSource,
     AssetDetail,
     AssetSearchResponse,
+    AssetSort,
     SearchGroup,
   } from '../types/assets';
   import AssetEmptyState from './AssetEmptyState.svelte';
@@ -39,6 +41,7 @@
   let results = $state<AssetSearchResponse | null>(null);
   let page = $state(1);
   let pageSize = $state(DEFAULT_ASSET_PAGE_SIZE);
+  let sort = $state<AssetSort>(createDefaultAssetSort());
   let loading = $state(true);
   let error = $state<string | null>(null);
   let syncing = $state(false);
@@ -67,7 +70,7 @@
     loading = true;
     error = null;
     try {
-      results = await searchAssets(expression, page, pageSize, searchController.signal);
+      results = await searchAssets(expression, page, pageSize, sort, searchController.signal);
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
@@ -105,8 +108,9 @@
     }
   }
 
-  function applySearch(nextExpression: SearchGroup): void {
+  function applySearch(nextExpression: SearchGroup, nextSort: AssetSort): void {
     expression = copySearchGroup(nextExpression);
+    sort = { ...nextSort };
     page = 1;
     viewerIndex = null;
     void loadAssets();

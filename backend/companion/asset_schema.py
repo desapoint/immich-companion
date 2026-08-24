@@ -13,6 +13,16 @@ from pydantic import BaseModel, Field, model_validator
 from companion.immich import ImmichAsset
 from companion.models import AssetRecord
 
+AssetSortField = Literal[
+    "taken_at",
+    "filename",
+    "created_at",
+    "modified_at",
+    "width",
+    "height",
+]
+AssetSortDirection = Literal["asc", "desc"]
+
 
 def parse_aspect_ratio(value: str | int | float) -> float:
     """Parse a positive decimal or fraction without accepting partial values."""
@@ -51,6 +61,8 @@ class AssetSearchQuery(BaseModel):
     favorite: bool | None = None
     archived: bool | None = None
     trashed: bool | None = None
+    sort_field: AssetSortField = "taken_at"
+    sort_direction: AssetSortDirection = "desc"
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=48, ge=1, le=200)
 
@@ -156,6 +168,8 @@ class StructuredAssetSearchQuery(BaseModel):
     """Recursive search request with stable pagination."""
 
     expression: SearchGroup = Field(default_factory=SearchGroup)
+    sort_field: AssetSortField = "taken_at"
+    sort_direction: AssetSortDirection = "desc"
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=48, ge=1, le=200)
 

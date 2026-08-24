@@ -2,11 +2,13 @@ import type {
   AssetDetail,
   AlbumOption,
   AssetSearchResponse,
+  AssetSort,
   AssetSyncResult,
   SearchGroup,
   AssetViewerMedia,
 } from '../types/assets';
 import type { MediaPreviewItem } from '../../../lib/types/media';
+import { createDefaultAssetSort } from '../state/assetSort';
 import { serializeSearchGroup } from '../state/assetViewModel';
 import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
 
@@ -43,20 +45,28 @@ export function buildAssetSearchRequest(
   expression: SearchGroup,
   page: number,
   pageSize = DEFAULT_ASSET_PAGE_SIZE,
+  sort: AssetSort = createDefaultAssetSort(),
 ): Record<string, unknown> {
-  return { expression: serializeSearchGroup(expression), page, page_size: pageSize };
+  return {
+    expression: serializeSearchGroup(expression),
+    sort_field: sort.field,
+    sort_direction: sort.direction,
+    page,
+    page_size: pageSize,
+  };
 }
 
 export async function searchAssets(
   expression: SearchGroup,
   page: number,
   pageSize = DEFAULT_ASSET_PAGE_SIZE,
+  sort: AssetSort = createDefaultAssetSort(),
   signal?: AbortSignal,
 ): Promise<AssetSearchResponse> {
   const response = await requestJson<AssetSearchResponse>('/api/assets/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize)),
+    body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize, sort)),
     signal,
   });
   return normalizeAssetSearchResponse(response);

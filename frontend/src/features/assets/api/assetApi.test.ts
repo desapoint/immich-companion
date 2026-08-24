@@ -30,15 +30,24 @@ describe('structured asset API', () => {
           { kind: 'group', operator: 'or', negate: true, children: [] },
         ],
       },
+      sort_field: 'taken_at',
+      sort_direction: 'desc',
       page: 2,
       page_size: 24,
     });
   });
 
   it('allows callers to override the default number of results per page', () => {
-    expect(buildAssetSearchRequest(createSearchGroup(), 3, 96)).toMatchObject({
+    expect(buildAssetSearchRequest(
+      createSearchGroup(),
+      3,
+      96,
+      { field: 'filename', direction: 'asc' },
+    )).toMatchObject({
       page: 3,
       page_size: 96,
+      sort_field: 'filename',
+      sort_direction: 'asc',
     });
   });
 

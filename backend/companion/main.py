@@ -21,6 +21,8 @@ from companion.asset_schema import (
     AssetDetail,
     AssetSearchQuery,
     AssetSearchResponse,
+    AssetSortDirection,
+    AssetSortField,
     AssetSyncResult,
     StructuredAssetSearchQuery,
 )
@@ -201,6 +203,8 @@ def create_app(
         favorite: bool | None = None,
         archived: bool | None = None,
         trashed: bool | None = None,
+        sort_field: AssetSortField = "taken_at",
+        sort_direction: AssetSortDirection = "desc",
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=48, ge=1, le=200),
     ) -> AssetSearchResponse:
@@ -219,6 +223,8 @@ def create_app(
             favorite=favorite,
             archived=archived,
             trashed=trashed,
+            sort_field=sort_field,
+            sort_direction=sort_direction,
             page=page,
             page_size=page_size,
         )

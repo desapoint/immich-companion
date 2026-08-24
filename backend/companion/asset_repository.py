@@ -14,6 +14,8 @@ from companion.asset_schema import (
     AssetAlbumSummary,
     AssetSearchQuery,
     AssetSearchResponse,
+    AssetSortDirection,
+    AssetSortField,
     AssetSummary,
     SearchCondition,
     SearchGroup,
@@ -192,7 +194,13 @@ class AssetRepository:
         if criteria.trashed is not None:
             predicates.append(AssetRecord.is_trashed == criteria.trashed)
 
-        return await self._search_page(predicates, criteria.page, criteria.page_size)
+        return await self._search_page(
+            predicates,
+            criteria.page,
+            criteria.page_size,
+            criteria.sort_field,
+            criteria.sort_direction,
+        )
 
     @staticmethod
     def _compile_condition(condition: SearchCondition):
@@ -267,18 +275,43 @@ class AssetRepository:
         """Compile a validated recursive expression and return one stable page."""
 
         predicate = self._compile_group(criteria.expression)
-        return await self._search_page([predicate], criteria.page, criteria.page_size)
+        return await self._search_page(
+            [predicate],
+            criteria.page,
+            criteria.page_size,
+            criteria.sort_field,
+            criteria.sort_direction,
+        )
+
+    @staticmethod
+    def _sort_expressions(
+        sort_field: AssetSortField,
+        sort_direction: AssetSortDirection,
+    ) -> tuple[object, object]:
+        columns = {
+            "taken_at": AssetRecord.file_created_at,
+            "filename": func.lower(AssetRecord.original_file_name),
+            "created_at": AssetRecord.immich_created_at,
+            "modified_at": AssetRecord.file_modified_at,
+            "width": AssetRecord.width,
+            "height": AssetRecord.height,
+        }
+        column = columns[sort_field]
+        ordered = column.asc() if sort_direction == "asc" else column.desc()
+        return ordered.nullslast(), AssetRecord.id.asc()
 
     async def _search_page(
         self,
         predicates: list[object],
         page: int,
         page_size: int,
+        sort_field: AssetSortField,
+        sort_direction: AssetSortDirection,
     ) -> AssetSearchResponse:
         filtered = select(AssetRecord).where(*predicates)
         count_statement = select(func.count()).select_from(AssetRecord).where(*predicates)
         result_statement = (
-            filtered.order_by(AssetRecord.file_created_at.desc(), AssetRecord.id.asc())
+            filtered.order_by(*self._sort_expressions(sort_field, sort_direction))
             .offset((page - 1) * page_size)
             .limit(page_size)
         )

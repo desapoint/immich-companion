@@ -5,49 +5,63 @@
     createSimpleAssetSearchFilters,
     simpleFiltersToSearchGroup,
   } from '../state/assetViewModel';
+  import { createDefaultAssetSort } from '../state/assetSort';
   import type {
     AlbumOption,
+    AssetSort,
     SearchGroup,
     SearchMode,
     SimpleAssetSearchFilters,
   } from '../types/assets';
   import AssetSearchModeSwitch from './AssetSearchModeSwitch.svelte';
+  import AssetSortControls from './AssetSortControls.svelte';
   import ExpertAssetSearch from './ExpertAssetSearch.svelte';
   import SimpleAssetSearch from './SimpleAssetSearch.svelte';
 
   interface Props {
     albums: AlbumOption[];
     disabled?: boolean;
-    onsearch: (expression: SearchGroup) => void;
+    onsearch: (expression: SearchGroup, sort: AssetSort) => void;
   }
 
   let { albums, disabled = false, onsearch }: Props = $props();
   let mode = $state<SearchMode>('simple');
   let simpleFilters = $state<SimpleAssetSearchFilters>(createSimpleAssetSearchFilters());
   let expertExpression = $state<SearchGroup>(createSearchGroup());
+  let sort = $state<AssetSort>(createDefaultAssetSort());
+
+  function changeSort(nextSort: AssetSort): void {
+    sort = { ...nextSort };
+    if (mode === 'simple') {
+      onsearch(simpleFiltersToSearchGroup(simpleFilters), { ...sort });
+    } else {
+      onsearch(copySearchGroup(expertExpression), { ...sort });
+    }
+  }
 
   function searchSimple(): void {
-    onsearch(simpleFiltersToSearchGroup(simpleFilters));
+    onsearch(simpleFiltersToSearchGroup(simpleFilters), { ...sort });
   }
 
   function resetSimple(): void {
     const defaultFilters = createSimpleAssetSearchFilters();
     simpleFilters = defaultFilters;
-    onsearch(simpleFiltersToSearchGroup(defaultFilters));
+    onsearch(simpleFiltersToSearchGroup(defaultFilters), { ...sort });
   }
 
   function searchExpert(): void {
-    onsearch(copySearchGroup(expertExpression));
+    onsearch(copySearchGroup(expertExpression), { ...sort });
   }
 
   function resetExpert(): void {
     expertExpression = createSearchGroup();
-    onsearch(copySearchGroup(expertExpression));
+    onsearch(copySearchGroup(expertExpression), { ...sort });
   }
 </script>
 
 <section class="search-toolbar" aria-label="Immich asset search">
   <AssetSearchModeSwitch {mode} onchange={(nextMode) => (mode = nextMode)} />
+  <AssetSortControls {sort} {disabled} onchange={changeSort} />
 
   {#if mode === 'simple'}
     <SimpleAssetSearch

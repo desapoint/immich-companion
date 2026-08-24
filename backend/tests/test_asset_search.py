@@ -21,6 +21,14 @@ def compiled_sql(group: SearchGroup) -> str:
     )
 
 
+def compiled_order(sort_field: str, sort_direction: str) -> str:
+    return str(
+        select(AssetRecord.id)
+        .order_by(*AssetRepository._sort_expressions(sort_field, sort_direction))
+        .compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True})
+    )
+
+
 def test_nested_album_intersection_union_and_exclusion_compile() -> None:
     album_a = UUID("11111111-1111-4111-8111-111111111111")
     album_b = UUID("22222222-2222-4222-8222-222222222222")
@@ -107,3 +115,36 @@ def test_invalid_field_operator_and_values_are_rejected() -> None:
                 }
             }
         )
+
+
+@pytest.mark.parametrize(
+    ("sort_field", "sort_direction", "expected"),
+    [
+        ("taken_at", "desc", "assets.file_created_at DESC NULLS LAST"),
+        ("filename", "asc", "lower(assets.original_file_name) ASC NULLS LAST"),
+        ("created_at", "desc", "assets.immich_created_at DESC NULLS LAST"),
+        ("modified_at", "asc", "assets.file_modified_at ASC NULLS LAST"),
+        ("width", "desc", "assets.width DESC NULLS LAST"),
+        ("height", "asc", "assets.height ASC NULLS LAST"),
+    ],
+)
+def test_allow_listed_sorting_is_null_safe_and_stable(
+    sort_field: str,
+    sort_direction: str,
+    expected: str,
+) -> None:
+    sql = compiled_order(sort_field, sort_direction)
+
+    assert expected in sql
+    assert sql.endswith("assets.id ASC")
+
+
+def test_structured_sort_defaults_and_invalid_values() -> None:
+    criteria = StructuredAssetSearchQuery()
+
+    assert criteria.sort_field == "taken_at"
+    assert criteria.sort_direction == "desc"
+    with pytest.raises(ValidationError):
+        StructuredAssetSearchQuery(sort_field="checksum")
+    with pytest.raises(ValidationError):
+        StructuredAssetSearchQuery(sort_direction="random")

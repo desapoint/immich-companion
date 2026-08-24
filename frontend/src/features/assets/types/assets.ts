@@ -2,6 +2,19 @@ export type AssetType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'OTHER';
 
 export type SearchMode = 'simple' | 'expert';
 export type SearchBooleanFilter = 'any' | 'true' | 'false';
+export type AssetSortField =
+  | 'taken_at'
+  | 'filename'
+  | 'created_at'
+  | 'modified_at'
+  | 'width'
+  | 'height';
+export type AssetSortDirection = 'asc' | 'desc';
+
+export interface AssetSort {
+  field: AssetSortField;
+  direction: AssetSortDirection;
+}
 
 export interface SimpleAssetSearchFilters {
   query: string;

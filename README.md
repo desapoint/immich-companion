@@ -7,7 +7,8 @@ database or media files directly.
 
 The current vertical slice includes a FastAPI service, a componentized Svelte
 status dashboard and asset workspace, typed Immich asset/album synchronization,
-nested PostgreSQL search, image cards, and a full-size fullscreen viewer. The
+nested PostgreSQL search with stable configurable ordering, image cards, and a
+full-size fullscreen viewer. The
 reproducible integration environment is backed by real Immich v3.1.0 and seeds
 66 unique images, producing three pages at the frontend's default 24-card size
 and still a second page at the 48-card option. Production defaults remain safe;
