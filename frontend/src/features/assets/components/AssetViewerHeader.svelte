@@ -1,4 +1,5 @@
 <script lang="ts">
+  import IconButton from '../../../lib/components/ui/IconButton.svelte';
   import type { ViewerScaleMode } from '../types/assets';
   import AssetKeyboardHelp from './AssetKeyboardHelp.svelte';
 
@@ -46,25 +47,38 @@
   </div>
 
   <div class="viewer-actions">
-    <button class:selected class="selection-action" type="button" onclick={ontoggleselection} aria-pressed={selected}>
-      {selected ? '✓ Selected' : 'Select image'}
-    </button>
-    <button type="button" onclick={ontogglescale} aria-pressed={scaleMode === 'actual'} title="Toggle between fit-to-screen and actual-size viewing">
-      {scaleMode === 'fit' ? 'Actual size' : 'Fit to screen'}
-    </button>
+    <IconButton
+      icon={selected ? 'check' : 'select'}
+      label={selected ? 'Deselect image' : 'Select image'}
+      tone={selected ? 'accent' : 'default'}
+      onclick={ontoggleselection}
+    />
+    <IconButton
+      icon={scaleMode === 'fit' ? 'actual-size' : 'fit'}
+      label={scaleMode === 'fit' ? 'Show actual size' : 'Fit image to screen'}
+      onclick={ontogglescale}
+    />
     <div class="zoom-actions" aria-label="Image zoom controls">
-      <button type="button" onclick={onzoomout} aria-label="Zoom out" title="Zoom out (-)">−</button>
+      <IconButton icon="zoom-out" label="Zoom out (-)" size="compact" onclick={onzoomout} />
       <button type="button" onclick={onzoomreset} title="Reset zoom (0)">{zoomPercent}%</button>
-      <button type="button" onclick={onzoomin} aria-label="Zoom in" title="Zoom in (+)">+</button>
+      <IconButton icon="zoom-in" label="Zoom in (+)" size="compact" onclick={onzoomin} />
     </div>
-    <button type="button" onclick={ontoggleinfo} aria-pressed={infoOpen}>More info</button>
+    <IconButton
+      icon="info"
+      label={infoOpen ? 'Hide more info' : 'Show more info'}
+      tone={infoOpen ? 'accent' : 'default'}
+      onclick={ontoggleinfo}
+    />
     <div class="help-action">
-      <button type="button" onclick={ontogglehelp} aria-pressed={helpOpen} title="Show or hide keyboard shortcuts">
-        Keyboard
-      </button>
+      <IconButton
+        icon="keyboard"
+        label={helpOpen ? 'Hide keyboard shortcuts' : 'Show keyboard shortcuts'}
+        tone={helpOpen ? 'accent' : 'default'}
+        onclick={ontogglehelp}
+      />
       {#if helpOpen}<AssetKeyboardHelp />{/if}
     </div>
-    <button class="close-action" type="button" onclick={onclose} aria-label="Close asset viewer" title="Close viewer">×</button>
+    <IconButton icon="close" label="Close asset viewer" onclick={onclose} />
   </div>
 </header>
 
@@ -126,16 +140,9 @@
     font-weight: 760;
   }
 
-  button:hover,
-  button[aria-pressed='true'] {
+  button:hover {
     border-color: var(--color-accent-strong);
     color: var(--color-accent-strong);
-  }
-
-  .selection-action.selected {
-    color: var(--color-positive-ink);
-    border-color: var(--color-positive-border);
-    background: var(--color-positive-surface);
   }
 
   .help-action {
@@ -150,28 +157,6 @@
   .zoom-actions button {
     min-width: 2.2rem;
     border-radius: 0;
-  }
-
-  .zoom-actions button:first-child {
-    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
-  }
-
-  .zoom-actions button:last-child {
-    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
-  }
-
-  .zoom-actions button + button {
-    margin-left: -1px;
-  }
-
-  .close-action {
-    display: grid;
-    width: 2.3rem;
-    padding: 0;
-    place-items: center;
-    color: var(--color-negative-ink);
-    font-size: 1.3rem;
-    line-height: 1;
   }
 
   @media (max-width: 56rem) {
@@ -190,8 +175,5 @@
       padding-bottom: 0.15rem;
     }
 
-    .close-action {
-      margin-left: auto;
-    }
   }
 </style>

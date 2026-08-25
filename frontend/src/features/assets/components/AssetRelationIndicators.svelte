@@ -1,10 +1,10 @@
 <script lang="ts">
   import AssetPreviewStrip from '../../../lib/components/domain/AssetPreviewStrip.svelte';
+  import Icon from '../../../lib/components/ui/Icon.svelte';
   import { buildAssetPreviewItems } from '../api/assetApi';
   import { stackMembersForAsset } from '../state/assetViewModel';
   import { safeAssetTagColor } from '../state/assetTagViewModel';
   import type { AssetSummary } from '../types/assets';
-  import AssetIcon from './AssetIcon.svelte';
   import AssetRelationIndicator from './AssetRelationIndicator.svelte';
 
   interface Props {
@@ -98,12 +98,12 @@
         aria-label={`Open ${asset.original_file_name} in Immich`}
         title="Open in Immich"
       >
-        <AssetIcon kind="immich" />
+        <Icon name="immich" />
         <span>Immich</span>
       </a>
     {:else}
       <span class="immich-link disabled" title="Configure IMMICH_PUBLIC_URL to open this asset in Immich">
-        <AssetIcon kind="immich" />
+        <Icon name="immich" />
         <span>Immich</span>
       </span>
     {/if}

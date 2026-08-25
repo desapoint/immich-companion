@@ -245,6 +245,8 @@ export type AssetActionIntent =
   | 'favorite_toggle'
   | 'trash'
   | 'restore'
+  | 'add_album'
+  | 'add_tag'
   | 'remove_album'
   | 'remove_tag';
 
@@ -255,6 +257,8 @@ export type AssetActionOperation =
   | 'unfavorite'
   | 'trash'
   | 'restore'
+  | 'add_album'
+  | 'add_tag'
   | 'remove_album'
   | 'remove_tag';
 
@@ -262,7 +266,8 @@ export interface AssetActionPlan {
   id: string;
   action: AssetActionIntent;
   operation: AssetActionOperation;
-  relation_id: string | null;
+  relation_ids: string[];
+  relations: AssetActionRelationPlan[];
   target_count: number;
   applicable_count: number;
   skipped_count: number;
@@ -270,6 +275,12 @@ export interface AssetActionPlan {
   destructive: boolean;
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
   expires_at: string;
+}
+
+export interface AssetActionRelationPlan {
+  relation_id: string;
+  applicable_count: number;
+  skipped_count: number;
 }
 
 export interface AssetActionResult {
@@ -281,8 +292,16 @@ export interface AssetActionResult {
   applied_ids: string[];
   skipped_ids: string[];
   failed_ids: string[];
+  relation_results: AssetActionRelationResult[];
   verified: boolean;
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
+}
+
+export interface AssetActionRelationResult {
+  relation_id: string;
+  applied_ids: string[];
+  skipped_ids: string[];
+  failed_ids: string[];
 }
 
 export type ViewerScaleMode = 'fit' | 'actual';

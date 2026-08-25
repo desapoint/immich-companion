@@ -2,10 +2,11 @@
   import type { Snippet } from 'svelte';
 
   import { clickOutside } from '../../../lib/actions/clickOutside';
-  import AssetIcon from './AssetIcon.svelte';
+  import Icon from '../../../lib/components/ui/Icon.svelte';
+  import type { IconName } from '../../../lib/types/ui';
 
   interface Props {
-    kind: 'album' | 'tag' | 'stack' | 'external';
+    kind: Extract<IconName, 'album' | 'tag' | 'stack' | 'external'>;
     label: string;
     count?: number;
     popoverSizing?: 'default' | 'content';
@@ -30,7 +31,7 @@
     title={label}
     onclick={() => (pinned = !pinned)}
   >
-    <AssetIcon {kind} />
+    <Icon name={kind} />
     {#if count !== undefined}<span>{count}</span>{/if}
   </button>
   <aside

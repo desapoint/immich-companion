@@ -550,18 +550,26 @@ class AssetRepository:
 
         if not target_ids:
             return set()
-        if operation in {"remove_album", "remove_tag"}:
+        if operation in {"add_album", "add_tag", "remove_album", "remove_tag"}:
             assert relation_id is not None
-            model = AlbumAssetRecord if operation == "remove_album" else TagAssetRecord
+            album_action = operation in {"add_album", "remove_album"}
+            model = AlbumAssetRecord if album_action else TagAssetRecord
             relation_column = (
                 AlbumAssetRecord.album_id
-                if operation == "remove_album"
+                if album_action
                 else TagAssetRecord.tag_id
             )
-            statement = select(model.asset_id).where(
+            membership = select(model.asset_id).where(
                 model.asset_id.in_(target_ids),
                 relation_column == relation_id,
             )
+            if operation in {"remove_album", "remove_tag"}:
+                statement = membership
+            else:
+                statement = select(AssetRecord.id).where(
+                    AssetRecord.id.in_(target_ids),
+                    AssetRecord.id.not_in(membership),
+                )
         else:
             column, desired = {
                 "archive": (AssetRecord.is_archived, True),

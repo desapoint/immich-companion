@@ -9,6 +9,7 @@ import {
   selectAllMatching,
   selectCurrentPage,
   selectedAssetCount,
+  setSelectionRange,
   toggleAssetSelection,
 } from './assetSelection';
 
@@ -19,6 +20,18 @@ describe('asset selection', () => {
 
     expect([...state.selectedIds]).toEqual(['one', 'three']);
     expect(selectedAssetCount(state, 20)).toBe(2);
+  });
+
+  it('selects and deselects ordered page ranges in either selection mode', () => {
+    const page = ['one', 'two', 'three', 'four'];
+    let explicit = setSelectionRange(createAssetSelectionState(), page, 1, 3, true);
+    explicit = setSelectionRange(explicit, page, 2, 3, false);
+    expect([...explicit.selectedIds]).toEqual(['two']);
+
+    let matching = selectAllMatching();
+    matching = setSelectionRange(matching, page, 1, 2, false);
+    matching = setSelectionRange(matching, page, 2, 2, true);
+    expect([...matching.excludedIds]).toEqual(['two']);
   });
 
   it('models all matching with explicit exclusions', () => {

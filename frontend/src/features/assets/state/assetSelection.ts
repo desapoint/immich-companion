@@ -46,6 +46,39 @@ export function toggleAssetSelection(
   return { ...state, selectedIds };
 }
 
+export function setAssetsSelected(
+  state: AssetSelectionState,
+  assetIds: string[],
+  selected: boolean,
+): AssetSelectionState {
+  if (state.mode === 'all_matching') {
+    const excludedIds = new Set(state.excludedIds);
+    assetIds.forEach((assetId) => {
+      if (selected) excludedIds.delete(assetId);
+      else excludedIds.add(assetId);
+    });
+    return { ...state, excludedIds };
+  }
+  const selectedIds = new Set(state.selectedIds);
+  assetIds.forEach((assetId) => {
+    if (selected) selectedIds.add(assetId);
+    else selectedIds.delete(assetId);
+  });
+  return { ...state, selectedIds };
+}
+
+export function setSelectionRange(
+  state: AssetSelectionState,
+  pageIds: string[],
+  anchorIndex: number,
+  currentIndex: number,
+  selected: boolean,
+): AssetSelectionState {
+  const start = Math.max(0, Math.min(anchorIndex, currentIndex));
+  const end = Math.min(pageIds.length - 1, Math.max(anchorIndex, currentIndex));
+  return setAssetsSelected(state, pageIds.slice(start, end + 1), selected);
+}
+
 export function selectCurrentPage(
   state: AssetSelectionState,
   pageIds: string[],

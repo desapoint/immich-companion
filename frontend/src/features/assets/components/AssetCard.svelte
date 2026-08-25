@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../../../lib/components/ui/Icon.svelte';
   import { assetMediaUrl } from '../api/assetApi';
   import {
     formatAssetBytes,
@@ -16,43 +17,93 @@
   interface Props {
     asset: AssetSummary;
     selected: boolean;
+    selectionActive: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
     matchingTagIds: ReadonlySet<string>;
     onopen: () => void;
-    ontoggle: () => void;
+    onselect: (shiftKey: boolean) => void;
+    ondragstart: (event: PointerEvent) => void;
+    ondragenter: (event: PointerEvent) => void;
   }
 
   let {
     asset,
     selected,
+    selectionActive,
     indicatorConfig,
     matchingTagIds,
     onopen,
-    ontoggle,
+    onselect,
+    ondragstart,
+    ondragenter,
   }: Props = $props();
   const fileSize = $derived(formatAssetBytes(asset.file_size_bytes));
   const inlineTags = $derived(
     inlineTagsForAsset(asset.tags, indicatorConfig.inlineTags, matchingTagIds),
   );
+
+  function handleMediaKeydown(event: KeyboardEvent): void {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    if (selectionActive) onselect(event.shiftKey);
+    else onopen();
+  }
+
+  function handleMediaPointerDown(event: PointerEvent): void {
+    if (!selectionActive || event.pointerType !== 'mouse' || event.button !== 0) return;
+    event.preventDefault();
+    ondragstart(event);
+  }
 </script>
 
 <article class:selected class="asset-card" data-asset-id={asset.id}>
   <header class="card-decision">
     <label class="selection-control">
-      <input type="checkbox" checked={selected} onchange={ontoggle} />
+      <input
+        type="checkbox"
+        checked={selected}
+        onclick={(event) => onselect(event.shiftKey)}
+      />
       <span>{selected ? 'Selected' : 'Select'}</span>
     </label>
     <span class="media-type">{asset.type}</span>
   </header>
 
-  <button class="media-stage" type="button" onclick={onopen} aria-label={`Open ${asset.original_file_name} in viewer`}>
-    <img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" decoding="async" />
-    <span class="media-facts" aria-hidden="true">
-      {#if fileSize}<span>{fileSize}</span>{/if}
-      {#if asset.width && asset.height}<span>{asset.width} × {asset.height}</span>{/if}
-    </span>
-    <span class="view-cue">View</span>
-  </button>
+  <div class="media-wrap">
+    <div
+      class:selection-active={selectionActive}
+      class="media-stage"
+      role="button"
+      tabindex="0"
+      aria-label={selectionActive
+        ? `${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`
+        : `Open ${asset.original_file_name} in viewer`}
+      aria-pressed={selectionActive ? selected : undefined}
+      onpointerdown={handleMediaPointerDown}
+      onpointerenter={ondragenter}
+      onclick={() => { if (!selectionActive) onopen(); }}
+      onkeydown={handleMediaKeydown}
+    >
+      <img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" decoding="async" />
+      <span class="media-facts" aria-hidden="true">
+        {#if fileSize}<span>{fileSize}</span>{/if}
+        {#if asset.width && asset.height}<span>{asset.width} × {asset.height}</span>{/if}
+      </span>
+      <span class="selection-cue">{selected ? 'Selected' : 'Select'}</span>
+    </div>
+    {#if selectionActive}
+      <button
+        class="view-cue"
+        type="button"
+        aria-label={`Open ${asset.original_file_name} in viewer`}
+        title="Open viewer"
+        onpointerdown={(event) => event.stopPropagation()}
+        onclick={(event) => { event.stopPropagation(); onopen(); }}
+      ><Icon name="view" /><span class="visually-hidden">Open viewer</span></button>
+    {:else}
+      <span class="view-cue">View</span>
+    {/if}
+  </div>
 
   <div class="card-content">
     <div class="identity">
@@ -145,8 +196,11 @@
     font-weight: 760;
   }
 
-  .media-stage {
+  .media-wrap {
     position: relative;
+  }
+
+  .media-stage {
     display: block;
     width: 100%;
     height: 13.5rem;
@@ -159,10 +213,17 @@
     border-radius: 0;
   }
 
+  .media-stage.selection-active {
+    cursor: cell;
+    touch-action: manipulation;
+    user-select: none;
+  }
+
   .media-stage img {
     width: 100%;
     height: 100%;
     object-fit: contain;
+    -webkit-user-drag: none;
     transition: filter 140ms ease, transform 180ms ease;
   }
 
@@ -199,9 +260,44 @@
     transition: opacity 140ms ease;
   }
 
-  .media-stage:hover .view-cue,
-  .media-stage:focus-visible .view-cue {
+  button.view-cue {
+    min-height: auto;
+    cursor: zoom-in;
+    font: inherit;
+  }
+
+  .selection-cue {
+    position: absolute;
+    top: 0.55rem;
+    left: 0.55rem;
+    display: none;
+    padding: 0.24rem 0.42rem;
+    border: 1px solid rgb(255 255 255 / 22%);
+    border-radius: 999px;
+    color: #fff;
+    background: rgb(0 0 0 / 66%);
+    font-size: 0.62rem;
+    font-weight: 760;
+  }
+
+  .selection-active .selection-cue {
+    display: block;
+  }
+
+  .media-wrap:hover .view-cue,
+  .media-wrap:focus-within .view-cue {
     opacity: 1;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
   }
 
   .card-content {

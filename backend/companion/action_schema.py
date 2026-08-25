@@ -16,6 +16,8 @@ AssetActionIntent = Literal[
     "favorite_toggle",
     "trash",
     "restore",
+    "add_album",
+    "add_tag",
     "remove_album",
     "remove_tag",
 ]
@@ -26,6 +28,8 @@ AssetActionOperation = Literal[
     "unfavorite",
     "trash",
     "restore",
+    "add_album",
+    "add_tag",
     "remove_album",
     "remove_tag",
 ]
@@ -92,14 +96,28 @@ class AssetActionPlanRequest(BaseModel):
 
     selection: AssetSelectionRequest
     action: AssetActionIntent
-    relation_id: UUID | None = None
+    relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=100)
 
     @model_validator(mode="after")
     def validate_relation(self) -> AssetActionPlanRequest:
-        relation_action = self.action in {"remove_album", "remove_tag"}
-        if relation_action != (self.relation_id is not None):
-            raise ValueError("Album and tag removal require exactly one relation ID")
+        self.relation_ids = list(dict.fromkeys(self.relation_ids))
+        relation_action = self.action in {
+            "add_album",
+            "add_tag",
+            "remove_album",
+            "remove_tag",
+        }
+        if relation_action != bool(self.relation_ids):
+            raise ValueError("Album and tag actions require one or more relation IDs")
         return self
+
+
+class AssetActionRelationPlan(BaseModel):
+    """Per-relation applicability included in a reviewed plan."""
+
+    relation_id: UUID
+    applicable_count: int
+    skipped_count: int
 
 
 class AssetActionPlan(BaseModel):
@@ -108,7 +126,8 @@ class AssetActionPlan(BaseModel):
     id: UUID
     action: AssetActionIntent
     operation: AssetActionOperation
-    relation_id: UUID | None
+    relation_ids: list[UUID]
+    relations: list[AssetActionRelationPlan]
     target_count: int
     applicable_count: int
     skipped_count: int
@@ -131,6 +150,15 @@ class AssetActionExecuteRequest(BaseModel):
         return self
 
 
+class AssetActionRelationResult(BaseModel):
+    """Verified outcome for one album or tag in a multi-relation action."""
+
+    relation_id: UUID
+    applied_ids: list[UUID]
+    skipped_ids: list[UUID]
+    failed_ids: list[UUID]
+
+
 class AssetActionResult(BaseModel):
     """Final synchronous action outcome."""
 
@@ -142,5 +170,6 @@ class AssetActionResult(BaseModel):
     applied_ids: list[UUID]
     skipped_ids: list[UUID]
     failed_ids: list[UUID]
+    relation_results: list[AssetActionRelationResult] = Field(default_factory=list)
     verified: bool
     status: ActionPlanStatus

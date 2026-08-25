@@ -145,6 +145,8 @@ class ActionPlanRecord(Base):
     action: Mapped[str] = mapped_column(String(32), index=True)
     operation: Mapped[str] = mapped_column(String(32), index=True)
     relation_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    relation_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    relation_work: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     selection: Mapped[dict[str, Any]] = mapped_column(JSON)
     target_ids: Mapped[list[str]] = mapped_column(JSON)
     target_digest: Mapped[str] = mapped_column(String(64))

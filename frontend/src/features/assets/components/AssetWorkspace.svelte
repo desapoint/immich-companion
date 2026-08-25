@@ -20,6 +20,7 @@
     selectAllMatching,
     selectCurrentPage,
     selectedAssetCount,
+    setSelectionRange,
     toggleAssetSelection,
   } from '../state/assetSelection';
   import {
@@ -80,6 +81,10 @@
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   let selectionController: AbortController | null = null;
+  let selectionAnchorIndex: number | null = null;
+  let dragSelecting = false;
+  let dragSelectionValue = true;
+  let dragLastIndex: number | null = null;
   const detailCache = new Map<string, AssetDetail>();
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
@@ -164,6 +169,7 @@
   function changePage(nextPage: number): void {
     page = nextPage;
     viewerIndex = null;
+    selectionAnchorIndex = null;
     void loadAssets();
     document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
   }
@@ -173,6 +179,7 @@
     pageSize = nextPageSize;
     page = 1;
     viewerIndex = null;
+    selectionAnchorIndex = null;
     void loadAssets();
     document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
   }
@@ -193,12 +200,82 @@
     void refreshSelection();
   }
 
+  function selectAtIndex(index: number, shiftKey: boolean): void {
+    const items = results?.items ?? [];
+    const asset = items[index];
+    if (!asset) return;
+    const shouldSelect = !isAssetSelected(selection, asset.id);
+    selection = shiftKey && selectionAnchorIndex !== null
+      ? setSelectionRange(
+          selection,
+          items.map((item) => item.id),
+          selectionAnchorIndex,
+          index,
+          shouldSelect,
+        )
+      : setSelectionRange(selection, items.map((item) => item.id), index, index, shouldSelect);
+    selectionAnchorIndex = index;
+    actionPlan = null;
+    void refreshSelection();
+  }
+
+  function beginDragSelection(index: number, event: PointerEvent): void {
+    if (event.shiftKey) {
+      selectAtIndex(index, true);
+      return;
+    }
+    const items = results?.items ?? [];
+    const asset = items[index];
+    if (!asset) return;
+    dragSelectionValue = !isAssetSelected(selection, asset.id);
+    dragSelecting = true;
+    dragLastIndex = index;
+    selection = setSelectionRange(
+      selection,
+      items.map((item) => item.id),
+      index,
+      index,
+      dragSelectionValue,
+    );
+    actionPlan = null;
+  }
+
+  function continueDragSelection(index: number, event: PointerEvent): void {
+    if (!dragSelecting || event.pointerType !== 'mouse') return;
+    if ((event.buttons & 1) === 0) {
+      finishDragSelection();
+      return;
+    }
+    if (dragLastIndex === null || dragLastIndex === index) return;
+    const ids = results?.items.map((item) => item.id) ?? [];
+    selection = setSelectionRange(
+      selection,
+      ids,
+      dragLastIndex,
+      index,
+      dragSelectionValue,
+    );
+    dragLastIndex = index;
+    actionPlan = null;
+  }
+
+  function finishDragSelection(): void {
+    if (!dragSelecting) return;
+    dragSelecting = false;
+    selectionAnchorIndex = dragLastIndex;
+    dragLastIndex = null;
+    void refreshSelection();
+  }
+
   function clearSelection(): void {
     selection = createAssetSelectionState();
     selectionResolution = null;
     actionPlan = null;
     selectionController?.abort();
     selectionLoading = false;
+    selectionAnchorIndex = null;
+    dragSelecting = false;
+    dragLastIndex = null;
   }
 
   function selectPage(): void {
@@ -255,7 +332,7 @@
 
   async function previewAction(
     action: AssetActionIntent,
-    relationId: string | null = null,
+    relationIds: string[] = [],
   ): Promise<void> {
     actionBusy = true;
     actionError = null;
@@ -265,7 +342,7 @@
       actionPlan = await planAssetAction(
         buildSelectionRequest(selection, expression),
         action,
-        relationId,
+        relationIds,
       );
     } catch (requestError) {
       actionError = requestError instanceof Error
@@ -282,7 +359,9 @@
     actionError = null;
     try {
       const result = await executeAssetAction(actionPlan.id);
-      actionMessage = `${result.applied_count} changed · ${result.skipped_count} skipped`;
+      actionMessage = `${result.applied_count} changed · ${result.skipped_count} skipped${
+        result.failed_ids.length ? ` · ${result.failed_ids.length} assets failed verification` : ''
+      }`;
       actionPlan = null;
       clearSelection();
       detailCache.clear();
@@ -316,8 +395,14 @@
   }
 
   onMount(() => {
+    window.addEventListener('pointerup', finishDragSelection);
+    window.addEventListener('pointercancel', finishDragSelection);
     void loadRelationOptions();
     void loadAssets();
+    return () => {
+      window.removeEventListener('pointerup', finishDragSelection);
+      window.removeEventListener('pointercancel', finishDragSelection);
+    };
   });
 
   onDestroy(() => {
@@ -339,7 +424,7 @@
     onsync={syncAssets}
   />
 
-  {#if results}
+  {#if results && selectedCount > 0}
     <AssetSelectionActions
       {selectedCount}
       matchingTotal={results.total}
@@ -350,7 +435,6 @@
       {tags}
       plan={actionPlan}
       busy={selectionLoading || actionBusy || syncing}
-      message={actionMessage}
       error={actionError}
       onselectpage={selectPage}
       onselectall={selectEveryMatch}
@@ -362,6 +446,8 @@
     />
   {/if}
 
+  {#if actionMessage}<p class="action-message" role="status">{actionMessage}</p>{/if}
+
   {#if loading && !results}
     <AssetLoadingState />
   {:else if error}
@@ -372,10 +458,13 @@
     <AssetGrid
       assets={results.items}
       selectedIds={visibleSelectedIds}
+      selectionActive={selectedCount > 0}
       indicatorConfig={cardIndicatorConfig}
       {matchingTagIds}
       onopen={openViewer}
-      ontoggle={toggleSelection}
+      onselect={selectAtIndex}
+      ondragstart={beginDragSelection}
+      ondragenter={continueDragSelection}
     />
     <AssetPagination
       page={results.page}
@@ -409,5 +498,12 @@
   .asset-workspace {
     display: grid;
     gap: 1.1rem;
+  }
+
+  .action-message {
+    margin: 0;
+    color: var(--color-accent-strong);
+    font-size: 0.74rem;
+    font-weight: 720;
   }
 </style>

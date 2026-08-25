@@ -25,7 +25,11 @@
 
 <style>
   .app-header {
+    position: sticky;
+    z-index: 90;
+    top: 0;
     width: min(96rem, calc(100% - 2rem));
+    min-height: var(--app-header-height, 4.8rem);
     margin: 0 auto;
     padding: 1rem 0;
     display: flex;
@@ -33,6 +37,8 @@
     justify-content: space-between;
     gap: 1rem;
     border-bottom: 1px solid var(--color-border-subtle);
+    background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
+    backdrop-filter: blur(0.8rem);
   }
 
   .brand {

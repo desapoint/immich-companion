@@ -19,6 +19,7 @@ from companion.models import ActionPlanRecord
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
 RELATION_ID = UUID("44444444-4444-4444-8444-444444444444")
+RELATION_TWO = UUID("55555555-5555-4555-8555-555555555555")
 
 
 def resolution(*, archived: int = 0, favorite: int = 0, trashed: int = 0):
@@ -70,6 +71,7 @@ class FakeActions:
         operation,
         applicable_ids,
         skipped_ids,
+        relation_work,
         target_digest,
         expires_at,
     ):
@@ -77,7 +79,9 @@ class FakeActions:
             id=uuid4(),
             action=request.action,
             operation=operation,
-            relation_id=request.relation_id,
+            relation_id=request.relation_ids[0] if len(request.relation_ids) == 1 else None,
+            relation_ids=[str(identifier) for identifier in request.relation_ids],
+            relation_work=relation_work,
             selection=request.selection.model_dump(mode="json"),
             target_ids=[str(identifier) for identifier in current.ids],
             target_digest=target_digest,
@@ -114,8 +118,14 @@ class FakeImmich:
     async def remove_assets_from_album(self, relation_id, ids):
         self.calls.append(("remove_album", relation_id, ids))
 
+    async def add_assets_to_album(self, relation_id, ids):
+        self.calls.append(("add_album", relation_id, ids))
+
     async def remove_assets_from_tag(self, relation_id, ids):
         self.calls.append(("remove_tag", relation_id, ids))
+
+    async def add_assets_to_tag(self, relation_id, ids):
+        self.calls.append(("add_tag", relation_id, ids))
 
     async def set_assets_archived(self, ids, value):
         self.calls.append(("archive" if value else "unarchive", None, ids))
@@ -170,8 +180,13 @@ async def test_mixed_state_chooses_only_archive_and_favorite_directions() -> Non
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("action", ["remove_album", "remove_tag"])
-async def test_relation_removal_skips_assets_without_the_membership(action: str) -> None:
+@pytest.mark.parametrize(
+    "action",
+    ["add_album", "add_tag", "remove_album", "remove_tag"],
+)
+async def test_relation_action_skips_assets_already_in_the_requested_state(
+    action: str,
+) -> None:
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
     instance, actions, immich, sync = service(
         resolution(),
@@ -181,7 +196,7 @@ async def test_relation_removal_skips_assets_without_the_membership(action: str)
         AssetActionPlanRequest(
             selection=selection,
             action=action,
-            relation_id=RELATION_ID,
+            relation_ids=[RELATION_ID],
         )
     )
 
@@ -200,6 +215,51 @@ async def test_relation_removal_skips_assets_without_the_membership(action: str)
     assert result.verified is True
     assert actions.finished is not None
     assert actions.finished[0] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_multi_relation_action_reports_and_verifies_each_relation() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    instance, _, immich, sync = service(
+        resolution(),
+        [
+            {ASSET_ONE},
+            {ASSET_TWO},
+            {ASSET_ONE},
+            {ASSET_TWO},
+            set(),
+            set(),
+        ],
+    )
+    plan = await instance.plan(
+        AssetActionPlanRequest(
+            selection=selection,
+            action="add_album",
+            relation_ids=[RELATION_ID, RELATION_TWO],
+        )
+    )
+
+    assert plan.target_count == 2
+    assert plan.applicable_count == 2
+    assert plan.skipped_count == 2
+    assert [relation.relation_id for relation in plan.relations] == [
+        RELATION_ID,
+        RELATION_TWO,
+    ]
+
+    result = await instance.execute(
+        AssetActionExecuteRequest(plan_id=plan.id, confirm=True)
+    )
+
+    assert immich.calls == [
+        ("add_album", RELATION_ID, [ASSET_ONE]),
+        ("add_album", RELATION_TWO, [ASSET_TWO]),
+    ]
+    assert sync.calls == 1
+    assert result.applied_count == 2
+    assert result.skipped_count == 2
+    assert result.failed_ids == []
+    assert len(result.relation_results) == 2
 
 
 @pytest.mark.asyncio

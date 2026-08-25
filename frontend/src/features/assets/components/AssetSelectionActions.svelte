@@ -1,5 +1,6 @@
 <script lang="ts">
-  import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import IconButton from '../../../lib/components/ui/IconButton.svelte';
+  import type { IconName, SelectOption } from '../../../lib/types/ui';
   import type {
     AlbumOption,
     AssetActionIntent,
@@ -7,7 +8,13 @@
     AssetSelectionSummary,
     TagOption,
   } from '../types/assets';
-  import AssetActionReview from './AssetActionReview.svelte';
+  import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
+  import AssetRelationActionDialog from './AssetRelationActionDialog.svelte';
+
+  type RelationAction = Extract<
+    AssetActionIntent,
+    'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'
+  >;
 
   interface Props {
     selectedCount: number;
@@ -19,13 +26,12 @@
     tags: TagOption[];
     plan: AssetActionPlan | null;
     busy?: boolean;
-    message?: string | null;
     error?: string | null;
     onselectpage: () => void;
     onselectall: () => void;
     oninvertpage: () => void;
     onclear: () => void;
-    onplan: (action: AssetActionIntent, relationId?: string | null) => void;
+    onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
     onconfirm: () => void;
     oncancel: () => void;
   }
@@ -40,7 +46,6 @@
     tags,
     plan,
     busy = false,
-    message = null,
     error = null,
     onselectpage,
     onselectall,
@@ -51,246 +56,232 @@
     oncancel,
   }: Props = $props();
 
-  let albumId = $state('');
-  let tagId = $state('');
-  const albumOptions = $derived(albums.map((album) => ({
+  let relationAction = $state<RelationAction | null>(null);
+  const albumOptions = $derived<SelectOption[]>(albums.map((album) => ({
     value: album.id,
     label: `${album.name} (${album.asset_count})`,
   })));
-  const tagOptions = $derived(tags.map((tag) => ({
+  const tagOptions = $derived<SelectOption[]>(tags.map((tag) => ({
     value: tag.id,
     label: `${tag.name} (${tag.asset_count})`,
   })));
-  const relationLabel = $derived(
-    plan?.operation === 'remove_album'
-      ? albums.find((album) => album.id === plan.relation_id)?.name ?? null
-      : plan?.operation === 'remove_tag'
-        ? tags.find((tag) => tag.id === plan.relation_id)?.name ?? null
-        : null,
+  const relationOptions = $derived(
+    relationAction?.endsWith('album') ? albumOptions : tagOptions,
   );
 
   function titleCase(value: string): string {
     return value.charAt(0).toUpperCase() + value.slice(1);
   }
+
+  function stateIcon(action: 'archive' | 'unarchive' | 'favorite' | 'unfavorite'): IconName {
+    return action;
+  }
+
+  function applyRelation(relationIds: string[]): void {
+    if (!relationAction || relationIds.length === 0) return;
+    onplan(relationAction, relationIds);
+    relationAction = null;
+  }
 </script>
 
 <section class="selection-actions" aria-label="Selected asset actions">
-  <div class="selection-tools">
+  <div class="selection-summary">
+    <span>Selection</span>
+    <strong>{selectedCount} selected</strong>
+    {#if allMatching}<small>All matching results except unchecked assets</small>{/if}
+  </div>
+
+  <div class="toolbar-group" aria-label="Selection controls">
+    <span class="group-label">Select</span>
     <div>
-      <span>Selection</span>
-      <strong>{selectedCount} selected</strong>
-      {#if allMatching}<small>All matching results, excluding unchecked assets</small>{/if}
-    </div>
-    <div class="button-row">
-      <button type="button" onclick={onselectpage} disabled={busy || currentPageCount === 0}>
-        Select page
-      </button>
-      <button type="button" onclick={onselectall} disabled={busy || matchingTotal === 0}>
-        Select all {matchingTotal}
-      </button>
-      <button type="button" onclick={oninvertpage} disabled={busy || currentPageCount === 0}>
-        Invert page
-      </button>
-      <button type="button" onclick={onclear} disabled={busy || selectedCount === 0}>
-        Clear
-      </button>
+      <IconButton
+        icon="select-page"
+        label="Select current page"
+        disabled={busy || currentPageCount === 0}
+        onclick={onselectpage}
+      />
+      <IconButton
+        icon="select-all"
+        label={`Select all ${matchingTotal} matching assets`}
+        disabled={busy || matchingTotal === 0}
+        onclick={onselectall}
+      />
+      <IconButton
+        icon="invert-selection"
+        label="Invert current page selection"
+        disabled={busy || currentPageCount === 0}
+        onclick={oninvertpage}
+      />
+      <IconButton
+        icon="clear-selection"
+        label="Clear selection"
+        disabled={busy}
+        onclick={onclear}
+      />
     </div>
   </div>
 
-  {#if selectedCount > 0}
-    <div class="action-tools">
-      <div class="state-actions">
-        {#if summary?.archive_action}
-          <button type="button" onclick={() => onplan('archive_toggle')} disabled={busy}>
-            {titleCase(summary.archive_action)}
-          </button>
-        {/if}
-        {#if summary?.favorite_action}
-          <button type="button" onclick={() => onplan('favorite_toggle')} disabled={busy}>
-            {titleCase(summary.favorite_action)}
-          </button>
-        {/if}
-        {#if summary?.can_trash}
-          <button class="destructive" type="button" onclick={() => onplan('trash')} disabled={busy}>
-            Trash
-          </button>
-        {/if}
-        {#if summary?.can_restore}
-          <button type="button" onclick={() => onplan('restore')} disabled={busy}>
-            Restore
-          </button>
-        {/if}
-        {#if !summary}<small>Resolving selected asset state…</small>{/if}
-      </div>
-
-      <div class="relation-actions">
-        <div>
-          <SelectField
-            id="remove-selection-album"
-            label="Remove from album"
-            value={albumId}
-            options={albumOptions}
-            disabled={busy}
-            compact
-            onchange={(value) => (albumId = value)}
-          />
-          <button
-            type="button"
-            onclick={() => onplan('remove_album', albumId)}
-            disabled={busy || !albumId}
-          >Remove album</button>
-        </div>
-        <div>
-          <SelectField
-            id="remove-selection-tag"
-            label="Remove tag"
-            value={tagId}
-            options={tagOptions}
-            disabled={busy}
-            compact
-            onchange={(value) => (tagId = value)}
-          />
-          <button
-            type="button"
-            onclick={() => onplan('remove_tag', tagId)}
-            disabled={busy || !tagId}
-          >Remove tag</button>
-        </div>
-      </div>
+  <div class="toolbar-group" aria-label="Asset state actions">
+    <span class="group-label">State</span>
+    <div>
+      {#if summary?.archive_action}
+        <IconButton
+          icon={stateIcon(summary.archive_action)}
+          label={`${titleCase(summary.archive_action)} selected assets`}
+          disabled={busy}
+          tone="accent"
+          onclick={() => onplan('archive_toggle')}
+        />
+      {/if}
+      {#if summary?.favorite_action}
+        <IconButton
+          icon={stateIcon(summary.favorite_action)}
+          label={`${titleCase(summary.favorite_action)} selected assets`}
+          disabled={busy}
+          tone="accent"
+          onclick={() => onplan('favorite_toggle')}
+        />
+      {/if}
+      {#if summary?.can_trash}
+        <IconButton
+          icon="trash"
+          label="Trash applicable selected assets"
+          disabled={busy}
+          tone="destructive"
+          onclick={() => onplan('trash')}
+        />
+      {/if}
+      {#if summary?.can_restore}
+        <IconButton
+          icon="restore"
+          label="Restore applicable selected assets"
+          disabled={busy}
+          onclick={() => onplan('restore')}
+        />
+      {/if}
+      {#if !summary}<small>Resolving…</small>{/if}
     </div>
-  {/if}
+  </div>
 
-  {#if plan}
-    <AssetActionReview
-      {plan}
-      {relationLabel}
-      {busy}
-      {onconfirm}
-      oncancel={oncancel}
-    />
-  {/if}
+  <div class="toolbar-group" aria-label="Album actions">
+    <span class="group-label">Albums</span>
+    <div>
+      <IconButton
+        icon="album-add"
+        label="Add selected assets to albums"
+        disabled={busy || albums.length === 0}
+        onclick={() => (relationAction = 'add_album')}
+      />
+      <IconButton
+        icon="album-remove"
+        label="Remove selected assets from albums"
+        disabled={busy || albums.length === 0}
+        onclick={() => (relationAction = 'remove_album')}
+      />
+    </div>
+  </div>
 
-  {#if message}<p class="message" role="status">{message}</p>{/if}
+  <div class="toolbar-group" aria-label="Tag actions">
+    <span class="group-label">Tags</span>
+    <div>
+      <IconButton
+        icon="tag-add"
+        label="Add tags to selected assets"
+        disabled={busy || tags.length === 0}
+        onclick={() => (relationAction = 'add_tag')}
+      />
+      <IconButton
+        icon="tag-remove"
+        label="Remove tags from selected assets"
+        disabled={busy || tags.length === 0}
+        onclick={() => (relationAction = 'remove_tag')}
+      />
+    </div>
+  </div>
+
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
 
+{#if relationAction}
+  <AssetRelationActionDialog
+    action={relationAction}
+    options={relationOptions}
+    {selectedCount}
+    {busy}
+    onapply={applyRelation}
+    onclose={() => (relationAction = null)}
+  />
+{/if}
+
+{#if plan}
+  <AssetActionConfirmDialog
+    {plan}
+    {albums}
+    {tags}
+    {busy}
+    {onconfirm}
+    onclose={oncancel}
+  />
+{/if}
+
 <style>
   .selection-actions {
-    display: grid;
-    gap: 0.75rem;
-    padding: 0.8rem;
-    border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-md);
-    background: var(--color-surface-raised);
-    box-shadow: var(--shadow-card);
-  }
-
-  .selection-tools,
-  .action-tools,
-  .button-row,
-  .state-actions,
-  .relation-actions,
-  .relation-actions > div {
+    position: sticky;
+    z-index: 80;
+    top: calc(var(--app-header-height, 4.8rem) + 0.5rem);
     display: flex;
     align-items: end;
-    gap: 0.55rem;
+    gap: 0.8rem;
+    padding: 0.72rem 0.8rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-md);
+    background: color-mix(in srgb, var(--color-surface-raised) 94%, transparent);
+    box-shadow: 0 0.55rem 1.6rem rgb(17 24 19 / 15%);
+    backdrop-filter: blur(0.75rem);
   }
 
-  .selection-tools,
-  .action-tools {
-    justify-content: space-between;
-  }
-
-  .selection-tools > div:first-child {
+  .selection-summary {
     display: grid;
-    gap: 0.15rem;
+    min-width: 8.5rem;
+    gap: 0.1rem;
   }
 
-  span,
-  small {
-    color: var(--color-ink-muted);
-    font-size: 0.66rem;
-  }
-
-  span {
+  .selection-summary > span,
+  .group-label {
     color: var(--color-accent-strong);
+    font-size: 0.6rem;
     font-weight: 800;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
-  .button-row,
-  .state-actions,
-  .relation-actions {
-    flex-wrap: wrap;
+  .selection-summary small,
+  .toolbar-group small {
+    color: var(--color-ink-muted);
+    font-size: 0.62rem;
   }
 
-  .relation-actions > div {
-    min-width: min(18rem, 100%);
+  .toolbar-group {
+    display: grid;
+    gap: 0.28rem;
   }
 
-  .relation-actions :global(.select-field) {
-    min-width: 11rem;
-    flex: 1;
+  .toolbar-group > div {
+    display: flex;
+    gap: 0.32rem;
   }
 
-  button {
-    min-height: 2.3rem;
-    padding: 0.48rem 0.68rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--color-ink-strong);
-    background: var(--color-canvas);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.7rem;
-    font-weight: 760;
-  }
-
-  button:hover:not(:disabled) {
-    border-color: var(--color-accent-strong);
-    color: var(--color-accent-strong);
-  }
-
-  button.destructive {
-    border-color: color-mix(in srgb, #b45309 55%, var(--color-border-strong));
-    color: #b45309;
-  }
-
-  button:disabled {
-    cursor: default;
-    opacity: 0.48;
-  }
-
-  .message,
   .error {
+    min-width: 8rem;
     margin: 0;
-    font-size: 0.72rem;
-  }
-
-  .message {
-    color: var(--color-accent-strong);
-  }
-
-  .error {
     color: #b42318;
+    font-size: 0.68rem;
   }
 
-  @media (max-width: 70rem) {
-    .selection-tools,
-    .action-tools {
-      align-items: stretch;
-      flex-direction: column;
-    }
-  }
-
-  @media (max-width: 42rem) {
-    .button-row,
-    .state-actions,
-    .relation-actions,
-    .relation-actions > div {
-      align-items: stretch;
-      flex-direction: column;
+  @media (max-width: 62rem) {
+    .selection-actions {
+      align-items: center;
+      flex-wrap: wrap;
     }
   }
 </style>

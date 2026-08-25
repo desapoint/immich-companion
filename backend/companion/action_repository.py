@@ -31,6 +31,7 @@ class ActionRepository:
         operation: AssetActionOperation,
         applicable_ids: list[UUID],
         skipped_ids: list[UUID],
+        relation_work: dict[str, dict[str, list[str]]],
         target_digest: str,
         expires_at: datetime,
     ) -> ActionPlanRecord:
@@ -39,7 +40,9 @@ class ActionRepository:
         record = ActionPlanRecord(
             action=request.action,
             operation=operation,
-            relation_id=request.relation_id,
+            relation_id=request.relation_ids[0] if len(request.relation_ids) == 1 else None,
+            relation_ids=[str(identifier) for identifier in request.relation_ids],
+            relation_work=relation_work,
             selection=request.selection.model_dump(mode="json"),
             target_ids=[str(identifier) for identifier in resolution.ids],
             target_digest=target_digest,

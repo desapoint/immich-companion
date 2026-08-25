@@ -8,19 +8,25 @@
   interface Props {
     assets: AssetSummary[];
     selectedIds: Set<string>;
+    selectionActive: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
     matchingTagIds: ReadonlySet<string>;
     onopen: (index: number) => void;
-    ontoggle: (assetId: string) => void;
+    onselect: (index: number, shiftKey: boolean) => void;
+    ondragstart: (index: number, event: PointerEvent) => void;
+    ondragenter: (index: number, event: PointerEvent) => void;
   }
 
   let {
     assets,
     selectedIds,
+    selectionActive,
     indicatorConfig,
     matchingTagIds,
     onopen,
-    ontoggle,
+    onselect,
+    ondragstart,
+    ondragenter,
   }: Props = $props();
 </script>
 
@@ -30,9 +36,12 @@
       {asset}
       {indicatorConfig}
       {matchingTagIds}
+      {selectionActive}
       selected={selectedIds.has(asset.id)}
       onopen={() => onopen(index)}
-      ontoggle={() => ontoggle(asset.id)}
+      onselect={(shiftKey) => onselect(index, shiftKey)}
+      ondragstart={(event) => ondragstart(index, event)}
+      ondragenter={(event) => ondragenter(index, event)}
     />
   {/each}
 </div>

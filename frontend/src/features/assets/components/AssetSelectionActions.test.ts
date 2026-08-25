@@ -37,12 +37,12 @@ describe('AssetSelectionActions', () => {
       },
     });
 
-    expect(body).toContain('>Archive</button>');
-    expect(body).not.toContain('>Unarchive</button>');
-    expect(body).toContain('>Favorite</button>');
-    expect(body).not.toContain('>Unfavorite</button>');
-    expect(body).toContain('>Trash</button>');
-    expect(body).toContain('>Restore</button>');
+    expect(body).toContain('aria-label="Archive selected assets"');
+    expect(body).not.toContain('aria-label="Unarchive selected assets"');
+    expect(body).toContain('aria-label="Favorite selected assets"');
+    expect(body).not.toContain('aria-label="Unfavorite selected assets"');
+    expect(body).toContain('aria-label="Trash applicable selected assets"');
+    expect(body).toContain('aria-label="Restore applicable selected assets"');
   });
 
   it('switches to the inverse actions only when every selected asset is set', () => {
@@ -78,11 +78,11 @@ describe('AssetSelectionActions', () => {
       },
     });
 
-    expect(body).toContain('>Unarchive</button>');
-    expect(body).not.toContain('>Archive</button>');
-    expect(body).toContain('>Unfavorite</button>');
-    expect(body).not.toContain('>Favorite</button>');
-    expect(body).toContain('>Trash</button>');
-    expect(body).not.toContain('>Restore</button>');
+    expect(body).toContain('aria-label="Unarchive selected assets"');
+    expect(body).not.toContain('aria-label="Archive selected assets"');
+    expect(body).toContain('aria-label="Unfavorite selected assets"');
+    expect(body).not.toContain('aria-label="Favorite selected assets"');
+    expect(body).toContain('aria-label="Trash applicable selected assets"');
+    expect(body).not.toContain('aria-label="Restore applicable selected assets"');
   });
 });

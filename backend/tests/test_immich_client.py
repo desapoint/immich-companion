@@ -277,7 +277,9 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
     await client.remove_assets_from_album(album_id, [ASSET_ONE])
+    await client.add_assets_to_album(album_id, [ASSET_ONE])
     await client.remove_assets_from_tag(tag_id, [ASSET_TWO])
+    await client.add_assets_to_tag(tag_id, [ASSET_TWO])
     await client.set_assets_archived([ASSET_ONE], True)
     await client.set_assets_archived([ASSET_ONE], False)
     await client.set_assets_favorite([ASSET_TWO], True)
@@ -287,7 +289,9 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
 
     assert requests == [
         ("DELETE", f"/api/albums/{album_id}/assets", {"ids": [str(ASSET_ONE)]}),
+        ("PUT", f"/api/albums/{album_id}/assets", {"ids": [str(ASSET_ONE)]}),
         ("DELETE", f"/api/tags/{tag_id}/assets", {"ids": [str(ASSET_TWO)]}),
+        ("PUT", f"/api/tags/{tag_id}/assets", {"ids": [str(ASSET_TWO)]}),
         ("PUT", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "archive"}),
         ("PUT", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "timeline"}),
         ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": True}),

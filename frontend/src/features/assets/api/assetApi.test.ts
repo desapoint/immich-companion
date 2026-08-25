@@ -100,7 +100,8 @@ describe('structured asset API', () => {
         id: 'plan-1',
         action: 'remove_tag',
         operation: 'remove_tag',
-        relation_id: 'tag-1',
+        relation_ids: ['tag-1'],
+        relations: [{ relation_id: 'tag-1', applicable_count: 1, skipped_count: 1 }],
         target_count: 2,
         applicable_count: 1,
         skipped_count: 1,
@@ -117,6 +118,7 @@ describe('structured asset API', () => {
         applied_ids: ['asset-1'],
         skipped_ids: ['asset-2'],
         failed_ids: [],
+        relation_results: [],
         verified: true,
         status: 'completed',
       }), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -128,13 +130,13 @@ describe('structured asset API', () => {
       excluded_ids: [],
     };
 
-    await planAssetAction(selection, 'remove_tag', 'tag-1');
+    await planAssetAction(selection, 'remove_tag', ['tag-1']);
     await executeAssetAction('plan-1');
 
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
       selection,
       action: 'remove_tag',
-      relation_id: 'tag-1',
+      relation_ids: ['tag-1'],
     });
     expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toEqual({
       plan_id: 'plan-1',

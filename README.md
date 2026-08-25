@@ -10,8 +10,8 @@ status dashboard and asset workspace, typed Immich asset/album synchronization,
 nested PostgreSQL search with stable configurable ordering, image cards, and a
 full-size fullscreen viewer. Checked, current-page, inverted-page, and
 all-matching selections can be resolved by the backend and sent through a
-reviewed bulk-action flow for album/tag removal, archive, favorite, trash, and
-restore. The
+reviewed bulk-action flow for multi-album/tag addition and removal, archive,
+favorite, trash, and restore. The
 reproducible integration environment is backed by real Immich v3.1.0 and seeds
 66 unique images, producing three pages at the frontend's default 24-card size
 and still a second page at the 48-card option. Production defaults remain safe:
@@ -103,12 +103,17 @@ comparison strip defaults to stack members and click activation, while also
 supporting future similar-image collections and hover or press-and-hold
 comparison behavior.
 
-The selection action bar supports exact checked assets, the current page,
-page inversion, or every backend-resolved match. Every mutation is previewed
-with applicable and already-satisfied counts before confirmation. Removing an
-album or tag skips assets that do not have that membership. Mixed selections
-show one Archive/Unarchive direction and one Favorite/Unfavorite direction;
-Trash and Restore are independently visible when either state applies.
+The selection action bar appears only after selection begins and remains below
+the sticky application header. The card media area then supports click,
+Shift-range, and pointer-drag selection or deselection while retaining a
+dedicated viewer button. Exact checked assets, the current page, page inversion,
+or every backend-resolved match use the same reviewed action flow. Album and tag
+actions use searchable multi-select dialogs; additions skip existing members
+and removals skip missing memberships. Mixed selections show one dynamic
+Archive/Unarchive direction and one Favorite/Unfavorite direction; Trash and
+Restore remain independently available when either state applies. Shared typed
+icons, icon-button legends, dialogs, and confirmation dialogs provide the
+reusable UI foundation for these controls.
 
 Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather

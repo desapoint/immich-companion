@@ -105,12 +105,12 @@ export function resolveAssetSelection(
 export function planAssetAction(
   selection: AssetSelectionRequest,
   action: AssetActionIntent,
-  relationId: string | null = null,
+  relationIds: string[] = [],
 ): Promise<AssetActionPlan> {
   return requestJson('/api/assets/actions/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ selection, action, relation_id: relationId }),
+    body: JSON.stringify({ selection, action, relation_ids: relationIds }),
   });
 }
 

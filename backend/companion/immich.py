@@ -322,6 +322,18 @@ class ImmichApiClient:
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
+    async def add_assets_to_album(
+        self, album_id: UUID, asset_ids: list[UUID]
+    ) -> None:
+        """Add missing members to one album through the supported API."""
+
+        await self._request(
+            "PUT",
+            f"/api/albums/{album_id}/assets",
+            operation="add assets to album",
+            json={"ids": [str(asset_id) for asset_id in asset_ids]},
+        )
+
     async def remove_assets_from_tag(
         self, tag_id: UUID, asset_ids: list[UUID]
     ) -> None:
@@ -331,6 +343,16 @@ class ImmichApiClient:
             "DELETE",
             f"/api/tags/{tag_id}/assets",
             operation="remove assets from tag",
+            json={"ids": [str(asset_id) for asset_id in asset_ids]},
+        )
+
+    async def add_assets_to_tag(self, tag_id: UUID, asset_ids: list[UUID]) -> None:
+        """Add missing members to one tag through the supported API."""
+
+        await self._request(
+            "PUT",
+            f"/api/tags/{tag_id}/assets",
+            operation="add assets to tag",
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
