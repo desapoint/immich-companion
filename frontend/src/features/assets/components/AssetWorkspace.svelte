@@ -5,25 +5,40 @@
     getAlbumOptions,
     getAssetDetail,
     getTagOptions,
+    executeAssetAction,
+    planAssetAction,
+    resolveAssetSelection,
     searchAssets,
     synchronizeAssets,
   } from '../api/assetApi';
   import { createDefaultAssetSort } from '../state/assetSort';
   import {
+    buildSelectionRequest,
+    createAssetSelectionState,
+    invertCurrentPage,
+    isAssetSelected,
+    selectAllMatching,
+    selectCurrentPage,
+    selectedAssetCount,
+    toggleAssetSelection,
+  } from '../state/assetSelection';
+  import {
     copySearchGroup,
     createSimpleAssetSearchFilters,
     simpleFiltersToSearchGroup,
     searchedTagIds,
-    toggleSelectedAsset,
   } from '../state/assetViewModel';
   import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
   import type {
     AlbumOption,
+    AssetActionIntent,
+    AssetActionPlan,
     AssetCardIndicatorConfig,
     AssetComparisonActivation,
     AssetComparisonSource,
     AssetDetail,
     AssetSearchResponse,
+    AssetSelectionResolution,
     AssetSort,
     SearchGroup,
     TagOption,
@@ -35,6 +50,7 @@
   import AssetPagination from './AssetPagination.svelte';
   import AssetResultStatus from './AssetResultStatus.svelte';
   import AssetSearchToolbar from './AssetSearchToolbar.svelte';
+  import AssetSelectionActions from './AssetSelectionActions.svelte';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
 
   let expression = $state<SearchGroup>(
@@ -50,13 +66,20 @@
   let error = $state<string | null>(null);
   let syncing = $state(false);
   let syncMessage = $state<string | null>(null);
-  let selectedIds = $state<Set<string>>(new Set());
+  let selection = $state(createAssetSelectionState());
+  let selectionResolution = $state<AssetSelectionResolution | null>(null);
+  let selectionLoading = $state(false);
+  let actionPlan = $state<AssetActionPlan | null>(null);
+  let actionBusy = $state(false);
+  let actionMessage = $state<string | null>(null);
+  let actionError = $state<string | null>(null);
   let viewerIndex = $state<number | null>(null);
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
+  let selectionController: AbortController | null = null;
   const detailCache = new Map<string, AssetDetail>();
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
@@ -69,6 +92,12 @@
   const viewerComparisonSource: AssetComparisonSource = 'stack';
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
   const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
+  const selectedCount = $derived(selectedAssetCount(selection, results?.total ?? 0));
+  const visibleSelectedIds = $derived(new Set(
+    results?.items
+      .filter((asset) => isAssetSelected(selection, asset.id))
+      .map((asset) => asset.id) ?? [],
+  ));
 
   async function loadRelationOptions(): Promise<void> {
     const [albumResult, tagResult] = await Promise.allSettled([
@@ -128,6 +157,7 @@
     sort = { ...nextSort };
     page = 1;
     viewerIndex = null;
+    clearSelection();
     void loadAssets();
   }
 
@@ -158,7 +188,113 @@
   }
 
   function toggleSelection(assetId: string): void {
-    selectedIds = toggleSelectedAsset(selectedIds, assetId);
+    selection = toggleAssetSelection(selection, assetId);
+    actionPlan = null;
+    void refreshSelection();
+  }
+
+  function clearSelection(): void {
+    selection = createAssetSelectionState();
+    selectionResolution = null;
+    actionPlan = null;
+    selectionController?.abort();
+    selectionLoading = false;
+  }
+
+  function selectPage(): void {
+    selection = selectCurrentPage(
+      selection,
+      results?.items.map((asset) => asset.id) ?? [],
+    );
+    actionPlan = null;
+    void refreshSelection();
+  }
+
+  function selectEveryMatch(): void {
+    selection = selectAllMatching();
+    actionPlan = null;
+    void refreshSelection();
+  }
+
+  function invertPage(): void {
+    selection = invertCurrentPage(
+      selection,
+      results?.items.map((asset) => asset.id) ?? [],
+    );
+    actionPlan = null;
+    void refreshSelection();
+  }
+
+  async function refreshSelection(): Promise<void> {
+    selectionController?.abort();
+    if (selectedAssetCount(selection, results?.total ?? 0) === 0) {
+      selectionResolution = null;
+      return;
+    }
+    const controller = new AbortController();
+    selectionController = controller;
+    selectionLoading = true;
+    actionError = null;
+    try {
+      const resolved = await resolveAssetSelection(
+        buildSelectionRequest(selection, expression),
+        controller.signal,
+      );
+      if (!controller.signal.aborted) selectionResolution = resolved;
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      if (!controller.signal.aborted) {
+        actionError = requestError instanceof Error
+          ? requestError.message
+          : 'Selection resolution failed.';
+      }
+    } finally {
+      if (!controller.signal.aborted) selectionLoading = false;
+    }
+  }
+
+  async function previewAction(
+    action: AssetActionIntent,
+    relationId: string | null = null,
+  ): Promise<void> {
+    actionBusy = true;
+    actionError = null;
+    actionMessage = null;
+    actionPlan = null;
+    try {
+      actionPlan = await planAssetAction(
+        buildSelectionRequest(selection, expression),
+        action,
+        relationId,
+      );
+    } catch (requestError) {
+      actionError = requestError instanceof Error
+        ? requestError.message
+        : 'Action planning failed.';
+    } finally {
+      actionBusy = false;
+    }
+  }
+
+  async function confirmAction(): Promise<void> {
+    if (!actionPlan) return;
+    actionBusy = true;
+    actionError = null;
+    try {
+      const result = await executeAssetAction(actionPlan.id);
+      actionMessage = `${result.applied_count} changed · ${result.skipped_count} skipped`;
+      actionPlan = null;
+      clearSelection();
+      detailCache.clear();
+      page = 1;
+      await Promise.all([loadRelationOptions(), loadAssets()]);
+    } catch (requestError) {
+      actionError = requestError instanceof Error
+        ? requestError.message
+        : 'Action execution failed.';
+    } finally {
+      actionBusy = false;
+    }
   }
 
   async function syncAssets(): Promise<void> {
@@ -169,6 +305,7 @@
       const result = await synchronizeAssets();
       syncMessage = `Synced ${result.seen} assets · ${result.created} new · ${result.removed} removed`;
       detailCache.clear();
+      clearSelection();
       await loadRelationOptions();
       await loadAssets();
     } catch (requestError) {
@@ -186,6 +323,7 @@
   onDestroy(() => {
     searchController?.abort();
     detailController?.abort();
+    selectionController?.abort();
   });
 </script>
 
@@ -195,11 +333,34 @@
   <AssetResultStatus
     total={results?.total ?? 0}
     shown={results?.items.length ?? 0}
-    selected={selectedIds.size}
+    selected={selectedCount}
     {syncing}
     {syncMessage}
     onsync={syncAssets}
   />
+
+  {#if results}
+    <AssetSelectionActions
+      {selectedCount}
+      matchingTotal={results.total}
+      currentPageCount={results.items.length}
+      allMatching={selection.mode === 'all_matching'}
+      summary={selectionResolution?.summary ?? null}
+      {albums}
+      {tags}
+      plan={actionPlan}
+      busy={selectionLoading || actionBusy || syncing}
+      message={actionMessage}
+      error={actionError}
+      onselectpage={selectPage}
+      onselectall={selectEveryMatch}
+      oninvertpage={invertPage}
+      onclear={clearSelection}
+      onplan={previewAction}
+      onconfirm={confirmAction}
+      oncancel={() => (actionPlan = null)}
+    />
+  {/if}
 
   {#if loading && !results}
     <AssetLoadingState />
@@ -210,7 +371,7 @@
   {:else if results}
     <AssetGrid
       assets={results.items}
-      {selectedIds}
+      selectedIds={visibleSelectedIds}
       indicatorConfig={cardIndicatorConfig}
       {matchingTagIds}
       onopen={openViewer}
@@ -232,7 +393,7 @@
   <AssetViewerDialog
     assets={results.items}
     initialIndex={viewerIndex}
-    {selectedIds}
+    selectedIds={visibleSelectedIds}
     {detail}
     {detailLoading}
     {detailError}

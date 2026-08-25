@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     JSON,
@@ -133,4 +133,31 @@ class TagAssetRecord(Base):
         ForeignKey("assets.id", ondelete="CASCADE"),
         primary_key=True,
         index=True,
+    )
+
+
+class ActionPlanRecord(Base):
+    """Immutable reviewed action target plus its execution audit."""
+
+    __tablename__ = "action_plans"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    action: Mapped[str] = mapped_column(String(32), index=True)
+    operation: Mapped[str] = mapped_column(String(32), index=True)
+    relation_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    selection: Mapped[dict[str, Any]] = mapped_column(JSON)
+    target_ids: Mapped[list[str]] = mapped_column(JSON)
+    target_digest: Mapped[str] = mapped_column(String(64))
+    applicable_ids: Mapped[list[str]] = mapped_column(JSON)
+    skipped_ids: Mapped[list[str]] = mapped_column(JSON)
+    missing_ids: Mapped[list[str]] = mapped_column(JSON)
+    destructive: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(24), default="planned", index=True)
+    result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    executed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

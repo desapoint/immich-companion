@@ -263,3 +263,35 @@ async def test_tag_memberships_use_paged_metadata_search() -> None:
     assert len(tags) == 1
     assert tags[0].name == "Review"
     assert tags[0].asset_ids == [ASSET_ONE]
+
+
+@pytest.mark.asyncio
+async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
+    album_id = UUID("44444444-4444-4444-8444-444444444444")
+    tag_id = UUID("66666666-6666-4666-8666-666666666666")
+    requests: list[tuple[str, str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json={})
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    await client.remove_assets_from_album(album_id, [ASSET_ONE])
+    await client.remove_assets_from_tag(tag_id, [ASSET_TWO])
+    await client.set_assets_archived([ASSET_ONE], True)
+    await client.set_assets_archived([ASSET_ONE], False)
+    await client.set_assets_favorite([ASSET_TWO], True)
+    await client.set_assets_favorite([ASSET_TWO], False)
+    await client.trash_assets([ASSET_ONE])
+    await client.restore_assets([ASSET_ONE])
+
+    assert requests == [
+        ("DELETE", f"/api/albums/{album_id}/assets", {"ids": [str(ASSET_ONE)]}),
+        ("DELETE", f"/api/tags/{tag_id}/assets", {"ids": [str(ASSET_TWO)]}),
+        ("PUT", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "archive"}),
+        ("PUT", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "timeline"}),
+        ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": True}),
+        ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": False}),
+        ("DELETE", "/api/assets", {"ids": [str(ASSET_ONE)], "force": False}),
+        ("POST", "/api/trash/restore/assets", {"ids": [str(ASSET_ONE)]}),
+    ]

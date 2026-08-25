@@ -15,6 +15,22 @@ from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from companion.action_repository import ActionRepository
+from companion.action_schema import (
+    AssetActionExecuteRequest,
+    AssetActionPlan,
+    AssetActionPlanRequest,
+    AssetActionResult,
+    AssetSelectionRequest,
+    AssetSelectionResolution,
+)
+from companion.action_service import (
+    ActionPlanConflictError,
+    ActionPlanNotFoundError,
+    AssetActionService,
+    DestructiveActionsDisabledError,
+    EmptySelectionError,
+)
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import (
     AlbumOption,
@@ -51,6 +67,17 @@ def create_app(
     asset_repository = AssetRepository(database) if database is not None else None
     asset_sync = (
         AssetSyncService(immich, asset_repository) if asset_repository is not None else None
+    )
+    action_service = (
+        AssetActionService(
+            runtime_settings,
+            immich,
+            asset_repository,
+            ActionRepository(database),
+            asset_sync,
+        )
+        if database is not None and asset_repository is not None and asset_sync is not None
+        else None
     )
 
     @asynccontextmanager
@@ -132,9 +159,11 @@ def create_app(
                 "structured_asset_search",
                 "album_filters",
                 "tag_filters",
+                "selection_resolution",
+                "reviewed_asset_actions",
             ],
             "planned": [
-                "actions",
+                "action_jobs",
                 "integrity",
                 "exact_dedupe",
                 "tagging",
@@ -164,6 +193,33 @@ def create_app(
         return HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="Immich could not complete the asset request.",
+        )
+
+    def require_action_service() -> AssetActionService:
+        if action_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return action_service
+
+    def map_action_error(error: RuntimeError) -> HTTPException:
+        if isinstance(error, ActionPlanNotFoundError):
+            return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(error))
+        if isinstance(error, DestructiveActionsDisabledError):
+            return HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(error))
+        if isinstance(error, ActionPlanConflictError):
+            return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error))
+        if isinstance(error, EmptySelectionError):
+            return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(error))
+        if isinstance(error, ValueError):
+            return HTTPException(
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                detail=str(error),
+            )
+        return HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="The companion action could not be completed.",
         )
 
     def add_public_asset_urls(response: AssetSearchResponse) -> AssetSearchResponse:
@@ -248,6 +304,36 @@ def create_app(
     async def search_tag_options() -> list[TagOption]:
         repository = require_asset_repository()
         return await repository.list_tags()
+
+    @app.post("/api/assets/selection/resolve", response_model=AssetSelectionResolution)
+    async def resolve_asset_selection(
+        selection: AssetSelectionRequest,
+    ) -> AssetSelectionResolution:
+        service = require_action_service()
+        try:
+            return await service.resolve_selection(selection)
+        except ValueError as error:
+            raise map_action_error(error) from error
+
+    @app.post("/api/assets/actions/plan", response_model=AssetActionPlan)
+    async def plan_asset_action(request: AssetActionPlanRequest) -> AssetActionPlan:
+        service = require_action_service()
+        try:
+            return await service.plan(request)
+        except (RuntimeError, ValueError) as error:
+            raise map_action_error(error) from error
+
+    @app.post("/api/assets/actions/execute", response_model=AssetActionResult)
+    async def execute_asset_action(
+        request: AssetActionExecuteRequest,
+    ) -> AssetActionResult:
+        service = require_action_service()
+        try:
+            return await service.execute(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except (RuntimeError, ValueError) as error:
+            raise map_action_error(error) from error
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:

@@ -1,7 +1,12 @@
 import type {
   AssetDetail,
+  AssetActionIntent,
+  AssetActionPlan,
+  AssetActionResult,
   AlbumOption,
   AssetSearchResponse,
+  AssetSelectionRequest,
+  AssetSelectionResolution,
   AssetSort,
   AssetSyncResult,
   SearchGroup,
@@ -83,6 +88,38 @@ export function getTagOptions(signal?: AbortSignal): Promise<TagOption[]> {
 
 export function synchronizeAssets(): Promise<AssetSyncResult> {
   return requestJson('/api/assets/sync', { method: 'POST' });
+}
+
+export function resolveAssetSelection(
+  selection: AssetSelectionRequest,
+  signal?: AbortSignal,
+): Promise<AssetSelectionResolution> {
+  return requestJson('/api/assets/selection/resolve', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selection),
+    signal,
+  });
+}
+
+export function planAssetAction(
+  selection: AssetSelectionRequest,
+  action: AssetActionIntent,
+  relationId: string | null = null,
+): Promise<AssetActionPlan> {
+  return requestJson('/api/assets/actions/plan', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ selection, action, relation_id: relationId }),
+  });
+}
+
+export function executeAssetAction(planId: string): Promise<AssetActionResult> {
+  return requestJson('/api/assets/actions/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId, confirm: true }),
+  });
 }
 
 export function getAssetDetail(assetId: string, signal?: AbortSignal): Promise<AssetDetail> {

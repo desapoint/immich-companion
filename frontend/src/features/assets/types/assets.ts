@@ -211,6 +211,80 @@ export interface AssetSyncResult {
   completed_at: string;
 }
 
+export type AssetSelectionMode = 'explicit' | 'all_matching';
+
+export interface AssetSelectionRequest {
+  mode: AssetSelectionMode;
+  ids: string[];
+  expression?: Record<string, unknown>;
+  excluded_ids: string[];
+}
+
+export interface AssetSelectionSummary {
+  total: number;
+  archived: number;
+  unarchived: number;
+  favorite: number;
+  not_favorite: number;
+  trashed: number;
+  not_trashed: number;
+  archive_action: 'archive' | 'unarchive' | null;
+  favorite_action: 'favorite' | 'unfavorite' | null;
+  can_trash: boolean;
+  can_restore: boolean;
+}
+
+export interface AssetSelectionResolution {
+  ids: string[];
+  missing_ids: string[];
+  summary: AssetSelectionSummary;
+}
+
+export type AssetActionIntent =
+  | 'archive_toggle'
+  | 'favorite_toggle'
+  | 'trash'
+  | 'restore'
+  | 'remove_album'
+  | 'remove_tag';
+
+export type AssetActionOperation =
+  | 'archive'
+  | 'unarchive'
+  | 'favorite'
+  | 'unfavorite'
+  | 'trash'
+  | 'restore'
+  | 'remove_album'
+  | 'remove_tag';
+
+export interface AssetActionPlan {
+  id: string;
+  action: AssetActionIntent;
+  operation: AssetActionOperation;
+  relation_id: string | null;
+  target_count: number;
+  applicable_count: number;
+  skipped_count: number;
+  missing_ids: string[];
+  destructive: boolean;
+  status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
+  expires_at: string;
+}
+
+export interface AssetActionResult {
+  plan_id: string;
+  operation: AssetActionOperation;
+  target_count: number;
+  applied_count: number;
+  skipped_count: number;
+  applied_ids: string[];
+  skipped_ids: string[];
+  failed_ids: string[];
+  verified: boolean;
+  status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
+}
+
 export type ViewerScaleMode = 'fit' | 'actual';
 export type AssetComparisonSource = 'stack' | 'similar';
 export type AssetComparisonActivation = 'click' | 'hover' | 'press';

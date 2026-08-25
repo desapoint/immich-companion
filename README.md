@@ -8,11 +8,14 @@ database or media files directly.
 The current vertical slice includes a FastAPI service, a componentized Svelte
 status dashboard and asset workspace, typed Immich asset/album synchronization,
 nested PostgreSQL search with stable configurable ordering, image cards, and a
-full-size fullscreen viewer. The
+full-size fullscreen viewer. Checked, current-page, inverted-page, and
+all-matching selections can be resolved by the backend and sent through a
+reviewed bulk-action flow for album/tag removal, archive, favorite, trash, and
+restore. The
 reproducible integration environment is backed by real Immich v3.1.0 and seeds
 66 unique images, producing three pages at the frontend's default 24-card size
-and still a second page at the 48-card option. Production defaults remain safe;
-action capability is enabled only in the disposable test environment.
+and still a second page at the 48-card option. Production defaults remain safe:
+trash is disabled unless `ALLOW_DESTRUCTIVE_ACTIONS` is explicitly enabled.
 
 ## Quick start
 
@@ -90,7 +93,7 @@ switch exposes recursive AND/OR groups, whole-group NOT, and album
 membership/exclusion. Results use a
 four-column desktop grid and full numbered pagination with first/last
 navigation, nearby-page windows, and 24/48/96/192 item page sizes. Cards use
-thumbnails, render compact tag chips directly, and expose album, tag, stack,
+thumbnails and expose album, tag, stack,
 external-source, and Open in Immich indicators when their metadata is available.
 Indicator popovers list relation details, and stack popovers preview their member
 images. The dialog requests the original Immich asset and provides
@@ -99,6 +102,13 @@ collection navigation, selection, details, and shortcuts. Its reusable bottom
 comparison strip defaults to stack members and click activation, while also
 supporting future similar-image collections and hover or press-and-hold
 comparison behavior.
+
+The selection action bar supports exact checked assets, the current page,
+page inversion, or every backend-resolved match. Every mutation is previewed
+with applicable and already-satisfied counts before confirmation. Removing an
+album or tag skips assets that do not have that membership. Mixed selections
+show one Archive/Unarchive direction and one Favorite/Unfavorite direction;
+Trash and Restore are independently visible when either state applies.
 
 Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather

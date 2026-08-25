@@ -9,6 +9,12 @@ from uuid import UUID
 from sqlalchemy import Float, and_, cast, delete, exists, func, not_, or_, select, true
 from sqlalchemy.dialects.postgresql import insert
 
+from companion.action_schema import (
+    AssetActionOperation,
+    AssetSelectionRequest,
+    AssetSelectionResolution,
+    AssetSelectionSummary,
+)
 from companion.asset_schema import (
     AlbumOption,
     AssetAlbumSummary,
@@ -468,3 +474,106 @@ class AssetRepository:
             return await session.scalar(
                 select(AssetRecord.id).where(AssetRecord.id == asset_id)
             ) is not None
+
+    async def resolve_selection(
+        self,
+        selection: AssetSelectionRequest,
+        *,
+        max_targets: int,
+    ) -> AssetSelectionResolution:
+        """Resolve an exact action target inside companion PostgreSQL."""
+
+        excluded = set(selection.excluded_ids)
+        if selection.mode == "explicit":
+            requested = list(selection.ids)
+            statement = select(AssetRecord).where(AssetRecord.id.in_(requested))
+        else:
+            assert selection.expression is not None
+            predicate = self._compile_group(selection.expression)
+            statement = select(AssetRecord).where(predicate)
+            if excluded:
+                statement = statement.where(AssetRecord.id.not_in(excluded))
+            statement = statement.order_by(AssetRecord.id).limit(max_targets + 1)
+
+        async with self._database.sessions() as session:
+            records = list((await session.scalars(statement)).all())
+
+        if len(records) > max_targets:
+            raise ValueError(f"Selection exceeds the {max_targets} asset safety limit")
+
+        record_by_id = {record.id: record for record in records}
+        if selection.mode == "explicit":
+            ordered_records = [
+                record_by_id[identifier]
+                for identifier in selection.ids
+                if identifier in record_by_id
+            ]
+            missing_ids = [
+                identifier
+                for identifier in selection.ids
+                if identifier not in record_by_id
+            ]
+        else:
+            ordered_records = records
+            missing_ids = []
+
+        total = len(ordered_records)
+        archived = sum(record.is_archived for record in ordered_records)
+        favorite = sum(record.is_favorite for record in ordered_records)
+        trashed = sum(record.is_trashed for record in ordered_records)
+        summary = AssetSelectionSummary(
+            total=total,
+            archived=archived,
+            unarchived=total - archived,
+            favorite=favorite,
+            not_favorite=total - favorite,
+            trashed=trashed,
+            not_trashed=total - trashed,
+            archive_action=("archive" if archived < total else "unarchive") if total else None,
+            favorite_action=("favorite" if favorite < total else "unfavorite") if total else None,
+            can_trash=trashed < total,
+            can_restore=trashed > 0,
+        )
+        return AssetSelectionResolution(
+            ids=[record.id for record in ordered_records],
+            missing_ids=missing_ids,
+            summary=summary,
+        )
+
+    async def applicable_action_ids(
+        self,
+        operation: AssetActionOperation,
+        target_ids: list[UUID],
+        relation_id: UUID | None = None,
+    ) -> set[UUID]:
+        """Return targets whose synchronized state still needs the operation."""
+
+        if not target_ids:
+            return set()
+        if operation in {"remove_album", "remove_tag"}:
+            assert relation_id is not None
+            model = AlbumAssetRecord if operation == "remove_album" else TagAssetRecord
+            relation_column = (
+                AlbumAssetRecord.album_id
+                if operation == "remove_album"
+                else TagAssetRecord.tag_id
+            )
+            statement = select(model.asset_id).where(
+                model.asset_id.in_(target_ids),
+                relation_column == relation_id,
+            )
+        else:
+            column, desired = {
+                "archive": (AssetRecord.is_archived, True),
+                "unarchive": (AssetRecord.is_archived, False),
+                "favorite": (AssetRecord.is_favorite, True),
+                "unfavorite": (AssetRecord.is_favorite, False),
+                "trash": (AssetRecord.is_trashed, True),
+                "restore": (AssetRecord.is_trashed, False),
+            }[operation]
+            statement = select(AssetRecord.id).where(
+                AssetRecord.id.in_(target_ids),
+                column != desired,
+            )
+        async with self._database.sessions() as session:
+            return set((await session.scalars(statement)).all())

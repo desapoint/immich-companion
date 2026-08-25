@@ -310,6 +310,76 @@ class ImmichApiClient:
             cache_control=response.headers.get("cache-control"),
         )
 
+    async def remove_assets_from_album(
+        self, album_id: UUID, asset_ids: list[UUID]
+    ) -> None:
+        """Remove current members from one album through the supported API."""
+
+        await self._request(
+            "DELETE",
+            f"/api/albums/{album_id}/assets",
+            operation="remove assets from album",
+            json={"ids": [str(asset_id) for asset_id in asset_ids]},
+        )
+
+    async def remove_assets_from_tag(
+        self, tag_id: UUID, asset_ids: list[UUID]
+    ) -> None:
+        """Remove current members from one tag through the supported API."""
+
+        await self._request(
+            "DELETE",
+            f"/api/tags/{tag_id}/assets",
+            operation="remove assets from tag",
+            json={"ids": [str(asset_id) for asset_id in asset_ids]},
+        )
+
+    async def set_assets_archived(self, asset_ids: list[UUID], archived: bool) -> None:
+        """Set archive visibility for a batch through Immich."""
+
+        await self._request(
+            "PUT",
+            "/api/assets",
+            operation="archive assets" if archived else "unarchive assets",
+            json={
+                "ids": [str(asset_id) for asset_id in asset_ids],
+                "visibility": "archive" if archived else "timeline",
+            },
+        )
+
+    async def set_assets_favorite(self, asset_ids: list[UUID], favorite: bool) -> None:
+        """Set favorite state for a batch through Immich."""
+
+        await self._request(
+            "PUT",
+            "/api/assets",
+            operation="favorite assets" if favorite else "unfavorite assets",
+            json={
+                "ids": [str(asset_id) for asset_id in asset_ids],
+                "isFavorite": favorite,
+            },
+        )
+
+    async def trash_assets(self, asset_ids: list[UUID]) -> None:
+        """Move a batch to trash without permanent deletion."""
+
+        await self._request(
+            "DELETE",
+            "/api/assets",
+            operation="trash assets",
+            json={"ids": [str(asset_id) for asset_id in asset_ids], "force": False},
+        )
+
+    async def restore_assets(self, asset_ids: list[UUID]) -> None:
+        """Restore a batch from trash through Immich."""
+
+        await self._request(
+            "POST",
+            "/api/trash/restore/assets",
+            operation="restore assets",
+            json={"ids": [str(asset_id) for asset_id in asset_ids]},
+        )
+
     async def list_albums(self, assets: list[ImmichAsset]) -> list[ImmichAlbum]:
         """List albums and resolve memberships without direct Immich database access."""
 
