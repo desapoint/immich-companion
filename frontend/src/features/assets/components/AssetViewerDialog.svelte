@@ -81,6 +81,7 @@
     comparisonSource === 'stack' ? stackMembersForAsset(currentAsset) : comparisonAssets,
   );
   const previewItems = $derived(buildAssetPreviewItems(comparisonMembers));
+  const hasComparisonTray = $derived(previewItems.length > 1);
   const visibleAsset = $derived(
     comparisonMembers.find((asset) => asset.id === visibleAssetId)
       ?? assetAsStackMember(currentAsset),
@@ -358,16 +359,23 @@
     </button>
 
     {#if infoOpen}
-      <AssetInfoPanel asset={currentAsset} {detail} loading={detailLoading} error={detailError} />
+      <AssetInfoPanel
+        asset={currentAsset}
+        {detail}
+        loading={detailLoading}
+        error={detailError}
+        reserveComparisonTray={hasComparisonTray}
+      />
     {/if}
 
-    {#if previewItems.length > 1}
+    {#if hasComparisonTray}
       <AssetViewerComparisonTray
         items={previewItems}
         source={comparisonSource}
         activation={comparisonActivation}
         selectedId={currentAsset.id}
         visibleId={visibleAsset.id}
+        avoidInfoPanel={infoOpen}
         onpreview={previewComparison}
         onrestore={restoreComparison}
         oncommit={commitComparison}

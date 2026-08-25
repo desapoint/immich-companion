@@ -78,6 +78,7 @@ SearchField = Literal[
     "archived",
     "trashed",
     "album",
+    "tag",
 ]
 SearchOperator = Literal[
     "contains",
@@ -89,6 +90,10 @@ SearchOperator = Literal[
     "at_most",
     "in_album",
     "not_in_album",
+    "in_any",
+    "in_all",
+    "not_in_any",
+    "has_none",
 ]
 
 
@@ -98,7 +103,7 @@ class SearchCondition(BaseModel):
     kind: Literal["condition"] = "condition"
     field: SearchField
     operator: SearchOperator
-    value: str | int | float | bool
+    value: str | int | float | bool | list[str] | None = None
 
     @model_validator(mode="after")
     def validate_field_operator_value(self) -> SearchCondition:
@@ -112,10 +117,45 @@ class SearchCondition(BaseModel):
             "favorite": {"equals"},
             "archived": {"equals"},
             "trashed": {"equals"},
-            "album": {"in_album", "not_in_album"},
+            "album": {
+                "in_album",
+                "not_in_album",
+                "in_any",
+                "in_all",
+                "not_in_any",
+                "has_none",
+            },
+            "tag": {"in_any", "in_all", "not_in_any", "has_none"},
         }
         if self.operator not in allowed[self.field]:
             raise ValueError(f"Operator {self.operator!r} is not valid for {self.field!r}")
+        if self.field in {"album", "tag"}:
+            if self.operator == "has_none":
+                if self.value not in (None, []):
+                    raise ValueError(f"{self.field!r} with 'has_none' does not accept values")
+                self.value = []
+                return self
+            if self.operator in {"in_album", "not_in_album"}:
+                if self.field != "album" or not isinstance(self.value, str):
+                    raise ValueError("Legacy album membership requires one album UUID")
+                values = [self.value]
+                self.operator = "in_any" if self.operator == "in_album" else "not_in_any"
+            elif isinstance(self.value, list):
+                values = self.value
+            else:
+                raise ValueError(f"{self.field!r} requires a list of UUIDs")
+            if not values or len(values) > 100:
+                raise ValueError(f"{self.field!r} requires between 1 and 100 UUIDs")
+            normalized: list[str] = []
+            for item in values:
+                try:
+                    identifier = str(UUID(item))
+                except (TypeError, ValueError) as error:
+                    raise ValueError(f"{self.field!r} requires valid UUIDs") from error
+                if identifier not in normalized:
+                    normalized.append(identifier)
+            self.value = normalized
+            return self
         if self.field in {"favorite", "archived", "trashed"} and not isinstance(
             self.value, bool
         ):
@@ -135,13 +175,6 @@ class SearchCondition(BaseModel):
                 datetime.fromisoformat(self.value.replace("Z", "+00:00"))
             except ValueError as error:
                 raise ValueError("'taken_at' requires an ISO date-time string") from error
-        if self.field == "album":
-            if not isinstance(self.value, str):
-                raise ValueError("'album' requires an album UUID")
-            try:
-                UUID(self.value)
-            except ValueError as error:
-                raise ValueError("'album' requires an album UUID") from error
         if self.field == "type" and self.value not in {"IMAGE", "VIDEO", "AUDIO", "OTHER"}:
             raise ValueError("'type' requires a supported media type")
         if self.field == "filename" and (
@@ -179,6 +212,15 @@ class AlbumOption(BaseModel):
 
     id: UUID
     name: str
+    asset_count: int
+
+
+class TagOption(BaseModel):
+    """Compact tag choice for search controls."""
+
+    id: UUID
+    name: str
+    color: str | None
     asset_count: int
 
 

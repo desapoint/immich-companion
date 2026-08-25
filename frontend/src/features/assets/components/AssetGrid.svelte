@@ -1,16 +1,30 @@
 <script lang="ts">
-  import type { AssetCardIndicatorConfig, AssetSummary } from '../types/assets';
+  import type {
+    AssetCardIndicatorConfig,
+    AssetCardInlineTagMode,
+    AssetSummary,
+  } from '../types/assets';
   import AssetCard from './AssetCard.svelte';
 
   interface Props {
     assets: AssetSummary[];
     selectedIds: Set<string>;
     indicatorConfig: AssetCardIndicatorConfig;
+    inlineTagMode: AssetCardInlineTagMode;
+    matchingTagIds: ReadonlySet<string>;
     onopen: (index: number) => void;
     ontoggle: (assetId: string) => void;
   }
 
-  let { assets, selectedIds, indicatorConfig, onopen, ontoggle }: Props = $props();
+  let {
+    assets,
+    selectedIds,
+    indicatorConfig,
+    inlineTagMode,
+    matchingTagIds,
+    onopen,
+    ontoggle,
+  }: Props = $props();
 </script>
 
 <div class="asset-grid" aria-label="Asset search results">
@@ -18,6 +32,8 @@
     <AssetCard
       {asset}
       {indicatorConfig}
+      {inlineTagMode}
+      {matchingTagIds}
       selected={selectedIds.has(asset.id)}
       onopen={() => onopen(index)}
       ontoggle={() => ontoggle(asset.id)}

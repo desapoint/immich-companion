@@ -1,5 +1,6 @@
 <script lang="ts">
-  import SelectField, { type SelectOption } from '../../../lib/components/ui/SelectField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import type { SelectOption } from '../../../lib/types/ui';
   import type { AssetSort, AssetSortDirection, AssetSortField } from '../types/assets';
 
   interface Props {

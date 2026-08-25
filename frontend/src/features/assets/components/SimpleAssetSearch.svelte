@@ -1,22 +1,26 @@
 <script lang="ts">
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import type {
+    AlbumOption,
     AssetType,
     SearchBooleanFilter,
     SimpleAssetSearchFilters,
+    TagOption,
   } from '../types/assets';
   import AssetSearchFormHeader from './AssetSearchFormHeader.svelte';
   import SimpleAdvancedFilters from './SimpleAdvancedFilters.svelte';
 
   interface Props {
     filters: SimpleAssetSearchFilters;
+    albums: AlbumOption[];
+    tags: TagOption[];
     disabled?: boolean;
     onchange: (filters: SimpleAssetSearchFilters) => void;
     onsearch: () => void;
     onreset: () => void;
   }
 
-  let { filters, disabled = false, onchange, onsearch, onreset }: Props = $props();
+  let { filters, albums, tags, disabled = false, onchange, onsearch, onreset }: Props = $props();
 
   const stateOptions = [
     { value: 'any', label: 'Any' },
@@ -90,7 +94,7 @@
     />
   </div>
 
-  <SimpleAdvancedFilters {filters} {disabled} {onchange} />
+  <SimpleAdvancedFilters {filters} {albums} {tags} {disabled} {onchange} />
 </form>
 
 <style>
@@ -154,6 +158,7 @@
     .query-field {
       grid-column: 1 / -1;
     }
+
   }
 
   @media (max-width: 30rem) {

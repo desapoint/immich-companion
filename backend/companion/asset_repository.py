@@ -20,10 +20,17 @@ from companion.asset_schema import (
     SearchCondition,
     SearchGroup,
     StructuredAssetSearchQuery,
+    TagOption,
 )
 from companion.database import DatabaseManager
-from companion.immich import ImmichAlbum, ImmichAsset
-from companion.models import AlbumAssetRecord, AlbumRecord, AssetRecord
+from companion.immich import ImmichAlbum, ImmichAsset, ImmichTag
+from companion.models import (
+    AlbumAssetRecord,
+    AlbumRecord,
+    AssetRecord,
+    TagAssetRecord,
+    TagRecord,
+)
 
 ASPECT_RATIO_RELATIVE_TOLERANCE = 0.001
 
@@ -73,6 +80,7 @@ class AssetRepository:
         self,
         assets: list[ImmichAsset],
         albums: list[ImmichAlbum] | None = None,
+        tags: list[ImmichTag] | None = None,
     ) -> tuple[int, int, int]:
         """Upsert a complete traversal and remove rows absent from that traversal."""
 
@@ -154,6 +162,55 @@ class AssetRepository:
                         )
                 else:
                     await session.execute(delete(AlbumRecord))
+
+            if tags is not None:
+                await session.execute(delete(TagAssetRecord))
+                tag_rows = []
+                tag_memberships = []
+                for tag in tags:
+                    member_ids = [
+                        asset_id
+                        for asset_id in tag.asset_ids
+                        if asset_id in unique_assets
+                    ]
+                    tag_rows.append(
+                        {
+                            "id": tag.id,
+                            "tag_name": tag.name,
+                            "tag_value": tag.value,
+                            "color": tag.color,
+                            "asset_count": len(member_ids),
+                            "synced_at": synced_at,
+                        }
+                    )
+                    tag_memberships.extend(
+                        {"tag_id": tag.id, "asset_id": asset_id}
+                        for asset_id in member_ids
+                    )
+                if tag_rows:
+                    tag_statement = insert(TagRecord).values(tag_rows)
+                    await session.execute(
+                        tag_statement.on_conflict_do_update(
+                            index_elements=[TagRecord.id],
+                            set_={
+                                column.name: getattr(tag_statement.excluded, column.name)
+                                for column in TagRecord.__table__.columns
+                                if column.name != "id"
+                            },
+                        )
+                    )
+                    tag_ids = [tag.id for tag in tags]
+                    await session.execute(
+                        delete(TagRecord).where(TagRecord.id.not_in(tag_ids))
+                    )
+                    if tag_memberships:
+                        await session.execute(
+                            insert(TagAssetRecord)
+                            .values(tag_memberships)
+                            .on_conflict_do_nothing()
+                        )
+                else:
+                    await session.execute(delete(TagRecord))
 
         created = len(unique_assets) - len(existing_ids)
         updated = len(existing_ids)
@@ -245,14 +302,34 @@ class AssetRepository:
                 "trashed": AssetRecord.is_trashed,
             }[condition.field]
             return column == bool(value)
-        if condition.field == "album":
-            membership = exists(
-                select(1).where(
-                    AlbumAssetRecord.asset_id == AssetRecord.id,
-                    AlbumAssetRecord.album_id == UUID(str(value)),
-                )
+        if condition.field in {"album", "tag"}:
+            membership_model = (
+                AlbumAssetRecord if condition.field == "album" else TagAssetRecord
             )
-            return not_(membership) if condition.operator == "not_in_album" else membership
+            relation_column = (
+                AlbumAssetRecord.album_id
+                if condition.field == "album"
+                else TagAssetRecord.tag_id
+            )
+            any_membership = exists(
+                select(1).where(membership_model.asset_id == AssetRecord.id)
+            )
+            if condition.operator == "has_none":
+                return not_(any_membership)
+            assert isinstance(value, list)
+            memberships = [
+                exists(
+                    select(1).where(
+                        membership_model.asset_id == AssetRecord.id,
+                        relation_column == UUID(identifier),
+                    )
+                )
+                for identifier in value
+            ]
+            if condition.operator == "in_all":
+                return and_(*memberships)
+            any_selected = or_(*memberships)
+            return not_(any_selected) if condition.operator == "not_in_any" else any_selected
         raise ValueError(f"Unsupported search field: {condition.field}")
 
     @classmethod
@@ -364,6 +441,24 @@ class AssetRepository:
         return [
             AlbumOption(id=album.id, name=album.album_name, asset_count=album.asset_count)
             for album in albums
+        ]
+
+    async def list_tags(self) -> list[TagOption]:
+        """Return stable tag choices for Simple and Expert search controls."""
+
+        statement = select(TagRecord).order_by(
+            func.lower(TagRecord.tag_name), TagRecord.id
+        )
+        async with self._database.sessions() as session:
+            tags = list((await session.scalars(statement)).all())
+        return [
+            TagOption(
+                id=tag.id,
+                name=tag.tag_name,
+                color=tag.color,
+                asset_count=tag.asset_count,
+            )
+            for tag in tags
         ]
 
     async def has_asset(self, asset_id: UUID) -> bool:

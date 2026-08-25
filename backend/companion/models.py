@@ -103,3 +103,34 @@ class AlbumAssetRecord(Base):
         primary_key=True,
         index=True,
     )
+
+
+class TagRecord(Base):
+    """Synchronized Immich tag metadata used by relation search."""
+
+    __tablename__ = "tags"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    tag_name: Mapped[str] = mapped_column(Text, index=True)
+    tag_value: Mapped[str] = mapped_column(Text)
+    color: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    asset_count: Mapped[int] = mapped_column(Integer, default=0)
+    synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class TagAssetRecord(Base):
+    """Current many-to-many Immich tag membership."""
+
+    __tablename__ = "tag_assets"
+
+    tag_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("tags.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+        index=True,
+    )

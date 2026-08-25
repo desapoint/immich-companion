@@ -7,9 +7,11 @@ import {
   createSearchCondition,
   createSearchGroup,
   formatAssetBytes,
+  inlineTagsForAsset,
   nextViewerIndex,
   restoreComparisonState,
   serializeSearchGroup,
+  searchedTagIds,
   simpleFiltersToSearchGroup,
   stackMembersForAsset,
   toggleSelectedAsset,
@@ -158,5 +160,49 @@ describe('asset view model', () => {
         { field: 'aspect_ratio', operator: 'at_most', value: 16 / 9 },
       ],
     });
+  });
+
+  it('serializes Simple album and tag selections as OR relations and empty shortcuts', () => {
+    const filters = createSimpleAssetSearchFilters();
+    filters.albumIds = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'];
+    filters.tagIds = ['33333333-3333-4333-8333-333333333333'];
+
+    expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
+      children: [
+        { field: 'trashed', operator: 'equals', value: false },
+        { field: 'album', operator: 'in_any', value: filters.albumIds },
+        { field: 'tag', operator: 'in_any', value: filters.tagIds },
+      ],
+    });
+
+    filters.noAlbum = true;
+    filters.noTag = true;
+    expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
+      children: [
+        { field: 'trashed', operator: 'equals', value: false },
+        { field: 'album', operator: 'has_none', value: [] },
+        { field: 'tag', operator: 'has_none', value: [] },
+      ],
+    });
+  });
+
+  it('finds nested searched tags and applies each inline display mode', () => {
+    const expression = createSearchGroup();
+    const nested = createSearchGroup('or');
+    const tagCondition = createSearchCondition('tag');
+    tagCondition.value = ['tag-review', 'tag-similar'];
+    nested.children.push(tagCondition);
+    expression.children.push(nested);
+
+    const tags = [
+      { id: 'tag-review', name: 'Review', color: null },
+      { id: 'tag-other', name: 'Other', color: null },
+    ];
+    const searched = new Set(searchedTagIds(expression));
+
+    expect([...searched]).toEqual(['tag-review', 'tag-similar']);
+    expect(inlineTagsForAsset(tags, 'hidden', searched)).toEqual([]);
+    expect(inlineTagsForAsset(tags, 'matching', searched)).toEqual([tags[0]]);
+    expect(inlineTagsForAsset(tags, 'compact', searched)).toEqual(tags);
   });
 });

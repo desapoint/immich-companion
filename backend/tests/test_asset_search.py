@@ -56,6 +56,46 @@ def test_nested_album_intersection_union_and_exclusion_compile() -> None:
     assert "NOT (EXISTS" in sql
 
 
+def test_multi_relation_any_all_none_and_empty_compile() -> None:
+    album_a = UUID("11111111-1111-4111-8111-111111111111")
+    album_b = UUID("22222222-2222-4222-8222-222222222222")
+    tag_a = UUID("33333333-3333-4333-8333-333333333333")
+    tag_b = UUID("44444444-4444-4444-8444-444444444444")
+    expression = SearchGroup(
+        children=[
+            SearchCondition(
+                field="album",
+                operator="in_any",
+                value=[str(album_a), str(album_b)],
+            ),
+            SearchCondition(
+                field="tag",
+                operator="in_all",
+                value=[str(tag_a), str(tag_b)],
+            ),
+            SearchCondition(
+                field="tag",
+                operator="not_in_any",
+                value=[str(tag_b)],
+            ),
+            SearchCondition(field="album", operator="has_none", value=[]),
+            SearchCondition(field="tag", operator="has_none", value=[]),
+        ]
+    )
+
+    sql = compiled_sql(expression)
+
+    assert "album_assets" in sql
+    assert "tag_assets" in sql
+    assert str(album_a) in sql
+    assert str(album_b) in sql
+    assert str(tag_a) in sql
+    assert str(tag_b) in sql
+    assert " OR " in sql
+    assert " AND " in sql
+    assert sql.count("NOT (EXISTS") >= 3
+
+
 def test_dimensions_aspect_ratio_and_states_compile() -> None:
     expression = SearchGroup(
         children=[
@@ -96,6 +136,12 @@ def test_invalid_field_operator_and_values_are_rejected() -> None:
         SearchCondition(field="album", operator="contains", value="not-a-uuid")
     with pytest.raises(ValidationError):
         SearchCondition(field="width", operator="at_least", value="wide")
+    with pytest.raises(ValidationError):
+        SearchCondition(field="tag", operator="in_any", value=[])
+    with pytest.raises(ValidationError):
+        SearchCondition(field="tag", operator="in_all", value=["not-a-uuid"])
+    with pytest.raises(ValidationError):
+        SearchCondition(field="album", operator="has_none", value=[str(UUID(int=1))])
     for value in ["0", "-1", "16/0", "16/9/2", "wide"]:
         with pytest.raises(ValidationError):
             SearchCondition(field="aspect_ratio", operator="equals", value=value)

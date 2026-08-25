@@ -6,6 +6,7 @@ import type {
   AssetSyncResult,
   SearchGroup,
   AssetViewerMedia,
+  TagOption,
 } from '../types/assets';
 import type { MediaPreviewItem } from '../../../lib/types/media';
 import { createDefaultAssetSort } from '../state/assetSort';
@@ -74,6 +75,10 @@ export async function searchAssets(
 
 export function getAlbumOptions(signal?: AbortSignal): Promise<AlbumOption[]> {
   return requestJson('/api/albums', { signal });
+}
+
+export function getTagOptions(signal?: AbortSignal): Promise<TagOption[]> {
+  return requestJson('/api/tags', { signal });
 }
 
 export function synchronizeAssets(): Promise<AssetSyncResult> {

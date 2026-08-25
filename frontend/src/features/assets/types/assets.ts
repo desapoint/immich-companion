@@ -2,6 +2,7 @@ export type AssetType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'OTHER';
 
 export type SearchMode = 'simple' | 'expert';
 export type SearchBooleanFilter = 'any' | 'true' | 'false';
+export type AssetCardInlineTagMode = 'hidden' | 'matching' | 'compact';
 export type AssetSortField =
   | 'taken_at'
   | 'filename'
@@ -22,6 +23,10 @@ export interface SimpleAssetSearchFilters {
   favorite: SearchBooleanFilter;
   archived: SearchBooleanFilter;
   trashed: SearchBooleanFilter;
+  albumIds: string[];
+  tagIds: string[];
+  noAlbum: boolean;
+  noTag: boolean;
   takenAfter: string;
   takenBefore: string;
   minWidth: string;
@@ -121,7 +126,8 @@ export type SearchField =
   | 'favorite'
   | 'archived'
   | 'trashed'
-  | 'album';
+  | 'album'
+  | 'tag';
 
 export type SearchOperator =
   | 'contains'
@@ -131,15 +137,17 @@ export type SearchOperator =
   | 'before'
   | 'at_least'
   | 'at_most'
-  | 'in_album'
-  | 'not_in_album';
+  | 'in_any'
+  | 'in_all'
+  | 'not_in_any'
+  | 'has_none';
 
 export interface SearchCondition {
   id: string;
   kind: 'condition';
   field: SearchField;
   operator: SearchOperator;
-  value: string;
+  value: string | string[];
 }
 
 export interface SearchGroup {
@@ -155,6 +163,13 @@ export type SearchNode = SearchCondition | SearchGroup;
 export interface AlbumOption {
   id: string;
   name: string;
+  asset_count: number;
+}
+
+export interface TagOption {
+  id: string;
+  name: string;
+  color: string | null;
   asset_count: number;
 }
 

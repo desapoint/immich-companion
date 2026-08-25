@@ -1,5 +1,7 @@
 import type {
   AssetComparisonSource,
+  AssetCardInlineTagMode,
+  AssetTagSummary,
   AssetStackMember,
   AssetSummary,
   SearchCondition,
@@ -33,11 +35,18 @@ const DEFAULT_OPERATOR: Record<SearchField, SearchOperator> = {
   favorite: 'equals',
   archived: 'equals',
   trashed: 'equals',
-  album: 'in_album',
+  album: 'in_any',
+  tag: 'in_any',
 };
 
 export function createSearchCondition(field: SearchField = 'filename'): SearchCondition {
-  const value = field === 'type' ? 'IMAGE' : field === 'favorite' || field === 'archived' || field === 'trashed' ? 'true' : '';
+  const value = field === 'type'
+    ? 'IMAGE'
+    : field === 'favorite' || field === 'archived' || field === 'trashed'
+      ? 'true'
+      : field === 'album' || field === 'tag'
+        ? []
+        : '';
   return {
     id: nodeId('condition'),
     kind: 'condition',
@@ -45,6 +54,12 @@ export function createSearchCondition(field: SearchField = 'filename'): SearchCo
     operator: DEFAULT_OPERATOR[field],
     value,
   };
+}
+
+export function createEmptyRelationCondition(field: 'album' | 'tag'): SearchCondition {
+  const condition = createSearchCondition(field);
+  condition.operator = 'has_none';
+  return condition;
 }
 
 export function resetSearchConditionField(
@@ -78,6 +93,10 @@ export function createSimpleAssetSearchFilters(): SimpleAssetSearchFilters {
     favorite: 'any',
     archived: 'any',
     trashed: 'false',
+    albumIds: [],
+    tagIds: [],
+    noAlbum: false,
+    noTag: false,
     takenAfter: '',
     takenBefore: '',
     minWidth: '',
@@ -108,6 +127,21 @@ export function simpleFiltersToSearchGroup(filters: SimpleAssetSearchFilters): S
     if (value === 'any') continue;
     const condition = createSearchCondition(field);
     condition.value = value;
+    group.children.push(condition);
+  }
+
+  if (filters.noAlbum) {
+    group.children.push(createEmptyRelationCondition('album'));
+  } else if (filters.albumIds.length) {
+    const condition = createSearchCondition('album');
+    condition.value = [...filters.albumIds];
+    group.children.push(condition);
+  }
+  if (filters.noTag) {
+    group.children.push(createEmptyRelationCondition('tag'));
+  } else if (filters.tagIds.length) {
+    const condition = createSearchCondition('tag');
+    condition.value = [...filters.tagIds];
     group.children.push(condition);
   }
 
@@ -143,13 +177,15 @@ function serializeNode(node: SearchNode): Record<string, unknown> {
       children: node.children.map(serializeNode),
     };
   }
-  let value: string | number | boolean = node.value;
-  if (node.field === 'width' || node.field === 'height') value = Number.parseInt(node.value, 10);
-  if (node.field === 'aspect_ratio') value = parseAspectRatioInput(node.value);
+  let value: string | number | boolean | string[] = Array.isArray(node.value)
+    ? [...node.value]
+    : node.value;
+  if (node.field === 'width' || node.field === 'height') value = Number.parseInt(String(node.value), 10);
+  if (node.field === 'aspect_ratio') value = parseAspectRatioInput(String(node.value));
   if (node.field === 'favorite' || node.field === 'archived' || node.field === 'trashed') {
     value = node.value === 'true';
   }
-  if (node.field === 'taken_at') value = new Date(node.value).toISOString();
+  if (node.field === 'taken_at') value = new Date(String(node.value)).toISOString();
   return { kind: 'condition', field: node.field, operator: node.operator, value };
 }
 
@@ -190,6 +226,30 @@ export function stackMembersForAsset(asset: AssetSummary): AssetStackMember[] {
   const unique = new Map(members.map((member) => [member.id, member]));
   if (!unique.has(asset.id)) unique.set(asset.id, assetAsStackMember(asset));
   return [...unique.values()];
+}
+
+export function searchedTagIds(group: SearchGroup): string[] {
+  const identifiers = new Set<string>();
+  function visit(node: SearchNode): void {
+    if (node.kind === 'group') {
+      node.children.forEach(visit);
+      return;
+    }
+    if (node.field !== 'tag' || !Array.isArray(node.value)) return;
+    node.value.forEach((identifier) => identifiers.add(identifier));
+  }
+  visit(group);
+  return [...identifiers];
+}
+
+export function inlineTagsForAsset(
+  tags: AssetTagSummary[],
+  mode: AssetCardInlineTagMode,
+  matchingTagIds: ReadonlySet<string>,
+): AssetTagSummary[] {
+  if (mode === 'hidden') return [];
+  if (mode === 'matching') return tags.filter((tag) => matchingTagIds.has(tag.id));
+  return tags;
 }
 
 export function comparisonPreviewState(

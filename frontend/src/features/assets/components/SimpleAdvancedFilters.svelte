@@ -1,7 +1,8 @@
 <script lang="ts">
   import AspectRatioField from '../../../lib/components/ui/AspectRatioField.svelte';
   import DateTimePicker from '../../../lib/components/ui/DateTimePicker.svelte';
-  import type { SimpleAssetSearchFilters } from '../types/assets';
+  import type { AlbumOption, SimpleAssetSearchFilters, TagOption } from '../types/assets';
+  import RelationMultiFilter from './RelationMultiFilter.svelte';
 
   type NumericFilter =
     | 'minWidth'
@@ -11,11 +12,13 @@
 
   interface Props {
     filters: SimpleAssetSearchFilters;
+    albums: AlbumOption[];
+    tags: TagOption[];
     disabled?: boolean;
     onchange: (filters: SimpleAssetSearchFilters) => void;
   }
 
-  let { filters, disabled = false, onchange }: Props = $props();
+  let { filters, albums, tags, disabled = false, onchange }: Props = $props();
   let open = $state(false);
   const componentId = $props.id();
   const activeCount = $derived([
@@ -27,7 +30,19 @@
     filters.maxHeight,
     filters.minAspectRatio,
     filters.maxAspectRatio,
-  ].filter((value) => value.trim()).length);
+  ].filter((value) => value.trim()).length
+    + filters.albumIds.length
+    + filters.tagIds.length
+    + Number(filters.noAlbum)
+    + Number(filters.noTag));
+  const albumOptions = $derived(albums.map((album) => ({
+    value: album.id,
+    label: `${album.name} (${album.asset_count})`,
+  })));
+  const tagOptions = $derived(tags.map((tag) => ({
+    value: tag.id,
+    label: `${tag.name} (${tag.asset_count})`,
+  })));
 </script>
 
 {#snippet numberField(
@@ -60,6 +75,38 @@
   </summary>
 
   <div class="advanced-fields">
+    <RelationMultiFilter
+      id={`${componentId}-albums`}
+      label="Albums"
+      values={filters.albumIds}
+      options={albumOptions}
+      placeholder="Any album"
+      emptySelected={filters.noAlbum}
+      emptyLabel="No album"
+      {disabled}
+      onvalueschange={(albumIds) => onchange({ ...filters, albumIds, noAlbum: false })}
+      onemptychange={(noAlbum) => onchange({
+        ...filters,
+        noAlbum,
+        albumIds: noAlbum ? [] : filters.albumIds,
+      })}
+    />
+    <RelationMultiFilter
+      id={`${componentId}-tags`}
+      label="Tags"
+      values={filters.tagIds}
+      options={tagOptions}
+      placeholder="Any tag"
+      emptySelected={filters.noTag}
+      emptyLabel="No tag"
+      {disabled}
+      onvalueschange={(tagIds) => onchange({ ...filters, tagIds, noTag: false })}
+      onemptychange={(noTag) => onchange({
+        ...filters,
+        noTag,
+        tagIds: noTag ? [] : filters.tagIds,
+      })}
+    />
     <DateTimePicker
       id={`${componentId}-taken-after`}
       label="Taken after"

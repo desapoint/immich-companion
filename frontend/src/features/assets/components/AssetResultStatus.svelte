@@ -1,14 +1,30 @@
 <script lang="ts">
+  import type { AssetCardInlineTagMode } from '../types/assets';
+  import AssetCardDisplaySettings from './AssetCardDisplaySettings.svelte';
+
   interface Props {
     total: number;
     shown: number;
     selected: number;
     syncing: boolean;
     syncMessage: string | null;
+    inlineTagMode: AssetCardInlineTagMode;
+    searchedTagCount: number;
     onsync: () => void;
+    oninlinetagmodechange: (mode: AssetCardInlineTagMode) => void;
   }
 
-  let { total, shown, selected, syncing, syncMessage, onsync }: Props = $props();
+  let {
+    total,
+    shown,
+    selected,
+    syncing,
+    syncMessage,
+    inlineTagMode,
+    searchedTagCount,
+    onsync,
+    oninlinetagmodechange,
+  }: Props = $props();
 </script>
 
 <div class="result-status">
@@ -18,6 +34,11 @@
     <small>{shown} on this page · {selected} selected</small>
   </div>
   <div class="sync-area">
+    <AssetCardDisplaySettings
+      {inlineTagMode}
+      {searchedTagCount}
+      onchange={oninlinetagmodechange}
+    />
     {#if syncMessage}<small role="status">{syncMessage}</small>{/if}
     <button type="button" onclick={onsync} disabled={syncing}>
       {syncing ? 'Syncing Immich…' : 'Sync Immich'}
@@ -57,7 +78,7 @@
 
   .sync-area {
     display: flex;
-    align-items: center;
+    align-items: end;
     gap: 0.65rem;
   }
 

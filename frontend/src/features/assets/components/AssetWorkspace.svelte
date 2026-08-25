@@ -4,6 +4,7 @@
   import {
     getAlbumOptions,
     getAssetDetail,
+    getTagOptions,
     searchAssets,
     synchronizeAssets,
   } from '../api/assetApi';
@@ -12,18 +13,21 @@
     copySearchGroup,
     createSimpleAssetSearchFilters,
     simpleFiltersToSearchGroup,
+    searchedTagIds,
     toggleSelectedAsset,
   } from '../state/assetViewModel';
   import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
   import type {
     AlbumOption,
     AssetCardIndicatorConfig,
+    AssetCardInlineTagMode,
     AssetComparisonActivation,
     AssetComparisonSource,
     AssetDetail,
     AssetSearchResponse,
     AssetSort,
     SearchGroup,
+    TagOption,
   } from '../types/assets';
   import AssetEmptyState from './AssetEmptyState.svelte';
   import AssetErrorState from './AssetErrorState.svelte';
@@ -38,6 +42,7 @@
     simpleFiltersToSearchGroup(createSimpleAssetSearchFilters()),
   );
   let albums = $state<AlbumOption[]>([]);
+  let tags = $state<TagOption[]>([]);
   let results = $state<AssetSearchResponse | null>(null);
   let page = $state(1);
   let pageSize = $state(DEFAULT_ASSET_PAGE_SIZE);
@@ -51,6 +56,7 @@
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
+  let inlineTagMode = $state<AssetCardInlineTagMode>('hidden');
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   const detailCache = new Map<string, AssetDetail>();
@@ -63,6 +69,16 @@
   };
   const viewerComparisonSource: AssetComparisonSource = 'stack';
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
+  const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
+
+  async function loadRelationOptions(): Promise<void> {
+    const [albumResult, tagResult] = await Promise.allSettled([
+      getAlbumOptions(),
+      getTagOptions(),
+    ]);
+    albums = albumResult.status === 'fulfilled' ? albumResult.value : [];
+    tags = tagResult.status === 'fulfilled' ? tagResult.value : [];
+  }
 
   async function loadAssets(): Promise<void> {
     searchController?.abort();
@@ -154,6 +170,7 @@
       const result = await synchronizeAssets();
       syncMessage = `Synced ${result.seen} assets · ${result.created} new · ${result.removed} removed`;
       detailCache.clear();
+      await loadRelationOptions();
       await loadAssets();
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Immich sync failed.';
@@ -163,9 +180,7 @@
   }
 
   onMount(() => {
-    void getAlbumOptions().then((loaded) => (albums = loaded)).catch(() => {
-      albums = [];
-    });
+    void loadRelationOptions();
     void loadAssets();
   });
 
@@ -176,7 +191,7 @@
 </script>
 
 <section class="asset-workspace" aria-label="Asset search workspace">
-  <AssetSearchToolbar {albums} disabled={loading || syncing} onsearch={applySearch} />
+  <AssetSearchToolbar {albums} {tags} disabled={loading || syncing} onsearch={applySearch} />
 
   <AssetResultStatus
     total={results?.total ?? 0}
@@ -184,7 +199,10 @@
     selected={selectedIds.size}
     {syncing}
     {syncMessage}
+    {inlineTagMode}
+    searchedTagCount={matchingTagIds.size}
     onsync={syncAssets}
+    oninlinetagmodechange={(mode) => (inlineTagMode = mode)}
   />
 
   {#if loading && !results}
@@ -198,6 +216,8 @@
       assets={results.items}
       {selectedIds}
       indicatorConfig={cardIndicatorConfig}
+      {inlineTagMode}
+      {matchingTagIds}
       onopen={openViewer}
       ontoggle={toggleSelection}
     />

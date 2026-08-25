@@ -25,6 +25,7 @@ from companion.asset_schema import (
     AssetSortField,
     AssetSyncResult,
     StructuredAssetSearchQuery,
+    TagOption,
 )
 from companion.asset_service import AssetSyncService
 from companion.config import Settings, get_settings
@@ -130,6 +131,7 @@ def create_app(
                 "asset_previews",
                 "structured_asset_search",
                 "album_filters",
+                "tag_filters",
             ],
             "planned": [
                 "actions",
@@ -241,6 +243,11 @@ def create_app(
     async def search_album_options() -> list[AlbumOption]:
         repository = require_asset_repository()
         return await repository.list_albums()
+
+    @app.get("/api/tags", response_model=list[TagOption])
+    async def search_tag_options() -> list[TagOption]:
+        repository = require_asset_repository()
+        return await repository.list_tags()
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:

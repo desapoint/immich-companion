@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from companion.asset_schema import AssetAlbumSummary, AssetSummary
-from companion.models import AssetRecord
+from companion.models import AssetRecord, TagAssetRecord, TagRecord
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -116,3 +116,20 @@ def test_upload_source_does_not_expose_internal_storage_path() -> None:
     assert summary.source.kind == "upload"
     assert summary.source.library_id is None
     assert summary.source.original_path is None
+
+
+def test_tag_models_define_normalized_metadata_and_membership_tables() -> None:
+    assert TagRecord.__table__.name == "tags"
+    assert set(TagRecord.__table__.columns.keys()) == {
+        "id",
+        "tag_name",
+        "tag_value",
+        "color",
+        "asset_count",
+        "synced_at",
+    }
+    assert TagAssetRecord.__table__.name == "tag_assets"
+    assert set(TagAssetRecord.__table__.primary_key.columns.keys()) == {
+        "tag_id",
+        "asset_id",
+    }

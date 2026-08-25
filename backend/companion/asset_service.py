@@ -64,7 +64,7 @@ class AssetSyncService:
             asset.model_copy(update={"tags": tags_by_asset.get(asset.id, asset.tags)})
             for asset in assets
         ]
-        created, updated, removed = await self._repository.reconcile(assets, albums)
+        created, updated, removed = await self._repository.reconcile(assets, albums, tags)
         return AssetSyncResult(
             seen=len(assets),
             created=created,

@@ -2,12 +2,7 @@
   import { onDestroy, tick } from 'svelte';
 
   import { clickOutside } from '../../actions/clickOutside';
-
-  export interface SelectOption {
-    value: string;
-    label: string;
-    disabled?: boolean;
-  }
+  import type { SelectOption } from '../../types/ui';
 
   interface Props {
     id: string;

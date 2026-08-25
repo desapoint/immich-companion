@@ -109,7 +109,9 @@
 <style>
   .asset-preview-strip {
     display: flex;
+    width: max-content;
     min-width: 0;
+    max-width: 100%;
     gap: 0.45rem;
     overflow-x: auto;
     padding: 0.2rem 0.15rem 0.42rem;

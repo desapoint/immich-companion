@@ -56,13 +56,16 @@ class FakeImmich:
 class FakeRepository:
     def __init__(self) -> None:
         self.assets: list[ImmichAsset] = []
+        self.tags: list[ImmichTag] = []
 
     async def reconcile(
         self,
         assets: list[ImmichAsset],
         _albums: list[object],
+        tags: list[ImmichTag],
     ) -> tuple[int, int, int]:
         self.assets = assets
+        self.tags = tags
         return len(assets), 0, 0
 
 
@@ -92,3 +95,4 @@ async def test_sync_retains_compact_stack_members_for_card_previews() -> None:
         }
     ]
     assert repository.assets[1].tags == []
+    assert repository.tags[0].id == TAG_ID

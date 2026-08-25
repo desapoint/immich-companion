@@ -1,17 +1,18 @@
 <script lang="ts">
-  import type { AlbumOption, SearchGroup } from '../types/assets';
+  import type { AlbumOption, SearchGroup, TagOption } from '../types/assets';
   import AssetSearchFormHeader from './AssetSearchFormHeader.svelte';
   import SearchExpressionBuilder from './SearchExpressionBuilder.svelte';
 
   interface Props {
     expression: SearchGroup;
     albums: AlbumOption[];
+    tags: TagOption[];
     disabled?: boolean;
     onsearch: () => void;
     onreset: () => void;
   }
 
-  let { expression, albums, disabled = false, onsearch, onreset }: Props = $props();
+  let { expression, albums, tags, disabled = false, onsearch, onreset }: Props = $props();
 
   function submit(event: SubmitEvent): void {
     event.preventDefault();
@@ -22,13 +23,13 @@
 <form aria-label="Expert Immich asset search" onsubmit={submit}>
   <AssetSearchFormHeader
     eyebrow="Expert search"
-    title="Build boolean album and metadata rules"
-    description="Combine conditions with AND or OR, nest groups, and negate any whole group."
+    title="Build boolean relation and metadata rules"
+    description="Combine conditions with AND or OR, use multi-value album and tag rules, nest groups, and negate any whole group."
     {disabled}
     {onreset}
   />
 
-  <SearchExpressionBuilder {expression} {albums} {disabled} />
+  <SearchExpressionBuilder {expression} {albums} {tags} {disabled} />
 </form>
 
 <style>

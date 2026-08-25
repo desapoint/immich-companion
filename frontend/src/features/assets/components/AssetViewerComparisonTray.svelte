@@ -12,6 +12,7 @@
     activation: AssetComparisonActivation;
     selectedId: string;
     visibleId: string;
+    avoidInfoPanel?: boolean;
     onpreview: (assetId: string) => void;
     onrestore: () => void;
     oncommit: (assetId: string) => void;
@@ -23,6 +24,7 @@
     activation,
     selectedId,
     visibleId,
+    avoidInfoPanel = false,
     onpreview,
     onrestore,
     oncommit,
@@ -36,7 +38,11 @@
   );
 </script>
 
-<section class="comparison-tray" aria-label={`${source} image comparison`}>
+<section
+  class:avoid-info-panel={avoidInfoPanel}
+  class="comparison-tray"
+  aria-label={`${source} image comparison`}
+>
   <header>
     <div>
       <span>{source === 'stack' ? 'Stack images' : 'Similar images'}</span>
@@ -58,13 +64,17 @@
 
 <style>
   .comparison-tray {
+    --tray-inline-offset: 0.7rem;
+    --tray-max-width: calc(100% - 1.4rem);
+
     position: absolute;
     z-index: 5;
-    right: clamp(3.5rem, 7vw, 6rem);
-    bottom: 0.75rem;
-    left: clamp(3.5rem, 7vw, 6rem);
+    bottom: 1.5rem;
+    left: var(--tray-inline-offset);
     display: grid;
+    width: max-content;
     min-width: 0;
+    max-width: var(--tray-max-width);
     max-height: calc(100% - 1.5rem);
     gap: 0.3rem;
     padding: 0.55rem 0.7rem 0.3rem;
@@ -86,6 +96,7 @@
   header {
     justify-content: space-between;
     gap: 0.8rem;
+    text-align: left;
   }
 
   header > div {
@@ -107,15 +118,22 @@
 
   @media (max-width: 38rem) {
     .comparison-tray {
-      right: 2.8rem;
-      bottom: 0.45rem;
-      left: 2.8rem;
+      --tray-inline-offset: 0.25rem;
+      --tray-max-width: calc(100% - 0.5rem);
+
+      bottom: 1.25rem;
     }
 
     header > div {
       align-items: flex-start;
       flex-direction: column;
       gap: 0.1rem;
+    }
+  }
+
+  @media (min-width: 64rem) {
+    .comparison-tray.avoid-info-panel {
+      max-width: calc(100% - var(--tray-inline-offset) - 28.25rem);
     }
   }
 </style>

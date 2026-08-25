@@ -8,9 +8,16 @@
     detail: AssetDetail | null;
     loading: boolean;
     error: string | null;
+    reserveComparisonTray?: boolean;
   }
 
-  let { asset, detail, loading, error }: Props = $props();
+  let {
+    asset,
+    detail,
+    loading,
+    error,
+    reserveComparisonTray = false,
+  }: Props = $props();
 
   function displayValue(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -20,7 +27,11 @@
   }
 </script>
 
-<aside class="info-panel" aria-label="Image details">
+<aside
+  class:reserve-comparison-tray={reserveComparisonTray}
+  class="info-panel"
+  aria-label="Image details"
+>
   <header>
     <span>More info</span>
     <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
@@ -73,7 +84,7 @@
     position: absolute;
     z-index: 4;
     top: 0.75rem;
-    right: 0.75rem;
+    right: 1.5rem;
     width: min(26rem, calc(100% - 1.5rem));
     max-height: calc(100% - 1.5rem);
     padding: 0.9rem;
@@ -84,6 +95,10 @@
     background: color-mix(in srgb, var(--color-surface-raised) 96%, transparent);
     box-shadow: 0 1rem 3rem rgb(0 0 0 / 28%);
     backdrop-filter: blur(0.6rem);
+  }
+
+  .info-panel.reserve-comparison-tray {
+    max-height: calc(100% - 8rem);
   }
 
   header {

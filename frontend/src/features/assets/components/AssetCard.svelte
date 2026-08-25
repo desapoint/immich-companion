@@ -1,7 +1,15 @@
 <script lang="ts">
   import { assetMediaUrl } from '../api/assetApi';
-  import { formatAssetBytes, formatAssetDate } from '../state/assetViewModel';
-  import type { AssetCardIndicatorConfig, AssetSummary } from '../types/assets';
+  import {
+    formatAssetBytes,
+    formatAssetDate,
+    inlineTagsForAsset,
+  } from '../state/assetViewModel';
+  import type {
+    AssetCardIndicatorConfig,
+    AssetCardInlineTagMode,
+    AssetSummary,
+  } from '../types/assets';
   import AssetRelationIndicators from './AssetRelationIndicators.svelte';
   import AssetStateChips from './AssetStateChips.svelte';
   import AssetTagChips from './AssetTagChips.svelte';
@@ -10,12 +18,23 @@
     asset: AssetSummary;
     selected: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
+    inlineTagMode: AssetCardInlineTagMode;
+    matchingTagIds: ReadonlySet<string>;
     onopen: () => void;
     ontoggle: () => void;
   }
 
-  let { asset, selected, indicatorConfig, onopen, ontoggle }: Props = $props();
+  let {
+    asset,
+    selected,
+    indicatorConfig,
+    inlineTagMode,
+    matchingTagIds,
+    onopen,
+    ontoggle,
+  }: Props = $props();
   const fileSize = $derived(formatAssetBytes(asset.file_size_bytes));
+  const inlineTags = $derived(inlineTagsForAsset(asset.tags, inlineTagMode, matchingTagIds));
 </script>
 
 <article class:selected class="asset-card" data-asset-id={asset.id}>
@@ -42,7 +61,12 @@
       <span>{formatAssetDate(asset.taken_at)}</span>
     </div>
 
-    <AssetTagChips tags={asset.tags} />
+    {#if inlineTags.length}
+      <AssetTagChips
+        tags={inlineTags}
+        maxVisible={inlineTagMode === 'matching' ? inlineTags.length : 3}
+      />
+    {/if}
 
     <AssetRelationIndicators
       {asset}

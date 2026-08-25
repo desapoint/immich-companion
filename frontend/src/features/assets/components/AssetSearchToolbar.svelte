@@ -12,6 +12,7 @@
     SearchGroup,
     SearchMode,
     SimpleAssetSearchFilters,
+    TagOption,
   } from '../types/assets';
   import AssetSearchModeSwitch from './AssetSearchModeSwitch.svelte';
   import AssetSortControls from './AssetSortControls.svelte';
@@ -20,11 +21,12 @@
 
   interface Props {
     albums: AlbumOption[];
+    tags: TagOption[];
     disabled?: boolean;
     onsearch: (expression: SearchGroup, sort: AssetSort) => void;
   }
 
-  let { albums, disabled = false, onsearch }: Props = $props();
+  let { albums, tags, disabled = false, onsearch }: Props = $props();
   let mode = $state<SearchMode>('simple');
   let simpleFilters = $state<SimpleAssetSearchFilters>(createSimpleAssetSearchFilters());
   let expertExpression = $state<SearchGroup>(createSearchGroup());
@@ -66,6 +68,8 @@
   {#if mode === 'simple'}
     <SimpleAssetSearch
       filters={simpleFilters}
+      {albums}
+      {tags}
       {disabled}
       onchange={(filters) => (simpleFilters = filters)}
       onsearch={searchSimple}
@@ -75,6 +79,7 @@
     <ExpertAssetSearch
       expression={expertExpression}
       {albums}
+      {tags}
       {disabled}
       onsearch={searchExpert}
       onreset={resetExpert}

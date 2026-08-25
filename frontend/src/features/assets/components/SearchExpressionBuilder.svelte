@@ -1,16 +1,21 @@
 <script lang="ts">
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
-  import { createSearchCondition, createSearchGroup } from '../state/assetViewModel';
-  import type { AlbumOption, SearchGroup } from '../types/assets';
+  import {
+    createEmptyRelationCondition,
+    createSearchCondition,
+    createSearchGroup,
+  } from '../state/assetViewModel';
+  import type { AlbumOption, SearchGroup, TagOption } from '../types/assets';
   import SearchConditionRow from './SearchConditionRow.svelte';
 
   interface Props {
     expression: SearchGroup;
     albums: AlbumOption[];
+    tags: TagOption[];
     disabled?: boolean;
   }
 
-  let { expression, albums, disabled = false }: Props = $props();
+  let { expression, albums, tags, disabled = false }: Props = $props();
 </script>
 
 {#snippet groupEditor(group: SearchGroup, depth: number)}
@@ -42,6 +47,7 @@
           <SearchConditionRow
             condition={child}
             {albums}
+            {tags}
             {disabled}
             onremove={() => group.children.splice(index, 1)}
           />
@@ -66,6 +72,8 @@
     <footer>
       <button type="button" {disabled} onclick={() => group.children.push(createSearchCondition())}>+ Condition</button>
       <button type="button" {disabled} onclick={() => group.children.push(createSearchGroup())}>+ Nested group</button>
+      <button type="button" {disabled} onclick={() => group.children.push(createEmptyRelationCondition('album'))}>+ No album</button>
+      <button type="button" {disabled} onclick={() => group.children.push(createEmptyRelationCondition('tag'))}>+ No tag</button>
     </footer>
   </section>
 {/snippet}
