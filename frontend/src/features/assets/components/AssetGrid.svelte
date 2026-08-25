@@ -1,7 +1,6 @@
 <script lang="ts">
   import type {
     AssetCardIndicatorConfig,
-    AssetCardInlineTagMode,
     AssetSummary,
   } from '../types/assets';
   import AssetCard from './AssetCard.svelte';
@@ -10,7 +9,6 @@
     assets: AssetSummary[];
     selectedIds: Set<string>;
     indicatorConfig: AssetCardIndicatorConfig;
-    inlineTagMode: AssetCardInlineTagMode;
     matchingTagIds: ReadonlySet<string>;
     onopen: (index: number) => void;
     ontoggle: (assetId: string) => void;
@@ -20,7 +18,6 @@
     assets,
     selectedIds,
     indicatorConfig,
-    inlineTagMode,
     matchingTagIds,
     onopen,
     ontoggle,
@@ -32,7 +29,6 @@
     <AssetCard
       {asset}
       {indicatorConfig}
-      {inlineTagMode}
       {matchingTagIds}
       selected={selectedIds.has(asset.id)}
       onopen={() => onopen(index)}

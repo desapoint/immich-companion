@@ -7,7 +7,6 @@
   } from '../state/assetViewModel';
   import type {
     AssetCardIndicatorConfig,
-    AssetCardInlineTagMode,
     AssetSummary,
   } from '../types/assets';
   import AssetRelationIndicators from './AssetRelationIndicators.svelte';
@@ -18,7 +17,6 @@
     asset: AssetSummary;
     selected: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
-    inlineTagMode: AssetCardInlineTagMode;
     matchingTagIds: ReadonlySet<string>;
     onopen: () => void;
     ontoggle: () => void;
@@ -28,13 +26,14 @@
     asset,
     selected,
     indicatorConfig,
-    inlineTagMode,
     matchingTagIds,
     onopen,
     ontoggle,
   }: Props = $props();
   const fileSize = $derived(formatAssetBytes(asset.file_size_bytes));
-  const inlineTags = $derived(inlineTagsForAsset(asset.tags, inlineTagMode, matchingTagIds));
+  const inlineTags = $derived(
+    inlineTagsForAsset(asset.tags, indicatorConfig.inlineTags, matchingTagIds),
+  );
 </script>
 
 <article class:selected class="asset-card" data-asset-id={asset.id}>
@@ -64,7 +63,7 @@
     {#if inlineTags.length}
       <AssetTagChips
         tags={inlineTags}
-        maxVisible={inlineTagMode === 'matching' ? inlineTags.length : 3}
+        maxVisible={indicatorConfig.inlineTags === 'matching' ? inlineTags.length : 3}
       />
     {/if}
 

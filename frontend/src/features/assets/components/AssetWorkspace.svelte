@@ -20,7 +20,6 @@
   import type {
     AlbumOption,
     AssetCardIndicatorConfig,
-    AssetCardInlineTagMode,
     AssetComparisonActivation,
     AssetComparisonSource,
     AssetDetail,
@@ -56,7 +55,6 @@
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
-  let inlineTagMode = $state<AssetCardInlineTagMode>('hidden');
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   const detailCache = new Map<string, AssetDetail>();
@@ -66,6 +64,7 @@
     stack: true,
     external: true,
     immich: true,
+    inlineTags: 'hidden',
   };
   const viewerComparisonSource: AssetComparisonSource = 'stack';
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
@@ -199,10 +198,7 @@
     selected={selectedIds.size}
     {syncing}
     {syncMessage}
-    {inlineTagMode}
-    searchedTagCount={matchingTagIds.size}
     onsync={syncAssets}
-    oninlinetagmodechange={(mode) => (inlineTagMode = mode)}
   />
 
   {#if loading && !results}
@@ -216,7 +212,6 @@
       assets={results.items}
       {selectedIds}
       indicatorConfig={cardIndicatorConfig}
-      {inlineTagMode}
       {matchingTagIds}
       onopen={openViewer}
       ontoggle={toggleSelection}

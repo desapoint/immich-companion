@@ -77,6 +77,7 @@ export interface AssetCardIndicatorConfig {
   stack: boolean;
   external: boolean;
   immich: boolean;
+  inlineTags: AssetCardInlineTagMode;
 }
 
 export interface AssetSummary {
