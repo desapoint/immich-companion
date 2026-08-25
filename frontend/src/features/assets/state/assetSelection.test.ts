@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { createSearchGroup } from './assetViewModel';
 import {
   buildSelectionRequest,
+  buildExplicitAssetSelectionRequest,
   createAssetSelectionState,
   invertCurrentPage,
   isAssetSelected,
@@ -20,6 +21,14 @@ describe('asset selection', () => {
 
     expect([...state.selectedIds]).toEqual(['one', 'three']);
     expect(selectedAssetCount(state, 20)).toBe(2);
+  });
+
+  it('builds an isolated one-asset request for viewer actions', () => {
+    expect(buildExplicitAssetSelectionRequest('viewed')).toEqual({
+      mode: 'explicit',
+      ids: ['viewed'],
+      excluded_ids: [],
+    });
   });
 
   it('selects and deselects ordered page ranges in either selection mode', () => {

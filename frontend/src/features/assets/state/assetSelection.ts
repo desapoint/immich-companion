@@ -15,6 +15,10 @@ export function createAssetSelectionState(): AssetSelectionState {
   return { mode: 'explicit', selectedIds: new Set(), excludedIds: new Set() };
 }
 
+export function buildExplicitAssetSelectionRequest(assetId: string): AssetSelectionRequest {
+  return { mode: 'explicit', ids: [assetId], excluded_ids: [] };
+}
+
 export function selectedAssetCount(
   state: AssetSelectionState,
   matchingTotal: number,

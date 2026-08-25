@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import AssetSelectionActions from './AssetSelectionActions.svelte';
 
 describe('AssetSelectionActions', () => {
-  it('shows one toggle direction and independently applicable trash actions', () => {
+  it('keeps favorite and trash primary while secondary actions use overflow', () => {
     const { body } = render(AssetSelectionActions, {
       props: {
         selectedCount: 3,
@@ -37,12 +37,16 @@ describe('AssetSelectionActions', () => {
       },
     });
 
-    expect(body).toContain('aria-label="Archive selected assets"');
-    expect(body).not.toContain('aria-label="Unarchive selected assets"');
     expect(body).toContain('aria-label="Favorite selected assets"');
-    expect(body).not.toContain('aria-label="Unfavorite selected assets"');
-    expect(body).toContain('aria-label="Trash applicable selected assets"');
-    expect(body).toContain('aria-label="Restore applicable selected assets"');
+    expect(body).toContain('aria-label="Delete selected assets (move to trash)"');
+    expect(body).toContain('aria-label="More actions for selected assets"');
+    expect(body).toContain('aria-label="Add selected assets to album"');
+    expect(body).toContain('Archive selected assets');
+    expect(body).toContain('Add tags to selected assets');
+    expect(body).toContain('Remove tags from selected assets');
+    expect(body).toContain('Remove selected assets from albums');
+    expect(body).toContain('Restore applicable selected assets');
+    expect(body).not.toContain('class="group-label"');
   });
 
   it('switches to the inverse actions only when every selected asset is set', () => {
@@ -78,11 +82,9 @@ describe('AssetSelectionActions', () => {
       },
     });
 
-    expect(body).toContain('aria-label="Unarchive selected assets"');
-    expect(body).not.toContain('aria-label="Archive selected assets"');
     expect(body).toContain('aria-label="Unfavorite selected assets"');
     expect(body).not.toContain('aria-label="Favorite selected assets"');
-    expect(body).toContain('aria-label="Trash applicable selected assets"');
-    expect(body).not.toContain('aria-label="Restore applicable selected assets"');
+    expect(body).toContain('aria-label="Delete selected assets (move to trash)"');
+    expect(body).toContain('Unarchive selected assets');
   });
 });

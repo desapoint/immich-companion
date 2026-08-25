@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { flushSync, onMount } from 'svelte';
+  import { flushSync, onMount, untrack } from 'svelte';
 
   import { assetOriginalUrl, buildAssetPreviewItems } from '../api/assetApi';
   import {
@@ -18,14 +18,20 @@
     type ViewerPanOrigin,
   } from '../state/viewerZoom';
   import type {
+    AlbumOption,
+    AssetActionIntent,
+    AssetActionPlan,
     AssetComparisonActivation,
     AssetComparisonSource,
     AssetDetail,
     AssetStackMember,
     AssetSummary,
+    AssetSelectionSummary,
+    TagOption,
     ViewerScaleMode,
   } from '../types/assets';
   import AssetInfoPanel from './AssetInfoPanel.svelte';
+  import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
   import AssetViewerComparisonTray from './AssetViewerComparisonTray.svelte';
   import AssetViewerFooter from './AssetViewerFooter.svelte';
   import AssetViewerHeader from './AssetViewerHeader.svelte';
@@ -37,12 +43,26 @@
     detail: AssetDetail | null;
     detailLoading: boolean;
     detailError: string | null;
+    albums: AlbumOption[];
+    tags: TagOption[];
+    actionPlan: AssetActionPlan | null;
+    actionSummary: AssetSelectionSummary | null;
+    actionBusy?: boolean;
+    actionError?: string | null;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
     oncomparisonnavigate?: (assetId: string) => void;
     onnavigate: (index: number) => void;
     ontoggleselection: (assetId: string) => void;
+    onvisiblechange: (assetId: string) => void;
+    onaction: (
+      assetId: string,
+      action: AssetActionIntent,
+      relationIds?: string[],
+    ) => void;
+    onconfirmaction: () => void;
+    oncancelaction: () => void;
     onclose: () => void;
   }
 
@@ -53,12 +73,22 @@
     detail,
     detailLoading,
     detailError,
+    albums,
+    tags,
+    actionPlan,
+    actionSummary,
+    actionBusy = false,
+    actionError = null,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
     oncomparisonnavigate,
     onnavigate,
     ontoggleselection,
+    onvisiblechange,
+    onaction,
+    onconfirmaction,
+    oncancelaction,
     onclose,
   }: Props = $props();
 
@@ -166,6 +196,7 @@
 
   function handleKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
+    if (target?.closest('[role="dialog"]')) return;
     if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
     const key = event.key.toLowerCase();
 
@@ -256,7 +287,8 @@
   });
 
   $effect(() => {
-    visibleAsset.id;
+    const assetId = visibleAsset.id;
+    untrack(() => onvisiblechange(assetId));
     zoom = 1;
     imageLoading = true;
     imageError = false;
@@ -289,6 +321,12 @@
     {infoOpen}
     {helpOpen}
     {zoomPercent}
+    {actionSummary}
+    {albums}
+    {tags}
+    {actionBusy}
+    {actionError}
+    onaction={(action, relationIds) => onaction(visibleAsset.id, action, relationIds)}
     ontoggleselection={() => ontoggleselection(currentAsset.id)}
     ontogglescale={toggleScale}
     onzoomout={() => changeZoomFromVisibleCenter(zoom / 1.2)}
@@ -298,6 +336,17 @@
     ontogglehelp={() => (helpOpen = !helpOpen)}
     onclose={closeViewer}
   />
+
+  {#if actionPlan}
+    <AssetActionConfirmDialog
+      plan={actionPlan}
+      {albums}
+      {tags}
+      busy={actionBusy}
+      onconfirm={onconfirmaction}
+      onclose={oncancelaction}
+    />
+  {/if}
 
   <section class="viewer-content" aria-label="Full-size image">
     <div bind:this={viewerScroll} class="viewer-scroll">

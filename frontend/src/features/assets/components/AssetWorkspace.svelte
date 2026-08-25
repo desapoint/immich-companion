@@ -14,6 +14,7 @@
   import { createDefaultAssetSort } from '../state/assetSort';
   import {
     buildSelectionRequest,
+    buildExplicitAssetSelectionRequest,
     createAssetSelectionState,
     invertCurrentPage,
     isAssetSelected,
@@ -40,6 +41,7 @@
     AssetDetail,
     AssetSearchResponse,
     AssetSelectionResolution,
+    AssetSelectionRequest,
     AssetSort,
     SearchGroup,
     TagOption,
@@ -74,6 +76,8 @@
   let actionBusy = $state(false);
   let actionMessage = $state<string | null>(null);
   let actionError = $state<string | null>(null);
+  let actionContext = $state<'selection' | 'viewer'>('selection');
+  let actionTargetIds = $state<string[]>([]);
   let viewerIndex = $state<number | null>(null);
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
@@ -81,6 +85,10 @@
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   let selectionController: AbortController | null = null;
+  let viewerActionController: AbortController | null = null;
+  let viewerActionAssetId = $state<string | null>(null);
+  let viewerActionResolution = $state<AssetSelectionResolution | null>(null);
+  let viewerActionError = $state<string | null>(null);
   let selectionAnchorIndex: number | null = null;
   let dragSelecting = false;
   let dragSelectionValue = true;
@@ -330,7 +338,9 @@
     }
   }
 
-  async function previewAction(
+  async function createActionPlan(
+    request: AssetSelectionRequest,
+    context: 'selection' | 'viewer',
     action: AssetActionIntent,
     relationIds: string[] = [],
   ): Promise<void> {
@@ -338,9 +348,11 @@
     actionError = null;
     actionMessage = null;
     actionPlan = null;
+    actionContext = context;
+    actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
     try {
       actionPlan = await planAssetAction(
-        buildSelectionRequest(selection, expression),
+        request,
         action,
         relationIds,
       );
@@ -353,8 +365,72 @@
     }
   }
 
+  function previewSelectionAction(
+    action: AssetActionIntent,
+    relationIds: string[] = [],
+  ): void {
+    void createActionPlan(
+      buildSelectionRequest(selection, expression),
+      'selection',
+      action,
+      relationIds,
+    );
+  }
+
+  function previewViewerAction(
+    assetId: string,
+    action: AssetActionIntent,
+    relationIds: string[] = [],
+  ): void {
+    void createActionPlan(
+      buildExplicitAssetSelectionRequest(assetId),
+      'viewer',
+      action,
+      relationIds,
+    );
+  }
+
+  async function resolveViewerActionState(assetId: string): Promise<void> {
+    if (viewerActionAssetId === assetId && viewerActionResolution) return;
+    viewerActionController?.abort();
+    const controller = new AbortController();
+    viewerActionController = controller;
+    viewerActionAssetId = assetId;
+    viewerActionResolution = null;
+    viewerActionError = null;
+    try {
+      const resolved = await resolveAssetSelection(
+        buildExplicitAssetSelectionRequest(assetId),
+        controller.signal,
+      );
+      if (!controller.signal.aborted) viewerActionResolution = resolved;
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      if (!controller.signal.aborted) {
+        viewerActionError = requestError instanceof Error
+          ? requestError.message
+          : 'Image action state could not be resolved.';
+      }
+    }
+  }
+
+  function closeViewer(): void {
+    viewerIndex = null;
+    viewerActionController?.abort();
+    viewerActionAssetId = null;
+    viewerActionResolution = null;
+    viewerActionError = null;
+    if (actionContext === 'viewer') {
+      actionPlan = null;
+      actionError = null;
+      actionTargetIds = [];
+    }
+  }
+
   async function confirmAction(): Promise<void> {
     if (!actionPlan) return;
+    const confirmedContext = actionContext;
+    const confirmedTargetId = actionTargetIds[0] ?? null;
     actionBusy = true;
     actionError = null;
     try {
@@ -363,10 +439,26 @@
         result.failed_ids.length ? ` · ${result.failed_ids.length} assets failed verification` : ''
       }`;
       actionPlan = null;
-      clearSelection();
       detailCache.clear();
-      page = 1;
-      await Promise.all([loadRelationOptions(), loadAssets()]);
+      if (confirmedContext === 'selection') {
+        clearSelection();
+        page = 1;
+        await Promise.all([loadRelationOptions(), loadAssets()]);
+      } else {
+        await Promise.all([loadRelationOptions(), loadAssets()]);
+        if (selectedCount > 0) void refreshSelection();
+        const refreshedIndex = results?.items.findIndex(
+          (asset) => asset.id === confirmedTargetId,
+        ) ?? -1;
+        if (refreshedIndex >= 0) {
+          viewerIndex = refreshedIndex;
+          await loadDetail(refreshedIndex);
+          if (confirmedTargetId) await resolveViewerActionState(confirmedTargetId);
+        } else {
+          closeViewer();
+        }
+      }
+      actionTargetIds = [];
     } catch (requestError) {
       actionError = requestError instanceof Error
         ? requestError.message
@@ -409,6 +501,7 @@
     searchController?.abort();
     detailController?.abort();
     selectionController?.abort();
+    viewerActionController?.abort();
   });
 </script>
 
@@ -433,14 +526,14 @@
       summary={selectionResolution?.summary ?? null}
       {albums}
       {tags}
-      plan={actionPlan}
+      plan={actionContext === 'selection' ? actionPlan : null}
       busy={selectionLoading || actionBusy || syncing}
-      error={actionError}
+      error={actionContext === 'selection' ? actionError : null}
       onselectpage={selectPage}
       onselectall={selectEveryMatch}
       oninvertpage={invertPage}
       onclear={clearSelection}
-      onplan={previewAction}
+      onplan={previewSelectionAction}
       onconfirm={confirmAction}
       oncancel={() => (actionPlan = null)}
     />
@@ -486,11 +579,21 @@
     {detail}
     {detailLoading}
     {detailError}
+    {albums}
+    {tags}
+    actionPlan={actionContext === 'viewer' ? actionPlan : null}
+    actionSummary={viewerActionAssetId ? viewerActionResolution?.summary ?? null : null}
+    {actionBusy}
+    actionError={actionContext === 'viewer' ? actionError ?? viewerActionError : viewerActionError}
     comparisonSource={viewerComparisonSource}
     comparisonActivation={viewerComparisonActivation}
     onnavigate={navigateViewer}
     ontoggleselection={toggleSelection}
-    onclose={() => (viewerIndex = null)}
+    onvisiblechange={(assetId) => void resolveViewerActionState(assetId)}
+    onaction={previewViewerAction}
+    onconfirmaction={confirmAction}
+    oncancelaction={() => (actionPlan = null)}
+    onclose={closeViewer}
   />
 {/if}
 

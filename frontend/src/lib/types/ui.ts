@@ -35,5 +35,14 @@ export type IconName =
   | 'unfavorite'
   | 'view'
   | 'keyboard'
+  | 'more'
   | 'zoom-in'
   | 'zoom-out';
+
+export interface ActionMenuItem {
+  id: string;
+  icon: IconName;
+  label: string;
+  disabled?: boolean;
+  tone?: 'default' | 'destructive';
+}

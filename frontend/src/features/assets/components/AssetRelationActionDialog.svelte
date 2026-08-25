@@ -29,9 +29,13 @@
   let values = $state<string[]>([]);
 
   const isAlbum = $derived(action.endsWith('album'));
-  const isAdd = $derived(action.startsWith('add'));
   const relationName = $derived(isAlbum ? 'albums' : 'tags');
-  const title = $derived(`${isAdd ? 'Add' : 'Remove'} ${relationName}`);
+  const title = $derived.by(() => {
+    if (action === 'add_album') return 'Add to albums';
+    if (action === 'remove_album') return 'Remove from albums';
+    if (action === 'add_tag') return 'Add tags';
+    return 'Remove tags';
+  });
   const description = $derived(
     `${selectedCount} selected asset${selectedCount === 1 ? '' : 's'} · choose one or more ${relationName}`,
   );

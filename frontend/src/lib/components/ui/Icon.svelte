@@ -20,13 +20,19 @@
   {#if name === 'album' || name === 'album-add' || name === 'album-remove'}
     <path d="M3.5 6.5h6l1.7 2h9.3v9.75a2.25 2.25 0 0 1-2.25 2.25H5.75a2.25 2.25 0 0 1-2.25-2.25V6.5Z" />
     <path d="M3.5 9h17" />
-    {#if name === 'album-add'}<path d="M12 12.25v5M9.5 14.75h5" />{/if}
-    {#if name === 'album-remove'}<path d="M9.5 14.75h5" />{/if}
+    {#if name === 'album-add' || name === 'album-remove'}
+      <circle class="action-badge" cx="17.2" cy="16.7" r="4.2" />
+      <path class="action-badge-mark" d="M15.1 16.7h4.2" />
+      {#if name === 'album-add'}<path class="action-badge-mark" d="M17.2 14.6v4.2" />{/if}
+    {/if}
   {:else if name === 'tag' || name === 'tag-add' || name === 'tag-remove'}
     <path d="M4 4h7.1l8.4 8.4a2 2 0 0 1 0 2.8l-4.3 4.3a2 2 0 0 1-2.8 0L4 11.1V4Z" />
     <circle cx="8" cy="8" r="1.35" />
-    {#if name === 'tag-add'}<path d="M12.2 12.2v4.4M10 14.4h4.4" />{/if}
-    {#if name === 'tag-remove'}<path d="M10 14.4h4.4" />{/if}
+    {#if name === 'tag-add' || name === 'tag-remove'}
+      <circle class="action-badge" cx="17.2" cy="16.7" r="4.2" />
+      <path class="action-badge-mark" d="M15.1 16.7h4.2" />
+      {#if name === 'tag-add'}<path class="action-badge-mark" d="M17.2 14.6v4.2" />{/if}
+    {/if}
   {:else if name === 'stack'}
     <rect x="5.5" y="3.5" width="15" height="12" rx="2" />
     <path d="M3.5 7.5v10a3 3 0 0 0 3 3h12M8.5 12l3-3 2.5 2.5 2-2 2 2" />
@@ -72,6 +78,10 @@
     <circle cx="12" cy="12" r="9" /><path d="M12 10.5v6M12 7.5h.01" />
   {:else if name === 'keyboard'}
     <rect x="3" y="6" width="18" height="12" rx="2" /><path d="M6 9h1M10 9h1M14 9h1M18 9h.01M6 12h1M10 12h1M14 12h4M7 15h10" />
+  {:else if name === 'more'}
+    <circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+    <circle cx="19" cy="12" r="1.2" fill="currentColor" stroke="none" />
   {:else}
     <path d="m5 12 4 4L19 6" />
   {/if}
@@ -85,5 +95,15 @@
     stroke: currentColor;
     stroke-linecap: round;
     stroke-linejoin: round;
+  }
+
+  .action-badge {
+    fill: currentColor;
+    stroke: currentColor;
+  }
+
+  .action-badge-mark {
+    stroke: var(--color-surface-raised);
+    stroke-width: 1.7;
   }
 </style>

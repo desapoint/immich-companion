@@ -1,6 +1,13 @@
 <script lang="ts">
   import IconButton from '../../../lib/components/ui/IconButton.svelte';
-  import type { ViewerScaleMode } from '../types/assets';
+  import type {
+    AlbumOption,
+    AssetActionIntent,
+    AssetSelectionSummary,
+    TagOption,
+    ViewerScaleMode,
+  } from '../types/assets';
+  import AssetActionControls from './AssetActionControls.svelte';
   import AssetKeyboardHelp from './AssetKeyboardHelp.svelte';
 
   interface Props {
@@ -11,6 +18,12 @@
     infoOpen: boolean;
     helpOpen: boolean;
     zoomPercent: number;
+    actionSummary: AssetSelectionSummary | null;
+    albums: AlbumOption[];
+    tags: TagOption[];
+    actionBusy?: boolean;
+    actionError?: string | null;
+    onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
     ontoggleselection: () => void;
     ontogglescale: () => void;
     onzoomout: () => void;
@@ -29,6 +42,12 @@
     infoOpen,
     helpOpen,
     zoomPercent,
+    actionSummary,
+    albums,
+    tags,
+    actionBusy = false,
+    actionError = null,
+    onaction,
     ontoggleselection,
     ontogglescale,
     onzoomout,
@@ -44,9 +63,20 @@
   <div class="viewer-identity">
     <span>{filename === selectedFilename ? 'Asset viewer' : `Stack preview · selected ${selectedFilename}`}</span>
     <h2 id="asset-viewer-title" title={filename}>{filename}</h2>
+    {#if actionError}<small class="action-error" role="alert">{actionError}</small>{/if}
   </div>
 
   <div class="viewer-actions">
+    <AssetActionControls
+      summary={actionSummary}
+      {albums}
+      {tags}
+      targetCount={1}
+      targetLabel="viewed image"
+      busy={actionBusy}
+      onplan={onaction}
+    />
+    <span class="viewer-action-separator" aria-hidden="true"></span>
     <IconButton
       icon={selected ? 'check' : 'select'}
       label={selected ? 'Deselect image' : 'Select image'}
@@ -58,10 +88,16 @@
       label={scaleMode === 'fit' ? 'Show actual size' : 'Fit image to screen'}
       onclick={ontogglescale}
     />
-    <div class="zoom-actions" aria-label="Image zoom controls">
-      <IconButton icon="zoom-out" label="Zoom out (-)" size="compact" onclick={onzoomout} />
-      <button type="button" onclick={onzoomreset} title="Reset zoom (0)">{zoomPercent}%</button>
-      <IconButton icon="zoom-in" label="Zoom in (+)" size="compact" onclick={onzoomin} />
+    <div class="zoom-actions" role="group" aria-label="Image zoom controls">
+      <IconButton icon="zoom-out" label="Zoom out (-)" onclick={onzoomout} />
+      <button
+        class="zoom-reset"
+        type="button"
+        onclick={onzoomreset}
+        aria-label={`Reset zoom to fit (${zoomPercent}% currently)`}
+        title="Reset zoom to fit (0)"
+      >{zoomPercent}%</button>
+      <IconButton icon="zoom-in" label="Zoom in (+)" onclick={onzoomin} />
     </div>
     <IconButton
       icon="info"
@@ -111,6 +147,11 @@
     text-transform: uppercase;
   }
 
+  .viewer-identity .action-error {
+    color: var(--color-negative-ink);
+    font-size: 0.64rem;
+  }
+
   h2 {
     max-width: min(34vw, 32rem);
     margin: 0;
@@ -125,6 +166,12 @@
     flex: 0 0 auto;
     align-items: center;
     gap: 0.38rem;
+  }
+
+  .viewer-action-separator {
+    width: 1px;
+    height: 2.2rem;
+    background: var(--color-border-strong);
   }
 
   button {
@@ -152,11 +199,48 @@
   .zoom-actions {
     display: flex;
     align-items: center;
+    overflow: visible;
+    border-radius: var(--radius-sm);
   }
 
-  .zoom-actions button {
-    min-width: 2.2rem;
+  .zoom-actions .zoom-reset,
+  .zoom-actions :global(.icon-button-wrap button) {
+    width: 2.35rem;
+    height: 2.35rem;
+    min-height: 2.35rem;
+    padding: 0;
     border-radius: 0;
+    background: var(--color-canvas);
+  }
+
+  .zoom-actions .zoom-reset {
+    width: 3.8rem;
+    color: var(--color-ink-muted);
+    font-size: 0.7rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .zoom-actions :global(.icon-button-wrap:first-child button) {
+    border-radius: var(--radius-sm) 0 0 var(--radius-sm);
+  }
+
+  .zoom-actions :global(.icon-button-wrap:last-child button) {
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  }
+
+  .zoom-actions .zoom-reset,
+  .zoom-actions :global(.icon-button-wrap:last-child) {
+    margin-left: -1px;
+  }
+
+  .zoom-actions .zoom-reset:hover,
+  .zoom-actions .zoom-reset:focus-visible,
+  .zoom-actions :global(.icon-button-wrap button:hover),
+  .zoom-actions :global(.icon-button-wrap button:focus-visible) {
+    position: relative;
+    z-index: 1;
+    color: var(--color-accent-strong);
+    background: var(--color-surface-soft);
   }
 
   @media (max-width: 56rem) {
@@ -171,8 +255,7 @@
 
     .viewer-actions {
       width: 100%;
-      overflow-x: auto;
-      padding-bottom: 0.15rem;
+      flex-wrap: wrap;
     }
 
   }

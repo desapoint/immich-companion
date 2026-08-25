@@ -91,18 +91,14 @@
       </span>
       <span class="selection-cue">{selected ? 'Selected' : 'Select'}</span>
     </div>
-    {#if selectionActive}
-      <button
-        class="view-cue"
-        type="button"
-        aria-label={`Open ${asset.original_file_name} in viewer`}
-        title="Open viewer"
-        onpointerdown={(event) => event.stopPropagation()}
-        onclick={(event) => { event.stopPropagation(); onopen(); }}
-      ><Icon name="view" /><span class="visually-hidden">Open viewer</span></button>
-    {:else}
-      <span class="view-cue">View</span>
-    {/if}
+    <button
+      class="view-cue"
+      type="button"
+      aria-label={`Open ${asset.original_file_name} in viewer`}
+      title="Open viewer"
+      onpointerdown={(event) => event.stopPropagation()}
+      onclick={(event) => { event.stopPropagation(); onopen(); }}
+    ><Icon name="view" size="1.4rem" /><span class="visually-hidden">Open viewer</span></button>
   </div>
 
   <div class="card-content">
@@ -240,8 +236,7 @@
     gap: 0.3rem;
   }
 
-  .media-facts span,
-  .view-cue {
+  .media-facts span {
     padding: 0.24rem 0.42rem;
     border: 1px solid rgb(255 255 255 / 18%);
     border-radius: 999px;
@@ -256,14 +251,20 @@
     position: absolute;
     top: 0.55rem;
     right: 0.55rem;
-    opacity: 0;
-    transition: opacity 140ms ease;
-  }
-
-  button.view-cue {
-    min-height: auto;
+    display: grid;
+    width: 3rem;
+    height: 3rem;
+    padding: 0;
+    place-items: center;
+    border: 1px solid rgb(255 255 255 / 28%);
+    border-radius: 999px;
+    color: #fff;
+    background: rgb(0 0 0 / 70%);
     cursor: zoom-in;
     font: inherit;
+    opacity: 0.78;
+    backdrop-filter: blur(0.35rem);
+    transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
   }
 
   .selection-cue {
@@ -287,6 +288,8 @@
   .media-wrap:hover .view-cue,
   .media-wrap:focus-within .view-cue {
     opacity: 1;
+    transform: scale(1.04);
+    background: rgb(0 0 0 / 82%);
   }
 
   .visually-hidden {
