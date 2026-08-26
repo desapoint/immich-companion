@@ -418,6 +418,76 @@ class AssetRepository:
                 changed += 1
         return created, changed, unchanged
 
+    async def refresh_asset(self, asset: ImmichAsset) -> None:
+        """Refresh one action-affected asset without changing generation state."""
+
+        synced_at = datetime.now(UTC)
+        fingerprint = self._fingerprint(asset)
+        values = {
+            **self._values(asset, synced_at),
+            "sync_fingerprint": fingerprint,
+        }
+        values.pop("id", None)
+        values.pop("sync_generation", None)
+        values.pop("stack_generation", None)
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(
+                update(AssetRecord)
+                .where(AssetRecord.id == asset.id)
+                .values(**values)
+            )
+
+    async def remove_asset(self, asset_id: UUID) -> int:
+        """Remove one API-confirmed permanent deletion and its memberships."""
+
+        async with self._database.sessions() as session, session.begin():
+            result = await session.execute(
+                delete(AssetRecord).where(AssetRecord.id == asset_id)
+            )
+            return int(result.rowcount or 0)
+
+    async def apply_membership_event(
+        self,
+        relation: str,
+        relation_id: UUID,
+        asset_id: UUID,
+        present: bool,
+    ) -> None:
+        """Apply one authoritative album/tag membership delta."""
+
+        model = AlbumAssetRecord if relation == "album" else TagAssetRecord
+        relation_column = model.album_id if relation == "album" else model.tag_id
+        async with self._database.sessions() as session, session.begin():
+            if present:
+                generation = await session.scalar(
+                    select(AssetRecord.sync_generation).where(AssetRecord.id == asset_id)
+                )
+                if generation is None:
+                    raise SyncValidationError(
+                        f"{relation} membership referenced unknown asset {asset_id}"
+                    )
+                await session.execute(
+                    insert(model)
+                    .values(
+                        **{
+                            "asset_id": asset_id,
+                            "sync_generation": generation,
+                            ("album_id" if relation == "album" else "tag_id"): relation_id,
+                        }
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[relation_column, model.asset_id],
+                        set_={"sync_generation": generation},
+                    )
+                )
+            else:
+                await session.execute(
+                    delete(model).where(
+                        relation_column == relation_id,
+                        model.asset_id == asset_id,
+                    )
+                )
+
     async def apply_stack_batch(
         self,
         stacks: list[tuple[dict[str, object], list[UUID]]],

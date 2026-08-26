@@ -51,12 +51,18 @@ class FakeAssets:
     ) -> None:
         self.current = current
         self.applicability = applicability
+        self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
         return self.current
 
     async def applicable_action_ids(self, *_args, **_kwargs):
         return self.applicability.pop(0)
+
+    async def apply_membership_event(
+        self, relation: str, relation_id: UUID, asset_id: UUID, present: bool
+    ) -> None:
+        self.relation_deltas.append((relation, relation_id, asset_id, present))
 
 
 class FakeActions:

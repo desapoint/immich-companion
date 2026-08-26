@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, Field
 
 SyncMode = Literal["incremental", "full"]
-SyncStatus = Literal["queued", "running", "completed", "failed", "recovering"]
+SyncStatus = Literal["queued", "running", "completed", "failed", "recovering", "retrying"]
 SyncPhase = Literal[
     "queued",
     "catalogs",
@@ -26,6 +26,34 @@ class SyncStartRequest(BaseModel):
     """Administrator request for routine or full staged synchronization."""
 
     mode: SyncMode = "incremental"
+
+
+class SyncCapabilities(BaseModel):
+    """Supported remote change inputs discovered from Immich."""
+
+    stream: bool = False
+    acknowledgements: bool = False
+    bounded_updates: bool = True
+
+
+class SyncEvent(BaseModel):
+    """One typed, deduplicable change received from an Immich stream."""
+
+    id: str
+    kind: Literal["asset", "asset_deleted", "album_membership", "tag_membership", "stack", "reset"]
+    entity_id: UUID | None = None
+    version: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class SyncProgress(BaseModel):
+    """User-facing progress for the active synchronization phase."""
+
+    phase: SyncPhase
+    completed: int = 0
+    total: int | None = None
+    percent: float | None = None
+    detail: str | None = None
 
 
 class SyncRunStatus(BaseModel):
@@ -46,6 +74,11 @@ class SyncRunStatus(BaseModel):
     started_at: datetime | None
     heartbeat_at: datetime | None
     completed_at: datetime | None
+    retry_at: datetime | None = None
+    source: Literal["window", "stream", "mixed", "full"] = "window"
+    progress: SyncProgress = Field(
+        default_factory=lambda: SyncProgress(phase="queued")
+    )
 
 
 class SyncCoordinatorStatus(BaseModel):
@@ -56,3 +89,4 @@ class SyncCoordinatorStatus(BaseModel):
     last_success: SyncRunStatus | None
     successful_watermark: datetime | None
     authoritative_generation: int
+    capabilities: SyncCapabilities = Field(default_factory=SyncCapabilities)

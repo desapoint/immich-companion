@@ -75,6 +75,7 @@
   let error = $state<string | null>(null);
   let syncing = $state(false);
   let syncMessage = $state<string | null>(null);
+  let syncProgress = $state<import('../types/assets').AssetSyncProgress | null>(null);
   let selection = $state(createAssetSelectionState());
   let selectionResolution = $state<AssetSelectionResolution | null>(null);
   let selectionLoading = $state(false);
@@ -606,6 +607,7 @@
         && nextSuccessId !== handledSyncSuccessId;
       syncing = next.active !== null || next.pending !== null;
       syncMessage = describeSync(next);
+      syncProgress = next.active?.progress ?? null;
       if (!syncStatusInitialized) {
         syncStatusInitialized = true;
         handledSyncSuccessId = nextSuccessId;
@@ -661,7 +663,7 @@
 </script>
 
 <section class="asset-workspace" aria-label="Asset search workspace">
-  <AssetSearchToolbar {albums} {tags} disabled={loading || syncing} onsearch={applySearch} />
+  <AssetSearchToolbar {albums} {tags} disabled={loading} onsearch={applySearch} />
 
   <AssetResultStatus
     total={results?.total ?? 0}
@@ -669,6 +671,7 @@
     selected={selectedCount}
     {syncing}
     {syncMessage}
+    {syncProgress}
     onsync={() => void syncAssets('incremental')}
     onfullsync={() => void syncAssets('full')}
   />
@@ -683,7 +686,7 @@
       {albums}
       {tags}
       plan={actionContext === 'selection' ? actionPlan : null}
-      busy={selectionLoading || actionBusy || syncing}
+      busy={selectionLoading || actionBusy}
       error={actionContext === 'selection' ? actionError : null}
       onselectpage={selectPage}
       onselectall={selectEveryMatch}

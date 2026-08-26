@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import timedelta
+from time import monotonic
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
@@ -13,12 +14,19 @@ from companion.config import Settings
 from companion.immich import (
     ImmichAlbum,
     ImmichApiClient,
+    ImmichApiError,
     ImmichAsset,
     ImmichStack,
     ImmichTag,
 )
 from companion.sync_repository import SyncRepository, new_sync_owner
-from companion.sync_schema import SyncCoordinatorStatus, SyncMode, SyncRunStatus
+from companion.sync_schema import (
+    SyncCoordinatorStatus,
+    SyncEvent,
+    SyncMode,
+    SyncProgress,
+    SyncRunStatus,
+)
 
 
 def batches[T](items: list[T], size: int) -> list[list[T]]:
@@ -42,6 +50,8 @@ class AssetSyncService:
         self._syncs = syncs
         self._settings = settings
         self._worker: asyncio.Task[None] | None = None
+        self._scheduler: asyncio.Task[None] | None = None
+        self._last_full_sync = monotonic()
 
     @property
     def _lease_duration(self) -> timedelta:
@@ -56,15 +66,35 @@ class AssetSyncService:
 
         if self._worker is None or self._worker.done():
             self._worker = asyncio.create_task(self._drain(), name="asset-sync-worker")
+        if self._scheduler is None or self._scheduler.done():
+            self._scheduler = asyncio.create_task(
+                self._schedule(), name="asset-sync-scheduler"
+            )
 
     async def stop(self) -> None:
         """Stop local work safely; the durable lease can later be recovered."""
 
-        if self._worker is None or self._worker.done():
-            return
-        self._worker.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._worker
+        if self._worker is not None and not self._worker.done():
+            self._worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._worker
+        if self._scheduler is not None and not self._scheduler.done():
+            self._scheduler.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._scheduler
+
+    async def _schedule(self) -> None:
+        """Submit periodic work; durable enqueue coalesces replica timers."""
+
+        incremental = self._settings.sync_incremental_interval_seconds
+        full = self._settings.sync_full_interval_seconds
+        while True:
+            await asyncio.sleep(min(incremental, 30))
+            elapsed = monotonic() - self._last_full_sync
+            mode: SyncMode = "full" if elapsed >= full else "incremental"
+            if mode == "full":
+                self._last_full_sync = monotonic()
+            await self.start(mode)
 
     async def start(
         self,
@@ -143,6 +173,26 @@ class AssetSyncService:
                 raise
             except Exception as error:
                 await self._syncs.fail(run.id, owner, error)
+                transient = not isinstance(error, ImmichApiError) or error.status_code in {
+                    429, 500, 502, 503, 504
+                }
+                if transient and run.attempts < self._settings.sync_max_attempts:
+                    delay = min(
+                        self._settings.sync_retry_backoff_seconds
+                        * (2 ** max(0, run.attempts - 1)),
+                        300,
+                    )
+                    await asyncio.sleep(delay)
+                    await self.start(run.mode)
+
+    async def reconcile_targets(self, asset_ids: list[UUID]) -> None:
+        """Repair action-affected asset metadata without a library-wide scan."""
+
+        assets = await asyncio.gather(
+            *(self._immich.get_asset(identifier) for identifier in asset_ids)
+        )
+        for asset in assets:
+            await self._assets.refresh_asset(asset)
 
     async def _execute_with_heartbeat(
         self,
@@ -185,6 +235,7 @@ class AssetSyncService:
         counters: dict[str, int],
         phase: str,
         cursor: str | None,
+        progress: SyncProgress | None = None,
     ) -> None:
         await self._syncs.checkpoint(
             run.id,
@@ -192,7 +243,27 @@ class AssetSyncService:
             phase=phase,
             cursor=cursor,
             counters=counters,
+            progress=progress,
             lease_duration=self._lease_duration,
+        )
+
+    @staticmethod
+    def _progress(
+        phase: str,
+        completed: int,
+        total: int | None,
+        detail: str | None = None,
+    ) -> SyncProgress:
+        """Build safe phase progress, leaving the bar indeterminate when needed."""
+
+        percent = (
+            round(min(100.0, completed / total * 100), 1)
+            if total is not None and total > 0
+            else None
+        )
+        return SyncProgress(
+            phase=phase, completed=max(0, completed), total=total,
+            percent=percent, detail=detail,
         )
 
     async def _execute(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
@@ -220,20 +291,53 @@ class AssetSyncService:
         }
         start_phase = phase_order.get(run.phase, 0)
 
+        capabilities = (
+            await self._immich.sync_capabilities()
+            if hasattr(self._immich, "sync_capabilities")
+            else None
+        )
+        if capabilities is not None and capabilities.stream and run.mode == "incremental":
+            await self._sync_events(run, owner, counters)
+
         albums, tags = await asyncio.gather(
             self._immich.list_album_catalog(),
             self._immich.list_tag_catalog(),
         )
+        asset_total: int | None = None
+        count_assets = getattr(self._immich, "count_assets", None)
+        if count_assets is not None:
+            try:
+                asset_total = await count_assets(
+                    updated_after=run.window_start if run.mode == "incremental" else None,
+                    updated_before=run.window_end if run.mode == "incremental" else None,
+                )
+            except ImmichApiError:
+                # A count is useful for feedback but must not make a valid sync fail.
+                asset_total = None
         if start_phase <= 0:
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "catalogs",
+                run.cursor if run.phase == "catalogs" else None,
+                self._progress(
+                    "catalogs", 0, len(albums) + len(tags),
+                    f"Preparing {len(albums)} albums and {len(tags)} tags",
+                ),
+            )
             await self._sync_catalogs(run, owner, albums, tags, counters)
         if start_phase <= 1:
-            await self._sync_assets(run, owner, counters)
+            await self._sync_assets(run, owner, counters, asset_total)
         if start_phase <= 2:
             await self._sync_stacks(run, owner, counters)
         if start_phase <= 3:
             await self._sync_relationships(run, owner, albums, tags, counters)
 
-        await self._checkpoint(run, owner, counters, "finalizing", None)
+        await self._checkpoint(
+            run, owner, counters, "finalizing", None,
+            self._progress("finalizing", 0, 1, "Validating synchronized state"),
+        )
         validated_counts = await self._assets.validate_generation(
             run.generation,
             counters,
@@ -241,7 +345,10 @@ class AssetSyncService:
             allow_counter_repair=run.attempts > 1,
         )
         counters.update(validated_counts)
-        await self._checkpoint(run, owner, counters, "finalizing", "generation-valid")
+        await self._checkpoint(
+            run, owner, counters, "finalizing", "generation-valid",
+            self._progress("finalizing", 1, 1, "Finalizing synchronized state"),
+        )
         removed = await self._assets.finalize_generation(
             run.generation,
             remove_assets=run.mode == "full",
@@ -249,8 +356,54 @@ class AssetSyncService:
         )
         counters.update(removed)
         await self._assets.refresh_relation_counts()
-        await self._checkpoint(run, owner, counters, "finalizing", "validated")
+        await self._checkpoint(
+            run, owner, counters, "finalizing", "validated",
+            self._progress("finalizing", 1, 1, "Synchronization complete"),
+        )
         return counters
+
+    async def _sync_events(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+    ) -> None:
+        """Apply optional remote deltas before the bounded repair scan."""
+
+        cursor = run.cursor if run.phase == "queued" else None
+        async for event in self._immich.iter_sync_events(cursor):
+            await self._apply_event(event)
+            if hasattr(self._immich, "acknowledge_sync_event"):
+                await self._immich.acknowledge_sync_event(event.id)
+            counters["events_seen"] = counters.get("events_seen", 0) + 1
+            await self._checkpoint(run, owner, counters, "catalogs", f"event:{event.id}")
+
+    async def _apply_event(self, event: SyncEvent) -> None:
+        """Handle only events with enough data for an authoritative local write."""
+
+        if event.kind == "asset_deleted" and event.entity_id is not None:
+            await self._assets.remove_asset(event.entity_id)
+            return
+        if event.kind == "asset" and event.payload:
+            await self._assets.refresh_asset(ImmichAsset.model_validate(event.payload))
+            return
+        if event.kind in {"album_membership", "tag_membership"}:
+            relation_id = event.payload.get("relationId") or event.payload.get(
+                "albumId" if event.kind == "album_membership" else "tagId"
+            )
+            asset_id = event.payload.get("assetId") or event.entity_id
+            if relation_id is not None and asset_id is not None:
+                present = bool(
+                    event.payload.get(
+                        "present", event.payload.get("action", "add") != "remove"
+                    )
+                )
+                await self._assets.apply_membership_event(
+                    "album" if event.kind == "album_membership" else "tag",
+                    UUID(str(relation_id)),
+                    UUID(str(asset_id)),
+                    present,
+                )
 
     async def _sync_catalogs(
         self,
@@ -279,7 +432,14 @@ class AssetSyncService:
             )
             counters["albums_seen"] += created + observed
             await self._checkpoint(
-                run, owner, counters, "catalogs", f"albums:{index}"
+                run, owner, counters, "catalogs", f"albums:{index}",
+                self._progress(
+                    "catalogs", counters["albums_seen"], len(albums) + len(tags),
+                    (
+                        f"Albums {min(counters['albums_seen'], len(albums))}/{len(albums)} "
+                        f"· tags 0/{len(tags)}"
+                    ),
+                ),
             )
         for index, tag_batch in enumerate(tag_batches, start=1):
             if index <= completed_tags:
@@ -288,14 +448,28 @@ class AssetSyncService:
                 tag_batch, run.generation
             )
             counters["tags_seen"] += created + observed
-            await self._checkpoint(run, owner, counters, "catalogs", f"tags:{index}")
-        await self._checkpoint(run, owner, counters, "assets", None)
+            await self._checkpoint(
+                run, owner, counters, "catalogs", f"tags:{index}",
+                self._progress(
+                    "catalogs", len(albums) + min(counters["tags_seen"], len(tags)),
+                    len(albums) + len(tags),
+                    (
+                        f"Albums {len(albums)}/{len(albums)} "
+                        f"· tags {min(counters['tags_seen'], len(tags))}/{len(tags)}"
+                    ),
+                ),
+            )
+        await self._checkpoint(
+            run, owner, counters, "assets", None,
+            self._progress("assets", 0, None, "Preparing media traversal"),
+        )
 
     async def _sync_assets(
         self,
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
+        asset_total: int | None,
     ) -> None:
         batch = []
         completed_batches = 0
@@ -313,11 +487,11 @@ class AssetSyncService:
             if len(batch) < self._settings.sync_batch_size:
                 continue
             batch_number += 1
-            await self._commit_asset_batch(run, owner, counters, batch, batch_number)
+            await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
             batch = []
         if batch:
             batch_number += 1
-            await self._commit_asset_batch(run, owner, counters, batch, batch_number)
+            await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
         await self._checkpoint(run, owner, counters, "stacks", None)
 
     async def _commit_asset_batch(
@@ -327,6 +501,7 @@ class AssetSyncService:
         counters: dict[str, int],
         batch: list[ImmichAsset],
         batch_number: int,
+        asset_total: int | None,
     ) -> None:
         created, updated, unchanged = await self._assets.upsert_asset_batch(
             batch,
@@ -337,7 +512,12 @@ class AssetSyncService:
         counters["assets_updated"] += updated
         counters["assets_unchanged"] += unchanged
         await self._checkpoint(
-            run, owner, counters, "assets", f"assets:{batch_number}"
+            run, owner, counters, "assets", f"assets:{batch_number}",
+            self._progress(
+                "assets", counters["assets_seen"], asset_total,
+                f"Media {counters['assets_seen']}/{asset_total}" if asset_total is not None
+                else f"Media {counters['assets_seen']} processed",
+            ),
         )
 
     @staticmethod
@@ -372,6 +552,10 @@ class AssetSyncService:
     ) -> None:
         stacks = await self._immich.list_stacks()
         payloads = [self._stack_payload(stack) for stack in stacks]
+        await self._checkpoint(
+            run, owner, counters, "stacks", run.cursor if run.phase == "stacks" else None,
+            self._progress("stacks", 0, len(payloads), f"Preparing {len(payloads)} stacks"),
+        )
         completed_batches = 0
         if run.phase == "stacks" and run.cursor:
             completed_batches = int(run.cursor.rsplit(":", 1)[1])
@@ -384,8 +568,17 @@ class AssetSyncService:
                 stack_batch, run.generation
             )
             counters["stacks_seen"] += len(stack_batch)
-            await self._checkpoint(run, owner, counters, "stacks", f"stacks:{index}")
-        await self._checkpoint(run, owner, counters, "relationships", None)
+            await self._checkpoint(
+                run, owner, counters, "stacks", f"stacks:{index}",
+                self._progress(
+                    "stacks", min(counters["stacks_seen"], len(payloads)), len(payloads),
+                    f"Stacks {min(counters['stacks_seen'], len(payloads))}/{len(payloads)}",
+                ),
+            )
+        await self._checkpoint(
+            run, owner, counters, "relationships", None,
+            self._progress("relationships", 0, None, "Preparing associations"),
+        )
 
     async def _sync_relationships(
         self,
@@ -398,6 +591,15 @@ class AssetSyncService:
         relation_kind = ""
         completed_relation = 0
         completed_page = 0
+        relation_total = len(albums) + len(tags)
+        await self._checkpoint(
+            run, owner, counters, "relationships",
+            run.cursor if run.phase == "relationships" else None,
+            self._progress(
+                "relationships", 0, relation_total,
+                f"Preparing {len(albums)} album and {len(tags)} tag associations",
+            ),
+        )
         if run.phase == "relationships" and run.cursor:
             relation_kind, relation_text, page_text = run.cursor.split(":", 2)
             completed_relation = int(relation_text)
@@ -427,6 +629,13 @@ class AssetSyncService:
                     counters,
                     "relationships",
                     f"albums:{relation_index}:{page_number}",
+                    self._progress(
+                        "relationships", relation_index - 1, relation_total,
+                        (
+                            f"Album associations {relation_index}/{len(albums)} "
+                            f"· tag associations 0/{len(tags)}"
+                        ),
+                    ),
                 )
                 page_number += 1
         for relation_index, tag in enumerate(tags, start=1):
@@ -454,5 +663,22 @@ class AssetSyncService:
                     counters,
                     "relationships",
                     f"tags:{relation_index}:{page_number}",
+                    self._progress(
+                        "relationships", len(albums) + relation_index - 1, relation_total,
+                        (
+                            f"Album associations {len(albums)}/{len(albums)} "
+                            f"· tag associations {relation_index}/{len(tags)}"
+                        ),
+                    ),
                 )
                 page_number += 1
+        await self._checkpoint(
+            run, owner, counters, "relationships", None,
+            self._progress(
+                "relationships", relation_total, relation_total,
+                (
+                    f"Associations complete · {counters['album_memberships']} album links "
+                    f"· {counters['tag_memberships']} tag links"
+                ),
+            ),
+        )

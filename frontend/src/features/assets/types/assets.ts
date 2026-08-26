@@ -212,7 +212,7 @@ export interface AssetSyncResult {
 }
 
 export type AssetSyncMode = 'incremental' | 'full';
-export type AssetSyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering';
+export type AssetSyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering' | 'retrying';
 
 export interface AssetSyncRunStatus {
   id: string;
@@ -230,6 +230,15 @@ export interface AssetSyncRunStatus {
   started_at: string | null;
   heartbeat_at: string | null;
   completed_at: string | null;
+  progress: AssetSyncProgress;
+}
+
+export interface AssetSyncProgress {
+  phase: string;
+  completed: number;
+  total: number | null;
+  percent: number | null;
+  detail: string | null;
 }
 
 export interface AssetSyncCoordinatorStatus {

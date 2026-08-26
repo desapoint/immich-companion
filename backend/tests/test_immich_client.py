@@ -128,6 +128,35 @@ async def test_incremental_metadata_window_is_bounded_in_request_payload() -> No
 
 
 @pytest.mark.asyncio
+async def test_optional_sync_stream_is_typed_and_acknowledged() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/sync/capabilities":
+            return httpx.Response(200, json={"stream": True, "acknowledgements": True})
+        if request.url.path == "/api/sync/stream":
+            return httpx.Response(
+                200,
+                text='{"id":"evt-1","kind":"asset_deleted","entity_id":"'
+                + str(ASSET_ONE)
+                + '"}\n',
+            )
+        assert request.url.path == "/api/sync/ack"
+        assert json.loads(request.content) == {"id": "evt-1"}
+        return httpx.Response(204)
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    capabilities = await client.sync_capabilities()
+    events = [event async for event in client.iter_sync_events("cursor-1")]
+    await client.acknowledge_sync_event(events[0].id)
+
+    assert capabilities.stream is True
+    assert events[0].kind == "asset_deleted"
+    assert requests[1].url.params["cursor"] == "cursor-1"
+
+
+@pytest.mark.asyncio
 async def test_transient_retries_are_bounded_and_secrets_are_redacted() -> None:
     attempts = 0
 

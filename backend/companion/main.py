@@ -281,7 +281,9 @@ def create_app(
     async def asset_sync_status() -> SyncCoordinatorStatus:
         require_asset_repository()
         assert asset_sync is not None
-        return await asset_sync.status()
+        current = await asset_sync.status()
+        capabilities = await immich.sync_capabilities()
+        return current.model_copy(update={"capabilities": capabilities})
 
     @app.get("/api/assets/sync/runs/{run_id}", response_model=SyncRunStatus)
     async def asset_sync_run(run_id: UUID) -> SyncRunStatus:

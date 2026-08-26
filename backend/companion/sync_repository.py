@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from companion.database import DatabaseManager
 from companion.models import SyncCoordinatorRecord, SyncRunRecord
-from companion.sync_schema import SyncCoordinatorStatus, SyncMode, SyncRunStatus
+from companion.sync_schema import SyncCoordinatorStatus, SyncMode, SyncProgress, SyncRunStatus
 
 
 class SyncLeaseLostError(RuntimeError):
@@ -46,6 +46,8 @@ class SyncRepository:
             started_at=record.started_at,
             heartbeat_at=record.heartbeat_at,
             completed_at=record.completed_at,
+            source="full" if record.mode == "full" else "window",
+            progress=SyncProgress.model_validate(record.progress or {"phase": record.phase}),
         )
 
     async def enqueue(
@@ -99,6 +101,7 @@ class SyncRepository:
                     ),
                     window_end=now,
                     counters={},
+                    progress={"phase": "queued"},
                 )
                 session.add(pending)
                 await session.flush()
@@ -120,6 +123,7 @@ class SyncRepository:
                 ),
                 window_end=now,
                 counters={},
+                progress={"phase": "queued"},
             )
             session.add(run)
             await session.flush()
@@ -186,6 +190,7 @@ class SyncRepository:
         phase: str,
         cursor: str | None,
         counters: dict[str, int],
+        progress: SyncProgress | None = None,
         lease_duration: timedelta,
     ) -> SyncRunStatus:
         """Atomically renew ownership and persist the latest committed batch."""
@@ -211,6 +216,8 @@ class SyncRepository:
             run.phase = phase
             run.cursor = cursor
             run.counters = dict(counters)
+            if progress is not None:
+                run.progress = progress.model_dump(mode="json")
             run.heartbeat_at = now
             public = self._public(run)
             assert public is not None

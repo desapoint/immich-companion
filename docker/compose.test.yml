@@ -120,6 +120,10 @@ services:
       SYNC_BATCH_SIZE: "25"
       SYNC_OVERLAP_SECONDS: "300"
       SYNC_LEASE_SECONDS: "60"
+      SYNC_INCREMENTAL_INTERVAL_SECONDS: "300"
+      SYNC_FULL_INTERVAL_SECONDS: "86400"
+      SYNC_MAX_ATTEMPTS: "5"
+      SYNC_RETRY_BACKOFF_SECONDS: "1"
       COMPANION_DATABASE_URL: postgresql://companion:${COMPANION_DB_PASSWORD}@companion-database:5432/immich_companion
       DATABASE_TIMEOUT_SECONDS: "5"
       COMPANION_TEST_STATE_FILE: /run/immich-companion/bootstrap-state.json

@@ -182,6 +182,7 @@ class SyncRunRecord(Base):
     window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     cursor: Mapped[str | None] = mapped_column(String(255), nullable=True)
     counters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    progress: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     owner_token: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

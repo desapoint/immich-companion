@@ -143,9 +143,11 @@ class FakeAssetRepository:
 class FakeSyncRepository:
     def __init__(self) -> None:
         self.checkpoints: list[tuple[str, str | None]] = []
+        self.progress = []
 
     async def checkpoint(self, _run_id, _owner, *, phase, cursor, **_kwargs):
         self.checkpoints.append((phase, cursor))
+        self.progress.append(_kwargs.get("progress"))
 
 
 def run_status() -> SyncRunStatus:
@@ -204,3 +206,8 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert counters["tag_memberships"] == 1
     assert assets.stack_payloads[0][0]["primaryAssetId"] == str(ASSET_ONE)
     assert syncs.checkpoints[-1] == ("finalizing", "validated")
+    assert syncs.progress[-1].percent == 100
+    assert any(
+        item is not None and item.phase == "relationships"
+        for item in syncs.progress
+    )

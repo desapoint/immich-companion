@@ -14,6 +14,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from companion.config import Settings
+from companion.sync_schema import SyncCapabilities, SyncEvent
 
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
@@ -212,6 +213,47 @@ class ImmichApiClient:
             "latency_ms": round((perf_counter() - started) * 1000, 1),
         }
 
+    async def sync_capabilities(self) -> SyncCapabilities:
+        """Probe optional change-stream support without assuming it exists."""
+
+        try:
+            response = await self._request(
+                "GET", "/api/sync/capabilities", operation="sync capabilities"
+            )
+        except ImmichApiError as error:
+            if error.status_code in {404, 405, 501}:
+                return SyncCapabilities()
+            raise
+        payload = response.json()
+        return SyncCapabilities(
+            stream=bool(payload.get("stream", False)),
+            acknowledgements=bool(payload.get("acknowledgements", False)),
+            bounded_updates=bool(payload.get("boundedUpdates", True)),
+        )
+
+    async def iter_sync_events(self, cursor: str | None = None) -> AsyncIterator[SyncEvent]:
+        """Read optional newline-delimited events; unsupported streams fail safely."""
+
+        response = await self._request(
+            "GET",
+            "/api/sync/stream",
+            operation="sync stream",
+            params={"cursor": cursor} if cursor else None,
+        )
+        for line in response.text.splitlines():
+            if line.strip():
+                yield SyncEvent.model_validate_json(line)
+
+    async def acknowledge_sync_event(self, event_id: str) -> None:
+        """Acknowledge one event only after its local checkpoint is durable."""
+
+        await self._request(
+            "POST",
+            "/api/sync/ack",
+            operation="sync event acknowledgement",
+            json={"id": event_id},
+        )
+
     async def search_assets_page(
         self,
         page: int,
@@ -281,6 +323,22 @@ class ImmichApiClient:
                 page_number = int(token)
             except ValueError as error:
                 raise ImmichApiError("search assets pagination") from error
+
+    async def count_assets(
+        self,
+        *,
+        updated_after: datetime | None = None,
+        updated_before: datetime | None = None,
+    ) -> int:
+        """Return the bounded asset population used by a sync progress estimate."""
+
+        page = await self.search_assets_page(
+            1,
+            size=1,
+            updated_after=updated_after,
+            updated_before=updated_before,
+        )
+        return page.total
 
     async def get_asset(self, asset_id: UUID) -> ImmichAsset:
         """Retrieve live details for one Immich asset."""
