@@ -78,6 +78,17 @@ class AssetActionService:
         else:
             await self._sync.synchronize()
 
+    async def _stack_repair_ids(self, asset_ids: list[UUID]) -> list[UUID]:
+        """Snapshot every member whose stack metadata can change after an action."""
+
+        repair_ids: list[UUID] = []
+        for asset_id in asset_ids:
+            members = await self._assets.stack_asset_ids(asset_id)
+            for member_id in members or [asset_id]:
+                if member_id not in repair_ids:
+                    repair_ids.append(member_id)
+        return repair_ids
+
     async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
 
@@ -146,6 +157,15 @@ class AssetActionService:
         if not resolution.ids:
             raise EmptySelectionError("No synchronized assets matched the selection")
         operation = self._operation_for_request(request, resolution)
+        if operation == "remove_stack":
+            expanded_ids: list[UUID] = []
+            for asset_id in resolution.ids:
+                for member_id in await self._assets.stack_asset_ids(asset_id):
+                    if member_id not in expanded_ids:
+                        expanded_ids.append(member_id)
+            resolution = resolution.model_copy(update={"ids": expanded_ids})
+            if not resolution.ids:
+                raise EmptySelectionError("The selected asset is not in a synchronized stack")
         if operation == "trash" and not self._settings.allow_destructive_actions:
             raise DestructiveActionsDisabledError("Trash actions are disabled")
         relation_work: dict[str, dict[str, list[str]]] = {}
@@ -203,6 +223,24 @@ class AssetActionService:
             return
         if operation == "stack":
             await self._immich.create_stack(ids)
+        elif operation == "remove_from_stack":
+            for asset_id in ids:
+                stack_ids = await self._assets.stack_asset_ids(asset_id)
+                if not stack_ids:
+                    continue
+                # The selected asset payload contains the stack identity; use the
+                # same local snapshot that supplied the member list.
+                stack = await self._assets.get_asset_stack(asset_id)
+                if stack is not None:
+                    await self._immich.remove_asset_from_stack(stack[0], asset_id)
+        elif operation == "remove_stack":
+            stack_ids: list[UUID] = []
+            for asset_id in ids:
+                stack = await self._assets.get_asset_stack(asset_id)
+                if stack and stack[0] not in stack_ids:
+                    stack_ids.append(stack[0])
+            for stack_id in stack_ids:
+                await self._immich.delete_stack(stack_id)
         elif operation == "remove_album":
             assert relation_id is not None
             await self._immich.remove_assets_from_album(relation_id, ids)
@@ -387,7 +425,10 @@ class AssetActionService:
         try:
             await self._apply(operation, applicable_ids, relation_id)
             if applicable_ids:
-                await self._repair_targets(applicable_ids)
+                repair_ids = applicable_ids
+                if operation in {"remove_from_stack", "remove_stack"}:
+                    repair_ids = await self._stack_repair_ids(target_ids)
+                await self._repair_targets(repair_ids)
             remaining = await self._assets.applicable_action_ids(
                 operation,
                 applicable_ids,

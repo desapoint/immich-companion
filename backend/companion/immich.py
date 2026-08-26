@@ -558,6 +558,24 @@ class ImmichApiClient:
             operation="create stack",
         )
 
+    async def remove_asset_from_stack(self, stack_id: UUID, asset_id: UUID) -> None:
+        """Remove one asset from a stack through Immich's stack API."""
+
+        await self._request(
+            "DELETE",
+            f"/api/stacks/{stack_id}/assets/{asset_id}",
+            operation="remove asset from stack",
+        )
+
+    async def delete_stack(self, stack_id: UUID) -> None:
+        """Remove an entire stack while preserving its assets."""
+
+        await self._request(
+            "DELETE",
+            f"/api/stacks/{stack_id}",
+            operation="remove stack",
+        )
+
     async def list_tag_catalog(self) -> list[ImmichTag]:
         """Fetch the compact tag catalog before any media traversal."""
 

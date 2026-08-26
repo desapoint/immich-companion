@@ -14,6 +14,7 @@
     syncError?: string | null;
     onsync?: () => void;
     onshowselected?: () => void;
+    onstackaction?: (action: 'remove_from_stack' | 'remove_stack') => void;
   }
 
   let {
@@ -26,6 +27,7 @@
     syncError = null,
     onsync = () => undefined,
     onshowselected = () => undefined,
+    onstackaction = () => undefined,
   }: Props = $props();
 
   function displayValue(value: unknown): string {
@@ -55,6 +57,18 @@
         </button>
       {/if}
     </div>
+    {#if asset.stack}
+      <div class="stack-actions">
+        <button type="button" class="stack-button" onclick={() => onstackaction('remove_from_stack')}>
+          <Icon name="stack" size="0.85rem" />
+          <span>Remove from stack</span>
+        </button>
+        <button type="button" class="stack-button destructive" onclick={() => onstackaction('remove_stack')}>
+          <Icon name="stack" size="0.85rem" />
+          <span>Remove complete stack</span>
+        </button>
+      </div>
+    {/if}
     <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
     {#if syncError}<p class="error sync-error" role="alert">{syncError}</p>{/if}
   </header>
@@ -171,6 +185,16 @@
   .stack-button:focus-visible {
     border-color: var(--color-accent-strong);
     color: var(--color-accent-strong);
+  }
+
+  .stack-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .stack-button.destructive {
+    color: var(--color-negative-ink);
   }
 
   .sync-button:hover:not(:disabled),

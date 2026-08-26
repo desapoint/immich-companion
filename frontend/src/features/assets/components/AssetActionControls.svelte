@@ -21,6 +21,7 @@
     tags: TagOption[];
     targetCount: number;
     targetLabel: string;
+    allowStack?: boolean;
     busy?: boolean;
     onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
     onrelationconfirm: (action: RelationAction, relationIds: string[]) => void;
@@ -32,6 +33,7 @@
     tags,
     targetCount,
     targetLabel,
+    allowStack = true,
     busy = false,
     onplan,
     onrelationconfirm,
@@ -61,12 +63,12 @@
         label: `${summary.archive_action === 'archive' ? 'Archive' : 'Unarchive'} ${targetLabel}`,
       });
     }
+    if (allowStack) items.push({
+      id: 'stack',
+      icon: 'stack',
+      label: `Stack ${targetLabel}`,
+    });
     items.push(
-      {
-        id: 'stack',
-        icon: 'stack',
-        label: `Stack ${targetLabel}`,
-      },
       {
         id: 'add_tag',
         icon: 'tag-add',

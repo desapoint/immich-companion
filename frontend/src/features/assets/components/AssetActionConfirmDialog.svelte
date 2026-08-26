@@ -26,6 +26,8 @@
     remove_album: 'Remove from albums',
     remove_tag: 'Remove tags',
     stack: 'Stack assets',
+    remove_from_stack: 'Remove from stack',
+    remove_stack: 'Remove complete stack',
   };
   const icons: Record<AssetActionPlan['operation'], IconName> = {
     archive: 'archive',
@@ -39,6 +41,8 @@
     remove_album: 'album-remove',
     remove_tag: 'tag-remove',
     stack: 'stack',
+    remove_from_stack: 'stack',
+    remove_stack: 'stack',
   };
   const actionLabel = $derived(labels[plan.operation]);
   const relationNames = $derived.by(() => {

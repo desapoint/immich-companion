@@ -457,6 +457,7 @@
             showSelectedStackAsset(currentAsset.stack.primary_asset_id);
           }
         }}
+        onstackaction={(action) => onaction(currentAsset.id, action)}
         {onsync}
       />
     {/if}

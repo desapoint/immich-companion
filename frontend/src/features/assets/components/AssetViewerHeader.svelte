@@ -77,7 +77,8 @@
       {albums}
       {tags}
       targetCount={1}
-      targetLabel="viewed image"
+      targetLabel="selected image"
+      allowStack={false}
       busy={actionBusy}
       onplan={onaction}
       {onrelationconfirm}

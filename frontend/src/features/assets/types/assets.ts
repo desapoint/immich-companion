@@ -293,7 +293,9 @@ export type AssetActionIntent =
   | 'add_tag'
   | 'remove_album'
   | 'remove_tag'
-  | 'stack';
+  | 'stack'
+  | 'remove_from_stack'
+  | 'remove_stack';
 
 export type AssetActionOperation =
   | 'archive'
@@ -306,7 +308,9 @@ export type AssetActionOperation =
   | 'add_tag'
   | 'remove_album'
   | 'remove_tag'
-  | 'stack';
+  | 'stack'
+  | 'remove_from_stack'
+  | 'remove_stack';
 
 export interface AssetActionPlan {
   id: string;

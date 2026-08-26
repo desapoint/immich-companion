@@ -420,6 +420,45 @@ class AssetRepository:
                 update(AssetRecord).where(AssetRecord.id == asset.id).values(**values)
             )
 
+    async def stack_asset_ids(self, asset_id: UUID) -> list[UUID]:
+        """Return the locally synchronized members of an asset's stack."""
+
+        stack = await self.get_asset_stack(asset_id)
+        if stack is None:
+            return []
+        payload = stack[1]
+        members = payload.get("assets")
+        if not isinstance(members, list):
+            return []
+        ids: list[UUID] = []
+        for member in members:
+            if not isinstance(member, dict):
+                continue
+            try:
+                member_id = UUID(str(member.get("id")))
+            except (TypeError, ValueError):
+                continue
+            if member_id not in ids:
+                ids.append(member_id)
+        return ids
+
+    async def get_asset_stack(
+        self, asset_id: UUID
+    ) -> tuple[UUID, dict[str, object]] | None:
+        """Return an asset's synchronized stack ID and payload, if present."""
+
+        async with self._database.sessions() as session:
+            payload = await session.scalar(
+                select(AssetRecord.stack).where(AssetRecord.id == asset_id)
+            )
+        if not isinstance(payload, dict):
+            return None
+        try:
+            stack_id = UUID(str(payload["id"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        return stack_id, payload
+
     async def remove_asset(self, asset_id: UUID) -> int:
         """Remove one API-confirmed permanent deletion and its memberships."""
 
@@ -1263,6 +1302,11 @@ class AssetRepository:
             return set()
         if operation == "stack":
             statement = select(AssetRecord.id).where(AssetRecord.id.in_(target_ids))
+        elif operation in {"remove_from_stack", "remove_stack"}:
+            statement = select(AssetRecord.id).where(
+                AssetRecord.id.in_(target_ids),
+                AssetRecord.stack.is_not(None),
+            )
         elif operation in {"add_album", "add_tag", "remove_album", "remove_tag"}:
             assert relation_id is not None
             album_action = operation in {"add_album", "remove_album"}

@@ -21,6 +21,8 @@ AssetActionIntent = Literal[
     "remove_album",
     "remove_tag",
     "stack",
+    "remove_from_stack",
+    "remove_stack",
 ]
 AssetActionOperation = Literal[
     "archive",
@@ -34,6 +36,8 @@ AssetActionOperation = Literal[
     "remove_album",
     "remove_tag",
     "stack",
+    "remove_from_stack",
+    "remove_stack",
 ]
 ActionPlanStatus = Literal[
     "planned",

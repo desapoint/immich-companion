@@ -319,6 +319,25 @@ async def test_stack_contract_includes_all_typed_members() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stack_mutations_use_supported_stack_routes() -> None:
+    stack_id = UUID("55555555-5555-4555-8555-555555555555")
+    requests: list[tuple[str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        return httpx.Response(204)
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    await client.remove_asset_from_stack(stack_id, ASSET_TWO)
+    await client.delete_stack(stack_id)
+
+    assert requests == [
+        ("DELETE", f"/api/stacks/{stack_id}/assets/{ASSET_TWO}"),
+        ("DELETE", f"/api/stacks/{stack_id}"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_tag_memberships_use_paged_metadata_search() -> None:
     tag_id = UUID("66666666-6666-4666-8666-666666666666")
 
