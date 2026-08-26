@@ -416,13 +416,18 @@ class TaskRepository:
                 select(TaskScheduleRecord).where(TaskScheduleRecord.name == name).with_for_update()
             )
             if schedule is None:
+                next_run_at = (
+                    croniter(cron_expression, now).get_next(datetime)
+                    if cron_expression
+                    else now + timedelta(seconds=interval_seconds)
+                )
                 session.add(
                     TaskScheduleRecord(
                         name=name,
                         enabled=enabled,
                         interval_seconds=interval_seconds,
                         cron_expression=cron_expression,
-                        next_run_at=now + timedelta(seconds=interval_seconds),
+                        next_run_at=next_run_at,
                         task_type=task_type,
                         payload=dict(payload),
                         priority=priority,
@@ -433,6 +438,10 @@ class TaskRepository:
                 schedule.task_type = task_type
                 schedule.payload = dict(payload)
                 schedule.priority = priority
+                if schedule.cron_expression:
+                    schedule.next_run_at = croniter(
+                        schedule.cron_expression, now
+                    ).get_next(datetime)
 
     async def claim_due_schedules(self) -> list[TaskScheduleRecord]:
         now = datetime.now(UTC)
