@@ -13,6 +13,7 @@
     syncing?: boolean;
     syncError?: string | null;
     onsync?: () => void;
+    onshowselected?: () => void;
   }
 
   let {
@@ -24,6 +25,7 @@
     syncing = false,
     syncError = null,
     onsync = () => undefined,
+    onshowselected = () => undefined,
   }: Props = $props();
 
   function displayValue(value: unknown): string {
@@ -46,6 +48,12 @@
         <Icon name="sync" size="0.85rem" />
         <span>{syncing ? 'Syncing…' : 'Sync'}</span>
       </button>
+      {#if asset.stack && asset.stack.primary_asset_id !== asset.id}
+        <button type="button" class="stack-button" onclick={onshowselected}>
+          <Icon name="stack" size="0.85rem" />
+          <span>Go to selected</span>
+        </button>
+      {/if}
     </div>
     <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
     {#if syncError}<p class="error sync-error" role="alert">{syncError}</p>{/if}
@@ -142,6 +150,27 @@
     font: inherit;
     font-size: 0.65rem;
     font-weight: 760;
+  }
+
+  .stack-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    padding: 0.24rem 0.42rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-strong);
+    background: var(--color-canvas);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.65rem;
+    font-weight: 760;
+  }
+
+  .stack-button:hover,
+  .stack-button:focus-visible {
+    border-color: var(--color-accent-strong);
+    color: var(--color-accent-strong);
   }
 
   .sync-button:hover:not(:disabled),

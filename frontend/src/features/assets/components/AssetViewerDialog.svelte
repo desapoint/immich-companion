@@ -443,6 +443,11 @@
         reserveComparisonTray={hasComparisonTray}
         syncing={syncBusy}
         syncError={syncError}
+        onshowselected={() => {
+          if (currentAsset.stack?.primary_asset_id) {
+            previewComparison(currentAsset.stack.primary_asset_id);
+          }
+        }}
         {onsync}
       />
     {/if}
