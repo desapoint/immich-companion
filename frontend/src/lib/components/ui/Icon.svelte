@@ -36,6 +36,8 @@
   {:else if name === 'stack'}
     <rect x="5.5" y="3.5" width="15" height="12" rx="2" />
     <path d="M3.5 7.5v10a3 3 0 0 0 3 3h12M8.5 12l3-3 2.5 2.5 2-2 2 2" />
+  {:else if name === 'sync'}
+    <path d="M20 7v5h-5M4 17v-5h5" /><path d="M18.2 12a6.5 6.5 0 0 0-11.1-4.6L5 9M6 12a6.5 6.5 0 0 0 11.1 4.6L19 15" />
   {:else if name === 'external'}
     <path d="M13 4h7v7M20 4l-9 9M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
   {:else if name === 'immich'}

@@ -11,6 +11,7 @@ import {
   normalizeAssetSearchResponse,
   planAssetAction,
   startAssetSync,
+  synchronizeAsset,
 } from './assetApi';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -60,6 +61,19 @@ describe('structured asset API', () => {
 
   it('uses a distinct original-media endpoint for the fullscreen viewer', () => {
     expect(assetOriginalUrl('asset id')).toBe('/api/assets/asset%20id/original');
+  });
+
+  it('requests a complete single-asset synchronization', async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({ id: 'asset-1' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetcher);
+
+    await synchronizeAsset('asset id');
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/assets/asset%20id/sync');
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
   });
 
   it('builds reusable thumbnail-strip items from comparable assets', () => {

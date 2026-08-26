@@ -12,6 +12,7 @@
     resolveAssetSelection,
     searchAssets,
     startAssetSync,
+    synchronizeAsset,
   } from '../api/assetApi';
   import { createDefaultAssetSort } from '../state/assetSort';
   import {
@@ -89,6 +90,8 @@
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
+  let viewerSyncing = $state(false);
+  let viewerSyncError = $state<string | null>(null);
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   let selectionController: AbortController | null = null;
@@ -194,6 +197,33 @@
       }
     } finally {
       if (!controller.signal.aborted) detailLoading = false;
+    }
+  }
+
+  async function syncViewerAsset(assetId: string): Promise<void> {
+    viewerSyncing = true;
+    viewerSyncError = null;
+    try {
+      const syncedDetail = await synchronizeAsset(assetId);
+      detailCache.set(assetId, syncedDetail);
+      if (viewerIndex !== null && results?.items[viewerIndex]?.id === assetId) {
+        detail = syncedDetail;
+      }
+      const refreshedAsset = await matchAssetSearch(assetId, expression);
+      if (!refreshedAsset) {
+        closeViewer();
+        await loadAssets();
+        return;
+      }
+      const refreshedIndex = patchResultAsset(refreshedAsset);
+      if (refreshedIndex >= 0 && viewerIndex !== null) viewerIndex = refreshedIndex;
+      await loadRelationOptions();
+    } catch (requestError) {
+      viewerSyncError = requestError instanceof Error
+        ? requestError.message
+        : 'Asset sync failed.';
+    } finally {
+      viewerSyncing = false;
     }
   }
 
@@ -555,6 +585,8 @@
     viewerActionAssetId = null;
     viewerActionResolution = null;
     viewerActionError = null;
+    viewerSyncing = false;
+    viewerSyncError = null;
     if (actionContext === 'viewer') {
       actionPlan = null;
       actionError = null;
@@ -745,6 +777,8 @@
     actionSummary={viewerActionAssetId ? viewerActionResolution?.summary ?? null : null}
     {actionBusy}
     actionError={actionContext === 'viewer' ? actionError ?? viewerActionError : viewerActionError}
+    syncBusy={viewerSyncing}
+    syncError={viewerSyncError}
     comparisonSource={viewerComparisonSource}
     comparisonActivation={viewerComparisonActivation}
     onnavigate={navigateViewer}
@@ -754,6 +788,7 @@
     onrelationconfirm={confirmViewerRelationAction}
     onconfirmaction={confirmAction}
     oncancelaction={() => (actionPlan = null)}
+    onsync={() => void syncViewerAsset(results?.items[viewerIndex ?? -1]?.id ?? '')}
     onclose={closeViewer}
   />
 {/if}

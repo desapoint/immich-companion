@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Icon from '../../../lib/components/ui/Icon.svelte';
   import { formatAssetDate } from '../state/assetViewModel';
   import type { AssetDetail, AssetSummary } from '../types/assets';
   import AssetInfoRelationships from './AssetInfoRelationships.svelte';
@@ -9,6 +10,9 @@
     loading: boolean;
     error: string | null;
     reserveComparisonTray?: boolean;
+    syncing?: boolean;
+    syncError?: string | null;
+    onsync?: () => void;
   }
 
   let {
@@ -17,6 +21,9 @@
     loading,
     error,
     reserveComparisonTray = false,
+    syncing = false,
+    syncError = null,
+    onsync = () => undefined,
   }: Props = $props();
 
   function displayValue(value: unknown): string {
@@ -33,8 +40,15 @@
   aria-label="Image details"
 >
   <header>
-    <span>More info</span>
+    <div class="header-label">
+      <span>More info</span>
+      <button type="button" class="sync-button" onclick={onsync} disabled={syncing}>
+        <Icon name="sync" size="0.85rem" />
+        <span>{syncing ? 'Syncing…' : 'Sync'}</span>
+      </button>
+    </div>
     <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
+    {#if syncError}<p class="error sync-error" role="alert">{syncError}</p>{/if}
   </header>
 
   <AssetInfoRelationships {asset} />
@@ -106,6 +120,43 @@
     gap: 0.16rem;
     padding-bottom: 0.7rem;
     border-bottom: 1px solid var(--color-border-subtle);
+  }
+
+  .header-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .sync-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.28rem;
+    padding: 0.24rem 0.42rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-strong);
+    background: var(--color-canvas);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.65rem;
+    font-weight: 760;
+  }
+
+  .sync-button:hover:not(:disabled),
+  .sync-button:focus-visible {
+    border-color: var(--color-accent-strong);
+    color: var(--color-accent-strong);
+  }
+
+  .sync-button:disabled {
+    cursor: default;
+    opacity: 0.55;
+  }
+
+  .sync-error {
+    margin: 0.15rem 0 0;
   }
 
   header span {

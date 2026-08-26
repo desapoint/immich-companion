@@ -485,6 +485,19 @@ def create_app(
             raise map_immich_error(error) from error
         return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
 
+    @app.post("/api/assets/{asset_id}/sync", response_model=AssetDetail)
+    async def synchronize_asset(asset_id: UUID) -> AssetDetail:
+        """Refresh one asset and its metadata/relationship snapshot."""
+
+        require_asset_repository()
+        assert asset_sync is not None
+        try:
+            await asset_sync.reconcile_targets([asset_id])
+            asset = await immich.get_asset(asset_id)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
+
     @app.get("/api/assets/{asset_id}/thumbnail", response_class=Response)
     async def asset_thumbnail(
         asset_id: UUID,

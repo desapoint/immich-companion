@@ -27,6 +27,7 @@ export type IconName =
   | 'select-all'
   | 'select-page'
   | 'stack'
+  | 'sync'
   | 'tag'
   | 'tag-add'
   | 'tag-remove'

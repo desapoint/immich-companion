@@ -49,6 +49,8 @@
     actionSummary: AssetSelectionSummary | null;
     actionBusy?: boolean;
     actionError?: string | null;
+    syncBusy?: boolean;
+    syncError?: string | null;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
@@ -68,6 +70,7 @@
     ) => void;
     onconfirmaction: () => void;
     oncancelaction: () => void;
+    onsync: () => void;
     onclose: () => void;
   }
 
@@ -84,6 +87,8 @@
     actionSummary,
     actionBusy = false,
     actionError = null,
+    syncBusy = false,
+    syncError = null,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
@@ -95,6 +100,7 @@
     onrelationconfirm,
     onconfirmaction,
     oncancelaction,
+    onsync,
     onclose,
   }: Props = $props();
 
@@ -435,6 +441,9 @@
         loading={detailLoading}
         error={detailError}
         reserveComparisonTray={hasComparisonTray}
+        syncing={syncBusy}
+        syncError={syncError}
+        {onsync}
       />
     {/if}
 

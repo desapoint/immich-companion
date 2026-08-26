@@ -163,6 +163,10 @@ export function getAssetDetail(assetId: string, signal?: AbortSignal): Promise<A
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}`, { signal });
 }
 
+export function synchronizeAsset(assetId: string): Promise<AssetDetail> {
+  return requestJson(`/api/assets/${encodeURIComponent(assetId)}/sync`, { method: 'POST' });
+}
+
 export function assetMediaUrl(assetId: string, size: 'thumbnail' | 'preview'): string {
   return `/api/assets/${encodeURIComponent(assetId)}/thumbnail?size=${size}`;
 }
