@@ -634,6 +634,13 @@ class TaskCoordinator:
     async def get_status(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.get(task_id)
 
+    async def find_active(
+        self, task_type: str, deduplication_key: str
+    ) -> TaskStatusView | None:
+        """Find an active task for idempotent domain submissions."""
+
+        return await self._repository.find_active(task_type, deduplication_key)
+
     async def list_tasks(
         self, *, task_type: str | None = None, limit: int = 50
     ) -> list[TaskStatusView]:
