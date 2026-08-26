@@ -110,6 +110,8 @@
   let infoOpen = $state(false);
   let helpOpen = $state(false);
   let visibleAssetId = $state('');
+  let selectedAssetId = '';
+  let loadedMediaAssetId = '';
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(assets[currentIndex]);
@@ -288,12 +290,16 @@
   }
 
   $effect(() => {
-    currentAsset.id;
-    visibleAssetId = currentAsset.id;
+    const assetId = currentAsset.id;
+    if (assetId === selectedAssetId) return;
+    selectedAssetId = assetId;
+    visibleAssetId = assetId;
   });
 
   $effect(() => {
     const assetId = visibleAsset.id;
+    if (assetId === loadedMediaAssetId) return;
+    loadedMediaAssetId = assetId;
     untrack(() => onvisiblechange(assetId));
     zoom = 1;
     imageLoading = true;

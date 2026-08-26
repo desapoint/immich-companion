@@ -5,6 +5,7 @@ import type {
   AssetActionResult,
   AlbumOption,
   AssetSearchResponse,
+  AssetSummary,
   AssetSelectionRequest,
   AssetSelectionResolution,
   AssetSort,
@@ -31,19 +32,23 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
   return (await response.json()) as T;
 }
 
+export function normalizeAssetSummary(asset: AssetSummary): AssetSummary {
+  return {
+    ...asset,
+    albums: asset.albums ?? [],
+    tags: asset.tags ?? [],
+    stack: asset.stack
+      ? { ...asset.stack, assets: asset.stack.assets ?? [] }
+      : null,
+    source: asset.source ?? { kind: 'upload', library_id: null, original_path: null },
+    immich_url: asset.immich_url ?? null,
+  };
+}
+
 export function normalizeAssetSearchResponse(response: AssetSearchResponse): AssetSearchResponse {
   return {
     ...response,
-    items: response.items.map((asset) => ({
-      ...asset,
-      albums: asset.albums ?? [],
-      tags: asset.tags ?? [],
-      stack: asset.stack
-        ? { ...asset.stack, assets: asset.stack.assets ?? [] }
-        : null,
-      source: asset.source ?? { kind: 'upload', library_id: null, original_path: null },
-      immich_url: asset.immich_url ?? null,
-    })),
+    items: response.items.map(normalizeAssetSummary),
   };
 }
 
@@ -76,6 +81,23 @@ export async function searchAssets(
     signal,
   });
   return normalizeAssetSearchResponse(response);
+}
+
+export async function matchAssetSearch(
+  assetId: string,
+  expression: SearchGroup,
+  signal?: AbortSignal,
+): Promise<AssetSummary | null> {
+  const asset = await requestJson<AssetSummary | null>(
+    `/api/assets/${encodeURIComponent(assetId)}/search-match`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expression: serializeSearchGroup(expression) }),
+      signal,
+    },
+  );
+  return asset ? normalizeAssetSummary(asset) : null;
 }
 
 export function getAlbumOptions(signal?: AbortSignal): Promise<AlbumOption[]> {

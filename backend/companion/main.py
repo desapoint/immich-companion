@@ -35,10 +35,12 @@ from companion.asset_repository import AssetRepository
 from companion.asset_schema import (
     AlbumOption,
     AssetDetail,
+    AssetSearchMatchRequest,
     AssetSearchQuery,
     AssetSearchResponse,
     AssetSortDirection,
     AssetSortField,
+    AssetSummary,
     AssetSyncResult,
     StructuredAssetSearchQuery,
     TagOption,
@@ -234,6 +236,13 @@ def create_app(
             }
         )
 
+    def add_public_asset_url(asset: AssetSummary | None) -> AssetSummary | None:
+        """Attach a browser-safe Immich URL to one matching card."""
+
+        if asset is None:
+            return None
+        return asset.model_copy(update={"immich_url": immich.public_asset_url(asset.id)})
+
     @app.post("/api/assets/sync", response_model=AssetSyncResult)
     async def synchronize_assets() -> AssetSyncResult:
         require_asset_repository()
@@ -294,6 +303,19 @@ def create_app(
     ) -> AssetSearchResponse:
         repository = require_asset_repository()
         return add_public_asset_urls(await repository.search_structured(criteria))
+
+    @app.post(
+        "/api/assets/{asset_id}/search-match",
+        response_model=AssetSummary | None,
+    )
+    async def match_asset_search(
+        asset_id: UUID,
+        criteria: AssetSearchMatchRequest,
+    ) -> AssetSummary | None:
+        repository = require_asset_repository()
+        return add_public_asset_url(
+            await repository.find_structured_match(asset_id, criteria)
+        )
 
     @app.get("/api/albums", response_model=list[AlbumOption])
     async def search_album_options() -> list[AlbumOption]:

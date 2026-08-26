@@ -18,6 +18,7 @@ from companion.action_schema import (
 from companion.asset_schema import (
     AlbumOption,
     AssetAlbumSummary,
+    AssetSearchMatchRequest,
     AssetSearchQuery,
     AssetSearchResponse,
     AssetSortDirection,
@@ -366,6 +367,24 @@ class AssetRepository:
             criteria.sort_direction,
         )
 
+    async def find_structured_match(
+        self,
+        asset_id: UUID,
+        criteria: AssetSearchMatchRequest,
+    ) -> AssetSummary | None:
+        """Return one refreshed card only when it still matches an expression."""
+
+        statement = select(AssetRecord).where(
+            AssetRecord.id == asset_id,
+            self._compile_group(criteria.expression),
+        )
+        async with self._database.sessions() as session:
+            record = await session.scalar(statement)
+            if record is None:
+                return None
+            summaries = await self._summaries_for_records(session, [record])
+        return summaries[0]
+
     @staticmethod
     def _sort_expressions(
         sort_field: AssetSortField,
@@ -402,39 +421,46 @@ class AssetRepository:
         async with self._database.sessions() as session:
             total = int(await session.scalar(count_statement) or 0)
             records = list((await session.scalars(result_statement)).all())
-            album_map: dict[UUID, list[AssetAlbumSummary]] = {
-                record.id: [] for record in records
-            }
-            if records:
-                album_statement = (
-                    select(
-                        AlbumAssetRecord.asset_id,
-                        AlbumRecord.id.label("album_id"),
-                        AlbumRecord.album_name,
-                    )
-                    .join(AlbumRecord, AlbumRecord.id == AlbumAssetRecord.album_id)
-                    .where(AlbumAssetRecord.asset_id.in_([record.id for record in records]))
-                    .order_by(
-                        AlbumAssetRecord.asset_id,
-                        func.lower(AlbumRecord.album_name),
-                        AlbumRecord.id,
-                    )
-                )
-                for asset_id, album_id, album_name in (await session.execute(album_statement)):
-                    album_map[asset_id].append(
-                        AssetAlbumSummary(id=album_id, name=album_name)
-                    )
+            items = await self._summaries_for_records(session, records)
 
         return AssetSearchResponse(
-            items=[
-                AssetSummary.from_record(record, album_map.get(record.id, []))
-                for record in records
-            ],
+            items=items,
             total=total,
             page=page,
             page_size=page_size,
             pages=math.ceil(total / page_size) if total else 0,
         )
+
+    @staticmethod
+    async def _summaries_for_records(session, records: list[AssetRecord]) -> list[AssetSummary]:
+        """Hydrate card summaries and album memberships for known records."""
+
+        album_map: dict[UUID, list[AssetAlbumSummary]] = {
+            record.id: [] for record in records
+        }
+        if records:
+            album_statement = (
+                select(
+                    AlbumAssetRecord.asset_id,
+                    AlbumRecord.id.label("album_id"),
+                    AlbumRecord.album_name,
+                )
+                .join(AlbumRecord, AlbumRecord.id == AlbumAssetRecord.album_id)
+                .where(AlbumAssetRecord.asset_id.in_([record.id for record in records]))
+                .order_by(
+                    AlbumAssetRecord.asset_id,
+                    func.lower(AlbumRecord.album_name),
+                    AlbumRecord.id,
+                )
+            )
+            for asset_id, album_id, album_name in await session.execute(album_statement):
+                album_map[asset_id].append(
+                    AssetAlbumSummary(id=album_id, name=album_name)
+                )
+        return [
+            AssetSummary.from_record(record, album_map.get(record.id, []))
+            for record in records
+        ]
 
     async def list_albums(self) -> list[AlbumOption]:
         """Return stable album choices for the structured search builder."""

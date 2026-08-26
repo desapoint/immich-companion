@@ -207,6 +207,12 @@ class StructuredAssetSearchQuery(BaseModel):
     page_size: int = Field(default=48, ge=1, le=200)
 
 
+class AssetSearchMatchRequest(BaseModel):
+    """Active structured expression used to re-evaluate one asset."""
+
+    expression: SearchGroup = Field(default_factory=SearchGroup)
+
+
 class AlbumOption(BaseModel):
     """Compact album choice for search controls."""
 

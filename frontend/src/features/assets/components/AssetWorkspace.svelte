@@ -6,6 +6,7 @@
     getAssetDetail,
     getTagOptions,
     executeAssetAction,
+    matchAssetSearch,
     planAssetAction,
     resolveAssetSelection,
     searchAssets,
@@ -41,6 +42,7 @@
     AssetComparisonSource,
     AssetDetail,
     AssetSearchResponse,
+    AssetSummary,
     AssetSelectionResolution,
     AssetSelectionRequest,
     AssetSort,
@@ -164,6 +166,39 @@
     } finally {
       if (!controller.signal.aborted) detailLoading = false;
     }
+  }
+
+  async function refreshDetail(assetId: string): Promise<void> {
+    detailController?.abort();
+    const controller = new AbortController();
+    detailController = controller;
+    detailError = null;
+    detailLoading = true;
+    try {
+      const loaded = await getAssetDetail(assetId, controller.signal);
+      detailCache.set(assetId, loaded);
+      if (!controller.signal.aborted) detail = loaded;
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      if (!controller.signal.aborted) {
+        detailError = requestError instanceof Error
+          ? requestError.message
+          : 'Image details failed to load.';
+      }
+    } finally {
+      if (!controller.signal.aborted) detailLoading = false;
+    }
+  }
+
+  function patchResultAsset(asset: AssetSummary): number {
+    if (!results) return -1;
+    const index = results.items.findIndex((item) => item.id === asset.id);
+    if (index < 0) return -1;
+    results = {
+      ...results,
+      items: results.items.map((item) => item.id === asset.id ? asset : item),
+    };
+    return index;
   }
 
   function applySearch(nextExpression: SearchGroup, nextSort: AssetSort): void {
@@ -401,23 +436,33 @@
       result.failed_ids.length ? ` · ${result.failed_ids.length} assets failed verification` : ''
     }`;
     actionPlan = null;
-    detailCache.clear();
     if (confirmedContext === 'selection') {
+      detailCache.clear();
       clearSelection();
       page = 1;
       await Promise.all([loadRelationOptions(), loadAssets()]);
     } else {
-      await Promise.all([loadRelationOptions(), loadAssets()]);
-      if (selectedCount > 0) void refreshSelection();
-      const refreshedIndex = results?.items.findIndex(
-        (asset) => asset.id === confirmedTargetId,
-      ) ?? -1;
-      if (refreshedIndex >= 0) {
-        viewerIndex = refreshedIndex;
-        await loadDetail(refreshedIndex);
-        if (confirmedTargetId) await resolveViewerActionState(confirmedTargetId);
-      } else {
+      if (!confirmedTargetId) {
         closeViewer();
+        await Promise.all([loadRelationOptions(), loadAssets()]);
+      } else {
+        const [refreshedAsset] = await Promise.all([
+          matchAssetSearch(confirmedTargetId, expression),
+          loadRelationOptions(),
+        ]);
+        if (!refreshedAsset) {
+          closeViewer();
+          await loadAssets();
+        } else {
+          const refreshedIndex = patchResultAsset(refreshedAsset);
+          if (refreshedIndex >= 0) viewerIndex = refreshedIndex;
+          detailCache.delete(confirmedTargetId);
+          await Promise.all([
+            refreshDetail(confirmedTargetId),
+            resolveViewerActionState(confirmedTargetId, true),
+          ]);
+        }
+        if (selectedCount > 0) void refreshSelection();
       }
     }
     actionTargetIds = [];
@@ -473,8 +518,8 @@
     );
   }
 
-  async function resolveViewerActionState(assetId: string): Promise<void> {
-    if (viewerActionAssetId === assetId && viewerActionResolution) return;
+  async function resolveViewerActionState(assetId: string, force = false): Promise<void> {
+    if (!force && viewerActionAssetId === assetId && viewerActionResolution) return;
     viewerActionController?.abort();
     const controller = new AbortController();
     viewerActionController = controller;

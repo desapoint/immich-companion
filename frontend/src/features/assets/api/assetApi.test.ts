@@ -6,6 +6,7 @@ import {
   buildAssetPreviewItems,
   buildAssetSearchRequest,
   executeAssetAction,
+  matchAssetSearch,
   normalizeAssetSearchResponse,
   planAssetAction,
 } from './assetApi';
@@ -90,6 +91,39 @@ describe('structured asset API', () => {
       stack: null,
       source: { kind: 'upload', library_id: null, original_path: null },
       immich_url: null,
+    });
+  });
+
+  it('re-evaluates one asset with the active structured expression', async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      id: 'asset-1',
+      albums: null,
+      tags: null,
+      stack: null,
+      source: null,
+      immich_url: null,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetcher);
+    const expression = createSearchGroup('and');
+
+    const match = await matchAssetSearch('asset id', expression);
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe(
+      '/api/assets/asset%20id/search-match',
+    );
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      expression: {
+        kind: 'group',
+        operator: 'and',
+        negate: false,
+        children: [],
+      },
+    });
+    expect(match).toMatchObject({
+      id: 'asset-1',
+      albums: [],
+      tags: [],
+      source: { kind: 'upload', library_id: null, original_path: null },
     });
   });
 
