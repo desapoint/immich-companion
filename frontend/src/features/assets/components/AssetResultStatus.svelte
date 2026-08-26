@@ -148,13 +148,15 @@
   .sync-area {
     display: flex;
     align-items: end;
+    flex-wrap: wrap;
     gap: 0.65rem;
   }
 
   .sync-progress {
     position: relative;
     display: grid;
-    min-width: min(25rem, 42vw);
+    width: clamp(12rem, 24vw, 18rem);
+    min-width: 0;
     gap: 0.4rem;
     padding: 0.65rem 0.75rem;
     border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
@@ -225,6 +227,7 @@
     bottom: calc(100% + 0.45rem);
     display: grid;
     max-width: min(23rem, 80vw);
+    min-width: min(13rem, 70vw);
     gap: 0.18rem;
     padding: 0.55rem 0.7rem;
     border: 1px solid var(--color-border-strong);
@@ -233,6 +236,7 @@
     background: var(--color-surface-raised);
     box-shadow: 0 0.5rem 1.25rem rgb(24 35 54 / 18%);
     font-size: 0.68rem;
+    overflow-wrap: anywhere;
     opacity: 0;
     pointer-events: none;
     transform: translateY(0.25rem);
@@ -244,6 +248,11 @@
     font-size: 0.66rem;
     letter-spacing: normal;
     text-transform: none;
+  }
+
+  .sync-area > small {
+    max-width: min(18rem, 38vw);
+    overflow-wrap: anywhere;
   }
 
   .sync-progress:hover .progress-tooltip,
@@ -285,7 +294,7 @@
     }
 
     .sync-progress {
-      min-width: min(25rem, 90vw);
+      width: min(25rem, 90vw);
     }
   }
 </style>
