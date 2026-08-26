@@ -36,11 +36,6 @@
   const currentStep = $derived(syncProgress ? Math.max(0, syncSteps.indexOf(syncProgress.phase)) : 0);
   const stepNumber = $derived(currentStep + 1);
   const stepPercent = $derived(syncProgress?.percent ?? null);
-  const overallPercent = $derived(
-    stepPercent === null
-      ? null
-      : Math.min(100, ((currentStep + stepPercent / 100) / syncSteps.length) * 100),
-  );
 </script>
 
 <div class="result-status">
@@ -55,8 +50,8 @@
       <div class="sync-progress" role="status" aria-label="Immich synchronization progress">
         <div class="progress-heading">
           <span>Step {stepNumber} of {syncSteps.length} · {phaseLabels[syncProgress.phase] ?? syncProgress.phase}</span>
-          {#if overallPercent !== null}
-            <strong>{overallPercent.toFixed(1)}%</strong>
+          {#if stepPercent !== null}
+            <strong>{stepPercent.toFixed(1)}%</strong>
           {:else}
             <strong>Working…</strong>
           {/if}
@@ -67,10 +62,13 @@
           role="progressbar"
           aria-valuemin="0"
           aria-valuemax="100"
-          aria-valuenow={overallPercent ?? undefined}
+          aria-valuenow={stepPercent ?? undefined}
           aria-valuetext={syncProgress.detail ?? phaseLabels[syncProgress.phase] ?? syncProgress.phase}
         >
-          <div class="progress-value" style={`width: ${overallPercent ?? 35}%`}></div>
+          <div
+            class="progress-value"
+            style={stepPercent === null ? undefined : `width: ${stepPercent}%`}
+          ></div>
         </div>
         <div class="progress-tooltip" role="tooltip">
           <strong>{phaseLabels[syncProgress.phase] ?? syncProgress.phase}</strong>
@@ -202,7 +200,7 @@
 
   .progress-track.indeterminate .progress-value {
     width: 42%;
-    animation: sync-progress 1.2s ease-in-out infinite alternate;
+    animation: sync-progress 1.2s linear infinite;
   }
 
   .progress-tooltip {
@@ -247,8 +245,8 @@
   }
 
   @keyframes sync-progress {
-    from { transform: translateX(-100%); }
-    to { transform: translateX(250%); }
+    from { transform: translateX(-110%); }
+    to { transform: translateX(260%); }
   }
 
   @keyframes progress-shimmer {
