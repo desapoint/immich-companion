@@ -166,7 +166,11 @@ class TaskRepository:
             candidates = await session.scalars(
                 select(TaskRecord)
                 .where(
-                    TaskRecord.status.in_(("queued", "retrying", "recovering")),
+                    # A process can disappear while a task is running. Once its
+                    # lease expires, reclaim it and resume from its checkpoint.
+                    TaskRecord.status.in_(
+                        ("queued", "running", "retrying", "recovering")
+                    ),
                     (TaskRecord.next_attempt_at.is_(None)) | (TaskRecord.next_attempt_at <= now),
                     (TaskRecord.lease_expires_at.is_(None)) | (TaskRecord.lease_expires_at <= now),
                 )
