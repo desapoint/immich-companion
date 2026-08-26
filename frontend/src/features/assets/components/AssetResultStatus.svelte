@@ -46,7 +46,7 @@
     <small>{shown} on this page · {selected} selected</small>
   </div>
   <div class="sync-area">
-    {#if syncMessage}<small role="status">{syncMessage}</small>{/if}
+    {#if syncMessage && !syncing}<small role="status">{syncMessage}</small>{/if}
     {#if syncing && syncProgress}
       <div class="sync-progress" role="status" aria-label="Immich synchronization progress">
         <div class="progress-heading">
@@ -157,8 +157,8 @@
     display: grid;
     width: clamp(12rem, 24vw, 18rem);
     min-width: 0;
-    gap: 0.4rem;
-    padding: 0.65rem 0.75rem;
+    gap: 0.22rem;
+    padding: 0.4rem 0.55rem;
     border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
     border-radius: var(--radius-md);
     background: color-mix(in srgb, var(--color-surface-raised) 92%, var(--color-accent));
@@ -185,7 +185,7 @@
     display: grid;
     grid-template-columns: repeat(5, minmax(2.2rem, 1fr));
     gap: 0.22rem;
-    min-height: 0.62rem;
+    min-height: 0.42rem;
   }
 
   .progress-step {
@@ -212,12 +212,12 @@
     justify-content: space-between;
     gap: 0.5rem;
     color: var(--color-ink);
-    font-size: 0.7rem;
+    font-size: 0.66rem;
     font-weight: 720;
   }
 
   .progress-caption small {
-    font-size: 0.65rem;
+    font-size: 0.61rem;
   }
 
   .progress-tooltip {

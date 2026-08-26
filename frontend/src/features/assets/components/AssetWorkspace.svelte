@@ -606,7 +606,7 @@
         && nextSuccessId !== null
         && nextSuccessId !== handledSyncSuccessId;
       syncing = next.active !== null || next.pending !== null;
-      syncMessage = describeSync(next);
+      syncMessage = next.active || next.pending ? describeSync(next) : null;
       syncProgress = next.active?.progress ?? null;
       if (!syncStatusInitialized) {
         syncStatusInitialized = true;
