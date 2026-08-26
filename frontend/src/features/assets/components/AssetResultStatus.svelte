@@ -149,11 +149,14 @@
     width: clamp(12rem, 24vw, 18rem);
     min-width: 0;
     gap: 0.22rem;
-    padding: 0.4rem 0.55rem;
-    border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
+    padding: 0.42rem 0.58rem;
+    border: 1px solid color-mix(in srgb, var(--color-accent-strong) 58%, var(--color-border-strong));
     border-radius: var(--radius-md);
-    background: color-mix(in srgb, var(--color-surface-raised) 92%, var(--color-accent));
-    box-shadow: 0 0.45rem 1.4rem rgb(24 35 54 / 12%);
+    background: color-mix(in srgb, var(--color-surface-raised) 84%, var(--color-accent-strong));
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-accent-strong) 18%, transparent),
+      0 0 0 2px color-mix(in srgb, var(--color-accent-strong) 10%, transparent),
+      0 0.35rem 0.9rem rgb(24 35 54 / 16%);
   }
 
   .progress-heading {
