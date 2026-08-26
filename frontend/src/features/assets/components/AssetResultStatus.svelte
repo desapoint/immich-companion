@@ -148,6 +148,8 @@
     right: 1rem;
     bottom: 1rem;
     z-index: 20;
+    contain: layout paint;
+    isolation: isolate;
     display: grid;
     width: clamp(12rem, 24vw, 18rem);
     max-width: calc(100vw - 2rem);
@@ -217,8 +219,8 @@
     right: 0.5rem;
     bottom: calc(100% + 0.45rem);
     display: grid;
-    max-width: min(23rem, 80vw);
-    min-width: min(13rem, 70vw);
+    width: min(23rem, calc(100vw - 2rem));
+    box-sizing: border-box;
     gap: 0.18rem;
     padding: 0.55rem 0.7rem;
     border: 1px solid var(--color-border-strong);
