@@ -127,6 +127,7 @@ def test_tag_models_define_normalized_metadata_and_membership_tables() -> None:
         "color",
         "asset_count",
         "synced_at",
+        "sync_generation",
     }
     assert TagAssetRecord.__table__.name == "tag_assets"
     assert set(TagAssetRecord.__table__.primary_key.columns.keys()) == {

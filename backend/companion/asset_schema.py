@@ -309,6 +309,7 @@ class AssetSummary(BaseModel):
         cls,
         asset: AssetRecord,
         albums: list[AssetAlbumSummary] | None = None,
+        tags: list[AssetTagSummary] | None = None,
     ) -> AssetSummary:
         exif = asset.exif_info or {}
         file_size = exif.get("fileSizeInByte")
@@ -318,20 +319,31 @@ class AssetSummary(BaseModel):
         if not isinstance(stack_asset_count, int):
             stack_asset_count = len(stack_assets) if isinstance(stack_assets, list) else 0
         compact_tags: list[AssetTagSummary] = []
-        for index, tag in enumerate(asset.tags or []):
-            if not isinstance(tag, dict):
-                continue
-            name = tag.get("name") or tag.get("value")
-            if not isinstance(name, str) or not name.strip():
-                continue
-            identifier = tag.get("id")
-            compact_tags.append(
-                AssetTagSummary(
-                    id=str(identifier) if identifier is not None else f"tag-{index}-{name}",
-                    name=name,
-                    color=tag.get("color") if isinstance(tag.get("color"), str) else None,
+        if tags is not None:
+            compact_tags = tags
+        else:
+            for index, tag in enumerate(asset.tags or []):
+                if not isinstance(tag, dict):
+                    continue
+                name = tag.get("name") or tag.get("value")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                identifier = tag.get("id")
+                compact_tags.append(
+                    AssetTagSummary(
+                        id=(
+                            str(identifier)
+                            if identifier is not None
+                            else f"tag-{index}-{name}"
+                        ),
+                        name=name,
+                        color=(
+                            tag.get("color")
+                            if isinstance(tag.get("color"), str)
+                            else None
+                        ),
+                    )
                 )
-            )
 
         compact_stack: AssetStackSummary | None = None
         stack_id = stack.get("id")

@@ -219,6 +219,8 @@ class ImmichApiClient:
         size: int = 250,
         album_ids: list[UUID] | None = None,
         tag_ids: list[UUID] | None = None,
+        updated_after: datetime | None = None,
+        updated_before: datetime | None = None,
     ) -> ImmichAssetSearchPage:
         """Retrieve one stable metadata-search page with useful related data."""
 
@@ -235,6 +237,10 @@ class ImmichApiClient:
             payload["albumIds"] = [str(album_id) for album_id in album_ids]
         if tag_ids:
             payload["tagIds"] = [str(tag_id) for tag_id in tag_ids]
+        if updated_after:
+            payload["updatedAfter"] = updated_after.isoformat()
+        if updated_before:
+            payload["updatedBefore"] = updated_before.isoformat()
         response = await self._request(
             "POST",
             "/api/search/metadata",
@@ -243,13 +249,25 @@ class ImmichApiClient:
         )
         return ImmichSearchResponse.model_validate(response.json()).assets
 
-    async def iter_assets(self, *, page_size: int = 250) -> AsyncIterator[ImmichAsset]:
+    async def iter_assets(
+        self,
+        *,
+        page_size: int = 250,
+        updated_after: datetime | None = None,
+        updated_before: datetime | None = None,
+        start_page: int = 1,
+    ) -> AsyncIterator[ImmichAsset]:
         """Yield all assets while guarding against repeated pagination tokens."""
 
-        page_number = 1
+        page_number = start_page
         seen_tokens: set[str] = set()
         while True:
-            page = await self.search_assets_page(page_number, size=page_size)
+            page = await self.search_assets_page(
+                page_number,
+                size=page_size,
+                updated_after=updated_after,
+                updated_before=updated_before,
+            )
             for asset in page.items:
                 yield asset
 
@@ -402,35 +420,52 @@ class ImmichApiClient:
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
-    async def list_albums(self, assets: list[ImmichAsset]) -> list[ImmichAlbum]:
-        """List albums and resolve memberships without direct Immich database access."""
+    async def list_album_catalog(self) -> list[ImmichAlbum]:
+        """Fetch the compact album catalog before any media traversal."""
 
         response = await self._request("GET", "/api/albums", operation="list albums")
-        albums = [ImmichAlbum.model_validate(payload) for payload in response.json()]
+        return [ImmichAlbum.model_validate(payload) for payload in response.json()]
+
+    async def iter_album_asset_ids(
+        self,
+        album_id: UUID,
+        *,
+        page_size: int = 1000,
+        start_page: int = 1,
+    ) -> AsyncIterator[list[UUID]]:
+        """Yield bounded album-membership pages through metadata search."""
+
+        page_number = start_page
+        seen_tokens: set[str] = set()
+        while True:
+            page = await self.search_assets_page(
+                page_number,
+                size=page_size,
+                album_ids=[album_id],
+            )
+            yield [asset.id for asset in page.items]
+            if page.next_page is None:
+                return
+            if page.next_page in seen_tokens:
+                raise ImmichApiError("album membership pagination")
+            seen_tokens.add(page.next_page)
+            try:
+                page_number = int(page.next_page)
+            except ValueError as error:
+                raise ImmichApiError("album membership pagination") from error
+
+    async def list_albums(self, assets: list[ImmichAsset]) -> list[ImmichAlbum]:
+        """Compatibility helper returning catalogs with resolved memberships."""
+
+        albums = await self.list_album_catalog()
         synchronized_ids = {asset.id for asset in assets}
         resolved: list[ImmichAlbum] = []
         for album in albums:
             asset_ids: list[UUID] = []
-            page_number = 1
-            seen_tokens: set[str] = set()
-            while True:
-                page = await self.search_assets_page(
-                    page_number,
-                    size=1000,
-                    album_ids=[album.id],
-                )
+            async for page_ids in self.iter_album_asset_ids(album.id):
                 asset_ids.extend(
-                    asset.id for asset in page.items if asset.id in synchronized_ids
+                    asset_id for asset_id in page_ids if asset_id in synchronized_ids
                 )
-                if page.next_page is None:
-                    break
-                if page.next_page in seen_tokens:
-                    raise ImmichApiError("album membership pagination")
-                seen_tokens.add(page.next_page)
-                try:
-                    page_number = int(page.next_page)
-                except ValueError as error:
-                    raise ImmichApiError("album membership pagination") from error
             resolved.append(album.model_copy(update={"asset_ids": asset_ids}))
         return resolved
 
@@ -440,35 +475,52 @@ class ImmichApiClient:
         response = await self._request("GET", "/api/stacks", operation="list stacks")
         return [ImmichStack.model_validate(payload) for payload in response.json()]
 
-    async def list_tags(self, assets: list[ImmichAsset]) -> list[ImmichTag]:
-        """List tags and resolve memberships omitted by general asset traversal."""
+    async def list_tag_catalog(self) -> list[ImmichTag]:
+        """Fetch the compact tag catalog before any media traversal."""
 
         response = await self._request("GET", "/api/tags", operation="list tags")
-        tags = [ImmichTag.model_validate(payload) for payload in response.json()]
+        return [ImmichTag.model_validate(payload) for payload in response.json()]
+
+    async def iter_tag_asset_ids(
+        self,
+        tag_id: UUID,
+        *,
+        page_size: int = 1000,
+        start_page: int = 1,
+    ) -> AsyncIterator[list[UUID]]:
+        """Yield bounded tag-membership pages through metadata search."""
+
+        page_number = start_page
+        seen_tokens: set[str] = set()
+        while True:
+            page = await self.search_assets_page(
+                page_number,
+                size=page_size,
+                tag_ids=[tag_id],
+            )
+            yield [asset.id for asset in page.items]
+            if page.next_page is None:
+                return
+            if page.next_page in seen_tokens:
+                raise ImmichApiError("tag membership pagination")
+            seen_tokens.add(page.next_page)
+            try:
+                page_number = int(page.next_page)
+            except ValueError as error:
+                raise ImmichApiError("tag membership pagination") from error
+
+    async def list_tags(self, assets: list[ImmichAsset]) -> list[ImmichTag]:
+        """Compatibility helper returning catalogs with resolved memberships."""
+
+        tags = await self.list_tag_catalog()
         synchronized_ids = {asset.id for asset in assets}
         resolved: list[ImmichTag] = []
         for tag in tags:
             asset_ids: list[UUID] = []
-            page_number = 1
-            seen_tokens: set[str] = set()
-            while True:
-                page = await self.search_assets_page(
-                    page_number,
-                    size=1000,
-                    tag_ids=[tag.id],
-                )
+            async for page_ids in self.iter_tag_asset_ids(tag.id):
                 asset_ids.extend(
-                    asset.id for asset in page.items if asset.id in synchronized_ids
+                    asset_id for asset_id in page_ids if asset_id in synchronized_ids
                 )
-                if page.next_page is None:
-                    break
-                if page.next_page in seen_tokens:
-                    raise ImmichApiError("tag membership pagination")
-                seen_tokens.add(page.next_page)
-                try:
-                    page_number = int(page.next_page)
-                except ValueError as error:
-                    raise ImmichApiError("tag membership pagination") from error
             resolved.append(tag.model_copy(update={"asset_ids": asset_ids}))
         return resolved
 

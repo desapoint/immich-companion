@@ -14,7 +14,10 @@ no media mount and performs no direct database access.
    optionally set `IMMICH_COMPANION_VERSION` to an immutable release or SHA tag.
    Keep `ALLOW_DESTRUCTIVE_ACTIONS=false` until trash workflows have been
    validated in staging. `ACTION_MAX_TARGETS` and `ACTION_PLAN_TTL_SECONDS`
-   bound synchronous batch size and review lifetime.
+   bound action size and review lifetime. `IMMICH_COMPANION_SYNC_BATCH_SIZE`,
+   `IMMICH_COMPANION_SYNC_OVERLAP_SECONDS`, and
+   `IMMICH_COMPANION_SYNC_LEASE_SECONDS` map to the companion's staged sync
+   batch size, overlap window, and coordinator lease duration.
 3. Load the original file and the overlay together in the deployment UI or
    Compose command used by the host.
 4. Confirm the companion reports `ready: true` before exposing port 8090 beyond

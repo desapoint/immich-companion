@@ -211,6 +211,35 @@ export interface AssetSyncResult {
   completed_at: string;
 }
 
+export type AssetSyncMode = 'incremental' | 'full';
+export type AssetSyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering';
+
+export interface AssetSyncRunStatus {
+  id: string;
+  mode: AssetSyncMode;
+  status: AssetSyncRunState;
+  phase: string;
+  generation: number;
+  window_start: string | null;
+  window_end: string;
+  cursor: string | null;
+  counters: Record<string, number>;
+  attempts: number;
+  error: string | null;
+  created_at: string;
+  started_at: string | null;
+  heartbeat_at: string | null;
+  completed_at: string | null;
+}
+
+export interface AssetSyncCoordinatorStatus {
+  active: AssetSyncRunStatus | null;
+  pending: AssetSyncRunStatus | null;
+  last_success: AssetSyncRunStatus | null;
+  successful_watermark: string | null;
+  authoritative_generation: number;
+}
+
 export type AssetSelectionMode = 'explicit' | 'all_matching';
 
 export interface AssetSelectionRequest {

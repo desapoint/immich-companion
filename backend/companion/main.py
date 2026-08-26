@@ -50,6 +50,12 @@ from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.migrate import run_migrations
+from companion.sync_repository import SyncRepository
+from companion.sync_schema import (
+    SyncCoordinatorStatus,
+    SyncRunStatus,
+    SyncStartRequest,
+)
 
 
 def create_app(
@@ -68,7 +74,14 @@ def create_app(
     )
     asset_repository = AssetRepository(database) if database is not None else None
     asset_sync = (
-        AssetSyncService(immich, asset_repository) if asset_repository is not None else None
+        AssetSyncService(
+            immich,
+            asset_repository,
+            SyncRepository(database),
+            runtime_settings,
+        )
+        if database is not None and asset_repository is not None
+        else None
     )
     action_service = (
         AssetActionService(
@@ -86,9 +99,13 @@ def create_app(
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if database is not None:
             await asyncio.to_thread(run_migrations, runtime_settings)
+        if asset_sync is not None:
+            asset_sync.wake()
         try:
             yield
         finally:
+            if asset_sync is not None:
+                await asset_sync.stop()
             if database is not None:
                 await database.dispose()
 
@@ -163,6 +180,8 @@ def create_app(
                 "tag_filters",
                 "selection_resolution",
                 "reviewed_asset_actions",
+                "hybrid_staged_sync",
+                "persistent_sync_status",
             ],
             "planned": [
                 "action_jobs",
@@ -248,9 +267,33 @@ def create_app(
         require_asset_repository()
         assert asset_sync is not None
         try:
-            return await asset_sync.synchronize()
+            return await asset_sync.synchronize("full")
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+
+    @app.post("/api/assets/sync/start", response_model=SyncRunStatus)
+    async def start_asset_sync(request: SyncStartRequest) -> SyncRunStatus:
+        require_asset_repository()
+        assert asset_sync is not None
+        return await asset_sync.start(request.mode)
+
+    @app.get("/api/assets/sync/status", response_model=SyncCoordinatorStatus)
+    async def asset_sync_status() -> SyncCoordinatorStatus:
+        require_asset_repository()
+        assert asset_sync is not None
+        return await asset_sync.status()
+
+    @app.get("/api/assets/sync/runs/{run_id}", response_model=SyncRunStatus)
+    async def asset_sync_run(run_id: UUID) -> SyncRunStatus:
+        require_asset_repository()
+        assert asset_sync is not None
+        run = await asset_sync.run_status(run_id)
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The sync run was not found.",
+            )
+        return run
 
     @app.get("/api/assets", response_model=AssetSearchResponse)
     async def search_assets(

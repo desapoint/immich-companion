@@ -64,6 +64,9 @@ class AssetRecord(Base):
     people: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     tags: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     stack: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    sync_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    sync_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+    stack_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
@@ -85,6 +88,7 @@ class AlbumRecord(Base):
     immich_created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     immich_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    sync_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
 
 
 class AlbumAssetRecord(Base):
@@ -103,6 +107,7 @@ class AlbumAssetRecord(Base):
         primary_key=True,
         index=True,
     )
+    sync_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
 
 
 class TagRecord(Base):
@@ -116,6 +121,7 @@ class TagRecord(Base):
     color: Mapped[str | None] = mapped_column(String(32), nullable=True)
     asset_count: Mapped[int] = mapped_column(Integer, default=0)
     synced_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    sync_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
 
 
 class TagAssetRecord(Base):
@@ -133,6 +139,63 @@ class TagAssetRecord(Base):
         ForeignKey("assets.id", ondelete="CASCADE"),
         primary_key=True,
         index=True,
+    )
+    sync_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
+
+
+class SyncCoordinatorRecord(Base):
+    """Singleton durable sync lease, queue, and successful checkpoints."""
+
+    __tablename__ = "sync_coordinator"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    lease_owner: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    active_run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    pending_run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True, index=True)
+    generation_counter: Mapped[int] = mapped_column(BigInteger, default=0)
+    authoritative_generation: Mapped[int] = mapped_column(BigInteger, default=0)
+    successful_watermark: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    last_success_run_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class SyncRunRecord(Base):
+    """Persisted staged sync progress that survives reloads and restarts."""
+
+    __tablename__ = "sync_runs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    mode: Mapped[str] = mapped_column(String(16), index=True)
+    status: Mapped[str] = mapped_column(String(24), index=True)
+    phase: Mapped[str] = mapped_column(String(32), index=True)
+    generation: Mapped[int] = mapped_column(BigInteger, index=True)
+    window_start: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    cursor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    counters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    owner_token: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    heartbeat_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
 

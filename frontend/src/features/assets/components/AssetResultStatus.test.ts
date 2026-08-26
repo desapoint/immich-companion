@@ -13,6 +13,7 @@ describe('AssetResultStatus', () => {
         syncing: false,
         syncMessage: null,
         onsync: () => undefined,
+        onfullsync: () => undefined,
       },
     });
 

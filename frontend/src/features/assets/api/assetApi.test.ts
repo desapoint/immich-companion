@@ -6,9 +6,11 @@ import {
   buildAssetPreviewItems,
   buildAssetSearchRequest,
   executeAssetAction,
+  getAssetSyncStatus,
   matchAssetSearch,
   normalizeAssetSearchResponse,
   planAssetAction,
+  startAssetSync,
 } from './assetApi';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -176,5 +178,43 @@ describe('structured asset API', () => {
       plan_id: 'plan-1',
       confirm: true,
     });
+  });
+
+  it('starts staged sync modes and reads reload-persistent status', async () => {
+    const run = {
+      id: 'run-1',
+      mode: 'incremental',
+      status: 'queued',
+      phase: 'queued',
+      generation: 4,
+      window_start: null,
+      window_end: '2026-08-26T12:00:00Z',
+      cursor: null,
+      counters: {},
+      attempts: 0,
+      error: null,
+      created_at: '2026-08-26T12:00:00Z',
+      started_at: null,
+      heartbeat_at: null,
+      completed_at: null,
+    };
+    const fetcher = vi.fn(async (input: RequestInfo | URL, _init?: RequestInit) => (
+      new Response(JSON.stringify(String(input).endsWith('/status') ? {
+        active: run,
+        pending: null,
+        last_success: null,
+        successful_watermark: null,
+        authoritative_generation: 0,
+      } : run), { status: 200, headers: { 'content-type': 'application/json' } })
+    ));
+    vi.stubGlobal('fetch', fetcher);
+
+    await startAssetSync('incremental');
+    const status = await getAssetSyncStatus();
+
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      mode: 'incremental',
+    });
+    expect(status.active?.id).toBe('run-1');
   });
 });

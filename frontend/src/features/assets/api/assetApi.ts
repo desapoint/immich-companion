@@ -10,6 +10,9 @@ import type {
   AssetSelectionResolution,
   AssetSort,
   AssetSyncResult,
+  AssetSyncCoordinatorStatus,
+  AssetSyncMode,
+  AssetSyncRunStatus,
   SearchGroup,
   AssetViewerMedia,
   TagOption,
@@ -110,6 +113,18 @@ export function getTagOptions(signal?: AbortSignal): Promise<TagOption[]> {
 
 export function synchronizeAssets(): Promise<AssetSyncResult> {
   return requestJson('/api/assets/sync', { method: 'POST' });
+}
+
+export function startAssetSync(mode: AssetSyncMode): Promise<AssetSyncRunStatus> {
+  return requestJson('/api/assets/sync/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mode }),
+  });
+}
+
+export function getAssetSyncStatus(signal?: AbortSignal): Promise<AssetSyncCoordinatorStatus> {
+  return requestJson('/api/assets/sync/status', { signal });
 }
 
 export function resolveAssetSelection(

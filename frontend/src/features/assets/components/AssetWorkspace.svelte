@@ -4,13 +4,14 @@
   import {
     getAlbumOptions,
     getAssetDetail,
+    getAssetSyncStatus,
     getTagOptions,
     executeAssetAction,
     matchAssetSearch,
     planAssetAction,
     resolveAssetSelection,
     searchAssets,
-    synchronizeAssets,
+    startAssetSync,
   } from '../api/assetApi';
   import { createDefaultAssetSort } from '../state/assetSort';
   import {
@@ -43,6 +44,8 @@
     AssetDetail,
     AssetSearchResponse,
     AssetSummary,
+    AssetSyncCoordinatorStatus,
+    AssetSyncMode,
     AssetSelectionResolution,
     AssetSelectionRequest,
     AssetSort,
@@ -96,6 +99,9 @@
   let dragSelecting = false;
   let dragSelectionValue = true;
   let dragLastIndex: number | null = null;
+  let syncPollTimer: ReturnType<typeof setInterval> | null = null;
+  let syncStatusInitialized = false;
+  let handledSyncSuccessId: string | null = null;
   const detailCache = new Map<string, AssetDetail>();
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
@@ -573,20 +579,60 @@
     }
   }
 
-  async function syncAssets(): Promise<void> {
+  function describeSync(status: AssetSyncCoordinatorStatus): string | null {
+    const active = status.active;
+    if (active) {
+      const label = active.mode === 'full' ? 'Full sync' : 'Incremental sync';
+      const assetsSeen = active.counters.assets_seen ?? 0;
+      const albumsSeen = active.counters.albums_seen ?? 0;
+      const tagsSeen = active.counters.tags_seen ?? 0;
+      const pending = status.pending ? ' · follow-up queued' : '';
+      return `${label} · ${active.phase} · ${albumsSeen} albums · ${tagsSeen} tags · ${assetsSeen} assets${pending}`;
+    }
+    if (status.pending) return `${status.pending.mode === 'full' ? 'Full' : 'Incremental'} sync queued`;
+    if (status.last_success) {
+      const counters = status.last_success.counters;
+      return `Last ${status.last_success.mode} sync · ${counters.assets_seen ?? 0} assets · ${counters.assets_removed ?? 0} removed`;
+    }
+    return null;
+  }
+
+  async function refreshSyncStatus(): Promise<void> {
+    try {
+      const next = await getAssetSyncStatus();
+      const nextSuccessId = next.last_success?.id ?? null;
+      const completedSinceLastCheck = syncStatusInitialized
+        && nextSuccessId !== null
+        && nextSuccessId !== handledSyncSuccessId;
+      syncing = next.active !== null || next.pending !== null;
+      syncMessage = describeSync(next);
+      if (!syncStatusInitialized) {
+        syncStatusInitialized = true;
+        handledSyncSuccessId = nextSuccessId;
+      } else if (completedSinceLastCheck) {
+        handledSyncSuccessId = nextSuccessId;
+        detailCache.clear();
+        clearSelection();
+        await Promise.all([loadRelationOptions(), loadAssets()]);
+      }
+    } catch (requestError) {
+      if (!syncStatusInitialized) {
+        syncMessage = requestError instanceof Error
+          ? requestError.message
+          : 'Sync status is unavailable.';
+      }
+    }
+  }
+
+  async function syncAssets(mode: AssetSyncMode = 'incremental'): Promise<void> {
     syncing = true;
-    syncMessage = null;
+    syncMessage = mode === 'full' ? 'Queueing full sync…' : 'Queueing incremental sync…';
     error = null;
     try {
-      const result = await synchronizeAssets();
-      syncMessage = `Synced ${result.seen} assets · ${result.created} new · ${result.removed} removed`;
-      detailCache.clear();
-      clearSelection();
-      await loadRelationOptions();
-      await loadAssets();
+      await startAssetSync(mode);
+      await refreshSyncStatus();
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Immich sync failed.';
-    } finally {
       syncing = false;
     }
   }
@@ -596,9 +642,12 @@
     window.addEventListener('pointercancel', finishDragSelection);
     void loadRelationOptions();
     void loadAssets();
+    void refreshSyncStatus();
+    syncPollTimer = setInterval(() => void refreshSyncStatus(), 1500);
     return () => {
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
+      if (syncPollTimer !== null) clearInterval(syncPollTimer);
     };
   });
 
@@ -607,6 +656,7 @@
     detailController?.abort();
     selectionController?.abort();
     viewerActionController?.abort();
+    if (syncPollTimer !== null) clearInterval(syncPollTimer);
   });
 </script>
 
@@ -619,7 +669,8 @@
     selected={selectedCount}
     {syncing}
     {syncMessage}
-    onsync={syncAssets}
+    onsync={() => void syncAssets('incremental')}
+    onfullsync={() => void syncAssets('full')}
   />
 
   {#if results && selectedCount > 0}
@@ -652,7 +703,7 @@
   {:else if error}
     <AssetErrorState message={error} onretry={loadAssets} />
   {:else if results && results.items.length === 0}
-    <AssetEmptyState {syncing} onsync={syncAssets} />
+    <AssetEmptyState {syncing} onsync={() => void syncAssets('incremental')} />
   {:else if results}
     <AssetGrid
       assets={results.items}

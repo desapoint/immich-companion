@@ -77,6 +77,23 @@ PostgreSQL services plus a separate PostgreSQL service owned by the companion.
 Deterministic media is uploaded through the supported Immich API; the companion
 does not mount Immich media or access Immich's database.
 
+Synchronization is catalog-first and staged. Every run first reconciles the
+complete album and tag catalogs, then processes image metadata in bounded
+batches, followed by stacks and normalized album/tag memberships. A generation
+is validated before stale relationships or catalog rows are removed; media rows
+are removed only after a successful full traversal. Routine incremental runs use
+the last successful watermark with an overlap window, while the confirmed Full
+sync control scans all media. PostgreSQL stores the run, lease, cursor, counters,
+and watermark, so syncs cannot overlap and progress remains visible after a page
+reload or service restart.
+
+The main tuning values are `SYNC_BATCH_SIZE` (default `250`),
+`SYNC_OVERLAP_SECONDS` (default `300`), and `SYNC_LEASE_SECONDS` (default `60`).
+The asset page exposes an incremental control plus a confirmed administrator full
+sync. API clients can start a run with `POST /api/assets/sync/start`, inspect the
+coordinator with `GET /api/assets/sync/status`, and audit a specific persisted run
+with `GET /api/assets/sync/runs/{run_id}`.
+
 The seed includes exact-byte and pixel-identical variants, crops, edits,
 occlusions, alpha images, aspect-ratio and dimension variants, negative controls,
 overlapping albums, stacks, favorites, archived assets, and trashed assets. A

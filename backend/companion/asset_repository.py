@@ -2,11 +2,27 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Float, and_, cast, delete, exists, func, not_, or_, select, true
+from sqlalchemy import (
+    Float,
+    and_,
+    case,
+    cast,
+    delete,
+    exists,
+    func,
+    not_,
+    or_,
+    select,
+    true,
+    tuple_,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.action_schema import (
@@ -24,6 +40,7 @@ from companion.asset_schema import (
     AssetSortDirection,
     AssetSortField,
     AssetSummary,
+    AssetTagSummary,
     SearchCondition,
     SearchGroup,
     StructuredAssetSearchQuery,
@@ -40,6 +57,10 @@ from companion.models import (
 )
 
 ASPECT_RATIO_RELATIVE_TOLERANCE = 0.001
+
+
+class SyncValidationError(RuntimeError):
+    """Raised when a staged generation is incomplete before finalization."""
 
 
 class AssetRepository:
@@ -108,9 +129,9 @@ class AssetRepository:
             if rows:
                 statement = insert(AssetRecord).values(rows)
                 update_columns = {
-                    column.name: getattr(statement.excluded, column.name)
-                    for column in AssetRecord.__table__.columns
-                    if column.name != "id"
+                    name: getattr(statement.excluded, name)
+                    for name in rows[0]
+                    if name != "id"
                 }
                 await session.execute(
                     statement.on_conflict_do_update(
@@ -223,6 +244,503 @@ class AssetRepository:
         updated = len(existing_ids)
         removed = int(removed_result.rowcount or 0)
         return created, updated, removed
+
+    @staticmethod
+    def _fingerprint(asset: ImmichAsset) -> str:
+        """Hash the canonical relevant Immich payload for replay suppression."""
+
+        payload = asset.model_dump(mode="json", by_alias=True, exclude_none=False)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(encoded.encode()).hexdigest()
+
+    async def upsert_album_catalog(
+        self,
+        albums: list[ImmichAlbum],
+        generation: int,
+    ) -> tuple[int, int]:
+        """Upsert a complete album catalog without deleting prior rows early."""
+
+        if not albums:
+            return 0, 0
+        synced_at = datetime.now(UTC)
+        rows = [
+            {
+                "id": album.id,
+                "album_name": album.album_name,
+                "description": album.description,
+                "album_thumbnail_asset_id": album.album_thumbnail_asset_id,
+                "asset_count": album.asset_count,
+                "immich_created_at": album.created_at,
+                "immich_updated_at": album.updated_at,
+                "synced_at": synced_at,
+                "sync_generation": generation,
+            }
+            for album in albums
+        ]
+        async with self._database.sessions() as session, session.begin():
+            existing = {
+                identifier: previous_generation
+                for identifier, previous_generation in (
+                    await session.execute(
+                        select(AlbumRecord.id, AlbumRecord.sync_generation).where(
+                            AlbumRecord.id.in_([album.id for album in albums])
+                        )
+                    )
+                )
+            }
+            statement = insert(AlbumRecord).values(rows)
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[AlbumRecord.id],
+                    set_={
+                        name: getattr(statement.excluded, name)
+                        for name in rows[0]
+                        if name != "id"
+                    },
+                )
+            )
+        created = len(rows) - len(existing)
+        newly_observed = sum(value != generation for value in existing.values())
+        return created, newly_observed
+
+    async def upsert_tag_catalog(
+        self,
+        tags: list[ImmichTag],
+        generation: int,
+    ) -> tuple[int, int]:
+        """Upsert a complete tag catalog without deleting prior rows early."""
+
+        if not tags:
+            return 0, 0
+        synced_at = datetime.now(UTC)
+        rows = [
+            {
+                "id": tag.id,
+                "tag_name": tag.name,
+                "tag_value": tag.value,
+                "color": tag.color,
+                "asset_count": len(tag.asset_ids),
+                "synced_at": synced_at,
+                "sync_generation": generation,
+            }
+            for tag in tags
+        ]
+        async with self._database.sessions() as session, session.begin():
+            existing = {
+                identifier: previous_generation
+                for identifier, previous_generation in (
+                    await session.execute(
+                        select(TagRecord.id, TagRecord.sync_generation).where(
+                            TagRecord.id.in_([tag.id for tag in tags])
+                        )
+                    )
+                )
+            }
+            statement = insert(TagRecord).values(rows)
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[TagRecord.id],
+                    set_={
+                        name: getattr(statement.excluded, name)
+                        for name in rows[0]
+                        if name != "id"
+                    },
+                )
+            )
+        created = len(rows) - len(existing)
+        newly_observed = sum(value != generation for value in existing.values())
+        return created, newly_observed
+
+    async def upsert_asset_batch(
+        self,
+        assets: list[ImmichAsset],
+        generation: int,
+    ) -> tuple[int, int, int]:
+        """Commit one idempotent asset batch and skip unchanged overlap rows."""
+
+        if not assets:
+            return 0, 0, 0
+        synced_at = datetime.now(UTC)
+        rows = []
+        fingerprints: dict[UUID, str] = {}
+        for asset in assets:
+            fingerprint = self._fingerprint(asset)
+            fingerprints[asset.id] = fingerprint
+            rows.append(
+                {
+                    **self._values(asset, synced_at),
+                    "sync_fingerprint": fingerprint,
+                    "sync_generation": generation,
+                }
+            )
+        async with self._database.sessions() as session, session.begin():
+            existing = {
+                identifier: (fingerprint, previous_generation)
+                for identifier, fingerprint, previous_generation in (
+                    await session.execute(
+                        select(
+                            AssetRecord.id,
+                            AssetRecord.sync_fingerprint,
+                            AssetRecord.sync_generation,
+                        ).where(AssetRecord.id.in_([asset.id for asset in assets]))
+                    )
+                )
+            }
+            statement = insert(AssetRecord).values(rows)
+            payload_changed = or_(
+                AssetRecord.sync_fingerprint.is_(None),
+                AssetRecord.sync_fingerprint != statement.excluded.sync_fingerprint,
+            )
+            update_columns = {"sync_generation": statement.excluded.sync_generation}
+            for name in rows[0]:
+                if name in {"id", "sync_generation", "stack", "stack_generation"}:
+                    continue
+                update_columns[name] = case(
+                    (payload_changed, getattr(statement.excluded, name)),
+                    else_=getattr(AssetRecord, name),
+                )
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[AssetRecord.id],
+                    set_=update_columns,
+                )
+            )
+        created = len(rows) - len(existing)
+        changed = 0
+        unchanged = 0
+        for identifier, fingerprint in fingerprints.items():
+            previous = existing.get(identifier)
+            if previous is None or previous[1] == generation:
+                continue
+            if previous[0] == fingerprint:
+                unchanged += 1
+            else:
+                changed += 1
+        return created, changed, unchanged
+
+    async def apply_stack_batch(
+        self,
+        stacks: list[tuple[dict[str, object], list[UUID]]],
+        generation: int,
+    ) -> int:
+        """Apply compact stack payloads only after their asset batch exists."""
+
+        applied = 0
+        async with self._database.sessions() as session, session.begin():
+            for payload, asset_ids in stacks:
+                if not asset_ids:
+                    continue
+                already_observed = int(
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(AssetRecord)
+                        .where(AssetRecord.id.in_(asset_ids))
+                        .where(AssetRecord.stack_generation == generation)
+                    )
+                    or 0
+                )
+                result = await session.execute(
+                    update(AssetRecord)
+                    .where(AssetRecord.id.in_(asset_ids))
+                    .values(stack=payload, stack_generation=generation)
+                )
+                applied += max(0, int(result.rowcount or 0) - already_observed)
+        return applied
+
+    async def upsert_album_memberships(
+        self,
+        album_id: UUID,
+        asset_ids: list[UUID],
+        generation: int,
+    ) -> int:
+        """Mark one bounded album-membership observation batch."""
+
+        if not asset_ids:
+            return 0
+        async with self._database.sessions() as session:
+            existing_asset_ids = set(
+                (
+                    await session.scalars(
+                        select(AssetRecord.id).where(AssetRecord.id.in_(asset_ids))
+                    )
+                ).all()
+            )
+            already_observed = set(
+                (
+                    await session.scalars(
+                        select(AlbumAssetRecord.asset_id).where(
+                            AlbumAssetRecord.album_id == album_id,
+                            AlbumAssetRecord.asset_id.in_(asset_ids),
+                            AlbumAssetRecord.sync_generation == generation,
+                        )
+                    )
+                ).all()
+            )
+        missing = set(asset_ids) - existing_asset_ids
+        if missing:
+            raise SyncValidationError(
+                f"Album membership referenced {len(missing)} unsynchronized assets"
+            )
+        rows = [
+            {"album_id": album_id, "asset_id": asset_id, "sync_generation": generation}
+            for asset_id in dict.fromkeys(asset_ids)
+            if asset_id in existing_asset_ids
+        ]
+        if not rows:
+            return 0
+        async with self._database.sessions() as session, session.begin():
+            statement = insert(AlbumAssetRecord).values(rows)
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[AlbumAssetRecord.album_id, AlbumAssetRecord.asset_id],
+                    set_={"sync_generation": generation},
+                )
+            )
+        return len(rows) - len(already_observed)
+
+    async def upsert_tag_memberships(
+        self,
+        tag_id: UUID,
+        asset_ids: list[UUID],
+        generation: int,
+    ) -> int:
+        """Mark one bounded tag-membership observation batch."""
+
+        if not asset_ids:
+            return 0
+        async with self._database.sessions() as session:
+            existing_asset_ids = set(
+                (
+                    await session.scalars(
+                        select(AssetRecord.id).where(AssetRecord.id.in_(asset_ids))
+                    )
+                ).all()
+            )
+            already_observed = set(
+                (
+                    await session.scalars(
+                        select(TagAssetRecord.asset_id).where(
+                            TagAssetRecord.tag_id == tag_id,
+                            TagAssetRecord.asset_id.in_(asset_ids),
+                            TagAssetRecord.sync_generation == generation,
+                        )
+                    )
+                ).all()
+            )
+        missing = set(asset_ids) - existing_asset_ids
+        if missing:
+            raise SyncValidationError(
+                f"Tag membership referenced {len(missing)} unsynchronized assets"
+            )
+        rows = [
+            {"tag_id": tag_id, "asset_id": asset_id, "sync_generation": generation}
+            for asset_id in dict.fromkeys(asset_ids)
+            if asset_id in existing_asset_ids
+        ]
+        if not rows:
+            return 0
+        async with self._database.sessions() as session, session.begin():
+            statement = insert(TagAssetRecord).values(rows)
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[TagAssetRecord.tag_id, TagAssetRecord.asset_id],
+                    set_={"sync_generation": generation},
+                )
+            )
+        return len(rows) - len(already_observed)
+
+    async def refresh_relation_counts(self) -> None:
+        """Derive catalog counts from the successfully reconciled memberships."""
+
+        album_count = (
+            select(func.count())
+            .select_from(AlbumAssetRecord)
+            .where(AlbumAssetRecord.album_id == AlbumRecord.id)
+            .correlate(AlbumRecord)
+            .scalar_subquery()
+        )
+        tag_count = (
+            select(func.count())
+            .select_from(TagAssetRecord)
+            .where(TagAssetRecord.tag_id == TagRecord.id)
+            .correlate(TagRecord)
+            .scalar_subquery()
+        )
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(update(AlbumRecord).values(asset_count=album_count))
+            await session.execute(update(TagRecord).values(asset_count=tag_count))
+
+    async def validate_generation(
+        self,
+        generation: int,
+        counters: dict[str, int],
+        *,
+        full: bool,
+        allow_counter_repair: bool = False,
+    ) -> dict[str, int]:
+        """Prove every staged catalog, relation, stack, and full asset count."""
+
+        checks = {
+            "albums_seen": select(func.count())
+            .select_from(AlbumRecord)
+            .where(AlbumRecord.sync_generation == generation),
+            "tags_seen": select(func.count())
+            .select_from(TagRecord)
+            .where(TagRecord.sync_generation == generation),
+            "album_memberships": select(func.count())
+            .select_from(AlbumAssetRecord)
+            .where(AlbumAssetRecord.sync_generation == generation),
+            "tag_memberships": select(func.count())
+            .select_from(TagAssetRecord)
+            .where(TagAssetRecord.sync_generation == generation),
+            "stack_members": select(func.count())
+            .select_from(AssetRecord)
+            .where(AssetRecord.stack_generation == generation)
+            .where(func.json_typeof(AssetRecord.stack) != "null"),
+        }
+        if full:
+            checks["assets_seen"] = (
+                select(func.count())
+                .select_from(AssetRecord)
+                .where(AssetRecord.sync_generation == generation)
+            )
+        async with self._database.sessions() as session:
+            actual = {
+                name: int(await session.scalar(statement) or 0)
+                for name, statement in checks.items()
+            }
+        mismatches = {
+            name: (counters.get(name, 0), value)
+            for name, value in actual.items()
+            if counters.get(name, 0) != value
+        }
+        if mismatches and not allow_counter_repair:
+            raise SyncValidationError(
+                "Staged generation validation failed: "
+                + ", ".join(
+                    f"{name} expected {expected}, found {value}"
+                    for name, (expected, value) in mismatches.items()
+                )
+            )
+        return actual
+
+    async def finalize_generation(
+        self,
+        generation: int,
+        *,
+        remove_assets: bool,
+        batch_size: int,
+    ) -> dict[str, int]:
+        """Delete only absence proven by a fully successful staged traversal."""
+
+        removed = {
+            "album_memberships_removed": 0,
+            "tag_memberships_removed": 0,
+            "albums_removed": 0,
+            "tags_removed": 0,
+            "stacks_cleared": 0,
+            "assets_removed": 0,
+        }
+        removed["album_memberships_removed"] = await self._delete_stale_memberships(
+            AlbumAssetRecord,
+            (AlbumAssetRecord.album_id, AlbumAssetRecord.asset_id),
+            generation,
+            batch_size,
+        )
+        removed["tag_memberships_removed"] = await self._delete_stale_memberships(
+            TagAssetRecord,
+            (TagAssetRecord.tag_id, TagAssetRecord.asset_id),
+            generation,
+            batch_size,
+        )
+        removed["albums_removed"] = await self._delete_stale_entities(
+            AlbumRecord, AlbumRecord.id, AlbumRecord.sync_generation, generation, batch_size
+        )
+        removed["tags_removed"] = await self._delete_stale_entities(
+            TagRecord, TagRecord.id, TagRecord.sync_generation, generation, batch_size
+        )
+        while True:
+            async with self._database.sessions() as session, session.begin():
+                identifiers = list(
+                    (
+                        await session.scalars(
+                            select(AssetRecord.id)
+                            .where(AssetRecord.stack_generation != generation)
+                            .where(func.json_typeof(AssetRecord.stack) != "null")
+                            .limit(batch_size)
+                        )
+                    ).all()
+                )
+                if not identifiers:
+                    break
+                result = await session.execute(
+                    update(AssetRecord)
+                    .where(AssetRecord.id.in_(identifiers))
+                    .values(stack=None, stack_generation=generation)
+                )
+                removed["stacks_cleared"] += int(result.rowcount or 0)
+        if remove_assets:
+            removed["assets_removed"] = await self._delete_stale_entities(
+                AssetRecord,
+                AssetRecord.id,
+                AssetRecord.sync_generation,
+                generation,
+                batch_size,
+            )
+        return removed
+
+    async def _delete_stale_memberships(
+        self,
+        model,
+        columns: tuple[object, object],
+        generation: int,
+        batch_size: int,
+    ) -> int:
+        removed = 0
+        while True:
+            async with self._database.sessions() as session, session.begin():
+                keys = list(
+                    (
+                        await session.execute(
+                            select(*columns)
+                            .where(model.sync_generation != generation)
+                            .limit(batch_size)
+                        )
+                    ).tuples()
+                )
+                if not keys:
+                    return removed
+                result = await session.execute(
+                    delete(model).where(tuple_(*columns).in_(keys))
+                )
+                removed += int(result.rowcount or 0)
+
+    async def _delete_stale_entities(
+        self,
+        model,
+        identifier_column,
+        generation_column,
+        generation: int,
+        batch_size: int,
+    ) -> int:
+        removed = 0
+        while True:
+            async with self._database.sessions() as session, session.begin():
+                identifiers = list(
+                    (
+                        await session.scalars(
+                            select(identifier_column)
+                            .where(generation_column != generation)
+                            .limit(batch_size)
+                        )
+                    ).all()
+                )
+                if not identifiers:
+                    return removed
+                result = await session.execute(
+                    delete(model).where(identifier_column.in_(identifiers))
+                )
+                removed += int(result.rowcount or 0)
 
     async def search(self, criteria: AssetSearchQuery) -> AssetSearchResponse:
         """Compose safe basic filters and return a stable result page."""
@@ -438,6 +956,9 @@ class AssetRepository:
         album_map: dict[UUID, list[AssetAlbumSummary]] = {
             record.id: [] for record in records
         }
+        tag_map: dict[UUID, list[AssetTagSummary]] = {
+            record.id: [] for record in records
+        }
         if records:
             album_statement = (
                 select(
@@ -457,8 +978,33 @@ class AssetRepository:
                 album_map[asset_id].append(
                     AssetAlbumSummary(id=album_id, name=album_name)
                 )
+            tag_statement = (
+                select(
+                    TagAssetRecord.asset_id,
+                    TagRecord.id.label("tag_id"),
+                    TagRecord.tag_name,
+                    TagRecord.color,
+                )
+                .join(TagRecord, TagRecord.id == TagAssetRecord.tag_id)
+                .where(TagAssetRecord.asset_id.in_([record.id for record in records]))
+                .order_by(
+                    TagAssetRecord.asset_id,
+                    func.lower(TagRecord.tag_name),
+                    TagRecord.id,
+                )
+            )
+            for asset_id, tag_id, tag_name, color in await session.execute(
+                tag_statement
+            ):
+                tag_map[asset_id].append(
+                    AssetTagSummary(id=str(tag_id), name=tag_name, color=color)
+                )
         return [
-            AssetSummary.from_record(record, album_map.get(record.id, []))
+            AssetSummary.from_record(
+                record,
+                album_map.get(record.id, []),
+                tag_map.get(record.id, []),
+            )
             for record in records
         ]
 

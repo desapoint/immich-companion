@@ -1,4 +1,6 @@
 <script lang="ts">
+  import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
+
   interface Props {
     total: number;
     shown: number;
@@ -6,6 +8,7 @@
     syncing: boolean;
     syncMessage: string | null;
     onsync: () => void;
+    onfullsync: () => void;
   }
 
   let {
@@ -15,7 +18,9 @@
     syncing,
     syncMessage,
     onsync,
+    onfullsync,
   }: Props = $props();
+  let fullSyncConfirmation = $state(false);
 </script>
 
 <div class="result-status">
@@ -27,10 +32,29 @@
   <div class="sync-area">
     {#if syncMessage}<small role="status">{syncMessage}</small>{/if}
     <button type="button" onclick={onsync} disabled={syncing}>
-      {syncing ? 'Syncing Immich…' : 'Sync Immich'}
+      {syncing ? 'Syncing Immich…' : 'Incremental sync'}
     </button>
+    <button
+      class="full-sync"
+      type="button"
+      onclick={() => (fullSyncConfirmation = true)}
+    >Full sync</button>
   </div>
 </div>
+
+{#if fullSyncConfirmation}
+  <ConfirmDialog
+    title="Force a global synchronization?"
+    message="This checks every album, tag, image, stack, and membership before safely removing anything absent. It runs in bounded batches and cannot overlap another sync."
+    confirmLabel="Start full sync"
+    icon="info"
+    onconfirm={() => {
+      fullSyncConfirmation = false;
+      onfullsync();
+    }}
+    onclose={() => (fullSyncConfirmation = false)}
+  />
+{/if}
 
 <style>
   .result-status {
@@ -85,6 +109,8 @@
     cursor: wait;
     opacity: 0.58;
   }
+
+  .full-sync { color: var(--color-ink-muted); }
 
   @media (max-width: 42rem) {
     .result-status,

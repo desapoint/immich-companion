@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -91,6 +92,39 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
     assert [asset.id for asset in assets] == [ASSET_ONE, ASSET_TWO]
     assert assets[0].original_file_name == "page-1.jpg"
     assert len(requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_incremental_metadata_window_is_bounded_in_request_payload() -> None:
+    lower = datetime(2026, 8, 26, 11, 55, tzinfo=UTC)
+    upper = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["updatedAfter"] == lower.isoformat()
+        assert body["updatedBefore"] == upper.isoformat()
+        return httpx.Response(
+            200,
+            json={
+                "assets": {
+                    "count": 0,
+                    "total": 0,
+                    "items": [],
+                    "nextPage": None,
+                }
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    assets = [
+        asset
+        async for asset in client.iter_assets(
+            updated_after=lower,
+            updated_before=upper,
+        )
+    ]
+
+    assert assets == []
 
 
 @pytest.mark.asyncio
