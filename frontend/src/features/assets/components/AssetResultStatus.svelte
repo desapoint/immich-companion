@@ -36,7 +36,11 @@
   const currentStep = $derived(syncProgress ? Math.max(0, syncSteps.indexOf(syncProgress.phase)) : 0);
   const stepNumber = $derived(currentStep + 1);
   const stepPercent = $derived(syncProgress?.percent ?? null);
-  const stepProgress = $derived(stepPercent === null ? 0 : stepPercent);
+  const overallPercent = $derived(
+    stepPercent === null
+      ? null
+      : Math.min(100, ((currentStep + stepPercent / 100) / syncSteps.length) * 100),
+  );
 </script>
 
 <div class="result-status">
@@ -50,34 +54,23 @@
     {#if syncing && syncProgress}
       <div class="sync-progress" role="status" aria-label="Immich synchronization progress">
         <div class="progress-heading">
-          <span>Sync progress</span>
-          <strong>Step {stepNumber} of {syncSteps.length}</strong>
+          <span>Step {stepNumber} of {syncSteps.length} · {phaseLabels[syncProgress.phase] ?? syncProgress.phase}</span>
+          {#if overallPercent !== null}
+            <strong>{overallPercent.toFixed(1)}%</strong>
+          {:else}
+            <strong>Working…</strong>
+          {/if}
         </div>
         <div
           class:indeterminate={stepPercent === null}
-          class="progress-steps"
+          class="progress-track"
           role="progressbar"
           aria-valuemin="0"
           aria-valuemax="100"
-          aria-valuenow={stepPercent ?? undefined}
+          aria-valuenow={overallPercent ?? undefined}
           aria-valuetext={syncProgress.detail ?? phaseLabels[syncProgress.phase] ?? syncProgress.phase}
         >
-          {#each syncSteps as step, index}
-            <div class:complete={index < currentStep} class:current={index === currentStep} class="progress-step">
-              <div
-                class="progress-step-value"
-                style={`width: ${index < currentStep ? 100 : index === currentStep ? stepProgress : 0}%`}
-              ></div>
-            </div>
-          {/each}
-        </div>
-        <div class="progress-caption">
-          <span>{phaseLabels[syncProgress.phase] ?? syncProgress.phase}</span>
-          {#if stepPercent !== null}
-            <small>{stepPercent}% of this step</small>
-          {:else}
-            <small>Working…</small>
-          {/if}
+          <div class="progress-value" style={`width: ${overallPercent ?? 35}%`}></div>
         </div>
         <div class="progress-tooltip" role="tooltip">
           <strong>{phaseLabels[syncProgress.phase] ?? syncProgress.phase}</strong>
@@ -170,54 +163,46 @@
     justify-content: space-between;
     gap: 0.6rem;
     color: var(--color-ink);
-    font-size: 0.72rem;
+    font-size: 0.62rem;
     font-weight: 760;
   }
 
   .progress-heading span {
     color: var(--color-ink-muted);
-    font-size: 0.65rem;
+    font-size: 0.61rem;
     letter-spacing: 0.06em;
     text-transform: uppercase;
   }
 
-  .progress-steps {
-    display: grid;
-    grid-template-columns: repeat(5, minmax(2.2rem, 1fr));
-    gap: 0.22rem;
-    min-height: 0.42rem;
-  }
-
-  .progress-step {
+  .progress-track {
     position: relative;
     overflow: hidden;
+    height: 0.34rem;
     border-radius: 99px;
     background: color-mix(in srgb, var(--color-border) 72%, transparent);
   }
 
-  .progress-step-value {
+  .progress-value {
+    position: relative;
+    overflow: hidden;
     height: 100%;
     border-radius: inherit;
     background: linear-gradient(90deg, var(--color-accent-strong), var(--color-accent));
-    transition: width 260ms ease;
+    transition: width 360ms ease;
   }
 
-  .progress-steps.indeterminate .progress-step.current .progress-step-value {
+  .progress-value::after {
+    position: absolute;
+    inset: 0;
+    content: '';
+    background: linear-gradient(105deg, transparent 25%, rgb(255 255 255 / 42%) 50%, transparent 75%);
+    background-size: 220% 100%;
+    animation: progress-shimmer 1.5s linear infinite;
+  }
+
+  .progress-track.indeterminate .progress-value {
     width: 42%;
     animation: sync-progress 1.2s ease-in-out infinite alternate;
-  }
-
-  .progress-caption {
-    display: flex;
-    justify-content: space-between;
-    gap: 0.5rem;
-    color: var(--color-ink);
-    font-size: 0.66rem;
-    font-weight: 720;
-  }
-
-  .progress-caption small {
-    font-size: 0.61rem;
   }
 
   .progress-tooltip {
@@ -264,6 +249,11 @@
   @keyframes sync-progress {
     from { transform: translateX(-100%); }
     to { transform: translateX(250%); }
+  }
+
+  @keyframes progress-shimmer {
+    from { background-position: 120% 0; }
+    to { background-position: -120% 0; }
   }
 
   button {
