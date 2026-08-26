@@ -87,6 +87,9 @@ class FakeImmich:
     async def count_tag_asset_ids(self, _tag_id: UUID) -> int:
         return 1
 
+    async def list_albums_for_asset(self, _asset_id: UUID):
+        return []
+
 
 class FakeAssetRepository:
     def __init__(self) -> None:
@@ -142,6 +145,20 @@ class FakeAssetRepository:
 
     async def refresh_relation_counts(self):
         self.calls.append("counts")
+
+    async def replace_album_memberships(self, _album_id, asset_ids):
+        self.calls.append("replace_album")
+        return len(asset_ids)
+
+    async def replace_tag_memberships(self, _tag_id, asset_ids):
+        self.calls.append("replace_tag")
+        return len(asset_ids)
+
+    async def replace_asset_album_memberships(self, _asset_id, _album_ids):
+        self.calls.append("replace_asset_album")
+
+    async def replace_asset_tag_memberships(self, _asset_id, _tag_ids):
+        self.calls.append("replace_asset_tag")
 
 
 class FakeSyncRepository:
@@ -216,3 +233,22 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     ]
     assert relationship_progress
     assert any(item.total == 2 and item.percent is not None for item in relationship_progress)
+
+
+@pytest.mark.asyncio
+async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traversal() -> None:
+    members = [asset(ASSET_ONE, "primary.png")]
+    stack = ImmichStack(id=STACK_ID, primaryAssetId=ASSET_ONE, assets=members)
+    immich = FakeImmich(members, stack)
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+
+    counters = await service._repair_relations_now([("album", ALBUM_ID), ("tag", TAG_ID)])
+
+    assert counters == {"albums": 1, "tags": 1, "memberships": 2}
+    assert assets.calls[-2:] == ["replace_album", "replace_tag"]

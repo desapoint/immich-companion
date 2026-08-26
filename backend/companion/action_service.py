@@ -65,30 +65,18 @@ class AssetActionService:
         self._actions = actions
         self._sync = sync
 
-    async def _repair_targets(self, asset_ids: list[UUID]) -> None:
+    async def _repair_targets(
+        self,
+        asset_ids: list[UUID],
+        relations: list[tuple[str, UUID]] | None = None,
+    ) -> None:
         """Use targeted repair while retaining compatibility with sync adapters."""
 
         repair = getattr(self._sync, "reconcile_targets", None)
         if repair is not None:
-            await repair(asset_ids)
+            await repair(asset_ids, relations=relations)
         else:
             await self._sync.synchronize()
-
-    async def _record_relation_change(
-        self,
-        operation: AssetActionOperation,
-        relation_id: UUID,
-        asset_ids: list[UUID],
-    ) -> None:
-        """Mirror a confirmed Immich relation mutation in the local index."""
-
-        apply_delta = getattr(self._assets, "apply_membership_event", None)
-        if apply_delta is None:
-            return
-        relation = "album" if operation in {"add_album", "remove_album"} else "tag"
-        present = operation.startswith("add_")
-        for asset_id in asset_ids:
-            await apply_delta(relation, relation_id, asset_id, present)
 
     async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
@@ -257,7 +245,6 @@ class AssetActionService:
             initial[relation_id] = (applicable, skipped)
             try:
                 await self._apply(operation, applicable, relation_id)
-                await self._record_relation_change(operation, relation_id, applicable)
                 successful_relations.append(relation_id)
             except Exception:
                 api_failed[relation_id] = applicable
@@ -267,7 +254,11 @@ class AssetActionService:
         )
         if successful_relations and has_successful_changes:
             try:
-                await self._repair_targets(target_ids)
+                relation = "album" if operation in {"add_album", "remove_album"} else "tag"
+                await self._repair_targets(
+                    target_ids,
+                    relations=[(relation, relation_id) for relation_id in successful_relations],
+                )
             except Exception as error:
                 relation_results = [
                     AssetActionRelationResult(

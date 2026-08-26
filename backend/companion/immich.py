@@ -70,6 +70,12 @@ class ImmichAsset(ImmichModel):
     tags: list[dict[str, Any]] = Field(default_factory=list)
     stack: dict[str, Any] | None = None
 
+    @property
+    def includes_tags(self) -> bool:
+        """Whether the response explicitly included the tags relationship."""
+
+        return "tags" in self.model_fields_set
+
 
 class ImmichAlbum(ImmichModel):
     """Album metadata plus membership resolved through supported Immich APIs."""
@@ -476,6 +482,17 @@ class ImmichApiClient:
         """Fetch the compact album catalog before any media traversal."""
 
         response = await self._request("GET", "/api/albums", operation="list albums")
+        return [ImmichAlbum.model_validate(payload) for payload in response.json()]
+
+    async def list_albums_for_asset(self, asset_id: UUID) -> list[ImmichAlbum]:
+        """Retrieve the albums containing one asset through the supported API."""
+
+        response = await self._request(
+            "GET",
+            "/api/albums",
+            operation="list albums for asset",
+            params={"assetId": str(asset_id)},
+        )
         return [ImmichAlbum.model_validate(payload) for payload in response.json()]
 
     async def iter_album_asset_ids(

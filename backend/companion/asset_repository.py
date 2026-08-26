@@ -469,6 +469,120 @@ class AssetRepository:
                     )
                 )
 
+    async def replace_album_memberships(self, album_id: UUID, asset_ids: list[UUID]) -> int:
+        """Replace one album snapshot after its complete remote traversal succeeds."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        async with self._database.sessions() as session, session.begin():
+            if unique_ids:
+                await session.execute(
+                    delete(AlbumAssetRecord).where(
+                        AlbumAssetRecord.album_id == album_id,
+                        AlbumAssetRecord.asset_id.not_in(unique_ids),
+                    )
+                )
+                await session.execute(
+                    insert(AlbumAssetRecord)
+                    .values(
+                        [
+                            {"album_id": album_id, "asset_id": asset_id}
+                            for asset_id in unique_ids
+                        ]
+                    )
+                    .on_conflict_do_nothing()
+                )
+            else:
+                await session.execute(
+                    delete(AlbumAssetRecord).where(AlbumAssetRecord.album_id == album_id)
+                )
+            count = await session.scalar(
+                select(func.count())
+                .select_from(AlbumAssetRecord)
+                .where(AlbumAssetRecord.album_id == album_id)
+            )
+            await session.execute(
+                update(AlbumRecord)
+                .where(AlbumRecord.id == album_id)
+                .values(asset_count=int(count or 0))
+            )
+            return int(count or 0)
+
+    async def replace_tag_memberships(self, tag_id: UUID, asset_ids: list[UUID]) -> int:
+        """Replace one tag snapshot after its complete remote traversal succeeds."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        async with self._database.sessions() as session, session.begin():
+            if unique_ids:
+                await session.execute(
+                    delete(TagAssetRecord).where(
+                        TagAssetRecord.tag_id == tag_id,
+                        TagAssetRecord.asset_id.not_in(unique_ids),
+                    )
+                )
+                await session.execute(
+                    insert(TagAssetRecord)
+                    .values(
+                        [{"tag_id": tag_id, "asset_id": asset_id} for asset_id in unique_ids]
+                    )
+                    .on_conflict_do_nothing()
+                )
+            else:
+                await session.execute(delete(TagAssetRecord).where(TagAssetRecord.tag_id == tag_id))
+            count = await session.scalar(
+                select(func.count())
+                .select_from(TagAssetRecord)
+                .where(TagAssetRecord.tag_id == tag_id)
+            )
+            await session.execute(
+                update(TagRecord)
+                .where(TagRecord.id == tag_id)
+                .values(asset_count=int(count or 0))
+            )
+            return int(count or 0)
+
+    async def replace_asset_tag_memberships(self, asset_id: UUID, tag_ids: list[UUID]) -> None:
+        """Replace one asset's tag memberships after a complete detail/fallback read."""
+
+        unique_ids = list(dict.fromkeys(tag_ids))
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(
+                delete(TagAssetRecord).where(
+                    TagAssetRecord.asset_id == asset_id,
+                    TagAssetRecord.tag_id.not_in(unique_ids) if unique_ids else true(),
+                )
+            )
+            if unique_ids:
+                await session.execute(
+                    insert(TagAssetRecord)
+                    .values([{"tag_id": tag_id, "asset_id": asset_id} for tag_id in unique_ids])
+                    .on_conflict_do_nothing()
+                )
+
+    async def replace_asset_album_memberships(
+        self, asset_id: UUID, album_ids: list[UUID]
+    ) -> None:
+        """Replace one asset's album memberships after a complete API read."""
+
+        unique_ids = list(dict.fromkeys(album_ids))
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(
+                delete(AlbumAssetRecord).where(
+                    AlbumAssetRecord.asset_id == asset_id,
+                    AlbumAssetRecord.album_id.not_in(unique_ids) if unique_ids else true(),
+                )
+            )
+            if unique_ids:
+                await session.execute(
+                    insert(AlbumAssetRecord)
+                    .values(
+                        [
+                            {"album_id": album_id, "asset_id": asset_id}
+                            for album_id in unique_ids
+                        ]
+                    )
+                    .on_conflict_do_nothing()
+                )
+
     async def apply_stack_batch(
         self,
         stacks: list[tuple[dict[str, object], list[UUID]]],

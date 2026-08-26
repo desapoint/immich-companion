@@ -97,10 +97,15 @@ def create_app(
         else None
     )
     if task_coordinator is not None and asset_sync is not None:
-        from companion.asset_service import AssetRepairTaskHandler, AssetSyncTaskHandler
+        from companion.asset_service import (
+            AssetRelationRepairTaskHandler,
+            AssetRepairTaskHandler,
+            AssetSyncTaskHandler,
+        )
 
         task_coordinator.register_handler(AssetSyncTaskHandler(asset_sync))
         task_coordinator.register_handler(AssetRepairTaskHandler(asset_sync))
+        task_coordinator.register_handler(AssetRelationRepairTaskHandler(asset_sync))
         task_coordinator.register_schedule(
             name="asset-sync-incremental",
             interval_seconds=runtime_settings.sync_incremental_interval_seconds,

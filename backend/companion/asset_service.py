@@ -149,6 +149,26 @@ class AssetRepairTaskHandler:
         return TaskResult(summary={"repaired": len(payload.get("asset_ids", []))})
 
 
+class AssetRelationRepairTaskHandler:
+    """Rebuild affected album/tag snapshots through the serialized sync lane."""
+
+    task_type = "asset_relation_repair"
+    lane_key = "asset_sync"
+    max_concurrency = 1
+
+    def __init__(self, service: AssetSyncService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        relations = [
+            (str(item["kind"]), UUID(str(item["id"])))
+            for item in payload.get("relations", [])
+            if isinstance(item, dict) and item.get("kind") in {"album", "tag"}
+        ]
+        counters = await self._service._repair_relations_now(relations)
+        return TaskResult(summary=counters, counters=counters)
+
+
 class AssetSyncService:
     """Queue and execute catalog-first staged sync runs under one durable lease."""
 
@@ -431,8 +451,34 @@ class AssetSyncService:
                     await asyncio.sleep(delay)
                     await self.start(run.mode)
 
-    async def reconcile_targets(self, asset_ids: list[UUID]) -> None:
+    async def reconcile_targets(
+        self,
+        asset_ids: list[UUID],
+        relations: list[tuple[str, UUID]] | None = None,
+    ) -> None:
         """Repair action-affected asset metadata without a library-wide scan."""
+
+        if relations:
+            unique_relations = sorted(set(relations), key=lambda item: (item[0], str(item[1])))
+            payload = {
+                "relations": [
+                    {"kind": kind, "id": str(relation_id)}
+                    for kind, relation_id in unique_relations
+                ]
+            }
+            if self._coordinator is not None:
+                task = await self._coordinator.submit(
+                    "asset_relation_repair",
+                    payload,
+                    priority=95,
+                    deduplication_key="asset-relation-repair:"
+                    + ",".join(f"{kind}:{relation_id}" for kind, relation_id in unique_relations),
+                )
+                await self._coordinator.start()
+                await self._coordinator.wait(task.id)
+                return
+            await self._repair_relations_now(unique_relations)
+            return
 
         if self._coordinator is not None:
             task = await self._coordinator.submit(
@@ -456,6 +502,46 @@ class AssetSyncService:
         )
         for asset in assets:
             await self._assets.refresh_asset(asset)
+            albums = await self._immich.list_albums_for_asset(asset.id)
+            await self._assets.replace_asset_album_memberships(
+                asset.id, [album.id for album in albums]
+            )
+            if asset.includes_tags:
+                await self._assets.replace_asset_tag_memberships(
+                    asset.id,
+                    [UUID(str(tag["id"])) for tag in asset.tags if tag.get("id")],
+                )
+            else:
+                tags = await self._immich.list_tag_catalog()
+                present: list[UUID] = []
+                for tag in tags:
+                    async for page_ids in self._immich.iter_tag_asset_ids(tag.id):
+                        if asset.id in page_ids:
+                            present.append(tag.id)
+                            break
+                await self._assets.replace_asset_tag_memberships(asset.id, present)
+
+    async def _repair_relations_now(self, relations: list[tuple[str, UUID]]) -> dict[str, int]:
+        """Traverse each affected relation completely before replacing its snapshot."""
+
+        counters = {"albums": 0, "tags": 0, "memberships": 0}
+        for kind, relation_id in relations:
+            asset_ids: list[UUID] = []
+            iterator = (
+                self._immich.iter_album_asset_ids(relation_id)
+                if kind == "album"
+                else self._immich.iter_tag_asset_ids(relation_id)
+            )
+            async for page_ids in iterator:
+                asset_ids.extend(page_ids)
+            if kind == "album":
+                count = await self._assets.replace_album_memberships(relation_id, asset_ids)
+                counters["albums"] += 1
+            else:
+                count = await self._assets.replace_tag_memberships(relation_id, asset_ids)
+                counters["tags"] += 1
+            counters["memberships"] += count
+        return counters
 
     async def _execute_with_heartbeat(
         self,

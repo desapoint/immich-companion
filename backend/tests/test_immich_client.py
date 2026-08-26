@@ -214,6 +214,38 @@ async def test_detail_and_thumbnail_contracts_preserve_safe_media_metadata() -> 
 
 
 @pytest.mark.asyncio
+async def test_asset_detail_tracks_tag_field_presence_and_album_membership_endpoint() -> None:
+    album_id = UUID("44444444-4444-4444-8444-444444444444")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/api/assets/{ASSET_ONE}":
+            payload = asset_payload(ASSET_ONE, "detail.jpg")
+            payload["tags"] = [{"id": str(UUID("66666666-6666-4666-8666-666666666666"))}]
+            return httpx.Response(200, json=payload)
+        assert request.url.path == "/api/albums"
+        assert request.url.params["assetId"] == str(ASSET_ONE)
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": str(album_id),
+                    "albumName": "Review",
+                    "assetCount": 1,
+                    "createdAt": "2026-08-20T12:00:00Z",
+                    "updatedAt": "2026-08-20T12:00:00Z",
+                }
+            ],
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    detail = await client.get_asset(ASSET_ONE)
+    albums = await client.list_albums_for_asset(ASSET_ONE)
+
+    assert detail.includes_tags is True
+    assert albums[0].id == album_id
+
+
+@pytest.mark.asyncio
 async def test_album_memberships_use_paged_metadata_search() -> None:
     album_id = UUID("44444444-4444-4444-8444-444444444444")
 
