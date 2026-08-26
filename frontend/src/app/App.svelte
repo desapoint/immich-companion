@@ -1,6 +1,7 @@
 <script lang="ts">
   import AssetsPage from '../features/assets/components/AssetsPage.svelte';
   import StatusDashboard from '../features/status/components/StatusDashboard.svelte';
+  import SettingsPage from '../features/settings/components/SettingsPage.svelte';
   import { errorMessage } from '../lib/utils/errors';
   import AppRuntimeError from './components/AppRuntimeError.svelte';
   import AppShell from './components/AppShell.svelte';
@@ -13,7 +14,11 @@
     {#if currentPath === '/assets' || currentPath.startsWith('/assets/')}
       <AssetsPage />
     {:else}
-      <StatusDashboard />
+      {#if currentPath === '/settings'}
+        <SettingsPage />
+      {:else}
+        <StatusDashboard />
+      {/if}
     {/if}
   </AppShell>
 

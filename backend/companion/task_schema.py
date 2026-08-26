@@ -78,7 +78,15 @@ class TaskScheduleView(BaseModel):
     name: str
     enabled: bool
     interval_seconds: int
+    cron_expression: str | None = None
     next_run_at: datetime
     task_type: str
     payload: dict[str, Any]
     priority: int
+
+
+class TaskScheduleUpdate(BaseModel):
+    """User-editable recurring schedule configuration."""
+
+    enabled: bool
+    cron_expression: str = Field(min_length=1, max_length=128)

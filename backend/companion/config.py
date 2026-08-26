@@ -35,9 +35,8 @@ class Settings(BaseSettings):
     sync_batch_size: int = Field(default=250, ge=25, le=2000)
     sync_overlap_seconds: int = Field(default=300, ge=0, le=86400)
     sync_lease_seconds: int = Field(default=60, ge=15, le=900)
-    sync_incremental_interval_seconds: int = Field(default=300, ge=30, le=86400)
-    sync_full_interval_seconds: int = Field(default=86400, ge=300, le=604800)
-    sync_schedules_enabled: bool = False
+    sync_incremental_interval_seconds: int = Field(default=900, ge=30, le=86400)
+    sync_full_interval_seconds: int = Field(default=604800, ge=300, le=604800)
     sync_max_attempts: int = Field(default=5, ge=1, le=10)
     sync_retry_backoff_seconds: float = Field(default=1.0, ge=0, le=60)
 

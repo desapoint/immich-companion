@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from croniter import croniter
 from sqlalchemy import func, select, text
 
 from companion.database import DatabaseManager
@@ -18,7 +19,7 @@ from companion.models import (
     TaskRecord,
     TaskScheduleRecord,
 )
-from companion.task_schema import TaskResult, TaskStatusView
+from companion.task_schema import TaskResult, TaskScheduleView, TaskStatusView
 
 
 class RetryableTaskError(RuntimeError):
@@ -76,6 +77,20 @@ def _public(record: TaskRecord | None) -> TaskStatusView | None:
         started_at=record.started_at,
         heartbeat_at=record.heartbeat_at,
         completed_at=record.completed_at,
+    )
+
+
+def _public_schedule(record: TaskScheduleRecord) -> TaskScheduleView:
+    return TaskScheduleView(
+        id=record.id,
+        name=record.name,
+        enabled=record.enabled,
+        interval_seconds=record.interval_seconds,
+        cron_expression=record.cron_expression,
+        next_run_at=record.next_run_at,
+        task_type=record.task_type,
+        payload=record.payload or {},
+        priority=record.priority,
     )
 
 
@@ -393,6 +408,7 @@ class TaskRepository:
         payload: dict[str, Any],
         priority: int,
         enabled: bool = True,
+        cron_expression: str | None = None,
     ) -> None:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
@@ -405,6 +421,7 @@ class TaskRepository:
                         name=name,
                         enabled=enabled,
                         interval_seconds=interval_seconds,
+                        cron_expression=cron_expression,
                         next_run_at=now + timedelta(seconds=interval_seconds),
                         task_type=task_type,
                         payload=dict(payload),
@@ -416,7 +433,6 @@ class TaskRepository:
                 schedule.task_type = task_type
                 schedule.payload = dict(payload)
                 schedule.priority = priority
-                schedule.enabled = enabled
 
     async def claim_due_schedules(self) -> list[TaskScheduleRecord]:
         now = datetime.now(UTC)
@@ -431,9 +447,41 @@ class TaskRepository:
             )
             for schedule in schedules:
                 while schedule.next_run_at <= now:
-                    schedule.next_run_at += timedelta(seconds=schedule.interval_seconds)
+                    if schedule.cron_expression:
+                        schedule.next_run_at = croniter(
+                            schedule.cron_expression, schedule.next_run_at
+                        ).get_next(datetime)
+                    else:
+                        schedule.next_run_at += timedelta(seconds=schedule.interval_seconds)
                 claimed.append(schedule)
-            return claimed
+        return claimed
+
+    async def list_schedules(self) -> list[TaskScheduleView]:
+        async with self._database.sessions() as session:
+            records = await session.scalars(
+                select(TaskScheduleRecord).order_by(TaskScheduleRecord.name)
+            )
+            return [_public_schedule(record) for record in records]
+
+    async def update_schedule(
+        self,
+        name: str,
+        *,
+        enabled: bool,
+        cron_expression: str,
+    ) -> TaskScheduleView | None:
+        croniter(cron_expression)
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(TaskScheduleRecord).where(TaskScheduleRecord.name == name).with_for_update()
+            )
+            if record is None:
+                return None
+            record.enabled = enabled
+            record.cron_expression = cron_expression
+            record.next_run_at = croniter(cron_expression, now).get_next(datetime)
+            return _public_schedule(record)
 
     async def list(self, *, task_type: str | None = None, limit: int = 50) -> list[TaskStatusView]:
         async with self._database.sessions() as session:
@@ -520,6 +568,7 @@ class TaskCoordinator:
         payload: dict[str, Any],
         priority: int = 0,
         enabled: bool = True,
+        cron_expression: str | None = None,
     ) -> None:
         self._schedule_definitions.append(
             {
@@ -529,6 +578,7 @@ class TaskCoordinator:
                 "payload": dict(payload),
                 "priority": priority,
                 "enabled": enabled,
+                "cron_expression": cron_expression,
             }
         )
 
@@ -566,6 +616,16 @@ class TaskCoordinator:
 
     async def cancel(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.cancel(task_id)
+
+    async def list_schedules(self) -> list[TaskScheduleView]:
+        return await self._repository.list_schedules()
+
+    async def update_schedule(
+        self, name: str, *, enabled: bool, cron_expression: str
+    ) -> TaskScheduleView | None:
+        return await self._repository.update_schedule(
+            name, enabled=enabled, cron_expression=cron_expression
+        )
 
     async def wait(self, task_id: UUID, *, poll_seconds: float = 0.25) -> TaskStatusView:
         while True:

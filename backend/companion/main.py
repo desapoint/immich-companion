@@ -11,6 +11,7 @@ from typing import Literal
 from uuid import UUID
 
 import httpx
+from croniter import CroniterBadCronError, croniter
 from fastapi import FastAPI, HTTPException, Query, Response, status
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -58,7 +59,7 @@ from companion.sync_schema import (
     SyncStartRequest,
 )
 from companion.task_coordinator import TaskCoordinator
-from companion.task_schema import TaskStatusView
+from companion.task_schema import TaskScheduleUpdate, TaskScheduleView, TaskStatusView
 
 
 def create_app(
@@ -113,7 +114,8 @@ def create_app(
             task_type="asset_sync",
             payload={"mode": "incremental"},
             priority=10,
-            enabled=runtime_settings.sync_schedules_enabled,
+            enabled=False,
+            cron_expression="*/15 * * * *",
         )
         task_coordinator.register_schedule(
             name="asset-sync-full",
@@ -121,7 +123,8 @@ def create_app(
             task_type="asset_sync",
             payload={"mode": "full"},
             priority=100,
-            enabled=runtime_settings.sync_schedules_enabled,
+            enabled=False,
+            cron_expression="0 0 * * 0",
         )
     action_service = (
         AssetActionService(
@@ -362,6 +365,31 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return await task_coordinator.list_tasks(task_type=task_type, limit=limit)
+
+    @app.get("/api/settings/sync", response_model=list[TaskScheduleView])
+    async def sync_schedule_settings() -> list[TaskScheduleView]:
+        if task_coordinator is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        return await task_coordinator.list_schedules()
+
+    @app.put("/api/settings/sync/{schedule_name}", response_model=TaskScheduleView)
+    async def update_sync_schedule(
+        schedule_name: str, request: TaskScheduleUpdate
+    ) -> TaskScheduleView:
+        if task_coordinator is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        try:
+            croniter(request.cron_expression)
+        except (CroniterBadCronError, ValueError) as error:
+            raise HTTPException(status_code=422, detail="Invalid cron expression.") from error
+        schedule = await task_coordinator.update_schedule(
+            schedule_name,
+            enabled=request.enabled,
+            cron_expression=request.cron_expression,
+        )
+        if schedule is None:
+            raise HTTPException(status_code=404, detail="The schedule was not found.")
+        return schedule
 
     @app.post("/api/tasks/{task_id}/cancel", response_model=TaskStatusView)
     async def cancel_task(task_id: UUID) -> TaskStatusView:

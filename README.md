@@ -89,10 +89,10 @@ reload or service restart.
 
 The main tuning values are `SYNC_BATCH_SIZE` (default `250`),
 `SYNC_OVERLAP_SECONDS` (default `300`), and `SYNC_LEASE_SECONDS` (default `60`).
-Scheduled incremental runs default to every five minutes and full repair runs
-default to every 24 hours. `SYNC_INCREMENTAL_INTERVAL_SECONDS`,
-`SYNC_FULL_INTERVAL_SECONDS`, `SYNC_MAX_ATTEMPTS`, and
-`SYNC_RETRY_BACKOFF_SECONDS` tune scheduling and transient-failure recovery.
+Automatic schedules are disabled by default and are configured from the Settings
+page using common presets or five-field cron expressions. The default schedule
+values are incremental every 15 minutes and full repair every Sunday at midnight;
+retry settings remain environment-backed.
 The asset page exposes an incremental control plus a confirmed administrator full
 sync. API clients can start a run with `POST /api/assets/sync/start`, inspect the
 coordinator with `GET /api/assets/sync/status`, and audit a specific persisted run

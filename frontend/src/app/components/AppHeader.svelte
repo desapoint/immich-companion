@@ -19,6 +19,7 @@
   <nav aria-label="Primary navigation">
     <a class:active={activePath === '/'} href="/">Status</a>
     <a class:active={activePath.startsWith('/assets')} href="/assets">Assets</a>
+    <a class:active={activePath === '/settings'} href="/settings">Settings</a>
     <a href="/api/docs">API docs</a>
   </nav>
 </header>

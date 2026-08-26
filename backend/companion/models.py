@@ -285,6 +285,7 @@ class TaskScheduleRecord(Base):
     name: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
     interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False)
+    cron_expression: Mapped[str | None] = mapped_column(String(128), nullable=True)
     next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     task_type: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
