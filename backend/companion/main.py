@@ -471,6 +471,16 @@ def create_app(
         repository = require_asset_repository()
         return add_public_asset_url(await repository.find_structured_match(asset_id, criteria))
 
+    @app.get(
+        "/api/assets/{asset_id}/summary",
+        response_model=AssetSummary | None,
+    )
+    async def asset_summary(asset_id: UUID) -> AssetSummary | None:
+        """Return one asset summary independently of the active search."""
+
+        repository = require_asset_repository()
+        return add_public_asset_url(await repository.get_asset_summary(asset_id))
+
     @app.get("/api/albums", response_model=list[AlbumOption])
     async def search_album_options() -> list[AlbumOption]:
         repository = require_asset_repository()

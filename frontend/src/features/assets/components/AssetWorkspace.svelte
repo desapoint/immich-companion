@@ -4,6 +4,7 @@
   import {
     getAlbumOptions,
     getAssetDetail,
+    getAssetSummary,
     getAssetSyncStatus,
     getTagOptions,
     executeAssetAction,
@@ -315,7 +316,7 @@
       detailError = null;
       detailLoading = true;
       const [asset, loadedDetail] = await Promise.all([
-        matchAssetSearch(assetId, expression),
+        getAssetSummary(assetId),
         getAssetDetail(assetId),
       ]);
       if (!asset || viewerIndex === null) return;

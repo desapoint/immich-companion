@@ -1227,6 +1227,16 @@ class AssetRepository:
                 is not None
             )
 
+    async def get_asset_summary(self, asset_id: UUID) -> AssetSummary | None:
+        """Return one synchronized asset summary without applying search filters."""
+
+        async with self._database.sessions() as session:
+            record = await session.get(AssetRecord, asset_id)
+            if record is None:
+                return None
+            summaries = await self._summaries_for_records(session, [record])
+        return summaries[0] if summaries else None
+
     async def resolve_selection(
         self,
         selection: AssetSelectionRequest,

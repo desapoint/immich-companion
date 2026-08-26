@@ -164,6 +164,10 @@ export function getAssetDetail(assetId: string, signal?: AbortSignal): Promise<A
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}`, { signal });
 }
 
+export function getAssetSummary(assetId: string, signal?: AbortSignal): Promise<AssetSummary | null> {
+  return requestJson(`/api/assets/${encodeURIComponent(assetId)}/summary`, { signal });
+}
+
 export function synchronizeAsset(assetId: string): Promise<AssetDetail> {
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}/sync`, { method: 'POST' });
 }
