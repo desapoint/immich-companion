@@ -148,7 +148,7 @@
     right: 1rem;
     bottom: 1rem;
     z-index: 20;
-    contain: layout paint;
+    contain: layout;
     isolation: isolate;
     display: grid;
     width: clamp(12rem, 24vw, 18rem);
