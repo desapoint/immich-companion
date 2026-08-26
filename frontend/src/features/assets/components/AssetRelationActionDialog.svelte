@@ -1,7 +1,13 @@
 <script lang="ts">
-  import Dialog from '../../../lib/components/ui/Dialog.svelte';
+  import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
-  import type { SelectOption } from '../../../lib/types/ui';
+  import type { IconName, SelectOption } from '../../../lib/types/ui';
+  import {
+    ALL_RELATIONS_VALUE,
+    relationDialogOptions,
+    resolveRelationSelection,
+    updateRelationSelection,
+  } from '../state/relationAction';
   import type { AssetActionIntent } from '../types/assets';
 
   type RelationAction = Extract<
@@ -13,6 +19,7 @@
     action: RelationAction;
     options: SelectOption[];
     selectedCount: number;
+    targetLabel: string;
     busy?: boolean;
     onapply: (relationIds: string[]) => void;
     onclose: () => void;
@@ -22,6 +29,7 @@
     action,
     options,
     selectedCount,
+    targetLabel,
     busy = false,
     onapply,
     onclose,
@@ -29,6 +37,7 @@
   let values = $state<string[]>([]);
 
   const isAlbum = $derived(action.endsWith('album'));
+  const isRemove = $derived(action.startsWith('remove'));
   const relationName = $derived(isAlbum ? 'albums' : 'tags');
   const title = $derived.by(() => {
     if (action === 'add_album') return 'Add to albums';
@@ -37,56 +46,49 @@
     return 'Remove tags';
   });
   const description = $derived(
-    `${selectedCount} selected asset${selectedCount === 1 ? '' : 's'} · choose one or more ${relationName}`,
+    `${selectedCount} ${targetLabel} · choose one or more ${relationName}`,
   );
+  const dialogOptions = $derived<SelectOption[]>(
+    relationDialogOptions(options, isRemove, relationName),
+  );
+  const resolvedValues = $derived(resolveRelationSelection(values, options));
+  const confirmLabel = $derived(
+    values.includes(ALL_RELATIONS_VALUE)
+      ? isAlbum ? 'Remove from all albums' : 'Remove all tags'
+      : title,
+  );
+  const icon = $derived<IconName>(action === 'add_album'
+    ? 'album-add'
+    : action === 'remove_album'
+      ? 'album-remove'
+      : action === 'add_tag'
+        ? 'tag-add'
+        : 'tag-remove');
+
+  function updateValues(next: string[]): void {
+    values = updateRelationSelection(values, next, isRemove);
+  }
 </script>
 
-<Dialog {title} {description} size="small" {onclose}>
+<ConfirmDialog
+  {title}
+  message={description}
+  {confirmLabel}
+  {icon}
+  {busy}
+  confirmDisabled={resolvedValues.length === 0}
+  onconfirm={() => onapply(resolvedValues)}
+  {onclose}
+>
   <MultiSelectField
     id={`asset-action-${action}`}
     label={isAlbum ? 'Albums' : 'Tags'}
     {values}
-    {options}
+    options={dialogOptions}
     placeholder={`Choose ${relationName}`}
     disabled={busy}
     required
     searchable
-    onchange={(next) => (values = next)}
+    onchange={updateValues}
   />
-  {#snippet footer()}
-    <div class="dialog-actions">
-      <button type="button" onclick={onclose} disabled={busy}>Cancel</button>
-      <button
-        class="continue"
-        type="button"
-        onclick={() => onapply(values)}
-        disabled={busy || values.length === 0}
-      >Review {title.toLocaleLowerCase()}</button>
-    </div>
-  {/snippet}
-</Dialog>
-
-<style>
-  .dialog-actions {
-    display: flex;
-    width: 100%;
-    justify-content: flex-end;
-    gap: 0.55rem;
-  }
-
-  button {
-    min-height: 2.4rem;
-    padding: 0.5rem 0.8rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--color-ink-strong);
-    background: var(--color-canvas);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.72rem;
-    font-weight: 780;
-  }
-
-  button.continue { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
-  button:disabled { cursor: default; opacity: 0.5; }
-</style>
+</ConfirmDialog>

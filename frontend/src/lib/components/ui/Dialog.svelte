@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, type Snippet } from 'svelte';
+  import { onMount, tick, type Snippet } from 'svelte';
 
   import IconButton from './IconButton.svelte';
 
@@ -25,6 +25,7 @@
     onclose,
   }: Props = $props();
   let panel = $state<HTMLElement>();
+  let dialog = $state<HTMLDialogElement>();
   const componentId = $props.id();
   const titleId = `${componentId}-title`;
   const descriptionId = `${componentId}-description`;
@@ -40,7 +41,7 @@
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (event.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
         event.preventDefault();
         last?.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -50,16 +51,23 @@
     }
   }
 
-  $effect(() => {
+  function handleCancel(event: Event): void {
+    event.preventDefault();
+    if (closeOnEscape) onclose();
+  }
+
+  onMount(() => {
+    const currentDialog = dialog;
+    if (!currentDialog) return;
     const previousOverflow = document.body.style.overflow;
     const previousFocus = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
     document.body.style.overflow = 'hidden';
-    void tick().then(() => {
-      panel?.querySelector<HTMLElement>('button:not(:disabled), input:not(:disabled)')?.focus();
-    });
+    currentDialog.showModal();
+    void tick().then(() => panel?.focus({ preventScroll: true }));
     return () => {
+      if (currentDialog.open) currentDialog.close();
       document.body.style.overflow = previousOverflow;
       previousFocus?.focus();
     };
@@ -68,9 +76,12 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div
-  class="dialog-backdrop"
-  role="presentation"
+<dialog
+  bind:this={dialog}
+  class="dialog-modal"
+  aria-labelledby={titleId}
+  aria-describedby={description ? descriptionId : undefined}
+  oncancel={handleCancel}
   onpointerdown={(event) => {
     if (closeOnBackdrop && event.target === event.currentTarget) onclose();
   }}
@@ -79,10 +90,7 @@
     bind:this={panel}
     class="dialog-panel"
     data-size={size}
-    role="dialog"
-    aria-modal="true"
-    aria-labelledby={titleId}
-    aria-describedby={description ? descriptionId : undefined}
+    role="document"
     tabindex="-1"
   >
     <header>
@@ -95,24 +103,39 @@
     <div class="dialog-content">{@render children()}</div>
     {#if footer}<footer>{@render footer()}</footer>{/if}
   </div>
-</div>
+</dialog>
 
 <style>
-  .dialog-backdrop {
+  .dialog-modal {
     position: fixed;
     z-index: 900;
     inset: 0;
+    width: 100vw;
+    max-width: none;
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    margin: 0;
+    padding: clamp(0.6rem, 2vw, 1.25rem);
+    overflow: hidden;
+    border: 0;
+    background: transparent;
+  }
+
+  .dialog-modal[open] {
     display: grid;
-    padding: 1rem;
     place-items: center;
-    background: rgb(6 12 9 / 64%);
+  }
+
+  .dialog-modal::backdrop {
+    background: rgb(0 0 0 / 68%);
     backdrop-filter: blur(0.3rem);
   }
 
   .dialog-panel {
     display: grid;
     width: min(100%, 38rem);
-    max-height: min(90vh, 52rem);
+    max-height: min(calc(100dvh - 2 * clamp(0.6rem, 2vw, 1.25rem)), 52rem);
     grid-template-rows: auto minmax(0, 1fr) auto;
     overflow: hidden;
     border: 1px solid var(--color-border-strong);
@@ -147,5 +170,15 @@
     padding: 1rem;
     overflow: auto;
     overscroll-behavior: contain;
+  }
+
+  @media (max-width: 32rem) {
+    .dialog-modal {
+      padding: 0.5rem;
+    }
+
+    .dialog-panel {
+      max-height: calc(100dvh - 1rem);
+    }
   }
 </style>

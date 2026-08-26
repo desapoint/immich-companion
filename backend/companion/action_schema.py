@@ -96,7 +96,7 @@ class AssetActionPlanRequest(BaseModel):
 
     selection: AssetSelectionRequest
     action: AssetActionIntent
-    relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=100)
+    relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=10_000)
 
     @model_validator(mode="after")
     def validate_relation(self) -> AssetActionPlanRequest:

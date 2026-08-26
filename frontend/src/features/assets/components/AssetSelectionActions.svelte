@@ -26,6 +26,10 @@
     oninvertpage: () => void;
     onclear: () => void;
     onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
+    onrelationconfirm: (
+      action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
+      relationIds: string[],
+    ) => void;
     onconfirm: () => void;
     oncancel: () => void;
   }
@@ -46,6 +50,7 @@
     oninvertpage,
     onclear,
     onplan,
+    onrelationconfirm,
     onconfirm,
     oncancel,
   }: Props = $props();
@@ -93,9 +98,10 @@
       {albums}
       {tags}
       targetCount={selectedCount}
-      targetLabel="selected assets"
+      targetLabel={selectedCount === 1 ? 'selected asset' : 'selected assets'}
       {busy}
       {onplan}
+      {onrelationconfirm}
     />
   </div>
 </section>

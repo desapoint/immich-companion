@@ -23,6 +23,7 @@
     targetLabel: string;
     busy?: boolean;
     onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
+    onrelationconfirm: (action: RelationAction, relationIds: string[]) => void;
   }
 
   let {
@@ -33,6 +34,7 @@
     targetLabel,
     busy = false,
     onplan,
+    onrelationconfirm,
   }: Props = $props();
   let relationAction = $state<RelationAction | null>(null);
 
@@ -103,7 +105,7 @@
 
   function applyRelation(relationIds: string[]): void {
     if (!relationAction || relationIds.length === 0) return;
-    onplan(relationAction, relationIds);
+    onrelationconfirm(relationAction, relationIds);
     relationAction = null;
   }
 </script>
@@ -148,6 +150,7 @@
     action={relationAction}
     options={relationOptions}
     selectedCount={targetCount}
+    {targetLabel}
     {busy}
     onapply={applyRelation}
     onclose={() => (relationAction = null)}

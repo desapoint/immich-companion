@@ -7,11 +7,13 @@
 
   interface Props {
     title: string;
-    message: string;
+    message?: string;
     confirmLabel: string;
     icon?: IconName;
+    children?: Snippet;
     detail?: Snippet;
     busy?: boolean;
+    confirmDisabled?: boolean;
     destructive?: boolean;
     onconfirm: () => void;
     onclose: () => void;
@@ -22,8 +24,10 @@
     message,
     confirmLabel,
     icon = 'check',
+    children,
     detail,
     busy = false,
+    confirmDisabled = false,
     destructive = false,
     onconfirm,
     onclose,
@@ -34,8 +38,9 @@
   <div class:destructive class="confirmation">
     <span class="confirmation-icon"><Icon name={icon} size="1.35rem" /></span>
     <div>
-      <p>{message}</p>
+      {#if message}<p>{message}</p>{/if}
       {#if detail}<div class="detail">{@render detail()}</div>{/if}
+      {#if children}<div class="confirmation-form">{@render children()}</div>{/if}
     </div>
   </div>
   {#snippet footer()}
@@ -46,7 +51,7 @@
         class="confirm"
         type="button"
         onclick={onconfirm}
-        disabled={busy}
+        disabled={busy || confirmDisabled}
       >{busy ? 'Applying…' : confirmLabel}</button>
     </div>
   {/snippet}
@@ -73,6 +78,7 @@
   .confirmation.destructive .confirmation-icon { color: #b45309; }
   p { margin: 0; line-height: 1.5; }
   .detail { margin-top: 0.65rem; color: var(--color-ink-muted); font-size: 0.74rem; }
+  .confirmation-form { min-width: 0; margin-top: 0.8rem; }
 
   .confirmation-actions {
     display: flex;

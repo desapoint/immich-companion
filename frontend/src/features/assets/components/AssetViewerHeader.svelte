@@ -24,6 +24,10 @@
     actionBusy?: boolean;
     actionError?: string | null;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
+    onrelationconfirm: (
+      action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
+      relationIds: string[],
+    ) => void;
     ontoggleselection: () => void;
     ontogglescale: () => void;
     onzoomout: () => void;
@@ -48,6 +52,7 @@
     actionBusy = false,
     actionError = null,
     onaction,
+    onrelationconfirm,
     ontoggleselection,
     ontogglescale,
     onzoomout,
@@ -75,6 +80,7 @@
       targetLabel="viewed image"
       busy={actionBusy}
       onplan={onaction}
+      {onrelationconfirm}
     />
     <span class="viewer-action-separator" aria-hidden="true"></span>
     <IconButton

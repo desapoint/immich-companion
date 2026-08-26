@@ -1,6 +1,6 @@
 """Validation coverage for selection and action request contracts."""
 
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import ValidationError
@@ -48,3 +48,15 @@ def test_relation_actions_require_one_or_more_unique_relations() -> None:
             action="favorite_toggle",
             relation_ids=[ALBUM_ID],
         )
+
+
+def test_relation_actions_accept_a_complete_large_relation_list() -> None:
+    relation_ids = [uuid4() for _ in range(101)]
+
+    request = AssetActionPlanRequest(
+        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE]),
+        action="remove_tag",
+        relation_ids=relation_ids,
+    )
+
+    assert request.relation_ids == relation_ids

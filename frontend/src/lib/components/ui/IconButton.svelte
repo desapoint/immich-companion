@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { IconName } from '../../types/ui';
   import Icon from './Icon.svelte';
+  import Tooltip from './Tooltip.svelte';
 
   interface Props {
     icon: IconName;
@@ -21,21 +22,49 @@
     type = 'button',
     onclick,
   }: Props = $props();
+  let button = $state<HTMLButtonElement>();
+  let pointerInside = $state(false);
+  let keyboardFocused = $state(false);
+  const componentId = $props.id();
+  const tooltipId = `${componentId}-tooltip`;
+  const tooltipOpen = $derived(pointerInside || keyboardFocused);
+
+  function hideTooltip(): void {
+    pointerInside = false;
+    keyboardFocused = false;
+  }
+
+  function handleFocus(): void {
+    keyboardFocused = button?.matches(':focus-visible') ?? false;
+  }
+
+  function handleClick(event: MouseEvent): void {
+    hideTooltip();
+    onclick(event);
+  }
 </script>
+
+<svelte:window onpointerup={hideTooltip} onpointercancel={hideTooltip} onblur={hideTooltip} />
 
 <span class="icon-button-wrap" data-tone={tone}>
   <button
+    bind:this={button}
     {type}
     {disabled}
     class:compact={size === 'compact'}
     aria-label={label}
-    title={label}
-    {onclick}
+    aria-describedby={tooltipOpen ? tooltipId : undefined}
+    onpointerenter={() => (pointerInside = true)}
+    onpointerleave={() => (pointerInside = false)}
+    onpointerdown={hideTooltip}
+    onfocus={handleFocus}
+    onblur={() => (keyboardFocused = false)}
+    onclick={handleClick}
   >
     <Icon name={icon} size={size === 'compact' ? '0.95rem' : '1.08rem'} />
     <span class="visually-hidden">{label}</span>
   </button>
-  <span class="legend" aria-hidden="true">{label}</span>
+  <Tooltip id={tooltipId} text={label} anchor={button ?? null} open={tooltipOpen} />
 </span>
 
 <style>
@@ -84,34 +113,6 @@
   button:disabled {
     cursor: default;
     opacity: 0.45;
-  }
-
-  .legend {
-    position: absolute;
-    z-index: 1200;
-    top: calc(100% + 0.38rem);
-    left: 50%;
-    width: max-content;
-    max-width: 14rem;
-    padding: 0.32rem 0.48rem;
-    pointer-events: none;
-    border: 1px solid var(--color-border-strong);
-    border-radius: calc(var(--radius-sm) - 0.15rem);
-    color: var(--color-ink-strong);
-    background: var(--color-surface-raised);
-    box-shadow: var(--shadow-card);
-    font-size: 0.66rem;
-    font-weight: 720;
-    line-height: 1.25;
-    opacity: 0;
-    transform: translate(-50%, -0.18rem);
-    transition: opacity 110ms ease, transform 110ms ease;
-  }
-
-  .icon-button-wrap:hover .legend,
-  .icon-button-wrap:focus-within .legend {
-    opacity: 1;
-    transform: translate(-50%, 0);
   }
 
   .visually-hidden {

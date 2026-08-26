@@ -35,6 +35,7 @@
     AlbumOption,
     AssetActionIntent,
     AssetActionPlan,
+    AssetActionResult,
     AssetCardIndicatorConfig,
     AssetComparisonActivation,
     AssetComparisonSource,
@@ -390,6 +391,88 @@
     );
   }
 
+  async function applyActionResult(
+    result: AssetActionResult,
+    confirmedContext: 'selection' | 'viewer',
+    confirmedTargetIds: string[],
+  ): Promise<void> {
+    const confirmedTargetId = confirmedTargetIds[0] ?? null;
+    actionMessage = `${result.applied_count} changed · ${result.skipped_count} skipped${
+      result.failed_ids.length ? ` · ${result.failed_ids.length} assets failed verification` : ''
+    }`;
+    actionPlan = null;
+    detailCache.clear();
+    if (confirmedContext === 'selection') {
+      clearSelection();
+      page = 1;
+      await Promise.all([loadRelationOptions(), loadAssets()]);
+    } else {
+      await Promise.all([loadRelationOptions(), loadAssets()]);
+      if (selectedCount > 0) void refreshSelection();
+      const refreshedIndex = results?.items.findIndex(
+        (asset) => asset.id === confirmedTargetId,
+      ) ?? -1;
+      if (refreshedIndex >= 0) {
+        viewerIndex = refreshedIndex;
+        await loadDetail(refreshedIndex);
+        if (confirmedTargetId) await resolveViewerActionState(confirmedTargetId);
+      } else {
+        closeViewer();
+      }
+    }
+    actionTargetIds = [];
+  }
+
+  async function createAndExecuteRelationAction(
+    request: AssetSelectionRequest,
+    context: 'selection' | 'viewer',
+    action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
+    relationIds: string[],
+  ): Promise<void> {
+    actionBusy = true;
+    actionError = null;
+    actionMessage = null;
+    actionPlan = null;
+    actionContext = context;
+    actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
+    try {
+      const plan = await planAssetAction(request, action, relationIds);
+      const result = await executeAssetAction(plan.id);
+      await applyActionResult(result, context, actionTargetIds);
+    } catch (requestError) {
+      actionError = requestError instanceof Error
+        ? requestError.message
+        : 'Relation action failed.';
+    } finally {
+      actionBusy = false;
+    }
+  }
+
+  function confirmSelectionRelationAction(
+    action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
+    relationIds: string[],
+  ): void {
+    void createAndExecuteRelationAction(
+      buildSelectionRequest(selection, expression),
+      'selection',
+      action,
+      relationIds,
+    );
+  }
+
+  function confirmViewerRelationAction(
+    assetId: string,
+    action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
+    relationIds: string[],
+  ): void {
+    void createAndExecuteRelationAction(
+      buildExplicitAssetSelectionRequest(assetId),
+      'viewer',
+      action,
+      relationIds,
+    );
+  }
+
   async function resolveViewerActionState(assetId: string): Promise<void> {
     if (viewerActionAssetId === assetId && viewerActionResolution) return;
     viewerActionController?.abort();
@@ -430,35 +513,12 @@
   async function confirmAction(): Promise<void> {
     if (!actionPlan) return;
     const confirmedContext = actionContext;
-    const confirmedTargetId = actionTargetIds[0] ?? null;
+    const confirmedTargetIds = [...actionTargetIds];
     actionBusy = true;
     actionError = null;
     try {
       const result = await executeAssetAction(actionPlan.id);
-      actionMessage = `${result.applied_count} changed · ${result.skipped_count} skipped${
-        result.failed_ids.length ? ` · ${result.failed_ids.length} assets failed verification` : ''
-      }`;
-      actionPlan = null;
-      detailCache.clear();
-      if (confirmedContext === 'selection') {
-        clearSelection();
-        page = 1;
-        await Promise.all([loadRelationOptions(), loadAssets()]);
-      } else {
-        await Promise.all([loadRelationOptions(), loadAssets()]);
-        if (selectedCount > 0) void refreshSelection();
-        const refreshedIndex = results?.items.findIndex(
-          (asset) => asset.id === confirmedTargetId,
-        ) ?? -1;
-        if (refreshedIndex >= 0) {
-          viewerIndex = refreshedIndex;
-          await loadDetail(refreshedIndex);
-          if (confirmedTargetId) await resolveViewerActionState(confirmedTargetId);
-        } else {
-          closeViewer();
-        }
-      }
-      actionTargetIds = [];
+      await applyActionResult(result, confirmedContext, confirmedTargetIds);
     } catch (requestError) {
       actionError = requestError instanceof Error
         ? requestError.message
@@ -534,6 +594,7 @@
       oninvertpage={invertPage}
       onclear={clearSelection}
       onplan={previewSelectionAction}
+      onrelationconfirm={confirmSelectionRelationAction}
       onconfirm={confirmAction}
       oncancel={() => (actionPlan = null)}
     />
@@ -591,6 +652,7 @@
     ontoggleselection={toggleSelection}
     onvisiblechange={(assetId) => void resolveViewerActionState(assetId)}
     onaction={previewViewerAction}
+    onrelationconfirm={confirmViewerRelationAction}
     onconfirmaction={confirmAction}
     oncancelaction={() => (actionPlan = null)}
     onclose={closeViewer}

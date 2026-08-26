@@ -61,6 +61,11 @@
       action: AssetActionIntent,
       relationIds?: string[],
     ) => void;
+    onrelationconfirm: (
+      assetId: string,
+      action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
+      relationIds: string[],
+    ) => void;
     onconfirmaction: () => void;
     oncancelaction: () => void;
     onclose: () => void;
@@ -87,6 +92,7 @@
     ontoggleselection,
     onvisiblechange,
     onaction,
+    onrelationconfirm,
     onconfirmaction,
     oncancelaction,
     onclose,
@@ -196,7 +202,7 @@
 
   function handleKeydown(event: KeyboardEvent): void {
     const target = event.target as HTMLElement | null;
-    if (target?.closest('[role="dialog"]')) return;
+    if (target?.closest('dialog, [role="dialog"]')) return;
     if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
     const key = event.key.toLowerCase();
 
@@ -298,6 +304,7 @@
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     dialogElement.showModal();
+    dialogElement.focus({ preventScroll: true });
     window.addEventListener('keydown', handleKeydown);
     const resizeObserver = new ResizeObserver(([entry]) => {
       viewportWidth = entry.contentRect.width;
@@ -312,7 +319,13 @@
   });
 </script>
 
-<dialog bind:this={dialogElement} class="asset-viewer" aria-labelledby="asset-viewer-title" oncancel={handleCancel}>
+<dialog
+  bind:this={dialogElement}
+  class="asset-viewer"
+  aria-labelledby="asset-viewer-title"
+  tabindex="-1"
+  oncancel={handleCancel}
+>
   <AssetViewerHeader
     filename={visibleAsset.original_file_name}
     selectedFilename={currentAsset.original_file_name}
@@ -327,6 +340,8 @@
     {actionBusy}
     {actionError}
     onaction={(action, relationIds) => onaction(visibleAsset.id, action, relationIds)}
+    onrelationconfirm={(action, relationIds) =>
+      onrelationconfirm(visibleAsset.id, action, relationIds)}
     ontoggleselection={() => ontoggleselection(currentAsset.id)}
     ontogglescale={toggleScale}
     onzoomout={() => changeZoomFromVisibleCenter(zoom / 1.2)}
