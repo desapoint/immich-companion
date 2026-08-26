@@ -53,17 +53,18 @@ class AssetSelectionRequest(BaseModel):
     """An explicit or backend-resolved action target."""
 
     mode: SelectionMode
-    ids: list[UUID] = Field(default_factory=list, max_length=5000)
+    selection_id: UUID | None = None
+    ids: list[UUID] = Field(default_factory=list)
     expression: SearchGroup | None = None
-    excluded_ids: list[UUID] = Field(default_factory=list, max_length=5000)
+    excluded_ids: list[UUID] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_mode(self) -> AssetSelectionRequest:
         self.ids = list(dict.fromkeys(self.ids))
         self.excluded_ids = list(dict.fromkeys(self.excluded_ids))
         if self.mode == "explicit":
-            if not self.ids:
-                raise ValueError("Explicit selection requires at least one asset ID")
+            if not self.ids and self.selection_id is None:
+                raise ValueError("Explicit selection requires asset IDs or a selection ID")
             if self.expression is not None or self.excluded_ids:
                 raise ValueError("Explicit selection accepts IDs only")
         elif self.expression is None:
@@ -71,6 +72,37 @@ class AssetSelectionRequest(BaseModel):
         elif self.ids:
             raise ValueError("All-matching selection does not accept explicit IDs")
         return self
+
+
+class SelectionSetView(BaseModel):
+    """Reload-safe server-owned selection metadata."""
+
+    id: UUID
+    revision: int
+    selected_count: int
+    status: Literal["active", "cancelled", "expired"]
+    expires_at: datetime
+
+
+class SelectionSetMembersRequest(BaseModel):
+    """Bounded page/delta update; total selection size is unbounded."""
+
+    asset_ids: list[UUID] = Field(min_length=1, max_length=2000)
+    selected: bool
+    revision: int
+
+
+class SelectionSetMembershipRequest(BaseModel):
+    """Ask only for membership of the currently visible page."""
+
+    asset_ids: list[UUID] = Field(min_length=0, max_length=2000)
+
+
+class SelectionSetMembershipResponse(BaseModel):
+    """Membership state for one visible page."""
+
+    selection: SelectionSetView
+    selected_ids: list[UUID]
 
 
 class AssetSelectionSummary(BaseModel):
@@ -179,3 +211,9 @@ class AssetActionResult(BaseModel):
     relation_results: list[AssetActionRelationResult] = Field(default_factory=list)
     verified: bool
     status: ActionPlanStatus
+
+
+class AssetActionTaskStart(BaseModel):
+    """Coordinator task returned for a queued bulk action."""
+
+    task_id: UUID

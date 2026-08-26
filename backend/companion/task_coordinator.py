@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
@@ -20,6 +21,8 @@ from companion.models import (
     TaskScheduleRecord,
 )
 from companion.task_schema import TaskResult, TaskScheduleView, TaskStatusView
+
+TASK_UPDATE_CHANNEL = "companion_task_updates"
 
 
 class RetryableTaskError(RuntimeError):
@@ -270,6 +273,10 @@ class TaskRepository:
                     details={"checkpoint": checkpoint, "progress": progress},
                 )
             )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
+            )
 
     async def is_cancelled(self, task_id: UUID, worker_id: UUID) -> bool:
         async with self._database.sessions() as session:
@@ -286,8 +293,13 @@ class TaskRepository:
             if record is None or record.lease_owner != worker_id:
                 raise TaskLeaseLostError("The task lease is no longer owned")
             now = datetime.now(UTC)
-            record.status = "completed"
+            record.status = "failed" if result.status == "failed" else "completed"
             record.result = result.model_dump(mode="json")
+            record.error = (
+                {"type": "task_result", "message": "One or more task items failed"}
+                if result.status == "failed"
+                else None
+            )
             record.completed_at = now
             record.lease_owner = None
             record.lease_expires_at = None
@@ -307,9 +319,13 @@ class TaskRepository:
                 TaskEventRecord(
                     task_id=task_id,
                     attempt=record.attempt,
-                    kind="completed",
+                    kind=record.status,
                     details=result.model_dump(mode="json"),
                 )
+            )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
             )
             return _public(record)  # type: ignore[return-value]
 
@@ -363,6 +379,10 @@ class TaskRepository:
                     details=record.error,
                 )
             )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
+            )
             return _public(record)
 
     async def cancel(self, task_id: UUID) -> TaskStatusView | None:
@@ -381,6 +401,10 @@ class TaskRepository:
                 TaskEventRecord(
                     task_id=task_id, attempt=record.attempt, kind="cancel_requested", details={}
                 )
+            )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
             )
             return _public(record)
 
@@ -522,11 +546,13 @@ class TaskContext:
         task: TaskStatusView,
         worker_id: UUID,
         lease_duration: timedelta,
+        notify: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self._repository = repository
         self.task = task
         self.worker_id = worker_id
         self._lease_duration = lease_duration
+        self._notify = notify
 
     async def checkpoint(
         self, *, checkpoint: dict[str, Any], counters: dict[str, int], progress: dict[str, Any]
@@ -539,6 +565,8 @@ class TaskContext:
             progress=progress,
             lease_duration=self._lease_duration,
         )
+        if self._notify is not None:
+            await self._notify()
 
     async def heartbeat(self) -> None:
         await self._repository.heartbeat(
@@ -550,6 +578,8 @@ class TaskContext:
 
         await self._repository.update_payload(self.task.id, self.worker_id, payload)
         self.task.payload = dict(payload)
+        if self._notify is not None:
+            await self._notify()
 
     async def ensure_active(self) -> None:
         if await self._repository.is_cancelled(self.task.id, self.worker_id):
@@ -576,6 +606,10 @@ class TaskCoordinator:
         self._stopping = asyncio.Event()
         self._running: set[asyncio.Task[None]] = set()
         self._schedule_definitions: list[dict[str, Any]] = []
+        self._subscribers: dict[UUID, set[asyncio.Queue[TaskStatusView]]] = {}
+        self._global_subscribers: set[asyncio.Queue[TaskStatusView]] = set()
+        self._database = database
+        self._listener: asyncio.Task[None] | None = None
 
     def register_handler(self, handler: TaskHandler) -> None:
         self._handlers[handler.task_type] = handler
@@ -621,7 +655,7 @@ class TaskCoordinator:
         handler = self._handlers.get(task_type)
         if handler is None:
             raise ValueError(f"No handler registered for task type {task_type}")
-        return await self._repository.submit(
+        task = await self._repository.submit(
             task_type,
             payload,
             priority=priority,
@@ -630,9 +664,66 @@ class TaskCoordinator:
             max_concurrency=max_concurrency or handler.max_concurrency,
             task_id=task_id,
         )
+        await self._publish(task.id)
+        return task
 
     async def get_status(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.get(task_id)
+
+    async def stream(self, task_id: UUID) -> AsyncIterator[TaskStatusView]:
+        """Yield an initial snapshot and coordinator-published task changes."""
+
+        queue: asyncio.Queue[TaskStatusView] = asyncio.Queue(maxsize=8)
+        subscribers = self._subscribers.setdefault(task_id, set())
+        subscribers.add(queue)
+        try:
+            current = await self.get_status(task_id)
+            if current is None:
+                return
+            yield current
+            if current.status in ("completed", "failed", "cancelled"):
+                return
+            while True:
+                try:
+                    current = await asyncio.wait_for(queue.get(), timeout=5)
+                except TimeoutError:
+                    current = await self.get_status(task_id)
+                    if current is None:
+                        return
+                yield current
+                if current.status in ("completed", "failed", "cancelled"):
+                    return
+        finally:
+            subscribers = self._subscribers.get(task_id)
+            if subscribers is not None:
+                subscribers.discard(queue)
+                if not subscribers:
+                    self._subscribers.pop(task_id, None)
+
+    async def stream_all(self) -> AsyncIterator[TaskStatusView]:
+        """Yield every committed task update, including newly submitted tasks."""
+
+        queue: asyncio.Queue[TaskStatusView] = asyncio.Queue(maxsize=32)
+        self._global_subscribers.add(queue)
+        try:
+            while True:
+                yield await queue.get()
+        finally:
+            self._global_subscribers.discard(queue)
+
+    async def _publish(self, task_id: UUID) -> None:
+        queues = tuple(self._subscribers.get(task_id, ()))
+        global_queues = tuple(self._global_subscribers)
+        if not queues and not global_queues:
+            return
+        task = await self.get_status(task_id)
+        if task is None:
+            return
+        for queue in (*queues, *global_queues):
+            if queue.full():
+                with suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(task)
 
     async def find_active(
         self, task_type: str, deduplication_key: str
@@ -673,6 +764,9 @@ class TaskCoordinator:
             self._stopping.clear()
             for definition in self._schedule_definitions:
                 await self._repository.ensure_schedule(**definition)
+            self._listener = asyncio.create_task(
+                self._listen_for_updates(), name="task-coordinator-listener"
+            )
             self._worker = asyncio.create_task(self._run(), name="task-coordinator-worker")
 
     async def stop(self) -> None:
@@ -681,6 +775,10 @@ class TaskCoordinator:
             self._worker.cancel()
             with suppress(asyncio.CancelledError):
                 await self._worker
+        if self._listener is not None and not self._listener.done():
+            self._listener.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._listener
         if self._running:
             await asyncio.gather(*self._running, return_exceptions=True)
 
@@ -701,6 +799,7 @@ class TaskCoordinator:
                 if task is None:
                     await asyncio.sleep(0.25)
                     continue
+                await self._publish(task.id)
                 execution = asyncio.create_task(
                     self._execute(task, worker_id), name=f"task-{task.id}"
                 )
@@ -742,6 +841,25 @@ class TaskCoordinator:
                     continue
             await asyncio.sleep(1)
 
+    async def _listen_for_updates(self) -> None:
+        """Fan out committed task changes from every coordinator replica."""
+
+        while not self._stopping.is_set():
+            try:
+                async for payload in self._database.listen(TASK_UPDATE_CHANNEL):
+                    if self._stopping.is_set():
+                        return
+                    try:
+                        await self._publish(UUID(payload))
+                    except ValueError:
+                        continue
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # A transient database/listener failure must not stop task work;
+                # the stream timeout still refreshes durable state meanwhile.
+                await asyncio.sleep(1)
+
     async def _execute(self, task: TaskStatusView, worker_id: UUID) -> None:
         handler = self._handlers.get(task.task_type)
         if handler is None:
@@ -754,7 +872,13 @@ class TaskCoordinator:
                 max_attempts=self._max_attempts,
             )
             return
-        context = TaskContext(self._repository, task, worker_id, self._lease_duration)
+        context = TaskContext(
+            self._repository,
+            task,
+            worker_id,
+            self._lease_duration,
+            notify=lambda: self._publish(task.id),
+        )
         heartbeat = asyncio.create_task(self._heartbeat(context), name=f"heartbeat-{task.id}")
         try:
             result = await handler.execute(context, task.payload)
@@ -767,6 +891,7 @@ class TaskCoordinator:
                 next_attempt_at=None,
                 max_attempts=self._max_attempts,
             )
+            await self._publish(task.id)
         except RetryableTaskError as error:
             delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
             await self._repository.fail(
@@ -777,6 +902,7 @@ class TaskCoordinator:
                 next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
                 max_attempts=self._max_attempts,
             )
+            await self._publish(task.id)
         except PermanentTaskError as error:
             await self._repository.fail(
                 task.id,
@@ -786,6 +912,7 @@ class TaskCoordinator:
                 next_attempt_at=None,
                 max_attempts=self._max_attempts,
             )
+            await self._publish(task.id)
         except Exception as error:
             delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
             await self._repository.fail(
@@ -796,8 +923,10 @@ class TaskCoordinator:
                 next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
                 max_attempts=self._max_attempts,
             )
+            await self._publish(task.id)
         else:
             await self._repository.complete(task.id, worker_id, result)
+            await self._publish(task.id)
         finally:
             heartbeat.cancel()
             with suppress(asyncio.CancelledError):

@@ -81,11 +81,12 @@ class SyncRunStatus(BaseModel):
 
 
 class SyncCoordinatorStatus(BaseModel):
-    """Current run, queued follow-up, and last successful checkpoint."""
+    """Current run, queued follow-up, and latest terminal outcomes."""
 
     active: SyncRunStatus | None
     pending: SyncRunStatus | None
     last_success: SyncRunStatus | None
+    last_failure: SyncRunStatus | None = None
     successful_watermark: datetime | None
     authoritative_generation: int
     capabilities: SyncCapabilities = Field(default_factory=SyncCapabilities)

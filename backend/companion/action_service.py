@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
@@ -23,6 +24,8 @@ from companion.asset_service import AssetSyncService
 from companion.config import Settings
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.models import ActionPlanRecord
+from companion.task_coordinator import PermanentTaskError, TaskContext
+from companion.task_schema import TaskResult
 
 
 class ActionPlanNotFoundError(RuntimeError):
@@ -267,12 +270,15 @@ class AssetActionService:
         record: ActionPlanRecord,
         operation: AssetActionOperation,
         target_ids: list[UUID],
+        progress: Callable[[int, int, str], Awaitable[None]] | None = None,
     ) -> AssetActionResult:
         """Apply, refresh once, and verify every relation in a reviewed plan."""
 
         initial: dict[UUID, tuple[list[UUID], list[UUID]]] = {}
         api_failed: dict[UUID, list[UUID]] = {}
         successful_relations: list[UUID] = []
+        relation_total = len(target_ids) * len(record.relation_ids)
+        relation_processed = 0
         for relation_text in record.relation_ids:
             relation_id = UUID(relation_text)
             applicable_set = await self._assets.applicable_action_ids(
@@ -283,8 +289,17 @@ class AssetActionService:
             applicable = [identifier for identifier in target_ids if identifier in applicable_set]
             skipped = [identifier for identifier in target_ids if identifier not in applicable_set]
             initial[relation_id] = (applicable, skipped)
+            relation_processed += len(skipped)
             try:
-                await self._apply(operation, applicable, relation_id)
+                for batch in self._batches(applicable, operation):
+                    await self._apply(operation, batch, relation_id)
+                    relation_processed += len(batch)
+                    if progress is not None:
+                        await progress(
+                            relation_processed,
+                            relation_total,
+                            f"Updated {relation_processed}/{relation_total} media relationships",
+                        )
                 successful_relations.append(relation_id)
             except Exception:
                 api_failed[relation_id] = applicable
@@ -386,7 +401,11 @@ class AssetActionService:
             status="completed" if failed_count == 0 else "failed",
         )
 
-    async def execute(self, request: AssetActionExecuteRequest) -> AssetActionResult:
+    async def execute(
+        self,
+        request: AssetActionExecuteRequest,
+        progress: Callable[[int, int, str], Awaitable[None]] | None = None,
+    ) -> AssetActionResult:
         """Execute a current reviewed plan once, then synchronize and verify it."""
 
         existing = await self._actions.get_plan(request.plan_id)
@@ -412,7 +431,7 @@ class AssetActionService:
         target_ids = [UUID(identifier) for identifier in claimed.target_ids]
         operation = claimed.operation
         if claimed.relation_ids:
-            return await self._execute_relations(claimed, operation, target_ids)
+            return await self._execute_relations(claimed, operation, target_ids, progress)
         relation_id = claimed.relation_id
         applicable_set = await self._assets.applicable_action_ids(
             operation,
@@ -423,7 +442,16 @@ class AssetActionService:
         skipped_count = len(target_ids) - len(applicable_ids)
 
         try:
-            await self._apply(operation, applicable_ids, relation_id)
+            updated = 0
+            for batch in self._batches(applicable_ids, operation):
+                await self._apply(operation, batch, relation_id)
+                updated += len(batch)
+                if progress is not None:
+                    await progress(
+                        skipped_count + updated,
+                        len(target_ids),
+                        f"Updated {skipped_count + updated}/{len(target_ids)} assets",
+                    )
             if applicable_ids:
                 repair_ids = applicable_ids
                 if operation in {"remove_from_stack", "remove_stack"}:
@@ -489,3 +517,82 @@ class AssetActionService:
             result.model_dump(mode="json"),
         )
         return result
+
+    def _batches(
+        self, ids: list[UUID], operation: AssetActionOperation
+    ) -> list[list[UUID]]:
+        """Bound remote mutations so task progress advances per media batch."""
+
+        if not ids:
+            return []
+        # A stack must be created as one operation or it would create several
+        # independent stacks instead of the reviewed single stack.
+        if operation == "stack":
+            return [ids]
+        size = self._settings.sync_batch_size
+        return [ids[index : index + size] for index in range(0, len(ids), size)]
+
+
+class AssetActionTaskHandler:
+    """Run reviewed bulk actions as durable coordinator tasks."""
+
+    task_type = "asset_action"
+    lane_key = "asset_action"
+    max_concurrency = 1
+
+    def __init__(self, service: AssetActionService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        plan_id = UUID(str(payload["plan_id"]))
+        plan = await self._service._actions.get_plan(plan_id)
+        total = len(plan.target_ids) if plan is not None else 0
+        await context.checkpoint(
+            checkpoint={"phase": "executing", "plan_id": str(plan_id)},
+            counters={"requested": total, "processed": 0},
+            progress={"phase": "action", "completed": 0, "total": total, "percent": 0},
+        )
+
+        async def report(completed: int, progress_total: int, detail: str) -> None:
+            percent = (
+                round(completed / progress_total * 100, 1) if progress_total else 100.0
+            )
+            await context.checkpoint(
+                checkpoint={
+                    "phase": "executing",
+                    "plan_id": str(plan_id),
+                    "processed": completed,
+                },
+                counters={"requested": progress_total, "processed": completed},
+                progress={
+                    "phase": "action",
+                    "completed": completed,
+                    "total": progress_total,
+                    "percent": percent,
+                    "detail": detail,
+                },
+            )
+
+        try:
+            result = await self._service.execute(
+                AssetActionExecuteRequest(plan_id=plan_id, confirm=True),
+                progress=report,
+            )
+        except Exception as error:
+            raise PermanentTaskError(str(error)) from error
+        completed = result.applied_count + result.skipped_count + len(result.failed_ids)
+        await context.checkpoint(
+            checkpoint={"phase": "complete", "plan_id": str(plan_id)},
+            counters={"requested": result.target_count, "processed": completed},
+            progress={
+                "phase": "action",
+                "completed": completed,
+                "total": result.target_count,
+                "percent": 100,
+            },
+        )
+        return TaskResult(
+            status="completed" if result.status == "completed" else "failed",
+            summary=result.model_dump(mode="json"),
+            counters={"requested": result.target_count, "processed": completed},
+        )

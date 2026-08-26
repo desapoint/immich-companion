@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from time import monotonic
 from uuid import UUID
 
@@ -29,6 +30,12 @@ from companion.sync_schema import (
 )
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
+
+
+def _dedupe_digest(parts: list[str]) -> str:
+    """Build a fixed-length key for arbitrarily large repair target sets."""
+
+    return sha256("\n".join(sorted(parts)).encode()).hexdigest()
 
 
 def batches[T](items: list[T], size: int) -> list[list[T]]:
@@ -145,10 +152,147 @@ class AssetRepairTaskHandler:
         self._service = service
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
-        await self._service._repair_targets_now(
-            [UUID(str(value)) for value in payload.get("asset_ids", [])]
+        asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
+        processed = int(context.task.checkpoint.get("processed", 0))
+        await context.checkpoint(
+            checkpoint={"phase": "repairing", "processed": processed},
+            counters={"requested": len(asset_ids), "processed": processed},
+            progress={
+                "phase": "asset_repair",
+                "completed": processed,
+                "total": len(asset_ids),
+                "percent": round(processed / len(asset_ids) * 100, 1) if asset_ids else 100.0,
+                "detail": "Refreshing affected assets",
+            },
         )
-        return TaskResult(summary={"repaired": len(payload.get("asset_ids", []))})
+        for index in range(processed, len(asset_ids)):
+            await self._service._repair_targets_now([asset_ids[index]])
+            processed = index + 1
+            await context.checkpoint(
+                checkpoint={"phase": "repairing", "processed": processed},
+                counters={"requested": len(asset_ids), "processed": processed},
+                progress={
+                    "phase": "asset_repair",
+                    "completed": processed,
+                    "total": len(asset_ids),
+                    "percent": round(processed / len(asset_ids) * 100, 1)
+                    if asset_ids
+                    else 100.0,
+                    "detail": f"Refreshed {processed}/{len(asset_ids)} assets",
+                },
+            )
+        return TaskResult(
+            summary={"repaired": processed},
+            counters={"requested": len(asset_ids), "processed": processed},
+        )
+
+
+class AssetSelectionSyncTaskHandler:
+    """Refresh a selected asset set in durable, independently checkpointed batches."""
+
+    task_type = "asset_selection_sync"
+    lane_key = "asset_repair"
+    max_concurrency = 4
+
+    def __init__(self, service: AssetSyncService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
+        checkpoint = context.task.checkpoint
+        counters = {
+            "requested": len(asset_ids),
+            "processed": int(checkpoint.get("processed", 0)),
+            "synced": int(context.task.counters.get("synced", 0)),
+            "failed": int(context.task.counters.get("failed", 0)),
+            "missing": int(context.task.counters.get("missing", 0)),
+        }
+        failed: dict[str, list[str]] = {}
+        missing: list[str] = []
+        saved_failures = checkpoint.get("failures", {})
+        if isinstance(saved_failures, dict):
+            failed = {
+                str(key): [str(identifier) for identifier in value]
+                for key, value in saved_failures.items()
+                if isinstance(value, list)
+            }
+        saved_missing = checkpoint.get("missing_ids", [])
+        if isinstance(saved_missing, list):
+            missing = [str(identifier) for identifier in saved_missing]
+
+        start = counters["processed"]
+        for index in range(start, len(asset_ids)):
+            identifier = asset_ids[index]
+            last_error: Exception | None = None
+            for item_attempt in range(self._service._settings.sync_max_attempts):
+                try:
+                    await self._service._repair_targets_now([identifier])
+                except ImmichApiError as error:
+                    last_error = error
+                    if error.status_code == 404:
+                        break
+                except Exception as error:
+                    last_error = error
+                else:
+                    last_error = None
+                    break
+                if item_attempt + 1 < self._service._settings.sync_max_attempts:
+                    await asyncio.sleep(
+                        min(
+                            self._service._settings.sync_retry_backoff_seconds * 2**item_attempt,
+                            300,
+                        )
+                    )
+            if isinstance(last_error, ImmichApiError) and last_error.status_code == 404:
+                missing.append(str(identifier))
+                counters["missing"] += 1
+            elif last_error is not None:
+                reason = (
+                    last_error.operation
+                    if isinstance(last_error, ImmichApiError)
+                    else type(last_error).__name__
+                )
+                failed.setdefault(reason, []).append(str(identifier))
+                counters["failed"] += 1
+            else:
+                counters["synced"] += 1
+            counters["processed"] = index + 1
+            percent = round(counters["processed"] / len(asset_ids) * 100, 1) if asset_ids else 100.0
+            await context.checkpoint(
+                checkpoint={
+                    "index": index + 1,
+                    "processed": counters["processed"],
+                    "failures": failed,
+                    "missing_ids": missing,
+                },
+                counters=counters,
+                progress={
+                    "phase": "selected_assets",
+                    "completed": counters["processed"],
+                    "total": len(asset_ids),
+                    "percent": percent,
+                    "detail": (
+                        f"{counters['synced']} synchronized · "
+                        f"{counters['failed']} failed · {counters['missing']} missing"
+                    ),
+                },
+            )
+
+        has_failures = bool(failed)
+        return TaskResult(
+            status="failed" if has_failures else "completed",
+            summary={
+                "requested": len(asset_ids),
+                "synced": counters["synced"],
+                "failed_ids": [identifier for values in failed.values() for identifier in values],
+                "missing_ids": missing,
+                "errors": [
+                    {"error": reason, "count": len(identifiers)}
+                    for reason, identifiers in failed.items()
+                ],
+            },
+            counters=counters,
+        )
 
 
 class AssetRelationRepairTaskHandler:
@@ -167,8 +311,26 @@ class AssetRelationRepairTaskHandler:
             for item in payload.get("relations", [])
             if isinstance(item, dict) and item.get("kind") in {"album", "tag"}
         ]
-        counters = await self._service._repair_relations_now(relations)
-        return TaskResult(summary=counters, counters=counters)
+        processed = int(context.task.checkpoint.get("processed", 0))
+        total = len(relations)
+        for index in range(processed, total):
+            counters = await self._service._repair_relations_now([relations[index]])
+            processed = index + 1
+            await context.checkpoint(
+                checkpoint={"phase": "repairing_relations", "processed": processed},
+                counters={"requested": total, "processed": processed, **counters},
+                progress={
+                    "phase": "relation_repair",
+                    "completed": processed,
+                    "total": total,
+                    "percent": round(processed / total * 100, 1) if total else 100.0,
+                    "detail": f"Refreshed {processed}/{total} relationships",
+                },
+            )
+        return TaskResult(
+            summary={"repaired": processed},
+            counters={"requested": total, "processed": processed},
+        )
 
 
 class AssetSyncService:
@@ -242,7 +404,10 @@ class AssetSyncService:
             cursor=checkpoint.get("cursor"),
             counters=task.counters,
             attempts=task.attempt,
-            error=(task.error or {}).get("type") if task.error else None,
+            error=(
+                (task.error or {}).get("message")
+                or (task.error or {}).get("type")
+            ) if task.error else None,
             created_at=task.created_at,
             started_at=task.started_at,
             heartbeat_at=task.heartbeat_at,
@@ -370,10 +535,17 @@ class AssetSyncService:
             completed = [task for task in tasks if task.status == "completed"]
             last_task = completed[0] if completed else None
             last = self._status_from_task(last_task) if last_task else None
+            failed = [task for task in tasks if task.status == "failed"]
+            last_failed_task = failed[0] if failed else None
             return SyncCoordinatorStatus(
                 active=self._status_from_task(active_task) if active_task else None,
                 pending=self._status_from_task(pending_task) if pending_task else None,
                 last_success=last,
+                last_failure=(
+                    self._status_from_task(last_failed_task)
+                    if last_failed_task
+                    else None
+                ),
                 successful_watermark=last.window_end if last else None,
                 authoritative_generation=(
                     max(
@@ -496,7 +668,9 @@ class AssetSyncService:
                     payload,
                     priority=95,
                     deduplication_key="asset-relation-repair:"
-                    + ",".join(f"{kind}:{relation_id}" for kind, relation_id in unique_relations),
+                    + _dedupe_digest(
+                        [f"{kind}:{relation_id}" for kind, relation_id in unique_relations]
+                    ),
                 )
                 await self._coordinator.start()
                 await self._coordinator.wait(task.id)
@@ -510,7 +684,7 @@ class AssetSyncService:
                 {"asset_ids": [str(asset_id) for asset_id in asset_ids]},
                 priority=90,
                 deduplication_key="asset-repair:"
-                + ",".join(sorted(str(asset_id) for asset_id in asset_ids)),
+                + _dedupe_digest([str(asset_id) for asset_id in asset_ids]),
             )
             await self._coordinator.start()
             await self._coordinator.wait(task.id)

@@ -8,11 +8,20 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 from croniter import CroniterBadCronError, croniter
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import (
+    FastAPI,
+    HTTPException,
+    Query,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    status,
+)
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -22,15 +31,22 @@ from companion.action_schema import (
     AssetActionPlan,
     AssetActionPlanRequest,
     AssetActionResult,
+    AssetActionTaskStart,
     AssetSelectionRequest,
     AssetSelectionResolution,
+    SelectionSetMembershipRequest,
+    SelectionSetMembershipResponse,
+    SelectionSetMembersRequest,
+    SelectionSetView,
 )
 from companion.action_service import (
     ActionPlanConflictError,
     ActionPlanNotFoundError,
     AssetActionService,
+    AssetActionTaskHandler,
     DestructiveActionsDisabledError,
     EmptySelectionError,
+    selection_digest,
 )
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import (
@@ -102,11 +118,13 @@ def create_app(
         from companion.asset_service import (
             AssetRelationRepairTaskHandler,
             AssetRepairTaskHandler,
+            AssetSelectionSyncTaskHandler,
             AssetSyncTaskHandler,
         )
 
         task_coordinator.register_handler(AssetSyncTaskHandler(asset_sync))
         task_coordinator.register_handler(AssetRepairTaskHandler(asset_sync))
+        task_coordinator.register_handler(AssetSelectionSyncTaskHandler(asset_sync))
         task_coordinator.register_handler(AssetRelationRepairTaskHandler(asset_sync))
         task_coordinator.register_schedule(
             name="asset-sync-incremental",
@@ -140,6 +158,8 @@ def create_app(
         if database is not None and asset_repository is not None and asset_sync is not None
         else None
     )
+    if task_coordinator is not None and action_service is not None:
+        task_coordinator.register_handler(AssetActionTaskHandler(action_service))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -357,6 +377,44 @@ def create_app(
             )
         return task
 
+    @app.websocket("/api/tasks/stream")
+    async def task_updates_stream(websocket: WebSocket) -> None:
+        """Stream task creation and progress updates before task IDs are known."""
+
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host")
+        if origin and host and urlsplit(origin).netloc != host:
+            await websocket.close(code=1008, reason="WebSocket origin is not allowed")
+            return
+        await websocket.accept()
+        if task_coordinator is None:
+            await websocket.close(code=1011, reason="Task coordinator unavailable")
+            return
+        try:
+            async for task in task_coordinator.stream_all():
+                await websocket.send_json(task.model_dump(mode="json"))
+        except WebSocketDisconnect:
+            return
+
+    @app.websocket("/api/tasks/{task_id}/stream")
+    async def task_stream(websocket: WebSocket, task_id: UUID) -> None:
+        """Stream task snapshots from the central coordinator event channel."""
+
+        origin = websocket.headers.get("origin")
+        host = websocket.headers.get("host")
+        if origin and host and urlsplit(origin).netloc != host:
+            await websocket.close(code=1008, reason="WebSocket origin is not allowed")
+            return
+        await websocket.accept()
+        try:
+            if task_coordinator is None:
+                await websocket.send_json({"error": "The task coordinator is unavailable."})
+                return
+            async for task in task_coordinator.stream(task_id):
+                await websocket.send_json(task.model_dump(mode="json"))
+        except WebSocketDisconnect:
+            return
+
     @app.get("/api/tasks", response_model=list[TaskStatusView])
     async def list_tasks(
         task_type: str | None = Query(default=None, max_length=64),
@@ -497,9 +555,94 @@ def create_app(
     ) -> AssetSelectionResolution:
         service = require_action_service()
         try:
-            return await service.resolve_selection(selection)
+            resolution = await service.resolve_selection(selection)
+            if selection.selection_id is not None:
+                return resolution.model_copy(update={"ids": [], "missing_ids": []})
+            return resolution
         except ValueError as error:
             raise map_action_error(error) from error
+
+    @app.post("/api/assets/selection/ids", response_model=list[UUID])
+    async def materialize_asset_selection(selection: AssetSelectionRequest) -> list[UUID]:
+        repository = require_asset_repository()
+        if selection.mode != "all_matching" or selection.expression is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Select-all materialization requires an all-matching expression.",
+            )
+        return await repository.list_matching_asset_ids(selection.expression)
+
+    def selection_view(record) -> SelectionSetView:
+        if record.expires_at <= datetime.now(record.expires_at.tzinfo):
+            record.status = "expired"
+        return SelectionSetView(
+            id=record.id,
+            revision=record.revision,
+            selected_count=record.selected_count,
+            status=record.status,
+            expires_at=record.expires_at,
+        )
+
+    @app.post("/api/assets/selections", response_model=SelectionSetView)
+    async def create_asset_selection() -> SelectionSetView:
+        repository = require_asset_repository()
+        return selection_view(
+            await repository.create_selection(ttl_seconds=runtime_settings.action_plan_ttl_seconds)
+        )
+
+    @app.post(
+        "/api/assets/selections/{selection_id}/select-all",
+        response_model=SelectionSetView,
+    )
+    async def select_all_asset_selection(
+        selection_id: UUID,
+        expression: StructuredAssetSearchQuery,
+    ) -> SelectionSetView:
+        repository = require_asset_repository()
+        try:
+            record = await repository.replace_selection_with_matching(
+                selection_id, expression.expression
+            )
+        except ValueError as error:
+            raise map_action_error(error) from error
+        return selection_view(record)
+
+    @app.post(
+        "/api/assets/selections/{selection_id}/members",
+        response_model=SelectionSetView,
+    )
+    async def update_asset_selection_members(
+        selection_id: UUID,
+        request: SelectionSetMembersRequest,
+    ) -> SelectionSetView:
+        repository = require_asset_repository()
+        try:
+            record = await repository.update_selection_members(
+                selection_id,
+                request.asset_ids,
+                selected=request.selected,
+                revision=request.revision,
+            )
+        except ValueError as error:
+            raise map_action_error(error) from error
+        return selection_view(record)
+
+    @app.post(
+        "/api/assets/selections/{selection_id}/membership",
+        response_model=SelectionSetMembershipResponse,
+    )
+    async def asset_selection_membership(
+        selection_id: UUID,
+        request: SelectionSetMembershipRequest,
+    ) -> SelectionSetMembershipResponse:
+        repository = require_asset_repository()
+        record = await repository.get_selection(selection_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Selection set was not found.")
+        return SelectionSetMembershipResponse(
+            selection=selection_view(record),
+            selected_ids=await repository.selection_membership(selection_id, request.asset_ids),
+        )
 
     @app.post("/api/assets/actions/plan", response_model=AssetActionPlan)
     async def plan_asset_action(request: AssetActionPlanRequest) -> AssetActionPlan:
@@ -520,6 +663,22 @@ def create_app(
             raise map_immich_error(error) from error
         except (RuntimeError, ValueError) as error:
             raise map_action_error(error) from error
+
+    @app.post("/api/assets/actions/execute-task", response_model=AssetActionTaskStart)
+    async def execute_asset_action_task(
+        request: AssetActionExecuteRequest,
+    ) -> AssetActionTaskStart:
+        if task_coordinator is None:
+            raise HTTPException(status_code=503, detail="Task coordinator is unavailable.")
+        task = await task_coordinator.submit(
+            "asset_action",
+            {"plan_id": str(request.plan_id)},
+            priority=80,
+            lane_key="asset_action",
+            deduplication_key=f"plan:{request.plan_id}",
+        )
+        await task_coordinator.start()
+        return AssetActionTaskStart(task_id=task.id)
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:
@@ -554,6 +713,21 @@ def create_app(
             request,
             max_targets=runtime_settings.action_max_targets,
         )
+        if task_coordinator is not None:
+            task_ids = [*resolution.ids, *resolution.missing_ids]
+            task = await task_coordinator.submit(
+                "asset_selection_sync",
+                {"asset_ids": [str(identifier) for identifier in task_ids]},
+                priority=90,
+                lane_key="asset_repair",
+                deduplication_key="asset-selection-sync:" + selection_digest(task_ids),
+            )
+            await task_coordinator.start()
+            return AssetSelectionSyncResult(
+                requested=len(task_ids),
+                synced=0,
+                task_id=task.id,
+            )
         await asset_sync.reconcile_targets(resolution.ids)
         return AssetSelectionSyncResult(requested=len(resolution.ids), synced=len(resolution.ids))
 

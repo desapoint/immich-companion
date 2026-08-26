@@ -11,6 +11,7 @@ import {
   selectCurrentPage,
   selectedAssetCount,
   setSelectionRange,
+  setServerSelection,
   toggleAssetSelection,
 } from './assetSelection';
 
@@ -55,6 +56,26 @@ describe('asset selection', () => {
       ids: [],
       excluded_ids: ['excluded'],
       expression: { kind: 'group', operator: 'and', children: [] },
+    });
+  });
+
+  it('keeps server selection totals while tracking only visible membership locally', () => {
+    const state = setServerSelection(
+      createAssetSelectionState(),
+      'selection-1',
+      4,
+      50000,
+      ['visible-1', 'visible-2'],
+    );
+
+    expect(selectedAssetCount(state, 2)).toBe(50000);
+    expect(isAssetSelected(state, 'visible-1')).toBe(true);
+    expect(isAssetSelected(state, 'off-page')).toBe(false);
+    expect(buildSelectionRequest(state, createSearchGroup())).toEqual({
+      mode: 'explicit',
+      selection_id: 'selection-1',
+      ids: ['visible-1', 'visible-2'],
+      excluded_ids: [],
     });
   });
 });

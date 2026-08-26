@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import (
@@ -16,6 +16,7 @@ from sqlalchemy import (
     delete,
     exists,
     func,
+    literal,
     not_,
     or_,
     select,
@@ -34,6 +35,7 @@ from companion.action_schema import (
 from companion.asset_schema import (
     AlbumOption,
     AssetAlbumSummary,
+    AssetPageSelection,
     AssetSearchMatchRequest,
     AssetSearchQuery,
     AssetSearchResponse,
@@ -52,6 +54,8 @@ from companion.models import (
     AlbumAssetRecord,
     AlbumRecord,
     AssetRecord,
+    SelectionSetMemberRecord,
+    SelectionSetRecord,
     TagAssetRecord,
     TagRecord,
 )
@@ -1074,6 +1078,7 @@ class AssetRepository:
             criteria.page_size,
             criteria.sort_field,
             criteria.sort_direction,
+            selection_id=criteria.selection_id,
         )
 
     async def find_structured_match(
@@ -1118,6 +1123,7 @@ class AssetRepository:
         page_size: int,
         sort_field: AssetSortField,
         sort_direction: AssetSortDirection,
+        selection_id: UUID | None = None,
     ) -> AssetSearchResponse:
         filtered = select(AssetRecord).where(*predicates)
         count_statement = select(func.count()).select_from(AssetRecord).where(*predicates)
@@ -1131,6 +1137,32 @@ class AssetRepository:
             total = int(await session.scalar(count_statement) or 0)
             records = list((await session.scalars(result_statement)).all())
             items = await self._summaries_for_records(session, records)
+            selection = None
+            if selection_id is not None:
+                selection_record = await session.get(SelectionSetRecord, selection_id)
+                if (
+                    selection_record is None
+                    or selection_record.status != "active"
+                    or selection_record.expires_at <= datetime.now(UTC)
+                ):
+                    raise ValueError("Selection set was not found or has expired")
+                visible_ids = [record.id for record in records]
+                selected_ids = list(
+                    (
+                        await session.scalars(
+                            select(SelectionSetMemberRecord.asset_id).where(
+                                SelectionSetMemberRecord.selection_id == selection_id,
+                                SelectionSetMemberRecord.asset_id.in_(visible_ids),
+                            )
+                        )
+                    ).all()
+                )
+                selection = AssetPageSelection(
+                    id=selection_record.id,
+                    revision=selection_record.revision,
+                    selected_count=selection_record.selected_count,
+                    selected_ids=selected_ids,
+                )
 
         return AssetSearchResponse(
             items=items,
@@ -1138,6 +1170,7 @@ class AssetRepository:
             page=page,
             page_size=page_size,
             pages=math.ceil(total / page_size) if total else 0,
+            selection=selection,
         )
 
     @staticmethod
@@ -1246,7 +1279,11 @@ class AssetRepository:
         """Resolve an exact action target inside companion PostgreSQL."""
 
         excluded = set(selection.excluded_ids)
-        if selection.mode == "explicit":
+        requested: list[UUID]
+        if selection.selection_id is not None:
+            requested = await self.selection_ids(selection.selection_id)
+            statement = select(AssetRecord).where(AssetRecord.id.in_(requested))
+        elif selection.mode == "explicit":
             requested = list(selection.ids)
             statement = select(AssetRecord).where(AssetRecord.id.in_(requested))
         else:
@@ -1264,14 +1301,15 @@ class AssetRepository:
             raise ValueError(f"Selection exceeds the {max_targets} asset safety limit")
 
         record_by_id = {record.id: record for record in records}
-        if selection.mode == "explicit":
+        if selection.mode == "explicit" or selection.selection_id is not None:
+            target_order = selection.ids if selection.selection_id is None else requested
             ordered_records = [
                 record_by_id[identifier]
-                for identifier in selection.ids
+                for identifier in target_order
                 if identifier in record_by_id
             ]
             missing_ids = [
-                identifier for identifier in selection.ids if identifier not in record_by_id
+                identifier for identifier in target_order if identifier not in record_by_id
             ]
         else:
             ordered_records = records
@@ -1299,6 +1337,151 @@ class AssetRepository:
             missing_ids=missing_ids,
             summary=summary,
         )
+
+    async def list_matching_asset_ids(self, expression: SearchGroup) -> list[UUID]:
+        """Materialize a search result as explicit IDs at selection time."""
+
+        predicate = self._compile_group(expression)
+        async with self._database.sessions() as session:
+            return list(
+                (
+                    await session.scalars(
+                        select(AssetRecord.id).where(predicate).order_by(AssetRecord.id)
+                    )
+                ).all()
+            )
+
+    async def create_selection(self, *, ttl_seconds: int) -> SelectionSetRecord:
+        """Create an empty server-owned selection set."""
+
+        now = datetime.now(UTC)
+        record = SelectionSetRecord(expires_at=now + timedelta(seconds=ttl_seconds))
+        async with self._database.sessions() as session, session.begin():
+            session.add(record)
+            await session.flush()
+        return record
+
+    async def get_selection(self, selection_id: UUID) -> SelectionSetRecord | None:
+        async with self._database.sessions() as session:
+            return await session.get(SelectionSetRecord, selection_id)
+
+    async def selection_ids(self, selection_id: UUID) -> list[UUID]:
+        async with self._database.sessions() as session:
+            return list(
+                (
+                    await session.scalars(
+                        select(SelectionSetMemberRecord.asset_id)
+                        .where(SelectionSetMemberRecord.selection_id == selection_id)
+                        .order_by(SelectionSetMemberRecord.asset_id)
+                    )
+                ).all()
+            )
+
+    async def selection_membership(
+        self, selection_id: UUID, asset_ids: list[UUID]
+    ) -> list[UUID]:
+        async with self._database.sessions() as session:
+            return list(
+                (
+                    await session.scalars(
+                        select(SelectionSetMemberRecord.asset_id).where(
+                            SelectionSetMemberRecord.selection_id == selection_id,
+                            SelectionSetMemberRecord.asset_id.in_(asset_ids),
+                        )
+                    )
+                ).all()
+            )
+
+    async def replace_selection_with_matching(
+        self, selection_id: UUID, expression: SearchGroup
+    ) -> SelectionSetRecord:
+        """Replace a selection in one consistent server-side operation."""
+
+        predicate = self._compile_group(expression)
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(SelectionSetRecord)
+                .where(SelectionSetRecord.id == selection_id)
+                .with_for_update()
+            )
+            if record is None:
+                raise ValueError("Selection set was not found")
+            if record.status != "active" or record.expires_at <= datetime.now(UTC):
+                raise ValueError("Selection set has expired")
+            await session.execute(
+                delete(SelectionSetMemberRecord).where(
+                    SelectionSetMemberRecord.selection_id == selection_id
+                )
+            )
+            source = select(
+                literal(selection_id).label("selection_id"), AssetRecord.id.label("asset_id")
+            ).where(predicate)
+            await session.execute(
+                insert(SelectionSetMemberRecord).from_select(
+                    ["selection_id", "asset_id"], source
+                )
+            )
+            record.selected_count = int(
+                await session.scalar(
+                    select(func.count()).select_from(SelectionSetMemberRecord).where(
+                        SelectionSetMemberRecord.selection_id == selection_id
+                    )
+                )
+            )
+            record.revision += 1
+            record.updated_at = datetime.now(UTC)
+            await session.flush()
+        return record
+
+    async def update_selection_members(
+        self,
+        selection_id: UUID,
+        asset_ids: list[UUID],
+        *,
+        selected: bool,
+        revision: int,
+    ) -> SelectionSetRecord:
+        """Apply one page-sized add/remove delta with optimistic revisioning."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(SelectionSetRecord)
+                .where(SelectionSetRecord.id == selection_id)
+                .with_for_update()
+            )
+            if record is None:
+                raise ValueError("Selection set was not found")
+            if record.status != "active" or record.expires_at <= datetime.now(UTC):
+                raise ValueError("Selection set has expired")
+            if record.revision != revision:
+                raise ValueError("Selection set changed; reload its membership")
+            if selected:
+                await session.execute(
+                    insert(SelectionSetMemberRecord)
+                    .values([
+                        {"selection_id": selection_id, "asset_id": asset_id}
+                        for asset_id in asset_ids
+                    ])
+                    .on_conflict_do_nothing()
+                )
+            else:
+                await session.execute(
+                    delete(SelectionSetMemberRecord).where(
+                        SelectionSetMemberRecord.selection_id == selection_id,
+                        SelectionSetMemberRecord.asset_id.in_(asset_ids),
+                    )
+                )
+            record.selected_count = int(
+                await session.scalar(
+                    select(func.count()).select_from(SelectionSetMemberRecord).where(
+                        SelectionSetMemberRecord.selection_id == selection_id
+                    )
+                )
+            )
+            record.revision += 1
+            record.updated_at = datetime.now(UTC)
+            await session.flush()
+        return record
 
     async def applicable_action_ids(
         self,

@@ -23,6 +23,7 @@ TaskStatus = Literal[
 class TaskResult(BaseModel):
     """Structured successful task output."""
 
+    status: Literal["completed", "failed"] = "completed"
     summary: dict[str, Any] = Field(default_factory=dict)
     counters: dict[str, int] = Field(default_factory=dict)
 

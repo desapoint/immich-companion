@@ -199,6 +199,7 @@ class StructuredAssetSearchQuery(BaseModel):
     sort_direction: AssetSortDirection = "desc"
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=48, ge=1, le=200)
+    selection_id: UUID | None = None
 
 
 class AssetSearchMatchRequest(BaseModel):
@@ -406,6 +407,15 @@ class AssetSummary(BaseModel):
         )
 
 
+class AssetPageSelection(BaseModel):
+    """Server selection metadata and membership for this page only."""
+
+    id: UUID
+    revision: int
+    selected_count: int
+    selected_ids: list[UUID]
+
+
 class AssetSearchResponse(BaseModel):
     """Stable page of SQL-backed asset summaries."""
 
@@ -414,6 +424,7 @@ class AssetSearchResponse(BaseModel):
     page: int
     page_size: int
     pages: int
+    selection: AssetPageSelection | None = None
 
 
 class AssetDetail(BaseModel):
@@ -493,3 +504,4 @@ class AssetSelectionSyncResult(BaseModel):
 
     requested: int
     synced: int
+    task_id: UUID | None = None

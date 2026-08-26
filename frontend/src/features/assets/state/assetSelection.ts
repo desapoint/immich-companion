@@ -7,12 +7,33 @@ import { serializeSearchGroup } from './assetViewModel';
 
 export interface AssetSelectionState {
   mode: AssetSelectionMode;
+  selectionId: string | null;
+  selectionRevision: number | null;
+  serverSelectedCount: number | null;
   selectedIds: Set<string>;
   excludedIds: Set<string>;
 }
 
 export function createAssetSelectionState(): AssetSelectionState {
-  return { mode: 'explicit', selectedIds: new Set(), excludedIds: new Set() };
+  return {
+    mode: 'explicit',
+    selectionId: null,
+    selectionRevision: null,
+    serverSelectedCount: null,
+    selectedIds: new Set(),
+    excludedIds: new Set(),
+  };
+}
+
+export function setExplicitAssetIds(assetIds: string[]): AssetSelectionState {
+  return {
+    mode: 'explicit',
+    selectionId: null,
+    selectionRevision: null,
+    serverSelectedCount: null,
+    selectedIds: new Set(assetIds),
+    excludedIds: new Set(),
+  };
 }
 
 export function buildExplicitAssetSelectionRequest(assetId: string): AssetSelectionRequest {
@@ -23,13 +44,17 @@ export function selectedAssetCount(
   state: AssetSelectionState,
   matchingTotal: number,
 ): number {
-  return state.mode === 'all_matching'
+  return state.selectionId !== null
+    ? state.serverSelectedCount ?? state.selectedIds.size
+    : state.mode === 'all_matching'
     ? Math.max(0, matchingTotal - state.excludedIds.size)
     : state.selectedIds.size;
 }
 
 export function isAssetSelected(state: AssetSelectionState, assetId: string): boolean {
-  return state.mode === 'all_matching'
+  return state.selectionId !== null
+    ? state.selectedIds.has(assetId)
+    : state.mode === 'all_matching'
     ? !state.excludedIds.has(assetId)
     : state.selectedIds.has(assetId);
 }
@@ -103,7 +128,28 @@ export function invertCurrentPage(
 }
 
 export function selectAllMatching(): AssetSelectionState {
-  return { mode: 'all_matching', selectedIds: new Set(), excludedIds: new Set() };
+  return {
+    ...createAssetSelectionState(),
+    mode: 'all_matching',
+  };
+}
+
+export function setServerSelection(
+  state: AssetSelectionState,
+  id: string,
+  revision: number,
+  selectedCount: number,
+  visibleSelectedIds: string[] = [],
+): AssetSelectionState {
+  return {
+    ...state,
+    mode: 'explicit',
+    selectionId: id,
+    selectionRevision: revision,
+    serverSelectedCount: selectedCount,
+    selectedIds: new Set(visibleSelectedIds),
+    excludedIds: new Set(),
+  };
 }
 
 export function buildSelectionRequest(
@@ -113,6 +159,7 @@ export function buildSelectionRequest(
   if (state.mode === 'explicit') {
     return {
       mode: 'explicit',
+      selection_id: state.selectionId,
       ids: [...state.selectedIds],
       excluded_ids: [],
     };

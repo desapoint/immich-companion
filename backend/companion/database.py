@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import AsyncIterator
 from time import perf_counter
 from typing import Any
 
@@ -68,6 +69,18 @@ class DatabaseManager:
             connect_args={"connect_timeout": math.ceil(settings.database_timeout_seconds)},
         )
         self.sessions = async_sessionmaker(self.engine, expire_on_commit=False)
+        self.notification_url = database_url
+
+    async def listen(self, channel: str) -> AsyncIterator[str]:
+        """Listen for PostgreSQL notifications on a dedicated non-pooled connection."""
+
+        async with await psycopg.AsyncConnection.connect(
+            self.notification_url,
+            autocommit=True,
+        ) as connection:
+            await connection.execute(f"LISTEN {channel}")
+            async for notification in connection.notifies():
+                yield notification.payload
 
     async def dispose(self) -> None:
         """Close pooled database connections during application shutdown."""

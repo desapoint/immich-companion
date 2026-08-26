@@ -13,6 +13,7 @@ export default defineConfig({
       '/api': {
         target: backendProxyTarget,
         changeOrigin: false,
+        ws: true,
       },
     },
   },

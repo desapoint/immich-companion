@@ -6,9 +6,17 @@
     getAssetDetail,
     getAssetSummary,
     getAssetSyncStatus,
+    getTaskStatus,
+    openTaskStream,
+    openTaskUpdates,
+    createAssetSelection,
+    getAssetSelectionMembership,
     getTagOptions,
     executeAssetAction,
+    executeAssetActionTask,
     matchAssetSearch,
+    selectAllAssetSelection,
+    updateAssetSelectionMembers,
     planAssetAction,
     resolveAssetSelection,
     searchAssets,
@@ -23,10 +31,11 @@
     createAssetSelectionState,
     invertCurrentPage,
     isAssetSelected,
-    selectAllMatching,
     selectCurrentPage,
     selectedAssetCount,
     setSelectionRange,
+    setExplicitAssetIds,
+    setServerSelection,
     toggleAssetSelection,
   } from '../state/assetSelection';
   import {
@@ -49,6 +58,7 @@
     AssetSummary,
     AssetSyncCoordinatorStatus,
     AssetSyncMode,
+    AssetTaskStatus,
     AssetSelectionResolution,
     AssetSelectionRequest,
     AssetSort,
@@ -63,7 +73,11 @@
   import AssetResultStatus from './AssetResultStatus.svelte';
   import AssetSearchToolbar from './AssetSearchToolbar.svelte';
   import AssetSelectionActions from './AssetSelectionActions.svelte';
+  import AssetTaskErrorDialog from './AssetTaskErrorDialog.svelte';
+  import AssetActionErrorDialog from './AssetActionErrorDialog.svelte';
+  import AssetTaskProgress from './AssetTaskProgress.svelte';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
+  import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
 
   let expression = $state<SearchGroup>(
     simpleFiltersToSearchGroup(createSimpleAssetSearchFilters()),
@@ -78,6 +92,8 @@
   let error = $state<string | null>(null);
   let syncing = $state(false);
   let syncMessage = $state<string | null>(null);
+  let syncError = $state<string | null>(null);
+  let syncCompletionMessage = $state<string | null>(null);
   let syncProgress = $state<import('../types/assets').AssetSyncProgress | null>(null);
   let selection = $state(createAssetSelectionState());
   let selectionResolution = $state<AssetSelectionResolution | null>(null);
@@ -97,6 +113,8 @@
   let viewerSyncError = $state<string | null>(null);
   let selectionSyncing = $state(false);
   let selectionSyncError = $state<string | null>(null);
+  let selectionTask = $state<AssetTaskStatus | null>(null);
+  let selectionTaskErrorOpen = $state(false);
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   let selectionController: AbortController | null = null;
@@ -109,8 +127,18 @@
   let dragSelectionValue = true;
   let dragLastIndex: number | null = null;
   let syncPollTimer: ReturnType<typeof setInterval> | null = null;
+  let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
+  let selectionTaskSocket: WebSocket | null = null;
+  let actionTask = $state<AssetTaskStatus | null>(null);
+  let actionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
+  let actionTaskSocket: WebSocket | null = null;
+  let syncTaskSocket: WebSocket | null = null;
+  let taskUpdatesSocket: WebSocket | null = null;
+  let syncTaskStreamId: string | null = null;
   let syncStatusInitialized = false;
   let handledSyncSuccessId: string | null = null;
+  let handledSyncFailureId: string | null = null;
+  let manualSyncPending = false;
   const detailCache = new Map<string, AssetDetail>();
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
@@ -122,7 +150,35 @@
   };
   const viewerComparisonSource: AssetComparisonSource = 'stack';
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
+
+  function closeTaskSocket(socket: WebSocket | null): void {
+    if (!socket) return;
+    if (socket.readyState === WebSocket.CONNECTING) {
+      socket.addEventListener('open', () => socket.close(), { once: true });
+    } else {
+      socket.close();
+    }
+  }
+
+  function handleTaskUpdate(task: AssetTaskStatus): void {
+    if (task.task_type === 'asset_sync') void refreshSyncStatus();
+    if (task.task_type === 'asset_selection_sync') {
+      selectionTask = task;
+      selectionSyncing = !isTaskTerminal(task.status);
+      localStorage.setItem('immich-companion:selected-sync-task', task.id);
+      if (isTaskTerminal(task.status)) void pollSelectionTask();
+      else startSelectionTaskPolling();
+    }
+    if (task.task_type === 'asset_action') {
+      actionTask = task;
+      localStorage.setItem('immich-companion:asset-action-task', task.id);
+      actionBusy = !isTaskTerminal(task.status);
+      if (isTaskTerminal(task.status)) void pollActionTask();
+      else startActionTaskPolling();
+    }
+  }
   const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
+  const hasSearch = $derived(expression.children.length > 0);
   const selectedCount = $derived(selectedAssetCount(selection, results?.total ?? 0));
   const visibleSelectedIds = $derived(new Set(
     results?.items
@@ -145,12 +201,85 @@
     loading = true;
     error = null;
     try {
-      results = await searchAssets(expression, page, pageSize, sort, searchController.signal);
+      results = await searchAssets(
+        expression,
+        page,
+        pageSize,
+        sort,
+        searchController.signal,
+        selection.selectionId,
+      );
+      if (results.pages > 0 && page > results.pages) {
+        page = results.pages;
+        await loadAssets();
+        return;
+      }
+      if (results.selection) {
+        selection = setServerSelection(
+          selection,
+          results.selection.id,
+          results.selection.revision,
+          results.selection.selected_count,
+          results.selection.selected_ids,
+        );
+      }
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
     } finally {
       if (!searchController.signal.aborted) loading = false;
+    }
+  }
+
+  async function refreshServerPageMembership(signal?: AbortSignal): Promise<void> {
+    if (!selection.selectionId || !results) return;
+    try {
+      const membership = await getAssetSelectionMembership(
+        selection.selectionId,
+        results.items.map((asset) => asset.id),
+      );
+      if (signal?.aborted) return;
+      selection = setServerSelection(
+        selection,
+        membership.selection.id,
+        membership.selection.revision,
+        membership.selection.selected_count,
+        membership.selected_ids,
+      );
+    } catch (requestError) {
+      if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) {
+        selectionSyncError = requestError instanceof Error
+          ? requestError.message
+          : 'Selection membership could not be loaded.';
+      }
+    }
+  }
+
+  async function persistServerPageMembership(assetIds: string[]): Promise<void> {
+    if (!selection.selectionId || selection.selectionRevision === null) return;
+    const selectionId = selection.selectionId;
+    const selected = assetIds.filter((id) => selection.selectedIds.has(id));
+    const unselected = assetIds.filter((id) => !selection.selectedIds.has(id));
+    try {
+      for (const [ids, value] of [[selected, true], [unselected, false]] as const) {
+        if (!ids.length || selection.selectionRevision === null) continue;
+        const updated = await updateAssetSelectionMembers(
+          selectionId,
+          ids,
+          value,
+          selection.selectionRevision,
+        );
+        selection = {
+          ...selection,
+          selectionRevision: updated.revision,
+          serverSelectedCount: updated.selected_count,
+        };
+      }
+    } catch (requestError) {
+      selectionSyncError = requestError instanceof Error
+        ? requestError.message
+        : 'Selection update failed.';
+      await refreshServerPageMembership();
     }
   }
 
@@ -238,18 +367,83 @@
     actionError = null;
     try {
       const result = await synchronizeAssetSelection(buildSelectionRequest(selection, expression));
-      actionMessage = `${result.synced} assets synchronized`;
-      detailCache.clear();
-      clearSelection();
-      page = 1;
-      await Promise.all([loadRelationOptions(), loadAssets()]);
+      if (result.task_id) {
+        selectionTask = await getTaskStatus(result.task_id);
+        localStorage.setItem('immich-companion:selected-sync-task', result.task_id);
+        startSelectionTaskPolling();
+      } else {
+        actionMessage = `${result.synced} assets synchronized`;
+        detailCache.clear();
+        clearSelection();
+        page = 1;
+        await Promise.all([loadRelationOptions(), loadAssets()]);
+      }
     } catch (requestError) {
       selectionSyncError = requestError instanceof Error
         ? requestError.message
         : 'Selected asset sync failed.';
     } finally {
-      selectionSyncing = false;
+      selectionSyncing = selectionTask !== null && !isTaskTerminal(selectionTask.status);
     }
+  }
+
+  function isTaskTerminal(status: AssetTaskStatus['status']): boolean {
+    return status === 'completed' || status === 'failed' || status === 'cancelled';
+  }
+
+  function startSelectionTaskPolling(): void {
+    if (selectionTaskPollTimer !== null) return;
+    selectionTaskPollTimer = setInterval(() => void pollSelectionTask(), 1000);
+  }
+
+  function startSelectionTaskStream(taskId: string): void {
+    if (selectionTaskSocket && selectionTaskSocket.readyState <= WebSocket.OPEN) return;
+    selectionTaskSocket = openTaskStream(taskId, (next) => {
+      selectionTask = next;
+      selectionSyncing = !isTaskTerminal(next.status);
+      if (isTaskTerminal(next.status)) void pollSelectionTask();
+    });
+  }
+
+  async function pollSelectionTask(): Promise<void> {
+    const taskId = selectionTask?.id ?? localStorage.getItem('immich-companion:selected-sync-task');
+    if (!taskId) return;
+    try {
+      const next = await getTaskStatus(taskId);
+      selectionTask = next;
+      selectionSyncing = !isTaskTerminal(next.status);
+      if (!isTaskTerminal(next.status)) return;
+      if (selectionTaskPollTimer !== null) {
+        clearInterval(selectionTaskPollTimer);
+        selectionTaskPollTimer = null;
+      }
+      selectionTaskSocket?.close();
+      selectionTaskSocket = null;
+      localStorage.removeItem('immich-companion:selected-sync-task');
+      const summary = next.result?.summary;
+      const failedIds = summary?.failed_ids ?? [];
+      if (next.status === 'failed' || failedIds.length > 0) {
+        selectionTaskErrorOpen = true;
+        selectionSyncError = next.error?.message ?? 'Some selected assets could not be synchronized.';
+        return;
+      }
+      actionMessage = `${summary?.synced ?? next.counters.synced ?? 0} assets synchronized`;
+      detailCache.clear();
+      clearSelection();
+      await Promise.all([loadRelationOptions(), loadAssets()]);
+    } catch (requestError) {
+      selectionSyncError = requestError instanceof Error
+        ? requestError.message
+        : 'Selected asset sync status is unavailable.';
+    }
+  }
+
+  function retryFailedSelection(ids: string[]): void {
+    selection = setExplicitAssetIds(ids);
+    selectionTaskErrorOpen = false;
+    selectionSyncError = null;
+    actionPlan = null;
+    void refreshSelection();
   }
 
   function patchResultAsset(asset: AssetSummary): number {
@@ -336,6 +530,7 @@
   function toggleSelection(assetId: string): void {
     selection = toggleAssetSelection(selection, assetId);
     actionPlan = null;
+    void persistServerPageMembership([assetId]);
     void refreshSelection();
   }
 
@@ -355,6 +550,7 @@
       : setSelectionRange(selection, items.map((item) => item.id), index, index, shouldSelect);
     selectionAnchorIndex = index;
     actionPlan = null;
+    void persistServerPageMembership(items.map((item) => item.id));
     void refreshSelection();
   }
 
@@ -403,6 +599,7 @@
     dragSelecting = false;
     selectionAnchorIndex = dragLastIndex;
     dragLastIndex = null;
+    void persistServerPageMembership(results?.items.map((item) => item.id) ?? []);
     void refreshSelection();
   }
 
@@ -423,13 +620,32 @@
       results?.items.map((asset) => asset.id) ?? [],
     );
     actionPlan = null;
+    void persistServerPageMembership(results?.items.map((asset) => asset.id) ?? []);
     void refreshSelection();
   }
 
-  function selectEveryMatch(): void {
-    selection = selectAllMatching();
-    actionPlan = null;
-    void refreshSelection();
+  async function selectEveryMatch(): Promise<void> {
+    selectionLoading = true;
+    actionError = null;
+    try {
+      const serverSelection = await createAssetSelection();
+      const filledSelection = await selectAllAssetSelection(serverSelection.id, expression);
+      selection = setServerSelection(
+        selection,
+        filledSelection.id,
+        filledSelection.revision,
+        filledSelection.selected_count,
+        results?.items.map((asset) => asset.id) ?? [],
+      );
+      actionPlan = null;
+      await refreshSelection();
+    } catch (requestError) {
+      actionError = requestError instanceof Error
+        ? requestError.message
+        : 'Could not select all matching assets.';
+    } finally {
+      selectionLoading = false;
+    }
   }
 
   function invertPage(): void {
@@ -438,6 +654,7 @@
       results?.items.map((asset) => asset.id) ?? [],
     );
     actionPlan = null;
+    void persistServerPageMembership(results?.items.map((asset) => asset.id) ?? []);
     void refreshSelection();
   }
 
@@ -534,7 +751,6 @@
     if (confirmedContext === 'selection') {
       detailCache.clear();
       clearSelection();
-      page = 1;
       await Promise.all([loadRelationOptions(), loadAssets()]);
     } else {
       if (!confirmedTargetId) {
@@ -577,8 +793,16 @@
     actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
     try {
       const plan = await planAssetAction(request, action, relationIds);
-      const result = await executeAssetAction(plan.id);
-      await applyActionResult(result, context, actionTargetIds);
+      if (context === 'selection') {
+        const started = await executeAssetActionTask(plan.id);
+        actionTask = await getTaskStatus(started.task_id);
+        localStorage.setItem('immich-companion:asset-action-task', started.task_id);
+        startActionTaskStream(started.task_id);
+        startActionTaskPolling();
+      } else {
+        const result = await executeAssetAction(plan.id);
+        await applyActionResult(result, context, actionTargetIds);
+      }
     } catch (requestError) {
       actionError = requestError instanceof Error
         ? requestError.message
@@ -660,14 +884,66 @@
     actionBusy = true;
     actionError = null;
     try {
-      const result = await executeAssetAction(actionPlan.id);
-      await applyActionResult(result, confirmedContext, confirmedTargetIds);
+      if (confirmedContext === 'selection') {
+        const started = await executeAssetActionTask(actionPlan.id);
+        actionTask = await getTaskStatus(started.task_id);
+        localStorage.setItem('immich-companion:asset-action-task', started.task_id);
+        startActionTaskStream(started.task_id);
+        startActionTaskPolling();
+        actionPlan = null;
+      } else {
+        const result = await executeAssetAction(actionPlan.id);
+        await applyActionResult(result, confirmedContext, confirmedTargetIds);
+      }
     } catch (requestError) {
       actionError = requestError instanceof Error
         ? requestError.message
         : 'Action execution failed.';
     } finally {
       actionBusy = false;
+    }
+  }
+
+  function startActionTaskPolling(): void {
+    if (actionTaskPollTimer !== null) return;
+    actionTaskPollTimer = setInterval(() => void pollActionTask(), 1000);
+  }
+
+  function startActionTaskStream(taskId: string): void {
+    if (actionTaskSocket && actionTaskSocket.readyState <= WebSocket.OPEN) return;
+    actionTaskSocket = openTaskStream(taskId, (next) => {
+      actionTask = next;
+      actionBusy = !isTaskTerminal(next.status);
+      if (isTaskTerminal(next.status)) void pollActionTask();
+    });
+  }
+
+  async function pollActionTask(): Promise<void> {
+    const taskId = actionTask?.id ?? localStorage.getItem('immich-companion:asset-action-task');
+    if (!taskId) return;
+    try {
+      const next = await getTaskStatus(taskId);
+      actionTask = next;
+      actionBusy = !isTaskTerminal(next.status);
+      if (!isTaskTerminal(next.status)) return;
+      if (actionTaskPollTimer !== null) {
+        clearInterval(actionTaskPollTimer);
+        actionTaskPollTimer = null;
+      }
+      actionTaskSocket?.close();
+      actionTaskSocket = null;
+      localStorage.removeItem('immich-companion:asset-action-task');
+      const summary = next.result?.summary ?? {};
+      if (next.status === 'failed') {
+        actionError = next.error?.message ?? 'The bulk action failed.';
+        return;
+      }
+      actionMessage = `${summary.applied_count ?? 0} changed · ${summary.skipped_count ?? 0} skipped`;
+      detailCache.clear();
+      clearSelection();
+      await Promise.all([loadRelationOptions(), loadAssets()]);
+    } catch (requestError) {
+      actionError = requestError instanceof Error ? requestError.message : 'Action status is unavailable.';
     }
   }
 
@@ -682,6 +958,15 @@
       return `${label} · ${active.phase} · ${albumsSeen} albums · ${tagsSeen} tags · ${assetsSeen} assets${pending}`;
     }
     if (status.pending) return `${status.pending.mode === 'full' ? 'Full' : 'Incremental'} sync queued`;
+    const failureIsCurrent = status.last_failure !== null
+      && (status.last_success === null
+        || status.last_failure.created_at > status.last_success.created_at);
+    if (failureIsCurrent && status.last_failure) {
+      const failure = status.last_failure;
+      const label = failure.mode === 'full' ? 'Full' : 'Incremental';
+      return `${label} sync failed after ${failure.attempts} attempt${failure.attempts === 1 ? '' : 's'}`
+        + (failure.error ? `: ${failure.error}` : '.');
+    }
     if (status.last_success) {
       const counters = status.last_success.counters;
       return `Last ${status.last_success.mode} sync · ${counters.assets_seen ?? 0} assets · ${counters.assets_removed ?? 0} removed`;
@@ -693,21 +978,55 @@
     try {
       const next = await getAssetSyncStatus();
       const nextSuccessId = next.last_success?.id ?? null;
+      const nextFailureId = next.last_failure?.id ?? null;
+      const failureIsCurrent = next.last_failure !== null
+        && (next.last_success === null
+          || next.last_failure.created_at > next.last_success.created_at);
       const completedSinceLastCheck = syncStatusInitialized
         && nextSuccessId !== null
         && nextSuccessId !== handledSyncSuccessId;
+      const failedSinceLastCheck = syncStatusInitialized
+        && nextFailureId !== null
+        && nextFailureId !== handledSyncFailureId;
       syncing = next.active !== null || next.pending !== null;
-      syncMessage = next.active || next.pending ? describeSync(next) : null;
+      syncMessage = next.active || next.pending || failureIsCurrent ? describeSync(next) : null;
       syncProgress = next.active?.progress ?? null;
+      if (completedSinceLastCheck) syncError = null;
+      if (failedSinceLastCheck && failureIsCurrent && next.last_failure) {
+        syncError = next.last_failure.error
+          ? `${next.last_failure.mode === 'full' ? 'Full' : 'Incremental'} sync failed after ${next.last_failure.attempts} attempt${next.last_failure.attempts === 1 ? '' : 's'}: ${next.last_failure.error}`
+          : 'Synchronization failed after its retry limit.';
+      }
+      const activeTaskId = next.active?.id ?? null;
+      if (activeTaskId && activeTaskId !== syncTaskStreamId) {
+        closeTaskSocket(syncTaskSocket);
+        syncTaskStreamId = activeTaskId;
+        syncTaskSocket = openTaskStream(activeTaskId, () => void refreshSyncStatus());
+      } else if (!activeTaskId) {
+        if (syncTaskSocket?.readyState !== WebSocket.CONNECTING) {
+          closeTaskSocket(syncTaskSocket);
+          syncTaskSocket = null;
+          syncTaskStreamId = null;
+        }
+      }
       if (!syncStatusInitialized) {
         syncStatusInitialized = true;
         handledSyncSuccessId = nextSuccessId;
+        handledSyncFailureId = nextFailureId;
       } else if (completedSinceLastCheck) {
         handledSyncSuccessId = nextSuccessId;
+        if (manualSyncPending && next.last_success) {
+          const counters = next.last_success.counters;
+          syncCompletionMessage = `${next.last_success.mode === 'full' ? 'Full' : 'Incremental'} sync completed: `
+            + `${counters.assets_updated ?? 0} updated, ${counters.assets_created ?? 0} created, `
+            + `${counters.assets_removed ?? 0} removed.`;
+          manualSyncPending = false;
+        }
         detailCache.clear();
         clearSelection();
         await Promise.all([loadRelationOptions(), loadAssets()]);
       }
+      if (nextFailureId !== null) handledSyncFailureId = nextFailureId;
     } catch (requestError) {
       if (!syncStatusInitialized) {
         syncMessage = requestError instanceof Error
@@ -719,7 +1038,9 @@
 
   async function syncAssets(mode: AssetSyncMode = 'incremental'): Promise<void> {
     syncing = true;
+    manualSyncPending = true;
     syncMessage = mode === 'full' ? 'Queueing full sync…' : 'Queueing incremental sync…';
+    syncError = null;
     error = null;
     try {
       await startAssetSync(mode);
@@ -731,16 +1052,35 @@
   }
 
   onMount(() => {
+    taskUpdatesSocket = openTaskUpdates(handleTaskUpdate);
     window.addEventListener('pointerup', finishDragSelection);
     window.addEventListener('pointercancel', finishDragSelection);
     void loadRelationOptions();
     void loadAssets();
     void refreshSyncStatus();
+    const savedSelectionTask = localStorage.getItem('immich-companion:selected-sync-task');
+    if (savedSelectionTask) {
+      void pollSelectionTask();
+      startSelectionTaskStream(savedSelectionTask);
+      startSelectionTaskPolling();
+    }
+    const savedActionTask = localStorage.getItem('immich-companion:asset-action-task');
+    if (savedActionTask) {
+      void pollActionTask();
+      startActionTaskStream(savedActionTask);
+      startActionTaskPolling();
+    }
     syncPollTimer = setInterval(() => void refreshSyncStatus(), 1500);
     return () => {
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
       if (syncPollTimer !== null) clearInterval(syncPollTimer);
+      if (selectionTaskPollTimer !== null) clearInterval(selectionTaskPollTimer);
+      if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
+      selectionTaskSocket?.close();
+      actionTaskSocket?.close();
+      closeTaskSocket(syncTaskSocket);
+      closeTaskSocket(taskUpdatesSocket);
     };
   });
 
@@ -750,6 +1090,10 @@
     selectionController?.abort();
     viewerActionController?.abort();
     if (syncPollTimer !== null) clearInterval(syncPollTimer);
+    selectionTaskSocket?.close();
+    actionTaskSocket?.close();
+    closeTaskSocket(syncTaskSocket);
+    closeTaskSocket(taskUpdatesSocket);
   });
 </script>
 
@@ -794,13 +1138,16 @@
   {/if}
 
   {#if actionMessage}<p class="action-message" role="status">{actionMessage}</p>{/if}
+{#if actionError && actionContext === 'selection'}
+    <p class="action-error" role="alert">Bulk action failed: {actionError}</p>
+  {/if}
 
   {#if loading && !results}
     <AssetLoadingState />
   {:else if error}
     <AssetErrorState message={error} onretry={loadAssets} />
   {:else if results && results.items.length === 0}
-    <AssetEmptyState {syncing} onsync={() => void syncAssets('incremental')} />
+    <AssetEmptyState {syncing} showSync={!hasSearch} onsync={() => void syncAssets('incremental')} />
   {:else if results}
     <AssetGrid
       assets={results.items}
@@ -824,6 +1171,47 @@
     />
   {/if}
 </section>
+
+{#if selectionTask && !isTaskTerminal(selectionTask.status)}
+  <AssetTaskProgress task={selectionTask} overlay />
+{/if}
+
+{#if actionTask && !isTaskTerminal(actionTask.status)}
+  <AssetTaskProgress task={actionTask} overlay />
+{/if}
+
+{#if selectionTask && selectionTaskErrorOpen}
+  <AssetTaskErrorDialog
+    task={selectionTask}
+    onretry={retryFailedSelection}
+    onclose={() => (selectionTaskErrorOpen = false)}
+  />
+{/if}
+
+{#if actionError}
+  <AssetActionErrorDialog
+    message={actionError}
+    onclose={() => (actionError = null)}
+  />
+{/if}
+
+{#if syncError}
+  <AssetActionErrorDialog
+    message={syncError}
+    onclose={() => (syncError = null)}
+  />
+{/if}
+
+{#if syncCompletionMessage}
+  <ConfirmDialog
+    title="Synchronization completed"
+    message={syncCompletionMessage}
+    confirmLabel="Close"
+    icon="check"
+    onconfirm={() => (syncCompletionMessage = null)}
+    onclose={() => (syncCompletionMessage = null)}
+  />
+{/if}
 
 {#if viewerIndex !== null && results?.items[viewerIndex]}
   <AssetViewerDialog
@@ -866,6 +1254,13 @@
   .action-message {
     margin: 0;
     color: var(--color-accent-strong);
+    font-size: 0.74rem;
+    font-weight: 720;
+  }
+
+  .action-error {
+    margin: 0;
+    color: var(--color-danger, #b42318);
     font-size: 0.74rem;
     font-weight: 720;
   }

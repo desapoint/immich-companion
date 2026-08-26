@@ -3,6 +3,7 @@ import type {
   AssetActionIntent,
   AssetActionPlan,
   AssetActionResult,
+  AssetActionTaskStart,
   AlbumOption,
   AssetSearchResponse,
   AssetSummary,
@@ -14,6 +15,9 @@ import type {
   AssetSyncCoordinatorStatus,
   AssetSyncMode,
   AssetSyncRunStatus,
+  AssetTaskStatus,
+  SelectionSetMembershipResponse,
+  SelectionSetView,
   SearchGroup,
   AssetViewerMedia,
   TagOption,
@@ -34,6 +38,45 @@ async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Pro
     throw new Error(detail ?? `Companion request failed with HTTP ${response.status}.`);
   }
   return (await response.json()) as T;
+}
+
+export function openTaskStream(
+  taskId: string,
+  onstatus: (task: AssetTaskStatus) => void,
+  onerror?: () => void,
+): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(
+    `${protocol}//${window.location.host}/api/tasks/${encodeURIComponent(taskId)}/stream`,
+  );
+  socket.onmessage = (event) => {
+    try {
+      const payload = JSON.parse(event.data) as AssetTaskStatus;
+      if (payload.id) onstatus(payload);
+    } catch {
+      onerror?.();
+    }
+  };
+  socket.onerror = () => onerror?.();
+  return socket;
+}
+
+export function openTaskUpdates(
+  onstatus: (task: AssetTaskStatus) => void,
+  onerror?: () => void,
+): WebSocket {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const socket = new WebSocket(`${protocol}//${window.location.host}/api/tasks/stream`);
+  socket.onmessage = (event) => {
+    try {
+      const payload = JSON.parse(event.data) as AssetTaskStatus;
+      if (payload.id) onstatus(payload);
+    } catch {
+      onerror?.();
+    }
+  };
+  socket.onerror = () => onerror?.();
+  return socket;
 }
 
 export function normalizeAssetSummary(asset: AssetSummary): AssetSummary {
@@ -61,6 +104,7 @@ export function buildAssetSearchRequest(
   page: number,
   pageSize = DEFAULT_ASSET_PAGE_SIZE,
   sort: AssetSort = createDefaultAssetSort(),
+  selectionId?: string | null,
 ): Record<string, unknown> {
   return {
     expression: serializeSearchGroup(expression),
@@ -68,6 +112,7 @@ export function buildAssetSearchRequest(
     sort_direction: sort.direction,
     page,
     page_size: pageSize,
+    ...(selectionId ? { selection_id: selectionId } : {}),
   };
 }
 
@@ -77,11 +122,12 @@ export async function searchAssets(
   pageSize = DEFAULT_ASSET_PAGE_SIZE,
   sort: AssetSort = createDefaultAssetSort(),
   signal?: AbortSignal,
+  selectionId?: string | null,
 ): Promise<AssetSearchResponse> {
   const response = await requestJson<AssetSearchResponse>('/api/assets/search', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize, sort)),
+    body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize, sort, selectionId)),
     signal,
   });
   return normalizeAssetSearchResponse(response);
@@ -128,6 +174,10 @@ export function getAssetSyncStatus(signal?: AbortSignal): Promise<AssetSyncCoord
   return requestJson('/api/assets/sync/status', { signal });
 }
 
+export function getTaskStatus(taskId: string, signal?: AbortSignal): Promise<AssetTaskStatus> {
+  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}`, { signal });
+}
+
 export function resolveAssetSelection(
   selection: AssetSelectionRequest,
   signal?: AbortSignal,
@@ -137,6 +187,66 @@ export function resolveAssetSelection(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(selection),
     signal,
+  });
+}
+
+export function materializeAssetSelection(
+  expression: SearchGroup,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return requestJson('/api/assets/selection/ids', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      mode: 'all_matching',
+      ids: [],
+      expression: serializeSearchGroup(expression),
+      excluded_ids: [],
+    }),
+    signal,
+  });
+}
+
+export function createAssetSelection(): Promise<SelectionSetView> {
+  return requestJson('/api/assets/selections', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
+  });
+}
+
+export function selectAllAssetSelection(
+  selectionId: string,
+  expression: SearchGroup,
+): Promise<SelectionSetView> {
+  return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/select-all`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ expression: serializeSearchGroup(expression) }),
+  });
+}
+
+export function updateAssetSelectionMembers(
+  selectionId: string,
+  assetIds: string[],
+  selected: boolean,
+  revision: number,
+): Promise<SelectionSetView> {
+  return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/members`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_ids: assetIds, selected, revision }),
+  });
+}
+
+export function getAssetSelectionMembership(
+  selectionId: string,
+  assetIds: string[],
+): Promise<SelectionSetMembershipResponse> {
+  return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/membership`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ asset_ids: assetIds }),
   });
 }
 
@@ -154,6 +264,14 @@ export function planAssetAction(
 
 export function executeAssetAction(planId: string): Promise<AssetActionResult> {
   return requestJson('/api/assets/actions/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plan_id: planId, confirm: true }),
+  });
+}
+
+export function executeAssetActionTask(planId: string): Promise<AssetActionTaskStart> {
+  return requestJson('/api/assets/actions/execute-task', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ plan_id: planId, confirm: true }),

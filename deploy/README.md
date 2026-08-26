@@ -23,6 +23,12 @@ no media mount and performs no direct database access.
 4. Confirm the companion reports `ready: true` before exposing port 8090 beyond
    a trusted network.
 
+If the dashboard is served through HTTPS, terminate TLS at the reverse proxy
+and forward WebSocket upgrades for `/api/tasks/*/stream`. The browser derives
+`wss://` automatically from the HTTPS dashboard URL; do not rewrite that
+connection to plain `ws://`. The proxy must preserve the external `Host`
+header so the companion's same-origin WebSocket check remains valid.
+
 The overlay adds `immich-companion` and its isolated `immich-companion-database`.
 Existing Immich, Tailscale, Immich PostgreSQL, Valkey, machine-learning, and
 power-tools definitions remain unchanged. Alembic upgrades the isolated schema

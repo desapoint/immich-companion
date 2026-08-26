@@ -175,10 +175,12 @@
   .progress-track {
     position: relative;
     overflow: hidden;
-    height: 0.34rem;
+    height: 0.4rem;
     border-radius: 99px;
-    background: color-mix(in srgb, var(--color-border-strong) 72%, var(--color-surface));
-    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 10%, transparent);
+    background: color-mix(in srgb, var(--color-ink) 22%, var(--color-surface-raised));
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 28%, transparent),
+      0 0 0 1px color-mix(in srgb, var(--color-border-strong) 45%, transparent);
   }
 
   .progress-value {

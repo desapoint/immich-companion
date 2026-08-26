@@ -115,6 +115,12 @@ export interface AssetSearchResponse {
   page: number;
   page_size: number;
   pages: number;
+  selection?: {
+    id: string;
+    revision: number;
+    selected_count: number;
+    selected_ids: string[];
+  } | null;
 }
 
 export type SearchField =
@@ -246,6 +252,7 @@ export interface AssetSyncCoordinatorStatus {
   active: AssetSyncRunStatus | null;
   pending: AssetSyncRunStatus | null;
   last_success: AssetSyncRunStatus | null;
+  last_failure: AssetSyncRunStatus | null;
   successful_watermark: string | null;
   authoritative_generation: number;
 }
@@ -254,9 +261,23 @@ export type AssetSelectionMode = 'explicit' | 'all_matching';
 
 export interface AssetSelectionRequest {
   mode: AssetSelectionMode;
+  selection_id?: string | null;
   ids: string[];
   expression?: Record<string, unknown>;
   excluded_ids: string[];
+}
+
+export interface SelectionSetView {
+  id: string;
+  revision: number;
+  selected_count: number;
+  status: 'active' | 'cancelled' | 'expired';
+  expires_at: string;
+}
+
+export interface SelectionSetMembershipResponse {
+  selection: SelectionSetView;
+  selected_ids: string[];
 }
 
 export interface AssetSelectionSummary {
@@ -282,6 +303,40 @@ export interface AssetSelectionResolution {
 export interface AssetSelectionSyncResult {
   requested: number;
   synced: number;
+  task_id?: string | null;
+}
+
+export interface AssetTaskStatus {
+  id: string;
+  task_type: string;
+  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
+  payload: Record<string, unknown>;
+  checkpoint: Record<string, unknown>;
+  counters: Record<string, number>;
+  progress: {
+    phase?: string;
+    completed?: number;
+    total?: number | null;
+    percent?: number | null;
+    detail?: string | null;
+  };
+  result: {
+    summary?: {
+      requested?: number;
+      synced?: number;
+      applied_count?: number;
+      skipped_count?: number;
+      failed_ids?: string[];
+      missing_ids?: string[];
+      errors?: Array<{ error: string; count: number }>;
+    };
+  } | null;
+  error: { type?: string; message?: string } | null;
+  attempt: number;
+  next_attempt_at: string | null;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
 }
 
 export type AssetActionIntent =
@@ -345,6 +400,10 @@ export interface AssetActionResult {
   relation_results: AssetActionRelationResult[];
   verified: boolean;
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
+}
+
+export interface AssetActionTaskStart {
+  task_id: string;
 }
 
 export interface AssetActionRelationResult {

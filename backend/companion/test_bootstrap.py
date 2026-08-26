@@ -56,8 +56,13 @@ def login(client: httpx.Client, email: str, password: str, name: str) -> str:
 
 
 def api_key_is_valid(client: httpx.Client, api_key: str) -> bool:
-    response = client.get("/api/assets/statistics", headers={"x-api-key": api_key})
-    return response.is_success
+    headers = {"x-api-key": api_key}
+    required_endpoints = (
+        "/api/assets/statistics",
+        "/api/albums",
+        "/api/tags",
+    )
+    return all(client.get(endpoint, headers=headers).is_success for endpoint in required_endpoints)
 
 
 def create_api_key(client: httpx.Client, access_token: str) -> str:

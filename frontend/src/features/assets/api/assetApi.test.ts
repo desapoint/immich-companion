@@ -217,6 +217,7 @@ describe('structured asset API', () => {
         active: run,
         pending: null,
         last_success: null,
+        last_failure: null,
         successful_watermark: null,
         authoritative_generation: 0,
       } : run), { status: 200, headers: { 'content-type': 'application/json' } })

@@ -1,19 +1,24 @@
 <script lang="ts">
   interface Props {
     syncing: boolean;
+    showSync?: boolean;
     onsync: () => void;
   }
 
-  let { syncing, onsync }: Props = $props();
+  let { syncing, showSync = true, onsync }: Props = $props();
 </script>
 
 <div class="empty-state">
   <span aria-hidden="true">▧</span>
   <strong>No synchronized assets match</strong>
-  <p>Sync Immich to refresh the companion index, or clear filters to widen this search.</p>
-  <button type="button" onclick={onsync} disabled={syncing}>
-    {syncing ? 'Syncing Immich…' : 'Sync Immich now'}
-  </button>
+  {#if showSync}
+    <p>Sync Immich to refresh the companion index, or clear filters to widen this search.</p>
+    <button type="button" onclick={onsync} disabled={syncing}>
+      {syncing ? 'Syncing Immich…' : 'Sync Immich now'}
+    </button>
+  {:else}
+    <p>Try changing the search or clearing the filters.</p>
+  {/if}
 </div>
 
 <style>

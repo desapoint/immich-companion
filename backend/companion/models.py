@@ -322,3 +322,31 @@ class ActionPlanRecord(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SelectionSetRecord(Base):
+    """Server-owned selection metadata; members are stored in separate rows."""
+
+    __tablename__ = "selection_sets"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    revision: Mapped[int] = mapped_column(Integer, default=0)
+    selected_count: Mapped[int] = mapped_column(BigInteger, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="active", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class SelectionSetMemberRecord(Base):
+    """One selected asset in a server-owned selection set."""
+
+    __tablename__ = "selection_set_members"
+
+    selection_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("selection_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
