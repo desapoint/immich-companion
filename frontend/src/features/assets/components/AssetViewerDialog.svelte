@@ -203,7 +203,7 @@
       onnavigate(resultIndex);
       return;
     }
-    previewComparison(assetId);
+    oncomparisonnavigate?.(assetId);
   }
 
   function restoreComparison(): void {
