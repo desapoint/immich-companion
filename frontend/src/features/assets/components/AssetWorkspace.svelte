@@ -88,6 +88,7 @@
   let actionContext = $state<'selection' | 'viewer'>('selection');
   let actionTargetIds = $state<string[]>([]);
   let viewerIndex = $state<number | null>(null);
+  let viewerSelectedAsset = $state<import('../types/assets').AssetSummary | null>(null);
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
@@ -266,6 +267,7 @@
     sort = { ...nextSort };
     page = 1;
     viewerIndex = null;
+    viewerSelectedAsset = null;
     clearSelection();
     void loadAssets();
   }
@@ -273,6 +275,7 @@
   function changePage(nextPage: number): void {
     page = nextPage;
     viewerIndex = null;
+    viewerSelectedAsset = null;
     selectionAnchorIndex = null;
     void loadAssets();
     document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
@@ -283,19 +286,48 @@
     pageSize = nextPageSize;
     page = 1;
     viewerIndex = null;
+    viewerSelectedAsset = null;
     selectionAnchorIndex = null;
     void loadAssets();
     document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
   }
 
   function openViewer(index: number): void {
+    viewerSelectedAsset = null;
     viewerIndex = index;
     void loadDetail(index);
   }
 
   function navigateViewer(index: number): void {
+    viewerSelectedAsset = null;
     viewerIndex = index;
     void loadDetail(index);
+  }
+
+  async function selectViewerComparisonAsset(assetId: string): Promise<void> {
+    const resultIndex = results?.items.findIndex((asset) => asset.id === assetId) ?? -1;
+    if (resultIndex >= 0) {
+      navigateViewer(resultIndex);
+      return;
+    }
+    try {
+      detail = null;
+      detailError = null;
+      detailLoading = true;
+      const [asset, loadedDetail] = await Promise.all([
+        matchAssetSearch(assetId, expression),
+        getAssetDetail(assetId),
+      ]);
+      if (!asset || viewerIndex === null) return;
+      viewerSelectedAsset = asset;
+      detail = loadedDetail;
+      detailError = null;
+      detailLoading = false;
+    } catch (requestError) {
+      detailError = requestError instanceof Error
+        ? requestError.message
+        : 'Selected stack member details could not be loaded.';
+    }
   }
 
   function toggleSelection(assetId: string): void {
@@ -604,6 +636,7 @@
 
   function closeViewer(): void {
     viewerIndex = null;
+    viewerSelectedAsset = null;
     viewerActionController?.abort();
     viewerActionAssetId = null;
     viewerActionResolution = null;
@@ -793,6 +826,7 @@
   <AssetViewerDialog
     assets={results.items}
     initialIndex={viewerIndex}
+    selectedAsset={viewerSelectedAsset}
     selectedIds={visibleSelectedIds}
     {detail}
     {detailLoading}
@@ -808,13 +842,14 @@
     comparisonSource={viewerComparisonSource}
     comparisonActivation={viewerComparisonActivation}
     onnavigate={navigateViewer}
+    oncomparisonnavigate={(assetId) => void selectViewerComparisonAsset(assetId)}
     ontoggleselection={toggleSelection}
     onvisiblechange={(assetId) => void resolveViewerActionState(assetId)}
     onaction={previewViewerAction}
     onrelationconfirm={confirmViewerRelationAction}
     onconfirmaction={confirmAction}
     oncancelaction={() => (actionPlan = null)}
-    onsync={() => void syncViewerAsset(results?.items[viewerIndex ?? -1]?.id ?? '')}
+    onsync={(assetId) => void syncViewerAsset(assetId)}
     onclose={closeViewer}
   />
 {/if}

@@ -39,6 +39,7 @@
   interface Props {
     assets: AssetSummary[];
     initialIndex: number;
+    selectedAsset?: AssetSummary | null;
     selectedIds: Set<string>;
     detail: AssetDetail | null;
     detailLoading: boolean;
@@ -70,13 +71,14 @@
     ) => void;
     onconfirmaction: () => void;
     oncancelaction: () => void;
-    onsync: () => void;
+    onsync: (assetId: string) => void;
     onclose: () => void;
   }
 
   let {
     assets,
     initialIndex,
+    selectedAsset = null,
     selectedIds,
     detail,
     detailLoading,
@@ -120,7 +122,7 @@
   let loadedMediaAssetId = '';
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   const currentIndex = $derived(initialIndex);
-  const currentAsset = $derived(assets[currentIndex]);
+  const currentAsset = $derived(selectedAsset ?? assets[currentIndex]);
   const comparisonMembers = $derived(
     comparisonSource === 'stack' ? stackMembersForAsset(currentAsset) : comparisonAssets,
   );
@@ -309,6 +311,7 @@
     if (assetId === selectedAssetId) return;
     selectedAssetId = assetId;
     visibleAssetId = assetId;
+    untrack(() => onvisiblechange(assetId));
   });
 
   $effect(() => {
@@ -453,7 +456,7 @@
         reserveComparisonTray={hasComparisonTray}
         syncing={syncBusy}
         syncError={syncError}
-        {onsync}
+        onsync={() => onsync(currentAsset.id)}
       />
     {/if}
 
