@@ -197,11 +197,11 @@
     overflow: hidden;
     height: 100%;
     border-radius: inherit;
-    background-color: var(--color-accent);
+    background-color: var(--color-accent-strong);
     background-image: repeating-linear-gradient(
       -45deg,
       var(--color-accent-strong) 0 0.35rem,
-      var(--color-accent) 0.35rem 0.7rem
+      var(--color-accent-hover) 0.35rem 0.7rem
     );
     background-size: 1rem 1rem;
     transition: width 360ms ease;
