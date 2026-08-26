@@ -144,9 +144,13 @@
   }
 
   .sync-progress {
-    position: relative;
+    position: fixed;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 20;
     display: grid;
     width: clamp(12rem, 24vw, 18rem);
+    max-width: calc(100vw - 2rem);
     min-width: 0;
     gap: 0.22rem;
     padding: 0.42rem 0.58rem;
@@ -228,6 +232,14 @@
     pointer-events: none;
     transform: translateY(0.25rem);
     transition: opacity 140ms ease, transform 140ms ease;
+  }
+
+  @media (max-width: 38rem) {
+    .sync-progress {
+      right: 0.75rem;
+      bottom: 0.75rem;
+      width: min(18rem, calc(100vw - 1.5rem));
+    }
   }
 
   .progress-tooltip span {
