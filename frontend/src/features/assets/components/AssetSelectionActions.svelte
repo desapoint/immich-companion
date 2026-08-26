@@ -1,5 +1,6 @@
 <script lang="ts">
-  import IconButton from '../../../lib/components/ui/IconButton.svelte';
+import IconButton from '../../../lib/components/ui/IconButton.svelte';
+  import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import type {
     AlbumOption,
     AssetActionIntent,
@@ -32,7 +33,12 @@
     ) => void;
     onconfirm: () => void;
     oncancel: () => void;
+    syncBusy?: boolean;
+    syncError?: string | null;
+    onsync?: () => void;
   }
+
+  const LARGE_SYNC_THRESHOLD = 50;
 
   let {
     selectedCount,
@@ -53,7 +59,19 @@
     onrelationconfirm,
     onconfirm,
     oncancel,
+    syncBusy = false,
+    syncError = null,
+    onsync = () => undefined,
   }: Props = $props();
+  let syncConfirmOpen = $state(false);
+
+  function requestSync(): void {
+    if (selectedCount >= LARGE_SYNC_THRESHOLD) {
+      syncConfirmOpen = true;
+      return;
+    }
+    onsync();
+  }
 </script>
 
 <section class="selection-actions" aria-label="Selected asset controls and actions">
@@ -61,6 +79,7 @@
     <strong>{selectedCount} selected</strong>
     {#if allMatching}<small>All matching results except unchecked assets</small>{/if}
     {#if error}<small class="error" role="alert">{error}</small>{/if}
+    {#if syncError}<small class="error" role="alert">{syncError}</small>{/if}
   </div>
 
   <div class="right-controls">
@@ -93,6 +112,13 @@
 
     <span class="control-separator" aria-hidden="true"></span>
 
+    <IconButton
+      icon="sync"
+      label={`Sync ${selectedCount} selected ${selectedCount === 1 ? 'asset' : 'assets'}`}
+      disabled={busy || syncBusy || selectedCount === 0}
+      onclick={requestSync}
+    />
+
     <AssetActionControls
       {summary}
       {albums}
@@ -115,6 +141,25 @@
     {onconfirm}
     onclose={oncancel}
   />
+{/if}
+
+{#if syncConfirmOpen}
+  <ConfirmDialog
+    title="Sync selected assets?"
+    message={`Syncing ${selectedCount} assets may take a while.`}
+    confirmLabel="Sync assets"
+    icon="sync"
+    busy={syncBusy}
+    onconfirm={() => {
+      syncConfirmOpen = false;
+      onsync();
+    }}
+    onclose={() => (syncConfirmOpen = false)}
+  >
+    {#snippet detail()}
+      <p>All selected metadata, state, albums, and tags will be refreshed from Immich.</p>
+    {/snippet}
+  </ConfirmDialog>
 {/if}
 
 <style>

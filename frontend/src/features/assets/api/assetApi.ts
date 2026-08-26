@@ -8,6 +8,7 @@ import type {
   AssetSummary,
   AssetSelectionRequest,
   AssetSelectionResolution,
+  AssetSelectionSyncResult,
   AssetSort,
   AssetSyncResult,
   AssetSyncCoordinatorStatus,
@@ -165,6 +166,16 @@ export function getAssetDetail(assetId: string, signal?: AbortSignal): Promise<A
 
 export function synchronizeAsset(assetId: string): Promise<AssetDetail> {
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}/sync`, { method: 'POST' });
+}
+
+export function synchronizeAssetSelection(
+  selection: AssetSelectionRequest,
+): Promise<AssetSelectionSyncResult> {
+  return requestJson('/api/assets/sync/selection', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(selection),
+  });
 }
 
 export function assetMediaUrl(assetId: string, size: 'thumbnail' | 'preview'): string {

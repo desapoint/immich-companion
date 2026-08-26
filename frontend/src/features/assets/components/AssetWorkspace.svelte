@@ -13,6 +13,7 @@
     searchAssets,
     startAssetSync,
     synchronizeAsset,
+    synchronizeAssetSelection,
   } from '../api/assetApi';
   import { createDefaultAssetSort } from '../state/assetSort';
   import {
@@ -92,6 +93,8 @@
   let detailError = $state<string | null>(null);
   let viewerSyncing = $state(false);
   let viewerSyncError = $state<string | null>(null);
+  let selectionSyncing = $state(false);
+  let selectionSyncError = $state<string | null>(null);
   let searchController: AbortController | null = null;
   let detailController: AbortController | null = null;
   let selectionController: AbortController | null = null;
@@ -224,6 +227,26 @@
         : 'Asset sync failed.';
     } finally {
       viewerSyncing = false;
+    }
+  }
+
+  async function syncSelectedAssets(): Promise<void> {
+    selectionSyncing = true;
+    selectionSyncError = null;
+    actionError = null;
+    try {
+      const result = await synchronizeAssetSelection(buildSelectionRequest(selection, expression));
+      actionMessage = `${result.synced} assets synchronized`;
+      detailCache.clear();
+      clearSelection();
+      page = 1;
+      await Promise.all([loadRelationOptions(), loadAssets()]);
+    } catch (requestError) {
+      selectionSyncError = requestError instanceof Error
+        ? requestError.message
+        : 'Selected asset sync failed.';
+    } finally {
+      selectionSyncing = false;
     }
   }
 
@@ -720,6 +743,9 @@
       plan={actionContext === 'selection' ? actionPlan : null}
       busy={selectionLoading || actionBusy}
       error={actionContext === 'selection' ? actionError : null}
+      syncBusy={selectionSyncing}
+      syncError={selectionSyncError}
+      onsync={() => void syncSelectedAssets()}
       onselectpage={selectPage}
       onselectall={selectEveryMatch}
       oninvertpage={invertPage}

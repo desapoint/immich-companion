@@ -115,16 +115,22 @@ class SyncRepository:
                 session.add(state)
                 await session.flush()
 
+            effective_mode: SyncMode = (
+                "full" if mode == "incremental" and state.successful_watermark is None else mode
+            )
+
             active = await session.get(SyncRunRecord, state.active_run_id)
             if active is not None and active.status in {"queued", "running", "recovering"}:
-                should_follow = force_follow_up or (mode == "full" and active.mode != "full")
+                should_follow = force_follow_up or (
+                    effective_mode == "full" and active.mode != "full"
+                )
                 if not should_follow:
                     public = self._public(active)
                     assert public is not None
                     return public
                 pending = await session.get(SyncRunRecord, state.pending_run_id)
                 if pending is not None:
-                    if mode == "full" and pending.mode != "full":
+                    if effective_mode == "full" and pending.mode != "full":
                         pending.mode = "full"
                         pending.window_start = None
                     public = self._public(pending)
@@ -132,13 +138,13 @@ class SyncRepository:
                     return public
                 state.generation_counter += 1
                 pending = SyncRunRecord(
-                    mode=mode,
+                    mode=effective_mode,
                     status="queued",
                     phase="queued",
                     generation=state.generation_counter,
                     window_start=(
                         state.successful_watermark - overlap
-                        if mode == "incremental" and state.successful_watermark
+                        if effective_mode == "incremental" and state.successful_watermark
                         else None
                     ),
                     window_end=now,
@@ -154,13 +160,13 @@ class SyncRepository:
 
             state.generation_counter += 1
             run = SyncRunRecord(
-                mode=mode,
+                mode=effective_mode,
                 status="queued",
                 phase="queued",
                 generation=state.generation_counter,
                 window_start=(
                     state.successful_watermark - overlap
-                    if mode == "incremental" and state.successful_watermark
+                    if effective_mode == "incremental" and state.successful_watermark
                     else None
                 ),
                 window_end=now,

@@ -77,6 +77,8 @@ class AssetSyncTaskHandler:
                 mode,
                 overlap=service._overlap,  # type: ignore[arg-type]
             )
+            if mode == "incremental" and window_start is None:
+                mode = "full"
             payload = {
                 **payload,
                 "mode": mode,
@@ -300,26 +302,35 @@ class AssetSyncService:
         """Persist sync intent, coalesce safely, and wake a background worker."""
 
         if self._coordinator is not None:
-            deduplication_key = (
-                f"asset-sync:{mode}"
-                if not force_follow_up
-                else f"asset-sync:{mode}:follow-up:{uuid4()}"
-            )
-            existing = await self._coordinator.find_active("asset_sync", deduplication_key)
-            if existing is not None and not force_follow_up:
-                return self._status_from_task(existing)
+            requested_key = f"asset-sync:{mode}"
+            if not force_follow_up:
+                existing = await self._coordinator.find_active("asset_sync", requested_key)
+                if existing is not None:
+                    return self._status_from_task(existing)
             generation, window_start, window_end = await self._legacy_metadata.next_sync_metadata(
                 mode, overlap=self._overlap
             )
+            effective_mode: SyncMode = (
+                "full" if mode == "incremental" and window_start is None else mode
+            )
+            deduplication_key = (
+                f"asset-sync:{effective_mode}"
+                if not force_follow_up
+                else f"asset-sync:{effective_mode}:follow-up:{uuid4()}"
+            )
+            if not force_follow_up and effective_mode != mode:
+                existing = await self._coordinator.find_active("asset_sync", deduplication_key)
+                if existing is not None:
+                    return self._status_from_task(existing)
             task = await self._coordinator.submit(
                 "asset_sync",
                 {
-                    "mode": mode,
+                    "mode": effective_mode,
                     "generation": generation,
                     "window_start": window_start.isoformat() if window_start else None,
                     "window_end": window_end.isoformat(),
                 },
-                priority=100 if mode == "full" else 10,
+                priority=100 if effective_mode == "full" else 10,
                 deduplication_key=deduplication_key,
                 task_id=None,
             )
@@ -857,6 +868,8 @@ class AssetSyncService:
             updated_before=run.window_end if run.mode == "incremental" else None,
             start_page=completed_batches + 1,
         )
+        if run.mode == "incremental":
+            iterator = self._iter_incremental_details(iterator)
         async for asset in iterator:
             batch.append(asset)
             if len(batch) < self._settings.sync_batch_size:
@@ -868,6 +881,12 @@ class AssetSyncService:
             batch_number += 1
             await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
         await self._checkpoint(run, owner, counters, "stacks", None)
+
+    async def _iter_incremental_details(self, candidates):
+        """Fetch each bounded incremental candidate through the detail endpoint."""
+
+        async for candidate in candidates:
+            yield await self._immich.get_asset(candidate.id)
 
     async def _commit_asset_batch(
         self,

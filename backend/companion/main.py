@@ -38,6 +38,7 @@ from companion.asset_schema import (
     AssetSearchMatchRequest,
     AssetSearchQuery,
     AssetSearchResponse,
+    AssetSelectionSyncResult,
     AssetSortDirection,
     AssetSortField,
     AssetSummary,
@@ -497,6 +498,21 @@ def create_app(
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
+
+    @app.post("/api/assets/sync/selection", response_model=AssetSelectionSyncResult)
+    async def synchronize_asset_selection(
+        request: AssetSelectionRequest,
+    ) -> AssetSelectionSyncResult:
+        """Synchronize the exact backend-resolved selection."""
+
+        repository = require_asset_repository()
+        assert asset_sync is not None
+        resolution = await repository.resolve_selection(
+            request,
+            max_targets=runtime_settings.action_max_targets,
+        )
+        await asset_sync.reconcile_targets(resolution.ids)
+        return AssetSelectionSyncResult(requested=len(resolution.ids), synced=len(resolution.ids))
 
     @app.get("/api/assets/{asset_id}/thumbnail", response_class=Response)
     async def asset_thumbnail(

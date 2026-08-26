@@ -279,6 +279,11 @@ export interface AssetSelectionResolution {
   summary: AssetSelectionSummary;
 }
 
+export interface AssetSelectionSyncResult {
+  requested: number;
+  synced: number;
+}
+
 export type AssetActionIntent =
   | 'archive_toggle'
   | 'favorite_toggle'

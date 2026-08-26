@@ -486,3 +486,10 @@ class AssetSyncResult(BaseModel):
     updated: int
     removed: int
     completed_at: datetime
+
+
+class AssetSelectionSyncResult(BaseModel):
+    """Result of a targeted synchronization for a resolved selection."""
+
+    requested: int
+    synced: int
