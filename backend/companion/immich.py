@@ -548,6 +548,16 @@ class ImmichApiClient:
         response = await self._request("GET", "/api/stacks", operation="list stacks")
         return [ImmichStack.model_validate(payload) for payload in response.json()]
 
+    async def create_stack(self, asset_ids: list[UUID]) -> None:
+        """Create one Immich stack from the selected assets."""
+
+        await self._request(
+            "POST",
+            "/api/stacks",
+            json={"assetIds": [str(asset_id) for asset_id in asset_ids]},
+            operation="create stack",
+        )
+
     async def list_tag_catalog(self) -> list[ImmichTag]:
         """Fetch the compact tag catalog before any media traversal."""
 

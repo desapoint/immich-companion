@@ -306,7 +306,7 @@
     const assetId = visibleAsset.id;
     if (assetId === loadedMediaAssetId) return;
     loadedMediaAssetId = assetId;
-    untrack(() => onvisiblechange(assetId));
+    untrack(() => onvisiblechange(currentAsset.id));
     zoom = 1;
     imageLoading = true;
     imageError = false;
@@ -351,9 +351,9 @@
     {tags}
     {actionBusy}
     {actionError}
-    onaction={(action, relationIds) => onaction(visibleAsset.id, action, relationIds)}
+    onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
     onrelationconfirm={(action, relationIds) =>
-      onrelationconfirm(visibleAsset.id, action, relationIds)}
+      onrelationconfirm(currentAsset.id, action, relationIds)}
     ontoggleselection={() => ontoggleselection(currentAsset.id)}
     ontogglescale={toggleScale}
     onzoomout={() => changeZoomFromVisibleCenter(zoom / 1.2)}

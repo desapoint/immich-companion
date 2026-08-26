@@ -63,6 +63,11 @@
     }
     items.push(
       {
+        id: 'stack',
+        icon: 'stack',
+        label: `Stack ${targetLabel}`,
+      },
+      {
         id: 'add_tag',
         icon: 'tag-add',
         label: `Add tags to ${targetLabel}`,

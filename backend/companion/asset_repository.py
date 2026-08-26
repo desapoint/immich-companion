@@ -1261,7 +1261,9 @@ class AssetRepository:
 
         if not target_ids:
             return set()
-        if operation in {"add_album", "add_tag", "remove_album", "remove_tag"}:
+        if operation == "stack":
+            statement = select(AssetRecord.id).where(AssetRecord.id.in_(target_ids))
+        elif operation in {"add_album", "add_tag", "remove_album", "remove_tag"}:
             assert relation_id is not None
             album_action = operation in {"add_album", "remove_album"}
             model = AlbumAssetRecord if album_action else TagAssetRecord

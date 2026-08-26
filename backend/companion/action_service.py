@@ -201,7 +201,9 @@ class AssetActionService:
     ) -> None:
         if not ids:
             return
-        if operation == "remove_album":
+        if operation == "stack":
+            await self._immich.create_stack(ids)
+        elif operation == "remove_album":
             assert relation_id is not None
             await self._immich.remove_assets_from_album(relation_id, ids)
         elif operation == "add_album":
