@@ -327,6 +327,8 @@
       detailError = requestError instanceof Error
         ? requestError.message
         : 'Selected stack member details could not be loaded.';
+    } finally {
+      detailLoading = false;
     }
   }
 
