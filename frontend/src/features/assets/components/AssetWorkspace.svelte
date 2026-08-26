@@ -101,6 +101,7 @@
   let actionPlan = $state<AssetActionPlan | null>(null);
   let actionBusy = $state(false);
   let actionMessage = $state<string | null>(null);
+  let actionCompletionMessage = $state<string | null>(null);
   let actionError = $state<string | null>(null);
   let actionContext = $state<'selection' | 'viewer'>('selection');
   let actionTargetIds = $state<string[]>([]);
@@ -134,6 +135,8 @@
   let actionTaskSocket: WebSocket | null = null;
   let syncTaskSocket: WebSocket | null = null;
   let taskUpdatesSocket: WebSocket | null = null;
+  let taskUpdatesReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let taskUpdatesStopped = false;
   let syncTaskStreamId: string | null = null;
   let syncStatusInitialized = false;
   let handledSyncSuccessId: string | null = null;
@@ -161,7 +164,17 @@
   }
 
   function handleTaskUpdate(task: AssetTaskStatus): void {
-    if (task.task_type === 'asset_sync') void refreshSyncStatus();
+    const trackedTaskIds = new Set([
+      selectionTask?.id,
+      actionTask?.id,
+      localStorage.getItem('immich-companion:selected-sync-task'),
+      localStorage.getItem('immich-companion:asset-action-task'),
+    ].filter((id): id is string => id !== null));
+    if (task.task_type === 'asset_sync') {
+      void refreshSyncStatus();
+      return;
+    }
+    if (!trackedTaskIds.has(task.id)) return;
     if (task.task_type === 'asset_selection_sync') {
       selectionTask = task;
       selectionSyncing = !isTaskTerminal(task.status);
@@ -176,6 +189,24 @@
       if (isTaskTerminal(task.status)) void pollActionTask();
       else startActionTaskPolling();
     }
+  }
+
+  function connectTaskUpdates(): void {
+    if (taskUpdatesStopped || taskUpdatesSocket?.readyState === WebSocket.OPEN
+      || taskUpdatesSocket?.readyState === WebSocket.CONNECTING) return;
+    taskUpdatesSocket = openTaskUpdates(
+      handleTaskUpdate,
+      undefined,
+      () => {
+        taskUpdatesSocket = null;
+        if (!taskUpdatesStopped && taskUpdatesReconnectTimer === null) {
+          taskUpdatesReconnectTimer = setTimeout(() => {
+            taskUpdatesReconnectTimer = null;
+            connectTaskUpdates();
+          }, 1000);
+        }
+      },
+    );
   }
   const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
   const hasSearch = $derived(expression.children.length > 0);
@@ -372,7 +403,7 @@
         localStorage.setItem('immich-companion:selected-sync-task', result.task_id);
         startSelectionTaskPolling();
       } else {
-        actionMessage = `${result.synced} assets synchronized`;
+        actionCompletionMessage = `${result.synced} assets synchronized.`;
         detailCache.clear();
         clearSelection();
         page = 1;
@@ -427,7 +458,7 @@
         selectionSyncError = next.error?.message ?? 'Some selected assets could not be synchronized.';
         return;
       }
-      actionMessage = `${summary?.synced ?? next.counters.synced ?? 0} assets synchronized`;
+      actionCompletionMessage = `${summary?.synced ?? next.counters.synced ?? 0} assets synchronized.`;
       detailCache.clear();
       clearSelection();
       await Promise.all([loadRelationOptions(), loadAssets()]);
@@ -938,7 +969,7 @@
         actionError = next.error?.message ?? 'The bulk action failed.';
         return;
       }
-      actionMessage = `${summary.applied_count ?? 0} changed · ${summary.skipped_count ?? 0} skipped`;
+      actionCompletionMessage = `${summary.applied_count ?? 0} changed · ${summary.skipped_count ?? 0} skipped.`;
       detailCache.clear();
       clearSelection();
       await Promise.all([loadRelationOptions(), loadAssets()]);
@@ -1052,7 +1083,8 @@
   }
 
   onMount(() => {
-    taskUpdatesSocket = openTaskUpdates(handleTaskUpdate);
+    taskUpdatesStopped = false;
+    connectTaskUpdates();
     window.addEventListener('pointerup', finishDragSelection);
     window.addEventListener('pointercancel', finishDragSelection);
     void loadRelationOptions();
@@ -1077,6 +1109,8 @@
       if (syncPollTimer !== null) clearInterval(syncPollTimer);
       if (selectionTaskPollTimer !== null) clearInterval(selectionTaskPollTimer);
       if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
+      taskUpdatesStopped = true;
+      if (taskUpdatesReconnectTimer !== null) clearTimeout(taskUpdatesReconnectTimer);
       selectionTaskSocket?.close();
       actionTaskSocket?.close();
       closeTaskSocket(syncTaskSocket);
@@ -1085,6 +1119,8 @@
   });
 
   onDestroy(() => {
+    taskUpdatesStopped = true;
+    if (taskUpdatesReconnectTimer !== null) clearTimeout(taskUpdatesReconnectTimer);
     searchController?.abort();
     detailController?.abort();
     selectionController?.abort();
@@ -1210,6 +1246,17 @@
     icon="check"
     onconfirm={() => (syncCompletionMessage = null)}
     onclose={() => (syncCompletionMessage = null)}
+  />
+{/if}
+
+{#if actionCompletionMessage}
+  <ConfirmDialog
+    title="Action completed"
+    message={actionCompletionMessage}
+    confirmLabel="Close"
+    icon="check"
+    onconfirm={() => (actionCompletionMessage = null)}
+    onclose={() => (actionCompletionMessage = null)}
   />
 {/if}
 

@@ -719,11 +719,29 @@ class TaskCoordinator:
         task = await self.get_status(task_id)
         if task is None:
             return
+        # The global stream is only a coordination signal.  Never broadcast
+        # immutable task inputs (which may contain thousands of asset IDs) to
+        # every connected browser; per-task streams remain available for the
+        # client that owns a task.
+        global_result = task.result
+        if global_result is not None:
+            global_result = global_result.model_copy(
+                update={
+                    "summary": {
+                        key: value
+                        for key, value in global_result.summary.items()
+                        if key not in {"failed_ids", "missing_ids"}
+                    }
+                }
+            )
+        global_task = task.model_copy(
+            update={"payload": {}, "checkpoint": {}, "result": global_result}
+        )
         for queue in (*queues, *global_queues):
             if queue.full():
                 with suppress(asyncio.QueueEmpty):
                     queue.get_nowait()
-            queue.put_nowait(task)
+            queue.put_nowait(task if queue in queues else global_task)
 
     async def find_active(
         self, task_type: str, deduplication_key: str

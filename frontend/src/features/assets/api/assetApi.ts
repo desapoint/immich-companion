@@ -64,6 +64,7 @@ export function openTaskStream(
 export function openTaskUpdates(
   onstatus: (task: AssetTaskStatus) => void,
   onerror?: () => void,
+  onclose?: () => void,
 ): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(`${protocol}//${window.location.host}/api/tasks/stream`);
@@ -76,6 +77,7 @@ export function openTaskUpdates(
     }
   };
   socket.onerror = () => onerror?.();
+  socket.onclose = () => onclose?.();
   return socket;
 }
 
