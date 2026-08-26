@@ -113,6 +113,7 @@ def create_app(
             task_type="asset_sync",
             payload={"mode": "incremental"},
             priority=10,
+            enabled=runtime_settings.sync_schedules_enabled,
         )
         task_coordinator.register_schedule(
             name="asset-sync-full",
@@ -120,6 +121,7 @@ def create_app(
             task_type="asset_sync",
             payload={"mode": "full"},
             priority=100,
+            enabled=runtime_settings.sync_schedules_enabled,
         )
     action_service = (
         AssetActionService(

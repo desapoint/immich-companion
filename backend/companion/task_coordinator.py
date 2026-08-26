@@ -392,6 +392,7 @@ class TaskRepository:
         task_type: str,
         payload: dict[str, Any],
         priority: int,
+        enabled: bool = True,
     ) -> None:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
@@ -402,7 +403,7 @@ class TaskRepository:
                 session.add(
                     TaskScheduleRecord(
                         name=name,
-                        enabled=True,
+                        enabled=enabled,
                         interval_seconds=interval_seconds,
                         next_run_at=now + timedelta(seconds=interval_seconds),
                         task_type=task_type,
@@ -415,6 +416,7 @@ class TaskRepository:
                 schedule.task_type = task_type
                 schedule.payload = dict(payload)
                 schedule.priority = priority
+                schedule.enabled = enabled
 
     async def claim_due_schedules(self) -> list[TaskScheduleRecord]:
         now = datetime.now(UTC)
@@ -517,6 +519,7 @@ class TaskCoordinator:
         task_type: str,
         payload: dict[str, Any],
         priority: int = 0,
+        enabled: bool = True,
     ) -> None:
         self._schedule_definitions.append(
             {
@@ -525,6 +528,7 @@ class TaskCoordinator:
                 "task_type": task_type,
                 "payload": dict(payload),
                 "priority": priority,
+                "enabled": enabled,
             }
         )
 
