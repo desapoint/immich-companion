@@ -87,6 +87,8 @@ def _public_schedule(record: TaskScheduleRecord) -> TaskScheduleView:
         enabled=record.enabled,
         interval_seconds=record.interval_seconds,
         cron_expression=record.cron_expression,
+        deduplication_policy=record.deduplication_policy,
+        blocked_by=record.blocked_by or [],
         next_run_at=record.next_run_at,
         task_type=record.task_type,
         payload=record.payload or {},
@@ -409,6 +411,8 @@ class TaskRepository:
         priority: int,
         enabled: bool = True,
         cron_expression: str | None = None,
+        deduplication_policy: str = "window",
+        blocked_by: list[str] | None = None,
     ) -> None:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
@@ -427,6 +431,8 @@ class TaskRepository:
                         enabled=enabled,
                         interval_seconds=interval_seconds,
                         cron_expression=cron_expression,
+                        deduplication_policy=deduplication_policy,
+                        blocked_by=list(blocked_by or []),
                         next_run_at=next_run_at,
                         task_type=task_type,
                         payload=dict(payload),
@@ -438,6 +444,8 @@ class TaskRepository:
                 schedule.task_type = task_type
                 schedule.payload = dict(payload)
                 schedule.priority = priority
+                schedule.deduplication_policy = deduplication_policy
+                schedule.blocked_by = list(blocked_by or [])
                 if schedule.cron_expression:
                     schedule.next_run_at = croniter(
                         schedule.cron_expression, now
@@ -578,6 +586,8 @@ class TaskCoordinator:
         priority: int = 0,
         enabled: bool = True,
         cron_expression: str | None = None,
+        deduplication_policy: str = "window",
+        blocked_by: list[str] | None = None,
     ) -> None:
         self._schedule_definitions.append(
             {
@@ -588,6 +598,8 @@ class TaskCoordinator:
                 "priority": priority,
                 "enabled": enabled,
                 "cron_expression": cron_expression,
+                "deduplication_policy": deduplication_policy,
+                "blocked_by": list(blocked_by or []),
             }
         )
 
@@ -691,7 +703,21 @@ class TaskCoordinator:
     async def _schedule(self) -> None:
         while not self._stopping.is_set():
             for schedule in await self._repository.claim_due_schedules():
-                dedupe = f"schedule:{schedule.name}:{schedule.next_run_at.isoformat()}"
+                dedupe = (
+                    f"{schedule.task_type}:{schedule.payload['mode']}"
+                    if schedule.deduplication_policy == "coalesce"
+                    and isinstance(schedule.payload.get("mode"), str)
+                    else (
+                        f"schedule:{schedule.name}"
+                        if schedule.deduplication_policy == "coalesce"
+                        else f"schedule:{schedule.name}:{schedule.next_run_at.isoformat()}"
+                    )
+                )
+                if any(
+                    await self._repository.find_active(schedule.task_type, blocked_key)
+                    for blocked_key in schedule.blocked_by or []
+                ):
+                    continue
                 try:
                     await self.submit(
                         schedule.task_type,

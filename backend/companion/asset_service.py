@@ -6,7 +6,7 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from time import monotonic
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import AssetSyncResult
@@ -302,23 +302,36 @@ class AssetSyncService:
         """Persist sync intent, coalesce safely, and wake a background worker."""
 
         if self._coordinator is not None:
+            if mode == "incremental":
+                active_tasks = await self._coordinator.list_tasks(
+                    task_type="asset_sync", limit=100
+                )
+                if any(
+                    task.status
+                    in {"queued", "running", "retrying", "recovering", "cancel_requested"}
+                    and task.payload.get("mode") == "full"
+                    for task in active_tasks
+                ):
+                    full_task = next(
+                        task
+                        for task in active_tasks
+                        if task.status
+                        in {"queued", "running", "retrying", "recovering", "cancel_requested"}
+                        and task.payload.get("mode") == "full"
+                    )
+                    return self._status_from_task(full_task)
             requested_key = f"asset-sync:{mode}"
-            if not force_follow_up:
-                existing = await self._coordinator.find_active("asset_sync", requested_key)
-                if existing is not None:
-                    return self._status_from_task(existing)
+            existing = await self._coordinator.find_active("asset_sync", requested_key)
+            if existing is not None:
+                return self._status_from_task(existing)
             generation, window_start, window_end = await self._legacy_metadata.next_sync_metadata(
                 mode, overlap=self._overlap
             )
             effective_mode: SyncMode = (
                 "full" if mode == "incremental" and window_start is None else mode
             )
-            deduplication_key = (
-                f"asset-sync:{effective_mode}"
-                if not force_follow_up
-                else f"asset-sync:{effective_mode}:follow-up:{uuid4()}"
-            )
-            if not force_follow_up and effective_mode != mode:
+            deduplication_key = f"asset-sync:{effective_mode}"
+            if effective_mode != mode:
                 existing = await self._coordinator.find_active("asset_sync", deduplication_key)
                 if existing is not None:
                     return self._status_from_task(existing)

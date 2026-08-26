@@ -291,6 +291,7 @@ class TaskScheduleRecord(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     priority: Mapped[int] = mapped_column(Integer, default=0)
     deduplication_policy: Mapped[str] = mapped_column(String(32), default="window")
+    blocked_by: Mapped[list[str]] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

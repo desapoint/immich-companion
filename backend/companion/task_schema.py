@@ -79,6 +79,8 @@ class TaskScheduleView(BaseModel):
     enabled: bool
     interval_seconds: int
     cron_expression: str | None = None
+    deduplication_policy: str = "window"
+    blocked_by: list[str] = Field(default_factory=list)
     next_run_at: datetime
     task_type: str
     payload: dict[str, Any]

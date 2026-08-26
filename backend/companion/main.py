@@ -116,6 +116,8 @@ def create_app(
             priority=10,
             enabled=False,
             cron_expression="*/15 * * * *",
+            deduplication_policy="coalesce",
+            blocked_by=["asset-sync:full", "schedule:asset-sync-full"],
         )
         task_coordinator.register_schedule(
             name="asset-sync-full",
@@ -125,6 +127,7 @@ def create_app(
             priority=100,
             enabled=False,
             cron_expression="0 0 * * 0",
+            deduplication_policy="coalesce",
         )
     action_service = (
         AssetActionService(
