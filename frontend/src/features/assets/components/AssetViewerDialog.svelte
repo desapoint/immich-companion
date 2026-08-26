@@ -195,6 +195,15 @@
     visibleAssetId = assetId;
   }
 
+  function showSelectedStackAsset(assetId: string): void {
+    const resultIndex = assets.findIndex((asset) => asset.id === assetId);
+    if (resultIndex >= 0) {
+      onnavigate(resultIndex);
+      return;
+    }
+    previewComparison(assetId);
+  }
+
   function restoreComparison(): void {
     visibleAssetId = currentAsset.id;
   }
@@ -445,7 +454,7 @@
         syncError={syncError}
         onshowselected={() => {
           if (currentAsset.stack?.primary_asset_id) {
-            previewComparison(currentAsset.stack.primary_asset_id);
+            showSelectedStackAsset(currentAsset.stack.primary_asset_id);
           }
         }}
         {onsync}
