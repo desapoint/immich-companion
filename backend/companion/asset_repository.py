@@ -129,9 +129,7 @@ class AssetRepository:
             if rows:
                 statement = insert(AssetRecord).values(rows)
                 update_columns = {
-                    name: getattr(statement.excluded, name)
-                    for name in rows[0]
-                    if name != "id"
+                    name: getattr(statement.excluded, name) for name in rows[0] if name != "id"
                 }
                 await session.execute(
                     statement.on_conflict_do_update(
@@ -184,9 +182,7 @@ class AssetRepository:
                     ]
                     if memberships:
                         await session.execute(
-                            insert(AlbumAssetRecord)
-                            .values(memberships)
-                            .on_conflict_do_nothing()
+                            insert(AlbumAssetRecord).values(memberships).on_conflict_do_nothing()
                         )
                 else:
                     await session.execute(delete(AlbumRecord))
@@ -197,9 +193,7 @@ class AssetRepository:
                 tag_memberships = []
                 for tag in tags:
                     member_ids = [
-                        asset_id
-                        for asset_id in tag.asset_ids
-                        if asset_id in unique_assets
+                        asset_id for asset_id in tag.asset_ids if asset_id in unique_assets
                     ]
                     tag_rows.append(
                         {
@@ -212,8 +206,7 @@ class AssetRepository:
                         }
                     )
                     tag_memberships.extend(
-                        {"tag_id": tag.id, "asset_id": asset_id}
-                        for asset_id in member_ids
+                        {"tag_id": tag.id, "asset_id": asset_id} for asset_id in member_ids
                     )
                 if tag_rows:
                     tag_statement = insert(TagRecord).values(tag_rows)
@@ -228,14 +221,10 @@ class AssetRepository:
                         )
                     )
                     tag_ids = [tag.id for tag in tags]
-                    await session.execute(
-                        delete(TagRecord).where(TagRecord.id.not_in(tag_ids))
-                    )
+                    await session.execute(delete(TagRecord).where(TagRecord.id.not_in(tag_ids)))
                     if tag_memberships:
                         await session.execute(
-                            insert(TagAssetRecord)
-                            .values(tag_memberships)
-                            .on_conflict_do_nothing()
+                            insert(TagAssetRecord).values(tag_memberships).on_conflict_do_nothing()
                         )
                 else:
                     await session.execute(delete(TagRecord))
@@ -293,9 +282,7 @@ class AssetRepository:
                 statement.on_conflict_do_update(
                     index_elements=[AlbumRecord.id],
                     set_={
-                        name: getattr(statement.excluded, name)
-                        for name in rows[0]
-                        if name != "id"
+                        name: getattr(statement.excluded, name) for name in rows[0] if name != "id"
                     },
                 )
             )
@@ -341,9 +328,7 @@ class AssetRepository:
                 statement.on_conflict_do_update(
                     index_elements=[TagRecord.id],
                     set_={
-                        name: getattr(statement.excluded, name)
-                        for name in rows[0]
-                        if name != "id"
+                        name: getattr(statement.excluded, name) for name in rows[0] if name != "id"
                     },
                 )
             )
@@ -432,18 +417,14 @@ class AssetRepository:
         values.pop("stack_generation", None)
         async with self._database.sessions() as session, session.begin():
             await session.execute(
-                update(AssetRecord)
-                .where(AssetRecord.id == asset.id)
-                .values(**values)
+                update(AssetRecord).where(AssetRecord.id == asset.id).values(**values)
             )
 
     async def remove_asset(self, asset_id: UUID) -> int:
         """Remove one API-confirmed permanent deletion and its memberships."""
 
         async with self._database.sessions() as session, session.begin():
-            result = await session.execute(
-                delete(AssetRecord).where(AssetRecord.id == asset_id)
-            )
+            result = await session.execute(delete(AssetRecord).where(AssetRecord.id == asset_id))
             return int(result.rowcount or 0)
 
     async def apply_membership_event(
@@ -780,9 +761,7 @@ class AssetRepository:
                 )
                 if not keys:
                     return removed
-                result = await session.execute(
-                    delete(model).where(tuple_(*columns).in_(keys))
-                )
+                result = await session.execute(delete(model).where(tuple_(*columns).in_(keys)))
                 removed += int(result.rowcount or 0)
 
     async def _delete_stale_entities(
@@ -886,10 +865,7 @@ class AssetRepository:
                 return ratio >= numeric
             if condition.operator == "at_most":
                 return ratio <= numeric
-            return (
-                func.abs(ratio - numeric)
-                <= numeric * ASPECT_RATIO_RELATIVE_TOLERANCE
-            )
+            return func.abs(ratio - numeric) <= numeric * ASPECT_RATIO_RELATIVE_TOLERANCE
         if condition.field in {"favorite", "archived", "trashed"}:
             column = {
                 "favorite": AssetRecord.is_favorite,
@@ -898,17 +874,11 @@ class AssetRepository:
             }[condition.field]
             return column == bool(value)
         if condition.field in {"album", "tag"}:
-            membership_model = (
-                AlbumAssetRecord if condition.field == "album" else TagAssetRecord
-            )
+            membership_model = AlbumAssetRecord if condition.field == "album" else TagAssetRecord
             relation_column = (
-                AlbumAssetRecord.album_id
-                if condition.field == "album"
-                else TagAssetRecord.tag_id
+                AlbumAssetRecord.album_id if condition.field == "album" else TagAssetRecord.tag_id
             )
-            any_membership = exists(
-                select(1).where(membership_model.asset_id == AssetRecord.id)
-            )
+            any_membership = exists(select(1).where(membership_model.asset_id == AssetRecord.id))
             if condition.operator == "has_none":
                 return not_(any_membership)
             assert isinstance(value, list)
@@ -941,9 +911,7 @@ class AssetRepository:
             expression = true()
         return not_(expression) if group.negate else expression
 
-    async def search_structured(
-        self, criteria: StructuredAssetSearchQuery
-    ) -> AssetSearchResponse:
+    async def search_structured(self, criteria: StructuredAssetSearchQuery) -> AssetSearchResponse:
         """Compile a validated recursive expression and return one stable page."""
 
         predicate = self._compile_group(criteria.expression)
@@ -1023,12 +991,8 @@ class AssetRepository:
     async def _summaries_for_records(session, records: list[AssetRecord]) -> list[AssetSummary]:
         """Hydrate card summaries and album memberships for known records."""
 
-        album_map: dict[UUID, list[AssetAlbumSummary]] = {
-            record.id: [] for record in records
-        }
-        tag_map: dict[UUID, list[AssetTagSummary]] = {
-            record.id: [] for record in records
-        }
+        album_map: dict[UUID, list[AssetAlbumSummary]] = {record.id: [] for record in records}
+        tag_map: dict[UUID, list[AssetTagSummary]] = {record.id: [] for record in records}
         if records:
             album_statement = (
                 select(
@@ -1045,9 +1009,7 @@ class AssetRepository:
                 )
             )
             for asset_id, album_id, album_name in await session.execute(album_statement):
-                album_map[asset_id].append(
-                    AssetAlbumSummary(id=album_id, name=album_name)
-                )
+                album_map[asset_id].append(AssetAlbumSummary(id=album_id, name=album_name))
             tag_statement = (
                 select(
                     TagAssetRecord.asset_id,
@@ -1063,9 +1025,7 @@ class AssetRepository:
                     TagRecord.id,
                 )
             )
-            for asset_id, tag_id, tag_name, color in await session.execute(
-                tag_statement
-            ):
+            for asset_id, tag_id, tag_name, color in await session.execute(tag_statement):
                 tag_map[asset_id].append(
                     AssetTagSummary(id=str(tag_id), name=tag_name, color=color)
                 )
@@ -1081,9 +1041,7 @@ class AssetRepository:
     async def list_albums(self) -> list[AlbumOption]:
         """Return stable album choices for the structured search builder."""
 
-        statement = select(AlbumRecord).order_by(
-            func.lower(AlbumRecord.album_name), AlbumRecord.id
-        )
+        statement = select(AlbumRecord).order_by(func.lower(AlbumRecord.album_name), AlbumRecord.id)
         async with self._database.sessions() as session:
             albums = list((await session.scalars(statement)).all())
         return [
@@ -1094,9 +1052,7 @@ class AssetRepository:
     async def list_tags(self) -> list[TagOption]:
         """Return stable tag choices for Simple and Expert search controls."""
 
-        statement = select(TagRecord).order_by(
-            func.lower(TagRecord.tag_name), TagRecord.id
-        )
+        statement = select(TagRecord).order_by(func.lower(TagRecord.tag_name), TagRecord.id)
         async with self._database.sessions() as session:
             tags = list((await session.scalars(statement)).all())
         return [
@@ -1113,9 +1069,10 @@ class AssetRepository:
         """Return whether an asset exists in the synchronized index."""
 
         async with self._database.sessions() as session:
-            return await session.scalar(
-                select(AssetRecord.id).where(AssetRecord.id == asset_id)
-            ) is not None
+            return (
+                await session.scalar(select(AssetRecord.id).where(AssetRecord.id == asset_id))
+                is not None
+            )
 
     async def resolve_selection(
         self,
@@ -1151,9 +1108,7 @@ class AssetRepository:
                 if identifier in record_by_id
             ]
             missing_ids = [
-                identifier
-                for identifier in selection.ids
-                if identifier not in record_by_id
+                identifier for identifier in selection.ids if identifier not in record_by_id
             ]
         else:
             ordered_records = records
@@ -1196,11 +1151,7 @@ class AssetRepository:
             assert relation_id is not None
             album_action = operation in {"add_album", "remove_album"}
             model = AlbumAssetRecord if album_action else TagAssetRecord
-            relation_column = (
-                AlbumAssetRecord.album_id
-                if album_action
-                else TagAssetRecord.tag_id
-            )
+            relation_column = AlbumAssetRecord.album_id if album_action else TagAssetRecord.tag_id
             membership = select(model.asset_id).where(
                 model.asset_id.in_(target_ids),
                 relation_column == relation_id,

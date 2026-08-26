@@ -216,6 +216,7 @@ export type AssetSyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 
 
 export interface AssetSyncRunStatus {
   id: string;
+  task_id?: string | null;
   mode: AssetSyncMode;
   status: AssetSyncRunState;
   phase: string;

@@ -138,9 +138,7 @@ async def test_optional_sync_stream_is_typed_and_acknowledged() -> None:
         if request.url.path == "/api/sync/stream":
             return httpx.Response(
                 200,
-                text='{"id":"evt-1","kind":"asset_deleted","entity_id":"'
-                + str(ASSET_ONE)
-                + '"}\n',
+                text='{"id":"evt-1","kind":"asset_deleted","entity_id":"' + str(ASSET_ONE) + '"}\n',
             )
         assert request.url.path == "/api/sync/ack"
         assert json.loads(request.content) == {"id": "evt-1"}
@@ -210,7 +208,9 @@ async def test_detail_and_thumbnail_contracts_preserve_safe_media_metadata() -> 
     assert media.etag == '"preview-etag"'
     assert original.content == b"original-bytes"
     assert original.media_type == "image/jpeg"
-    assert client.public_asset_url(ASSET_ONE) == f"https://photos.example.test/base/photos/{ASSET_ONE}"
+    assert (
+        client.public_asset_url(ASSET_ONE) == f"https://photos.example.test/base/photos/{ASSET_ONE}"
+    )
 
 
 @pytest.mark.asyncio

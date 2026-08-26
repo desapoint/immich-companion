@@ -68,9 +68,7 @@ class ActionRepository:
 
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
-                select(ActionPlanRecord)
-                .where(ActionPlanRecord.id == plan_id)
-                .with_for_update()
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
             )
             if record is None or record.status != "planned":
                 return None

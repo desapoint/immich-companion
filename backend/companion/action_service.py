@@ -90,9 +90,7 @@ class AssetActionService:
         for asset_id in asset_ids:
             await apply_delta(relation, relation_id, asset_id, present)
 
-    async def resolve_selection(
-        self, selection: AssetSelectionRequest
-    ) -> AssetSelectionResolution:
+    async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
 
         return await self._assets.resolve_selection(
@@ -122,14 +120,10 @@ class AssetActionService:
             AssetActionRelationPlan(
                 relation_id=relation_id,
                 applicable_count=len(
-                    record.relation_work.get(str(relation_id), {}).get(
-                        "applicable_ids", []
-                    )
+                    record.relation_work.get(str(relation_id), {}).get("applicable_ids", [])
                 ),
                 skipped_count=len(
-                    record.relation_work.get(str(relation_id), {}).get(
-                        "skipped_ids", []
-                    )
+                    record.relation_work.get(str(relation_id), {}).get("skipped_ids", [])
                 ),
             )
             for relation_id in relation_ids
@@ -177,14 +171,10 @@ class AssetActionService:
                     relation_id,
                 )
                 applicable = [
-                    identifier
-                    for identifier in resolution.ids
-                    if identifier in applicable_set
+                    identifier for identifier in resolution.ids if identifier in applicable_set
                 ]
                 skipped = [
-                    identifier
-                    for identifier in resolution.ids
-                    if identifier not in applicable_set
+                    identifier for identifier in resolution.ids if identifier not in applicable_set
                 ]
                 applicable_union.update(applicable)
                 skipped_union.update(skipped)
@@ -202,9 +192,7 @@ class AssetActionService:
         applicable_ids = [
             identifier for identifier in resolution.ids if identifier in applicable_union
         ]
-        skipped_ids = [
-            identifier for identifier in resolution.ids if identifier in skipped_union
-        ]
+        skipped_ids = [identifier for identifier in resolution.ids if identifier in skipped_union]
         record = await self._actions.create_plan(
             request,
             resolution,
@@ -316,9 +304,7 @@ class AssetActionService:
                 AssetActionRelationResult(
                     relation_id=relation_id,
                     applied_ids=[
-                        identifier
-                        for identifier in applicable
-                        if identifier not in failed
+                        identifier for identifier in applicable if identifier not in failed
                     ],
                     skipped_ids=skipped,
                     failed_ids=failed,
@@ -341,23 +327,17 @@ class AssetActionService:
     ) -> AssetActionResult:
         applied_ids = list(
             dict.fromkeys(
-                identifier
-                for outcome in relation_results
-                for identifier in outcome.applied_ids
+                identifier for outcome in relation_results for identifier in outcome.applied_ids
             )
         )
         skipped_ids = list(
             dict.fromkeys(
-                identifier
-                for outcome in relation_results
-                for identifier in outcome.skipped_ids
+                identifier for outcome in relation_results for identifier in outcome.skipped_ids
             )
         )
         failed_ids = list(
             dict.fromkeys(
-                identifier
-                for outcome in relation_results
-                for identifier in outcome.failed_ids
+                identifier for outcome in relation_results for identifier in outcome.failed_ids
             )
         )
         failed_count = sum(len(outcome.failed_ids) for outcome in relation_results)
@@ -428,9 +408,7 @@ class AssetActionService:
                 "skipped_count": skipped_count,
                 "applied_ids": [],
                 "skipped_ids": [
-                    str(identifier)
-                    for identifier in target_ids
-                    if identifier not in applicable_set
+                    str(identifier) for identifier in target_ids if identifier not in applicable_set
                 ],
                 "failed_ids": [str(identifier) for identifier in applicable_ids],
                 "verified": False,
@@ -446,9 +424,7 @@ class AssetActionService:
                 "skipped_count": skipped_count,
                 "applied_ids": [],
                 "skipped_ids": [
-                    str(identifier)
-                    for identifier in target_ids
-                    if identifier not in applicable_set
+                    str(identifier) for identifier in target_ids if identifier not in applicable_set
                 ],
                 "failed_ids": [str(identifier) for identifier in applicable_ids],
                 "verified": False,
@@ -458,12 +434,8 @@ class AssetActionService:
             raise
 
         failed_ids = [identifier for identifier in applicable_ids if identifier in remaining]
-        applied_ids = [
-            identifier for identifier in applicable_ids if identifier not in remaining
-        ]
-        skipped_ids = [
-            identifier for identifier in target_ids if identifier not in applicable_set
-        ]
+        applied_ids = [identifier for identifier in applicable_ids if identifier not in remaining]
+        skipped_ids = [identifier for identifier in target_ids if identifier not in applicable_set]
         status = "completed" if not failed_ids else "failed"
         result = AssetActionResult(
             plan_id=claimed.id,

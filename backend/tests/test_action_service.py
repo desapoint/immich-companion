@@ -208,9 +208,7 @@ async def test_relation_action_skips_assets_already_in_the_requested_state(
 
     assert plan.applicable_count == 1
     assert plan.skipped_count == 1
-    result = await instance.execute(
-        AssetActionExecuteRequest(plan_id=plan.id, confirm=True)
-    )
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert immich.calls == [(action, RELATION_ID, [ASSET_ONE])]
     assert sync.calls == 1
@@ -253,9 +251,7 @@ async def test_multi_relation_action_reports_and_verifies_each_relation() -> Non
         RELATION_TWO,
     ]
 
-    result = await instance.execute(
-        AssetActionExecuteRequest(plan_id=plan.id, confirm=True)
-    )
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert immich.calls == [
         ("add_album", RELATION_ID, [ASSET_ONE]),

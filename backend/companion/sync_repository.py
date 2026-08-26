@@ -22,12 +22,58 @@ class SyncRepository:
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
 
+    async def next_sync_metadata(
+        self,
+        mode: SyncMode,
+        *,
+        overlap: timedelta,
+    ) -> tuple[int, datetime | None, datetime]:
+        """Reserve durable sync metadata without owning execution or a lease."""
+
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            state = await session.scalar(
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
+            )
+            if state is None:
+                state = SyncCoordinatorRecord(id=1)
+                session.add(state)
+                await session.flush()
+            state.generation_counter += 1
+            window_start = (
+                state.successful_watermark - overlap
+                if mode == "incremental" and state.successful_watermark
+                else None
+            )
+            return state.generation_counter, window_start, now
+
+    async def record_success(
+        self,
+        *,
+        mode: SyncMode,
+        generation: int,
+        watermark: datetime,
+    ) -> None:
+        """Maintain legacy sync metadata as a read-compatible projection."""
+
+        async with self._database.sessions() as session, session.begin():
+            state = await session.scalar(
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
+            )
+            if state is None:
+                state = SyncCoordinatorRecord(id=1)
+                session.add(state)
+            state.successful_watermark = watermark
+            if mode == "full":
+                state.authoritative_generation = generation
+
     @staticmethod
     def _public(record: SyncRunRecord | None) -> SyncRunStatus | None:
         if record is None:
             return None
         return SyncRunStatus(
             id=record.id,
+            task_id=None,
             mode=record.mode,
             status=record.status,
             phase=record.phase,
@@ -62,9 +108,7 @@ class SyncRepository:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
-                select(SyncCoordinatorRecord)
-                .where(SyncCoordinatorRecord.id == 1)
-                .with_for_update()
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
             )
             if state is None:
                 state = SyncCoordinatorRecord(id=1)
@@ -73,9 +117,7 @@ class SyncRepository:
 
             active = await session.get(SyncRunRecord, state.active_run_id)
             if active is not None and active.status in {"queued", "running", "recovering"}:
-                should_follow = force_follow_up or (
-                    mode == "full" and active.mode != "full"
-                )
+                should_follow = force_follow_up or (mode == "full" and active.mode != "full")
                 if not should_follow:
                     public = self._public(active)
                     assert public is not None
@@ -144,9 +186,7 @@ class SyncRepository:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
-                select(SyncCoordinatorRecord)
-                .where(SyncCoordinatorRecord.id == 1)
-                .with_for_update()
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
             )
             if state is None:
                 return None
@@ -198,9 +238,7 @@ class SyncRepository:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
-                select(SyncCoordinatorRecord)
-                .where(SyncCoordinatorRecord.id == 1)
-                .with_for_update()
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
             )
             run = await session.get(SyncRunRecord, run_id)
             if (
@@ -235,9 +273,7 @@ class SyncRepository:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
-                select(SyncCoordinatorRecord)
-                .where(SyncCoordinatorRecord.id == 1)
-                .with_for_update()
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
             )
             run = await session.get(SyncRunRecord, run_id)
             if (
@@ -264,9 +300,7 @@ class SyncRepository:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
-                select(SyncCoordinatorRecord)
-                .where(SyncCoordinatorRecord.id == 1)
-                .with_for_update()
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
             )
             run = await session.get(SyncRunRecord, run_id)
             if (
@@ -300,9 +334,7 @@ class SyncRepository:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
-                select(SyncCoordinatorRecord)
-                .where(SyncCoordinatorRecord.id == 1)
-                .with_for_update()
+                select(SyncCoordinatorRecord).where(SyncCoordinatorRecord.id == 1).with_for_update()
             )
             run = await session.get(SyncRunRecord, run_id)
             owns_run = (
@@ -339,9 +371,7 @@ class SyncRepository:
                 )
             active = await session.get(SyncRunRecord, state.active_run_id)
             pending = await session.get(SyncRunRecord, state.pending_run_id)
-            last_success = await session.get(
-                SyncRunRecord, state.last_success_run_id
-            )
+            last_success = await session.get(SyncRunRecord, state.last_success_run_id)
             return SyncCoordinatorStatus(
                 active=self._public(active),
                 pending=self._public(pending),

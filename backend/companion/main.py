@@ -56,6 +56,8 @@ from companion.sync_schema import (
     SyncRunStatus,
     SyncStartRequest,
 )
+from companion.task_coordinator import TaskCoordinator
+from companion.task_schema import TaskStatusView
 
 
 def create_app(
@@ -73,16 +75,46 @@ def create_app(
         else None
     )
     asset_repository = AssetRepository(database) if database is not None else None
+    task_coordinator = (
+        TaskCoordinator(
+            database,
+            lease_seconds=runtime_settings.sync_lease_seconds,
+            max_attempts=runtime_settings.sync_max_attempts,
+            retry_backoff_seconds=runtime_settings.sync_retry_backoff_seconds,
+        )
+        if database is not None
+        else None
+    )
     asset_sync = (
         AssetSyncService(
             immich,
             asset_repository,
             SyncRepository(database),
             runtime_settings,
+            task_coordinator,
         )
         if database is not None and asset_repository is not None
         else None
     )
+    if task_coordinator is not None and asset_sync is not None:
+        from companion.asset_service import AssetRepairTaskHandler, AssetSyncTaskHandler
+
+        task_coordinator.register_handler(AssetSyncTaskHandler(asset_sync))
+        task_coordinator.register_handler(AssetRepairTaskHandler(asset_sync))
+        task_coordinator.register_schedule(
+            name="asset-sync-incremental",
+            interval_seconds=runtime_settings.sync_incremental_interval_seconds,
+            task_type="asset_sync",
+            payload={"mode": "incremental"},
+            priority=10,
+        )
+        task_coordinator.register_schedule(
+            name="asset-sync-full",
+            interval_seconds=runtime_settings.sync_full_interval_seconds,
+            task_type="asset_sync",
+            payload={"mode": "full"},
+            priority=100,
+        )
     action_service = (
         AssetActionService(
             runtime_settings,
@@ -99,13 +131,13 @@ def create_app(
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if database is not None:
             await asyncio.to_thread(run_migrations, runtime_settings)
-        if asset_sync is not None:
-            asset_sync.wake()
+        if task_coordinator is not None:
+            await task_coordinator.start()
         try:
             yield
         finally:
-            if asset_sync is not None:
-                await asset_sync.stop()
+            if task_coordinator is not None:
+                await task_coordinator.stop()
             if database is not None:
                 await database.dispose()
 
@@ -297,6 +329,46 @@ def create_app(
             )
         return run
 
+    @app.get("/api/tasks/{task_id}", response_model=TaskStatusView)
+    async def task_status(task_id: UUID) -> TaskStatusView:
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        task = await task_coordinator.get_status(task_id)
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
+            )
+        return task
+
+    @app.get("/api/tasks", response_model=list[TaskStatusView])
+    async def list_tasks(
+        task_type: str | None = Query(default=None, max_length=64),
+        limit: int = Query(default=50, ge=1, le=200),
+    ) -> list[TaskStatusView]:
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return await task_coordinator.list_tasks(task_type=task_type, limit=limit)
+
+    @app.post("/api/tasks/{task_id}/cancel", response_model=TaskStatusView)
+    async def cancel_task(task_id: UUID) -> TaskStatusView:
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        task = await task_coordinator.cancel(task_id)
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
+            )
+        return task
+
     @app.get("/api/assets", response_model=AssetSearchResponse)
     async def search_assets(
         query: str | None = Query(default=None, max_length=500),
@@ -358,9 +430,7 @@ def create_app(
         criteria: AssetSearchMatchRequest,
     ) -> AssetSummary | None:
         repository = require_asset_repository()
-        return add_public_asset_url(
-            await repository.find_structured_match(asset_id, criteria)
-        )
+        return add_public_asset_url(await repository.find_structured_match(asset_id, criteria))
 
     @app.get("/api/albums", response_model=list[AlbumOption])
     async def search_album_options() -> list[AlbumOption]:

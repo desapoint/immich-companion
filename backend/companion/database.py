@@ -39,9 +39,7 @@ class PostgresHealthClient:
                 await cursor.execute("SELECT 1")
                 row = await cursor.fetchone()
                 if row != (1,):
-                    raise RuntimeError(
-                        "Companion database returned an unexpected health result"
-                    )
+                    raise RuntimeError("Companion database returned an unexpected health result")
         except (OSError, psycopg.Error, RuntimeError) as error:
             return {
                 "status": "error",

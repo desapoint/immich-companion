@@ -50,25 +50,27 @@
       <div class="sync-progress" role="status" aria-label="Immich synchronization progress">
         <div class="progress-heading">
           <span>Step {stepNumber} of {syncSteps.length} · {phaseLabels[syncProgress.phase] ?? syncProgress.phase}</span>
-          {#if stepPercent !== null}
-            <strong>{stepPercent.toFixed(1)}%</strong>
-          {:else}
-            <strong>Working…</strong>
-          {/if}
         </div>
-        <div
-          class:indeterminate={stepPercent === null}
-          class="progress-track"
-          role="progressbar"
-          aria-valuemin="0"
-          aria-valuemax="100"
-          aria-valuenow={stepPercent ?? undefined}
-          aria-valuetext={syncProgress.detail ?? phaseLabels[syncProgress.phase] ?? syncProgress.phase}
-        >
+        <div class="progress-line">
           <div
-            class="progress-value"
-            style={stepPercent === null ? undefined : `width: ${stepPercent}%`}
-          ></div>
+            class:indeterminate={stepPercent === null}
+            class="progress-track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow={stepPercent ?? undefined}
+            aria-valuetext={syncProgress.detail ?? phaseLabels[syncProgress.phase] ?? syncProgress.phase}
+          >
+            <div
+              class="progress-value"
+              style={stepPercent === null ? undefined : `width: ${stepPercent}%`}
+            ></div>
+          </div>
+          {#if stepPercent !== null}
+            <strong class="progress-percent">{stepPercent.toFixed(1)}%</strong>
+          {:else}
+            <strong class="progress-percent">Working…</strong>
+          {/if}
         </div>
         <div class="progress-tooltip" role="tooltip">
           <strong>{phaseLabels[syncProgress.phase] ?? syncProgress.phase}</strong>
@@ -139,6 +141,8 @@
   .sync-area {
     display: flex;
     align-items: end;
+    flex: 1 1 30rem;
+    min-width: 0;
     flex-wrap: wrap;
     gap: 0.65rem;
   }
@@ -146,8 +150,9 @@
   .sync-progress {
     position: relative;
     display: grid;
-    width: clamp(12rem, 24vw, 18rem);
-    min-width: 0;
+    flex: 1 1 16rem;
+    width: auto;
+    min-width: 12rem;
     gap: 0.22rem;
     padding: 0.4rem 0.55rem;
     border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
@@ -158,7 +163,6 @@
 
   .progress-heading {
     display: flex;
-    justify-content: space-between;
     gap: 0.6rem;
     color: var(--color-ink);
     font-size: 0.62rem;
@@ -172,12 +176,28 @@
     text-transform: uppercase;
   }
 
+  .progress-line {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    gap: 0.45rem;
+  }
+
   .progress-track {
+    flex: 1 1 auto;
     position: relative;
     overflow: hidden;
     height: 0.34rem;
     border-radius: 99px;
     background: color-mix(in srgb, var(--color-border) 72%, transparent);
+  }
+
+  .progress-percent {
+    flex: 0 0 3.5rem;
+    color: var(--color-ink-muted);
+    font-size: 0.64rem;
+    text-align: right;
+    white-space: nowrap;
   }
 
   .progress-value {
@@ -282,7 +302,7 @@
     }
 
     .sync-progress {
-      width: min(25rem, 90vw);
+      width: 100%;
     }
   }
 </style>

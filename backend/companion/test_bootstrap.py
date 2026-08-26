@@ -335,9 +335,7 @@ def reconcile_tags(
         color = fixture.get("color")
         if not isinstance(name, str) or not isinstance(color, str):
             raise RuntimeError("Media manifest contains invalid tag metadata")
-        desired_ids = set(
-            resolve_paths(asset_ids, fixture.get("paths"), f"tag {name}")
-        )
+        desired_ids = set(resolve_paths(asset_ids, fixture.get("paths"), f"tag {name}"))
         current = existing.get(name)
         if current is None:
             created = client.post(

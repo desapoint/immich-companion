@@ -60,6 +60,7 @@ class SyncRunStatus(BaseModel):
     """Reload-safe progress for one durable sync run."""
 
     id: UUID
+    task_id: UUID | None = None
     mode: SyncMode
     status: SyncStatus
     phase: SyncPhase
@@ -76,9 +77,7 @@ class SyncRunStatus(BaseModel):
     completed_at: datetime | None
     retry_at: datetime | None = None
     source: Literal["window", "stream", "mixed", "full"] = "window"
-    progress: SyncProgress = Field(
-        default_factory=lambda: SyncProgress(phase="queued")
-    )
+    progress: SyncProgress = Field(default_factory=lambda: SyncProgress(phase="queued"))
 
 
 class SyncCoordinatorStatus(BaseModel):

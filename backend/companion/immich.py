@@ -386,9 +386,7 @@ class ImmichApiClient:
             cache_control=response.headers.get("cache-control"),
         )
 
-    async def remove_assets_from_album(
-        self, album_id: UUID, asset_ids: list[UUID]
-    ) -> None:
+    async def remove_assets_from_album(self, album_id: UUID, asset_ids: list[UUID]) -> None:
         """Remove current members from one album through the supported API."""
 
         await self._request(
@@ -398,9 +396,7 @@ class ImmichApiClient:
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
-    async def add_assets_to_album(
-        self, album_id: UUID, asset_ids: list[UUID]
-    ) -> None:
+    async def add_assets_to_album(self, album_id: UUID, asset_ids: list[UUID]) -> None:
         """Add missing members to one album through the supported API."""
 
         await self._request(
@@ -410,9 +406,7 @@ class ImmichApiClient:
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
-    async def remove_assets_from_tag(
-        self, tag_id: UUID, asset_ids: list[UUID]
-    ) -> None:
+    async def remove_assets_from_tag(self, tag_id: UUID, asset_ids: list[UUID]) -> None:
         """Remove current members from one tag through the supported API."""
 
         await self._request(
@@ -512,6 +506,12 @@ class ImmichApiClient:
             except ValueError as error:
                 raise ImmichApiError("album membership pagination") from error
 
+    async def count_album_asset_ids(self, album_id: UUID) -> int:
+        """Return the known album membership population for progress reporting."""
+
+        page = await self.search_assets_page(1, size=1, album_ids=[album_id])
+        return page.total
+
     async def list_albums(self, assets: list[ImmichAsset]) -> list[ImmichAlbum]:
         """Compatibility helper returning catalogs with resolved memberships."""
 
@@ -521,9 +521,7 @@ class ImmichApiClient:
         for album in albums:
             asset_ids: list[UUID] = []
             async for page_ids in self.iter_album_asset_ids(album.id):
-                asset_ids.extend(
-                    asset_id for asset_id in page_ids if asset_id in synchronized_ids
-                )
+                asset_ids.extend(asset_id for asset_id in page_ids if asset_id in synchronized_ids)
             resolved.append(album.model_copy(update={"asset_ids": asset_ids}))
         return resolved
 
@@ -567,6 +565,12 @@ class ImmichApiClient:
             except ValueError as error:
                 raise ImmichApiError("tag membership pagination") from error
 
+    async def count_tag_asset_ids(self, tag_id: UUID) -> int:
+        """Return the known tag membership population for progress reporting."""
+
+        page = await self.search_assets_page(1, size=1, tag_ids=[tag_id])
+        return page.total
+
     async def list_tags(self, assets: list[ImmichAsset]) -> list[ImmichTag]:
         """Compatibility helper returning catalogs with resolved memberships."""
 
@@ -576,9 +580,7 @@ class ImmichApiClient:
         for tag in tags:
             asset_ids: list[UUID] = []
             async for page_ids in self.iter_tag_asset_ids(tag.id):
-                asset_ids.extend(
-                    asset_id for asset_id in page_ids if asset_id in synchronized_ids
-                )
+                asset_ids.extend(asset_id for asset_id in page_ids if asset_id in synchronized_ids)
             resolved.append(tag.model_copy(update={"asset_ids": asset_ids}))
         return resolved
 

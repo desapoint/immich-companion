@@ -77,9 +77,15 @@ class FakeImmich:
         self.calls.append("album_memberships")
         yield [ASSET_ONE]
 
+    async def count_album_asset_ids(self, _album_id: UUID) -> int:
+        return 1
+
     async def iter_tag_asset_ids(self, _tag_id: UUID, **_kwargs):
         self.calls.append("tag_memberships")
         yield [ASSET_ONE]
+
+    async def count_tag_asset_ids(self, _tag_id: UUID) -> int:
+        return 1
 
 
 class FakeAssetRepository:
@@ -120,9 +126,7 @@ class FakeAssetRepository:
         assert batch_size == 25
         return {"assets_removed": 0}
 
-    async def validate_generation(
-        self, _generation, counters, *, full, allow_counter_repair
-    ):
+    async def validate_generation(self, _generation, counters, *, full, allow_counter_repair):
         self.calls.append("validate")
         assert full is True
         assert allow_counter_repair is False
@@ -207,7 +211,8 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert assets.stack_payloads[0][0]["primaryAssetId"] == str(ASSET_ONE)
     assert syncs.checkpoints[-1] == ("finalizing", "validated")
     assert syncs.progress[-1].percent == 100
-    assert any(
-        item is not None and item.phase == "relationships"
-        for item in syncs.progress
-    )
+    relationship_progress = [
+        item for item in syncs.progress if item is not None and item.phase == "relationships"
+    ]
+    assert relationship_progress
+    assert any(item.total == 2 and item.percent is not None for item in relationship_progress)

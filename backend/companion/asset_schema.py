@@ -156,14 +156,10 @@ class SearchCondition(BaseModel):
                     normalized.append(identifier)
             self.value = normalized
             return self
-        if self.field in {"favorite", "archived", "trashed"} and not isinstance(
-            self.value, bool
-        ):
+        if self.field in {"favorite", "archived", "trashed"} and not isinstance(self.value, bool):
             raise ValueError(f"{self.field!r} requires a boolean value")
         if self.field in {"width", "height"} and (
-            isinstance(self.value, bool)
-            or not isinstance(self.value, int)
-            or self.value < 1
+            isinstance(self.value, bool) or not isinstance(self.value, int) or self.value < 1
         ):
             raise ValueError(f"{self.field!r} requires a positive integer")
         if self.field == "aspect_ratio":
@@ -177,9 +173,7 @@ class SearchCondition(BaseModel):
                 raise ValueError("'taken_at' requires an ISO date-time string") from error
         if self.field == "type" and self.value not in {"IMAGE", "VIDEO", "AUDIO", "OTHER"}:
             raise ValueError("'type' requires a supported media type")
-        if self.field == "filename" and (
-            not isinstance(self.value, str) or not self.value.strip()
-        ):
+        if self.field == "filename" and (not isinstance(self.value, str) or not self.value.strip()):
             raise ValueError("'filename' requires non-empty text")
         return self
 
@@ -331,17 +325,9 @@ class AssetSummary(BaseModel):
                 identifier = tag.get("id")
                 compact_tags.append(
                     AssetTagSummary(
-                        id=(
-                            str(identifier)
-                            if identifier is not None
-                            else f"tag-{index}-{name}"
-                        ),
+                        id=(str(identifier) if identifier is not None else f"tag-{index}-{name}"),
                         name=name,
-                        color=(
-                            tag.get("color")
-                            if isinstance(tag.get("color"), str)
-                            else None
-                        ),
+                        color=(tag.get("color") if isinstance(tag.get("color"), str) else None),
                     )
                 )
 
@@ -415,9 +401,7 @@ class AssetSummary(BaseModel):
             source=AssetSourceSummary(
                 kind="external" if asset.library_id is not None else "upload",
                 library_id=asset.library_id,
-                original_path=(
-                    asset.original_path if asset.library_id is not None else None
-                ),
+                original_path=(asset.original_path if asset.library_id is not None else None),
             ),
         )
 
