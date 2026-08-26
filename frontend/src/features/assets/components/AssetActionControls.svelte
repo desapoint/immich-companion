@@ -21,6 +21,7 @@
     tags: TagOption[];
     targetCount: number;
     targetLabel: string;
+    allowStackRemoval?: boolean;
     allowStack?: boolean;
     busy?: boolean;
     onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
@@ -33,6 +34,7 @@
     tags,
     targetCount,
     targetLabel,
+    allowStackRemoval = false,
     allowStack = true,
     busy = false,
     onplan,
@@ -68,6 +70,20 @@
       icon: 'stack',
       label: `Stack ${targetLabel}`,
     });
+    if (allowStackRemoval) {
+      items.push(
+        {
+          id: 'remove_from_stack',
+          icon: 'stack',
+          label: `Remove ${targetLabel} from stack`,
+        },
+        {
+          id: 'remove_stack',
+          icon: 'stack',
+          label: 'Remove complete stack',
+        },
+      );
+    }
     items.push(
       {
         id: 'add_tag',

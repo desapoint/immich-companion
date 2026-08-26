@@ -21,6 +21,7 @@
     actionSummary: AssetSelectionSummary | null;
     albums: AlbumOption[];
     tags: TagOption[];
+    hasStack?: boolean;
     actionBusy?: boolean;
     actionError?: string | null;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
@@ -49,6 +50,7 @@
     actionSummary,
     albums,
     tags,
+    hasStack = false,
     actionBusy = false,
     actionError = null,
     onaction,
@@ -79,6 +81,7 @@
       targetCount={1}
       targetLabel="selected image"
       allowStack={false}
+      allowStackRemoval={hasStack}
       busy={actionBusy}
       onplan={onaction}
       {onrelationconfirm}

@@ -16,6 +16,7 @@
     onpreview: (assetId: string) => void;
     onrestore: () => void;
     oncommit: (assetId: string) => void;
+    onselectviewed: (assetId: string) => void;
   }
 
   let {
@@ -28,6 +29,7 @@
     onpreview,
     onrestore,
     oncommit,
+    onselectviewed,
   }: Props = $props();
   const interactionLabel = $derived(
     activation === 'hover'
@@ -49,6 +51,13 @@
       <small>{interactionLabel}</small>
     </div>
     <strong>{items.length} images</strong>
+    {#if visibleId !== selectedId}
+      <button
+        type="button"
+        class="select-viewed"
+        onclick={() => onselectviewed(visibleId)}
+      >Use viewed as selected</button>
+    {/if}
   </header>
   <AssetPreviewStrip
     {items}
@@ -91,6 +100,24 @@
   header > div {
     display: flex;
     align-items: center;
+  }
+
+  .select-viewed {
+    padding: 0.25rem 0.45rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-strong);
+    background: var(--color-canvas);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.58rem;
+    font-weight: 760;
+  }
+
+  .select-viewed:hover,
+  .select-viewed:focus-visible {
+    border-color: var(--color-accent-strong);
+    color: var(--color-accent-strong);
   }
 
   header {

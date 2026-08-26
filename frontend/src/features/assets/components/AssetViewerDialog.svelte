@@ -195,7 +195,7 @@
     visibleAssetId = assetId;
   }
 
-  function showSelectedStackAsset(assetId: string): void {
+  function selectViewedStackAsset(assetId: string): void {
     const resultIndex = assets.findIndex((asset) => asset.id === assetId);
     if (resultIndex >= 0) {
       onnavigate(resultIndex);
@@ -358,6 +358,7 @@
     {actionSummary}
     {albums}
     {tags}
+    hasStack={currentAsset.stack !== null}
     {actionBusy}
     {actionError}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
@@ -452,12 +453,6 @@
         reserveComparisonTray={hasComparisonTray}
         syncing={syncBusy}
         syncError={syncError}
-        onshowselected={() => {
-          if (currentAsset.stack?.primary_asset_id) {
-            showSelectedStackAsset(currentAsset.stack.primary_asset_id);
-          }
-        }}
-        onstackaction={(action) => onaction(currentAsset.id, action)}
         {onsync}
       />
     {/if}
@@ -473,6 +468,7 @@
         onpreview={previewComparison}
         onrestore={restoreComparison}
         oncommit={commitComparison}
+        onselectviewed={selectViewedStackAsset}
       />
     {/if}
   </section>
