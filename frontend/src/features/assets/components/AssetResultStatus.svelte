@@ -50,27 +50,25 @@
       <div class="sync-progress" role="status" aria-label="Immich synchronization progress">
         <div class="progress-heading">
           <span>Step {stepNumber} of {syncSteps.length} · {phaseLabels[syncProgress.phase] ?? syncProgress.phase}</span>
-        </div>
-        <div class="progress-line">
-          <div
-            class:indeterminate={stepPercent === null}
-            class="progress-track"
-            role="progressbar"
-            aria-valuemin="0"
-            aria-valuemax="100"
-            aria-valuenow={stepPercent ?? undefined}
-            aria-valuetext={syncProgress.detail ?? phaseLabels[syncProgress.phase] ?? syncProgress.phase}
-          >
-            <div
-              class="progress-value"
-              style={stepPercent === null ? undefined : `width: ${stepPercent}%`}
-            ></div>
-          </div>
           {#if stepPercent !== null}
-            <strong class="progress-percent">{stepPercent.toFixed(1)}%</strong>
+            <strong>{stepPercent.toFixed(1)}%</strong>
           {:else}
-            <strong class="progress-percent">Working…</strong>
+            <strong>Working…</strong>
           {/if}
+        </div>
+        <div
+          class:indeterminate={stepPercent === null}
+          class="progress-track"
+          role="progressbar"
+          aria-valuemin="0"
+          aria-valuemax="100"
+          aria-valuenow={stepPercent ?? undefined}
+          aria-valuetext={syncProgress.detail ?? phaseLabels[syncProgress.phase] ?? syncProgress.phase}
+        >
+          <div
+            class="progress-value"
+            style={stepPercent === null ? undefined : `width: ${stepPercent}%`}
+          ></div>
         </div>
         <div class="progress-tooltip" role="tooltip">
           <strong>{phaseLabels[syncProgress.phase] ?? syncProgress.phase}</strong>
@@ -141,8 +139,6 @@
   .sync-area {
     display: flex;
     align-items: end;
-    flex: 1 1 30rem;
-    min-width: 0;
     flex-wrap: wrap;
     gap: 0.65rem;
   }
@@ -150,9 +146,8 @@
   .sync-progress {
     position: relative;
     display: grid;
-    flex: 1 1 16rem;
-    width: auto;
-    min-width: 12rem;
+    width: clamp(12rem, 24vw, 18rem);
+    min-width: 0;
     gap: 0.22rem;
     padding: 0.4rem 0.55rem;
     border: 1px solid color-mix(in srgb, var(--color-accent) 28%, var(--color-border));
@@ -163,6 +158,7 @@
 
   .progress-heading {
     display: flex;
+    justify-content: space-between;
     gap: 0.6rem;
     color: var(--color-ink);
     font-size: 0.62rem;
@@ -176,28 +172,13 @@
     text-transform: uppercase;
   }
 
-  .progress-line {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    gap: 0.45rem;
-  }
-
   .progress-track {
-    flex: 1 1 auto;
     position: relative;
     overflow: hidden;
     height: 0.34rem;
     border-radius: 99px;
-    background: color-mix(in srgb, var(--color-border) 72%, transparent);
-  }
-
-  .progress-percent {
-    flex: 0 0 3.5rem;
-    color: var(--color-ink-muted);
-    font-size: 0.64rem;
-    text-align: right;
-    white-space: nowrap;
+    background: color-mix(in srgb, var(--color-border-strong) 72%, var(--color-surface));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 10%, transparent);
   }
 
   .progress-value {
@@ -205,22 +186,20 @@
     overflow: hidden;
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(90deg, var(--color-accent-strong), var(--color-accent));
+    background-color: var(--color-accent);
+    background-image: repeating-linear-gradient(
+      -45deg,
+      var(--color-accent-strong) 0 0.35rem,
+      var(--color-accent) 0.35rem 0.7rem
+    );
+    background-size: 1rem 1rem;
     transition: width 360ms ease;
-  }
-
-  .progress-value::after {
-    position: absolute;
-    inset: 0;
-    content: '';
-    background: linear-gradient(105deg, transparent 25%, rgb(255 255 255 / 42%) 50%, transparent 75%);
-    background-size: 220% 100%;
-    animation: progress-shimmer 1.5s linear infinite;
+    animation: progress-stripes 700ms linear infinite;
   }
 
   .progress-track.indeterminate .progress-value {
     width: 42%;
-    animation: sync-progress 1.2s linear infinite;
+    animation: sync-progress 1.2s linear infinite, progress-stripes 700ms linear infinite;
   }
 
   .progress-tooltip {
@@ -269,9 +248,9 @@
     to { transform: translateX(260%); }
   }
 
-  @keyframes progress-shimmer {
-    from { background-position: 120% 0; }
-    to { background-position: -120% 0; }
+  @keyframes progress-stripes {
+    from { background-position: 0 0; }
+    to { background-position: 1rem 0; }
   }
 
   button {
@@ -302,7 +281,7 @@
     }
 
     .sync-progress {
-      width: 100%;
+      width: min(25rem, 90vw);
     }
   }
 </style>
