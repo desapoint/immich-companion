@@ -13,6 +13,7 @@
     syncing?: boolean;
     syncError?: string | null;
     onsync?: () => void;
+    apiOnly?: boolean;
   }
 
   let {
@@ -24,6 +25,7 @@
     syncing = false,
     syncError = null,
     onsync = () => undefined,
+    apiOnly = false,
   }: Props = $props();
 
   function displayValue(value: unknown): string {
@@ -42,16 +44,16 @@
   <header>
     <div class="header-label">
       <span>More info</span>
-      <button type="button" class="sync-button" onclick={onsync} disabled={syncing}>
+      {#if !apiOnly}<button type="button" class="sync-button" onclick={onsync} disabled={syncing}>
         <Icon name="sync" size="0.85rem" />
         <span>{syncing ? 'Syncing…' : 'Sync'}</span>
-      </button>
+      </button>{/if}
     </div>
-    <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
+    <strong title={detail?.original_file_name ?? asset.original_file_name}>{detail?.original_file_name ?? asset.original_file_name}</strong>
     {#if syncError}<p class="error sync-error" role="alert">{syncError}</p>{/if}
   </header>
 
-  <AssetInfoRelationships {asset} />
+  {#if !apiOnly}<AssetInfoRelationships {asset} />{/if}
 
   <h3>Immich metadata</h3>
 

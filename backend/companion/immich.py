@@ -349,6 +349,7 @@ class ImmichApiClient:
         size: int = 250,
         album_ids: list[UUID] | None = None,
         tag_ids: list[UUID] | None = None,
+        trashed: bool | None = None,
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
     ) -> ImmichAssetSearchPage:
@@ -367,6 +368,8 @@ class ImmichApiClient:
             payload["albumIds"] = [str(album_id) for album_id in album_ids]
         if tag_ids:
             payload["tagIds"] = [str(tag_id) for tag_id in tag_ids]
+        if trashed is not None:
+            payload["isTrashed"] = trashed
         if updated_after:
             payload["updatedAfter"] = updated_after.isoformat()
         if updated_before:

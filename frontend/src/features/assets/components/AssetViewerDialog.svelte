@@ -53,6 +53,7 @@
     syncBusy?: boolean;
     syncError?: string | null;
     actionsEnabled?: boolean;
+    apiOnly?: boolean;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
@@ -98,6 +99,7 @@
     syncBusy = false,
     syncError = null,
     actionsEnabled = true,
+    apiOnly = false,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
@@ -152,8 +154,15 @@
   );
   const hasPrevious = $derived(currentIndex > 0 || (canrequestprevious && onrequestprevious !== undefined));
   const hasNext = $derived(currentIndex < assets.length - 1 || (canrequestnext && onrequestnext !== undefined));
-  const naturalWidth = $derived(visibleAsset.width ?? 1);
-  const naturalHeight = $derived(visibleAsset.height ?? 1);
+  const naturalWidth = $derived(
+    (apiOnly && detail ? detail.width : visibleAsset.width) ?? 1,
+  );
+  const naturalHeight = $derived(
+    (apiOnly && detail ? detail.height : visibleAsset.height) ?? 1,
+  );
+  const visibleFilename = $derived(
+    apiOnly && detail ? detail.original_file_name : visibleAsset.original_file_name,
+  );
   const fitScale = $derived(
     Math.max(0.01, Math.min((viewportWidth - 144) / naturalWidth, (viewportHeight - 32) / naturalHeight)),
   );
@@ -384,8 +393,8 @@
   oncancel={handleCancel}
 >
   <AssetViewerHeader
-    filename={visibleAsset.original_file_name}
-    selectedFilename={currentAsset.original_file_name}
+    filename={visibleFilename}
+    selectedFilename={apiOnly && detail ? detail.original_file_name : currentAsset.original_file_name}
     selected={selectedIds.has(currentAsset.id)}
     {scaleMode}
     {infoOpen}
@@ -493,6 +502,7 @@
         syncing={syncBusy}
         syncError={syncError}
         onsync={() => onsync(currentAsset.id)}
+        {apiOnly}
       />
     {/if}
 
@@ -513,7 +523,7 @@
   </section>
 
   <AssetViewerFooter
-    asset={visibleAsset}
+    asset={apiOnly && detail ? detail : visibleAsset}
     position={currentIndex + 1}
     total={assets.length}
     selectedId={currentAsset.id}

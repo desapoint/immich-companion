@@ -577,10 +577,24 @@ def create_app(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=48, ge=1, le=200),
     ) -> AssetSearchResponse:
-        """List lightweight trashed records for the dedicated Restore area."""
+        """List trashed assets directly from Immich, without local index data."""
 
-        repository = require_asset_repository()
-        return add_public_asset_urls(await repository.search_trashed(page, page_size))
+        try:
+            result = await require_immich().search_assets_page(
+                page, size=page_size, trashed=True
+            )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        return AssetSearchResponse(
+            items=[
+                add_public_asset_url(AssetSummary.from_immich(asset))
+                for asset in result.items
+            ],
+            total=result.total,
+            page=page,
+            page_size=page_size,
+            pages=(result.total + page_size - 1) // page_size,
+        )
 
     @app.post(
         "/api/assets/{asset_id}/search-match",
@@ -998,18 +1012,23 @@ def create_app(
 
     @app.get("/api/restore/{asset_id}", response_model=AssetDetail)
     async def restore_asset_detail(asset_id: UUID) -> AssetDetail:
-        repository = require_asset_repository()
-        if not await repository.is_trashed(asset_id):
+        try:
+            asset = await require_immich().get_asset(asset_id)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        if not asset.is_trashed:
             raise HTTPException(status_code=404, detail="The asset is not in Restore.")
-        asset = await immich.get_asset(asset_id)
         return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
 
     @app.post("/api/restore/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def restore_asset(asset_id: UUID) -> Response:
         """Restore one lightweight record, then refresh its normal workspace data."""
 
-        repository = require_asset_repository()
-        if not await repository.is_trashed(asset_id):
+        try:
+            asset = await require_immich().get_asset(asset_id)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        if not asset.is_trashed:
             raise HTTPException(status_code=404, detail="The asset is not in Restore.")
         try:
             await require_immich().restore_assets([asset_id])
@@ -1023,8 +1042,22 @@ def create_app(
     async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
         """Restore selected or all lightweight records in paced server-side batches."""
 
-        repository = require_asset_repository()
-        asset_ids = await repository.trashed_asset_ids(None if request.all else request.ids)
+        if request.all:
+            asset_ids: list[UUID] = []
+            page = 1
+            while True:
+                try:
+                    result = await require_immich().search_assets_page(
+                        page, size=500, trashed=True
+                    )
+                except ImmichApiError as error:
+                    raise map_immich_error(error) from error
+                asset_ids.extend(asset.id for asset in result.items)
+                if result.next_page is None:
+                    break
+                page = int(result.next_page)
+        else:
+            asset_ids = request.ids
         if not asset_ids:
             raise HTTPException(status_code=404, detail="No matching trashed assets were found.")
         assert asset_sync is not None
