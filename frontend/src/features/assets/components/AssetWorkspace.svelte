@@ -6,6 +6,8 @@
     getAssetDetail,
     getAssetSummary,
     getAssetSyncStatus,
+    cancelTask,
+    listTasks,
     getTaskStatus,
     openTaskUpdates,
     createAssetSelection,
@@ -76,6 +78,7 @@
   import AssetSelectionActions from './AssetSelectionActions.svelte';
   import AssetTaskErrorDialog from './AssetTaskErrorDialog.svelte';
   import AssetActionErrorDialog from './AssetActionErrorDialog.svelte';
+  import AssetActionTaskHistory from './AssetActionTaskHistory.svelte';
   import AssetTaskProgress from './AssetTaskProgress.svelte';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
@@ -135,6 +138,7 @@
   let syncPollTimer: ReturnType<typeof setInterval> | null = null;
   let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let actionTask = $state<AssetTaskStatus | null>(null);
+  let actionTaskHistory = $state<AssetTaskStatus[]>([]);
   let actionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let taskUpdateConnection: TaskUpdateConnection | null = null;
   let syncStatusInitialized = false;
@@ -154,6 +158,9 @@
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
 
   function handleTaskUpdate(task: AssetTaskStatus): void {
+    if (task.task_type === 'asset_action') {
+      actionTaskHistory = [task, ...actionTaskHistory.filter((item) => item.id !== task.id)].slice(0, 10);
+    }
     const trackedTaskIds = new Set([
       selectionTask?.id,
       actionTask?.id,
@@ -1064,6 +1071,23 @@
     }
   }
 
+  async function cancelActionTask(): Promise<void> {
+    if (!actionTask || isTaskTerminal(actionTask.status)) return;
+    try {
+      actionTask = await cancelTask(actionTask.id);
+    } catch (requestError) {
+      actionError = requestError instanceof Error ? requestError.message : 'Could not cancel the action.';
+    }
+  }
+
+  async function loadActionTaskHistory(): Promise<void> {
+    try {
+      actionTaskHistory = await listTasks('asset_action');
+    } catch {
+      // The active task overlay remains usable if task history cannot be loaded.
+    }
+  }
+
   function describeSync(status: AssetSyncCoordinatorStatus): string | null {
     const active = status.active;
     if (active) {
@@ -1158,6 +1182,7 @@
 
   onMount(() => {
     startTaskUpdates();
+    void loadActionTaskHistory();
     const url = new URL(window.location.href);
     const albumId = url.searchParams.get('albumId');
     const tagId = url.searchParams.get('tagId');
@@ -1304,12 +1329,14 @@
   {/if}
 </section>
 
+<AssetActionTaskHistory tasks={actionTaskHistory} />
+
 {#if selectionTask && !isTaskTerminal(selectionTask.status)}
   <AssetTaskProgress task={selectionTask} overlay />
 {/if}
 
 {#if actionTask && !isTaskTerminal(actionTask.status)}
-  <AssetTaskProgress task={actionTask} overlay />
+  <AssetTaskProgress task={actionTask} overlay oncancel={() => void cancelActionTask()} />
 {/if}
 
 {#if selectionTask && selectionTaskErrorOpen}

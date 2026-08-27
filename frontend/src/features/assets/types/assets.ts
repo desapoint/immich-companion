@@ -319,6 +319,12 @@ export interface AssetTaskStatus {
     total?: number | null;
     percent?: number | null;
     detail?: string | null;
+    batch?: number | null;
+    batches?: number | null;
+    batch_size?: number | null;
+    minimum_delay_seconds?: number | null;
+    assets_per_second?: number | null;
+    estimated_remaining_seconds?: number | null;
   };
   result: {
     summary?: {

@@ -197,6 +197,14 @@ export function getTaskStatus(taskId: string, signal?: AbortSignal): Promise<Ass
   return requestJson(`/api/tasks/${encodeURIComponent(taskId)}`, { signal });
 }
 
+export function cancelTask(taskId: string): Promise<AssetTaskStatus> {
+  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
+}
+
+export function listTasks(taskType: string, limit = 10): Promise<AssetTaskStatus[]> {
+  return requestJson(`/api/tasks?task_type=${encodeURIComponent(taskType)}&limit=${limit}`);
+}
+
 export function resolveAssetSelection(
   selection: AssetSelectionRequest,
   signal?: AbortSignal,

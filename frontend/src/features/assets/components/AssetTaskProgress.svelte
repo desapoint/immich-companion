@@ -4,9 +4,10 @@
   interface Props {
     task: AssetTaskStatus;
     overlay?: boolean;
+    oncancel?: (() => void) | undefined;
   }
 
-  let { task, overlay = false }: Props = $props();
+  let { task, overlay = false, oncancel }: Props = $props();
   const progress = $derived(task.progress ?? {});
   const percent = $derived(progress.percent ?? null);
   const completed = $derived(progress.completed ?? task.counters.processed ?? 0);
@@ -15,6 +16,10 @@
   const width = $derived(`${Math.max(0, Math.min(100, percent ?? 0))}%`);
   const terminal = $derived(['completed', 'failed', 'cancelled'].includes(task.status));
   const action = $derived(task.task_type === 'asset_action');
+  const batch = $derived(progress.batch ?? null);
+  const batches = $derived(progress.batches ?? null);
+  const rate = $derived(progress.assets_per_second ?? null);
+  const remaining = $derived(progress.estimated_remaining_seconds ?? null);
 </script>
 
 <div class:overlay role="presentation">
@@ -25,8 +30,14 @@
     <small>
       {#if total !== null}{completed.toLocaleString()} of {total.toLocaleString()}{:else}Working…{/if}
       {#if percent !== null} · {percent.toFixed(0)}%{/if}
+      {#if batch !== null && batches !== null} · Batch {batch}/{batches}{/if}
+      {#if rate !== null} · {rate.toFixed(1)}/s{/if}
+      {#if remaining !== null} · ~{Math.ceil(remaining)}s left{/if}
     </small>
   </div>
+  {#if oncancel && !terminal}
+    <button type="button" class="cancel" onclick={oncancel}>Cancel</button>
+  {/if}
   <div class="progress-track" role="progressbar" aria-label="Task progress"
     aria-valuemin="0" aria-valuemax="100" aria-valuenow={determinate ? percent : undefined}>
     <span class:indeterminate={!determinate} class="progress-fill" style:width={determinate ? width : undefined}></span>
@@ -88,6 +99,7 @@
   .copy { display: grid; min-width: 0; gap: 0.12rem; }
   strong { font-size: 0.74rem; }
   small { color: var(--color-ink-muted); font-size: 0.67rem; }
+  .cancel { margin-left: auto; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); padding: 0.35rem 0.5rem; color: var(--color-ink-muted); background: transparent; font: inherit; font-size: 0.68rem; cursor: pointer; }
 
   .progress-track {
     width: min(17rem, calc(100vw - 2rem));

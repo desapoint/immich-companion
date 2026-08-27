@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from time import perf_counter
+from time import monotonic, perf_counter
 from uuid import UUID
 
 from companion.action_repository import ActionRepository
@@ -28,7 +28,7 @@ from companion.config import Settings
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.models import ActionPlanRecord
 from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
-from companion.task_coordinator import PermanentTaskError, TaskContext
+from companion.task_coordinator import PermanentTaskError, RetryableTaskError, TaskContext
 from companion.task_schema import TaskResult
 
 
@@ -549,13 +549,15 @@ class AssetActionService:
         self,
         request: AssetActionExecuteRequest,
         progress: Callable[[int, int, str], Awaitable[None]] | None = None,
+        *,
+        resume: bool = False,
     ) -> AssetActionResult:
         """Execute a current reviewed plan once, then synchronize and verify it."""
 
         existing = await self._actions.get_plan(request.plan_id)
         if existing is None:
             raise ActionPlanNotFoundError("Action plan was not found")
-        if existing.status != "planned":
+        if existing.status != "planned" and not (resume and existing.status == "running"):
             raise ActionPlanConflictError("Action plan has already been used")
         if existing.expires_at <= datetime.now(UTC):
             await self._actions.finish_plan(existing.id, "expired", {"error": "expired"})
@@ -576,7 +578,11 @@ class AssetActionService:
             await self._actions.finish_plan(existing.id, "drifted", {"error": "target_drift"})
             raise ActionPlanConflictError("The selected assets changed after review")
 
-        claimed = await self._actions.claim_plan(existing.id)
+        claimed = (
+            existing
+            if existing.status == "running"
+            else await self._actions.claim_plan(existing.id)
+        )
         if claimed is None:
             raise ActionPlanConflictError("Action plan has already been used")
         target_ids = [UUID(identifier) for identifier in claimed.target_ids]
@@ -765,10 +771,34 @@ class AssetActionTaskHandler:
         plan_id = UUID(str(payload["plan_id"]))
         plan = await self._service._actions.get_plan(plan_id)
         total = len(plan.target_ids) if plan is not None else 0
+        pacing = await self._service._runtime_sync_settings.get()
+        batch_size = pacing.full_batch_size
+        batch_count = (total + batch_size - 1) // batch_size if total else 0
+        started = monotonic()
+
+        def telemetry(completed: int) -> dict[str, object]:
+            elapsed = max(monotonic() - started, 0.001)
+            rate = completed / elapsed
+            remaining = max(total - completed, 0)
+            return {
+                "batch": min((completed + batch_size - 1) // batch_size, batch_count),
+                "batches": batch_count,
+                "batch_size": batch_size,
+                "minimum_delay_seconds": pacing.full_min_batch_delay_seconds,
+                "assets_per_second": round(rate, 2),
+                "estimated_remaining_seconds": round(remaining / rate, 1) if rate else None,
+            }
+
         await context.checkpoint(
             checkpoint={"phase": "executing", "plan_id": str(plan_id)},
             counters={"requested": total, "processed": 0},
-            progress={"phase": "action", "completed": 0, "total": total, "percent": 0},
+            progress={
+                "phase": "action",
+                "completed": 0,
+                "total": total,
+                "percent": 0,
+                **telemetry(0),
+            },
         )
 
         async def report(completed: int, progress_total: int, detail: str) -> None:
@@ -788,6 +818,7 @@ class AssetActionTaskHandler:
                     "total": progress_total,
                     "percent": percent,
                     "detail": detail,
+                    **telemetry(completed),
                 },
             )
 
@@ -795,7 +826,10 @@ class AssetActionTaskHandler:
             result = await self._service.execute(
                 AssetActionExecuteRequest(plan_id=plan_id, confirm=True),
                 progress=report,
+                resume=context.task.status == "recovering",
             )
+        except ImmichApiError as error:
+            raise RetryableTaskError(str(error)) from error
         except Exception as error:
             raise PermanentTaskError(str(error)) from error
         completed = result.applied_count + result.skipped_count + len(result.failed_ids)
@@ -807,6 +841,7 @@ class AssetActionTaskHandler:
                 "completed": completed,
                 "total": result.target_count,
                 "percent": 100,
+                **telemetry(completed),
             },
         )
         return TaskResult(
