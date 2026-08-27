@@ -1,6 +1,7 @@
 """Action planning, skip, execution, and safety regression coverage."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -154,6 +155,40 @@ class FakeImmich:
 
     async def delete_stack(self, stack_id):
         self.calls.append(("remove_stack", stack_id, []))
+
+
+@pytest.mark.asyncio
+async def test_stack_verification_retries_until_immich_indexes_the_stack(monkeypatch) -> None:
+    class DelayedStackImmich(FakeImmich):
+        def __init__(self) -> None:
+            super().__init__()
+            self.responses = [
+                [],
+                [],
+                [
+                    SimpleNamespace(
+                        assets=[
+                            SimpleNamespace(id=ASSET_ONE),
+                            SimpleNamespace(id=ASSET_TWO),
+                        ]
+                    )
+                ],
+            ]
+
+        async def list_stacks(self):
+            return self.responses.pop(0)
+
+    instance, _, _, _ = service(resolution(), [])
+    instance._immich = DelayedStackImmich()  # type: ignore[assignment]
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("companion.action_service.asyncio.sleep", sleep)
+
+    assert await instance._remaining_stack_members([ASSET_ONE, ASSET_TWO]) == set()
+    assert sleeps == [0.2, 0.2]
 
 
 class FakeSync:

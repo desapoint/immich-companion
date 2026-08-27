@@ -113,6 +113,21 @@ class AssetActionService:
                     repair_ids.append(member_id)
         return repair_ids
 
+    async def _remaining_stack_members(self, asset_ids: list[UUID]) -> set[UUID]:
+        """Verify stack creation after Immich has indexed the mutation."""
+
+        remaining = set(asset_ids)
+        for attempt in range(3):
+            stacked_ids = {
+                member.id for stack in await self._immich.list_stacks() for member in stack.assets
+            }
+            remaining = {identifier for identifier in asset_ids if identifier not in stacked_ids}
+            if not remaining:
+                return remaining
+            if attempt < 2:
+                await asyncio.sleep(0.2)
+        return remaining
+
     async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
 
@@ -668,13 +683,7 @@ class AssetActionService:
                 # query intentionally returns every asset for this operation, so
                 # it cannot also be used as its post-action verifier. Ask
                 # Immich for the authoritative stack membership instead.
-                current_stacks = await self._immich.list_stacks()
-                stacked_ids = {
-                    member.id for stack in current_stacks for member in stack.assets
-                }
-                remaining = {
-                    identifier for identifier in applicable_ids if identifier not in stacked_ids
-                }
+                remaining = await self._remaining_stack_members(applicable_ids)
             elif operation == "set_stack_primary":
                 current_stacks = await self._immich.list_stacks()
                 primary_ids = {stack.primary_asset_id for stack in current_stacks}
