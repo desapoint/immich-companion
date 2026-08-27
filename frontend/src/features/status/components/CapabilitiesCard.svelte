@@ -9,6 +9,18 @@
   }
 
   let { capabilities }: Props = $props();
+
+  const compatibilityLabel = {
+    compatible: 'Compatible',
+    incompatible: 'Review required',
+    unknown: 'Unknown',
+  } as const;
+
+  const compatibilityTone = {
+    compatible: 'positive',
+    incompatible: 'negative',
+    unknown: 'warning',
+  } as const;
 </script>
 
 <SurfaceCard eyebrow="Scope" title="Available capabilities">
@@ -17,6 +29,23 @@
       label={capabilities.destructive_actions ? 'Destructive enabled' : 'Read-only baseline'}
       tone={capabilities.destructive_actions ? 'negative' : 'positive'}
     />
+    {#if capabilities.immich_server}
+      <div class="immich-compatibility">
+        <StatusBadge
+          label={`Immich ${compatibilityLabel[capabilities.immich_server.status]}`}
+          tone={compatibilityTone[capabilities.immich_server.status]}
+        />
+        <small>
+          {#if capabilities.immich_server.server_version}
+            Server {capabilities.immich_server.server_version.major}.
+            {capabilities.immich_server.server_version.minor}.
+            {capabilities.immich_server.server_version.patch}
+          {:else}
+            {capabilities.immich_server.detail}
+          {/if}
+        </small>
+      </div>
+    {/if}
     <div>
       <h3>Implemented</h3>
       <ul>
@@ -41,6 +70,16 @@
     display: grid;
     justify-items: start;
     gap: 1rem;
+  }
+
+  .immich-compatibility {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  small {
+    color: var(--color-ink-muted);
+    font-size: 0.72rem;
   }
 
   h3 {

@@ -26,8 +26,21 @@ export interface CapabilitiesResponse {
   destructive_actions: boolean;
   immich_api: boolean;
   companion_database: boolean;
+  immich_server?: ImmichCompatibilityResponse;
   implemented: string[];
   planned: string[];
+}
+
+export interface ImmichCompatibilityResponse {
+  status: 'compatible' | 'incompatible' | 'unknown';
+  server_version: {
+    major: number;
+    minor: number;
+    patch: number;
+    prerelease: number | null;
+  } | null;
+  supported_api_version: string;
+  detail: string;
 }
 
 export interface StatusSnapshot {

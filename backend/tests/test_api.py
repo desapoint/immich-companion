@@ -23,8 +23,13 @@ def settings(**overrides: object) -> Settings:
 
 def pong_transport() -> httpx.MockTransport:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path == "/api/server/ping"
         assert request.headers["x-api-key"] == "test-key"
+        if request.url.path == "/api/server/version":
+            return httpx.Response(
+                200,
+                json={"major": 3, "minor": 1, "patch": 0, "prerelease": None},
+            )
+        assert request.url.path == "/api/server/ping"
         return httpx.Response(200, json={"res": "pong"})
 
     return httpx.MockTransport(handler)
@@ -58,6 +63,8 @@ def test_safety_and_capability_defaults_are_visible() -> None:
     assert capabilities["destructive_actions"] is False
     assert capabilities["immich_api"] is True
     assert capabilities["companion_database"] is False
+    assert capabilities["immich_server"]["status"] == "compatible"
+    assert capabilities["immich_server"]["server_version"]["major"] == 3
     assert health["safe_mode"] is True
 
 

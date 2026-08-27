@@ -258,10 +258,12 @@ def create_app(
 
     @app.get("/api/capabilities")
     async def capabilities() -> dict[str, object]:
+        immich_compatibility = await immich.compatibility_report()
         return {
             "destructive_actions": runtime_settings.allow_destructive_actions,
             "immich_api": runtime_settings.immich_configured,
             "companion_database": runtime_settings.companion_database_url is not None,
+            "immich_server": immich_compatibility.model_dump(mode="json"),
             "implemented": [
                 "health",
                 "version",

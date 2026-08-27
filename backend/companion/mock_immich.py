@@ -17,10 +17,10 @@ class MockImmichHandler(BaseHTTPRequestHandler):
         routes: dict[str, dict[str, Any]] = {
             "/api/server/ping": {"res": "pong"},
             "/api/server/version": {
-                "major": 0,
-                "minor": 0,
+                "major": 3,
+                "minor": 1,
                 "patch": 0,
-                "mock": True,
+                "prerelease": None,
             },
             "/health": {"status": "ok"},
         }

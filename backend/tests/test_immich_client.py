@@ -155,6 +155,61 @@ async def test_optional_sync_stream_is_typed_and_acknowledged() -> None:
 
 
 @pytest.mark.asyncio
+async def test_server_version_is_typed_and_reports_supported_api_line() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["x-api-key"] == "private-test-key"
+        assert request.url.path == "/api/server/version"
+        return httpx.Response(
+            200,
+            json={"major": 3, "minor": 1, "patch": 0, "prerelease": None},
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    version = await client.get_server_version()
+    report = await client.compatibility_report()
+
+    assert version.label == "3.1.0"
+    assert version.is_compatible is True
+    assert report.status == "compatible"
+    assert report.server_version is not None
+    assert report.server_version.patch == 0
+    assert len(requests) == 2
+
+
+@pytest.mark.asyncio
+async def test_server_version_report_marks_other_api_lines_incompatible() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"major": 4, "minor": 0, "patch": 0, "prerelease": None},
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    report = await client.compatibility_report()
+
+    assert report.status == "incompatible"
+    assert report.server_version is not None
+    assert report.server_version.label == "4.0.0"
+    assert report.supported_api_version == "3.1.x"
+
+
+@pytest.mark.asyncio
+async def test_server_version_report_is_unknown_when_endpoint_is_unavailable() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"message": "Not found"})
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    report = await client.compatibility_report()
+
+    assert report.status == "unknown"
+    assert report.server_version is None
+    assert "does not expose" in report.detail
+
+
+@pytest.mark.asyncio
 async def test_transient_retries_are_bounded_and_secrets_are_redacted() -> None:
     attempts = 0
 

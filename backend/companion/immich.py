@@ -18,6 +18,9 @@ from companion.config import Settings
 from companion.sync_schema import SyncCapabilities, SyncEvent
 
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+SUPPORTED_IMMICH_MAJOR = 3
+SUPPORTED_IMMICH_MINOR = 1
+SUPPORTED_IMMICH_API_VERSION = f"{SUPPORTED_IMMICH_MAJOR}.{SUPPORTED_IMMICH_MINOR}.x"
 
 
 class ImmichApiError(RuntimeError):
@@ -36,6 +39,41 @@ class ImmichModel(BaseModel):
     """Base model that tolerates compatible fields added by Immich."""
 
     model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+
+class ImmichServerVersion(ImmichModel):
+    """Version response exposed by the pinned Immich server API."""
+
+    major: int = Field(ge=0)
+    minor: int = Field(ge=0)
+    patch: int = Field(ge=0)
+    prerelease: int | None = Field(default=None, ge=0)
+
+    @property
+    def label(self) -> str:
+        """Return a safe human-readable version label."""
+
+        suffix = f"-prerelease.{self.prerelease}" if self.prerelease is not None else ""
+        return f"{self.major}.{self.minor}.{self.patch}{suffix}"
+
+    @property
+    def is_compatible(self) -> bool:
+        """Return whether this server matches the supported stable API line."""
+
+        return (
+            self.major == SUPPORTED_IMMICH_MAJOR
+            and self.minor == SUPPORTED_IMMICH_MINOR
+            and self.prerelease is None
+        )
+
+
+class ImmichCompatibilityReport(BaseModel):
+    """Safe compatibility information suitable for the companion status API."""
+
+    status: Literal["compatible", "incompatible", "unknown"]
+    server_version: ImmichServerVersion | None = None
+    supported_api_version: str = SUPPORTED_IMMICH_API_VERSION
+    detail: str
 
 
 class ImmichAsset(ImmichModel):
@@ -220,6 +258,48 @@ class ImmichApiClient:
             "configured": True,
             "latency_ms": round((perf_counter() - started) * 1000, 1),
         }
+
+    async def get_server_version(self) -> ImmichServerVersion:
+        """Retrieve and validate the server version through the API boundary."""
+
+        response = await self._request(
+            "GET", "/api/server/version", operation="get server version"
+        )
+        return ImmichServerVersion.model_validate(response.json())
+
+    async def compatibility_report(self) -> ImmichCompatibilityReport:
+        """Report compatibility without exposing remote URLs or request details."""
+
+        if not self._settings.immich_configured:
+            return ImmichCompatibilityReport(
+                status="unknown",
+                detail="Immich is not configured.",
+            )
+
+        try:
+            server_version = await self.get_server_version()
+        except ImmichApiError as error:
+            detail = (
+                "Immich does not expose the server-version endpoint."
+                if error.status_code in {404, 405, 501}
+                else "Immich server version could not be determined."
+            )
+            return ImmichCompatibilityReport(status="unknown", detail=detail)
+
+        if server_version.is_compatible:
+            return ImmichCompatibilityReport(
+                status="compatible",
+                server_version=server_version,
+                detail=f"Immich {server_version.label} matches the supported API line.",
+            )
+        return ImmichCompatibilityReport(
+            status="incompatible",
+            server_version=server_version,
+            detail=(
+                f"Immich {server_version.label} is outside the supported "
+                f"{SUPPORTED_IMMICH_API_VERSION} API line."
+            ),
+        )
 
     async def sync_capabilities(self) -> SyncCapabilities:
         """Probe optional change-stream support without assuming it exists."""
