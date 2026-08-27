@@ -56,6 +56,8 @@
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
     oncomparisonnavigate?: (assetId: string) => void;
+    canrequestnext?: boolean;
+    onrequestnext?: () => Promise<number | null>;
     onnavigate: (index: number) => void;
     ontoggleselection: (assetId: string) => void;
     onvisiblechange: (assetId: string) => void;
@@ -96,6 +98,8 @@
     comparisonActivation = 'click',
     comparisonAssets = [],
     oncomparisonnavigate,
+    canrequestnext = false,
+    onrequestnext,
     onnavigate,
     ontoggleselection,
     onvisiblechange,
@@ -123,6 +127,7 @@
   let selectedAssetId = '';
   let loadedMediaAssetId = '';
   let panOrigin = $state<ViewerPanOrigin | null>(null);
+  let nextLoading = $state(false);
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(selectedAsset ?? assets[currentIndex]);
   const comparisonMembers = $derived(
@@ -140,7 +145,7 @@
       ?? assetAsStackMember(currentAsset),
   );
   const hasPrevious = $derived(currentIndex > 0);
-  const hasNext = $derived(currentIndex < assets.length - 1);
+  const hasNext = $derived(currentIndex < assets.length - 1 || (canrequestnext && onrequestnext !== undefined));
   const naturalWidth = $derived(visibleAsset.width ?? 1);
   const naturalHeight = $derived(visibleAsset.height ?? 1);
   const fitScale = $derived(
@@ -194,8 +199,19 @@
     onclose();
   }
 
-  function navigate(direction: 'previous' | 'next'): void {
+  async function navigate(direction: 'previous' | 'next'): Promise<void> {
     const nextIndex = nextViewerIndex(currentIndex, direction, assets.length);
+    if (nextIndex === currentIndex && direction === 'next' && onrequestnext && canrequestnext) {
+      if (nextLoading) return;
+      nextLoading = true;
+      try {
+        const loadedIndex = await onrequestnext();
+        if (loadedIndex !== null) onnavigate(loadedIndex);
+      } finally {
+        nextLoading = false;
+      }
+      return;
+    }
     if (nextIndex === currentIndex) return;
     onnavigate(nextIndex);
   }
@@ -234,10 +250,10 @@
 
     if (event.key === 'ArrowLeft' || key === 'h') {
       event.preventDefault();
-      navigate('previous');
+      void navigate('previous');
     } else if (event.key === 'ArrowRight' || key === 'l') {
       event.preventDefault();
-      navigate('next');
+      void navigate('next');
     } else if (event.key === ' ' && !target?.closest('button, a, summary')) {
       event.preventDefault();
       ontoggleselection(currentAsset.id);
@@ -438,7 +454,7 @@
     <button
       class="viewer-nav previous"
       type="button"
-      onclick={() => navigate('previous')}
+      onclick={() => void navigate('previous')}
       disabled={!hasPrevious}
       aria-label="Previous image"
       title="Previous image (Left arrow or H)"
@@ -448,8 +464,8 @@
     <button
       class="viewer-nav next"
       type="button"
-      onclick={() => navigate('next')}
-      disabled={!hasNext}
+      onclick={() => void navigate('next')}
+      disabled={!hasNext || nextLoading}
       aria-label="Next image"
       title="Next image (Right arrow or L)"
     >

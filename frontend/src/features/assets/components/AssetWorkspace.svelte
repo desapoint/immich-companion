@@ -270,10 +270,11 @@
     listMode === 'infinite' && Boolean(results) && page < (results?.pages ?? 0),
   );
 
-  async function loadNextInfinitePage(): Promise<void> {
-    if (!infiniteHasMore || infiniteLoading || !results) return;
+  async function loadNextInfinitePage(): Promise<boolean> {
+    if (!infiniteHasMore || infiniteLoading || !results) return false;
     const generation = assetLoadGeneration;
     const nextPage = page + 1;
+    let appended = false;
     infiniteLoading = true;
     try {
       const next = await searchAssets(
@@ -284,8 +285,9 @@
         undefined,
         selection.selectionId,
       );
-      if (generation !== assetLoadGeneration || listMode !== 'infinite' || !results) return;
+      if (generation !== assetLoadGeneration || listMode !== 'infinite' || !results) return false;
       const knownIds = new Set(results.items.map((asset) => asset.id));
+      appended = next.items.some((asset) => !knownIds.has(asset.id));
       page = next.page;
       results = {
         ...results,
@@ -298,13 +300,28 @@
         ],
       };
       if (selection.selectionId) await refreshServerPageMembership();
+      return appended;
     } catch (requestError) {
       if (generation === assetLoadGeneration) {
         error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
       }
+      return false;
     } finally {
       if (generation === assetLoadGeneration) infiniteLoading = false;
     }
+  }
+
+  async function requestNextViewerIndex(): Promise<number | null> {
+    if (!results) return null;
+    if (listMode === 'infinite') {
+      const previousLength = results.items.length;
+      if (await loadNextInfinitePage()) return previousLength;
+      return null;
+    }
+    if (page >= results.pages) return null;
+    page += 1;
+    await loadAssets();
+    return results?.items.length ? 0 : null;
   }
 
   function changeListMode(nextMode: 'paged' | 'infinite'): void {
@@ -1379,6 +1396,8 @@
     syncError={viewerSyncError}
     comparisonSource={viewerComparisonSource}
     comparisonActivation={viewerComparisonActivation}
+    canrequestnext={listMode === 'infinite' ? infiniteHasMore : page < results.pages}
+    onrequestnext={requestNextViewerIndex}
     onnavigate={navigateViewer}
     oncomparisonnavigate={(assetId) => void selectViewerComparisonAsset(assetId)}
     ontoggleselection={toggleSelection}
