@@ -16,6 +16,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     selectedCount: number;
     matchingTotal: number;
     currentPageCount: number;
+    infiniteScroll?: boolean;
     allMatching: boolean;
     summary: AssetSelectionSummary | null;
     albums: AlbumOption[];
@@ -46,6 +47,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     selectedCount,
     matchingTotal,
     currentPageCount,
+    infiniteScroll = false,
     allMatching,
     summary,
     albums,
@@ -89,19 +91,19 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     <div class="selection-controls" aria-label="Selection controls">
       <IconButton
         icon="select-page"
-        label="Select current page"
+        label={infiniteScroll ? 'Select loaded assets' : 'Select current page'}
         disabled={busy || currentPageCount === 0}
         onclick={onselectpage}
       />
       <IconButton
         icon="select-all"
-        label={`Select all ${matchingTotal} matching assets`}
+        label={`Select all ${matchingTotal} matching assets on the server`}
         disabled={busy || matchingTotal === 0}
         onclick={onselectall}
       />
       <IconButton
         icon="invert-selection"
-        label="Invert current page selection"
+        label={infiniteScroll ? 'Invert loaded asset selection' : 'Invert current page selection'}
         disabled={busy || currentPageCount === 0}
         onclick={oninvertpage}
       />

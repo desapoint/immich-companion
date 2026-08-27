@@ -5,6 +5,7 @@
   interface Props {
     total: number;
     shown: number;
+    shownLabel?: string;
     selected: number;
     syncing: boolean;
     syncMessage: string | null;
@@ -16,6 +17,7 @@
   let {
     total,
     shown,
+    shownLabel = 'on this page',
     selected,
     syncing,
     syncMessage,
@@ -42,7 +44,7 @@
   <div>
     <span>Search results</span>
     <strong>{total} matching assets</strong>
-    <small>{shown} on this page · {selected} selected</small>
+    <small>{shown} {shownLabel} · {selected} selected</small>
   </div>
   <div class="sync-area">
     {#if syncMessage && !syncing}<small role="status">{syncMessage}</small>{/if}

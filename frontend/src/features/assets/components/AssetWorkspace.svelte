@@ -87,6 +87,10 @@
   let results = $state<AssetSearchResponse | null>(null);
   let page = $state(1);
   let pageSize = $state(DEFAULT_ASSET_PAGE_SIZE);
+  let listMode = $state<'paged' | 'infinite'>('paged');
+  let infiniteLoading = $state(false);
+  let infiniteSentinel = $state<HTMLDivElement | undefined>(undefined);
+  let assetLoadGeneration = 0;
   let sort = $state<AssetSort>(createDefaultAssetSort());
   let loading = $state(true);
   let error = $state<string | null>(null);
@@ -226,6 +230,7 @@
   }
 
   async function loadAssets(): Promise<void> {
+    const generation = ++assetLoadGeneration;
     searchController?.abort();
     searchController = new AbortController();
     loading = true;
@@ -260,6 +265,69 @@
       if (!searchController.signal.aborted) loading = false;
     }
   }
+
+  const infiniteHasMore = $derived(
+    listMode === 'infinite' && Boolean(results) && page < (results?.pages ?? 0),
+  );
+
+  async function loadNextInfinitePage(): Promise<void> {
+    if (!infiniteHasMore || infiniteLoading || !results) return;
+    const generation = assetLoadGeneration;
+    const nextPage = page + 1;
+    infiniteLoading = true;
+    try {
+      const next = await searchAssets(
+        expression,
+        nextPage,
+        pageSize,
+        sort,
+        undefined,
+        selection.selectionId,
+      );
+      if (generation !== assetLoadGeneration || listMode !== 'infinite' || !results) return;
+      const knownIds = new Set(results.items.map((asset) => asset.id));
+      page = next.page;
+      results = {
+        ...results,
+        page: next.page,
+        pages: next.pages,
+        total: next.total,
+        items: [
+          ...results.items,
+          ...next.items.filter((asset) => !knownIds.has(asset.id)),
+        ],
+      };
+      if (selection.selectionId) await refreshServerPageMembership();
+    } catch (requestError) {
+      if (generation === assetLoadGeneration) {
+        error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+      }
+    } finally {
+      if (generation === assetLoadGeneration) infiniteLoading = false;
+    }
+  }
+
+  function changeListMode(nextMode: 'paged' | 'infinite'): void {
+    if (nextMode === listMode) return;
+    listMode = nextMode;
+    page = 1;
+    viewerIndex = null;
+    viewerSelectedAsset = null;
+    selectionAnchorIndex = null;
+    void loadAssets();
+  }
+
+  $effect(() => {
+    if (!infiniteSentinel || !infiniteHasMore) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadNextInfinitePage();
+      },
+      { rootMargin: '640px 0px' },
+    );
+    observer.observe(infiniteSentinel);
+    return () => observer.disconnect();
+  });
 
   async function refreshServerPageMembership(signal?: AbortSignal): Promise<void> {
     if (!selection.selectionId || !results) return;
@@ -1145,6 +1213,7 @@
   <AssetResultStatus
     total={results?.total ?? 0}
     shown={results?.items.length ?? 0}
+    shownLabel={listMode === 'infinite' ? 'loaded' : 'on this page'}
     selected={selectedCount}
     {syncing}
     {syncMessage}
@@ -1158,6 +1227,7 @@
       {selectedCount}
       matchingTotal={results.total}
       currentPageCount={results.items.length}
+      infiniteScroll={listMode === 'infinite'}
       allMatching={selection.mode === 'all_matching'}
       summary={selectionResolution?.summary ?? null}
       {albums}
@@ -1192,6 +1262,17 @@
   {:else if results && results.items.length === 0}
     <AssetEmptyState {syncing} showSync={!hasSearch} onsync={() => void syncAssets('incremental')} />
   {:else if results}
+    <AssetPagination
+      page={results.page}
+      pages={results.pages}
+      total={results.total}
+      pageSize={results.page_size}
+      disabled={loading}
+      onpage={changePage}
+      onpagesizechange={changePageSize}
+      mode={listMode}
+      onmodechange={changeListMode}
+    />
     <AssetGrid
       assets={results.items}
       selectedIds={visibleSelectedIds}
@@ -1203,15 +1284,15 @@
       ondragstart={beginDragSelection}
       ondragenter={continueDragSelection}
     />
-    <AssetPagination
-      page={results.page}
-      pages={results.pages}
-      total={results.total}
-      pageSize={results.page_size}
-      disabled={loading}
-      onpage={changePage}
-      onpagesizechange={changePageSize}
-    />
+    {#if listMode === 'infinite'}
+      <div bind:this={infiniteSentinel} class="infinite-status" aria-live="polite">
+        {#if infiniteLoading}
+          Loading more assets…
+        {:else if !infiniteHasMore}
+          End of matching assets
+        {/if}
+      </div>
+    {/if}
   {/if}
 </section>
 
@@ -1304,6 +1385,13 @@
   .asset-workspace {
     display: grid;
     gap: 1.1rem;
+  }
+
+  .infinite-status {
+    min-height: 1.5rem;
+    color: var(--color-ink-muted);
+    text-align: center;
+    font-size: 0.72rem;
   }
 
   .action-message {
