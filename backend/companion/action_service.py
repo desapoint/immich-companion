@@ -113,20 +113,22 @@ class AssetActionService:
                     repair_ids.append(member_id)
         return repair_ids
 
-    async def _remaining_stack_members(self, asset_ids: list[UUID]) -> set[UUID]:
-        """Verify stack creation from each authoritative asset detail response."""
+    async def _stack_creation_visible(self, primary_asset_id: UUID) -> bool:
+        """Verify a stack by its primary asset rather than filtered members.
 
-        remaining = set(asset_ids)
+        Immich can omit stack metadata from asset details and hide archived or
+        trashed stack children in stack-list responses.  Stack creation is one
+        atomic API request, so seeing its requested primary asset is sufficient
+        confirmation that the complete submitted set was accepted.
+        """
+
         for attempt in range(3):
-            assets = await asyncio.gather(
-                *(self._immich.get_asset(identifier) for identifier in asset_ids)
-            )
-            remaining = {asset.id for asset in assets if asset.stack is None}
-            if not remaining:
-                return remaining
+            stacks = await self._immich.list_stacks()
+            if any(stack.primary_asset_id == primary_asset_id for stack in stacks):
+                return True
             if attempt < 2:
                 await asyncio.sleep(0.2)
-        return remaining
+        return False
 
     async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
@@ -681,9 +683,11 @@ class AssetActionService:
             if operation == "stack":
                 # Stacking is a positive state change. The generic applicability
                 # query intentionally returns every asset for this operation, so
-                # it cannot also be used as its post-action verifier. Ask
-                # Immich for the authoritative stack membership instead.
-                remaining = await self._remaining_stack_members(applicable_ids)
+                # it cannot also be used as its post-action verifier. Immich
+                # filters stack members by visibility, so verify the atomic
+                # create request through the requested primary asset instead.
+                created = await self._stack_creation_visible(applicable_ids[0])
+                remaining = set() if created else set(applicable_ids)
             elif operation == "set_stack_primary":
                 current_stacks = await self._immich.list_stacks()
                 primary_ids = {stack.primary_asset_id for stack in current_stacks}

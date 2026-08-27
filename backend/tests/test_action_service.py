@@ -153,22 +153,25 @@ class FakeImmich:
     async def list_stacks(self):
         return []
 
+    async def create_stack(self, ids):
+        self.calls.append(("stack", None, ids))
+
     async def delete_stack(self, stack_id):
         self.calls.append(("remove_stack", stack_id, []))
 
 
 @pytest.mark.asyncio
-async def test_stack_verification_retries_until_immich_indexes_the_stack(monkeypatch) -> None:
+async def test_stack_verification_retries_until_immich_indexes_the_primary(monkeypatch) -> None:
     class DelayedStackImmich(FakeImmich):
         def __init__(self) -> None:
             super().__init__()
-            self.detail_round = 0
+            self.stack_round = 0
 
-        async def get_asset(self, asset_id):
-            if asset_id == ASSET_ONE:
-                self.detail_round += 1
-            stack = None if self.detail_round < 3 else {"id": "stack"}
-            return SimpleNamespace(id=asset_id, stack=stack)
+        async def list_stacks(self):
+            self.stack_round += 1
+            if self.stack_round < 3:
+                return []
+            return [SimpleNamespace(primary_asset_id=ASSET_ONE)]
 
     instance, _, _, _ = service(resolution(), [])
     instance._immich = DelayedStackImmich()  # type: ignore[assignment]
@@ -179,8 +182,43 @@ async def test_stack_verification_retries_until_immich_indexes_the_stack(monkeyp
 
     monkeypatch.setattr("companion.action_service.asyncio.sleep", sleep)
 
-    assert await instance._remaining_stack_members([ASSET_ONE, ASSET_TWO]) == set()
+    assert await instance._stack_creation_visible(ASSET_ONE) is True
     assert sleeps == [0.2, 0.2]
+
+
+@pytest.mark.asyncio
+async def test_stack_creation_accepts_filtered_children_after_primary_verification() -> None:
+    class StackImmich(FakeImmich):
+        primary_asset_id: UUID | None = None
+
+        async def create_stack(self, ids):
+            await super().create_stack(ids)
+            self.primary_asset_id = ids[0]
+
+        async def list_stacks(self):
+            if self.primary_asset_id is None:
+                return []
+            # Immich may omit archived or trashed children from this response.
+            return [SimpleNamespace(primary_asset_id=self.primary_asset_id, assets=[])]
+
+    instance, actions, _, _ = service(
+        resolution(),
+        [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}],
+    )
+    instance._immich = StackImmich()  # type: ignore[assignment]
+    plan = await instance.plan(
+        AssetActionPlanRequest(
+            selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+            action="stack",
+        )
+    )
+
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert result.status == "completed"
+    assert result.applied_ids == [ASSET_ONE, ASSET_TWO]
+    assert actions.finished is not None
+    assert actions.finished[0] == "completed"
 
 
 class FakeSync:
