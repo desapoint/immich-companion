@@ -56,6 +56,8 @@
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
     oncomparisonnavigate?: (assetId: string) => void;
+    canrequestprevious?: boolean;
+    onrequestprevious?: () => Promise<number | null>;
     canrequestnext?: boolean;
     onrequestnext?: () => Promise<number | null>;
     onnavigate: (index: number) => void;
@@ -98,6 +100,8 @@
     comparisonActivation = 'click',
     comparisonAssets = [],
     oncomparisonnavigate,
+    canrequestprevious = false,
+    onrequestprevious,
     canrequestnext = false,
     onrequestnext,
     onnavigate,
@@ -144,7 +148,7 @@
     comparisonMembers.find((asset) => asset.id === visibleAssetId)
       ?? assetAsStackMember(currentAsset),
   );
-  const hasPrevious = $derived(currentIndex > 0);
+  const hasPrevious = $derived(currentIndex > 0 || (canrequestprevious && onrequestprevious !== undefined));
   const hasNext = $derived(currentIndex < assets.length - 1 || (canrequestnext && onrequestnext !== undefined));
   const naturalWidth = $derived(visibleAsset.width ?? 1);
   const naturalHeight = $derived(visibleAsset.height ?? 1);
@@ -201,11 +205,15 @@
 
   async function navigate(direction: 'previous' | 'next'): Promise<void> {
     const nextIndex = nextViewerIndex(currentIndex, direction, assets.length);
-    if (nextIndex === currentIndex && direction === 'next' && onrequestnext && canrequestnext) {
+    const canLoadAdjacent = direction === 'next'
+      ? canrequestnext && onrequestnext !== undefined
+      : canrequestprevious && onrequestprevious !== undefined;
+    const loadAdjacent = direction === 'next' ? onrequestnext : onrequestprevious;
+    if (nextIndex === currentIndex && canLoadAdjacent && loadAdjacent) {
       if (nextLoading) return;
       nextLoading = true;
       try {
-        const loadedIndex = await onrequestnext();
+        const loadedIndex = await loadAdjacent();
         if (loadedIndex !== null) onnavigate(loadedIndex);
       } finally {
         nextLoading = false;
@@ -455,7 +463,7 @@
       class="viewer-nav previous"
       type="button"
       onclick={() => void navigate('previous')}
-      disabled={!hasPrevious}
+      disabled={!hasPrevious || nextLoading}
       aria-label="Previous image"
       title="Previous image (Left arrow or H)"
     >

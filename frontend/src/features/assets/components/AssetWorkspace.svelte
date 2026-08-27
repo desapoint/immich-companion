@@ -324,6 +324,13 @@
     return results?.items.length ? 0 : null;
   }
 
+  async function requestPreviousViewerIndex(): Promise<number | null> {
+    if (!results || listMode !== 'paged' || page <= 1) return null;
+    page -= 1;
+    await loadAssets();
+    return results?.items.length ? results.items.length - 1 : null;
+  }
+
   function changeListMode(nextMode: 'paged' | 'infinite'): void {
     if (nextMode === listMode) return;
     listMode = nextMode;
@@ -1396,6 +1403,8 @@
     syncError={viewerSyncError}
     comparisonSource={viewerComparisonSource}
     comparisonActivation={viewerComparisonActivation}
+    canrequestprevious={listMode === 'paged' && page > 1}
+    onrequestprevious={requestPreviousViewerIndex}
     canrequestnext={listMode === 'infinite' ? infiniteHasMore : page < results.pages}
     onrequestnext={requestNextViewerIndex}
     onnavigate={navigateViewer}
