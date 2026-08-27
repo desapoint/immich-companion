@@ -1272,6 +1272,7 @@
       onpagesizechange={changePageSize}
       mode={listMode}
       onmodechange={changeListMode}
+      showPagination={false}
     />
     <AssetGrid
       assets={results.items}
@@ -1293,6 +1294,17 @@
         {/if}
       </div>
     {/if}
+    <AssetPagination
+      page={results.page}
+      pages={results.pages}
+      total={results.total}
+      pageSize={results.page_size}
+      disabled={loading}
+      onpage={changePage}
+      onpagesizechange={changePageSize}
+      mode={listMode}
+      showModeToggle={false}
+    />
   {/if}
 </section>
 

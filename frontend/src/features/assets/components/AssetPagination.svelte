@@ -25,6 +25,8 @@
     onpagesizechange?: (pageSize: number) => void;
     mode?: 'paged' | 'infinite';
     onmodechange?: (mode: 'paged' | 'infinite') => void;
+    showPagination?: boolean;
+    showModeToggle?: boolean;
   }
 
   let {
@@ -46,10 +48,12 @@
     onpagesizechange,
     mode = 'paged',
     onmodechange,
+    showPagination = true,
+    showModeToggle = true,
   }: Props = $props();
 </script>
 
-{#if mode === 'paged'}
+{#if showPagination && mode === 'paged'}
 <Pagination
   currentPage={page}
   totalPages={pages}
@@ -69,7 +73,7 @@
   {onpagesizechange}
 />
 {/if}
-{#if onmodechange}
+{#if showModeToggle && onmodechange}
   <div class="mode-controls" role="group" aria-label="Asset list mode">
     <button class:active={mode === 'paged'} type="button" disabled={disabled || mode === 'paged'} onclick={() => onmodechange?.('paged')}>Pages</button>
     <button class:active={mode === 'infinite'} type="button" disabled={disabled || mode === 'infinite'} onclick={() => onmodechange?.('infinite')}>Infinite scroll</button>
