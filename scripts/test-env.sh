@@ -138,6 +138,9 @@ start_environment() {
   compose build companion
   compose up --detach database redis immich-machine-learning immich-server companion-database
   wait_for_immich
+  # The bootstrap process is a no-op when the persisted state file confirms a
+  # previous successful seed. This keeps ordinary start/restart operations from
+  # reconciling or changing an existing Immich test instance.
   COMPANION_TEST_RESET_MODE="${reset_mode}" compose run --rm --no-deps immich-bootstrap
   compose up --detach companion
   wait_until_ready

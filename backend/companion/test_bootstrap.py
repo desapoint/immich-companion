@@ -461,6 +461,18 @@ def write_state(path: Path, state: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def has_reusable_state(path: Path) -> bool:
+    """Return whether a previous successful bootstrap must be preserved."""
+
+    if not path.is_file():
+        return False
+    try:
+        state = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    return isinstance(state, dict) and state.get("ready") is True
+
+
 def main() -> None:
     base_url = required_environment("IMMICH_URL").rstrip("/")
     email = required_environment("IMMICH_TEST_ADMIN_EMAIL")
@@ -470,6 +482,13 @@ def main() -> None:
     state_path = Path(required_environment("COMPANION_TEST_STATE_FILE"))
     seed_root = Path(required_environment("COMPANION_TEST_SEED_DIR")).resolve()
     clean_reset = os.environ.get("COMPANION_TEST_RESET_MODE", "false").lower() == "true"
+
+    if not clean_reset and has_reusable_state(state_path):
+        print(
+            "Immich bootstrap skipped: preserving the existing test instance. "
+            "Use start --reset to recreate deterministic fixtures."
+        )
+        return
 
     manifest, manifest_path = load_manifest(seed_root)
     relationships = manifest_relationships(manifest)

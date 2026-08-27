@@ -33,6 +33,12 @@ Immich media, API key, and model cache:
 ./scripts/test-env.sh start
 ```
 
+After the first successful bootstrap, ordinary `start` and `restart` preserve
+the existing Immich instance without rerunning fixture reconciliation. They may
+rebuild the companion image and refresh only the companion-owned asset index.
+Use `start --reset` only when you explicitly want to delete the isolated test
+volumes and recreate deterministic fixtures.
+
 Open <http://localhost:8090> for the built companion dashboard,
 <http://localhost:8090/assets> for search/cards/viewer, and
 <http://localhost:22830> for Immich. Inspect the companion API with:
