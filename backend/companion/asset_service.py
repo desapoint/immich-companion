@@ -165,9 +165,6 @@ class AssetRepairTaskHandler:
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
         include_stacks = bool(payload.get("include_stacks", False))
-        stack_context = payload.get("stack_context")
-        if not isinstance(stack_context, dict):
-            stack_context = None
         processed = int(context.task.checkpoint.get("processed", 0))
         await context.checkpoint(
             checkpoint={"phase": "repairing", "processed": processed},
@@ -188,7 +185,6 @@ class AssetRepairTaskHandler:
             await self._service._repair_targets_now(
                 [asset_ids[index]],
                 include_stacks=include_stacks,
-                stack_context=stack_context,
             )
             processed = index + 1
             await context.checkpoint(
@@ -724,7 +720,6 @@ class AssetSyncService:
         asset_ids: list[UUID],
         relations: list[tuple[str, UUID]] | None = None,
         include_stacks: bool = False,
-        stack_context: dict[str, object] | None = None,
     ) -> None:
         """Repair action-affected asset metadata without a library-wide scan."""
 
@@ -758,7 +753,6 @@ class AssetSyncService:
                 {
                     "asset_ids": [str(asset_id) for asset_id in asset_ids],
                     "include_stacks": include_stacks,
-                    "stack_context": stack_context,
                 },
                 priority=90,
                 deduplication_key="asset-repair:"
@@ -774,7 +768,6 @@ class AssetSyncService:
         await self._repair_targets_now(
             asset_ids,
             include_stacks=include_stacks,
-            stack_context=stack_context,
         )
 
     async def _repair_targets_now(
@@ -782,7 +775,6 @@ class AssetSyncService:
         asset_ids: list[UUID],
         *,
         include_stacks: bool = False,
-        stack_context: dict[str, object] | None = None,
     ) -> None:
         """Perform the remote reads used by an asset-repair handler."""
 
@@ -793,11 +785,6 @@ class AssetSyncService:
         if include_stacks:
             for stack in await self._immich.list_stacks():
                 payload, member_ids = self._stack_payload(stack)
-                for member_id in member_ids:
-                    stack_payload_by_asset[member_id] = payload
-            context_payload = self._stack_context_payload(stack_context, assets)
-            if context_payload is not None:
-                payload, member_ids = context_payload
                 for member_id in member_ids:
                     stack_payload_by_asset[member_id] = payload
         for asset in assets:
@@ -1213,7 +1200,10 @@ class AssetSyncService:
         """Fetch each bounded incremental candidate through the detail endpoint."""
 
         async for candidate in candidates:
-            yield await self._immich.get_asset(candidate.id)
+            # Trashed assets are restoration records. Avoid the expensive detail
+            # request; the search payload supplies the card/path metadata needed
+            # by the dedicated Restore view.
+            yield candidate if candidate.is_trashed else await self._immich.get_asset(candidate.id)
 
     async def _commit_asset_batch(
         self,
@@ -1225,8 +1215,16 @@ class AssetSyncService:
         asset_total: int | None,
     ) -> None:
         started = perf_counter()
+        lightweight_batch = [
+            asset.model_copy(
+                update={"exif_info": None, "people": [], "tags": [], "stack": None}
+            )
+            if asset.is_trashed
+            else asset
+            for asset in batch
+        ]
         created, updated, unchanged = await self._assets.upsert_asset_batch(
-            batch,
+            lightweight_batch,
             run.generation,
         )
         counters["assets_seen"] += created + updated + unchanged
@@ -1271,42 +1269,18 @@ class AssetSyncService:
                 "fileCreatedAt": member.file_created_at.isoformat(),
             }
             for member in assets
+            if not member.is_trashed
         ]
         return (
             {
                 "id": str(stack_id),
                 "primaryAssetId": str(primary_asset_id),
-                "assetCount": len(assets),
+                "assetCount": len(members),
                 "assets": members,
             },
             [member.id for member in assets],
         )
 
-    @classmethod
-    def _stack_context_payload(
-        cls, context: dict[str, object] | None, assets: list[ImmichAsset]
-    ) -> tuple[dict[str, object], list[UUID]] | None:
-        """Build a complete local payload for a stack just created by Companion."""
-
-        if context is None:
-            return None
-        try:
-            stack_id = UUID(str(context["id"]))
-            primary_asset_id = UUID(str(context["primary_asset_id"]))
-        except (KeyError, TypeError, ValueError):
-            return None
-        raw_member_ids = context.get("member_ids")
-        if not isinstance(raw_member_ids, list):
-            return None
-        try:
-            member_ids = [UUID(str(value)) for value in raw_member_ids]
-        except ValueError:
-            return None
-        assets_by_id = {asset.id: asset for asset in assets}
-        members = [assets_by_id[member_id] for member_id in member_ids if member_id in assets_by_id]
-        if set(member_ids) - set(assets_by_id):
-            return None
-        return cls._stack_payload_from_members(stack_id, primary_asset_id, members)
 
     async def _sync_stacks(
         self,
@@ -1368,6 +1342,7 @@ class AssetSyncService:
         tags: list[ImmichTag],
         counters: dict[str, int],
     ) -> None:
+        runtime = await self._runtime_sync_settings.get()
         relation_kind = ""
         completed_relation = 0
         completed_page = 0
@@ -1421,7 +1396,10 @@ class AssetSyncService:
             ):
                 started = perf_counter()
                 counters["album_memberships"] += await self._assets.upsert_album_memberships(
-                    album.id, asset_ids, run.generation
+                    album.id,
+                    asset_ids,
+                    run.generation,
+                    include_trashed=getattr(runtime, "sync_trashed_album_context", False),
                 )
                 association_completed += len(asset_ids)
                 await self._checkpoint(
@@ -1475,7 +1453,10 @@ class AssetSyncService:
             ):
                 started = perf_counter()
                 counters["tag_memberships"] += await self._assets.upsert_tag_memberships(
-                    tag.id, asset_ids, run.generation
+                    tag.id,
+                    asset_ids,
+                    run.generation,
+                    include_trashed=getattr(runtime, "sync_trashed_tag_context", False),
                 )
                 association_completed += len(asset_ids)
                 await self._checkpoint(

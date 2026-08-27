@@ -660,19 +660,31 @@ class AssetRepository:
         album_id: UUID,
         asset_ids: list[UUID],
         generation: int,
+        *,
+        include_trashed: bool = True,
     ) -> int:
         """Mark one bounded album-membership observation batch."""
 
         if not asset_ids:
             return 0
         async with self._database.sessions() as session:
-            existing_asset_ids = set(
+            all_existing_asset_ids = set(
                 (
                     await session.scalars(
                         select(AssetRecord.id).where(AssetRecord.id.in_(asset_ids))
                     )
                 ).all()
             )
+            existing_asset_ids = set(
+                (
+                    await session.scalars(
+                        select(AssetRecord.id).where(
+                            AssetRecord.id.in_(asset_ids),
+                            AssetRecord.is_trashed.is_(False),
+                        )
+                    )
+                ).all()
+            ) if not include_trashed else all_existing_asset_ids
             already_observed = set(
                 (
                     await session.scalars(
@@ -684,7 +696,7 @@ class AssetRepository:
                     )
                 ).all()
             )
-        missing = set(asset_ids) - existing_asset_ids
+        missing = set(asset_ids) - all_existing_asset_ids
         if missing:
             raise SyncValidationError(
                 f"Album membership referenced {len(missing)} unsynchronized assets"
@@ -711,19 +723,31 @@ class AssetRepository:
         tag_id: UUID,
         asset_ids: list[UUID],
         generation: int,
+        *,
+        include_trashed: bool = True,
     ) -> int:
         """Mark one bounded tag-membership observation batch."""
 
         if not asset_ids:
             return 0
         async with self._database.sessions() as session:
-            existing_asset_ids = set(
+            all_existing_asset_ids = set(
                 (
                     await session.scalars(
                         select(AssetRecord.id).where(AssetRecord.id.in_(asset_ids))
                     )
                 ).all()
             )
+            existing_asset_ids = set(
+                (
+                    await session.scalars(
+                        select(AssetRecord.id).where(
+                            AssetRecord.id.in_(asset_ids),
+                            AssetRecord.is_trashed.is_(False),
+                        )
+                    )
+                ).all()
+            ) if not include_trashed else all_existing_asset_ids
             already_observed = set(
                 (
                     await session.scalars(
@@ -735,7 +759,7 @@ class AssetRepository:
                     )
                 ).all()
             )
-        missing = set(asset_ids) - existing_asset_ids
+        missing = set(asset_ids) - all_existing_asset_ids
         if missing:
             raise SyncValidationError(
                 f"Tag membership referenced {len(missing)} unsynchronized assets"
@@ -760,17 +784,23 @@ class AssetRepository:
     async def refresh_relation_counts(self) -> None:
         """Derive catalog counts from the successfully reconciled memberships."""
 
+        active_album_membership = AlbumAssetRecord.asset_id.in_(
+            select(AssetRecord.id).where(AssetRecord.is_trashed.is_(False))
+        )
+        active_tag_membership = TagAssetRecord.asset_id.in_(
+            select(AssetRecord.id).where(AssetRecord.is_trashed.is_(False))
+        )
         album_count = (
             select(func.count())
             .select_from(AlbumAssetRecord)
-            .where(AlbumAssetRecord.album_id == AlbumRecord.id)
+            .where(AlbumAssetRecord.album_id == AlbumRecord.id, active_album_membership)
             .correlate(AlbumRecord)
             .scalar_subquery()
         )
         tag_count = (
             select(func.count())
             .select_from(TagAssetRecord)
-            .where(TagAssetRecord.tag_id == TagRecord.id)
+            .where(TagAssetRecord.tag_id == TagRecord.id, active_tag_membership)
             .correlate(TagRecord)
             .scalar_subquery()
         )
@@ -875,8 +905,6 @@ class AssetRepository:
                             select(AssetRecord.id)
                             .where(AssetRecord.stack_generation != generation)
                             .where(func.json_typeof(AssetRecord.stack) != "null")
-                            .where(AssetRecord.is_trashed.is_(False))
-                            .where(AssetRecord.visibility.in_(["archive", "timeline"]))
                             .limit(batch_size)
                         )
                     ).all()
@@ -953,7 +981,7 @@ class AssetRepository:
     async def search(self, criteria: AssetSearchQuery) -> AssetSearchResponse:
         """Compose safe basic filters and return a stable result page."""
 
-        predicates = []
+        predicates = [AssetRecord.is_trashed.is_(False)]
         if criteria.query:
             query = criteria.query.strip()
             if query:
@@ -1075,13 +1103,28 @@ class AssetRepository:
 
         predicate = self._compile_group(criteria.expression)
         return await self._search_page(
-            [predicate],
+            [AssetRecord.is_trashed.is_(False), predicate],
             criteria.page,
             criteria.page_size,
             criteria.sort_field,
             criteria.sort_direction,
             selection_id=criteria.selection_id,
         )
+
+    async def search_trashed(self, page: int, page_size: int) -> AssetSearchResponse:
+        """Return lightweight restoration records outside the normal workspace."""
+
+        return await self._search_page(
+            [AssetRecord.is_trashed.is_(True)], page, page_size, "taken_at", "desc"
+        )
+
+    async def is_trashed(self, asset_id: UUID) -> bool:
+        async with self._database.sessions() as session:
+            return bool(
+                await session.scalar(
+                    select(AssetRecord.is_trashed).where(AssetRecord.id == asset_id)
+                )
+            )
 
     async def find_structured_match(
         self,
@@ -1092,6 +1135,7 @@ class AssetRepository:
 
         statement = select(AssetRecord).where(
             AssetRecord.id == asset_id,
+            AssetRecord.is_trashed.is_(False),
             self._compile_group(criteria.expression),
         )
         async with self._database.sessions() as session:
@@ -1237,6 +1281,13 @@ class AssetRepository:
             for album in albums
         ]
 
+    async def album_asset_counts(self) -> dict[UUID, int]:
+        """Return active-workspace membership counts keyed by album."""
+
+        async with self._database.sessions() as session:
+            rows = (await session.execute(select(AlbumRecord.id, AlbumRecord.asset_count))).all()
+        return {identifier: count for identifier, count in rows}
+
     async def list_tags(self) -> list[TagOption]:
         """Return stable tag choices for Simple and Expert search controls."""
 
@@ -1253,6 +1304,13 @@ class AssetRepository:
             for tag in tags
         ]
 
+    async def tag_asset_counts(self) -> dict[UUID, int]:
+        """Return active-workspace membership counts keyed by tag."""
+
+        async with self._database.sessions() as session:
+            rows = (await session.execute(select(TagRecord.id, TagRecord.asset_count))).all()
+        return {identifier: count for identifier, count in rows}
+
     async def has_asset(self, asset_id: UUID) -> bool:
         """Return whether an asset exists in the synchronized index."""
 
@@ -1267,6 +1325,8 @@ class AssetRepository:
 
         async with self._database.sessions() as session:
             record = await session.get(AssetRecord, asset_id)
+            if record is not None and record.is_trashed:
+                return None
             if record is None:
                 return None
             summaries = await self._summaries_for_records(session, [record])
@@ -1284,14 +1344,18 @@ class AssetRepository:
         requested: list[UUID]
         if selection.selection_id is not None:
             requested = await self.selection_ids(selection.selection_id)
-            statement = select(AssetRecord).where(AssetRecord.id.in_(requested))
+            statement = select(AssetRecord).where(
+                AssetRecord.id.in_(requested), AssetRecord.is_trashed.is_(False)
+            )
         elif selection.mode == "explicit":
             requested = list(selection.ids)
-            statement = select(AssetRecord).where(AssetRecord.id.in_(requested))
+            statement = select(AssetRecord).where(
+                AssetRecord.id.in_(requested), AssetRecord.is_trashed.is_(False)
+            )
         else:
             assert selection.expression is not None
             predicate = self._compile_group(selection.expression)
-            statement = select(AssetRecord).where(predicate)
+            statement = select(AssetRecord).where(AssetRecord.is_trashed.is_(False), predicate)
             if excluded:
                 statement = statement.where(AssetRecord.id.not_in(excluded))
             statement = statement.order_by(AssetRecord.id).limit(max_targets + 1)
@@ -1348,7 +1412,9 @@ class AssetRepository:
             return list(
                 (
                     await session.scalars(
-                        select(AssetRecord.id).where(predicate).order_by(AssetRecord.id)
+                        select(AssetRecord.id)
+                        .where(AssetRecord.is_trashed.is_(False), predicate)
+                        .order_by(AssetRecord.id)
                     )
                 ).all()
             )

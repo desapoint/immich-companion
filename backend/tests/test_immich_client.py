@@ -395,31 +395,6 @@ async def test_stack_mutations_use_supported_stack_routes() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_stack_returns_its_authoritative_identity() -> None:
-    stack_id = UUID("55555555-5555-4555-8555-555555555555")
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "POST"
-        assert request.url.path == "/api/stacks"
-        assert json.loads(request.content) == {"assetIds": [str(ASSET_ONE), str(ASSET_TWO)]}
-        return httpx.Response(
-            200,
-            json={
-                "id": str(stack_id),
-                "primaryAssetId": str(ASSET_ONE),
-                "assets": [asset_payload(ASSET_ONE, "stack-primary.png")],
-            },
-        )
-
-    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
-
-    stack = await client.create_stack([ASSET_ONE, ASSET_TWO])
-
-    assert stack.id == stack_id
-    assert stack.primary_asset_id == ASSET_ONE
-
-
-@pytest.mark.asyncio
 async def test_tag_memberships_use_paged_metadata_search() -> None:
     tag_id = UUID("66666666-6666-4666-8666-666666666666")
 

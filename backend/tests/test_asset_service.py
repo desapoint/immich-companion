@@ -96,6 +96,8 @@ class FakeAssetRepository:
         self.calls: list[str] = []
         self.assets: list[ImmichAsset] = []
         self.stack_payloads: list[tuple[dict[str, object], list[UUID]]] = []
+        self.album_membership_options: list[bool] = []
+        self.tag_membership_options: list[bool] = []
 
     async def upsert_album_catalog(self, albums, _generation):
         self.calls.append("album_catalog")
@@ -115,12 +117,14 @@ class FakeAssetRepository:
         self.stack_payloads.extend(stacks)
         return sum(len(asset_ids) for _, asset_ids in stacks)
 
-    async def upsert_album_memberships(self, _album_id, asset_ids, _generation):
+    async def upsert_album_memberships(self, _album_id, asset_ids, _generation, **_kwargs):
         self.calls.append("album_memberships")
+        self.album_membership_options.append(_kwargs.get("include_trashed", True))
         return len(asset_ids)
 
-    async def upsert_tag_memberships(self, _tag_id, asset_ids, _generation):
+    async def upsert_tag_memberships(self, _tag_id, asset_ids, _generation, **_kwargs):
         self.calls.append("tag_memberships")
+        self.tag_membership_options.append(_kwargs.get("include_trashed", True))
         return len(asset_ids)
 
     async def finalize_generation(self, _generation, *, remove_assets, batch_size):
@@ -223,6 +227,8 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert immich.calls.index("tag_catalog") < immich.calls.index("assets")
     assert immich.calls.index("assets") < immich.calls.index("album_memberships")
     assert counters["assets_seen"] == 2
+    assert assets.album_membership_options == [False]
+    assert assets.tag_membership_options == [False]
     assert counters["album_memberships"] == 1
     assert counters["tag_memberships"] == 1
     assert assets.stack_payloads[0][0]["primaryAssetId"] == str(ASSET_ONE)
@@ -233,25 +239,6 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     ]
     assert relationship_progress
     assert any(item.total == 2 and item.percent is not None for item in relationship_progress)
-
-
-def test_stack_context_payload_covers_members_filtered_from_immich_stack_list() -> None:
-    members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "trashed-child.png")]
-
-    payload = AssetSyncService._stack_context_payload(
-        {
-            "id": str(STACK_ID),
-            "primary_asset_id": str(ASSET_ONE),
-            "member_ids": [str(ASSET_ONE), str(ASSET_TWO)],
-        },
-        members,
-    )
-
-    assert payload is not None
-    value, member_ids = payload
-    assert member_ids == [ASSET_ONE, ASSET_TWO]
-    assert value["assetCount"] == 2
-    assert [member["id"] for member in value["assets"]] == [str(ASSET_ONE), str(ASSET_TWO)]
 
 
 @pytest.mark.asyncio

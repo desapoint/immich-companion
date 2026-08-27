@@ -7,6 +7,7 @@
   import AppShell from './components/AppShell.svelte';
   import AlbumsPage from '../features/relations/components/AlbumsPage.svelte';
   import TagsPage from '../features/relations/components/TagsPage.svelte';
+  import RestorePage from '../features/assets/components/RestorePage.svelte';
 
   const currentPath = window.location.pathname;
 </script>
@@ -19,6 +20,8 @@
       <AlbumsPage />
     {:else if currentPath === '/tags'}
       <TagsPage />
+    {:else if currentPath === '/restore'}
+      <RestorePage />
     {:else}
       {#if currentPath === '/settings'}
         <SettingsPage />

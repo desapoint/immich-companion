@@ -25,7 +25,7 @@ from companion.action_schema import (
 from companion.asset_repository import AssetRepository
 from companion.asset_service import AssetSyncService
 from companion.config import Settings
-from companion.immich import ImmichApiClient, ImmichApiError, ImmichStack
+from companion.immich import ImmichApiClient, ImmichApiError
 from companion.models import ActionPlanRecord
 from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import PermanentTaskError, RetryableTaskError, TaskContext
@@ -93,18 +93,12 @@ class AssetActionService:
         asset_ids: list[UUID],
         relations: list[tuple[str, UUID]] | None = None,
         include_stacks: bool = False,
-        stack_context: dict[str, object] | None = None,
     ) -> None:
         """Use targeted repair while retaining compatibility with sync adapters."""
 
         repair = getattr(self._sync, "reconcile_targets", None)
         if repair is not None:
-            await repair(
-                asset_ids,
-                relations=relations,
-                include_stacks=include_stacks,
-                stack_context=stack_context,
-            )
+            await repair(asset_ids, relations=relations, include_stacks=include_stacks)
         else:
             await self._sync.synchronize()
 
@@ -333,11 +327,11 @@ class AssetActionService:
         operation: AssetActionOperation,
         ids: list[UUID],
         relation_id: UUID | None,
-    ) -> ImmichStack | None:
+    ) -> None:
         if not ids:
             return
         if operation == "stack":
-            return await self._immich.create_stack(ids)
+            await self._immich.create_stack(ids)
         elif operation == "set_stack_primary":
             selected = set(ids)
             for stack in await self._immich.list_stacks():
@@ -384,7 +378,6 @@ class AssetActionService:
             await self._immich.trash_assets(ids)
         else:
             await self._immich.restore_assets(ids)
-        return None
 
     async def _prepare_stack(
         self, asset_ids: list[UUID], resolution: str | None
@@ -657,7 +650,6 @@ class AssetActionService:
 
         try:
             repair_ids = applicable_ids
-            created_stack: ImmichStack | None = None
             if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
                 # Capture the complete old stack before the first member is
                 # removed, so remaining and detached members are both repaired.
@@ -666,9 +658,7 @@ class AssetActionService:
             action_batches = self._batches(applicable_ids, operation, batch_size)
             for index, batch in enumerate(action_batches):
                 batch_started = perf_counter()
-                created = await self._apply(operation, batch, relation_id)
-                if created is not None:
-                    created_stack = created
+                await self._apply(operation, batch, relation_id)
                 updated += len(batch)
                 if progress is not None:
                     await progress(
@@ -681,15 +671,6 @@ class AssetActionService:
             if applicable_ids:
                 if operation == "stack":
                     repair_ids = stack_repair_ids
-                stack_context = (
-                    {
-                        "id": str(created_stack.id),
-                        "primary_asset_id": str(created_stack.primary_asset_id),
-                        "member_ids": [str(identifier) for identifier in applicable_ids],
-                    }
-                    if operation == "stack" and created_stack is not None
-                    else None
-                )
                 await self._repair_targets(
                     repair_ids,
                     include_stacks=operation in {
@@ -698,7 +679,6 @@ class AssetActionService:
                         "remove_from_stack",
                         "remove_stack",
                     },
-                    stack_context=stack_context,
                 )
             if operation == "stack":
                 # Stacking is a positive state change. The generic applicability

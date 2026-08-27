@@ -571,6 +571,16 @@ def create_app(
         repository = require_asset_repository()
         return add_public_asset_urls(await repository.search_structured(criteria))
 
+    @app.get("/api/restore", response_model=AssetSearchResponse)
+    async def search_restore_assets(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=48, ge=1, le=200),
+    ) -> AssetSearchResponse:
+        """List lightweight trashed records for the dedicated Restore area."""
+
+        repository = require_asset_repository()
+        return add_public_asset_urls(await repository.search_trashed(page, page_size))
+
     @app.post(
         "/api/assets/{asset_id}/search-match",
         response_model=AssetSummary | None,
@@ -608,13 +618,14 @@ def create_app(
                             sort: Literal["name", "asset_count"] = "name",
                             direction: Literal["asc", "desc"] = "asc"):
         albums = await require_immich().list_album_catalog()
+        counts = await require_asset_repository().album_asset_counts()
         if search:
             needle = search.casefold()
             albums = [a for a in albums if needle in a.album_name.casefold()]
         albums.sort(
             key=lambda album: album.album_name.casefold()
             if sort == "name"
-            else album.asset_count,
+            else counts.get(album.id, 0),
             reverse=direction == "desc",
         )
         total = len(albums)
@@ -624,7 +635,7 @@ def create_app(
                 id=a.id,
                 name=a.album_name,
                 description=a.description,
-                asset_count=a.asset_count,
+                asset_count=counts.get(a.id, 0),
                 created_at=a.created_at,
                 updated_at=a.updated_at,
             )
@@ -694,6 +705,7 @@ def create_app(
                           sort: Literal["name", "asset_count"] = "name",
                           direction: Literal["asc", "desc"] = "asc"):
         catalog = await require_immich().list_tag_catalog()
+        counts = await require_asset_repository().tag_asset_counts()
         tags_by_id = {tag.id: tag for tag in catalog}
         children_by_parent: dict[UUID, list[ImmichTag]] = {}
         roots: list[ImmichTag] = []
@@ -733,7 +745,7 @@ def create_app(
                 parent_id = parent.parent_id if parent is not None else None
 
         def sort_key(tag: ImmichTag) -> str | int:
-            return tag.name.casefold() if sort == "name" else tag.asset_count
+            return tag.name.casefold() if sort == "name" else counts.get(tag.id, 0)
 
 
         def build_node(tag: ImmichTag) -> TagManagementItem | None:
@@ -752,7 +764,7 @@ def create_app(
                 color=tag.color,
                 parent_id=tag.parent_id,
                 parent_path=parent_path(tag),
-                asset_count=tag.asset_count,
+                asset_count=counts.get(tag.id, 0),
                 children=child_nodes,
             )
 
@@ -975,11 +987,36 @@ def create_app(
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:
+        if asset_repository is not None and await asset_repository.is_trashed(asset_id):
+            raise HTTPException(status_code=404, detail="Trashed assets are available in Restore.")
         try:
             asset = await immich.get_asset(asset_id)
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
+
+    @app.get("/api/restore/{asset_id}", response_model=AssetDetail)
+    async def restore_asset_detail(asset_id: UUID) -> AssetDetail:
+        repository = require_asset_repository()
+        if not await repository.is_trashed(asset_id):
+            raise HTTPException(status_code=404, detail="The asset is not in Restore.")
+        asset = await immich.get_asset(asset_id)
+        return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
+
+    @app.post("/api/restore/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
+    async def restore_asset(asset_id: UUID) -> Response:
+        """Restore one lightweight record, then refresh its normal workspace data."""
+
+        repository = require_asset_repository()
+        if not await repository.is_trashed(asset_id):
+            raise HTTPException(status_code=404, detail="The asset is not in Restore.")
+        try:
+            await require_immich().restore_assets([asset_id])
+            assert asset_sync is not None
+            await asset_sync.reconcile_targets([asset_id])
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/api/assets/{asset_id}/sync", response_model=AssetDetail)
     async def synchronize_asset(asset_id: UUID) -> AssetDetail:

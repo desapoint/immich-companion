@@ -13,6 +13,8 @@ from companion.models import SyncRuntimeSettingsRecord
 class SyncRuntimeSettings(BaseModel):
     full_batch_size: int = Field(ge=1, le=500)
     full_min_batch_delay_seconds: float = Field(ge=0, le=60)
+    sync_trashed_album_context: bool = False
+    sync_trashed_tag_context: bool = False
 
 
 class SyncRuntimeSettingsUpdate(SyncRuntimeSettings):
@@ -28,6 +30,8 @@ class SyncRuntimeSettingsRepository:
         return SyncRuntimeSettings(
             full_batch_size=self._defaults.sync_full_batch_size,
             full_min_batch_delay_seconds=self._defaults.sync_full_min_batch_delay_seconds,
+            sync_trashed_album_context=False,
+            sync_trashed_tag_context=False,
         )
 
     async def get(self) -> SyncRuntimeSettings:
@@ -43,11 +47,15 @@ class SyncRuntimeSettingsRepository:
                     id=1,
                     full_batch_size=default.full_batch_size,
                     full_min_batch_delay_seconds=default.full_min_batch_delay_seconds,
+                    sync_trashed_album_context=default.sync_trashed_album_context,
+                    sync_trashed_tag_context=default.sync_trashed_tag_context,
                 )
                 session.add(record)
             return SyncRuntimeSettings(
                 full_batch_size=record.full_batch_size,
                 full_min_batch_delay_seconds=record.full_min_batch_delay_seconds,
+                sync_trashed_album_context=record.sync_trashed_album_context,
+                sync_trashed_tag_context=record.sync_trashed_tag_context,
             )
 
     async def update(self, value: SyncRuntimeSettingsUpdate) -> SyncRuntimeSettings:
@@ -62,6 +70,8 @@ class SyncRuntimeSettingsRepository:
                 session.add(record)
             record.full_batch_size = value.full_batch_size
             record.full_min_batch_delay_seconds = value.full_min_batch_delay_seconds
+            record.sync_trashed_album_context = value.sync_trashed_album_context
+            record.sync_trashed_tag_context = value.sync_trashed_tag_context
             return SyncRuntimeSettings.model_validate(value)
 
 
