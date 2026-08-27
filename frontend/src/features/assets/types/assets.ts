@@ -106,6 +106,7 @@ export interface AssetSummary {
   tags: AssetTagSummary[];
   stack: AssetStackSummary | null;
   source: AssetSourceSummary;
+  restore_path?: string | null;
   immich_url: string | null;
 }
 

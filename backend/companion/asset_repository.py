@@ -1126,6 +1126,15 @@ class AssetRepository:
                 )
             )
 
+    async def trashed_asset_ids(self, requested: list[UUID] | None = None) -> list[UUID]:
+        """Resolve restore targets only from currently trashed records."""
+
+        statement = select(AssetRecord.id).where(AssetRecord.is_trashed.is_(True))
+        if requested is not None:
+            statement = statement.where(AssetRecord.id.in_(requested))
+        async with self._database.sessions() as session:
+            return list((await session.scalars(statement.order_by(AssetRecord.id))).all())
+
     async def find_structured_match(
         self,
         asset_id: UUID,

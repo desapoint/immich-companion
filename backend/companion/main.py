@@ -52,6 +52,7 @@ from companion.asset_repository import AssetRepository
 from companion.asset_schema import (
     AlbumOption,
     AssetDetail,
+    AssetRestoreRequest,
     AssetSearchMatchRequest,
     AssetSearchQuery,
     AssetSearchResponse,
@@ -63,7 +64,7 @@ from companion.asset_schema import (
     StructuredAssetSearchQuery,
     TagOption,
 )
-from companion.asset_service import AssetSyncService
+from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
@@ -1017,6 +1018,27 @@ def create_app(
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    @app.post("/api/restore")
+    async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
+        """Restore selected or all lightweight records in paced server-side batches."""
+
+        repository = require_asset_repository()
+        asset_ids = await repository.trashed_asset_ids(None if request.all else request.ids)
+        if not asset_ids:
+            raise HTTPException(status_code=404, detail="No matching trashed assets were found.")
+        assert asset_sync is not None
+        pacing = await asset_sync._runtime_sync_settings.get()
+        restore_batches = batches(asset_ids, pacing.full_batch_size)
+        for index, batch in enumerate(restore_batches):
+            try:
+                await require_immich().restore_assets(batch)
+            except ImmichApiError as error:
+                raise map_immich_error(error) from error
+            await asset_sync.reconcile_targets(batch)
+            if index < len(restore_batches) - 1:
+                await asyncio.sleep(pacing.full_min_batch_delay_seconds)
+        return {"restored": len(asset_ids)}
 
     @app.post("/api/assets/{asset_id}/sync", response_model=AssetDetail)
     async def synchronize_asset(asset_id: UUID) -> AssetDetail:

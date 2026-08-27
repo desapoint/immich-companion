@@ -297,6 +297,7 @@ class AssetSummary(BaseModel):
     tags: list[AssetTagSummary]
     stack: AssetStackSummary | None
     source: AssetSourceSummary
+    restore_path: str | None = None
     immich_url: str | None = None
 
     @classmethod
@@ -404,6 +405,7 @@ class AssetSummary(BaseModel):
                 library_id=asset.library_id,
                 original_path=(asset.original_path if asset.library_id is not None else None),
             ),
+            restore_path=asset.original_path if asset.is_trashed else None,
         )
 
 
@@ -425,6 +427,19 @@ class AssetSearchResponse(BaseModel):
     page_size: int
     pages: int
     selection: AssetPageSelection | None = None
+
+
+class AssetRestoreRequest(BaseModel):
+    """A reversible restore request for explicit or all trashed records."""
+
+    ids: list[UUID] = Field(default_factory=list, max_length=10000)
+    all: bool = False
+
+    @model_validator(mode="after")
+    def validate_target(self) -> AssetRestoreRequest:
+        if self.all == bool(self.ids):
+            raise ValueError("Specify either one or more ids or all=true.")
+        return self
 
 
 class AssetDetail(BaseModel):

@@ -25,6 +25,7 @@
     isVisibleStackPrimary?: boolean;
     actionBusy?: boolean;
     actionError?: string | null;
+    actionsEnabled?: boolean;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
     onsetprimary?: () => void;
     onrelationconfirm: (
@@ -56,6 +57,7 @@
     isVisibleStackPrimary = false,
     actionBusy = false,
     actionError = null,
+    actionsEnabled = true,
     onaction,
     onsetprimary,
     onrelationconfirm,
@@ -78,7 +80,7 @@
   </div>
 
   <div class="viewer-actions">
-    <AssetActionControls
+    {#if actionsEnabled}<AssetActionControls
       summary={actionSummary}
       {albums}
       {tags}
@@ -92,13 +94,15 @@
       onplan={onaction}
       {onrelationconfirm}
     />
-    <span class="viewer-action-separator" aria-hidden="true"></span>
+    <span class="viewer-action-separator" aria-hidden="true"></span>{/if}
+    {#if actionsEnabled}
     <IconButton
       icon={selected ? 'check' : 'select'}
       label={selected ? 'Deselect image' : 'Select image'}
       tone={selected ? 'accent' : 'default'}
       onclick={ontoggleselection}
     />
+    {/if}
     <IconButton
       icon={scaleMode === 'fit' ? 'actual-size' : 'fit'}
       label={scaleMode === 'fit' ? 'Show actual size' : 'Fit image to screen'}

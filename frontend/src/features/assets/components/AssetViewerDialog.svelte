@@ -52,6 +52,7 @@
     actionError?: string | null;
     syncBusy?: boolean;
     syncError?: string | null;
+    actionsEnabled?: boolean;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
@@ -96,6 +97,7 @@
     actionError = null,
     syncBusy = false,
     syncError = null,
+    actionsEnabled = true,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
@@ -396,6 +398,7 @@
     isVisibleStackPrimary={currentAsset.stack?.primary_asset_id === visibleAsset.id}
     {actionBusy}
     {actionError}
+    {actionsEnabled}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
     onsetprimary={() => onsetprimary?.(visibleAsset.id)}
     onrelationconfirm={(action, relationIds) =>
