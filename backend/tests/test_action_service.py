@@ -188,12 +188,15 @@ async def test_stack_verification_retries_until_immich_indexes_the_primary(monke
 
 @pytest.mark.asyncio
 async def test_stack_creation_accepts_filtered_children_after_primary_verification() -> None:
+    stack_id = uuid4()
+
     class StackImmich(FakeImmich):
         primary_asset_id: UUID | None = None
 
         async def create_stack(self, ids):
             await super().create_stack(ids)
             self.primary_asset_id = ids[0]
+            return SimpleNamespace(id=stack_id, primary_asset_id=self.primary_asset_id)
 
         async def list_stacks(self):
             if self.primary_asset_id is None:
@@ -201,9 +204,18 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
             # Immich may omit archived or trashed children from this response.
             return [SimpleNamespace(primary_asset_id=self.primary_asset_id, assets=[])]
 
+    class ContextSync:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object] | None] = []
+
+        async def reconcile_targets(self, _asset_ids, **kwargs) -> None:
+            self.calls.append(kwargs.get("stack_context"))
+
+    sync = ContextSync()
     instance, actions, _, _ = service(
         resolution(),
         [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}],
+        sync=sync,
     )
     instance._immich = StackImmich()  # type: ignore[assignment]
     plan = await instance.plan(
@@ -219,6 +231,13 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
     assert result.applied_ids == [ASSET_ONE, ASSET_TWO]
     assert actions.finished is not None
     assert actions.finished[0] == "completed"
+    assert sync.calls == [
+        {
+            "id": str(stack_id),
+            "primary_asset_id": str(ASSET_ONE),
+            "member_ids": [str(ASSET_ONE), str(ASSET_TWO)],
+        }
+    ]
 
 
 class FakeSync:
@@ -240,11 +259,11 @@ class RuntimeSettings:
         return self.value
 
 
-def service(current, applicability, *, destructive=True, runtime=None):
+def service(current, applicability, *, destructive=True, runtime=None, sync=None):
     assets = FakeAssets(current, applicability)
     actions = FakeActions()
     immich = FakeImmich()
-    sync = FakeSync()
+    sync = sync or FakeSync()
     instance = AssetActionService(
         Settings(allow_destructive_actions=destructive),
         immich,  # type: ignore[arg-type]

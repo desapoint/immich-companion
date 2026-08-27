@@ -165,6 +165,9 @@ class AssetRepairTaskHandler:
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
         include_stacks = bool(payload.get("include_stacks", False))
+        stack_context = payload.get("stack_context")
+        if not isinstance(stack_context, dict):
+            stack_context = None
         processed = int(context.task.checkpoint.get("processed", 0))
         await context.checkpoint(
             checkpoint={"phase": "repairing", "processed": processed},
@@ -183,7 +186,9 @@ class AssetRepairTaskHandler:
         batch_started = perf_counter()
         for index in range(processed, len(asset_ids)):
             await self._service._repair_targets_now(
-                [asset_ids[index]], include_stacks=include_stacks
+                [asset_ids[index]],
+                include_stacks=include_stacks,
+                stack_context=stack_context,
             )
             processed = index + 1
             await context.checkpoint(
@@ -719,6 +724,7 @@ class AssetSyncService:
         asset_ids: list[UUID],
         relations: list[tuple[str, UUID]] | None = None,
         include_stacks: bool = False,
+        stack_context: dict[str, object] | None = None,
     ) -> None:
         """Repair action-affected asset metadata without a library-wide scan."""
 
@@ -752,6 +758,7 @@ class AssetSyncService:
                 {
                     "asset_ids": [str(asset_id) for asset_id in asset_ids],
                     "include_stacks": include_stacks,
+                    "stack_context": stack_context,
                 },
                 priority=90,
                 deduplication_key="asset-repair:"
@@ -764,10 +771,18 @@ class AssetSyncService:
             await self._coordinator.wait(task.id)
             return
 
-        await self._repair_targets_now(asset_ids, include_stacks=include_stacks)
+        await self._repair_targets_now(
+            asset_ids,
+            include_stacks=include_stacks,
+            stack_context=stack_context,
+        )
 
     async def _repair_targets_now(
-        self, asset_ids: list[UUID], *, include_stacks: bool = False
+        self,
+        asset_ids: list[UUID],
+        *,
+        include_stacks: bool = False,
+        stack_context: dict[str, object] | None = None,
     ) -> None:
         """Perform the remote reads used by an asset-repair handler."""
 
@@ -778,6 +793,11 @@ class AssetSyncService:
         if include_stacks:
             for stack in await self._immich.list_stacks():
                 payload, member_ids = self._stack_payload(stack)
+                for member_id in member_ids:
+                    stack_payload_by_asset[member_id] = payload
+            context_payload = self._stack_context_payload(stack_context, assets)
+            if context_payload is not None:
+                payload, member_ids = context_payload
                 for member_id in member_ids:
                     stack_payload_by_asset[member_id] = payload
         for asset in assets:
@@ -1232,6 +1252,14 @@ class AssetSyncService:
 
     @staticmethod
     def _stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
+        return AssetSyncService._stack_payload_from_members(
+            stack.id, stack.primary_asset_id, stack.assets
+        )
+
+    @staticmethod
+    def _stack_payload_from_members(
+        stack_id: UUID, primary_asset_id: UUID, assets: list[ImmichAsset]
+    ) -> tuple[dict[str, object], list[UUID]]:
         members = [
             {
                 "id": str(member.id),
@@ -1242,17 +1270,43 @@ class AssetSyncService:
                 "height": member.height,
                 "fileCreatedAt": member.file_created_at.isoformat(),
             }
-            for member in stack.assets
+            for member in assets
         ]
         return (
             {
-                "id": str(stack.id),
-                "primaryAssetId": str(stack.primary_asset_id),
-                "assetCount": len(stack.assets),
+                "id": str(stack_id),
+                "primaryAssetId": str(primary_asset_id),
+                "assetCount": len(assets),
                 "assets": members,
             },
-            [member.id for member in stack.assets],
+            [member.id for member in assets],
         )
+
+    @classmethod
+    def _stack_context_payload(
+        cls, context: dict[str, object] | None, assets: list[ImmichAsset]
+    ) -> tuple[dict[str, object], list[UUID]] | None:
+        """Build a complete local payload for a stack just created by Companion."""
+
+        if context is None:
+            return None
+        try:
+            stack_id = UUID(str(context["id"]))
+            primary_asset_id = UUID(str(context["primary_asset_id"]))
+        except (KeyError, TypeError, ValueError):
+            return None
+        raw_member_ids = context.get("member_ids")
+        if not isinstance(raw_member_ids, list):
+            return None
+        try:
+            member_ids = [UUID(str(value)) for value in raw_member_ids]
+        except ValueError:
+            return None
+        assets_by_id = {asset.id: asset for asset in assets}
+        members = [assets_by_id[member_id] for member_id in member_ids if member_id in assets_by_id]
+        if set(member_ids) - set(assets_by_id):
+            return None
+        return cls._stack_payload_from_members(stack_id, primary_asset_id, members)
 
     async def _sync_stacks(
         self,

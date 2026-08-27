@@ -875,6 +875,8 @@ class AssetRepository:
                             select(AssetRecord.id)
                             .where(AssetRecord.stack_generation != generation)
                             .where(func.json_typeof(AssetRecord.stack) != "null")
+                            .where(AssetRecord.is_trashed.is_(False))
+                            .where(AssetRecord.visibility.in_(["archive", "timeline"]))
                             .limit(batch_size)
                         )
                     ).all()

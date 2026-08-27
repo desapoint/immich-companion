@@ -235,6 +235,25 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert any(item.total == 2 and item.percent is not None for item in relationship_progress)
 
 
+def test_stack_context_payload_covers_members_filtered_from_immich_stack_list() -> None:
+    members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "trashed-child.png")]
+
+    payload = AssetSyncService._stack_context_payload(
+        {
+            "id": str(STACK_ID),
+            "primary_asset_id": str(ASSET_ONE),
+            "member_ids": [str(ASSET_ONE), str(ASSET_TWO)],
+        },
+        members,
+    )
+
+    assert payload is not None
+    value, member_ids = payload
+    assert member_ids == [ASSET_ONE, ASSET_TWO]
+    assert value["assetCount"] == 2
+    assert [member["id"] for member in value["assets"]] == [str(ASSET_ONE), str(ASSET_TWO)]
+
+
 @pytest.mark.asyncio
 async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traversal() -> None:
     members = [asset(ASSET_ONE, "primary.png")]

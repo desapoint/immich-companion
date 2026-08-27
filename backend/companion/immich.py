@@ -652,15 +652,16 @@ class ImmichApiClient:
         response = await self._request("GET", "/api/stacks", operation="list stacks")
         return [ImmichStack.model_validate(payload) for payload in response.json()]
 
-    async def create_stack(self, asset_ids: list[UUID]) -> None:
+    async def create_stack(self, asset_ids: list[UUID]) -> ImmichStack:
         """Create one Immich stack from the selected assets."""
 
-        await self._request(
+        response = await self._request(
             "POST",
             "/api/stacks",
             json={"assetIds": [str(asset_id) for asset_id in asset_ids]},
             operation="create stack",
         )
+        return ImmichStack.model_validate(response.json())
 
     async def remove_asset_from_stack(self, stack_id: UUID, asset_id: UUID) -> None:
         """Remove one asset from a stack through Immich's stack API."""
