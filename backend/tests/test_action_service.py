@@ -162,21 +162,13 @@ async def test_stack_verification_retries_until_immich_indexes_the_stack(monkeyp
     class DelayedStackImmich(FakeImmich):
         def __init__(self) -> None:
             super().__init__()
-            self.responses = [
-                [],
-                [],
-                [
-                    SimpleNamespace(
-                        assets=[
-                            SimpleNamespace(id=ASSET_ONE),
-                            SimpleNamespace(id=ASSET_TWO),
-                        ]
-                    )
-                ],
-            ]
+            self.detail_round = 0
 
-        async def list_stacks(self):
-            return self.responses.pop(0)
+        async def get_asset(self, asset_id):
+            if asset_id == ASSET_ONE:
+                self.detail_round += 1
+            stack = None if self.detail_round < 3 else {"id": "stack"}
+            return SimpleNamespace(id=asset_id, stack=stack)
 
     instance, _, _, _ = service(resolution(), [])
     instance._immich = DelayedStackImmich()  # type: ignore[assignment]

@@ -114,14 +114,14 @@ class AssetActionService:
         return repair_ids
 
     async def _remaining_stack_members(self, asset_ids: list[UUID]) -> set[UUID]:
-        """Verify stack creation after Immich has indexed the mutation."""
+        """Verify stack creation from each authoritative asset detail response."""
 
         remaining = set(asset_ids)
         for attempt in range(3):
-            stacked_ids = {
-                member.id for stack in await self._immich.list_stacks() for member in stack.assets
-            }
-            remaining = {identifier for identifier in asset_ids if identifier not in stacked_ids}
+            assets = await asyncio.gather(
+                *(self._immich.get_asset(identifier) for identifier in asset_ids)
+            )
+            remaining = {asset.id for asset in assets if asset.stack is None}
             if not remaining:
                 return remaining
             if attempt < 2:
