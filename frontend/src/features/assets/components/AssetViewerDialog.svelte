@@ -64,6 +64,7 @@
       action: AssetActionIntent,
       relationIds?: string[],
     ) => void;
+    onsetprimary?: (assetId: string) => void;
     onrelationconfirm: (
       assetId: string,
       action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
@@ -99,6 +100,7 @@
     ontoggleselection,
     onvisiblechange,
     onaction,
+    onsetprimary,
     onrelationconfirm,
     onconfirmaction,
     oncancelaction,
@@ -126,7 +128,12 @@
   const comparisonMembers = $derived(
     comparisonSource === 'stack' ? stackMembersForAsset(currentAsset) : comparisonAssets,
   );
-  const previewItems = $derived(buildAssetPreviewItems(comparisonMembers));
+  const previewItems = $derived(
+    buildAssetPreviewItems(
+      comparisonMembers,
+      comparisonSource === 'stack' ? currentAsset.stack?.primary_asset_id : undefined,
+    ),
+  );
   const hasComparisonTray = $derived(previewItems.length > 1);
   const visibleAsset = $derived(
     comparisonMembers.find((asset) => asset.id === visibleAssetId)
@@ -362,9 +369,11 @@
     {albums}
     {tags}
     hasStack={currentAsset.stack !== null}
+    isVisibleStackPrimary={currentAsset.stack?.primary_asset_id === visibleAsset.id}
     {actionBusy}
     {actionError}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
+    onsetprimary={() => onsetprimary?.(visibleAsset.id)}
     onrelationconfirm={(action, relationIds) =>
       onrelationconfirm(currentAsset.id, action, relationIds)}
     ontoggleselection={() => ontoggleselection(currentAsset.id)}

@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  let bodyScrollLocks = 0;
+  let bodyOverflowBeforeDialog: string | null = null;
+</script>
+
 <script lang="ts">
   import { onMount, tick, type Snippet } from 'svelte';
 
@@ -59,7 +64,8 @@
   onMount(() => {
     const currentDialog = dialog;
     if (!currentDialog) return;
-    const previousOverflow = document.body.style.overflow;
+    if (bodyScrollLocks === 0) bodyOverflowBeforeDialog = document.body.style.overflow;
+    bodyScrollLocks += 1;
     const previousFocus = document.activeElement instanceof HTMLElement
       ? document.activeElement
       : null;
@@ -68,7 +74,11 @@
     void tick().then(() => panel?.focus({ preventScroll: true }));
     return () => {
       if (currentDialog.open) currentDialog.close();
-      document.body.style.overflow = previousOverflow;
+      bodyScrollLocks = Math.max(0, bodyScrollLocks - 1);
+      if (bodyScrollLocks === 0) {
+        document.body.style.overflow = bodyOverflowBeforeDialog ?? '';
+        bodyOverflowBeforeDialog = null;
+      }
       previousFocus?.focus();
     };
   });

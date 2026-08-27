@@ -21,6 +21,7 @@ import type {
   SearchGroup,
   AssetViewerMedia,
   TagOption,
+  StackResolution,
 } from '../types/assets';
 import type { MediaPreviewItem } from '../../../lib/types/media';
 import { createDefaultAssetSort } from '../state/assetSort';
@@ -160,6 +161,22 @@ export function getTagOptions(signal?: AbortSignal): Promise<TagOption[]> {
   return requestJson('/api/tags', { signal });
 }
 
+export function createAlbum(name: string, description = ''): Promise<AlbumOption> {
+  return requestJson('/api/albums/manage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, description }),
+  });
+}
+
+export function createTag(name: string, color: string | null = null): Promise<TagOption> {
+  return requestJson('/api/tags/manage', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, color }),
+  });
+}
+
 export function synchronizeAssets(): Promise<AssetSyncResult> {
   return requestJson('/api/assets/sync', { method: 'POST' });
 }
@@ -256,11 +273,17 @@ export function planAssetAction(
   selection: AssetSelectionRequest,
   action: AssetActionIntent,
   relationIds: string[] = [],
+  stackResolution?: StackResolution,
 ): Promise<AssetActionPlan> {
   return requestJson('/api/assets/actions/plan', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ selection, action, relation_ids: relationIds }),
+    body: JSON.stringify({
+      selection,
+      action,
+      relation_ids: relationIds,
+      ...(stackResolution ? { stack_resolution: stackResolution } : {}),
+    }),
   });
 }
 
@@ -310,11 +333,17 @@ export function assetOriginalUrl(assetId: string): string {
   return `/api/assets/${encodeURIComponent(assetId)}/original`;
 }
 
-export function buildAssetPreviewItems(assets: AssetViewerMedia[]): MediaPreviewItem[] {
+export function buildAssetPreviewItems(
+  assets: AssetViewerMedia[],
+  primaryAssetId?: string,
+): MediaPreviewItem[] {
   return assets.map((asset) => ({
     id: asset.id,
     label: asset.original_file_name,
     thumbnailUrl: assetMediaUrl(asset.id, 'thumbnail'),
-    meta: asset.width && asset.height ? `${asset.width} × ${asset.height}` : asset.type,
+    meta: asset.width && asset.height
+      ? `${asset.type} · ${asset.width} × ${asset.height}`
+      : asset.type,
+    ...(primaryAssetId !== undefined ? { isPrimary: asset.id === primaryAssetId } : {}),
   }));
 }

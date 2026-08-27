@@ -113,6 +113,7 @@ services:
     environment:
       COMPANION_ENV: test
       COMPANION_VERSION: local-test
+      COMPANION_FRONTEND_DIR: /opt/immich-companion/frontend
       IMMICH_URL: http://immich-server:2283
       IMMICH_PUBLIC_URL: http://localhost:${IMMICH_TEST_PORT:-22830}
       IMMICH_API_KEY_FILE: /run/immich-companion/immich-api-key

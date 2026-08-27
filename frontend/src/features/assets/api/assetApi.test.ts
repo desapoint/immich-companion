@@ -88,7 +88,7 @@ describe('structured asset API', () => {
       id: 'stack member',
       label: 'stack.png',
       thumbnailUrl: '/api/assets/stack%20member/thumbnail?size=thumbnail',
-      meta: '800 × 600',
+      meta: 'IMAGE · 800 × 600',
     }]);
   });
 

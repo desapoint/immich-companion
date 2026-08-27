@@ -153,6 +153,7 @@ class AssetRepairTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
+        include_stacks = bool(payload.get("include_stacks", False))
         processed = int(context.task.checkpoint.get("processed", 0))
         await context.checkpoint(
             checkpoint={"phase": "repairing", "processed": processed},
@@ -166,7 +167,9 @@ class AssetRepairTaskHandler:
             },
         )
         for index in range(processed, len(asset_ids)):
-            await self._service._repair_targets_now([asset_ids[index]])
+            await self._service._repair_targets_now(
+                [asset_ids[index]], include_stacks=include_stacks
+            )
             processed = index + 1
             await context.checkpoint(
                 checkpoint={"phase": "repairing", "processed": processed},
@@ -651,6 +654,7 @@ class AssetSyncService:
         self,
         asset_ids: list[UUID],
         relations: list[tuple[str, UUID]] | None = None,
+        include_stacks: bool = False,
     ) -> None:
         """Repair action-affected asset metadata without a library-wide scan."""
 
@@ -681,24 +685,42 @@ class AssetSyncService:
         if self._coordinator is not None:
             task = await self._coordinator.submit(
                 "asset_repair",
-                {"asset_ids": [str(asset_id) for asset_id in asset_ids]},
+                {
+                    "asset_ids": [str(asset_id) for asset_id in asset_ids],
+                    "include_stacks": include_stacks,
+                },
                 priority=90,
                 deduplication_key="asset-repair:"
-                + _dedupe_digest([str(asset_id) for asset_id in asset_ids]),
+                + _dedupe_digest(
+                    [str(asset_id) for asset_id in asset_ids]
+                    + (["stacks"] if include_stacks else [])
+                ),
             )
             await self._coordinator.start()
             await self._coordinator.wait(task.id)
             return
 
-        await self._repair_targets_now(asset_ids)
+        await self._repair_targets_now(asset_ids, include_stacks=include_stacks)
 
-    async def _repair_targets_now(self, asset_ids: list[UUID]) -> None:
+    async def _repair_targets_now(
+        self, asset_ids: list[UUID], *, include_stacks: bool = False
+    ) -> None:
         """Perform the remote reads used by an asset-repair handler."""
 
         assets = await asyncio.gather(
             *(self._immich.get_asset(identifier) for identifier in asset_ids)
         )
+        stack_payload_by_asset: dict[UUID, dict[str, object] | None] = {}
+        if include_stacks:
+            for stack in await self._immich.list_stacks():
+                payload, member_ids = self._stack_payload(stack)
+                for member_id in member_ids:
+                    stack_payload_by_asset[member_id] = payload
         for asset in assets:
+            if include_stacks:
+                asset = asset.model_copy(
+                    update={"stack": stack_payload_by_asset.get(asset.id)}
+                )
             await self._assets.refresh_asset(asset)
             albums = await self._immich.list_albums_for_asset(asset.id)
             await self._assets.replace_asset_album_memberships(
@@ -723,6 +745,35 @@ class AssetSyncService:
         """Traverse each affected relation completely before replacing its snapshot."""
 
         counters = {"albums": 0, "tags": 0, "memberships": 0}
+        for kind, relation_id in relations:
+            if kind == "album":
+                album = next(
+                    (
+                        item
+                        for item in await self._immich.list_album_catalog()
+                        if item.id == relation_id
+                    ),
+                    None,
+                )
+                if album is None:
+                    raise ImmichApiError("album catalog")
+                upsert_album_catalog = getattr(self._assets, "upsert_album_catalog", None)
+                if upsert_album_catalog is not None:
+                    await upsert_album_catalog([album], 0)
+            else:
+                tag = next(
+                    (
+                        item
+                        for item in await self._immich.list_tag_catalog()
+                        if item.id == relation_id
+                    ),
+                    None,
+                )
+                if tag is None:
+                    raise ImmichApiError("tag catalog")
+                upsert_tag_catalog = getattr(self._assets, "upsert_tag_catalog", None)
+                if upsert_tag_catalog is not None:
+                    await upsert_tag_catalog([tag], 0)
         for kind, relation_id in relations:
             asset_ids: list[UUID] = []
             iterator = (

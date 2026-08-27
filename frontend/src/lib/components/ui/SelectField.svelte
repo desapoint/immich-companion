@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+import { onDestroy, onMount, tick } from 'svelte';
 
   import { clickOutside } from '../../actions/clickOutside';
   import type { SelectOption } from '../../types/ui';
@@ -32,6 +32,7 @@
   let activeIndex = $state(-1);
   let typeahead = '';
   let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
+  let listStyle = $state('');
 
   const selectedOption = $derived(options.find((option) => option.value === value));
 
@@ -70,6 +71,8 @@
     if (disabled || options.length === 0) return;
     activeIndex = preferredIndex >= 0 ? preferredIndex : firstEnabledIndex();
     open = true;
+    await tick();
+    positionList();
     await focusActiveOption();
   }
 
@@ -79,6 +82,16 @@
       await tick();
       triggerElement?.focus();
     }
+  }
+
+  function positionList(): void {
+    if (!triggerElement) return;
+    const rect = triggerElement.getBoundingClientRect();
+    const height = listElement?.offsetHeight ?? Math.min(304, window.innerHeight * 0.48);
+    const top = rect.bottom + 6 + height <= window.innerHeight - 10 || rect.top < height + 16
+      ? Math.min(rect.bottom + 6, window.innerHeight - height - 10)
+      : rect.top - height - 6;
+    listStyle = `top:${Math.max(10, top)}px;left:${rect.left}px;width:${rect.width}px;`;
   }
 
   async function moveActive(direction: 1 | -1): Promise<void> {
@@ -163,6 +176,16 @@
   onDestroy(() => {
     if (typeaheadTimer) clearTimeout(typeaheadTimer);
   });
+
+  onMount(() => {
+    const reposition = () => open && positionList();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  });
 </script>
 
 <div
@@ -198,6 +221,7 @@
       bind:this={listElement}
       id={`${id}-options`}
       class="option-list"
+      style={listStyle}
       role="listbox"
       aria-labelledby={`${id}-label`}
       aria-required={required}
@@ -309,10 +333,8 @@
   }
 
   .option-list {
-    position: absolute;
-    z-index: 80;
-    top: calc(100% + 0.35rem);
-    left: 0;
+    position: fixed;
+    z-index: 1300;
     display: grid;
     width: 100%;
     max-height: min(19rem, 48vh);

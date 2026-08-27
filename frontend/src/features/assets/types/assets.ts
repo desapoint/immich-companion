@@ -349,6 +349,7 @@ export type AssetActionIntent =
   | 'remove_album'
   | 'remove_tag'
   | 'stack'
+  | 'set_stack_primary'
   | 'remove_from_stack'
   | 'remove_stack';
 
@@ -364,8 +365,11 @@ export type AssetActionOperation =
   | 'remove_album'
   | 'remove_tag'
   | 'stack'
+  | 'set_stack_primary'
   | 'remove_from_stack'
   | 'remove_stack';
+
+export type StackResolution = 'keep_existing' | 'move_selected' | 'include_existing';
 
 export interface AssetActionPlan {
   id: string;
@@ -380,6 +384,14 @@ export interface AssetActionPlan {
   destructive: boolean;
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
   expires_at: string;
+  stack_conflicts: StackConflict[];
+}
+
+export interface StackConflict {
+  stack_id: string;
+  selected_count: number;
+  member_count: number;
+  includes_unselected: boolean;
 }
 
 export interface AssetActionRelationPlan {

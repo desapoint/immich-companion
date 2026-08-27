@@ -59,6 +59,9 @@ class FakeAssets:
     async def applicable_action_ids(self, *_args, **_kwargs):
         return self.applicability.pop(0)
 
+    async def stack_asset_ids(self, asset_id):
+        return [asset_id]
+
     async def apply_membership_event(
         self, relation: str, relation_id: UUID, asset_id: UUID, present: bool
     ) -> None:
@@ -145,6 +148,12 @@ class FakeImmich:
     async def restore_assets(self, ids):
         self.calls.append(("restore", None, ids))
 
+    async def list_stacks(self):
+        return []
+
+    async def delete_stack(self, stack_id):
+        self.calls.append(("remove_stack", stack_id, []))
+
 
 class FakeSync:
     def __init__(self) -> None:
@@ -218,6 +227,24 @@ async def test_relation_action_skips_assets_already_in_the_requested_state(
     assert result.skipped_ids == [ASSET_TWO]
     assert result.verified is True
     assert actions.finished is not None
+
+
+@pytest.mark.asyncio
+async def test_remove_stack_keeps_original_selection_digest_after_expansion() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    instance, actions, _, sync = service(
+        resolution(),
+        [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}, set()],
+    )
+
+    plan = await instance.plan(
+        AssetActionPlanRequest(selection=selection, action="remove_stack")
+    )
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert result.verified is True
+    assert actions.finished is not None
+    assert sync.calls == 1
     assert actions.finished[0] == "completed"
 
 

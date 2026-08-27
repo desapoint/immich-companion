@@ -38,6 +38,10 @@
     <path d="M3.5 7.5v10a3 3 0 0 0 3 3h12M8.5 12l3-3 2.5 2.5 2-2 2 2" />
   {:else if name === 'sync'}
     <path d="M20 7v5h-5M4 17v-5h5" /><path d="M18.2 12a6.5 6.5 0 0 0-11.1-4.6L5 9M6 12a6.5 6.5 0 0 0 11.1 4.6L19 15" />
+  {:else if name === 'edit'}
+    <path d="m5 16-.7 3.7L8 19l10.8-10.8a2.1 2.1 0 0 0-3-3L5 16Z" /><path d="m14.5 6.5 3 3" />
+  {:else if name === 'filter'}
+    <path d="M4 5h16l-6.3 7.1v5.1l-3.4 1.8v-6.9L4 5Z" />
   {:else if name === 'external'}
     <path d="M13 4h7v7M20 4l-9 9M18 13v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h5" />
   {:else if name === 'immich'}
@@ -49,6 +53,8 @@
   {:else if name === 'favorite' || name === 'unfavorite'}
     <path d="M20.5 8.8c0 5.1-8.5 10-8.5 10s-8.5-4.9-8.5-10A4.6 4.6 0 0 1 12 6.3a4.6 4.6 0 0 1 8.5 2.5Z" />
     {#if name === 'unfavorite'}<path d="M4 4l16 16" />{/if}
+  {:else if name === 'star'}
+    <path d="m12 3.5 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9L12 3.5Z" />
   {:else if name === 'trash'}
     <path d="M4.5 7h15M9 7V4.5h6V7m-8.5 0 .8 13h9.4l.8-13M10 10.5v6M14 10.5v6" />
   {:else if name === 'restore'}
@@ -60,6 +66,8 @@
   {:else if name === 'invert-selection'}
     <path d="M7 4H5a1 1 0 0 0-1 1v2M17 4h2a1 1 0 0 1 1 1v2M7 20H5a1 1 0 0 1-1-1v-2M17 20h2a1 1 0 0 0 1-1v-2" />
     <path d="M8 8h8v8H8z" fill="currentColor" stroke="none" />
+  {:else if name === 'chevron'}
+    <path d="m6.5 9 5.5 5.5L17.5 9" />
   {:else if name === 'clear-selection' || name === 'close'}
     <path d="M6 6l12 12M18 6 6 18" />
     {#if name === 'clear-selection'}<rect x="3" y="3" width="18" height="18" rx="3" />{/if}

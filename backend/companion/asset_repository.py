@@ -1500,6 +1500,22 @@ class AssetRepository:
                 AssetRecord.id.in_(target_ids),
                 AssetRecord.stack.is_not(None),
             )
+        elif operation == "set_stack_primary":
+            async with self._database.sessions() as session:
+                rows = (
+                    await session.execute(
+                        select(AssetRecord.id, AssetRecord.stack).where(
+                            AssetRecord.id.in_(target_ids),
+                            AssetRecord.stack.is_not(None),
+                        )
+                    )
+                ).all()
+            return {
+                identifier
+                for identifier, payload in rows
+                if isinstance(payload, dict)
+                and str(payload.get("primaryAssetId")) != str(identifier)
+            }
         elif operation in {"add_album", "add_tag", "remove_album", "remove_tag"}:
             assert relation_id is not None
             album_action = operation in {"add_album", "remove_album"}

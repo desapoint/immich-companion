@@ -23,6 +23,8 @@
     label?: string;
     onpage: (page: number) => void;
     onpagesizechange?: (pageSize: number) => void;
+    mode?: 'paged' | 'infinite';
+    onmodechange?: (mode: 'paged' | 'infinite') => void;
   }
 
   let {
@@ -42,9 +44,12 @@
     label = 'Asset result pages',
     onpage,
     onpagesizechange,
+    mode = 'paged',
+    onmodechange,
   }: Props = $props();
 </script>
 
+{#if mode === 'paged'}
 <Pagination
   currentPage={page}
   totalPages={pages}
@@ -63,3 +68,42 @@
   onpagechange={onpage}
   {onpagesizechange}
 />
+{/if}
+{#if onmodechange}
+  <div class="mode-controls" role="group" aria-label="Asset list mode">
+    <button class:active={mode === 'paged'} type="button" disabled={disabled || mode === 'paged'} onclick={() => onmodechange?.('paged')}>Pages</button>
+    <button class:active={mode === 'infinite'} type="button" disabled={disabled || mode === 'infinite'} onclick={() => onmodechange?.('infinite')}>Infinite scroll</button>
+  </div>
+{/if}
+
+<style>
+  .mode-controls {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    margin-top: 0.45rem;
+  }
+
+  .mode-controls button {
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--color-border-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-muted);
+    background: var(--color-surface-raised);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.65rem;
+    font-weight: 700;
+  }
+
+  .mode-controls button.active {
+    border-color: var(--color-accent-strong);
+    color: var(--color-accent-strong);
+    background: var(--color-canvas);
+  }
+
+  .mode-controls button:focus-visible,
+  .mode-controls button:hover:not(:disabled) {
+    border-color: var(--color-accent-hover);
+  }
+</style>

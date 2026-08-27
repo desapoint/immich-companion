@@ -22,9 +22,11 @@
     albums: AlbumOption[];
     tags: TagOption[];
     hasStack?: boolean;
+    isVisibleStackPrimary?: boolean;
     actionBusy?: boolean;
     actionError?: string | null;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
+    onsetprimary?: () => void;
     onrelationconfirm: (
       action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
       relationIds: string[],
@@ -51,9 +53,11 @@
     albums,
     tags,
     hasStack = false,
+    isVisibleStackPrimary = false,
     actionBusy = false,
     actionError = null,
     onaction,
+    onsetprimary,
     onrelationconfirm,
     ontoggleselection,
     ontogglescale,
@@ -82,6 +86,8 @@
       targetLabel="selected image"
       allowStack={false}
       allowStackRemoval={hasStack}
+      isStackPrimary={isVisibleStackPrimary}
+      {onsetprimary}
       busy={actionBusy}
       onplan={onaction}
       {onrelationconfirm}

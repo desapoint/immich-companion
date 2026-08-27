@@ -66,8 +66,18 @@ from companion.asset_schema import (
 from companion.asset_service import AssetSyncService
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
-from companion.immich import ImmichApiClient, ImmichApiError
+from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
 from companion.migrate import run_migrations
+from companion.relation_schema import (
+    AlbumCreateRequest,
+    AlbumManagementItem,
+    AlbumUpdateRequest,
+    RelationBatchDeleteRequest,
+    RelationPage,
+    TagCreateRequest,
+    TagManagementItem,
+    TagUpdateRequest,
+)
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
     SyncCoordinatorStatus,
@@ -182,6 +192,25 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(ImmichApiError)
+    async def immich_error_handler(_request, error: ImmichApiError) -> Response:
+        """Keep relation-management failures safe and consistent with API actions."""
+        code = (
+            status.HTTP_404_NOT_FOUND
+            if error.status_code == 404
+            else status.HTTP_502_BAD_GATEWAY
+        )
+        detail = (
+            "The Immich relation was not found."
+            if code == 404
+            else "Immich could not complete the relation request."
+        )
+        return Response(
+            content=json.dumps({"detail": detail}),
+            status_code=code,
+            media_type="application/json",
+        )
 
     async def health_payload() -> dict[str, object]:
         immich_status, database_status = await asyncio.gather(
@@ -544,10 +573,250 @@ def create_app(
         repository = require_asset_repository()
         return await repository.list_albums()
 
+    def require_immich() -> ImmichApiClient:
+        if not runtime_settings.immich_configured:
+            raise HTTPException(status_code=503, detail="Immich is not configured.")
+        return immich
+
+    @app.get("/api/albums/manage", response_model=RelationPage[AlbumManagementItem])
+    async def manage_albums(page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
+                            search: str | None = Query(None, max_length=255),
+                            sort: Literal["name", "asset_count"] = "name",
+                            direction: Literal["asc", "desc"] = "asc"):
+        albums = await require_immich().list_album_catalog()
+        if search:
+            needle = search.casefold()
+            albums = [a for a in albums if needle in a.album_name.casefold()]
+        albums.sort(
+            key=lambda album: album.album_name.casefold()
+            if sort == "name"
+            else album.asset_count,
+            reverse=direction == "desc",
+        )
+        total = len(albums)
+        start = (page - 1) * page_size
+        items = [
+            AlbumManagementItem(
+                id=a.id,
+                name=a.album_name,
+                description=a.description,
+                asset_count=a.asset_count,
+                created_at=a.created_at,
+                updated_at=a.updated_at,
+            )
+            for a in albums[start : start + page_size]
+        ]
+        return RelationPage(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post("/api/albums/manage", response_model=AlbumManagementItem)
+    async def create_managed_album(request: AlbumCreateRequest):
+        album = await require_immich().create_album(request.name, request.description)
+        return AlbumManagementItem(
+            id=album.id,
+            name=album.album_name,
+            description=album.description,
+            asset_count=album.asset_count,
+            created_at=album.created_at,
+            updated_at=album.updated_at,
+        )
+
+    @app.post("/api/albums/manage/batch-delete")
+    async def batch_delete_albums(request: RelationBatchDeleteRequest):
+        client = require_immich()
+        completed: list[UUID] = []
+        failed: list[UUID] = []
+        for identifier in request.ids:
+            try:
+                await client.delete_album(identifier)
+            except ImmichApiError:
+                failed.append(identifier)
+            else:
+                completed.append(identifier)
+        return {"completed": completed, "failed": failed, "total": len(request.ids)}
+
+    @app.patch("/api/albums/manage/{album_id}", response_model=AlbumManagementItem)
+    async def update_managed_album(album_id: UUID, request: AlbumUpdateRequest):
+        album = await require_immich().update_album(
+            album_id, name=request.name, description=request.description
+        )
+        return AlbumManagementItem(
+            id=album.id,
+            name=album.album_name,
+            description=album.description,
+            asset_count=album.asset_count,
+            created_at=album.created_at,
+            updated_at=album.updated_at,
+        )
+
+    @app.delete("/api/albums/manage/{album_id}", status_code=204)
+    async def delete_managed_album(album_id: UUID) -> Response:
+        await require_immich().delete_album(album_id)
+        return Response(status_code=204)
+
     @app.get("/api/tags", response_model=list[TagOption])
     async def search_tag_options() -> list[TagOption]:
         repository = require_asset_repository()
         return await repository.list_tags()
+
+    @app.get("/api/tags/manage", response_model=RelationPage[TagManagementItem])
+    async def manage_tags(page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
+                          search: str | None = Query(None, max_length=255),
+                          sort: Literal["name", "asset_count"] = "name",
+                          direction: Literal["asc", "desc"] = "asc"):
+        catalog = await require_immich().list_tag_catalog()
+        tags_by_id = {tag.id: tag for tag in catalog}
+        children_by_parent: dict[UUID, list[ImmichTag]] = {}
+        roots: list[ImmichTag] = []
+        for tag in catalog:
+            if tag.parent_id is not None and tag.parent_id in tags_by_id:
+                children_by_parent.setdefault(tag.parent_id, []).append(tag)
+            else:
+                roots.append(tag)
+
+        def parent_path(tag: ImmichTag) -> list[str]:
+            path: list[str] = []
+            parent_id = tag.parent_id
+            visited = {tag.id}
+            while parent_id is not None and parent_id not in visited:
+                parent = tags_by_id.get(parent_id)
+                if parent is None:
+                    break
+                path.append(parent.name)
+                visited.add(parent.id)
+                parent_id = parent.parent_id
+            return list(reversed(path))
+
+        needle = search.casefold().strip() if search else ""
+        matching_ids = {
+            tag.id for tag in catalog if not needle or needle in tag.name.casefold()
+        }
+        included_ids = set(matching_ids)
+        for tag in catalog:
+            if tag.id not in matching_ids:
+                continue
+            parent_id = tag.parent_id
+            visited = {tag.id}
+            while parent_id is not None and parent_id not in visited:
+                included_ids.add(parent_id)
+                visited.add(parent_id)
+                parent = tags_by_id.get(parent_id)
+                parent_id = parent.parent_id if parent is not None else None
+
+        def sort_key(tag: ImmichTag) -> str | int:
+            return tag.name.casefold() if sort == "name" else tag.asset_count
+
+
+        def build_node(tag: ImmichTag) -> TagManagementItem | None:
+            if tag.id not in included_ids:
+                return None
+            child_nodes = [
+                node
+                for child in sorted(
+                    children_by_parent.get(tag.id, []), key=sort_key, reverse=direction == "desc"
+                )
+                if (node := build_node(child)) is not None
+            ]
+            return TagManagementItem(
+                id=tag.id,
+                name=tag.name,
+                color=tag.color,
+                parent_id=tag.parent_id,
+                parent_path=parent_path(tag),
+                asset_count=tag.asset_count,
+                children=child_nodes,
+            )
+
+        visible_roots = [
+            node
+            for root in sorted(roots, key=sort_key, reverse=direction == "desc")
+            if (node := build_node(root)) is not None
+        ]
+        total = len(visible_roots)
+        start = (page - 1) * page_size
+        items = visible_roots[start : start + page_size]
+        return RelationPage(
+            items=items,
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.post("/api/tags/manage", response_model=TagManagementItem)
+    async def create_managed_tag(request: TagCreateRequest):
+        tag = await require_immich().create_tag(request.name, request.color, request.parent_id)
+        return TagManagementItem(id=tag.id, name=tag.name, color=tag.color, parent_id=tag.parent_id,
+                                 asset_count=tag.asset_count)
+
+    @app.post("/api/tags/manage/batch-delete")
+    async def batch_delete_tags(request: RelationBatchDeleteRequest):
+        client = require_immich()
+        catalog = await client.list_tag_catalog()
+        children = {tag.parent_id for tag in catalog if tag.parent_id is not None}
+        completed: list[UUID] = []
+        failed: list[UUID] = [identifier for identifier in request.ids if identifier in children]
+        for identifier in request.ids:
+            if identifier in children:
+                continue
+            try:
+                await client.delete_tag(identifier)
+            except ImmichApiError:
+                failed.append(identifier)
+            else:
+                completed.append(identifier)
+        return {"completed": completed, "failed": failed, "total": len(request.ids)}
+
+    @app.patch("/api/tags/manage/{tag_id}", response_model=TagManagementItem)
+    async def update_managed_tag(tag_id: UUID, request: TagUpdateRequest):
+        client = require_immich()
+        catalog = await client.list_tag_catalog()
+        current = next((item for item in catalog if item.id == tag_id), None)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Tag not found.")
+        parent_id = current.parent_id
+        if "parent_id" in request.model_fields_set:
+            parent_id = request.parent_id
+            if parent_id == tag_id:
+                raise HTTPException(status_code=400, detail="A tag cannot be its own parent.")
+            by_id = {item.id: item for item in catalog}
+            visited: set[UUID] = set()
+            ancestor = parent_id
+            while ancestor is not None and ancestor not in visited:
+                if ancestor == tag_id:
+                    raise HTTPException(
+                        status_code=400, detail="A tag cannot be moved below its own child."
+                    )
+                visited.add(ancestor)
+                parent = by_id.get(ancestor)
+                ancestor = parent.parent_id if parent is not None else None
+        if parent_id != current.parent_id:
+            tag = await client.reparent_tag(
+                tag_id,
+                name=request.name if request.name is not None else current.name,
+                color=request.color if request.color is not None else current.color,
+                parent_id=parent_id,
+                catalog=catalog,
+            )
+        else:
+            tag = await client.update_tag(tag_id, name=request.name, color=request.color)
+        return TagManagementItem(id=tag.id, name=tag.name, color=tag.color, parent_id=tag.parent_id,
+                                 asset_count=tag.asset_count)
+
+    @app.delete("/api/tags/manage/{tag_id}", status_code=204)
+    async def delete_managed_tag(tag_id: UUID) -> Response:
+        client = require_immich()
+        if any(tag.parent_id == tag_id for tag in await client.list_tag_catalog()):
+            raise HTTPException(
+                status_code=409, detail="Delete child tags before deleting this parent tag."
+            )
+        await client.delete_tag(tag_id)
+        return Response(status_code=204)
 
     @app.post("/api/assets/selection/resolve", response_model=AssetSelectionResolution)
     async def resolve_asset_selection(

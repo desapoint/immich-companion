@@ -6,6 +6,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     AssetActionIntent,
     AssetActionPlan,
     AssetSelectionSummary,
+    StackResolution,
     TagOption,
   } from '../types/assets';
   import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
@@ -27,6 +28,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     oninvertpage: () => void;
     onclear: () => void;
     onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
+    onstackconfirm?: (mode: StackResolution) => void;
     onrelationconfirm: (
       action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
       relationIds: string[],
@@ -56,6 +58,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     oninvertpage,
     onclear,
     onplan,
+    onstackconfirm = () => undefined,
     onrelationconfirm,
     onconfirm,
     oncancel,
@@ -140,6 +143,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     {busy}
     {onconfirm}
     onclose={oncancel}
+    onstackconfirm={onstackconfirm}
   />
 {/if}
 

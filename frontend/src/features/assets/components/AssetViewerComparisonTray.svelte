@@ -81,7 +81,7 @@
     bottom: 1.5rem;
     left: var(--tray-inline-offset);
     display: grid;
-    width: max-content;
+    width: min(48rem, var(--tray-max-width));
     min-width: 0;
     max-width: var(--tray-max-width);
     max-height: calc(100% - 1.5rem);

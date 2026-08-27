@@ -5,6 +5,8 @@
   import { errorMessage } from '../lib/utils/errors';
   import AppRuntimeError from './components/AppRuntimeError.svelte';
   import AppShell from './components/AppShell.svelte';
+  import AlbumsPage from '../features/relations/components/AlbumsPage.svelte';
+  import TagsPage from '../features/relations/components/TagsPage.svelte';
 
   const currentPath = window.location.pathname;
 </script>
@@ -13,6 +15,10 @@
   <AppShell activePath={currentPath}>
     {#if currentPath === '/assets' || currentPath.startsWith('/assets/')}
       <AssetsPage />
+    {:else if currentPath === '/albums'}
+      <AlbumsPage />
+    {:else if currentPath === '/tags'}
+      <TagsPage />
     {:else}
       {#if currentPath === '/settings'}
         <SettingsPage />

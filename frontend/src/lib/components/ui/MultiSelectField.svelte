@@ -18,6 +18,9 @@
     required?: boolean;
     compact?: boolean;
     searchable?: boolean;
+    allowCreate?: boolean;
+    createLabel?: string;
+    oncreate?: (value: string) => void;
     onchange: (values: string[]) => void;
   }
 
@@ -31,6 +34,9 @@
     required = false,
     compact = false,
     searchable = false,
+    allowCreate = false,
+    createLabel = 'Add',
+    oncreate,
     onchange,
   }: Props = $props();
 
@@ -56,6 +62,12 @@
     const normalized = query.trim().toLocaleLowerCase();
     if (!searchable || !normalized) return options;
     return options.filter((option) => option.label.toLocaleLowerCase().includes(normalized));
+  });
+  const canCreate = $derived.by(() => {
+    const value = query.trim();
+    return allowCreate && Boolean(value) && !options.some(
+      (option) => option.label.trim().toLocaleLowerCase() === value.toLocaleLowerCase(),
+    );
   });
 
   function firstEnabledIndex(): number {
@@ -244,6 +256,18 @@
         aria-multiselectable="true"
         aria-required={required}
       >
+        {#if canCreate}
+          <button
+            class="option create-option"
+            type="button"
+            role="option"
+            aria-selected="false"
+            onclick={() => oncreate?.(query.trim())}
+          >
+            <span>{createLabel} “{query.trim()}”</span>
+            <span aria-hidden="true">＋</span>
+          </button>
+        {/if}
         {#each filteredOptions as option, index (option.value)}
           <button
             class:active={index === activeIndex}
@@ -434,6 +458,12 @@
   .option.active {
     color: var(--color-accent-strong);
     background: var(--color-surface-soft);
+  }
+
+  .create-option {
+    color: var(--color-accent-strong);
+    background: color-mix(in srgb, var(--color-accent-strong) 7%, transparent);
+    font-weight: 760;
   }
 
   .option.selected {

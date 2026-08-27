@@ -6,4 +6,5 @@ export interface MediaPreviewItem {
   label: string;
   thumbnailUrl: string;
   meta?: string | null;
+  isPrimary?: boolean;
 }

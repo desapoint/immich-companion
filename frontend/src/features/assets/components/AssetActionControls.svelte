@@ -22,6 +22,8 @@
     targetCount: number;
     targetLabel: string;
     allowStackRemoval?: boolean;
+    isStackPrimary?: boolean;
+    onsetprimary?: () => void;
     allowStack?: boolean;
     busy?: boolean;
     onplan: (action: AssetActionIntent, relationIds?: string[]) => void;
@@ -35,6 +37,8 @@
     targetCount,
     targetLabel,
     allowStackRemoval = false,
+    isStackPrimary = false,
+    onsetprimary,
     allowStack = true,
     busy = false,
     onplan,
@@ -71,6 +75,13 @@
       label: `Stack ${targetLabel}`,
     });
     if (allowStackRemoval) {
+      if (!isStackPrimary) {
+        items.push({
+          id: 'set_stack_primary',
+          icon: 'star',
+          label: 'Set as primary',
+        });
+      }
       items.push(
         {
           id: 'remove_from_stack',
@@ -89,7 +100,6 @@
         id: 'add_tag',
         icon: 'tag-add',
         label: `Add tags to ${targetLabel}`,
-        disabled: tags.length === 0,
       },
       {
         id: 'remove_tag',
@@ -123,6 +133,10 @@
       relationAction = action as RelationAction;
       return;
     }
+    if (action === 'set_stack_primary') {
+      onsetprimary?.();
+      return;
+    }
     onplan(action as AssetActionIntent);
   }
 
@@ -137,7 +151,7 @@
   <IconButton
     icon="album-add"
     label={`Add ${targetLabel} to album`}
-    disabled={busy || albums.length === 0}
+    disabled={busy}
     onclick={() => (relationAction = 'add_album')}
   />
   {#if summary?.favorite_action}

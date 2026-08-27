@@ -81,7 +81,7 @@
         class:selected={item.id === selectedId}
         class:visible={item.id === visibleId}
         type="button"
-        aria-label={`${item.label}${item.id === selectedId ? ', selected' : ''}${item.id === visibleId ? ', currently visible' : ''}`}
+        aria-label={`${item.label}${item.id === selectedId ? ', selected' : ''}${item.id === visibleId ? ', currently visible' : ''}${item.isPrimary ? ', primary' : ''}`}
         aria-pressed={item.id === selectedId}
         title={item.label}
         onclick={(event) => clickItem(event, item.id)}
@@ -95,12 +95,20 @@
         <span class="item-state" aria-hidden="true">
           {item.id === selectedId && item.id === visibleId ? 'Selected · Viewing' : item.id === selectedId ? 'Selected' : item.id === visibleId ? 'Viewing' : ''}
         </span>
-        {#if item.meta}<small>{item.meta}</small>{/if}
+        {#if item.meta || item.isPrimary}
+          <small class:primary-meta={item.isPrimary}>
+            {item.meta}{item.isPrimary ? `${item.meta ? ' · ' : ''}★ Primary` : ''}
+          </small>
+        {/if}
       </button>
     {:else}
       <div class:selected={item.id === selectedId} class:visible={item.id === visibleId} class="preview-item" title={item.label}>
         <img src={item.thumbnailUrl} alt={item.label} loading="lazy" decoding="async" draggable="false" />
-        {#if item.meta}<small>{item.meta}</small>{/if}
+        {#if item.meta || item.isPrimary}
+          <small class:primary-meta={item.isPrimary}>
+            {item.meta}{item.isPrimary ? `${item.meta ? ' · ' : ''}★ Primary` : ''}
+          </small>
+        {/if}
       </div>
     {/if}
   {/each}
@@ -109,11 +117,12 @@
 <style>
   .asset-preview-strip {
     display: flex;
-    width: max-content;
+    width: 100%;
     min-width: 0;
     max-width: 100%;
     gap: 0.45rem;
     overflow-x: auto;
+    overflow-y: hidden;
     padding: 0.2rem 0.15rem 0.42rem;
     overscroll-behavior-x: contain;
     scrollbar-gutter: stable;
@@ -185,6 +194,10 @@
 
   .item-state {
     top: 0.18rem;
+  }
+
+  .primary-meta {
+    color: #facc15;
   }
 
   .item-state:empty {

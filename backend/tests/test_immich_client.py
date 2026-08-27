@@ -329,10 +329,12 @@ async def test_stack_mutations_use_supported_stack_routes() -> None:
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
     await client.remove_asset_from_stack(stack_id, ASSET_TWO)
+    await client.update_stack_primary(stack_id, ASSET_ONE)
     await client.delete_stack(stack_id)
 
     assert requests == [
         ("DELETE", f"/api/stacks/{stack_id}/assets/{ASSET_TWO}"),
+        ("PUT", f"/api/stacks/{stack_id}"),
         ("DELETE", f"/api/stacks/{stack_id}"),
     ]
 

@@ -9,19 +9,23 @@
 </script>
 
 <header class="app-header">
-  <a class="brand" href={homePath} aria-label="Immich Companion home">
-    <span class="brand-mark" aria-hidden="true">IC</span>
-    <span>
-      <strong>Immich Companion</strong>
-      <small>Operational workspace</small>
-    </span>
-  </a>
-  <nav aria-label="Primary navigation">
-    <a class:active={activePath === '/'} href="/">Status</a>
-    <a class:active={activePath.startsWith('/assets')} href="/assets">Assets</a>
-    <a class:active={activePath === '/settings'} href="/settings">Settings</a>
-    <a href="/api/docs">API docs</a>
-  </nav>
+  <div class="header-inner">
+    <a class="brand" href={homePath} aria-label="Immich Companion home">
+      <span class="brand-mark" aria-hidden="true">IC</span>
+      <span>
+        <strong>Immich Companion</strong>
+        <small>Operational workspace</small>
+      </span>
+    </a>
+    <nav aria-label="Primary navigation">
+      <a class:active={activePath === '/'} href="/">Status</a>
+      <a class:active={activePath.startsWith('/assets')} href="/assets">Assets</a>
+      <a class:active={activePath === '/albums'} href="/albums">Albums</a>
+      <a class:active={activePath === '/tags'} href="/tags">Tags</a>
+      <a class:active={activePath === '/settings'} href="/settings">Settings</a>
+      <a href="/api/docs">API docs</a>
+    </nav>
+  </div>
 </header>
 
 <style>
@@ -29,17 +33,23 @@
     position: sticky;
     z-index: 90;
     top: 0;
-    width: min(96rem, calc(100% - 2rem));
+    width: 100%;
     min-height: var(--app-header-height, 4.8rem);
+    padding: 0 1rem;
+    border-bottom: 1px solid var(--color-border-subtle);
+    background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
+    backdrop-filter: blur(0.8rem);
+  }
+
+  .header-inner {
+    width: min(96rem, 100%);
+    min-height: inherit;
     margin: 0 auto;
     padding: 1rem 0;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    border-bottom: 1px solid var(--color-border-subtle);
-    background: color-mix(in srgb, var(--color-canvas) 94%, transparent);
-    backdrop-filter: blur(0.8rem);
   }
 
   .brand {
@@ -102,7 +112,7 @@
   }
 
   @media (max-width: 34rem) {
-    .app-header {
+    .header-inner {
       align-items: flex-start;
     }
 

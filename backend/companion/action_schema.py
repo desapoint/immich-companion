@@ -21,6 +21,7 @@ AssetActionIntent = Literal[
     "remove_album",
     "remove_tag",
     "stack",
+    "set_stack_primary",
     "remove_from_stack",
     "remove_stack",
 ]
@@ -36,9 +37,11 @@ AssetActionOperation = Literal[
     "remove_album",
     "remove_tag",
     "stack",
+    "set_stack_primary",
     "remove_from_stack",
     "remove_stack",
 ]
+StackResolution = Literal["keep_existing", "move_selected", "include_existing"]
 ActionPlanStatus = Literal[
     "planned",
     "running",
@@ -135,6 +138,7 @@ class AssetActionPlanRequest(BaseModel):
     selection: AssetSelectionRequest
     action: AssetActionIntent
     relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=10_000)
+    stack_resolution: StackResolution | None = None
 
     @model_validator(mode="after")
     def validate_relation(self) -> AssetActionPlanRequest:
@@ -147,6 +151,8 @@ class AssetActionPlanRequest(BaseModel):
         }
         if relation_action != bool(self.relation_ids):
             raise ValueError("Album and tag actions require one or more relation IDs")
+        if self.stack_resolution is not None and self.action != "stack":
+            raise ValueError("Stack resolution is only valid for stack actions")
         return self
 
 
@@ -156,6 +162,15 @@ class AssetActionRelationPlan(BaseModel):
     relation_id: UUID
     applicable_count: int
     skipped_count: int
+
+
+class StackConflict(BaseModel):
+    """Stack membership overlap found during a stack-action preview."""
+
+    stack_id: UUID
+    selected_count: int
+    member_count: int
+    includes_unselected: bool
 
 
 class AssetActionPlan(BaseModel):
@@ -173,6 +188,7 @@ class AssetActionPlan(BaseModel):
     destructive: bool
     status: ActionPlanStatus
     expires_at: datetime
+    stack_conflicts: list[StackConflict] = Field(default_factory=list)
 
 
 class AssetActionExecuteRequest(BaseModel):

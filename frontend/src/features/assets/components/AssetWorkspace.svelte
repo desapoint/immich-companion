@@ -7,7 +7,6 @@
     getAssetSummary,
     getAssetSyncStatus,
     getTaskStatus,
-    openTaskStream,
     openTaskUpdates,
     createAssetSelection,
     getAssetSelectionMembership,
@@ -63,6 +62,7 @@
     AssetSelectionRequest,
     AssetSort,
     SearchGroup,
+    StackResolution,
     TagOption,
   } from '../types/assets';
   import AssetEmptyState from './AssetEmptyState.svelte';
@@ -129,15 +129,12 @@
   let dragLastIndex: number | null = null;
   let syncPollTimer: ReturnType<typeof setInterval> | null = null;
   let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
-  let selectionTaskSocket: WebSocket | null = null;
   let actionTask = $state<AssetTaskStatus | null>(null);
   let actionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
-  let actionTaskSocket: WebSocket | null = null;
-  let syncTaskSocket: WebSocket | null = null;
   let taskUpdatesSocket: WebSocket | null = null;
   let taskUpdatesReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let taskUpdatesReconnectDelay = 1000;
   let taskUpdatesStopped = false;
-  let syncTaskStreamId: string | null = null;
   let syncStatusInitialized = false;
   let handledSyncSuccessId: string | null = null;
   let handledSyncFailureId: string | null = null;
@@ -203,10 +200,12 @@
           taskUpdatesReconnectTimer = setTimeout(() => {
             taskUpdatesReconnectTimer = null;
             connectTaskUpdates();
-          }, 1000);
+            taskUpdatesReconnectDelay = Math.min(taskUpdatesReconnectDelay * 2, 10000);
+          }, taskUpdatesReconnectDelay);
         }
       },
     );
+    taskUpdatesSocket.addEventListener('open', () => { taskUpdatesReconnectDelay = 1000; }, { once: true });
   }
   const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
   const hasSearch = $derived(expression.children.length > 0);
@@ -427,15 +426,6 @@
     selectionTaskPollTimer = setInterval(() => void pollSelectionTask(), 1000);
   }
 
-  function startSelectionTaskStream(taskId: string): void {
-    if (selectionTaskSocket && selectionTaskSocket.readyState <= WebSocket.OPEN) return;
-    selectionTaskSocket = openTaskStream(taskId, (next) => {
-      selectionTask = next;
-      selectionSyncing = !isTaskTerminal(next.status);
-      if (isTaskTerminal(next.status)) void pollSelectionTask();
-    });
-  }
-
   async function pollSelectionTask(): Promise<void> {
     const taskId = selectionTask?.id ?? localStorage.getItem('immich-companion:selected-sync-task');
     if (!taskId) return;
@@ -448,8 +438,6 @@
         clearInterval(selectionTaskPollTimer);
         selectionTaskPollTimer = null;
       }
-      selectionTaskSocket?.close();
-      selectionTaskSocket = null;
       localStorage.removeItem('immich-companion:selected-sync-task');
       const summary = next.result?.summary;
       const failedIds = summary?.failed_ids ?? [];
@@ -722,6 +710,7 @@
     context: 'selection' | 'viewer',
     action: AssetActionIntent,
     relationIds: string[] = [],
+    stackResolution?: StackResolution,
   ): Promise<void> {
     actionBusy = true;
     actionError = null;
@@ -734,6 +723,7 @@
         request,
         action,
         relationIds,
+        stackResolution,
       );
     } catch (requestError) {
       actionError = requestError instanceof Error
@@ -747,13 +737,38 @@
   function previewSelectionAction(
     action: AssetActionIntent,
     relationIds: string[] = [],
+    stackResolution?: StackResolution,
   ): void {
     void createActionPlan(
       buildSelectionRequest(selection, expression),
       'selection',
       action,
       relationIds,
+      stackResolution,
     );
+  }
+
+  async function confirmStackAction(stackResolution: StackResolution): Promise<void> {
+    if (!actionPlan) return;
+    const request = buildSelectionRequest(selection, expression);
+    const confirmedTargetIds = [...actionTargetIds];
+    actionBusy = true;
+    actionError = null;
+    try {
+      const reviewedPlan = await planAssetAction(request, 'stack', [], stackResolution);
+      const started = await executeAssetActionTask(reviewedPlan.id);
+      actionTask = await getTaskStatus(started.task_id);
+      localStorage.setItem('immich-companion:asset-action-task', started.task_id);
+      startActionTaskPolling();
+      actionPlan = null;
+      actionTargetIds = confirmedTargetIds;
+    } catch (requestError) {
+      actionError = requestError instanceof Error
+        ? requestError.message
+        : 'Stack action execution failed.';
+    } finally {
+      actionBusy = false;
+    }
   }
 
   function previewViewerAction(
@@ -788,13 +803,28 @@
         closeViewer();
         await Promise.all([loadRelationOptions(), loadAssets()]);
       } else {
-        const [refreshedAsset] = await Promise.all([
-          matchAssetSearch(confirmedTargetId, expression),
-          loadRelationOptions(),
-        ]);
+        // A stack mutation changes every member, not only the image used to
+        // open the viewer. Refresh the current page and re-read every target
+        // reported by the action so sibling cards/detail entries cannot keep
+        // stale stack metadata.
+        const affectedIds = [...new Set([
+          ...result.applied_ids,
+          ...result.failed_ids,
+          confirmedTargetId,
+        ])];
+        await Promise.all([loadRelationOptions(), loadAssets()]);
+        const refreshedAssets = await Promise.all(
+          affectedIds.map(async (assetId) => {
+            detailCache.delete(assetId);
+            return [assetId, await matchAssetSearch(assetId, expression)] as const;
+          }),
+        );
+        for (const [, refreshed] of refreshedAssets) {
+          if (refreshed) patchResultAsset(refreshed);
+        }
+        const refreshedAsset = refreshedAssets.find(([assetId]) => assetId === confirmedTargetId)?.[1] ?? null;
         if (!refreshedAsset) {
           closeViewer();
-          await loadAssets();
         } else {
           const refreshedIndex = patchResultAsset(refreshedAsset);
           if (refreshedIndex >= 0) viewerIndex = refreshedIndex;
@@ -828,7 +858,6 @@
         const started = await executeAssetActionTask(plan.id);
         actionTask = await getTaskStatus(started.task_id);
         localStorage.setItem('immich-companion:asset-action-task', started.task_id);
-        startActionTaskStream(started.task_id);
         startActionTaskPolling();
       } else {
         const result = await executeAssetAction(plan.id);
@@ -919,7 +948,6 @@
         const started = await executeAssetActionTask(actionPlan.id);
         actionTask = await getTaskStatus(started.task_id);
         localStorage.setItem('immich-companion:asset-action-task', started.task_id);
-        startActionTaskStream(started.task_id);
         startActionTaskPolling();
         actionPlan = null;
       } else {
@@ -940,15 +968,6 @@
     actionTaskPollTimer = setInterval(() => void pollActionTask(), 1000);
   }
 
-  function startActionTaskStream(taskId: string): void {
-    if (actionTaskSocket && actionTaskSocket.readyState <= WebSocket.OPEN) return;
-    actionTaskSocket = openTaskStream(taskId, (next) => {
-      actionTask = next;
-      actionBusy = !isTaskTerminal(next.status);
-      if (isTaskTerminal(next.status)) void pollActionTask();
-    });
-  }
-
   async function pollActionTask(): Promise<void> {
     const taskId = actionTask?.id ?? localStorage.getItem('immich-companion:asset-action-task');
     if (!taskId) return;
@@ -961,18 +980,16 @@
         clearInterval(actionTaskPollTimer);
         actionTaskPollTimer = null;
       }
-      actionTaskSocket?.close();
-      actionTaskSocket = null;
       localStorage.removeItem('immich-companion:asset-action-task');
       const summary = next.result?.summary ?? {};
+      detailCache.clear();
+      await Promise.all([loadRelationOptions(), loadAssets()]);
       if (next.status === 'failed') {
         actionError = next.error?.message ?? 'The bulk action failed.';
         return;
       }
       actionCompletionMessage = `${summary.applied_count ?? 0} changed · ${summary.skipped_count ?? 0} skipped.`;
-      detailCache.clear();
       clearSelection();
-      await Promise.all([loadRelationOptions(), loadAssets()]);
     } catch (requestError) {
       actionError = requestError instanceof Error ? requestError.message : 'Action status is unavailable.';
     }
@@ -1028,18 +1045,6 @@
           ? `${next.last_failure.mode === 'full' ? 'Full' : 'Incremental'} sync failed after ${next.last_failure.attempts} attempt${next.last_failure.attempts === 1 ? '' : 's'}: ${next.last_failure.error}`
           : 'Synchronization failed after its retry limit.';
       }
-      const activeTaskId = next.active?.id ?? null;
-      if (activeTaskId && activeTaskId !== syncTaskStreamId) {
-        closeTaskSocket(syncTaskSocket);
-        syncTaskStreamId = activeTaskId;
-        syncTaskSocket = openTaskStream(activeTaskId, () => void refreshSyncStatus());
-      } else if (!activeTaskId) {
-        if (syncTaskSocket?.readyState !== WebSocket.CONNECTING) {
-          closeTaskSocket(syncTaskSocket);
-          syncTaskSocket = null;
-          syncTaskStreamId = null;
-        }
-      }
       if (!syncStatusInitialized) {
         syncStatusInitialized = true;
         handledSyncSuccessId = nextSuccessId;
@@ -1085,6 +1090,15 @@
   onMount(() => {
     taskUpdatesStopped = false;
     connectTaskUpdates();
+    const url = new URL(window.location.href);
+    const albumId = url.searchParams.get('albumId');
+    const tagId = url.searchParams.get('tagId');
+    if (albumId || tagId) {
+      const filters = createSimpleAssetSearchFilters();
+      if (albumId) filters.albumIds = [albumId];
+      if (tagId) filters.tagIds = [tagId];
+      expression = simpleFiltersToSearchGroup(filters);
+    }
     window.addEventListener('pointerup', finishDragSelection);
     window.addEventListener('pointercancel', finishDragSelection);
     void loadRelationOptions();
@@ -1093,13 +1107,11 @@
     const savedSelectionTask = localStorage.getItem('immich-companion:selected-sync-task');
     if (savedSelectionTask) {
       void pollSelectionTask();
-      startSelectionTaskStream(savedSelectionTask);
       startSelectionTaskPolling();
     }
     const savedActionTask = localStorage.getItem('immich-companion:asset-action-task');
     if (savedActionTask) {
       void pollActionTask();
-      startActionTaskStream(savedActionTask);
       startActionTaskPolling();
     }
     syncPollTimer = setInterval(() => void refreshSyncStatus(), 1500);
@@ -1111,9 +1123,6 @@
       if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
       taskUpdatesStopped = true;
       if (taskUpdatesReconnectTimer !== null) clearTimeout(taskUpdatesReconnectTimer);
-      selectionTaskSocket?.close();
-      actionTaskSocket?.close();
-      closeTaskSocket(syncTaskSocket);
       closeTaskSocket(taskUpdatesSocket);
     };
   });
@@ -1126,9 +1135,6 @@
     selectionController?.abort();
     viewerActionController?.abort();
     if (syncPollTimer !== null) clearInterval(syncPollTimer);
-    selectionTaskSocket?.close();
-    actionTaskSocket?.close();
-    closeTaskSocket(syncTaskSocket);
     closeTaskSocket(taskUpdatesSocket);
   });
 </script>
@@ -1170,6 +1176,7 @@
       onrelationconfirm={confirmSelectionRelationAction}
       onconfirm={confirmAction}
       oncancel={() => (actionPlan = null)}
+      onstackconfirm={confirmStackAction}
     />
   {/if}
 
@@ -1284,6 +1291,7 @@
     ontoggleselection={toggleSelection}
     onvisiblechange={(assetId) => void resolveViewerActionState(assetId)}
     onaction={previewViewerAction}
+    onsetprimary={(assetId) => previewViewerAction(assetId, 'set_stack_primary')}
     onrelationconfirm={confirmViewerRelationAction}
     onconfirmaction={confirmAction}
     oncancelaction={() => (actionPlan = null)}
