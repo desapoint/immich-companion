@@ -17,7 +17,11 @@ no media mount and performs no direct database access.
    bound action size and review lifetime. `IMMICH_COMPANION_SYNC_BATCH_SIZE`,
    `IMMICH_COMPANION_SYNC_OVERLAP_SECONDS`, and
    `IMMICH_COMPANION_SYNC_LEASE_SECONDS` map to the companion's staged sync
-   batch size, overlap window, and coordinator lease duration.
+   batch size, overlap window, and coordinator lease duration. New companion
+   databases seed Global sync load with
+   `IMMICH_COMPANION_SYNC_FULL_BATCH_SIZE` (50) and
+   `IMMICH_COMPANION_SYNC_FULL_MIN_BATCH_DELAY_SECONDS` (0.2); saved Settings
+   values take precedence after initialization.
 3. Load the original file and the overlay together in the deployment UI or
    Compose command used by the host.
 4. Confirm the companion reports `ready: true` before exposing port 8090 beyond

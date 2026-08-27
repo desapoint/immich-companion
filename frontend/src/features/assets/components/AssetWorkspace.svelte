@@ -44,6 +44,7 @@
     searchedTagIds,
   } from '../state/assetViewModel';
   import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
+  import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
     AssetActionIntent,
@@ -135,10 +136,7 @@
   let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let actionTask = $state<AssetTaskStatus | null>(null);
   let actionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
-  let taskUpdatesSocket: WebSocket | null = null;
-  let taskUpdatesReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let taskUpdatesReconnectDelay = 1000;
-  let taskUpdatesStopped = false;
+  let taskUpdateConnection: TaskUpdateConnection | null = null;
   let syncStatusInitialized = false;
   let handledSyncSuccessId: string | null = null;
   let handledSyncFailureId: string | null = null;
@@ -154,15 +152,6 @@
   };
   const viewerComparisonSource: AssetComparisonSource = 'stack';
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
-
-  function closeTaskSocket(socket: WebSocket | null): void {
-    if (!socket) return;
-    if (socket.readyState === WebSocket.CONNECTING) {
-      socket.addEventListener('open', () => socket.close(), { once: true });
-    } else {
-      socket.close();
-    }
-  }
 
   function handleTaskUpdate(task: AssetTaskStatus): void {
     const trackedTaskIds = new Set([
@@ -192,24 +181,12 @@
     }
   }
 
-  function connectTaskUpdates(): void {
-    if (taskUpdatesStopped || taskUpdatesSocket?.readyState === WebSocket.OPEN
-      || taskUpdatesSocket?.readyState === WebSocket.CONNECTING) return;
-    taskUpdatesSocket = openTaskUpdates(
+  function startTaskUpdates(): void {
+    taskUpdateConnection ??= new TaskUpdateConnection(
+      (onstatus, onclose) => openTaskUpdates(onstatus, undefined, onclose),
       handleTaskUpdate,
-      undefined,
-      () => {
-        taskUpdatesSocket = null;
-        if (!taskUpdatesStopped && taskUpdatesReconnectTimer === null) {
-          taskUpdatesReconnectTimer = setTimeout(() => {
-            taskUpdatesReconnectTimer = null;
-            connectTaskUpdates();
-            taskUpdatesReconnectDelay = Math.min(taskUpdatesReconnectDelay * 2, 10000);
-          }, taskUpdatesReconnectDelay);
-        }
-      },
     );
-    taskUpdatesSocket.addEventListener('open', () => { taskUpdatesReconnectDelay = 1000; }, { once: true });
+    taskUpdateConnection.start();
   }
   const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
   const hasSearch = $derived(expression.children.length > 0);
@@ -1180,8 +1157,7 @@
   }
 
   onMount(() => {
-    taskUpdatesStopped = false;
-    connectTaskUpdates();
+    startTaskUpdates();
     const url = new URL(window.location.href);
     const albumId = url.searchParams.get('albumId');
     const tagId = url.searchParams.get('tagId');
@@ -1213,21 +1189,17 @@
       if (syncPollTimer !== null) clearInterval(syncPollTimer);
       if (selectionTaskPollTimer !== null) clearInterval(selectionTaskPollTimer);
       if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
-      taskUpdatesStopped = true;
-      if (taskUpdatesReconnectTimer !== null) clearTimeout(taskUpdatesReconnectTimer);
-      closeTaskSocket(taskUpdatesSocket);
+      taskUpdateConnection?.stop();
     };
   });
 
   onDestroy(() => {
-    taskUpdatesStopped = true;
-    if (taskUpdatesReconnectTimer !== null) clearTimeout(taskUpdatesReconnectTimer);
+    taskUpdateConnection?.stop();
     searchController?.abort();
     detailController?.abort();
     selectionController?.abort();
     viewerActionController?.abort();
     if (syncPollTimer !== null) clearInterval(syncPollTimer);
-    closeTaskSocket(taskUpdatesSocket);
   });
 </script>
 

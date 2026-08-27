@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { loadSyncSchedules, saveSyncSchedule } from '../api/settingsApi';
-  import type { SyncSchedule } from '../types/settings';
+  import { loadSyncRuntimeSettings, loadSyncSchedules, saveSyncRuntimeSettings, saveSyncSchedule } from '../api/settingsApi';
+  import type { SyncRuntimeSettings, SyncSchedule } from '../types/settings';
 
   const defaults: Record<string, string> = {
     'asset-sync-incremental': '*/15 * * * *',
@@ -25,6 +25,9 @@
   let saving = $state<string | null>(null);
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
+  let runtime = $state<SyncRuntimeSettings | null>(null);
+  let runtimeDraft = $state<SyncRuntimeSettings>({ full_batch_size: 50, full_min_batch_delay_seconds: 0.2 });
+  let runtimeSaving = $state(false);
 
   function hydrate(items: SyncSchedule[]): void {
     schedules = items;
@@ -55,9 +58,27 @@
     }
   }
 
+  async function saveRuntime(): Promise<void> {
+    runtimeSaving = true;
+    message = null;
+    error = null;
+    try {
+      runtime = await saveSyncRuntimeSettings(runtimeDraft);
+      runtimeDraft = { ...runtime };
+      message = 'Background batch load settings saved.';
+    } catch (requestError) {
+      error = requestError instanceof Error ? requestError.message : 'Could not save background batch load settings.';
+    } finally {
+      runtimeSaving = false;
+    }
+  }
+
   onMount(async () => {
     try {
-      hydrate(await loadSyncSchedules());
+      const [loadedSchedules, loadedRuntime] = await Promise.all([loadSyncSchedules(), loadSyncRuntimeSettings()]);
+      hydrate(loadedSchedules);
+      runtime = loadedRuntime;
+      runtimeDraft = { ...loadedRuntime };
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Could not load settings.';
     } finally {
@@ -78,6 +99,18 @@
   {:else if error && schedules.length === 0}
     <p class="state error" role="alert">{error}</p>
   {:else}
+    <article class="runtime-card" aria-labelledby="runtime-settings-title">
+      <div>
+        <p class="eyebrow">Host responsiveness</p>
+        <h2 id="runtime-settings-title">Background batch load</h2>
+        <p class="hint">Global sync and large asset actions rest after each batch for at least this delay and otherwise as long as the batch took, limiting sustained work to about half of available capacity. A batch-size change applies to the next job; delay changes apply at the next batch.</p>
+      </div>
+      <div class="runtime-fields">
+        <label class="field" for="full-batch-size"><span>Assets per batch</span><input id="full-batch-size" type="number" min="1" max="500" value={runtimeDraft.full_batch_size} oninput={(event) => runtimeDraft = { ...runtimeDraft, full_batch_size: Number(event.currentTarget.value) }} /></label>
+        <label class="field" for="full-batch-delay"><span>Minimum delay (seconds)</span><input id="full-batch-delay" type="number" min="0" max="60" step="0.1" value={runtimeDraft.full_min_batch_delay_seconds} oninput={(event) => runtimeDraft = { ...runtimeDraft, full_min_batch_delay_seconds: Number(event.currentTarget.value) }} /></label>
+      </div>
+      <button class="save" type="button" disabled={runtimeSaving || !Number.isInteger(runtimeDraft.full_batch_size) || runtimeDraft.full_batch_size < 1 || runtimeDraft.full_batch_size > 500 || runtimeDraft.full_min_batch_delay_seconds < 0 || runtimeDraft.full_min_batch_delay_seconds > 60} onclick={() => void saveRuntime()}>{runtimeSaving ? 'Saving…' : 'Save load settings'}</button>
+    </article>
     <div class="cards">
       {#each schedules as schedule}
         {@const draft = drafts[schedule.name]}
@@ -120,7 +153,10 @@
   h2 { font-size: 1.25rem; }
   .intro > p:last-child { color: var(--color-ink-muted); line-height: 1.6; }
   .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-  .schedule-card { display: grid; gap: 1.1rem; padding: 1.25rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); }
+  .schedule-card, .runtime-card { display: grid; gap: 1.1rem; padding: 1.25rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); }
+  .runtime-card { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
+  .runtime-card .hint { max-width: 48rem; line-height: 1.5; }
+  .runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(10rem, 1fr)); gap: .75rem; grid-column: 1 / -1; }
   .card-heading { display: flex; justify-content: space-between; gap: 1rem; }
   .toggle { display: flex; align-items: center; gap: 0.45rem; color: var(--color-ink-muted); font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
   .field { display: grid; gap: 0.45rem; color: var(--color-ink-muted); font-size: 0.78rem; font-weight: 700; }
@@ -133,5 +169,5 @@
   .hint, .state, .success { margin: 0; color: var(--color-ink-muted); font-size: 0.78rem; }
   .error { color: var(--color-danger, #b42318); }
   .success { color: var(--color-accent-strong); font-weight: 700; }
-  @media (max-width: 46rem) { .cards { grid-template-columns: 1fr; } }
+  @media (max-width: 46rem) { .cards, .runtime-fields { grid-template-columns: 1fr; } .runtime-card { grid-template-columns: 1fr; } }
 </style>

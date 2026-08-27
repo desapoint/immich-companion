@@ -61,6 +61,7 @@ class SyncRunStatus(BaseModel):
 
     id: UUID
     task_id: UUID | None = None
+    full_batch_size: int | None = Field(default=None, ge=1, le=500)
     mode: SyncMode
     status: SyncStatus
     phase: SyncPhase

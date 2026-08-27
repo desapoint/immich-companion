@@ -6,7 +6,7 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from time import monotonic
+from time import monotonic, perf_counter
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
@@ -28,6 +28,7 @@ from companion.sync_schema import (
     SyncProgress,
     SyncRunStatus,
 )
+from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
@@ -86,12 +87,17 @@ class AssetSyncTaskHandler:
             )
             if mode == "incremental" and window_start is None:
                 mode = "full"
+            full_batch_payload: dict[str, int] = {}
+            if mode == "full":
+                pacing = await service._runtime_sync_settings.get()
+                full_batch_payload = {"full_batch_size": pacing.full_batch_size}
             payload = {
                 **payload,
                 "mode": mode,
                 "generation": generation,
                 "window_start": window_start.isoformat() if window_start else None,
                 "window_end": window_end.isoformat(),
+                **full_batch_payload,
             }
             await context.update_payload(payload)
         checkpoint = context.task.checkpoint
@@ -109,6 +115,11 @@ class AssetSyncTaskHandler:
         assert window_end is not None
         run = SyncRunStatus(
             id=context.task.id,
+            full_batch_size=(
+                int(payload["full_batch_size"])
+                if mode == "full" and payload.get("full_batch_size") is not None
+                else None
+            ),
             mode=mode,  # type: ignore[arg-type]
             status="recovering" if context.task.status == "recovering" else "running",
             phase=phase,  # type: ignore[arg-type]
@@ -166,6 +177,10 @@ class AssetRepairTaskHandler:
                 "detail": "Refreshing affected assets",
             },
         )
+        pacing = await self._service._runtime_sync_settings.get()
+        batch_size = pacing.full_batch_size
+        throttle = len(asset_ids) > batch_size
+        batch_started = perf_counter()
         for index in range(processed, len(asset_ids)):
             await self._service._repair_targets_now(
                 [asset_ids[index]], include_stacks=include_stacks
@@ -184,6 +199,13 @@ class AssetRepairTaskHandler:
                     "detail": f"Refreshed {processed}/{len(asset_ids)} assets",
                 },
             )
+            if (
+                throttle
+                and processed % batch_size == 0
+                and processed < len(asset_ids)
+            ):
+                await self._service._pace_runtime_batch(batch_started)
+                batch_started = perf_counter()
         return TaskResult(
             summary={"repaired": processed},
             counters={"requested": len(asset_ids), "processed": processed},
@@ -346,12 +368,18 @@ class AssetSyncService:
         syncs: SyncRepository,
         settings: Settings,
         coordinator: TaskCoordinator | None = None,
+        runtime_sync_settings: object | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._syncs = syncs
         self._settings = settings
         self._coordinator = coordinator
+        self._runtime_sync_settings = (
+            runtime_sync_settings
+            if runtime_sync_settings is not None
+            else DefaultSyncRuntimeSettingsRepository(settings)
+        )
         self._legacy_metadata = syncs
         self._worker: asyncio.Task[None] | None = None
         self._scheduler: asyncio.Task[None] | None = None
@@ -398,6 +426,11 @@ class AssetSyncService:
         return SyncRunStatus(
             id=task.id,
             task_id=task.id,
+            full_batch_size=(
+                int(payload["full_batch_size"])
+                if payload.get("mode") == "full" and payload.get("full_batch_size") is not None
+                else None
+            ),
             mode=payload.get("mode", "incremental"),
             status=status,
             phase=phase,
@@ -427,6 +460,27 @@ class AssetSyncService:
     @property
     def _overlap(self) -> timedelta:
         return timedelta(seconds=self._settings.sync_overlap_seconds)
+
+    @staticmethod
+    def _full_batch_size(run: SyncRunStatus, settings: Settings) -> int:
+        if run.mode != "full":
+            return settings.sync_batch_size
+        return run.full_batch_size or settings.sync_full_batch_size
+
+    async def _pace_full_batch(self, run: SyncRunStatus, started: float) -> None:
+        """Yield host capacity after a durable global-sync batch checkpoint."""
+
+        if run.mode != "full":
+            return
+        await self._pace_runtime_batch(started)
+
+    async def _pace_runtime_batch(self, started: float) -> None:
+        """Give the host equal idle time after a bounded background batch."""
+
+        pacing = await self._runtime_sync_settings.get()
+        await asyncio.sleep(
+            max(pacing.full_min_batch_delay_seconds, perf_counter() - started)
+        )
 
     def wake(self) -> None:
         """Ensure this process competes for queued or recoverable work."""
@@ -503,6 +557,11 @@ class AssetSyncService:
                 existing = await self._coordinator.find_active("asset_sync", deduplication_key)
                 if existing is not None:
                     return self._status_from_task(existing)
+            runtime_pacing = (
+                await self._runtime_sync_settings.get()
+                if effective_mode == "full"
+                else None
+            )
             task = await self._coordinator.submit(
                 "asset_sync",
                 {
@@ -510,6 +569,11 @@ class AssetSyncService:
                     "generation": generation,
                     "window_start": window_start.isoformat() if window_start else None,
                     "window_end": window_end.isoformat(),
+                    **(
+                        {"full_batch_size": runtime_pacing.full_batch_size}
+                        if runtime_pacing is not None
+                        else {}
+                    ),
                 },
                 priority=100 if effective_mode == "full" else 10,
                 deduplication_key=deduplication_key,
@@ -1026,8 +1090,9 @@ class AssetSyncService:
         tags: list[ImmichTag],
         counters: dict[str, int],
     ) -> None:
-        album_batches = batches(albums, self._settings.sync_batch_size)
-        tag_batches = batches(tags, self._settings.sync_batch_size)
+        batch_size = self._full_batch_size(run, self._settings)
+        album_batches = batches(albums, batch_size)
+        tag_batches = batches(tags, batch_size)
         completed_albums = 0
         completed_tags = 0
         if run.phase == "catalogs" and run.cursor:
@@ -1040,6 +1105,7 @@ class AssetSyncService:
         for index, album_batch in enumerate(album_batches, start=1):
             if index <= completed_albums:
                 continue
+            started = perf_counter()
             created, observed = await self._assets.upsert_album_catalog(album_batch, run.generation)
             counters["albums_seen"] += created + observed
             await self._checkpoint(
@@ -1058,9 +1124,11 @@ class AssetSyncService:
                     ),
                 ),
             )
+            await self._pace_full_batch(run, started)
         for index, tag_batch in enumerate(tag_batches, start=1):
             if index <= completed_tags:
                 continue
+            started = perf_counter()
             created, observed = await self._assets.upsert_tag_catalog(tag_batch, run.generation)
             counters["tags_seen"] += created + observed
             await self._checkpoint(
@@ -1079,6 +1147,7 @@ class AssetSyncService:
                     ),
                 ),
             )
+            await self._pace_full_batch(run, started)
         await self._checkpoint(
             run,
             owner,
@@ -1101,7 +1170,7 @@ class AssetSyncService:
             completed_batches = int(run.cursor.rsplit(":", 1)[1])
         batch_number = completed_batches
         iterator = self._immich.iter_assets(
-            page_size=self._settings.sync_batch_size,
+            page_size=self._full_batch_size(run, self._settings),
             updated_after=run.window_start if run.mode == "incremental" else None,
             updated_before=run.window_end if run.mode == "incremental" else None,
             start_page=completed_batches + 1,
@@ -1110,7 +1179,7 @@ class AssetSyncService:
             iterator = self._iter_incremental_details(iterator)
         async for asset in iterator:
             batch.append(asset)
-            if len(batch) < self._settings.sync_batch_size:
+            if len(batch) < self._full_batch_size(run, self._settings):
                 continue
             batch_number += 1
             await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
@@ -1135,6 +1204,7 @@ class AssetSyncService:
         batch_number: int,
         asset_total: int | None,
     ) -> None:
+        started = perf_counter()
         created, updated, unchanged = await self._assets.upsert_asset_batch(
             batch,
             run.generation,
@@ -1158,6 +1228,7 @@ class AssetSyncService:
                 else f"Media {counters['assets_seen']} processed",
             ),
         )
+        await self._pace_full_batch(run, started)
 
     @staticmethod
     def _stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
@@ -1203,10 +1274,11 @@ class AssetSyncService:
         if run.phase == "stacks" and run.cursor:
             completed_batches = int(run.cursor.rsplit(":", 1)[1])
         for index, stack_batch in enumerate(
-            batches(payloads, self._settings.sync_batch_size), start=1
+            batches(payloads, self._full_batch_size(run, self._settings)), start=1
         ):
             if index <= completed_batches:
                 continue
+            started = perf_counter()
             counters["stack_members"] += await self._assets.apply_stack_batch(
                 stack_batch, run.generation
             )
@@ -1224,6 +1296,7 @@ class AssetSyncService:
                     f"Stacks {min(counters['stacks_seen'], len(payloads))}/{len(payloads)}",
                 ),
             )
+            await self._pace_full_batch(run, started)
         await self._checkpoint(
             run,
             owner,
@@ -1289,9 +1362,10 @@ class AssetSyncService:
             page_number = start_page
             async for asset_ids in self._immich.iter_album_asset_ids(
                 album.id,
-                page_size=self._settings.sync_batch_size,
+                page_size=self._full_batch_size(run, self._settings),
                 start_page=start_page,
             ):
+                started = perf_counter()
                 counters["album_memberships"] += await self._assets.upsert_album_memberships(
                     album.id, asset_ids, run.generation
                 )
@@ -1312,6 +1386,7 @@ class AssetSyncService:
                         ),
                     ),
                 )
+                await self._pace_full_batch(run, started)
                 page_number += 1
             if page_number == start_page == 1:
                 await self._checkpoint(
@@ -1341,9 +1416,10 @@ class AssetSyncService:
             page_number = start_page
             async for asset_ids in self._immich.iter_tag_asset_ids(
                 tag.id,
-                page_size=self._settings.sync_batch_size,
+                page_size=self._full_batch_size(run, self._settings),
                 start_page=start_page,
             ):
+                started = perf_counter()
                 counters["tag_memberships"] += await self._assets.upsert_tag_memberships(
                     tag.id, asset_ids, run.generation
                 )
@@ -1364,6 +1440,7 @@ class AssetSyncService:
                         ),
                     ),
                 )
+                await self._pace_full_batch(run, started)
                 page_number += 1
             if page_number == start_page == 1:
                 await self._checkpoint(

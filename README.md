@@ -95,6 +95,11 @@ reload or service restart.
 
 The main tuning values are `SYNC_BATCH_SIZE` (default `250`),
 `SYNC_OVERLAP_SECONDS` (default `300`), and `SYNC_LEASE_SECONDS` (default `60`).
+Global sync load defaults to 50 assets per batch with a 0.2-second minimum pause;
+configure these values from Settings. Each persisted full-sync batch then waits at
+least that delay and otherwise as long as the preceding batch took, avoiding
+sustained full-host pressure. Environment values seed a new companion database;
+saved Settings values take precedence and survive restarts.
 Automatic schedules are disabled by default and are configured from the Settings
 page using common presets or five-field cron expressions. The default schedule
 values are incremental every 15 minutes and full repair every Sunday at midnight;

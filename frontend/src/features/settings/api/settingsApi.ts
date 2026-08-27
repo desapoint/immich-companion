@@ -1,4 +1,24 @@
-import type { SyncSchedule } from '../types/settings';
+import type { SyncRuntimeSettings, SyncSchedule } from '../types/settings';
+
+async function requestRuntimeSettings(
+  method: 'GET' | 'PUT', value?: SyncRuntimeSettings,
+): Promise<SyncRuntimeSettings> {
+  const response = await fetch('/api/settings/sync/runtime', {
+    method,
+    headers: { accept: 'application/json', ...(value ? { 'content-type': 'application/json' } : {}) },
+    ...(value ? { body: JSON.stringify(value) } : {}),
+  });
+  if (!response.ok) throw new Error(`Could not save global-sync load settings (${response.status}).`);
+  return (await response.json()) as SyncRuntimeSettings;
+}
+
+export function loadSyncRuntimeSettings(): Promise<SyncRuntimeSettings> {
+  return requestRuntimeSettings('GET');
+}
+
+export function saveSyncRuntimeSettings(value: SyncRuntimeSettings): Promise<SyncRuntimeSettings> {
+  return requestRuntimeSettings('PUT', value);
+}
 
 export async function loadSyncSchedules(): Promise<SyncSchedule[]> {
   const response = await fetch('/api/settings/sync');

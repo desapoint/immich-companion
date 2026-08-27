@@ -10,3 +10,8 @@ export interface SyncSchedule {
   payload: Record<string, unknown>;
   priority: number;
 }
+
+export interface SyncRuntimeSettings {
+  full_batch_size: number;
+  full_min_batch_delay_seconds: number;
+}

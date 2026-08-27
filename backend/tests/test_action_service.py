@@ -15,6 +15,7 @@ from companion.action_schema import (
 from companion.action_service import AssetActionService, DestructiveActionsDisabledError
 from companion.config import Settings
 from companion.models import ActionPlanRecord
+from companion.sync_settings import SyncRuntimeSettings
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -163,7 +164,18 @@ class FakeSync:
         self.calls += 1
 
 
-def service(current, applicability, *, destructive=True):
+class RuntimeSettings:
+    def __init__(self, batch_size: int = 50, delay: float = 0.2) -> None:
+        self.value = SyncRuntimeSettings(
+            full_batch_size=batch_size,
+            full_min_batch_delay_seconds=delay,
+        )
+
+    async def get(self) -> SyncRuntimeSettings:
+        return self.value
+
+
+def service(current, applicability, *, destructive=True, runtime=None):
     assets = FakeAssets(current, applicability)
     actions = FakeActions()
     immich = FakeImmich()
@@ -174,8 +186,40 @@ def service(current, applicability, *, destructive=True):
         assets,  # type: ignore[arg-type]
         actions,  # type: ignore[arg-type]
         sync,  # type: ignore[arg-type]
+        runtime,
     )
     return instance, actions, immich, sync
+
+
+@pytest.mark.asyncio
+async def test_large_actions_use_runtime_batches_and_pause_between_them(monkeypatch) -> None:
+    asset_ids = [UUID(f"{index:08x}-0000-4000-8000-000000000000") for index in range(1, 52)]
+    current = resolution().model_copy(update={"ids": asset_ids})
+    all_ids = set(asset_ids)
+    instance, _, immich, _ = service(
+        current,
+        [all_ids, all_ids, set()],
+        runtime=RuntimeSettings(),
+    )
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("companion.action_service.perf_counter", lambda: 3.0)
+    monkeypatch.setattr("companion.action_service.asyncio.sleep", sleep)
+    plan = await instance.plan(
+        AssetActionPlanRequest(
+            selection=AssetSelectionRequest(mode="explicit", ids=asset_ids),
+            action="archive_toggle",
+        )
+    )
+
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert [len(ids) for _, _, ids in immich.calls] == [50, 1]
+    assert sleeps == [0.2]
+    assert result.applied_count == 51
 
 
 @pytest.mark.asyncio

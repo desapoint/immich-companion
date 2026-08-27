@@ -297,6 +297,19 @@ class TaskScheduleRecord(Base):
     )
 
 
+class SyncRuntimeSettingsRecord(Base):
+    """Singleton, user-editable pacing settings for global synchronization."""
+
+    __tablename__ = "sync_runtime_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    full_batch_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    full_min_batch_delay_seconds: Mapped[float] = mapped_column(nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ActionPlanRecord(Base):
     """Immutable reviewed action target plus its execution audit."""
 

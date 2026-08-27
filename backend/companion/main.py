@@ -84,6 +84,7 @@ from companion.sync_schema import (
     SyncRunStatus,
     SyncStartRequest,
 )
+from companion.sync_settings import SyncRuntimeSettingsRepository, SyncRuntimeSettingsUpdate
 from companion.task_coordinator import TaskCoordinator
 from companion.task_schema import TaskScheduleUpdate, TaskScheduleView, TaskStatusView
 
@@ -103,6 +104,9 @@ def create_app(
         else None
     )
     asset_repository = AssetRepository(database) if database is not None else None
+    runtime_sync_settings = (
+        SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
+    )
     task_coordinator = (
         TaskCoordinator(
             database,
@@ -120,6 +124,7 @@ def create_app(
             SyncRepository(database),
             runtime_settings,
             task_coordinator,
+            runtime_sync_settings,
         )
         if database is not None and asset_repository is not None
         else None
@@ -164,6 +169,7 @@ def create_app(
             asset_repository,
             ActionRepository(database),
             asset_sync,
+            runtime_sync_settings,
         )
         if database is not None and asset_repository is not None and asset_sync is not None
         else None
@@ -463,6 +469,22 @@ def create_app(
         if task_coordinator is None:
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
         return await task_coordinator.list_schedules()
+
+    @app.get("/api/settings/sync/runtime")
+    async def sync_runtime_settings() -> dict[str, object]:
+        if database is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
+
+    @app.put("/api/settings/sync/runtime")
+    async def update_sync_runtime_settings(
+        request: SyncRuntimeSettingsUpdate,
+    ) -> dict[str, object]:
+        if database is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        return (
+            await SyncRuntimeSettingsRepository(database, runtime_settings).update(request)
+        ).model_dump()
 
     @app.put("/api/settings/sync/{schedule_name}", response_model=TaskScheduleView)
     async def update_sync_schedule(

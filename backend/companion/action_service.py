@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from time import perf_counter
 from uuid import UUID
 
 from companion.action_repository import ActionRepository
@@ -25,6 +27,7 @@ from companion.asset_service import AssetSyncService
 from companion.config import Settings
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.models import ActionPlanRecord
+from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import PermanentTaskError, TaskContext
 from companion.task_schema import TaskResult
 
@@ -62,12 +65,28 @@ class AssetActionService:
         assets: AssetRepository,
         actions: ActionRepository,
         sync: AssetSyncService,
+        runtime_sync_settings: object | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
         self._assets = assets
         self._actions = actions
         self._sync = sync
+        self._runtime_sync_settings = (
+            runtime_sync_settings
+            if runtime_sync_settings is not None
+            else DefaultSyncRuntimeSettingsRepository(settings)
+        )
+
+    async def _pace_large_action_batch(self, started: float, *, enabled: bool) -> None:
+        """Rest between large-action batches without delaying small actions."""
+
+        if not enabled:
+            return
+        pacing = await self._runtime_sync_settings.get()
+        await asyncio.sleep(
+            max(pacing.full_min_batch_delay_seconds, perf_counter() - started)
+        )
 
     async def _repair_targets(
         self,
@@ -389,6 +408,9 @@ class AssetActionService:
         operation: AssetActionOperation,
         target_ids: list[UUID],
         progress: Callable[[int, int, str], Awaitable[None]] | None = None,
+        *,
+        batch_size: int,
+        throttle: bool,
     ) -> AssetActionResult:
         """Apply, refresh once, and verify every relation in a reviewed plan."""
 
@@ -409,7 +431,9 @@ class AssetActionService:
             initial[relation_id] = (applicable, skipped)
             relation_processed += len(skipped)
             try:
-                for batch in self._batches(applicable, operation):
+                action_batches = self._batches(applicable, operation, batch_size)
+                for index, batch in enumerate(action_batches):
+                    batch_started = perf_counter()
                     await self._apply(operation, batch, relation_id)
                     relation_processed += len(batch)
                     if progress is not None:
@@ -418,6 +442,8 @@ class AssetActionService:
                             relation_total,
                             f"Updated {relation_processed}/{relation_total} media relationships",
                         )
+                    if index + 1 < len(action_batches):
+                        await self._pace_large_action_batch(batch_started, enabled=throttle)
                 successful_relations.append(relation_id)
             except Exception:
                 api_failed[relation_id] = applicable
@@ -555,6 +581,9 @@ class AssetActionService:
             raise ActionPlanConflictError("Action plan has already been used")
         target_ids = [UUID(identifier) for identifier in claimed.target_ids]
         operation = claimed.operation
+        pacing = await self._runtime_sync_settings.get()
+        batch_size = pacing.full_batch_size
+        throttle = len(target_ids) > batch_size
         if operation == "stack":
             try:
                 target_ids, stack_repair_ids = await self._prepare_stack(
@@ -579,7 +608,14 @@ class AssetActionService:
                 )
                 raise
         if claimed.relation_ids:
-            return await self._execute_relations(claimed, operation, target_ids, progress)
+            return await self._execute_relations(
+                claimed,
+                operation,
+                target_ids,
+                progress,
+                batch_size=batch_size,
+                throttle=throttle,
+            )
         relation_id = claimed.relation_id
         applicable_set = await self._assets.applicable_action_ids(
             operation,
@@ -596,7 +632,9 @@ class AssetActionService:
                 # removed, so remaining and detached members are both repaired.
                 repair_ids = await self._stack_repair_ids(target_ids)
             updated = 0
-            for batch in self._batches(applicable_ids, operation):
+            action_batches = self._batches(applicable_ids, operation, batch_size)
+            for index, batch in enumerate(action_batches):
+                batch_started = perf_counter()
                 await self._apply(operation, batch, relation_id)
                 updated += len(batch)
                 if progress is not None:
@@ -605,6 +643,8 @@ class AssetActionService:
                         len(target_ids),
                         f"Updated {skipped_count + updated}/{len(target_ids)} assets",
                     )
+                if index + 1 < len(action_batches):
+                    await self._pace_large_action_batch(batch_started, enabled=throttle)
             if applicable_ids:
                 if operation == "stack":
                     repair_ids = stack_repair_ids
@@ -698,7 +738,7 @@ class AssetActionService:
         return result
 
     def _batches(
-        self, ids: list[UUID], operation: AssetActionOperation
+        self, ids: list[UUID], operation: AssetActionOperation, batch_size: int
     ) -> list[list[UUID]]:
         """Bound remote mutations so task progress advances per media batch."""
 
@@ -708,8 +748,7 @@ class AssetActionService:
         # independent stacks instead of the reviewed single stack.
         if operation == "stack":
             return [ids]
-        size = self._settings.sync_batch_size
-        return [ids[index : index + size] for index in range(0, len(ids), size)]
+        return [ids[index : index + batch_size] for index in range(0, len(ids), batch_size)]
 
 
 class AssetActionTaskHandler:
