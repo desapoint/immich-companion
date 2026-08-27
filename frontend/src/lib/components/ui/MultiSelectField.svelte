@@ -401,10 +401,12 @@
   .multi-select-popover {
     position: fixed;
     z-index: 1000;
-    display: grid;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
     gap: 0.4rem;
     padding: 0.42rem;
-    overflow: auto;
+    overflow: hidden;
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-sm);
     background: var(--color-surface-raised);
@@ -430,8 +432,9 @@
 
   .option-list {
     display: grid;
+    flex: 1 1 auto;
     min-height: 0;
-    max-height: min(19rem, 42vh);
+    max-height: none;
     gap: 0.18rem;
     overflow-y: auto;
     overscroll-behavior: contain;
