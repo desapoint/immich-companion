@@ -5,6 +5,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 COMPOSE_FILE="${REPO_DIR}/docker/compose.test.yml"
+BACKEND_DEV_COMPOSE_FILE="${REPO_DIR}/docker/compose.backend-dev.yml"
 PROJECT_NAME="immich-companion-test"
 LOCAL_STATE_DIR="${REPO_DIR}/.local/test-environment"
 COMPOSE_ENV_FILE="${LOCAL_STATE_DIR}/compose.env"
@@ -43,6 +44,15 @@ compose() {
     --env-file "${COMPOSE_ENV_FILE}" \
     --project-name "${PROJECT_NAME}" \
     --file "${COMPOSE_FILE}" \
+    "$@"
+}
+
+compose_backend_dev() {
+  "${COMPOSE[@]}" \
+    --env-file "${COMPOSE_ENV_FILE}" \
+    --project-name "${PROJECT_NAME}" \
+    --file "${COMPOSE_FILE}" \
+    --file "${BACKEND_DEV_COMPOSE_FILE}" \
     "$@"
 }
 
@@ -180,6 +190,22 @@ start_frontend() {
       --strictPort
 }
 
+start_backend_dev() {
+  echo "Switching only the companion service to bind-mounted Uvicorn reload mode..."
+  # Legacy docker-compose 1.29 cannot reliably recreate containers built by
+  # current Docker engines. The companion is stateless, so remove only that
+  # service before applying the development override; all volumes and other
+  # services remain untouched.
+  compose rm --stop --force companion
+  compose_backend_dev up --detach --no-deps companion
+  if ! wait_until_ready; then
+    echo "If the supporting services are stopped, run $0 start before retrying backend mode." >&2
+    return 1
+  fi
+  echo "Backend reload is watching ${REPO_DIR}/backend/companion."
+  echo "Python source edits now reload without rebuilding the image."
+}
+
 parse_start_options() {
   RESET_MODE=false
   START_FRONTEND=false
@@ -203,7 +229,7 @@ parse_start_options() {
 
 usage() {
   echo "Usage: $0 start [--reset] [--frontend]"
-  echo "       $0 {frontend|stop|restart|status|logs|smoke|config}"
+  echo "       $0 {backend|frontend|dev|stop|restart|status|logs|smoke|config}"
 }
 
 COMMAND="${1:-}"
@@ -241,6 +267,21 @@ case "${COMMAND}" in
     fi
     start_frontend
     ;;
+  backend)
+    if [[ $# -ne 0 ]]; then
+      usage >&2
+      exit 2
+    fi
+    start_backend_dev
+    ;;
+  dev)
+    if [[ $# -ne 0 ]]; then
+      usage >&2
+      exit 2
+    fi
+    start_backend_dev
+    start_frontend
+    ;;
   status)
     compose ps
     ;;
@@ -252,7 +293,8 @@ case "${COMMAND}" in
     ;;
   config)
     compose config --quiet
-    echo "Compose configuration is valid."
+    compose_backend_dev config --quiet
+    echo "Base and backend-development Compose configurations are valid."
     ;;
   *)
     usage >&2

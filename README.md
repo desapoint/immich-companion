@@ -170,8 +170,26 @@ Open <http://localhost:5173> from Windows. Vite binds to `0.0.0.0`, proxies
 `/api` to the companion on port 8090, and applies Svelte/CSS changes with native
 hot-module replacement. `Ctrl+C` stops Vite only; Immich and the backend keep
 running. The helper installs locked frontend dependencies only when missing or
-when the lockfile changed. Apply backend changes with another plain `start`,
-which rebuilds containers while retaining environment state.
+when the lockfile changed.
+
+For backend changes, switch only the companion service to bind-mounted Uvicorn
+reload mode:
+
+```bash
+./scripts/test-env.sh backend
+```
+
+Python edits under `backend/companion/` then reload automatically without an
+image build or an Immich/database restart. To enable backend reload and enter
+the frontend HMR loop together, use:
+
+```bash
+./scripts/test-env.sh dev
+```
+
+Run `start` again when dependencies, the Dockerfile, or container configuration
+change. A normal `start` returns the companion to its production-like image
+command while preserving test data.
 
 ### Windows access when Docker runs inside WSL 2
 
