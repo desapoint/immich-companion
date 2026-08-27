@@ -304,6 +304,14 @@ def create_app(
             )
         return asset_repository
 
+    def require_asset_sync() -> AssetSyncService:
+        if asset_sync is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return asset_sync
+
     def map_immich_error(error: ImmichApiError) -> HTTPException:
         if error.status_code == status.HTTP_404_NOT_FOUND:
             return HTTPException(
@@ -580,20 +588,20 @@ def create_app(
         """List trashed assets directly from Immich, without local index data."""
 
         try:
-            result = await require_immich().search_assets_page(
-                page, size=page_size, trashed=True
-            )
+            trashed_assets = [asset async for asset in require_immich().iter_trashed_assets()]
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+        total = len(trashed_assets)
+        offset = (page - 1) * page_size
         return AssetSearchResponse(
             items=[
                 add_public_asset_url(AssetSummary.from_immich(asset))
-                for asset in result.items
+                for asset in trashed_assets[offset : offset + page_size]
             ],
-            total=result.total,
+            total=total,
             page=page,
             page_size=page_size,
-            pages=(result.total + page_size - 1) // page_size,
+            pages=(total + page_size - 1) // page_size,
         )
 
     @app.post(
@@ -1024,6 +1032,7 @@ def create_app(
     async def restore_asset(asset_id: UUID) -> Response:
         """Restore one lightweight record, then refresh its normal workspace data."""
 
+        sync = require_asset_sync()
         try:
             asset = await require_immich().get_asset(asset_id)
         except ImmichApiError as error:
@@ -1032,8 +1041,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="The asset is not in Restore.")
         try:
             await require_immich().restore_assets([asset_id])
-            assert asset_sync is not None
-            await asset_sync.reconcile_targets([asset_id])
+            await sync.reconcile_targets([asset_id])
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1042,33 +1050,41 @@ def create_app(
     async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
         """Restore selected or all lightweight records in paced server-side batches."""
 
+        sync = require_asset_sync()
+        pacing = await sync._runtime_sync_settings.get()
         if request.all:
-            asset_ids: list[UUID] = []
-            page = 1
-            while True:
+            try:
+                asset_ids = [
+                    asset.id async for asset in require_immich().iter_trashed_assets()
+                ]
+            except ImmichApiError as error:
+                raise map_immich_error(error) from error
+        else:
+            asset_ids = list(dict.fromkeys(request.ids))
+            resolved_assets = []
+            for batch in batches(asset_ids, pacing.full_batch_size):
                 try:
-                    result = await require_immich().search_assets_page(
-                        page, size=500, trashed=True
+                    resolved_assets.extend(
+                        await asyncio.gather(
+                            *(require_immich().get_asset(asset_id) for asset_id in batch)
+                        )
                     )
                 except ImmichApiError as error:
                     raise map_immich_error(error) from error
-                asset_ids.extend(asset.id for asset in result.items)
-                if result.next_page is None:
-                    break
-                page = int(result.next_page)
-        else:
-            asset_ids = request.ids
+            if any(not asset.is_trashed for asset in resolved_assets):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Some requested assets are no longer in Restore.",
+                )
         if not asset_ids:
             raise HTTPException(status_code=404, detail="No matching trashed assets were found.")
-        assert asset_sync is not None
-        pacing = await asset_sync._runtime_sync_settings.get()
         restore_batches = batches(asset_ids, pacing.full_batch_size)
         for index, batch in enumerate(restore_batches):
             try:
                 await require_immich().restore_assets(batch)
             except ImmichApiError as error:
                 raise map_immich_error(error) from error
-            await asset_sync.reconcile_targets(batch)
+            await sync.reconcile_targets(batch)
             if index < len(restore_batches) - 1:
                 await asyncio.sleep(pacing.full_min_batch_delay_seconds)
         return {"restored": len(asset_ids)}

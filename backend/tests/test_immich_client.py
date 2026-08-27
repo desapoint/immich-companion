@@ -95,6 +95,57 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_trashed_assets_use_epoch_filter_and_drop_active_leaks() -> None:
+    payloads: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        payloads.append(body)
+        page = int(body["page"])
+        active = asset_payload(ASSET_ONE, "active.jpg")
+        trashed = asset_payload(ASSET_TWO, "trashed.jpg")
+        trashed["isTrashed"] = True
+        return httpx.Response(
+            200,
+            json={
+                "assets": {
+                    "count": 2 if page == 1 else 1,
+                    "total": 2 if page == 1 else 1,
+                    "items": [active, trashed] if page == 1 else [trashed],
+                    "nextPage": "2" if page == 1 else None,
+                }
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    assets = [asset async for asset in client.iter_trashed_assets(page_size=48)]
+
+    assert [asset.id for asset in assets] == [ASSET_TWO, ASSET_TWO]
+    assert payloads == [
+        {
+            "page": 1,
+            "size": 48,
+            "order": "asc",
+            "withExif": True,
+            "withPeople": True,
+            "withStacked": True,
+            "withDeleted": True,
+            "trashedAfter": "1970-01-01T00:00:00+00:00",
+        },
+        {
+            "page": 2,
+            "size": 48,
+            "order": "asc",
+            "withExif": True,
+            "withPeople": True,
+            "withStacked": True,
+            "withDeleted": True,
+            "trashedAfter": "1970-01-01T00:00:00+00:00",
+        },
+    ]
+
+
+@pytest.mark.asyncio
 async def test_incremental_metadata_window_is_bounded_in_request_payload() -> None:
     lower = datetime(2026, 8, 26, 11, 55, tzinfo=UTC)
     upper = datetime(2026, 8, 26, 12, 0, tzinfo=UTC)

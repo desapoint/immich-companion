@@ -28,16 +28,21 @@ import { createDefaultAssetSort } from '../state/assetSort';
 import { serializeSearchGroup } from '../state/assetViewModel';
 import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
 
-async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const response = await fetch(input, {
-    headers: { Accept: 'application/json', ...init?.headers },
     ...init,
+    headers: { Accept: 'application/json', ...init?.headers },
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);
     const detail = body && typeof body.detail === 'string' ? body.detail : null;
     throw new Error(detail ?? `Companion request failed with HTTP ${response.status}.`);
   }
+  return response;
+}
+
+async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
+  const response = await request(input, init);
   return (await response.json()) as T;
 }
 
@@ -317,6 +322,30 @@ export function getAssetDetail(assetId: string, signal?: AbortSignal): Promise<A
 
 export function getRestoreAssetDetail(assetId: string, signal?: AbortSignal): Promise<AssetDetail> {
   return requestJson(`/api/restore/${encodeURIComponent(assetId)}`, { signal });
+}
+
+export async function getRestoreAssets(
+  page: number,
+  pageSize = 48,
+  signal?: AbortSignal,
+): Promise<AssetSearchResponse> {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) });
+  const response = await requestJson<AssetSearchResponse>(`/api/restore?${query}`, { signal });
+  return normalizeAssetSearchResponse(response);
+}
+
+export async function restoreAsset(assetId: string): Promise<void> {
+  await request(`/api/restore/${encodeURIComponent(assetId)}`, { method: 'POST' });
+}
+
+export function restoreAssets(
+  target: { ids: string[] } | { all: true },
+): Promise<{ restored: number }> {
+  return requestJson('/api/restore', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(target),
+  });
 }
 
 export function getAssetSummary(assetId: string, signal?: AbortSignal): Promise<AssetSummary | null> {

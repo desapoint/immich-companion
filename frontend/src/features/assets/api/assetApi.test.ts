@@ -6,10 +6,13 @@ import {
   buildAssetPreviewItems,
   buildAssetSearchRequest,
   executeAssetAction,
+  getRestoreAssets,
   getAssetSyncStatus,
   matchAssetSearch,
   normalizeAssetSearchResponse,
   planAssetAction,
+  restoreAsset,
+  restoreAssets,
   startAssetSync,
   synchronizeAsset,
 } from './assetApi';
@@ -61,6 +64,46 @@ describe('structured asset API', () => {
 
   it('uses a distinct original-media endpoint for the fullscreen viewer', () => {
     expect(assetOriginalUrl('asset id')).toBe('/api/assets/asset%20id/original');
+  });
+
+  it('uses the typed Restore API for live pages and mutations', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.includes('?')) {
+        return new Response(JSON.stringify({
+          items: [{ id: 'asset-1' }],
+          total: 73,
+          page: 2,
+          page_size: 48,
+          pages: 2,
+        }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      if (path.endsWith('/asset%20id')) return new Response(null, { status: 204 });
+      expect(init?.body).toBe(JSON.stringify({ ids: ['asset-1', 'asset-2'] }));
+      return new Response(JSON.stringify({ restored: 2 }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetcher);
+
+    const result = await getRestoreAssets(2, 48);
+    await restoreAsset('asset id');
+    const restored = await restoreAssets({ ids: ['asset-1', 'asset-2'] });
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/restore?page=2&page_size=48');
+    expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
+    expect(fetcher.mock.calls[2]?.[1]).toMatchObject({
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(result.total).toBe(73);
+    expect(result.items[0]).toMatchObject({
+      albums: [],
+      tags: [],
+      source: { kind: 'upload', library_id: null, original_path: null },
+    });
+    expect(restored).toEqual({ restored: 2 });
   });
 
   it('requests a complete single-asset synchronization', async () => {

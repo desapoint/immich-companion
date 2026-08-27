@@ -1,5 +1,6 @@
 """Regression tests for the bootstrap API and safety defaults."""
 
+import json
 from pathlib import Path
 
 import httpx
@@ -33,6 +34,30 @@ def pong_transport() -> httpx.MockTransport:
         return httpx.Response(200, json={"res": "pong"})
 
     return httpx.MockTransport(handler)
+
+
+def immich_asset_payload(asset_id: str, *, trashed: bool) -> dict[str, object]:
+    return {
+        "id": asset_id,
+        "ownerId": "33333333-3333-4333-8333-333333333333",
+        "type": "IMAGE",
+        "originalFileName": "restore.jpg",
+        "originalPath": "upload/library/restore.jpg",
+        "originalMimeType": "image/jpeg",
+        "width": 2048,
+        "height": 1365,
+        "fileCreatedAt": "2026-08-20T12:00:00Z",
+        "fileModifiedAt": "2026-08-20T12:00:00Z",
+        "isFavorite": False,
+        "isArchived": False,
+        "isTrashed": trashed,
+        "isOffline": False,
+        "isEdited": False,
+        "hasMetadata": True,
+        "visibility": "timeline",
+        "people": [],
+        "tags": [],
+    }
 
 
 def test_health_is_ready_when_immich_ping_succeeds() -> None:
@@ -207,3 +232,60 @@ def test_asset_search_requires_companion_database_configuration() -> None:
 
     assert response.status_code == 503
     assert response.json()["detail"] == "The companion database is not configured."
+
+
+def test_restore_listing_is_paged_directly_from_immich() -> None:
+    active_id = "11111111-1111-4111-8111-111111111111"
+    first_trashed_id = "22222222-2222-4222-8222-222222222222"
+    second_trashed_id = "44444444-4444-4444-8444-444444444444"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/search/metadata"
+        request_payload = json.loads(request.read())
+        assert request_payload["size"] == 1000
+        assert request_payload["trashedAfter"] == "1970-01-01T00:00:00+00:00"
+        assert "isTrashed" not in request_payload
+        page = request_payload["page"]
+        items = (
+            [
+                immich_asset_payload(active_id, trashed=False),
+                immich_asset_payload(first_trashed_id, trashed=True),
+            ]
+            if page == 1
+            else [immich_asset_payload(second_trashed_id, trashed=True)]
+        )
+        return httpx.Response(
+            200,
+            json={
+                "assets": {
+                    "count": len(items),
+                    "total": len(items),
+                    "items": items,
+                    "nextPage": "2" if page == 1 else None,
+                }
+            },
+        )
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get("/api/restore?page=2&page_size=1")
+
+    assert response.status_code == 200
+    assert response.json()["total"] == 2
+    assert response.json()["pages"] == 2
+    assert response.json()["items"][0]["id"] == second_trashed_id
+    assert response.json()["items"][0]["is_trashed"] is True
+    assert response.json()["items"][0]["restore_path"] == "upload/library/restore.jpg"
+
+
+def test_restore_detail_rejects_an_asset_that_immich_reports_as_active() -> None:
+    asset_id = "11111111-1111-4111-8111-111111111111"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{asset_id}"
+        return httpx.Response(200, json=immich_asset_payload(asset_id, trashed=False))
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get(f"/api/restore/{asset_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "The asset is not in Restore."

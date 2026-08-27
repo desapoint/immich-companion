@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from time import perf_counter
 from typing import Any, Literal
 from uuid import UUID
@@ -21,6 +21,7 @@ TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 SUPPORTED_IMMICH_MAJOR = 3
 SUPPORTED_IMMICH_MINOR = 1
 SUPPORTED_IMMICH_API_VERSION = f"{SUPPORTED_IMMICH_MAJOR}.{SUPPORTED_IMMICH_MINOR}.x"
+TRASH_SEARCH_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class ImmichApiError(RuntimeError):
@@ -368,8 +369,8 @@ class ImmichApiClient:
             payload["albumIds"] = [str(album_id) for album_id in album_ids]
         if tag_ids:
             payload["tagIds"] = [str(tag_id) for tag_id in tag_ids]
-        if trashed is not None:
-            payload["isTrashed"] = trashed
+        if trashed:
+            payload["trashedAfter"] = TRASH_SEARCH_EPOCH.isoformat()
         if updated_after:
             payload["updatedAfter"] = updated_after.isoformat()
         if updated_before:
@@ -414,6 +415,28 @@ class ImmichApiClient:
                 page_number = int(token)
             except ValueError as error:
                 raise ImmichApiError("search assets pagination") from error
+
+    async def iter_trashed_assets(self, *, page_size: int = 1000) -> AsyncIterator[ImmichAsset]:
+        """Yield the complete live Immich trash and reject leaked active results."""
+
+        page_number = 1
+        seen_tokens: set[str] = set()
+        while True:
+            page = await self.search_assets_page(page_number, size=page_size, trashed=True)
+            for asset in page.items:
+                if asset.is_trashed:
+                    yield asset
+
+            token = page.next_page
+            if token is None:
+                return
+            if token in seen_tokens:
+                raise ImmichApiError("search trashed assets pagination")
+            seen_tokens.add(token)
+            try:
+                page_number = int(token)
+            except ValueError as error:
+                raise ImmichApiError("search trashed assets pagination") from error
 
     async def count_assets(
         self,
