@@ -38,6 +38,13 @@
   const currentStep = $derived(syncProgress ? Math.max(0, syncSteps.indexOf(syncProgress.phase)) : 0);
   const stepNumber = $derived(currentStep + 1);
   const stepPercent = $derived(syncProgress?.percent ?? null);
+  const progressUnit = $derived(({
+    catalogs: 'catalog entries',
+    assets: 'media items',
+    stacks: 'stacks',
+    relationships: 'associations',
+  } as Record<string, string>)[syncProgress?.phase ?? ''] ?? 'items');
+  const showProgressCounts = $derived(syncProgress?.phase !== 'finalizing');
 </script>
 
 <div class="result-status">
@@ -74,10 +81,12 @@
         </div>
         <div class="progress-tooltip" role="tooltip">
           <strong>{phaseLabels[syncProgress.phase] ?? syncProgress.phase}</strong>
-          {#if syncProgress.total !== null}
-            <span>{syncProgress.completed.toLocaleString()} of {syncProgress.total.toLocaleString()} processed</span>
-          {:else}
-            <span>{syncProgress.completed.toLocaleString()} processed · total not available</span>
+          {#if showProgressCounts}
+            {#if syncProgress.total !== null}
+              <span>{syncProgress.completed.toLocaleString()} of {syncProgress.total.toLocaleString()} {progressUnit} processed</span>
+            {:else}
+              <span>{syncProgress.completed.toLocaleString()} {progressUnit} processed · total not available</span>
+            {/if}
           {/if}
           {#if syncProgress.detail}<span>{syncProgress.detail}</span>{/if}
         </div>

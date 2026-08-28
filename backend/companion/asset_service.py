@@ -1006,7 +1006,7 @@ class AssetSyncService:
                     f"Preparing {len(albums)} albums and {len(tags)} tags",
                 ),
             )
-            await self._sync_catalogs(run, owner, albums, tags, counters)
+            await self._sync_catalogs(run, owner, albums, tags, counters, asset_total)
         if start_phase <= 1:
             await self._sync_assets(run, owner, counters, asset_total)
         if start_phase <= 2:
@@ -1102,6 +1102,7 @@ class AssetSyncService:
         albums: list[ImmichAlbum],
         tags: list[ImmichTag],
         counters: dict[str, int],
+        asset_total: int | None,
     ) -> None:
         batch_size = self._full_batch_size(run, self._settings)
         album_batches = batches(albums, batch_size)
@@ -1167,7 +1168,14 @@ class AssetSyncService:
             counters,
             "assets",
             None,
-            self._progress("assets", 0, None, "Preparing media traversal"),
+            self._progress(
+                "assets",
+                0,
+                asset_total,
+                f"Preparing {asset_total} media items"
+                if asset_total is not None
+                else "Preparing media traversal",
+            ),
         )
 
     async def _sync_assets(
@@ -1198,7 +1206,14 @@ class AssetSyncService:
         if batch:
             batch_number += 1
             await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
-        await self._checkpoint(run, owner, counters, "stacks", None)
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "stacks",
+            None,
+            self._progress("stacks", 0, None, "Preparing stack traversal"),
+        )
 
     async def _commit_asset_batch(
         self,
@@ -1340,19 +1355,9 @@ class AssetSyncService:
         completed_relation = 0
         completed_page = 0
         membership_total: int | None = None
-        count_album = getattr(self._immich, "count_album_asset_ids", None)
-        count_tag = getattr(self._immich, "count_tag_asset_ids", None)
-        if count_album is not None and count_tag is not None:
-            try:
-                album_counts, tag_counts = await asyncio.gather(
-                    asyncio.gather(*(count_album(album.id) for album in albums)),
-                    asyncio.gather(*(count_tag(tag.id) for tag in tags)),
-                )
-                membership_total = sum(album_counts) + sum(tag_counts)
-            except ImmichApiError:
-                # The association traversal remains valid when count requests
-                # are unavailable; only the visual estimate becomes indeterminate.
-                membership_total = None
+        # Immich's metadata-search total is page-sized on supported live
+        # versions. Counting every album and tag also creates an unbounded
+        # request fan-out. Keep this phase truthful and indeterminate instead.
         association_completed = counters.get("album_memberships", 0) + counters.get(
             "tag_memberships", 0
         )

@@ -69,6 +69,9 @@ class FakeImmich:
         for current in self.assets:
             yield current
 
+    async def count_assets(self, **_kwargs) -> int:
+        return len(self.assets)
+
     async def list_stacks(self) -> list[ImmichStack]:
         self.calls.append("stacks")
         return [self.stack]
@@ -77,15 +80,9 @@ class FakeImmich:
         self.calls.append("album_memberships")
         yield [ASSET_ONE]
 
-    async def count_album_asset_ids(self, _album_id: UUID) -> int:
-        return 1
-
     async def iter_tag_asset_ids(self, _tag_id: UUID, **_kwargs):
         self.calls.append("tag_memberships")
         yield [ASSET_ONE]
-
-    async def count_tag_asset_ids(self, _tag_id: UUID) -> int:
-        return 1
 
     async def list_albums_for_asset(self, _asset_id: UUID):
         self.calls.append("asset_albums")
@@ -250,7 +247,14 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
         item for item in syncs.progress if item is not None and item.phase == "relationships"
     ]
     assert relationship_progress
-    assert any(item.total == 2 and item.percent is not None for item in relationship_progress)
+    assert all(item.total is None and item.percent is None for item in relationship_progress)
+    media_progress = [
+        item for item in syncs.progress if item is not None and item.phase == "assets"
+    ]
+    assert media_progress
+    assert all(item.total == 2 for item in media_progress)
+    assert media_progress[-1].completed == 2
+    assert media_progress[-1].percent == 100
 
 
 @pytest.mark.asyncio

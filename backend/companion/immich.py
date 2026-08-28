@@ -447,16 +447,22 @@ class ImmichApiClient:
         *,
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
-    ) -> int:
-        """Return the bounded asset population used by a sync progress estimate."""
+    ) -> int | None:
+        """Return an authoritative active-library total when the scope supports it."""
 
-        page = await self.search_assets_page(
-            1,
-            size=1,
-            updated_after=updated_after,
-            updated_before=updated_before,
+        if updated_after is not None or updated_before is not None:
+            # Immich statistics cannot represent an update window. Metadata
+            # search `total` is page-sized on supported live versions, so an
+            # indeterminate incremental total is more truthful than a false one.
+            return None
+        response = await self._request(
+            "GET",
+            "/api/assets/statistics",
+            operation="count active assets",
+            params={"isTrashed": "false"},
         )
-        return page.total
+        payload = response.json()
+        return int(payload["total"])
 
     async def get_asset(self, asset_id: UUID) -> ImmichAsset:
         """Retrieve live details for one Immich asset."""
@@ -657,12 +663,6 @@ class ImmichApiClient:
             except ValueError as error:
                 raise ImmichApiError("album membership pagination") from error
 
-    async def count_album_asset_ids(self, album_id: UUID) -> int:
-        """Return the known album membership population for progress reporting."""
-
-        page = await self.search_assets_page(1, size=1, album_ids=[album_id])
-        return page.total
-
     async def list_albums(self, assets: list[ImmichAsset]) -> list[ImmichAlbum]:
         """Compatibility helper returning catalogs with resolved memberships."""
 
@@ -828,12 +828,6 @@ class ImmichApiClient:
                 page_number = int(page.next_page)
             except ValueError as error:
                 raise ImmichApiError("tag membership pagination") from error
-
-    async def count_tag_asset_ids(self, tag_id: UUID) -> int:
-        """Return the known tag membership population for progress reporting."""
-
-        page = await self.search_assets_page(1, size=1, tag_ids=[tag_id])
-        return page.total
 
     async def list_tags(self, assets: list[ImmichAsset]) -> list[ImmichTag]:
         """Compatibility helper returning catalogs with resolved memberships."""

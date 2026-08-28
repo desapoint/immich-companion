@@ -98,6 +98,23 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_full_asset_count_uses_statistics_and_window_count_is_indeterminate() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/api/assets/statistics"
+        assert request.url.params["isTrashed"] == "false"
+        return httpx.Response(200, json={"total": 64, "images": 60, "videos": 4})
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+
+    assert await client.count_assets() == 64
+    assert await client.count_assets(updated_after=datetime.now(UTC)) is None
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
 async def test_trashed_assets_use_epoch_filter_and_drop_active_leaks() -> None:
     payloads: list[dict[str, object]] = []
 
