@@ -150,7 +150,7 @@
 
   let dialogElement: HTMLDialogElement;
   let viewerScroll: HTMLDivElement;
-  let viewerImage: HTMLImageElement | undefined;
+  let viewerImage = $state<HTMLImageElement>();
   let scaleMode = $state<ViewerScaleMode>('fit');
   let zoom = $state(1);
   let viewportWidth = $state(1);
