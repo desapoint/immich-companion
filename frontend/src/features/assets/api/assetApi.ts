@@ -366,7 +366,10 @@ export function synchronizeAssetSelection(
   });
 }
 
-export function assetMediaUrl(assetId: string, size: 'thumbnail' | 'preview'): string {
+export function assetMediaUrl(
+  assetId: string,
+  size: 'thumbnail' | 'preview' | 'fullsize',
+): string {
   return `/api/assets/${encodeURIComponent(assetId)}/thumbnail?size=${size}`;
 }
 
