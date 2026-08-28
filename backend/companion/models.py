@@ -60,7 +60,9 @@ class AssetRecord(Base):
     has_metadata: Mapped[bool] = mapped_column(Boolean, default=False)
     visibility: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     live_photo_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    exif_info: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    exif_info: Mapped[dict[str, Any] | None] = mapped_column(
+        JSON(none_as_null=True), nullable=True
+    )
     people: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     tags: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     stack: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

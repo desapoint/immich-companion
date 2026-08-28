@@ -79,12 +79,6 @@ smoke() {
   echo "Smoke check passed: companion, real Immich, both PostgreSQL services, migrations, and seed state"
 }
 
-sync_companion_assets() {
-  local result
-  result="$(curl --fail --silent --show-error --request POST "${BASE_URL}/api/assets/sync")"
-  echo "Companion asset index refreshed: ${result}"
-}
-
 wait_until_ready() {
   local attempt
   for attempt in {1..120}; do
@@ -154,7 +148,6 @@ start_environment() {
   COMPANION_TEST_RESET_MODE="${reset_mode}" compose run --rm --no-deps immich-bootstrap
   compose up --detach companion
   wait_until_ready
-  sync_companion_assets
   show_access_urls
 }
 

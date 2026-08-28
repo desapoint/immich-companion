@@ -183,6 +183,10 @@ def create_app(
         if database is not None:
             await asyncio.to_thread(run_migrations, runtime_settings)
         if task_coordinator is not None:
+            await task_coordinator.cancel_unfinished(
+                "asset_sync",
+                reason="Asset sync does not resume automatically on container startup.",
+            )
             await task_coordinator.start()
         try:
             yield
@@ -1040,8 +1044,7 @@ def create_app(
         if not asset.is_trashed:
             raise HTTPException(status_code=404, detail="The asset is not in Restore.")
         try:
-            await require_immich().restore_assets([asset_id])
-            await sync.reconcile_targets([asset_id])
+            await sync.restore_targets([asset_id])
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1081,10 +1084,9 @@ def create_app(
         restore_batches = batches(asset_ids, pacing.full_batch_size)
         for index, batch in enumerate(restore_batches):
             try:
-                await require_immich().restore_assets(batch)
+                await sync.restore_targets(batch)
             except ImmichApiError as error:
                 raise map_immich_error(error) from error
-            await sync.reconcile_targets(batch)
             if index < len(restore_batches) - 1:
                 await asyncio.sleep(pacing.full_min_batch_delay_seconds)
         return {"restored": len(asset_ids)}

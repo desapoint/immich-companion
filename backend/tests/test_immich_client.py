@@ -68,8 +68,11 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
         assert request.headers["x-api-key"] == "private-test-key"
         assert request.url.path == "/api/search/metadata"
         body = json.loads(request.content)
-        assert body["withExif"] is True
-        assert body["withDeleted"] is True
+        assert body["withExif"] is False
+        assert body["withPeople"] is False
+        assert body["withStacked"] is True
+        assert body["withDeleted"] is False
+        assert body["withArchived"] is True
         page = int(body["page"])
         item = asset_payload(ASSET_ONE if page == 1 else ASSET_TWO, f"page-{page}.jpg")
         return httpx.Response(
@@ -126,20 +129,22 @@ async def test_trashed_assets_use_epoch_filter_and_drop_active_leaks() -> None:
             "page": 1,
             "size": 48,
             "order": "asc",
-            "withExif": True,
-            "withPeople": True,
+            "withExif": False,
+            "withPeople": False,
             "withStacked": True,
             "withDeleted": True,
+            "withArchived": True,
             "trashedAfter": "1970-01-01T00:00:00+00:00",
         },
         {
             "page": 2,
             "size": 48,
             "order": "asc",
-            "withExif": True,
-            "withPeople": True,
+            "withExif": False,
+            "withPeople": False,
             "withStacked": True,
             "withDeleted": True,
+            "withArchived": True,
             "trashedAfter": "1970-01-01T00:00:00+00:00",
         },
     ]

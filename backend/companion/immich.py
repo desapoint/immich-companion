@@ -354,16 +354,20 @@ class ImmichApiClient:
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
     ) -> ImmichAssetSearchPage:
-        """Retrieve one stable metadata-search page with useful related data."""
+        """Retrieve one lightweight active-asset metadata-search page."""
 
         payload: dict[str, Any] = {
             "page": page,
             "size": size,
             "order": "asc",
-            "withExif": True,
-            "withPeople": True,
+            "withExif": False,
+            "withPeople": False,
+            # Immich hides stack children when this is false. Keep the complete
+            # inventory here; stack relationships are still synchronized by
+            # the separate stack stage and stripped before asset persistence.
             "withStacked": True,
-            "withDeleted": True,
+            "withDeleted": bool(trashed),
+            "withArchived": True,
         }
         if album_ids:
             payload["albumIds"] = [str(album_id) for album_id in album_ids]
@@ -391,7 +395,7 @@ class ImmichApiClient:
         updated_before: datetime | None = None,
         start_page: int = 1,
     ) -> AsyncIterator[ImmichAsset]:
-        """Yield all assets while guarding against repeated pagination tokens."""
+        """Yield active lightweight assets while guarding against repeated page tokens."""
 
         page_number = start_page
         seen_tokens: set[str] = set()

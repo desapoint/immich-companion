@@ -42,6 +42,7 @@ class FakeRepository:
     def __init__(self) -> None:
         self.failures: list[dict[str, object]] = []
         self.completed: list[TaskResult] = []
+        self.cancelled_types: list[tuple[str, str]] = []
 
     async def fail(self, _task_id, _worker_id, error, **kwargs):
         self.failures.append({"error": error, **kwargs})
@@ -55,6 +56,10 @@ class FakeRepository:
 
     async def is_cancelled(self, *_args, **_kwargs):
         return False
+
+    async def cancel_unfinished(self, task_type, *, reason):
+        self.cancelled_types.append((task_type, reason))
+        return 2
 
 
 class RetryHandler:
@@ -101,3 +106,20 @@ async def test_permanent_handler_is_not_retried() -> None:
     assert isinstance(failure["error"], PermanentTaskError)
     assert failure["retryable"] is False
     assert failure["next_attempt_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_startup_fence_cancels_only_requested_unfinished_task_type() -> None:
+    coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
+    repository = FakeRepository()
+    coordinator._repository = repository  # type: ignore[assignment]
+
+    cancelled = await coordinator.cancel_unfinished(
+        "asset_sync",
+        reason="Do not resume library sync at startup.",
+    )
+
+    assert cancelled == 2
+    assert repository.cancelled_types == [
+        ("asset_sync", "Do not resume library sync at startup.")
+    ]

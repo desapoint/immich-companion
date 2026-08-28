@@ -88,7 +88,15 @@ class FakeImmich:
         return 1
 
     async def list_albums_for_asset(self, _asset_id: UUID):
-        return []
+        self.calls.append("asset_albums")
+        return await self.list_album_catalog()
+
+    async def get_asset(self, asset_id: UUID) -> ImmichAsset:
+        self.calls.append("asset_detail")
+        return next(asset for asset in self.assets if asset.id == asset_id)
+
+    async def restore_assets(self, _asset_ids: list[UUID]) -> None:
+        self.calls.append("restore")
 
 
 class FakeAssetRepository:
@@ -163,6 +171,10 @@ class FakeAssetRepository:
 
     async def replace_asset_tag_memberships(self, _asset_id, _tag_ids):
         self.calls.append("replace_asset_tag")
+
+    async def refresh_asset(self, asset):
+        self.calls.append("refresh_asset")
+        self.assets.append(asset)
 
 
 class FakeSyncRepository:
@@ -258,3 +270,29 @@ async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traver
 
     assert counters == {"albums": 1, "tags": 1, "memberships": 2}
     assert assets.calls[-2:] == ["replace_album", "replace_tag"]
+
+
+@pytest.mark.asyncio
+async def test_restore_uses_immich_then_refreshes_asset_albums_and_tags() -> None:
+    restored = asset(ASSET_ONE, "restored.png").model_copy(
+        update={"tags": [{"id": str(TAG_ID), "name": "Review"}]}
+    )
+    stack = ImmichStack(id=STACK_ID, primaryAssetId=ASSET_ONE, assets=[restored])
+    immich = FakeImmich([restored], stack)
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+
+    await service.restore_targets([ASSET_ONE])
+
+    assert immich.calls[:2] == ["restore", "asset_detail"]
+    assert "asset_albums" in immich.calls
+    assert assets.calls == [
+        "refresh_asset",
+        "replace_asset_album",
+        "replace_asset_tag",
+    ]

@@ -101,8 +101,9 @@ class AssetRepository:
             "has_metadata": asset.has_metadata,
             "visibility": asset.visibility,
             "live_photo_video_id": asset.live_photo_video_id,
-            "exif_info": asset.exif_info,
-            "people": asset.people,
+            # EXIF is fetched live for the viewer and is not written by the
+            # inventory path. People synchronization is intentionally deferred.
+            "people": [],
             "tags": asset.tags,
             "stack": asset.stack,
             "synced_at": synced_at,
@@ -419,6 +420,8 @@ class AssetRepository:
         values.pop("id", None)
         values.pop("sync_generation", None)
         values.pop("stack_generation", None)
+        # Stack state is owned by the independent stack synchronization stage.
+        values.pop("stack", None)
         async with self._database.sessions() as session, session.begin():
             await session.execute(
                 update(AssetRecord).where(AssetRecord.id == asset.id).values(**values)

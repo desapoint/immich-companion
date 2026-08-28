@@ -536,6 +536,40 @@ class TaskRepository:
             records = await session.scalars(statement)
             return [_public(record) for record in records if _public(record) is not None]  # type: ignore[misc]
 
+    async def cancel_unfinished(self, task_type: str, *, reason: str) -> int:
+        """Cancel unfinished tasks of one type before startup workers can reclaim them."""
+
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            records = await session.scalars(
+                select(TaskRecord)
+                .where(
+                    TaskRecord.task_type == task_type,
+                    TaskRecord.status.in_(
+                        ("queued", "running", "retrying", "recovering", "cancel_requested")
+                    ),
+                )
+                .with_for_update()
+            )
+            cancelled = 0
+            for record in records:
+                record.status = "cancelled"
+                record.completed_at = now
+                record.next_attempt_at = None
+                record.lease_owner = None
+                record.lease_expires_at = None
+                record.error = {"type": "startup_cancelled", "message": reason}
+                session.add(
+                    TaskEventRecord(
+                        task_id=record.id,
+                        attempt=record.attempt,
+                        kind="cancelled",
+                        details={"reason": reason, "source": "startup"},
+                    )
+                )
+                cancelled += 1
+            return cancelled
+
 
 class TaskContext:
     """Lease-bound handler context for durable progress and cancellation."""
@@ -757,6 +791,11 @@ class TaskCoordinator:
 
     async def cancel(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.cancel(task_id)
+
+    async def cancel_unfinished(self, task_type: str, *, reason: str) -> int:
+        """Prevent selected durable work from resuming merely because the process started."""
+
+        return await self._repository.cancel_unfinished(task_type, reason=reason)
 
     async def list_schedules(self) -> list[TaskScheduleView]:
         return await self._repository.list_schedules()

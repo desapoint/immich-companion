@@ -770,6 +770,12 @@ class AssetSyncService:
             include_stacks=include_stacks,
         )
 
+    async def restore_targets(self, asset_ids: list[UUID]) -> None:
+        """Restore through Immich, then persist the resulting active asset relationships."""
+
+        await self._immich.restore_assets(asset_ids)
+        await self.reconcile_targets(asset_ids)
+
     async def _repair_targets_now(
         self,
         asset_ids: list[UUID],
@@ -1182,8 +1188,6 @@ class AssetSyncService:
             updated_before=run.window_end if run.mode == "incremental" else None,
             start_page=completed_batches + 1,
         )
-        if run.mode == "incremental":
-            iterator = self._iter_incremental_details(iterator)
         async for asset in iterator:
             batch.append(asset)
             if len(batch) < self._full_batch_size(run, self._settings):
@@ -1195,15 +1199,6 @@ class AssetSyncService:
             batch_number += 1
             await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
         await self._checkpoint(run, owner, counters, "stacks", None)
-
-    async def _iter_incremental_details(self, candidates):
-        """Fetch each bounded incremental candidate through the detail endpoint."""
-
-        async for candidate in candidates:
-            # Trashed assets are restoration records. Avoid the expensive detail
-            # request; the search payload supplies the card/path metadata needed
-            # by the dedicated Restore view.
-            yield candidate if candidate.is_trashed else await self._immich.get_asset(candidate.id)
 
     async def _commit_asset_batch(
         self,
@@ -1219,8 +1214,6 @@ class AssetSyncService:
             asset.model_copy(
                 update={"exif_info": None, "people": [], "tags": [], "stack": None}
             )
-            if asset.is_trashed
-            else asset
             for asset in batch
         ]
         created, updated, unchanged = await self._assets.upsert_asset_batch(
