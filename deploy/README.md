@@ -22,6 +22,9 @@ no media mount and performs no direct database access.
    `IMMICH_COMPANION_SYNC_FULL_BATCH_SIZE` (50) and
    `IMMICH_COMPANION_SYNC_FULL_MIN_BATCH_DELAY_SECONDS` (0.2); saved Settings
    values take precedence after initialization.
+   Association traversal uses an independent
+   `IMMICH_COMPANION_SYNC_RELATIONSHIP_PAGE_SIZE` (1,000) so lowering the media
+   batch size does not multiply album/tag API and database round trips.
    Set `IMMICH_COMPANION_SYNC_MEMORY_DIAGNOSTICS=true` temporarily to include
    process RSS/high-water and traced Python current/peak allocations in each
    durable sync progress checkpoint. Leave it disabled normally because Python

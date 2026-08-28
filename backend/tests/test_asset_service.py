@@ -337,6 +337,64 @@ async def test_stack_sync_persists_bounded_batches_and_skips_final_pacing() -> N
 
 
 @pytest.mark.asyncio
+async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() -> None:
+    class RelationshipImmich:
+        album_page_size: int | None = None
+        tag_page_size: int | None = None
+
+        async def iter_album_asset_ids(self, _album_id, *, page_size, start_page):
+            assert start_page == 1
+            self.album_page_size = page_size
+            yield [ASSET_ONE]
+            yield [ASSET_TWO]
+            yield [ASSET_ONE, ASSET_TWO]
+
+        async def iter_tag_asset_ids(self, _tag_id, *, page_size, start_page):
+            assert start_page == 1
+            self.tag_page_size = page_size
+            yield [ASSET_ONE]
+            yield [ASSET_TWO]
+
+    immich = RelationshipImmich()
+    assets = FakeAssetRepository()
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_full_batch_size=25, sync_relationship_page_size=1000),
+    )
+    paced: list[int] = []
+
+    async def pace(_run, _started):
+        paced.append(1)
+
+    service._pace_full_batch = pace  # type: ignore[method-assign]
+    album = ImmichAlbum(
+        id=ALBUM_ID,
+        albumName="Large album",
+        createdAt="2026-08-24T12:00:00Z",
+        updatedAt="2026-08-24T12:00:00Z",
+    )
+    tag = ImmichTag(id=TAG_ID, name="Large tag", value="Large tag")
+    counters = {"album_memberships": 0, "tag_memberships": 0}
+
+    await service._sync_relationships(
+        run_status().model_copy(update={"phase": "relationships"}),
+        OWNER_ID,
+        [album],
+        [tag],
+        counters,
+    )
+
+    assert immich.album_page_size == 1000
+    assert immich.tag_page_size == 1000
+    assert paced == [1, 1, 1]
+    assert counters == {"album_memberships": 4, "tag_memberships": 2}
+    assert syncs.checkpoints[-1] == ("relationships", None)
+
+
+@pytest.mark.asyncio
 async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traversal() -> None:
     members = [asset(ASSET_ONE, "primary.png")]
     stack = ImmichStack(

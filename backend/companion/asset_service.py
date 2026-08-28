@@ -66,6 +66,24 @@ async def async_batches_with_last[T](
         yield batch, True
 
 
+async def async_items_with_last[T](
+    items: AsyncIterator[T],
+) -> AsyncIterator[tuple[T, bool]]:
+    """Yield async items with one-item lookahead so final work is not paced."""
+
+    previous: T | None = None
+    has_previous = False
+    async for item in items:
+        if has_previous:
+            assert previous is not None
+            yield previous, False
+        previous = item
+        has_previous = True
+    if has_previous:
+        assert previous is not None
+        yield previous, True
+
+
 async def _enumerate_async[T](
     items: AsyncIterator[T], start: int = 0
 ) -> AsyncIterator[tuple[int, T]]:
@@ -1479,10 +1497,12 @@ class AssetSyncService:
                 else 1
             )
             page_number = start_page
-            async for asset_ids in self._immich.iter_album_asset_ids(
-                album.id,
-                page_size=self._full_batch_size(run, self._settings),
-                start_page=start_page,
+            async for asset_ids, is_last_page in async_items_with_last(
+                self._immich.iter_album_asset_ids(
+                    album.id,
+                    page_size=self._settings.sync_relationship_page_size,
+                    start_page=start_page,
+                )
             ):
                 started = perf_counter()
                 counters["album_memberships"] += await self._assets.upsert_album_memberships(
@@ -1508,7 +1528,8 @@ class AssetSyncService:
                         ),
                     ),
                 )
-                await self._pace_full_batch(run, started)
+                if not is_last_page:
+                    await self._pace_full_batch(run, started)
                 page_number += 1
             if page_number == start_page == 1:
                 await self._checkpoint(
@@ -1536,10 +1557,12 @@ class AssetSyncService:
                 else 1
             )
             page_number = start_page
-            async for asset_ids in self._immich.iter_tag_asset_ids(
-                tag.id,
-                page_size=self._full_batch_size(run, self._settings),
-                start_page=start_page,
+            async for asset_ids, is_last_page in async_items_with_last(
+                self._immich.iter_tag_asset_ids(
+                    tag.id,
+                    page_size=self._settings.sync_relationship_page_size,
+                    start_page=start_page,
+                )
             ):
                 started = perf_counter()
                 counters["tag_memberships"] += await self._assets.upsert_tag_memberships(
@@ -1565,7 +1588,8 @@ class AssetSyncService:
                         ),
                     ),
                 )
-                await self._pace_full_batch(run, started)
+                if not is_last_page:
+                    await self._pace_full_batch(run, started)
                 page_number += 1
             if page_number == start_page == 1:
                 await self._checkpoint(
