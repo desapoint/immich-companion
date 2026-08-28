@@ -526,6 +526,14 @@ class AssetSyncService:
             return
         await self._pace_runtime_batch(started)
 
+    async def _pace_full_page(self, run: SyncRunStatus) -> None:
+        """Apply only the configured yield between large Media API pages."""
+
+        if run.mode != "full":
+            return
+        pacing = await self._runtime_sync_settings.get()
+        await asyncio.sleep(pacing.full_min_batch_delay_seconds)
+
     async def _pace_runtime_batch(self, started: float) -> None:
         """Give the host equal idle time after a bounded background batch."""
 
@@ -1306,7 +1314,6 @@ class AssetSyncService:
             start_page=start_page,
         )
         async for page_number, page in iterator:
-            started = perf_counter()
             await self._commit_asset_page(
                 run,
                 owner,
@@ -1318,7 +1325,7 @@ class AssetSyncService:
                 asset_total,
             )
             if page.next_page is not None:
-                await self._pace_full_batch(run, started)
+                await self._pace_full_page(run)
         await self._checkpoint(
             run,
             owner,

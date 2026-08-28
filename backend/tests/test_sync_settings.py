@@ -58,6 +58,28 @@ async def test_full_sync_pacing_uses_the_longer_of_minimum_delay_and_work_time(m
 
 
 @pytest.mark.asyncio
+async def test_media_page_pacing_uses_only_configured_delay(monkeypatch) -> None:
+    service = AssetSyncService(
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        None,  # type: ignore[arg-type]
+        Settings(sync_full_batch_size=50, sync_full_min_batch_delay_seconds=0.2),
+        runtime_sync_settings=RuntimeSettings(),
+    )
+    sleeps: list[float] = []
+
+    async def sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr("companion.asset_service.asyncio.sleep", sleep)
+
+    await service._pace_full_page(full_run())
+    await service._pace_full_page(full_run().model_copy(update={"mode": "incremental"}))
+
+    assert sleeps == [0.2]
+
+
+@pytest.mark.asyncio
 async def test_environment_values_seed_runtime_settings_and_incremental_batch_size() -> None:
     settings = Settings(
         sync_batch_size=250,

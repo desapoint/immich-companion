@@ -387,10 +387,10 @@ async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> N
     )
     paced: list[int] = []
 
-    async def pace(_run, _started):
+    async def pace(_run):
         paced.append(1)
 
-    service._pace_full_batch = pace  # type: ignore[method-assign]
+    service._pace_full_page = pace  # type: ignore[method-assign]
     counters = {
         "assets_seen": 0,
         "assets_created": 0,
