@@ -20,7 +20,7 @@ from companion.models import (
     TaskRecord,
     TaskScheduleRecord,
 )
-from companion.task_schema import TaskResult, TaskScheduleView, TaskStatusView
+from companion.task_schema import TaskEvent, TaskResult, TaskScheduleView, TaskStatusView
 
 TASK_UPDATE_CHANNEL = "companion_task_updates"
 
@@ -96,6 +96,17 @@ def _public_schedule(record: TaskScheduleRecord) -> TaskScheduleView:
         task_type=record.task_type,
         payload=record.payload or {},
         priority=record.priority,
+    )
+
+
+def _public_event(record: TaskEventRecord) -> TaskEvent:
+    return TaskEvent(
+        id=record.id,
+        task_id=record.task_id,
+        attempt=record.attempt,
+        kind=record.kind,
+        details=record.details or {},
+        created_at=record.created_at,
     )
 
 
@@ -536,6 +547,18 @@ class TaskRepository:
             records = await session.scalars(statement)
             return [_public(record) for record in records if _public(record) is not None]  # type: ignore[misc]
 
+    async def events(self, task_id: UUID, *, limit: int = 1000) -> list[TaskEvent]:
+        """Return durable lifecycle/checkpoint history for diagnostics."""
+
+        async with self._database.sessions() as session:
+            records = await session.scalars(
+                select(TaskEventRecord)
+                .where(TaskEventRecord.task_id == task_id)
+                .order_by(TaskEventRecord.created_at, TaskEventRecord.id)
+                .limit(limit)
+            )
+            return [_public_event(record) for record in records]
+
     async def cancel_unfinished(self, task_type: str, *, reason: str) -> int:
         """Cancel unfinished tasks of one type before startup workers can reclaim them."""
 
@@ -788,6 +811,9 @@ class TaskCoordinator:
         self, *, task_type: str | None = None, limit: int = 50
     ) -> list[TaskStatusView]:
         return await self._repository.list(task_type=task_type, limit=limit)
+
+    async def task_events(self, task_id: UUID, *, limit: int = 1000) -> list[TaskEvent]:
+        return await self._repository.events(task_id, limit=limit)
 
     async def cancel(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.cancel(task_id)

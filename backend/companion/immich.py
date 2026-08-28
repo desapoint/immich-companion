@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from json import JSONDecodeError, JSONDecoder
 from time import perf_counter
 from typing import Any, Literal
 from uuid import UUID
@@ -130,12 +131,29 @@ class ImmichAlbum(ImmichModel):
     asset_ids: list[UUID] = Field(default_factory=list, exclude=True)
 
 
+class ImmichStackAsset(BaseModel):
+    """Only the embedded asset fields needed by stack sync and actions."""
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    id: UUID
+    asset_type: str = Field(alias="type")
+    original_file_name: str = Field(alias="originalFileName")
+    original_mime_type: str | None = Field(default=None, alias="originalMimeType")
+    width: int | None = None
+    height: int | None = None
+    file_created_at: datetime = Field(alias="fileCreatedAt")
+    is_trashed: bool = Field(default=False, alias="isTrashed")
+
+
 class ImmichStack(ImmichModel):
     """Stack metadata used to enrich every synchronized member."""
 
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
     id: UUID
     primary_asset_id: UUID = Field(alias="primaryAssetId")
-    assets: list[ImmichAsset]
+    assets: list[ImmichStackAsset]
 
 
 class ImmichTag(ImmichModel):
@@ -173,6 +191,82 @@ class ImmichMedia:
     media_type: str
     etag: str | None
     cache_control: str | None
+
+
+async def _iter_json_array(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
+    """Incrementally decode a top-level JSON array without retaining prior items."""
+
+    decoder = JSONDecoder()
+    buffer = ""
+    position = 0
+    array_started = False
+    array_finished = False
+    expect_value = True
+    allow_end = True
+
+    async for chunk in response.aiter_text():
+        buffer += chunk
+        while True:
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if not array_started:
+                if position >= len(buffer):
+                    break
+                if buffer[position] != "[":
+                    raise JSONDecodeError("Expected a top-level JSON array", buffer, position)
+                array_started = True
+                position += 1
+                continue
+
+            while position < len(buffer) and buffer[position].isspace():
+                position += 1
+            if position >= len(buffer):
+                break
+
+            if not expect_value:
+                if buffer[position] == ",":
+                    position += 1
+                    expect_value = True
+                    allow_end = False
+                    continue
+                if buffer[position] == "]":
+                    array_finished = True
+                    position += 1
+                    break
+                raise JSONDecodeError("Expected a comma or array end", buffer, position)
+
+            if buffer[position] == "]":
+                if not allow_end:
+                    raise JSONDecodeError("Trailing comma in JSON array", buffer, position)
+                array_finished = True
+                position += 1
+                break
+
+            try:
+                payload, end = decoder.raw_decode(buffer, position)
+            except JSONDecodeError:
+                if position:
+                    buffer = buffer[position:]
+                    position = 0
+                break
+            if not isinstance(payload, dict):
+                raise JSONDecodeError("Expected an object in JSON array", buffer, position)
+            position = end
+            expect_value = False
+            allow_end = True
+            yield payload
+
+            if position >= 65536:
+                buffer = buffer[position:]
+                position = 0
+
+        if array_finished:
+            break
+
+    while position < len(buffer) and buffer[position].isspace():
+        position += 1
+    if not array_started or not array_finished or position != len(buffer):
+        raise JSONDecodeError("Incomplete or malformed top-level JSON array", buffer, position)
 
 
 class ImmichApiClient:
@@ -677,10 +771,42 @@ class ImmichApiClient:
         return resolved
 
     async def list_stacks(self) -> list[ImmichStack]:
-        """List current stacks through the supported Immich API."""
+        """Compatibility helper that materializes the streamed stack traversal."""
 
-        response = await self._request("GET", "/api/stacks", operation="list stacks")
-        return [ImmichStack.model_validate(payload) for payload in response.json()]
+        return [stack async for stack in self.iter_stacks()]
+
+    async def iter_stacks(self) -> AsyncIterator[ImmichStack]:
+        """Stream stacks one at a time from Immich's unpaginated array response."""
+
+        attempts = self._settings.immich_retry_attempts
+        for attempt in range(attempts):
+            yielded = False
+            try:
+                async with (
+                    self._client() as client,
+                    client.stream("GET", "/api/stacks") as response,
+                ):
+                    if response.status_code in TRANSIENT_STATUS_CODES:
+                        if attempt + 1 >= attempts:
+                            raise ImmichApiError("list stacks", response.status_code)
+                    else:
+                        try:
+                            response.raise_for_status()
+                        except httpx.HTTPStatusError as error:
+                            raise ImmichApiError("list stacks", response.status_code) from error
+                        async for payload in _iter_json_array(response):
+                            yielded = True
+                            yield ImmichStack.model_validate(payload)
+                        return
+            except (httpx.RequestError, JSONDecodeError) as error:
+                if yielded or attempt + 1 >= attempts:
+                    raise ImmichApiError("list stacks") from error
+
+            backoff = self._settings.immich_retry_backoff_seconds * (2**attempt)
+            if backoff:
+                await asyncio.sleep(backoff)
+
+        raise ImmichApiError("list stacks")
 
     async def create_stack(self, asset_ids: list[UUID]) -> None:
         """Create one Immich stack from the selected assets."""

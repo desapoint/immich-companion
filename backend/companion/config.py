@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     sync_full_min_batch_delay_seconds: float = Field(default=0.2, ge=0, le=60)
     sync_max_attempts: int = Field(default=5, ge=1, le=10)
     sync_retry_backoff_seconds: float = Field(default=1.0, ge=0, le=60)
+    sync_memory_diagnostics: bool = False
 
     def resolve_immich_api_key(self) -> str | None:
         """Resolve a direct or file-backed API key without exposing it."""

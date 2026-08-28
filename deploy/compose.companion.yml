@@ -20,6 +20,8 @@ services:
   immich-companion:
     image: ghcr.io/desapoint/immich-companion:${IMMICH_COMPANION_VERSION:-latest}
     container_name: immich_companion
+    mem_limit: ${IMMICH_COMPANION_MEMORY_LIMIT:-1g}
+    mem_reservation: ${IMMICH_COMPANION_MEMORY_RESERVATION:-256m}
     environment:
       COMPANION_ENV: production
       COMPANION_VERSION: ${IMMICH_COMPANION_VERSION:-latest}
@@ -36,6 +38,7 @@ services:
       SYNC_FULL_MIN_BATCH_DELAY_SECONDS: ${IMMICH_COMPANION_SYNC_FULL_MIN_BATCH_DELAY_SECONDS:-0.2}
       SYNC_MAX_ATTEMPTS: ${IMMICH_COMPANION_SYNC_MAX_ATTEMPTS:-5}
       SYNC_RETRY_BACKOFF_SECONDS: ${IMMICH_COMPANION_SYNC_RETRY_BACKOFF_SECONDS:-1}
+      SYNC_MEMORY_DIAGNOSTICS: ${IMMICH_COMPANION_SYNC_MEMORY_DIAGNOSTICS:-false}
       COMPANION_DATABASE_URL: postgresql://companion:${IMMICH_COMPANION_DB_PASSWORD}@immich-companion-database:5432/immich_companion
       DATABASE_TIMEOUT_SECONDS: "5"
       ALLOW_DESTRUCTIVE_ACTIONS: "false"

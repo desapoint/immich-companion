@@ -7,7 +7,13 @@ import pytest
 
 from companion.asset_service import AssetSyncService
 from companion.config import Settings
-from companion.immich import ImmichAlbum, ImmichAsset, ImmichStack, ImmichTag
+from companion.immich import (
+    ImmichAlbum,
+    ImmichAsset,
+    ImmichStack,
+    ImmichStackAsset,
+    ImmichTag,
+)
 from companion.sync_schema import SyncRunStatus
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
@@ -31,6 +37,20 @@ def asset(asset_id: UUID, filename: str) -> ImmichAsset:
             "fileCreatedAt": "2026-08-24T12:00:00Z",
             "fileModifiedAt": "2026-08-24T12:00:00Z",
             "updatedAt": "2026-08-24T12:00:00Z",
+        }
+    )
+
+
+def stack_asset(asset_id: UUID, filename: str) -> ImmichStackAsset:
+    return ImmichStackAsset.model_validate(
+        {
+            "id": str(asset_id),
+            "type": "IMAGE",
+            "originalFileName": filename,
+            "originalMimeType": "image/png",
+            "width": 800,
+            "height": 600,
+            "fileCreatedAt": "2026-08-24T12:00:00Z",
         }
     )
 
@@ -75,6 +95,10 @@ class FakeImmich:
     async def list_stacks(self) -> list[ImmichStack]:
         self.calls.append("stacks")
         return [self.stack]
+
+    async def iter_stacks(self):
+        self.calls.append("stacks")
+        yield self.stack
 
     async def iter_album_asset_ids(self, _album_id: UUID, **_kwargs):
         self.calls.append("album_memberships")
@@ -208,7 +232,11 @@ def run_status() -> SyncRunStatus:
 @pytest.mark.asyncio
 async def test_global_sync_orders_catalogs_before_media_and_relations_after() -> None:
     members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "child.png")]
-    stack = ImmichStack(id=STACK_ID, primaryAssetId=ASSET_ONE, assets=members)
+    stack_members = [
+        stack_asset(ASSET_ONE, "primary.png"),
+        stack_asset(ASSET_TWO, "child.png"),
+    ]
+    stack = ImmichStack(id=STACK_ID, primaryAssetId=ASSET_ONE, assets=stack_members)
     immich = FakeImmich(members, stack)
     assets = FakeAssetRepository()
     syncs = FakeSyncRepository()
@@ -258,9 +286,64 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
 
 
 @pytest.mark.asyncio
+async def test_stack_sync_persists_bounded_batches_and_skips_final_pacing() -> None:
+    stack_models = [
+        ImmichStack(
+            id=UUID(int=index + 100),
+            primaryAssetId=ASSET_ONE,
+            assets=[stack_asset(ASSET_ONE, f"member-{index}.png")],
+        )
+        for index in range(5)
+    ]
+
+    class StreamingImmich:
+        async def iter_stacks(self):
+            for stack in stack_models:
+                yield stack
+
+        async def list_stacks(self):
+            raise AssertionError("stack sync must use the streaming traversal")
+
+    assets = FakeAssetRepository()
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        StreamingImmich(),  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_full_batch_size=2),
+    )
+    paced: list[int] = []
+
+    async def pace(_run, _started):
+        paced.append(1)
+
+    service._pace_full_batch = pace  # type: ignore[method-assign]
+    run = run_status().model_copy(update={"phase": "stacks"})
+    counters = {"stacks_seen": 0, "stack_members": 0}
+
+    await service._sync_stacks(run, OWNER_ID, counters)
+
+    assert [cursor for phase, cursor in syncs.checkpoints if phase == "stacks"] == [
+        None,
+        "stacks:1",
+        "stacks:2",
+        "stacks:3",
+    ]
+    assert paced == [1, 1]
+    assert counters == {"stacks_seen": 5, "stack_members": 5}
+    stack_progress = [item for item in syncs.progress if item and item.phase == "stacks"]
+    assert all(item.total is None and item.percent is None for item in stack_progress)
+    assert syncs.checkpoints[-1] == ("relationships", None)
+
+
+@pytest.mark.asyncio
 async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traversal() -> None:
     members = [asset(ASSET_ONE, "primary.png")]
-    stack = ImmichStack(id=STACK_ID, primaryAssetId=ASSET_ONE, assets=members)
+    stack = ImmichStack(
+        id=STACK_ID,
+        primaryAssetId=ASSET_ONE,
+        assets=[stack_asset(ASSET_ONE, "primary.png")],
+    )
     immich = FakeImmich(members, stack)
     assets = FakeAssetRepository()
     service = AssetSyncService(
@@ -281,7 +364,11 @@ async def test_restore_uses_immich_then_refreshes_asset_albums_and_tags() -> Non
     restored = asset(ASSET_ONE, "restored.png").model_copy(
         update={"tags": [{"id": str(TAG_ID), "name": "Review"}]}
     )
-    stack = ImmichStack(id=STACK_ID, primaryAssetId=ASSET_ONE, assets=[restored])
+    stack = ImmichStack(
+        id=STACK_ID,
+        primaryAssetId=ASSET_ONE,
+        assets=[stack_asset(ASSET_ONE, "restored.png")],
+    )
     immich = FakeImmich([restored], stack)
     assets = FakeAssetRepository()
     service = AssetSyncService(

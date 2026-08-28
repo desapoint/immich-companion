@@ -421,22 +421,27 @@ async def test_album_memberships_use_paged_metadata_search() -> None:
 @pytest.mark.asyncio
 async def test_stack_contract_includes_all_typed_members() -> None:
     stack_id = UUID("55555555-5555-4555-8555-555555555555")
+    content = json.dumps(
+        [
+            {
+                "id": str(stack_id),
+                "primaryAssetId": str(ASSET_ONE),
+                "assets": [
+                    asset_payload(ASSET_ONE, "stack-primary.png"),
+                    asset_payload(ASSET_TWO, "stack-child.png"),
+                ],
+            }
+        ]
+    ).encode()
+
+    class ChunkedStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            for index in range(0, len(content), 37):
+                yield content[index : index + 37]
 
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/api/stacks"
-        return httpx.Response(
-            200,
-            json=[
-                {
-                    "id": str(stack_id),
-                    "primaryAssetId": str(ASSET_ONE),
-                    "assets": [
-                        asset_payload(ASSET_ONE, "stack-primary.png"),
-                        asset_payload(ASSET_TWO, "stack-child.png"),
-                    ],
-                }
-            ],
-        )
+        return httpx.Response(200, stream=ChunkedStream())
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
     stacks = await client.list_stacks()
@@ -444,6 +449,7 @@ async def test_stack_contract_includes_all_typed_members() -> None:
     assert len(stacks) == 1
     assert stacks[0].primary_asset_id == ASSET_ONE
     assert [asset.id for asset in stacks[0].assets] == [ASSET_ONE, ASSET_TWO]
+    assert stacks[0].assets[0].model_extra is None
 
 
 @pytest.mark.asyncio

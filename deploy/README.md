@@ -22,6 +22,14 @@ no media mount and performs no direct database access.
    `IMMICH_COMPANION_SYNC_FULL_BATCH_SIZE` (50) and
    `IMMICH_COMPANION_SYNC_FULL_MIN_BATCH_DELAY_SECONDS` (0.2); saved Settings
    values take precedence after initialization.
+   Set `IMMICH_COMPANION_SYNC_MEMORY_DIAGNOSTICS=true` temporarily to include
+   process RSS/high-water and traced Python current/peak allocations in each
+   durable sync progress checkpoint. Leave it disabled normally because Python
+   allocation tracing has runtime overhead.
+   The overlay also caps Companion at `IMMICH_COMPANION_MEMORY_LIMIT` (1 GiB)
+   with a `IMMICH_COMPANION_MEMORY_RESERVATION` hint (256 MiB). Keep a limit as
+   defense in depth even though synchronization is batch-bounded; raise it only
+   after reviewing the recorded RSS/high-water evidence for the deployment.
 3. Load the original file and the overlay together in the deployment UI or
    Compose command used by the host.
 4. Confirm the companion reports `ready: true` before exposing port 8090 beyond

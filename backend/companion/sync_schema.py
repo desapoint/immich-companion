@@ -46,6 +46,18 @@ class SyncEvent(BaseModel):
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
+class SyncMemorySnapshot(BaseModel):
+    """Optional process-memory diagnostics captured at a durable checkpoint."""
+
+    rss_bytes: int = Field(ge=0)
+    rss_peak_bytes: int = Field(ge=0)
+    python_bytes: int | None = Field(default=None, ge=0)
+    python_peak_bytes: int | None = Field(default=None, ge=0)
+    elapsed_seconds: float = Field(ge=0)
+    batch: int | None = Field(default=None, ge=0)
+    batch_size: int = Field(ge=1)
+
+
 class SyncProgress(BaseModel):
     """User-facing progress for the active synchronization phase."""
 
@@ -54,6 +66,7 @@ class SyncProgress(BaseModel):
     total: int | None = None
     percent: float | None = None
     detail: str | None = None
+    memory: SyncMemorySnapshot | None = None
 
 
 class SyncRunStatus(BaseModel):

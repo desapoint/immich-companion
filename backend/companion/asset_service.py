@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import tracemalloc
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from pathlib import Path
 from time import monotonic, perf_counter
 from uuid import UUID
 
@@ -18,12 +21,14 @@ from companion.immich import (
     ImmichApiError,
     ImmichAsset,
     ImmichStack,
+    ImmichStackAsset,
     ImmichTag,
 )
 from companion.sync_repository import SyncRepository, new_sync_owner
 from companion.sync_schema import (
     SyncCoordinatorStatus,
     SyncEvent,
+    SyncMemorySnapshot,
     SyncMode,
     SyncProgress,
     SyncRunStatus,
@@ -43,6 +48,31 @@ def batches[T](items: list[T], size: int) -> list[list[T]]:
     """Split an already compact collection into bounded persistence batches."""
 
     return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+async def async_batches_with_last[T](
+    items: AsyncIterator[T], size: int
+) -> AsyncIterator[tuple[list[T], bool]]:
+    """Yield bounded async batches and identify the final batch with one-item lookahead."""
+
+    batch: list[T] = []
+    async for item in items:
+        batch.append(item)
+        if len(batch) > size:
+            overflow = batch.pop()
+            yield batch, False
+            batch = [overflow]
+    if batch:
+        yield batch, True
+
+
+async def _enumerate_async[T](
+    items: AsyncIterator[T], start: int = 0
+) -> AsyncIterator[tuple[int, T]]:
+    index = start
+    async for item in items:
+        yield index, item
+        index += 1
 
 
 class _CoordinatorSyncRepository:
@@ -375,6 +405,8 @@ class AssetSyncService:
         self._assets = assets
         self._syncs = syncs
         self._settings = settings
+        if settings.sync_memory_diagnostics and not tracemalloc.is_tracing():
+            tracemalloc.start()
         self._coordinator = coordinator
         self._runtime_sync_settings = (
             runtime_sync_settings
@@ -912,6 +944,10 @@ class AssetSyncService:
         cursor: str | None,
         progress: SyncProgress | None = None,
     ) -> None:
+        if progress is not None and self._settings.sync_memory_diagnostics:
+            progress = progress.model_copy(
+                update={"memory": self._memory_snapshot(run, cursor)}
+            )
         await self._syncs.checkpoint(
             run.id,
             owner,
@@ -920,6 +956,38 @@ class AssetSyncService:
             counters=counters,
             progress=progress,
             lease_duration=self._lease_duration,
+        )
+
+    def _memory_snapshot(
+        self, run: SyncRunStatus, cursor: str | None
+    ) -> SyncMemorySnapshot:
+        values: dict[str, int] = {}
+        try:
+            for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+                name, separator, raw = line.partition(":")
+                if separator and name in {"VmRSS", "VmHWM"}:
+                    values[name] = int(raw.strip().split()[0]) * 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        python_bytes: int | None = None
+        python_peak_bytes: int | None = None
+        if tracemalloc.is_tracing():
+            python_bytes, python_peak_bytes = tracemalloc.get_traced_memory()
+        batch: int | None = None
+        if cursor and ":" in cursor:
+            with suppress(ValueError):
+                batch = int(cursor.rsplit(":", 1)[1])
+        return SyncMemorySnapshot(
+            rss_bytes=values.get("VmRSS", 0),
+            rss_peak_bytes=values.get("VmHWM", values.get("VmRSS", 0)),
+            python_bytes=python_bytes,
+            python_peak_bytes=python_peak_bytes,
+            elapsed_seconds=max(
+                0.0,
+                (datetime.now(UTC) - (run.started_at or run.created_at)).total_seconds(),
+            ),
+            batch=batch,
+            batch_size=self._full_batch_size(run, self._settings),
         )
 
     @staticmethod
@@ -968,6 +1036,16 @@ class AssetSyncService:
             "finalizing": 4,
         }
         start_phase = phase_order.get(run.phase, 0)
+
+        if start_phase <= 0:
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "catalogs",
+                None,
+                self._progress("catalogs", 0, None, "Starting synchronization"),
+            )
 
         capabilities = (
             await self._immich.sync_capabilities()
@@ -1264,7 +1342,9 @@ class AssetSyncService:
 
     @staticmethod
     def _stack_payload_from_members(
-        stack_id: UUID, primary_asset_id: UUID, assets: list[ImmichAsset]
+        stack_id: UUID,
+        primary_asset_id: UUID,
+        assets: list[ImmichAsset] | list[ImmichStackAsset],
     ) -> tuple[dict[str, object], list[UUID]]:
         members = [
             {
@@ -1296,25 +1376,35 @@ class AssetSyncService:
         owner: UUID,
         counters: dict[str, int],
     ) -> None:
-        stacks = await self._immich.list_stacks()
-        payloads = [self._stack_payload(stack) for stack in stacks]
         await self._checkpoint(
             run,
             owner,
             counters,
             "stacks",
             run.cursor if run.phase == "stacks" else None,
-            self._progress("stacks", 0, len(payloads), f"Preparing {len(payloads)} stacks"),
+            self._progress("stacks", counters["stacks_seen"], None, "Reading stacks"),
         )
         completed_batches = 0
         if run.phase == "stacks" and run.cursor:
             completed_batches = int(run.cursor.rsplit(":", 1)[1])
-        for index, stack_batch in enumerate(
-            batches(payloads, self._full_batch_size(run, self._settings)), start=1
+
+        async def iter_stacks() -> AsyncIterator[ImmichStack]:
+            stream = getattr(self._immich, "iter_stacks", None)
+            if stream is not None:
+                async for stack in stream():
+                    yield stack
+                return
+            for stack in await self._immich.list_stacks():
+                yield stack
+
+        stack_size = self._full_batch_size(run, self._settings)
+        async for index, (stack_models, is_last) in _enumerate_async(
+            async_batches_with_last(iter_stacks(), stack_size), start=1
         ):
             if index <= completed_batches:
                 continue
             started = perf_counter()
+            stack_batch = [self._stack_payload(stack) for stack in stack_models]
             counters["stack_members"] += await self._assets.apply_stack_batch(
                 stack_batch, run.generation
             )
@@ -1327,12 +1417,14 @@ class AssetSyncService:
                 f"stacks:{index}",
                 self._progress(
                     "stacks",
-                    min(counters["stacks_seen"], len(payloads)),
-                    len(payloads),
-                    f"Stacks {min(counters['stacks_seen'], len(payloads))}/{len(payloads)}",
+                    counters["stacks_seen"],
+                    None,
+                    f"Stacks {counters['stacks_seen']} processed · "
+                    f"{counters['stack_members']} members",
                 ),
             )
-            await self._pace_full_batch(run, started)
+            if not is_last:
+                await self._pace_full_batch(run, started)
         await self._checkpoint(
             run,
             owner,

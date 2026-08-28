@@ -87,7 +87,7 @@ from companion.sync_schema import (
 )
 from companion.sync_settings import SyncRuntimeSettingsRepository, SyncRuntimeSettingsUpdate
 from companion.task_coordinator import TaskCoordinator
-from companion.task_schema import TaskScheduleUpdate, TaskScheduleView, TaskStatusView
+from companion.task_schema import TaskEvent, TaskScheduleUpdate, TaskScheduleView, TaskStatusView
 
 
 def create_app(
@@ -426,6 +426,24 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
             )
         return task
+
+    @app.get("/api/tasks/{task_id}/events", response_model=list[TaskEvent])
+    async def task_events(
+        task_id: UUID,
+        limit: int = Query(default=1000, ge=1, le=5000),
+    ) -> list[TaskEvent]:
+        """Expose durable checkpoints, including opt-in sync memory snapshots."""
+
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        if await task_coordinator.get_status(task_id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
+            )
+        return await task_coordinator.task_events(task_id, limit=limit)
 
     @app.websocket("/api/tasks/stream")
     async def task_updates_stream(websocket: WebSocket) -> None:
