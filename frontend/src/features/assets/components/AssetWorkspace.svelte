@@ -53,6 +53,7 @@
     AssetActionPlan,
     AssetActionResult,
     AssetCardIndicatorConfig,
+    AssetLayoutMode,
     AssetComparisonActivation,
     AssetComparisonSource,
     AssetDetail,
@@ -71,6 +72,7 @@
   import AssetEmptyState from './AssetEmptyState.svelte';
   import AssetErrorState from './AssetErrorState.svelte';
   import AssetGrid from './AssetGrid.svelte';
+  import AssetLayoutControls from './AssetLayoutControls.svelte';
   import AssetLoadingState from './AssetLoadingState.svelte';
   import AssetPagination from './AssetPagination.svelte';
   import AssetResultStatus from './AssetResultStatus.svelte';
@@ -92,6 +94,7 @@
   let page = $state(1);
   let pageSize = $state(DEFAULT_ASSET_PAGE_SIZE);
   let listMode = $state<'paged' | 'infinite'>('paged');
+  let layoutMode = $state<AssetLayoutMode>('normal');
   let infiniteLoading = $state(false);
   let infiniteSentinel = $state<HTMLDivElement | undefined>(undefined);
   let assetLoadGeneration = 0;
@@ -323,6 +326,11 @@
     viewerSelectedAsset = null;
     selectionAnchorIndex = null;
     void loadAssets();
+  }
+
+  function changeLayoutMode(nextMode: AssetLayoutMode): void {
+    layoutMode = nextMode;
+    localStorage.setItem('immich-companion:asset-layout', nextMode);
   }
 
   $effect(() => {
@@ -1181,6 +1189,8 @@
   }
 
   onMount(() => {
+    const savedLayout = localStorage.getItem('immich-companion:asset-layout');
+    if (savedLayout === 'normal' || savedLayout === 'condensed') layoutMode = savedLayout;
     startTaskUpdates();
     void loadActionTaskHistory();
     const url = new URL(window.location.href);
@@ -1283,24 +1293,28 @@
   {:else if results && results.items.length === 0}
     <AssetEmptyState {syncing} showSync={!hasSearch} onsync={() => void syncAssets('incremental')} />
   {:else if results}
-    <AssetPagination
-      page={results.page}
-      pages={results.pages}
-      total={results.total}
-      pageSize={results.page_size}
-      disabled={loading}
-      onpage={changePage}
-      onpagesizechange={changePageSize}
-      mode={listMode}
-      onmodechange={changeListMode}
-      showPagination={false}
-    />
+    <div class="result-layout-controls">
+      <AssetPagination
+        page={results.page}
+        pages={results.pages}
+        total={results.total}
+        pageSize={results.page_size}
+        disabled={loading}
+        onpage={changePage}
+        onpagesizechange={changePageSize}
+        mode={listMode}
+        onmodechange={changeListMode}
+        showPagination={false}
+      />
+      <AssetLayoutControls mode={layoutMode} disabled={loading} onchange={changeLayoutMode} />
+    </div>
     <AssetGrid
       assets={results.items}
       selectedIds={visibleSelectedIds}
       selectionActive={selectedCount > 0}
       indicatorConfig={cardIndicatorConfig}
       {matchingTagIds}
+      layout={layoutMode}
       onopen={openViewer}
       onselect={selectAtIndex}
       ondragstart={beginDragSelection}
@@ -1424,6 +1438,14 @@
   .asset-workspace {
     display: grid;
     gap: 1.1rem;
+  }
+
+  .result-layout-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: space-between;
+    gap: 0.65rem 1rem;
   }
 
   .infinite-status {

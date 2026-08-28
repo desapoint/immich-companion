@@ -18,6 +18,7 @@
     asset: AssetSummary;
     selected: boolean;
     selectionActive: boolean;
+    condensed?: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
     matchingTagIds: ReadonlySet<string>;
     onopen: () => void;
@@ -30,6 +31,7 @@
     asset,
     selected,
     selectionActive,
+    condensed = false,
     indicatorConfig,
     matchingTagIds,
     onopen,
@@ -56,20 +58,32 @@
   }
 </script>
 
-<article class:selected class="asset-card" data-asset-id={asset.id}>
-  <header class="card-decision">
-    <label class="selection-control">
-      <input
-        type="checkbox"
-        checked={selected}
-        onclick={(event) => onselect(event.shiftKey)}
-      />
-      <span>{selected ? 'Selected' : 'Select'}</span>
-    </label>
-    <span class="media-type">{asset.type}</span>
-  </header>
+<article class:selected class:condensed class="asset-card" data-asset-id={asset.id}>
+  {#if !condensed}
+    <header class="card-decision">
+      <label class="selection-control">
+        <input
+          type="checkbox"
+          checked={selected}
+          onclick={(event) => onselect(event.shiftKey)}
+        />
+        <span>{selected ? 'Selected' : 'Select'}</span>
+      </label>
+      <span class="media-type">{asset.type}</span>
+    </header>
+  {/if}
 
   <div class="media-wrap">
+    {#if condensed}
+      <label class="selection-control condensed-selection">
+        <input
+          type="checkbox"
+          checked={selected}
+          aria-label={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
+          onclick={(event) => onselect(event.shiftKey)}
+        />
+      </label>
+    {/if}
     <div
       class:selection-active={selectionActive}
       class="media-stage"
@@ -85,11 +99,13 @@
       onkeydown={handleMediaKeydown}
     >
       <img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" decoding="async" />
-      <span class="media-facts" aria-hidden="true">
-        {#if fileSize}<span>{fileSize}</span>{/if}
-        {#if asset.width && asset.height}<span>{asset.width} × {asset.height}</span>{/if}
-      </span>
-      <span class="selection-cue">{selected ? 'Selected' : 'Select'}</span>
+      {#if !condensed}
+        <span class="media-facts" aria-hidden="true">
+          {#if fileSize}<span>{fileSize}</span>{/if}
+          {#if asset.width && asset.height}<span>{asset.width} × {asset.height}</span>{/if}
+        </span>
+        <span class="selection-cue">{selected ? 'Selected' : 'Select'}</span>
+      {/if}
     </div>
     <button
       class="view-cue"
@@ -99,42 +115,56 @@
       onpointerdown={(event) => event.stopPropagation()}
       onclick={(event) => { event.stopPropagation(); onopen(); }}
     ><Icon name="view" size="1.4rem" /><span class="visually-hidden">Open viewer</span></button>
-  </div>
-
-  <div class="card-content">
-    <div class="identity">
-      <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
-      <span>{formatAssetDate(asset.taken_at)}</span>
-    </div>
-
-    {#if inlineTags.length}
-      <AssetTagChips
-        tags={inlineTags}
-        maxVisible={indicatorConfig.inlineTags === 'matching' ? inlineTags.length : 3}
-      />
+    {#if condensed}
+      <div class="condensed-indicators">
+        <AssetRelationIndicators
+          {asset}
+          showAlbums={indicatorConfig.albums}
+          showTags={indicatorConfig.tags}
+          showStack={indicatorConfig.stack}
+          showExternal={indicatorConfig.external}
+          showImmich={indicatorConfig.immich}
+        />
+      </div>
     {/if}
-
-    <AssetRelationIndicators
-      {asset}
-      showAlbums={indicatorConfig.albums}
-      showTags={indicatorConfig.tags}
-      showStack={indicatorConfig.stack}
-      showExternal={indicatorConfig.external}
-      showImmich={indicatorConfig.immich}
-    />
-
-    <AssetStateChips {asset} />
-
-    <details>
-      <summary>Details</summary>
-      <dl>
-        <div><dt>Immich ID</dt><dd title={asset.id}>{asset.id}</dd></div>
-        <div><dt>Modified</dt><dd>{formatAssetDate(asset.file_modified_at)}</dd></div>
-        {#if asset.original_mime_type}<div><dt>MIME type</dt><dd>{asset.original_mime_type}</dd></div>{/if}
-        {#if asset.visibility}<div><dt>Visibility</dt><dd>{asset.visibility}</dd></div>{/if}
-      </dl>
-    </details>
   </div>
+
+  {#if !condensed}
+    <div class="card-content">
+      <div class="identity">
+        <strong title={asset.original_file_name}>{asset.original_file_name}</strong>
+        <span>{formatAssetDate(asset.taken_at)}</span>
+      </div>
+
+      {#if inlineTags.length}
+        <AssetTagChips
+          tags={inlineTags}
+          maxVisible={indicatorConfig.inlineTags === 'matching' ? inlineTags.length : 3}
+        />
+      {/if}
+
+      <AssetRelationIndicators
+        {asset}
+        showAlbums={indicatorConfig.albums}
+        showTags={indicatorConfig.tags}
+        showStack={indicatorConfig.stack}
+        showExternal={indicatorConfig.external}
+        showImmich={indicatorConfig.immich}
+      />
+
+      <AssetStateChips {asset} />
+
+      <details>
+        <summary>Details</summary>
+        <dl>
+          <div><dt>Immich ID</dt><dd title={asset.id}>{asset.id}</dd></div>
+          <div><dt>Modified</dt><dd>{formatAssetDate(asset.file_modified_at)}</dd></div>
+          {#if asset.original_mime_type}<div><dt>MIME type</dt><dd>{asset.original_mime_type}</dd></div>{/if}
+          {#if asset.visibility}<div><dt>Visibility</dt><dd>{asset.visibility}</dd></div>{/if}
+        </dl>
+      </details>
+    </div>
+  {/if}
 </article>
 
 <style>
@@ -158,6 +188,11 @@
   .asset-card.selected {
     border-color: var(--color-accent-strong);
     box-shadow: inset 0 0 0 0.12rem var(--color-accent-strong), var(--shadow-card);
+  }
+
+  .asset-card.condensed {
+    overflow: visible;
+    border-radius: var(--radius-sm);
   }
 
   .card-decision {
@@ -185,6 +220,26 @@
     accent-color: var(--color-accent-strong);
   }
 
+  .condensed-selection {
+    position: absolute;
+    z-index: 12;
+    top: 0.5rem;
+    left: 0.5rem;
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border: 1px solid rgb(255 255 255 / 28%);
+    border-radius: 999px;
+    color: white;
+    background: rgb(0 0 0 / 70%);
+    backdrop-filter: blur(0.35rem);
+  }
+
+  .condensed-selection input {
+    margin: 0;
+  }
+
   .media-type {
     color: var(--color-ink-muted);
     font-family: var(--font-mono);
@@ -207,6 +262,12 @@
     background: #080b09;
     cursor: zoom-in;
     border-radius: 0;
+  }
+
+  .condensed .media-stage {
+    height: auto;
+    aspect-ratio: 1;
+    border-radius: var(--radius-sm);
   }
 
   .media-stage.selection-active {
@@ -265,6 +326,43 @@
     opacity: 0.78;
     backdrop-filter: blur(0.35rem);
     transition: opacity 140ms ease, transform 140ms ease, background 140ms ease;
+  }
+
+  .condensed .view-cue {
+    z-index: 12;
+    width: 2rem;
+    height: 2rem;
+  }
+
+  .condensed-indicators {
+    position: absolute;
+    z-index: 11;
+    right: 0.45rem;
+    bottom: 0.45rem;
+    left: 0.45rem;
+    padding: 0.25rem;
+    border-radius: var(--radius-sm);
+    background: rgb(0 0 0 / 62%);
+    backdrop-filter: blur(0.35rem);
+  }
+
+  .condensed-indicators :global(.relation-indicators) {
+    flex-wrap: nowrap;
+    overflow: visible;
+  }
+
+  .condensed-indicators :global(.relation-indicator > button),
+  .condensed-indicators :global(.immich-link) {
+    min-width: 1.8rem;
+    min-height: 1.8rem;
+    padding: 0.28rem 0.38rem;
+    border-color: rgb(255 255 255 / 24%);
+    color: white;
+    background: rgb(0 0 0 / 68%);
+  }
+
+  .condensed-indicators :global(.immich-link > span) {
+    display: none;
   }
 
   .selection-cue {

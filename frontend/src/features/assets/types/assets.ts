@@ -3,6 +3,7 @@ export type AssetType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'OTHER';
 export type SearchMode = 'simple' | 'expert';
 export type SearchBooleanFilter = 'any' | 'true' | 'false';
 export type AssetCardInlineTagMode = 'hidden' | 'matching' | 'compact';
+export type AssetLayoutMode = 'normal' | 'condensed';
 export type AssetSortField =
   | 'taken_at'
   | 'filename'

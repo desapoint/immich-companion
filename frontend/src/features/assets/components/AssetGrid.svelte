@@ -1,6 +1,7 @@
 <script lang="ts">
   import type {
     AssetCardIndicatorConfig,
+    AssetLayoutMode,
     AssetSummary,
   } from '../types/assets';
   import AssetCard from './AssetCard.svelte';
@@ -11,6 +12,7 @@
     selectionActive: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
     matchingTagIds: ReadonlySet<string>;
+    layout: AssetLayoutMode;
     onopen: (index: number) => void;
     onselect: (index: number, shiftKey: boolean) => void;
     ondragstart: (index: number, event: PointerEvent) => void;
@@ -23,6 +25,7 @@
     selectionActive,
     indicatorConfig,
     matchingTagIds,
+    layout,
     onopen,
     onselect,
     ondragstart,
@@ -30,13 +33,14 @@
   }: Props = $props();
 </script>
 
-<div class="asset-grid" aria-label="Asset search results">
+<div class:condensed={layout === 'condensed'} class="asset-grid" aria-label="Asset search results">
   {#each assets as asset, index (asset.id)}
     <AssetCard
       {asset}
       {indicatorConfig}
       {matchingTagIds}
       {selectionActive}
+      condensed={layout === 'condensed'}
       selected={selectedIds.has(asset.id)}
       onopen={() => onopen(index)}
       onselect={(shiftKey) => onselect(index, shiftKey)}
@@ -52,6 +56,11 @@
     grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.9rem;
     align-items: start;
+  }
+
+  .asset-grid.condensed {
+    grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr));
+    gap: 0.55rem;
   }
 
   @media (max-width: 72rem) {
