@@ -171,6 +171,7 @@
 <style>
   .asset-card {
     position: relative;
+    z-index: 0;
     min-width: 0;
     overflow: visible;
     border: 1px solid var(--color-border-subtle);
@@ -181,13 +182,13 @@
   }
 
   .asset-card:hover {
-    z-index: 200;
+    z-index: 2;
     border-color: var(--color-border-strong);
     transform: translateY(-0.1rem);
   }
 
   .asset-card:focus-within {
-    z-index: 100;
+    z-index: 2;
   }
 
   .asset-card.selected {
