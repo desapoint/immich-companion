@@ -28,6 +28,7 @@ describe('Checkbox', () => {
     }).body;
 
     expect(checked).toContain('circle');
+    expect(checked).toMatch(/class="control [^"]* checked"/);
     expect(checked).toMatch(/class="checkmark [^"]* visible"/);
     expect(unchecked).toContain('checkmark');
     expect(unchecked).not.toMatch(/class="checkmark [^"]* visible"/);

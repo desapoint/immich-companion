@@ -1,6 +1,4 @@
 <script lang="ts">
-  import Icon from './Icon.svelte';
-
   interface Props {
     checked: boolean;
     label: string;
@@ -36,9 +34,9 @@
     onchange={(event) => onchange?.(event.currentTarget.checked)}
     {onclick}
   />
-  <span class="control" aria-hidden="true">
+  <span class:checked class="control" aria-hidden="true">
     {#if variant === 'checkbox'}
-      <span class:visible={checked} class="checkmark"><Icon name="check" size="0.82rem" strokeWidth={2.4} /></span>
+      <span class:visible={checked} class="checkmark"></span>
     {:else}
       <span class="switch-thumb"></span>
     {/if}
@@ -87,29 +85,32 @@
   }
 
   .circle .control {
-    width: 1.3rem;
-    height: 1.3rem;
+    width: 1.5rem;
+    height: 1.5rem;
     border-radius: 50%;
   }
 
   .checkmark {
-    display: grid;
-    place-items: center;
+    width: 0.34rem;
+    height: 0.65rem;
+    margin-top: -0.08rem;
+    border-right: 0.14rem solid currentColor;
+    border-bottom: 0.14rem solid currentColor;
     opacity: 0;
-    transform: scale(0.72);
+    transform: rotate(45deg) scale(0.72);
     transition: opacity 100ms ease, transform 100ms ease;
   }
 
   .checkmark.visible {
     opacity: 1;
-    transform: scale(1);
+    transform: rotate(45deg) scale(1);
   }
 
   .label {
     line-height: 1.35;
   }
 
-  input:checked + .control {
+  .control.checked {
     border-color: var(--color-accent-strong);
     background: var(--color-accent-strong);
     box-shadow: inset 0 0 0 0.08rem color-mix(in srgb, var(--color-canvas) 28%, transparent);
@@ -148,11 +149,11 @@
     transition: transform 140ms ease, background 140ms ease;
   }
 
-  .switch input:checked + .control {
+  .switch .control.checked {
     background: color-mix(in srgb, var(--color-accent-strong) 18%, var(--color-surface-soft));
   }
 
-  .switch input:checked + .control .switch-thumb {
+  .switch .control.checked .switch-thumb {
     background: var(--color-accent-strong);
     transform: translateX(1.2rem);
   }

@@ -67,7 +67,7 @@
         label={selected ? 'Selected' : 'Select'}
         ariaLabel={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
         shape="circle"
-        onclick={(event) => { event.preventDefault(); onselect(event.shiftKey); }}
+        onclick={(event) => onselect(event.shiftKey)}
       />
       <span class="media-type">{asset.type}</span>
     </header>
@@ -81,7 +81,7 @@
           label={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
           hiddenLabel
           shape="circle"
-          onclick={(event) => { event.preventDefault(); onselect(event.shiftKey); }}
+          onclick={(event) => onselect(event.shiftKey)}
         />
       </div>
     {/if}
@@ -216,15 +216,6 @@
     z-index: 12;
     top: 0.5rem;
     left: 0.5rem;
-    display: grid;
-    width: 2rem;
-    height: 2rem;
-    place-items: center;
-    border: 1px solid rgb(255 255 255 / 28%);
-    border-radius: 999px;
-    color: white;
-    background: rgb(0 0 0 / 70%);
-    backdrop-filter: blur(0.35rem);
   }
 
   .media-type {

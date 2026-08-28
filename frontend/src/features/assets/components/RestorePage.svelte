@@ -343,13 +343,6 @@
     z-index: 1;
     top: 0.5rem;
     left: 0.5rem;
-    display: grid;
-    width: 2rem;
-    height: 2rem;
-    place-items: center;
-    border: 1px solid color-mix(in srgb, var(--color-ink-inverse) 25%, transparent);
-    border-radius: 50%;
-    background: color-mix(in srgb, var(--color-surface-raised) 88%, transparent);
   }
 
   article > div:not(.image-wrap) {
