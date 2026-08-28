@@ -1,13 +1,14 @@
 <script lang="ts">
   import { flushSync, onMount, untrack } from 'svelte';
 
-  import { assetOriginalUrl, buildAssetPreviewItems } from '../api/assetApi';
+  import { buildAssetPreviewItems } from '../api/assetApi';
   import {
     assetAsStackMember,
     comparisonPreviewState,
     nextViewerIndex,
     stackMembersForAsset,
   } from '../state/assetViewModel';
+  import { resolveViewerMediaUrls } from '../state/viewerMedia';
   import {
     anchoredScrollOffset,
     captureImageZoomAnchor,
@@ -128,18 +129,22 @@
 
   let dialogElement: HTMLDialogElement;
   let viewerScroll: HTMLDivElement;
-  let viewerImage: HTMLImageElement;
+  let viewerImage: HTMLImageElement | undefined;
   let scaleMode = $state<ViewerScaleMode>('fit');
   let zoom = $state(1);
   let viewportWidth = $state(1);
   let viewportHeight = $state(1);
   let imageLoading = $state(true);
   let imageError = $state(false);
+  let viewerMediaUrl = $state('');
+  let viewerMediaUrls = $state<string[]>([]);
+  let viewerMediaIndex = $state(0);
   let infoOpen = $state(false);
   let helpOpen = $state(false);
   let visibleAssetId = $state('');
   let selectedAssetId = '';
   let loadedMediaAssetId = '';
+  let mediaLoadGeneration = 0;
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   let nextLoading = $state(false);
   const currentIndex = $derived(initialIndex);
@@ -183,7 +188,7 @@
   }
 
   function currentVisibleCenterAnchor(): ImageZoomAnchor | null {
-    if (imageLoading || imageError) return null;
+    if (!viewerImage || imageLoading || imageError) return null;
     return captureVisibleImageCenter(
       viewerImage.getBoundingClientRect(),
       viewerScroll.getBoundingClientRect(),
@@ -196,7 +201,7 @@
     flushSync(() => {
       zoom = nextZoom;
     });
-    if (!anchor) return;
+    if (!anchor || !viewerImage) return;
     const offset = anchoredScrollOffset(
       anchor,
       viewerImage.getBoundingClientRect(),
@@ -313,7 +318,7 @@
   }
 
   function handleWheel(event: WheelEvent): void {
-    if (!event.ctrlKey) return;
+    if (!event.ctrlKey || !viewerImage) return;
     event.preventDefault();
     const imageRect = viewerImage.getBoundingClientRect();
     const anchor = imageLoading || imageError
@@ -355,6 +360,19 @@
     panOrigin = null;
   }
 
+  function handleImageError(): void {
+    const nextIndex = viewerMediaIndex + 1;
+    if (nextIndex < viewerMediaUrls.length) {
+      viewerMediaIndex = nextIndex;
+      viewerMediaUrl = viewerMediaUrls[nextIndex];
+      imageLoading = true;
+      imageError = false;
+      return;
+    }
+    imageLoading = false;
+    imageError = true;
+  }
+
   $effect(() => {
     const assetId = currentAsset.id;
     if (assetId === selectedAssetId) return;
@@ -365,12 +383,30 @@
 
   $effect(() => {
     const assetId = visibleAsset.id;
+    const mimeType = visibleAsset.original_mime_type;
     if (assetId === loadedMediaAssetId) return;
     loadedMediaAssetId = assetId;
+    const generation = ++mediaLoadGeneration;
     untrack(() => onvisiblechange(currentAsset.id));
     zoom = 1;
     imageLoading = true;
     imageError = false;
+    viewerMediaUrl = '';
+    viewerMediaUrls = [];
+    viewerMediaIndex = 0;
+
+    untrack(() => {
+      void resolveViewerMediaUrls(assetId, mimeType).then((urls) => {
+        if (generation !== mediaLoadGeneration || loadedMediaAssetId !== assetId) return;
+        viewerMediaUrls = urls;
+        viewerMediaIndex = 0;
+        viewerMediaUrl = urls[0] ?? '';
+        if (!viewerMediaUrl) {
+          imageLoading = false;
+          imageError = true;
+        }
+      });
+    });
   });
 
   onMount(() => {
@@ -464,20 +500,19 @@
         {#if imageError}
           <div class="image-status error" role="alert">The full-size image could not be loaded.</div>
         {/if}
-        <img
-          bind:this={viewerImage}
-          src={assetOriginalUrl(visibleAsset.id)}
-          alt={visibleAsset.original_file_name}
-          draggable="false"
-          class:hidden={imageLoading || imageError}
-          style={`width: ${displayWidth}px; height: ${displayHeight}px;`}
-          onload={() => (imageLoading = false)}
-          onerror={() => {
-            imageLoading = false;
-            imageError = true;
-          }}
-          ondblclick={toggleScale}
-        />
+        {#if viewerMediaUrl}
+          <img
+            bind:this={viewerImage}
+            src={viewerMediaUrl}
+            alt={visibleAsset.original_file_name}
+            draggable="false"
+            class:hidden={imageLoading || imageError}
+            style={`width: ${displayWidth}px; height: ${displayHeight}px;`}
+            onload={() => (imageLoading = false)}
+            onerror={handleImageError}
+            ondblclick={toggleScale}
+          />
+        {/if}
       </div>
     </div>
 
