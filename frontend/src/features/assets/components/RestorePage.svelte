@@ -179,9 +179,9 @@
     </div>
     <div class:condensed={layoutMode === 'condensed'} class="grid">
       {#each items as asset, index (asset.id)}
-        <article>
+        <article class:selected={selectedIds.has(asset.id)}>
           <div class:overlay={layoutMode === 'condensed'} class="image-wrap">
-            <div class="select"><Checkbox checked={selectedIds.has(asset.id)} label={`Select ${asset.original_file_name}`} hiddenLabel onchange={() => toggleSelection(asset.id)} /></div>
+            <div class="select"><Checkbox checked={selectedIds.has(asset.id)} label={`Select ${asset.original_file_name}`} hiddenLabel shape="circle" onchange={() => toggleSelection(asset.id)} /></div>
             <button class="preview" type="button" onclick={() => void openViewer(index)} aria-label={`Preview ${asset.original_file_name}`}><img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" /></button>
             {#if layoutMode === 'condensed'}
               <div class="overlay-actions" aria-label={`Actions for ${asset.original_file_name}`}>
@@ -304,12 +304,28 @@
     background: var(--color-surface-raised);
   }
 
+  article.selected {
+    border-color: var(--color-accent-strong);
+    background: color-mix(in srgb, var(--color-accent-strong) 7%, var(--color-surface-raised));
+    box-shadow: 0 0 0 0.18rem color-mix(in srgb, var(--color-accent-strong) 72%, transparent);
+  }
+
   .image-wrap {
     min-width: 0;
   }
 
   .image-wrap.overlay {
     position: relative;
+  }
+
+  article.selected .image-wrap.overlay::after {
+    position: absolute;
+    z-index: 0;
+    inset: 0;
+    border: 0.18rem solid var(--color-accent-strong);
+    border-radius: var(--radius-sm);
+    content: '';
+    pointer-events: none;
   }
 
   img {

@@ -66,6 +66,7 @@
         checked={selected}
         label={selected ? 'Selected' : 'Select'}
         ariaLabel={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
+        shape="circle"
         onclick={(event) => { event.preventDefault(); onselect(event.shiftKey); }}
       />
       <span class="media-type">{asset.type}</span>
@@ -79,6 +80,7 @@
           checked={selected}
           label={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
           hiddenLabel
+          shape="circle"
           onclick={(event) => { event.preventDefault(); onselect(event.shiftKey); }}
         />
       </div>
@@ -190,7 +192,8 @@
 
   .asset-card.selected {
     border-color: var(--color-accent-strong);
-    box-shadow: inset 0 0 0 0.12rem var(--color-accent-strong), var(--shadow-card);
+    background: color-mix(in srgb, var(--color-accent-strong) 7%, var(--color-surface-raised));
+    box-shadow: 0 0 0 0.18rem color-mix(in srgb, var(--color-accent-strong) 72%, transparent), var(--shadow-card);
   }
 
   .asset-card.condensed {
@@ -233,6 +236,16 @@
 
   .media-wrap {
     position: relative;
+  }
+
+  .asset-card.selected.condensed .media-wrap::after {
+    position: absolute;
+    z-index: 9;
+    inset: 0;
+    border: 0.18rem solid var(--color-accent-strong);
+    border-radius: var(--radius-sm);
+    content: '';
+    pointer-events: none;
   }
 
   .media-stage {
