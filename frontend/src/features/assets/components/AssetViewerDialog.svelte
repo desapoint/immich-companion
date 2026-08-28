@@ -1,3 +1,24 @@
+<script lang="ts" module>
+  /**
+   * Window key events also bubble out of native dialogs. Only the viewer's
+   * own surface may use its shortcuts; nested dialogs and controls must keep
+   * their native keyboard behavior.
+   */
+  export function shouldHandleViewerShortcut(
+    target: object | null,
+    viewerDialog: object,
+  ): boolean {
+    const element = target as (EventTarget & {
+      closest?: (selector: string) => object | null;
+    }) | null;
+    const closestDialog = element?.closest?.('dialog, [role="dialog"]');
+    if (closestDialog && closestDialog !== viewerDialog) return false;
+    return !element?.closest?.(
+      'input, textarea, select, button, a, summary, [role="button"], [contenteditable="true"]',
+    );
+  }
+</script>
+
 <script lang="ts">
   import { flushSync, onMount, untrack } from 'svelte';
 
@@ -274,9 +295,7 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    const target = event.target as HTMLElement | null;
-    if (target?.closest('dialog, [role="dialog"]')) return;
-    if (target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+    if (!shouldHandleViewerShortcut(event.target, dialogElement)) return;
     const key = event.key.toLowerCase();
 
     if (event.key === 'ArrowLeft' || key === 'h') {
@@ -285,7 +304,7 @@
     } else if (event.key === 'ArrowRight' || key === 'l') {
       event.preventDefault();
       void navigate('next');
-    } else if (event.key === ' ' && !target?.closest('button, a, summary')) {
+    } else if (event.key === ' ') {
       event.preventDefault();
       ontoggleselection(currentAsset.id);
     } else if (key === 'i') {
