@@ -4,6 +4,36 @@ import { describe, expect, it } from 'vitest';
 import AssetSelectionActions from './AssetSelectionActions.svelte';
 
 describe('AssetSelectionActions', () => {
+  it('keeps selection controls visible while reserving hidden actions when deselected', () => {
+    const { body } = render(AssetSelectionActions, {
+      props: {
+        selectedCount: 0,
+        matchingTotal: 66,
+        currentPageCount: 24,
+        allMatching: false,
+        summary: null,
+        albums: [],
+        tags: [],
+        plan: null,
+        onselectpage: () => undefined,
+        onselectall: () => undefined,
+        oninvertpage: () => undefined,
+        onclear: () => undefined,
+        onplan: () => undefined,
+        onrelationconfirm: () => undefined,
+        onconfirm: () => undefined,
+        oncancel: () => undefined,
+      },
+    });
+
+    expect(body).toContain('0 selected');
+    expect(body).toContain('aria-label="Selection controls"');
+    expect(body).toContain('aria-label="Select current page"');
+    expect(body).toMatch(/class="action-controls[^"]* hidden/);
+    expect(body).toContain('inert');
+    expect(body).toContain('aria-hidden="true"');
+  });
+
   it('keeps favorite and trash primary while secondary actions use overflow', () => {
     const { body } = render(AssetSelectionActions, {
       props: {

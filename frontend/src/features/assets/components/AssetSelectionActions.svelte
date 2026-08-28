@@ -110,30 +110,36 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
       <IconButton
         icon="clear-selection"
         label="Clear selection"
-        disabled={busy}
+        disabled={busy || selectedCount === 0}
         onclick={onclear}
       />
     </div>
 
-    <span class="control-separator" aria-hidden="true"></span>
+    <div
+      class={['action-controls', { hidden: selectedCount === 0 }]}
+      aria-hidden={selectedCount === 0}
+      inert={selectedCount === 0}
+    >
+      <span class="control-separator" aria-hidden="true"></span>
 
-    <IconButton
-      icon="sync"
-      label={`Sync ${selectedCount} selected ${selectedCount === 1 ? 'asset' : 'assets'}`}
-      disabled={busy || syncBusy || selectedCount === 0}
-      onclick={requestSync}
-    />
+      <IconButton
+        icon="sync"
+        label={`Sync ${selectedCount} selected ${selectedCount === 1 ? 'asset' : 'assets'}`}
+        disabled={busy || syncBusy || selectedCount === 0}
+        onclick={requestSync}
+      />
 
-    <AssetActionControls
-      {summary}
-      {albums}
-      {tags}
-      targetCount={selectedCount}
-      targetLabel={selectedCount === 1 ? 'selected asset' : 'selected assets'}
-      {busy}
-      {onplan}
-      {onrelationconfirm}
-    />
+      <AssetActionControls
+        {summary}
+        {albums}
+        {tags}
+        targetCount={selectedCount}
+        targetLabel={selectedCount === 1 ? 'selected asset' : 'selected assets'}
+        {busy}
+        {onplan}
+        {onrelationconfirm}
+      />
+    </div>
   </div>
 </section>
 
@@ -214,6 +220,21 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     gap: 0.32rem;
   }
 
+  .action-controls {
+    display: flex;
+    width: 18rem;
+    min-width: 18rem;
+    flex: 0 0 18rem;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.85rem;
+  }
+
+  .action-controls.hidden {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .control-separator {
     width: 1px;
     height: 2.35rem;
@@ -240,6 +261,12 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
   @media (max-width: 38rem) {
     .right-controls {
       flex-wrap: wrap;
+    }
+
+    .action-controls {
+      width: 100%;
+      min-width: 0;
+      flex-basis: 100%;
     }
   }
 </style>

@@ -1253,7 +1253,7 @@
     onfullsync={() => void syncAssets('full')}
   />
 
-  {#if results && selectedCount > 0}
+  {#if results}
     <AssetSelectionActions
       {selectedCount}
       matchingTotal={results.total}
