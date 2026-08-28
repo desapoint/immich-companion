@@ -32,6 +32,15 @@ describe('AssetSelectionActions', () => {
     expect(body).toMatch(/class="action-controls[^"]* hidden/);
     expect(body).toContain('inert');
     expect(body).toContain('aria-hidden="true"');
+    expect(body.indexOf('class="action-controls')).toBeLessThan(
+      body.indexOf('aria-label="Selection controls"'),
+    );
+    expect(body.indexOf('aria-label="Sync 0 selected assets"')).toBeLessThan(
+      body.indexOf('class="control-separator'),
+    );
+    expect(body.indexOf('class="control-separator')).toBeLessThan(
+      body.indexOf('aria-label="Selection controls"'),
+    );
   });
 
   it('keeps favorite and trash primary while secondary actions use overflow', () => {

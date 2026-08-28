@@ -88,6 +88,36 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
   </div>
 
   <div class="right-controls">
+    <div
+      class={['action-controls', { hidden: selectedCount === 0 }]}
+      aria-hidden={selectedCount === 0}
+      inert={selectedCount === 0}
+    >
+      <IconButton
+        icon="sync"
+        label={`Sync ${selectedCount} selected ${selectedCount === 1 ? 'asset' : 'assets'}`}
+        disabled={busy || syncBusy || selectedCount === 0}
+        onclick={requestSync}
+      />
+
+      <AssetActionControls
+        {summary}
+        {albums}
+        {tags}
+        targetCount={selectedCount}
+        targetLabel={selectedCount === 1 ? 'selected asset' : 'selected assets'}
+        {busy}
+        {onplan}
+        {onrelationconfirm}
+      />
+    </div>
+
+    <span
+      class:hidden={selectedCount === 0}
+      class="control-separator"
+      aria-hidden="true"
+    ></span>
+
     <div class="selection-controls" aria-label="Selection controls">
       <IconButton
         icon="select-page"
@@ -112,32 +142,6 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
         label="Clear selection"
         disabled={busy || selectedCount === 0}
         onclick={onclear}
-      />
-    </div>
-
-    <div
-      class={['action-controls', { hidden: selectedCount === 0 }]}
-      aria-hidden={selectedCount === 0}
-      inert={selectedCount === 0}
-    >
-      <span class="control-separator" aria-hidden="true"></span>
-
-      <IconButton
-        icon="sync"
-        label={`Sync ${selectedCount} selected ${selectedCount === 1 ? 'asset' : 'assets'}`}
-        disabled={busy || syncBusy || selectedCount === 0}
-        onclick={requestSync}
-      />
-
-      <AssetActionControls
-        {summary}
-        {albums}
-        {tags}
-        targetCount={selectedCount}
-        targetLabel={selectedCount === 1 ? 'selected asset' : 'selected assets'}
-        {busy}
-        {onplan}
-        {onrelationconfirm}
       />
     </div>
   </div>
@@ -222,12 +226,12 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
 
   .action-controls {
     display: flex;
-    width: 18rem;
-    min-width: 18rem;
-    flex: 0 0 18rem;
+    width: 16.25rem;
+    min-width: 16.25rem;
+    flex: 0 0 16.25rem;
     align-items: center;
     justify-content: flex-end;
-    gap: 0.85rem;
+    gap: 0.38rem;
   }
 
   .action-controls.hidden {
@@ -240,6 +244,10 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     height: 2.35rem;
     flex: 0 0 auto;
     background: var(--color-border-strong);
+  }
+
+  .control-separator.hidden {
+    visibility: hidden;
   }
 
   @media (max-width: 58rem) {
@@ -267,6 +275,15 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
       width: 100%;
       min-width: 0;
       flex-basis: 100%;
+      order: 2;
+    }
+
+    .selection-controls {
+      order: 1;
+    }
+
+    .control-separator {
+      display: none;
     }
   }
 </style>
