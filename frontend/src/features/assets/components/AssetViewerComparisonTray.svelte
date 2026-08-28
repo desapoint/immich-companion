@@ -46,18 +46,21 @@
   aria-label={`${source} image comparison`}
 >
   <header>
-    <div>
+    <div class="tray-heading">
       <span>{source === 'stack' ? 'Stack images' : 'Similar images'}</span>
       <small>{interactionLabel}</small>
     </div>
-    <strong>{items.length} images</strong>
-    {#if visibleId !== selectedId}
+    <div class="tray-status">
       <button
         type="button"
         class="select-viewed"
-        onclick={() => onselectviewed(visibleId)}
+        class:hidden={visibleId === selectedId}
+        disabled={visibleId === selectedId}
+        aria-hidden={visibleId === selectedId}
+        onclick={() => { if (visibleId !== selectedId) onselectviewed(visibleId); }}
       >Use viewed as selected</button>
-    {/if}
+      <strong>{items.length} images</strong>
+    </div>
   </header>
   <AssetPreviewStrip
     {items}
@@ -97,9 +100,15 @@
   }
 
   header,
-  header > div {
+  .tray-heading,
+  .tray-status {
     display: flex;
     align-items: center;
+  }
+
+  .tray-status {
+    flex: none;
+    gap: 0.55rem;
   }
 
   .select-viewed {
@@ -112,6 +121,11 @@
     font: inherit;
     font-size: 0.58rem;
     font-weight: 760;
+    white-space: nowrap;
+  }
+
+  .select-viewed.hidden {
+    visibility: hidden;
   }
 
   .select-viewed:hover,
@@ -126,7 +140,7 @@
     text-align: left;
   }
 
-  header > div {
+  .tray-heading {
     gap: 0.48rem;
   }
 
@@ -151,7 +165,7 @@
       bottom: 1.25rem;
     }
 
-    header > div {
+    .tray-heading {
       align-items: flex-start;
       flex-direction: column;
       gap: 0.1rem;

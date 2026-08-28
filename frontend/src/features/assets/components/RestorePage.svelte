@@ -311,7 +311,9 @@
   }
 
   .image-wrap {
+    display: grid;
     min-width: 0;
+    gap: 0.55rem;
   }
 
   .image-wrap.overlay {

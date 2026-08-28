@@ -66,10 +66,12 @@ describe('AssetGrid', () => {
 
     expect(normal).toContain('class="asset-grid');
     expect(normal).not.toContain('asset-grid condensed');
+    expect(normal).toContain('data-layout="normal"');
     expect(normal).toContain('class="card-content');
     expect(normal).toContain('class="card-decision');
 
     expect(condensed).toMatch(/class="asset-grid[^"]* condensed/);
+    expect(condensed).toContain('data-layout="condensed"');
     expect(condensed).toMatch(/class="asset-card[^"]* condensed/);
     expect(condensed).toContain('class="condensed-selection');
     expect(condensed).not.toContain('class="card-content');

@@ -33,7 +33,11 @@
   }: Props = $props();
 </script>
 
-<div class:condensed={layout === 'condensed'} class="asset-grid" aria-label="Asset search results">
+<div
+  class={['asset-grid', { condensed: layout === 'condensed' }]}
+  data-layout={layout}
+  aria-label="Asset search results"
+>
   {#each assets as asset, index (asset.id)}
     <AssetCard
       {asset}
