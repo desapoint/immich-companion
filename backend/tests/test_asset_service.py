@@ -1,5 +1,6 @@
 """Staged sync ordering, enrichment, and checkpoint coverage."""
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -82,6 +83,7 @@ class FakeImmich:
                 name="Review",
                 value="Review",
                 color="#d97706",
+                assetCount=1,
             )
         ]
 
@@ -138,8 +140,6 @@ class FakeAssetRepository:
         self.assets: list[ImmichAsset] = []
         self.asset_batch_sizes: list[int] = []
         self.stack_payloads: list[tuple[dict[str, object], list[UUID]]] = []
-        self.album_membership_options: list[bool] = []
-        self.tag_membership_options: list[bool] = []
 
     async def upsert_album_catalog(self, albums, _generation):
         self.calls.append("album_catalog")
@@ -160,14 +160,12 @@ class FakeAssetRepository:
         self.stack_payloads.extend(stacks)
         return sum(len(asset_ids) for _, asset_ids in stacks)
 
-    async def upsert_album_memberships(self, _album_id, asset_ids, _generation, **_kwargs):
+    async def upsert_album_memberships(self, _album_id, asset_ids, _generation):
         self.calls.append("album_memberships")
-        self.album_membership_options.append(_kwargs.get("include_trashed", True))
         return len(asset_ids)
 
-    async def upsert_tag_memberships(self, _tag_id, asset_ids, _generation, **_kwargs):
+    async def upsert_tag_memberships(self, _tag_id, asset_ids, _generation):
         self.calls.append("tag_memberships")
-        self.tag_membership_options.append(_kwargs.get("include_trashed", True))
         return len(asset_ids)
 
     async def finalize_generation(self, _generation, *, remove_assets, batch_size):
@@ -278,8 +276,6 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert immich.calls.index("tag_catalog") < immich.calls.index("assets")
     assert immich.calls.index("assets") < immich.calls.index("album_memberships")
     assert counters["assets_seen"] == 2
-    assert assets.album_membership_options == [False]
-    assert assets.tag_membership_options == [False]
     assert counters["album_memberships"] == 1
     assert counters["tag_memberships"] == 1
     assert assets.stack_payloads[0][0]["primaryAssetId"] == str(ASSET_ONE)
@@ -526,7 +522,7 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
         createdAt="2026-08-24T12:00:00Z",
         updatedAt="2026-08-24T12:00:00Z",
     )
-    tag = ImmichTag(id=TAG_ID, name="Large tag", value="Large tag")
+    tag = ImmichTag(id=TAG_ID, name="Large tag", value="Large tag", assetCount=2)
     counters = {"album_memberships": 0, "tag_memberships": 0}
 
     await service._sync_relationships(
@@ -542,6 +538,61 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
     assert paced == [1, 1, 1]
     assert counters == {"album_memberships": 4, "tag_memberships": 2}
     assert syncs.checkpoints[-1] == ("relationships", None)
+
+
+@pytest.mark.asyncio
+async def test_tag_relationships_skip_empty_tags_and_run_four_searches_concurrently() -> None:
+    class ConcurrentTagImmich:
+        def __init__(self) -> None:
+            self.active = 0
+            self.maximum_active = 0
+            self.calls: list[UUID] = []
+
+        async def iter_tag_asset_ids(self, tag_id, *, page_size, start_page):
+            assert page_size == 1000
+            assert start_page == 1
+            self.calls.append(tag_id)
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+            await asyncio.sleep(0)
+            yield [] if tag_id == tag_ids[0] else [ASSET_ONE]
+            self.active -= 1
+
+    tag_ids = [
+        UUID(f"{index:08x}-0000-4000-8000-000000000000")
+        for index in range(1, 7)
+    ]
+    tags = [
+        ImmichTag(
+            id=tag_id,
+            name=f"Tag {index}",
+            value=f"Tag {index}",
+            assetCount=0 if index == 0 else 1,
+        )
+        for index, tag_id in enumerate(tag_ids)
+    ]
+    immich = ConcurrentTagImmich()
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_relationship_page_size=1000),
+    )
+    counters = {"album_memberships": 0, "tag_memberships": 0}
+
+    await service._sync_relationships(
+        run_status().model_copy(update={"phase": "relationships"}),
+        OWNER_ID,
+        [],
+        tags,
+        counters,
+    )
+
+    assert set(immich.calls) == set(tag_ids)
+    assert immich.maximum_active == 4
+    assert counters["tag_memberships"] == 5
+    assert assets.calls.count("tag_memberships") == 5
 
 
 @pytest.mark.asyncio

@@ -118,7 +118,9 @@ class AssetRepository:
         """Upsert a complete traversal and remove rows absent from that traversal."""
 
         synced_at = datetime.now(UTC)
-        unique_assets = {asset.id: asset for asset in assets}
+        unique_assets = {
+            asset.id: asset for asset in assets if not asset.is_trashed
+        }
         asset_ids = list(unique_assets)
         rows = [self._values(asset, synced_at) for asset in unique_assets.values()]
 
@@ -346,8 +348,14 @@ class AssetRepository:
         assets: list[ImmichAsset],
         generation: int,
     ) -> tuple[int, int, int]:
-        """Commit one idempotent asset batch and skip unchanged overlap rows."""
+        """Commit active assets and evict any trashed API payloads."""
 
+        if not assets:
+            return 0, 0, 0
+        trashed_ids = [asset.id for asset in assets if asset.is_trashed]
+        if trashed_ids:
+            await self.remove_assets(trashed_ids)
+        assets = [asset for asset in assets if not asset.is_trashed]
         if not assets:
             return 0, 0, 0
         synced_at = datetime.now(UTC)
@@ -409,22 +417,31 @@ class AssetRepository:
         return created, changed, unchanged
 
     async def refresh_asset(self, asset: ImmichAsset) -> None:
-        """Refresh one action-affected asset without changing generation state."""
+        """Upsert one active asset or evict it when Immich reports it trashed."""
 
+        if asset.is_trashed:
+            await self.remove_asset(asset.id)
+            return
         synced_at = datetime.now(UTC)
         fingerprint = self._fingerprint(asset)
-        values = {
+        insert_values = {
             **self._values(asset, synced_at),
             "sync_fingerprint": fingerprint,
         }
-        values.pop("id", None)
-        values.pop("sync_generation", None)
-        values.pop("stack_generation", None)
         # Stack state is owned by the independent stack synchronization stage.
-        values.pop("stack", None)
+        insert_values.pop("stack", None)
+        update_values = dict(insert_values)
+        update_values.pop("id", None)
+        update_values.pop("sync_generation", None)
+        update_values.pop("stack_generation", None)
         async with self._database.sessions() as session, session.begin():
             await session.execute(
-                update(AssetRecord).where(AssetRecord.id == asset.id).values(**values)
+                insert(AssetRecord)
+                .values(insert_values)
+                .on_conflict_do_update(
+                    index_elements=[AssetRecord.id],
+                    set_=update_values,
+                )
             )
 
     async def stack_asset_ids(self, asset_id: UUID) -> list[UUID]:
@@ -469,8 +486,20 @@ class AssetRepository:
     async def remove_asset(self, asset_id: UUID) -> int:
         """Remove one API-confirmed permanent deletion and its memberships."""
 
+        return await self.remove_assets([asset_id])
+
+    async def remove_assets(self, asset_ids: list[UUID]) -> int:
+        """Remove API-confirmed unavailable assets and their memberships."""
+
+        if not asset_ids:
+            return 0
+
         async with self._database.sessions() as session, session.begin():
-            result = await session.execute(delete(AssetRecord).where(AssetRecord.id == asset_id))
+            result = await session.execute(
+                delete(AssetRecord).where(
+                    AssetRecord.id.in_(list(dict.fromkeys(asset_ids)))
+                )
+            )
             return int(result.rowcount or 0)
 
     async def apply_membership_event(
@@ -663,21 +692,12 @@ class AssetRepository:
         album_id: UUID,
         asset_ids: list[UUID],
         generation: int,
-        *,
-        include_trashed: bool = True,
     ) -> int:
         """Mark one bounded album-membership observation batch."""
 
         if not asset_ids:
             return 0
         async with self._database.sessions() as session:
-            all_existing_asset_ids = set(
-                (
-                    await session.scalars(
-                        select(AssetRecord.id).where(AssetRecord.id.in_(asset_ids))
-                    )
-                ).all()
-            )
             existing_asset_ids = set(
                 (
                     await session.scalars(
@@ -687,7 +707,7 @@ class AssetRepository:
                         )
                     )
                 ).all()
-            ) if not include_trashed else all_existing_asset_ids
+            )
             already_observed = set(
                 (
                     await session.scalars(
@@ -699,7 +719,7 @@ class AssetRepository:
                     )
                 ).all()
             )
-        missing = set(asset_ids) - all_existing_asset_ids
+        missing = set(asset_ids) - existing_asset_ids
         if missing:
             raise SyncValidationError(
                 f"Album membership referenced {len(missing)} unsynchronized assets"
@@ -726,21 +746,12 @@ class AssetRepository:
         tag_id: UUID,
         asset_ids: list[UUID],
         generation: int,
-        *,
-        include_trashed: bool = True,
     ) -> int:
         """Mark one bounded tag-membership observation batch."""
 
         if not asset_ids:
             return 0
         async with self._database.sessions() as session:
-            all_existing_asset_ids = set(
-                (
-                    await session.scalars(
-                        select(AssetRecord.id).where(AssetRecord.id.in_(asset_ids))
-                    )
-                ).all()
-            )
             existing_asset_ids = set(
                 (
                     await session.scalars(
@@ -750,7 +761,7 @@ class AssetRepository:
                         )
                     )
                 ).all()
-            ) if not include_trashed else all_existing_asset_ids
+            )
             already_observed = set(
                 (
                     await session.scalars(
@@ -762,7 +773,7 @@ class AssetRepository:
                     )
                 ).all()
             )
-        missing = set(asset_ids) - all_existing_asset_ids
+        missing = set(asset_ids) - existing_asset_ids
         if missing:
             raise SyncValidationError(
                 f"Tag membership referenced {len(missing)} unsynchronized assets"
@@ -1113,30 +1124,6 @@ class AssetRepository:
             criteria.sort_direction,
             selection_id=criteria.selection_id,
         )
-
-    async def search_trashed(self, page: int, page_size: int) -> AssetSearchResponse:
-        """Return lightweight restoration records outside the normal workspace."""
-
-        return await self._search_page(
-            [AssetRecord.is_trashed.is_(True)], page, page_size, "taken_at", "desc"
-        )
-
-    async def is_trashed(self, asset_id: UUID) -> bool:
-        async with self._database.sessions() as session:
-            return bool(
-                await session.scalar(
-                    select(AssetRecord.is_trashed).where(AssetRecord.id == asset_id)
-                )
-            )
-
-    async def trashed_asset_ids(self, requested: list[UUID] | None = None) -> list[UUID]:
-        """Resolve restore targets only from currently trashed records."""
-
-        statement = select(AssetRecord.id).where(AssetRecord.is_trashed.is_(True))
-        if requested is not None:
-            statement = statement.where(AssetRecord.id.in_(requested))
-        async with self._database.sessions() as session:
-            return list((await session.scalars(statement.order_by(AssetRecord.id))).all())
 
     async def find_structured_match(
         self,

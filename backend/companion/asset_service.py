@@ -38,6 +38,8 @@ from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
+TAG_ASSOCIATION_CONCURRENCY = 4
+
 
 def _dedupe_digest(parts: list[str]) -> str:
     """Build a fixed-length key for arbitrarily large repair target sets."""
@@ -1507,7 +1509,6 @@ class AssetSyncService:
         tags: list[ImmichTag],
         counters: dict[str, int],
     ) -> None:
-        runtime = await self._runtime_sync_settings.get()
         relation_kind = ""
         completed_relation = 0
         completed_page = 0
@@ -1556,7 +1557,6 @@ class AssetSyncService:
                     album.id,
                     asset_ids,
                     run.generation,
-                    include_trashed=getattr(runtime, "sync_trashed_album_context", False),
                 )
                 association_completed += len(asset_ids)
                 await self._checkpoint(
@@ -1595,63 +1595,51 @@ class AssetSyncService:
                         ),
                     ),
                 )
-        for relation_index, tag in enumerate(tags, start=1):
-            if relation_kind == "tags" and relation_index < completed_relation:
-                continue
-            start_page = (
-                completed_page + 1
-                if relation_kind == "tags" and relation_index == completed_relation
-                else 1
+        # Immich's compact tag catalog has no asset count. Each concurrent
+        # first-page search is therefore the authoritative empty-tag check.
+        skipped_tags = 0
+        tag_start = 0
+        if relation_kind == "tags":
+            # New checkpoints record completed waves as page zero. Older
+            # page-level cursors safely replay their current tag.
+            tag_start = (
+                completed_relation
+                if completed_page == 0
+                else max(0, completed_relation - 1)
             )
-            page_number = start_page
-            async for asset_ids, is_last_page in async_items_with_last(
-                self._immich.iter_tag_asset_ids(
-                    tag.id,
-                    page_size=self._settings.sync_relationship_page_size,
-                    start_page=start_page,
-                )
-            ):
-                started = perf_counter()
-                counters["tag_memberships"] += await self._assets.upsert_tag_memberships(
-                    tag.id,
-                    asset_ids,
-                    run.generation,
-                    include_trashed=getattr(runtime, "sync_trashed_tag_context", False),
-                )
-                association_completed += len(asset_ids)
-                await self._checkpoint(
-                    run,
-                    owner,
-                    counters,
+        for wave_start in range(
+            tag_start,
+            len(tags),
+            TAG_ASSOCIATION_CONCURRENCY,
+        ):
+            wave = tags[wave_start : wave_start + TAG_ASSOCIATION_CONCURRENCY]
+            tasks: list[asyncio.Task[tuple[int, int, bool]]] = []
+            async with asyncio.TaskGroup() as group:
+                tasks = [
+                    group.create_task(self._sync_tag_relationship(run, tag))
+                    for tag in wave
+                ]
+            results = [task.result() for task in tasks]
+            counters["tag_memberships"] += sum(result[0] for result in results)
+            association_completed += sum(result[1] for result in results)
+            skipped_tags += sum(result[2] for result in results)
+            completed_tags = wave_start + len(wave)
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "relationships",
+                f"tags:{completed_tags}:0",
+                self._progress(
                     "relationships",
-                    f"tags:{relation_index}:{page_number}",
-                    self._progress(
-                        "relationships",
-                        association_completed,
-                        membership_total,
-                        (
-                            f"Album associations {len(albums)}/{len(albums)} "
-                            f"· tag associations {relation_index}/{len(tags)}"
-                        ),
+                    association_completed,
+                    membership_total,
+                    (
+                        f"Tag associations {completed_tags}/{len(tags)}"
+                        + (f" · skipped {skipped_tags} empty" if skipped_tags else "")
                     ),
-                )
-                if not is_last_page:
-                    await self._pace_full_batch(run, started)
-                page_number += 1
-            if page_number == start_page == 1:
-                await self._checkpoint(
-                    run,
-                    owner,
-                    counters,
-                    "relationships",
-                    f"tags:{relation_index}:0",
-                    self._progress(
-                        "relationships",
-                        association_completed,
-                        membership_total,
-                        f"Tag {relation_index}/{len(tags)} · {association_completed} associations",
-                    ),
-                )
+                ),
+            )
         await self._checkpoint(
             run,
             owner,
@@ -1668,3 +1656,31 @@ class AssetSyncService:
                 ),
             ),
         )
+
+    async def _sync_tag_relationship(
+        self,
+        run: SyncRunStatus,
+        tag: ImmichTag,
+    ) -> tuple[int, int, bool]:
+        """Search one tag, skipping persistence when its result is empty."""
+
+        persisted = 0
+        observed = 0
+        async for asset_ids, is_last_page in async_items_with_last(
+            self._immich.iter_tag_asset_ids(
+                tag.id,
+                page_size=self._settings.sync_relationship_page_size,
+                start_page=1,
+            )
+        ):
+            started = perf_counter()
+            if asset_ids:
+                persisted += await self._assets.upsert_tag_memberships(
+                    tag.id,
+                    asset_ids,
+                    run.generation,
+                )
+            observed += len(asset_ids)
+            if not is_last_page:
+                await self._pace_full_batch(run, started)
+        return persisted, observed, observed == 0

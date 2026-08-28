@@ -54,6 +54,7 @@ class FakeAssets:
         self.current = current
         self.applicability = applicability
         self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
+        self.removed_batches: list[list[UUID]] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
         return self.current
@@ -68,6 +69,10 @@ class FakeAssets:
         self, relation: str, relation_id: UUID, asset_id: UUID, present: bool
     ) -> None:
         self.relation_deltas.append((relation, relation_id, asset_id, present))
+
+    async def remove_assets(self, asset_ids: list[UUID]) -> int:
+        self.removed_batches.append(asset_ids)
+        return len(asset_ids)
 
 
 class FakeActions:
@@ -426,3 +431,24 @@ async def test_trash_is_rejected_when_destructive_actions_are_disabled() -> None
 
     with pytest.raises(DestructiveActionsDisabledError):
         await instance.plan(AssetActionPlanRequest(selection=selection, action="trash"))
+
+
+@pytest.mark.asyncio
+async def test_successful_trash_removes_local_assets_without_targeted_sync() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    selected = {ASSET_ONE, ASSET_TWO}
+    instance, actions, immich, sync = service(
+        resolution(),
+        [selected, selected, set()],
+    )
+
+    plan = await instance.plan(AssetActionPlanRequest(selection=selection, action="trash"))
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert immich.calls == [("trash", None, [ASSET_ONE, ASSET_TWO])]
+    assert instance._assets.removed_batches == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.calls == 0
+    assert result.applied_ids == [ASSET_ONE, ASSET_TWO]
+    assert result.verified is True
+    assert actions.finished is not None
+    assert actions.finished[0] == "completed"

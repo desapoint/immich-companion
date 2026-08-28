@@ -279,6 +279,7 @@ class ImmichApiClient:
     ) -> None:
         self._settings = settings
         self._transport = transport
+        self._http_client: httpx.AsyncClient | None = None
 
     def _client(self) -> httpx.AsyncClient:
         if not self._settings.immich_configured:
@@ -287,13 +288,22 @@ class ImmichApiClient:
         assert self._settings.immich_url is not None
         api_key = self._settings.resolve_immich_api_key()
         assert api_key is not None
-        return httpx.AsyncClient(
-            base_url=str(self._settings.immich_url).rstrip("/"),
-            headers={"x-api-key": api_key},
-            timeout=self._settings.immich_timeout_seconds,
-            transport=self._transport,
-            follow_redirects=False,
-        )
+        if self._http_client is None:
+            self._http_client = httpx.AsyncClient(
+                base_url=str(self._settings.immich_url).rstrip("/"),
+                headers={"x-api-key": api_key},
+                timeout=self._settings.immich_timeout_seconds,
+                transport=self._transport,
+                follow_redirects=False,
+            )
+        return self._http_client
+
+    async def aclose(self) -> None:
+        """Close the shared connection pool at application shutdown."""
+
+        if self._http_client is not None:
+            await self._http_client.aclose()
+            self._http_client = None
 
     async def _request(
         self,
@@ -306,8 +316,7 @@ class ImmichApiClient:
         attempts = self._settings.immich_retry_attempts
         for attempt in range(attempts):
             try:
-                async with self._client() as client:
-                    response = await client.request(method, path, **kwargs)
+                response = await self._client().request(method, path, **kwargs)
             except httpx.RequestError as error:
                 if attempt + 1 >= attempts:
                     raise ImmichApiError(operation) from error
@@ -800,10 +809,7 @@ class ImmichApiClient:
         for attempt in range(attempts):
             yielded = False
             try:
-                async with (
-                    self._client() as client,
-                    client.stream("GET", "/api/stacks") as response,
-                ):
+                async with self._client().stream("GET", "/api/stacks") as response:
                     if response.status_code in TRANSIENT_STATUS_CODES:
                         if attempt + 1 >= attempts:
                             raise ImmichApiError("list stacks", response.status_code)

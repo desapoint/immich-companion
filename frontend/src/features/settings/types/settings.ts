@@ -14,6 +14,4 @@ export interface SyncSchedule {
 export interface SyncRuntimeSettings {
   full_batch_size: number;
   full_min_batch_delay_seconds: number;
-  sync_trashed_album_context: boolean;
-  sync_trashed_tag_context: boolean;
 }

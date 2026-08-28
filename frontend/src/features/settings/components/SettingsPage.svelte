@@ -27,7 +27,7 @@
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
   let runtime = $state<SyncRuntimeSettings | null>(null);
-  let runtimeDraft = $state<SyncRuntimeSettings>({ full_batch_size: 50, full_min_batch_delay_seconds: 0.2, sync_trashed_album_context: false, sync_trashed_tag_context: false });
+  let runtimeDraft = $state<SyncRuntimeSettings>({ full_batch_size: 50, full_min_batch_delay_seconds: 0.2 });
   let runtimeSaving = $state(false);
 
   function hydrate(items: SyncSchedule[]): void {
@@ -109,11 +109,6 @@
       <div class="runtime-fields">
         <label class="field" for="full-batch-size"><span>Assets per batch</span><input id="full-batch-size" type="number" min="1" max="500" value={runtimeDraft.full_batch_size} oninput={(event) => runtimeDraft = { ...runtimeDraft, full_batch_size: Number(event.currentTarget.value) }} /></label>
         <label class="field" for="full-batch-delay"><span>Minimum delay (seconds)</span><input id="full-batch-delay" type="number" min="0" max="60" step="0.1" value={runtimeDraft.full_min_batch_delay_seconds} oninput={(event) => runtimeDraft = { ...runtimeDraft, full_min_batch_delay_seconds: Number(event.currentTarget.value) }} /></label>
-      </div>
-      <div class="runtime-context">
-        <p class="hint">Trashed assets are kept as lightweight Restore records. Choose whether to retain their optional restoration context.</p>
-        <Checkbox checked={runtimeDraft.sync_trashed_album_context} label="Keep album context for trashed assets" onchange={(checked) => runtimeDraft = { ...runtimeDraft, sync_trashed_album_context: checked }} />
-        <Checkbox checked={runtimeDraft.sync_trashed_tag_context} label="Keep tag context for trashed assets" onchange={(checked) => runtimeDraft = { ...runtimeDraft, sync_trashed_tag_context: checked }} />
       </div>
       <button class="save" type="button" disabled={runtimeSaving || !Number.isInteger(runtimeDraft.full_batch_size) || runtimeDraft.full_batch_size < 1 || runtimeDraft.full_batch_size > 500 || runtimeDraft.full_min_batch_delay_seconds < 0 || runtimeDraft.full_min_batch_delay_seconds > 60} onclick={() => void saveRuntime()}>{runtimeSaving ? 'Saving…' : 'Save load settings'}</button>
     </article>

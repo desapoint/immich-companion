@@ -193,6 +193,7 @@ def create_app(
         finally:
             if task_coordinator is not None:
                 await task_coordinator.stop()
+            await immich.aclose()
             if database is not None:
                 await database.dispose()
 
@@ -1032,12 +1033,12 @@ def create_app(
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:
-        if asset_repository is not None and await asset_repository.is_trashed(asset_id):
-            raise HTTPException(status_code=404, detail="Trashed assets are available in Restore.")
         try:
             asset = await immich.get_asset(asset_id)
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+        if asset.is_trashed:
+            raise HTTPException(status_code=404, detail="Trashed assets are available in Restore.")
         return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
 
     @app.get("/api/restore/{asset_id}", response_model=AssetDetail)
@@ -1052,7 +1053,7 @@ def create_app(
 
     @app.post("/api/restore/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
     async def restore_asset(asset_id: UUID) -> Response:
-        """Restore one lightweight record, then refresh its normal workspace data."""
+        """Restore one live Immich asset, then refresh its normal workspace data."""
 
         sync = require_asset_sync()
         try:
@@ -1069,7 +1070,7 @@ def create_app(
 
     @app.post("/api/restore")
     async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
-        """Restore selected or all lightweight records in paced server-side batches."""
+        """Restore selected or all live Immich trash in paced server-side batches."""
 
         sync = require_asset_sync()
         pacing = await sync._runtime_sync_settings.get()

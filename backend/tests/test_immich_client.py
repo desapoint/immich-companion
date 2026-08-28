@@ -374,6 +374,24 @@ async def test_asset_detail_tracks_tag_field_presence_and_album_membership_endpo
 
 
 @pytest.mark.asyncio
+async def test_requests_reuse_one_http_client_connection_pool() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{ASSET_ONE}"
+        return httpx.Response(200, json=asset_payload(ASSET_ONE, "detail.jpg"))
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+
+    await client.get_asset(ASSET_ONE)
+    shared_client = client._http_client
+    await client.get_asset(ASSET_ONE)
+
+    assert shared_client is not None
+    assert client._http_client is shared_client
+    await client.aclose()
+    assert client._http_client is None
+
+
+@pytest.mark.asyncio
 async def test_album_memberships_use_paged_metadata_search() -> None:
     album_id = UUID("44444444-4444-4444-8444-444444444444")
 
@@ -440,10 +458,13 @@ async def test_stack_contract_includes_all_typed_members() -> None:
                 yield content[index : index + 37]
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/api/assets/{ASSET_ONE}":
+            return httpx.Response(200, json=asset_payload(ASSET_ONE, "before-stacks.png"))
         assert request.url.path == "/api/stacks"
         return httpx.Response(200, stream=ChunkedStream())
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    await client.get_asset(ASSET_ONE)
     stacks = await client.list_stacks()
 
     assert len(stacks) == 1

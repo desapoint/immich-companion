@@ -659,6 +659,10 @@ class AssetActionService:
             for index, batch in enumerate(action_batches):
                 batch_started = perf_counter()
                 await self._apply(operation, batch, relation_id)
+                if operation == "trash":
+                    # Immich's successful response is authoritative. Trashed
+                    # assets belong to the live Restore API, not the local index.
+                    await self._assets.remove_assets(batch)
                 updated += len(batch)
                 if progress is not None:
                     await progress(
@@ -668,7 +672,7 @@ class AssetActionService:
                     )
                 if index + 1 < len(action_batches):
                     await self._pace_large_action_batch(batch_started, enabled=throttle)
-            if applicable_ids:
+            if applicable_ids and operation != "trash":
                 if operation == "stack":
                     repair_ids = stack_repair_ids
                 await self._repair_targets(

@@ -289,3 +289,17 @@ def test_restore_detail_rejects_an_asset_that_immich_reports_as_active() -> None
 
     assert response.status_code == 404
     assert response.json()["detail"] == "The asset is not in Restore."
+
+
+def test_normal_detail_rejects_an_asset_that_immich_reports_as_trashed() -> None:
+    asset_id = "11111111-1111-4111-8111-111111111111"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{asset_id}"
+        return httpx.Response(200, json=immich_asset_payload(asset_id, trashed=True))
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get(f"/api/assets/{asset_id}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Trashed assets are available in Restore."
