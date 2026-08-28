@@ -491,6 +491,25 @@ class ImmichApiClient:
     ) -> AsyncIterator[ImmichAsset]:
         """Yield active lightweight assets while guarding against repeated page tokens."""
 
+        async for _, page in self.iter_asset_pages(
+            page_size=page_size,
+            updated_after=updated_after,
+            updated_before=updated_before,
+            start_page=start_page,
+        ):
+            for asset in page.items:
+                yield asset
+
+    async def iter_asset_pages(
+        self,
+        *,
+        page_size: int = 250,
+        updated_after: datetime | None = None,
+        updated_before: datetime | None = None,
+        start_page: int = 1,
+    ) -> AsyncIterator[tuple[int, ImmichAssetSearchPage]]:
+        """Yield bounded active-asset pages with their durable page number."""
+
         page_number = start_page
         seen_tokens: set[str] = set()
         while True:
@@ -500,8 +519,7 @@ class ImmichApiClient:
                 updated_after=updated_after,
                 updated_before=updated_before,
             )
-            for asset in page.items:
-                yield asset
+            yield page_number, page
 
             token = page.next_page
             if token is None:

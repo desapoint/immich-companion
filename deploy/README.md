@@ -22,7 +22,9 @@ no media mount and performs no direct database access.
    `IMMICH_COMPANION_SYNC_FULL_BATCH_SIZE` (50) and
    `IMMICH_COMPANION_SYNC_FULL_MIN_BATCH_DELAY_SECONDS` (0.2); saved Settings
    values take precedence after initialization.
-   Association traversal uses an independent
+   Media traversal uses an independent `IMMICH_COMPANION_SYNC_MEDIA_PAGE_SIZE`
+   (1,000), retaining the saved database batch size for durable checkpoints
+   while pacing once between API pages. Association traversal similarly uses
    `IMMICH_COMPANION_SYNC_RELATIONSHIP_PAGE_SIZE` (1,000) so lowering the media
    batch size does not multiply album/tag API and database round trips.
    Set `IMMICH_COMPANION_SYNC_MEMORY_DIAGNOSTICS=true` temporarily to include

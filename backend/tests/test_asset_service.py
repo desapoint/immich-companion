@@ -10,6 +10,7 @@ from companion.config import Settings
 from companion.immich import (
     ImmichAlbum,
     ImmichAsset,
+    ImmichAssetSearchPage,
     ImmichStack,
     ImmichStackAsset,
     ImmichTag,
@@ -89,6 +90,17 @@ class FakeImmich:
         for current in self.assets:
             yield current
 
+    async def iter_asset_pages(self, **_kwargs):
+        self.calls.append("assets")
+        yield 1, ImmichAssetSearchPage.model_validate(
+            {
+                "count": len(self.assets),
+                "total": len(self.assets),
+                "items": self.assets,
+                "nextPage": None,
+            }
+        )
+
     async def count_assets(self, **_kwargs) -> int:
         return len(self.assets)
 
@@ -124,6 +136,7 @@ class FakeAssetRepository:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.assets: list[ImmichAsset] = []
+        self.asset_batch_sizes: list[int] = []
         self.stack_payloads: list[tuple[dict[str, object], list[UUID]]] = []
         self.album_membership_options: list[bool] = []
         self.tag_membership_options: list[bool] = []
@@ -138,6 +151,7 @@ class FakeAssetRepository:
 
     async def upsert_asset_batch(self, assets, _generation):
         self.calls.append("assets")
+        self.asset_batch_sizes.append(len(assets))
         self.assets.extend(assets)
         return len(assets), 0, 0
 
@@ -334,6 +348,142 @@ async def test_stack_sync_persists_bounded_batches_and_skips_final_pacing() -> N
     stack_progress = [item for item in syncs.progress if item and item.phase == "stacks"]
     assert all(item.total is None and item.percent is None for item in stack_progress)
     assert syncs.checkpoints[-1] == ("relationships", None)
+
+
+@pytest.mark.asyncio
+async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> None:
+    media = [asset(UUID(int=index + 1000), f"asset-{index}.png") for index in range(9)]
+
+    class PagedImmich:
+        page_size: int | None = None
+        start_page: int | None = None
+
+        async def iter_asset_pages(
+            self, *, page_size, updated_after, updated_before, start_page
+        ):
+            assert updated_after is None
+            assert updated_before is None
+            self.page_size = page_size
+            self.start_page = start_page
+            page_items = [media[:4], media[4:8], media[8:]]
+            for page_number, items in enumerate(page_items, start=1):
+                yield page_number, ImmichAssetSearchPage.model_validate(
+                    {
+                        "count": len(items),
+                        "total": len(media),
+                        "items": items,
+                        "nextPage": str(page_number + 1) if page_number < 3 else None,
+                    }
+                )
+
+    immich = PagedImmich()
+    assets = FakeAssetRepository()
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_full_batch_size=2, sync_media_page_size=1000),
+    )
+    paced: list[int] = []
+
+    async def pace(_run, _started):
+        paced.append(1)
+
+    service._pace_full_batch = pace  # type: ignore[method-assign]
+    counters = {
+        "assets_seen": 0,
+        "assets_created": 0,
+        "assets_updated": 0,
+        "assets_unchanged": 0,
+    }
+
+    await service._sync_assets(
+        run_status().model_copy(update={"phase": "assets"}),
+        OWNER_ID,
+        counters,
+        len(media),
+    )
+
+    assert immich.page_size == 1000
+    assert immich.start_page == 1
+    assert len(assets.assets) == len(media)
+    assert assets.asset_batch_sizes == [2, 2, 2, 2, 1]
+    assert assets.calls.count("assets") == 5
+    assert paced == [1, 1]
+    assert [cursor for phase, cursor in syncs.checkpoints if phase == "assets"] == [
+        "assets:1:1",
+        "assets:1:2",
+        "assets:2:1",
+        "assets:2:2",
+        "assets:3:1",
+    ]
+    assert syncs.checkpoints[-1] == ("stacks", None)
+
+
+@pytest.mark.asyncio
+async def test_media_sync_resumes_inside_large_api_page() -> None:
+    media = [asset(UUID(int=index + 2000), f"resume-{index}.png") for index in range(5)]
+
+    class ResumeImmich:
+        start_page: int | None = None
+
+        async def iter_asset_pages(
+            self, *, page_size, updated_after, updated_before, start_page
+        ):
+            assert page_size == 1000
+            assert updated_after is None
+            assert updated_before is None
+            self.start_page = start_page
+            yield 2, ImmichAssetSearchPage.model_validate(
+                {
+                    "count": 4,
+                    "total": 5,
+                    "items": media[:4],
+                    "nextPage": "3",
+                }
+            )
+            yield 3, ImmichAssetSearchPage.model_validate(
+                {
+                    "count": 1,
+                    "total": 5,
+                    "items": media[4:],
+                    "nextPage": None,
+                }
+            )
+
+    immich = ResumeImmich()
+    assets = FakeAssetRepository()
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_full_batch_size=2, sync_media_page_size=1000),
+    )
+    counters = {
+        "assets_seen": 2,
+        "assets_created": 2,
+        "assets_updated": 0,
+        "assets_unchanged": 0,
+    }
+
+    await service._sync_assets(
+        run_status().model_copy(update={"phase": "assets", "cursor": "assets:2:1"}),
+        OWNER_ID,
+        counters,
+        len(media),
+    )
+
+    assert immich.start_page == 2
+    assert [current.id for current in assets.assets] == [
+        media[2].id,
+        media[3].id,
+        media[4].id,
+    ]
+    assert assets.asset_batch_sizes == [2, 1]
+    assert counters["assets_seen"] == 5
+    assert syncs.checkpoints[-1] == ("stacks", None)
 
 
 @pytest.mark.asyncio

@@ -70,4 +70,5 @@ async def test_environment_values_seed_runtime_settings_and_incremental_batch_si
     assert AssetSyncService._full_batch_size(full_run(), settings) == 50
     incremental = full_run().model_copy(update={"mode": "incremental"})
     assert AssetSyncService._full_batch_size(incremental, settings) == 250
+    assert settings.sync_media_page_size == 1000
     assert settings.sync_relationship_page_size == 1000

@@ -20,6 +20,7 @@ from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
+    ImmichAssetSearchPage,
     ImmichStack,
     ImmichStackAsset,
     ImmichTag,
@@ -1281,27 +1282,43 @@ class AssetSyncService:
         counters: dict[str, int],
         asset_total: int | None,
     ) -> None:
-        batch = []
+        batch_size = self._full_batch_size(run, self._settings)
+        page_size = self._settings.sync_media_page_size
+        start_page = 1
+        completed_page_batches = 0
         completed_batches = 0
         if run.phase == "assets" and run.cursor:
-            completed_batches = int(run.cursor.rsplit(":", 1)[1])
-        batch_number = completed_batches
-        iterator = self._immich.iter_assets(
-            page_size=self._full_batch_size(run, self._settings),
+            cursor_parts = run.cursor.split(":")
+            if len(cursor_parts) == 3:
+                start_page = int(cursor_parts[1])
+                completed_page_batches = int(cursor_parts[2])
+            else:
+                # Compatibility with checkpoints written before media API pages
+                # were decoupled from persistence batches.
+                completed_batches = int(cursor_parts[-1])
+                completed_assets = completed_batches * batch_size
+                start_page = completed_assets // page_size + 1
+                completed_page_batches = (completed_assets % page_size) // batch_size
+        iterator = self._immich.iter_asset_pages(
+            page_size=page_size,
             updated_after=run.window_start if run.mode == "incremental" else None,
             updated_before=run.window_end if run.mode == "incremental" else None,
-            start_page=completed_batches + 1,
+            start_page=start_page,
         )
-        async for asset in iterator:
-            batch.append(asset)
-            if len(batch) < self._full_batch_size(run, self._settings):
-                continue
-            batch_number += 1
-            await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
-            batch = []
-        if batch:
-            batch_number += 1
-            await self._commit_asset_batch(run, owner, counters, batch, batch_number, asset_total)
+        async for page_number, page in iterator:
+            started = perf_counter()
+            await self._commit_asset_page(
+                run,
+                owner,
+                counters,
+                page,
+                page_number,
+                completed_page_batches if page_number == start_page else 0,
+                batch_size,
+                asset_total,
+            )
+            if page.next_page is not None:
+                await self._pace_full_batch(run, started)
         await self._checkpoint(
             run,
             owner,
@@ -1311,16 +1328,40 @@ class AssetSyncService:
             self._progress("stacks", 0, None, "Preparing stack traversal"),
         )
 
+    async def _commit_asset_page(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        page: ImmichAssetSearchPage,
+        page_number: int,
+        completed_batches: int,
+        batch_size: int,
+        asset_total: int | None,
+    ) -> None:
+        """Persist one bounded API page in durable database-sized batches."""
+
+        for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
+            if batch_number <= completed_batches:
+                continue
+            await self._commit_asset_batch(
+                run,
+                owner,
+                counters,
+                batch,
+                f"assets:{page_number}:{batch_number}",
+                asset_total,
+            )
+
     async def _commit_asset_batch(
         self,
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
         batch: list[ImmichAsset],
-        batch_number: int,
+        cursor: str,
         asset_total: int | None,
     ) -> None:
-        started = perf_counter()
         lightweight_batch = [
             asset.model_copy(
                 update={"exif_info": None, "people": [], "tags": [], "stack": None}
@@ -1340,7 +1381,7 @@ class AssetSyncService:
             owner,
             counters,
             "assets",
-            f"assets:{batch_number}",
+            cursor,
             self._progress(
                 "assets",
                 counters["assets_seen"],
@@ -1350,7 +1391,6 @@ class AssetSyncService:
                 else f"Media {counters['assets_seen']} processed",
             ),
         )
-        await self._pace_full_batch(run, started)
 
     @staticmethod
     def _stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
