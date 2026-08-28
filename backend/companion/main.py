@@ -1065,7 +1065,7 @@ def create_app(
             await sync.restore_targets([asset_id])
         except ImmichApiError as error:
             raise map_immich_error(error) from error
-        return Response(status_code=204)
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/api/restore")
     async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
