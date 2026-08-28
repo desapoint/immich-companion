@@ -1306,7 +1306,7 @@
         onmodechange={changeListMode}
         showPagination={false}
       />
-      <LayoutModeSwitch mode={layoutMode} disabled={loading} onchange={changeLayoutMode} />
+      <LayoutModeSwitch mode={layoutMode} onchange={changeLayoutMode} />
     </div>
     <AssetGrid
       assets={results.items}
