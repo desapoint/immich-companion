@@ -1065,7 +1065,7 @@ def create_app(
             await sync.restore_targets([asset_id])
         except ImmichApiError as error:
             raise map_immich_error(error) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
+        return Response(status_code=204)
 
     @app.post("/api/restore")
     async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
@@ -1155,7 +1155,7 @@ def create_app(
     @app.get("/api/assets/{asset_id}/thumbnail", response_class=Response)
     async def asset_thumbnail(
         asset_id: UUID,
-        size: Literal["thumbnail", "preview"] = "thumbnail",
+        size: Literal["thumbnail", "preview", "fullsize"] = "thumbnail",
     ) -> Response:
         try:
             media = await immich.get_thumbnail(asset_id, size=size)
