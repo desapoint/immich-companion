@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import { assetMediaUrl } from '../api/assetApi';
   import {
@@ -61,28 +62,26 @@
 <article class:selected class:condensed class="asset-card" data-asset-id={asset.id}>
   {#if !condensed}
     <header class="card-decision">
-      <label class="selection-control">
-        <input
-          type="checkbox"
-          checked={selected}
-          onclick={(event) => onselect(event.shiftKey)}
-        />
-        <span>{selected ? 'Selected' : 'Select'}</span>
-      </label>
+      <Checkbox
+        checked={selected}
+        label={selected ? 'Selected' : 'Select'}
+        ariaLabel={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
+        onclick={(event) => { event.preventDefault(); onselect(event.shiftKey); }}
+      />
       <span class="media-type">{asset.type}</span>
     </header>
   {/if}
 
   <div class="media-wrap">
     {#if condensed}
-      <label class="selection-control condensed-selection">
-        <input
-          type="checkbox"
+      <div class="condensed-selection">
+        <Checkbox
           checked={selected}
-          aria-label={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
-          onclick={(event) => onselect(event.shiftKey)}
+          label={`${selected ? 'Deselect' : 'Select'} ${asset.original_file_name}`}
+          hiddenLabel
+          onclick={(event) => { event.preventDefault(); onselect(event.shiftKey); }}
         />
-      </label>
+      </div>
     {/if}
     <div
       class:selection-active={selectionActive}
@@ -180,9 +179,13 @@
   }
 
   .asset-card:hover {
-    z-index: 10;
+    z-index: 200;
     border-color: var(--color-border-strong);
     transform: translateY(-0.1rem);
+  }
+
+  .asset-card:focus-within {
+    z-index: 100;
   }
 
   .asset-card.selected {
@@ -205,21 +208,6 @@
     border-bottom: 1px solid var(--color-border-subtle);
   }
 
-  .selection-control {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.42rem;
-    cursor: pointer;
-    font-size: 0.72rem;
-    font-weight: 760;
-  }
-
-  .selection-control input {
-    width: 1rem;
-    height: 1rem;
-    accent-color: var(--color-accent-strong);
-  }
-
   .condensed-selection {
     position: absolute;
     z-index: 12;
@@ -234,10 +222,6 @@
     color: white;
     background: rgb(0 0 0 / 70%);
     backdrop-filter: blur(0.35rem);
-  }
-
-  .condensed-selection input {
-    margin: 0;
   }
 
   .media-type {

@@ -9,7 +9,9 @@
   } from '../api/assetApi';
   import AssetPagination from './AssetPagination.svelte';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
+  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import IconButton from '../../../lib/components/ui/IconButton.svelte';
+  import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
   import type { AssetDetail, AssetSummary } from '../types/assets';
 
   const pageSize = 48;
@@ -170,23 +172,16 @@
     {#if loadError}<p class="error" role="alert">{loadError}</p>{/if}
     {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
     <div class="bulk-actions">
-      <label><input type="checkbox" checked={allLoadedSelected} onchange={toggleLoadedSelection} /> Select all on this page</label>
+      <Checkbox checked={allLoadedSelected} label="Select all on this page" onchange={toggleLoadedSelection} />
       <button type="button" disabled={restoring !== null || selectedIds.size === 0} onclick={() => void restoreMany(false)}>{restoring === 'selected' ? 'Restoring selected…' : `Restore selected (${selectedIds.size})`}</button>
       <button type="button" disabled={restoring !== null} onclick={() => void restoreMany(true)}>{restoring === 'all' ? 'Restoring all…' : `Restore all (${total})`}</button>
-      <div class="layout-toggle" role="group" aria-label="Image list layout">
-        <button class:active={layoutMode === 'normal'} type="button" aria-pressed={layoutMode === 'normal'} onclick={() => (layoutMode = 'normal')}>
-          <span aria-hidden="true">☷</span> Normal
-        </button>
-        <button class:active={layoutMode === 'condensed'} type="button" aria-pressed={layoutMode === 'condensed'} onclick={() => (layoutMode = 'condensed')}>
-          <span aria-hidden="true">▦</span> Condensed
-        </button>
-      </div>
+      <div class="layout-toggle"><LayoutModeSwitch mode={layoutMode} onchange={(mode) => (layoutMode = mode)} /></div>
     </div>
     <div class:condensed={layoutMode === 'condensed'} class="grid">
       {#each items as asset, index (asset.id)}
         <article>
           <div class:overlay={layoutMode === 'condensed'} class="image-wrap">
-            <label class="select"><input type="checkbox" checked={selectedIds.has(asset.id)} onchange={() => toggleSelection(asset.id)} /><span>Select {asset.original_file_name}</span></label>
+            <div class="select"><Checkbox checked={selectedIds.has(asset.id)} label={`Select ${asset.original_file_name}`} hiddenLabel onchange={() => toggleSelection(asset.id)} /></div>
             <button class="preview" type="button" onclick={() => void openViewer(index)} aria-label={`Preview ${asset.original_file_name}`}><img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" /></button>
             {#if layoutMode === 'condensed'}
               <div class="overlay-actions" aria-label={`Actions for ${asset.original_file_name}`}>
@@ -249,9 +244,173 @@
 {/if}
 
 <style>
-  .restore-page { display: grid; gap: 1.5rem; }
-  header { max-width: 48rem; } .eyebrow { color: var(--color-accent-strong); font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
-  h1 { margin: .25rem 0; font-size: clamp(2rem, 5vw, 3.5rem); } p, small { color: var(--color-ink-muted); } .error { color: var(--color-danger); }
-  .load-error { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; }
-  .bulk-actions { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; } .bulk-actions label, .select { color: var(--color-ink-muted); font-size: .8rem; font-weight: 700; } .select span { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; } .layout-toggle { display: inline-flex; margin-inline-start: auto; gap: .2rem; padding: .2rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); } .layout-toggle button { border-color: transparent; color: var(--color-ink-muted); background: transparent; } .layout-toggle button.active { border-color: var(--color-accent-strong); color: var(--color-ink-inverse); background: var(--color-accent-strong); } .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 1rem; } article { display: grid; min-width: 0; gap: .65rem; padding: .7rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); overflow: hidden; } .image-wrap { min-width: 0; } .image-wrap.overlay { position: relative; } img { display: block; width: 100%; max-width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: var(--radius-sm); background: var(--color-surface-soft); } .image-wrap.overlay > .select { position: absolute; z-index: 1; top: .5rem; left: .5rem; display: grid; place-items: center; width: 1.8rem; height: 1.8rem; border-radius: 50%; background: color-mix(in srgb, var(--color-surface-raised) 88%, transparent); } .image-wrap.overlay > .select input { width: 1.1rem; height: 1.1rem; margin: 0; } article > div:not(.image-wrap) { min-width: 0; } strong { display: -webkit-box; overflow: hidden; line-clamp: 2; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; } small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } button { justify-self: start; max-width: 100%; padding: .45rem .7rem; border: 1px solid var(--color-accent-strong); border-radius: var(--radius-sm); color: var(--color-ink-inverse); background: var(--color-accent-strong); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; } button.preview { display: block; width: 100%; padding: 0; border: 0; background: none; } .overlay-actions { position: absolute; right: .5rem; bottom: .5rem; z-index: 1; display: flex; gap: .3rem; padding: .25rem; border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-surface-raised) 86%, transparent); } .overlay-actions :global(.icon-button-wrap button) { border-color: color-mix(in srgb, var(--color-ink-inverse) 70%, transparent); box-shadow: 0 1px 4px rgb(0 0 0 / 25%); } .condensed { grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); gap: .65rem; } .condensed article { padding: .35rem; } .condensed .image-wrap, .condensed img { border-radius: var(--radius-sm); } button:disabled { opacity: .65; cursor: wait; }
+  .restore-page {
+    display: grid;
+    gap: 1.5rem;
+  }
+
+  header {
+    max-width: 48rem;
+  }
+
+  .eyebrow {
+    color: var(--color-accent-strong);
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 0.25rem 0;
+    font-size: clamp(2rem, 5vw, 3.5rem);
+  }
+
+  p,
+  small {
+    color: var(--color-ink-muted);
+  }
+
+  .error {
+    color: var(--color-danger);
+  }
+
+  .load-error,
+  .bulk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.7rem;
+  }
+
+  .layout-toggle {
+    margin-inline-start: auto;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    gap: 1rem;
+  }
+
+  article {
+    display: grid;
+    min-width: 0;
+    gap: 0.65rem;
+    padding: 0.7rem;
+    overflow: hidden;
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    background: var(--color-surface-raised);
+  }
+
+  .image-wrap {
+    min-width: 0;
+  }
+
+  .image-wrap.overlay {
+    position: relative;
+  }
+
+  img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-soft);
+  }
+
+  .image-wrap.overlay > .select {
+    position: absolute;
+    z-index: 1;
+    top: 0.5rem;
+    left: 0.5rem;
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border: 1px solid color-mix(in srgb, var(--color-ink-inverse) 25%, transparent);
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--color-surface-raised) 88%, transparent);
+  }
+
+  article > div:not(.image-wrap) {
+    min-width: 0;
+  }
+
+  strong {
+    display: -webkit-box;
+    overflow: hidden;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+  }
+
+  small {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  button {
+    max-width: 100%;
+    padding: 0.45rem 0.7rem;
+    border: 1px solid var(--color-accent-strong);
+    border-radius: var(--radius-sm);
+    color: var(--color-ink-inverse);
+    background: var(--color-accent-strong);
+    cursor: pointer;
+    font: inherit;
+    font-size: 0.8rem;
+    font-weight: 700;
+    justify-self: start;
+  }
+
+  button.preview {
+    display: block;
+    width: 100%;
+    padding: 0;
+    border: 0;
+    background: none;
+  }
+
+  .overlay-actions {
+    position: absolute;
+    z-index: 1;
+    right: 0.5rem;
+    bottom: 0.5rem;
+    display: flex;
+    gap: 0.3rem;
+    padding: 0.25rem;
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--color-surface-raised) 86%, transparent);
+  }
+
+  .overlay-actions :global(.icon-button-wrap button) {
+    border-color: color-mix(in srgb, var(--color-ink-inverse) 70%, transparent);
+    box-shadow: 0 1px 4px rgb(0 0 0 / 25%);
+  }
+
+  .condensed {
+    grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr));
+    gap: 0.65rem;
+  }
+
+  .condensed article {
+    padding: 0.35rem;
+  }
+
+  .condensed .image-wrap,
+  .condensed img {
+    border-radius: var(--radius-sm);
+  }
+
+  button:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
 </style>

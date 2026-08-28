@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import type { SearchMode } from '../types/assets';
 
   interface Props {
@@ -14,18 +15,17 @@
     <span>Search mode</span>
     <strong>{mode === 'expert' ? 'Expert rules' : 'Simple filters'}</strong>
   </div>
-  <label class="mode-switch">
+  <div class="mode-switch">
     <span>Simple</span>
-    <input
-      type="checkbox"
-      role="switch"
-      aria-label="Use expert search mode"
+    <Checkbox
       checked={mode === 'expert'}
-      onchange={(event) => onchange(event.currentTarget.checked ? 'expert' : 'simple')}
+      label="Use expert search mode"
+      hiddenLabel
+      variant="switch"
+      onchange={(checked) => onchange(checked ? 'expert' : 'simple')}
     />
-    <span class="switch-track" aria-hidden="true"><span></span></span>
     <span>Expert</span>
-  </label>
+  </div>
 </div>
 
 <style>
@@ -65,52 +65,6 @@
     cursor: pointer;
     font-size: 0.72rem;
     font-weight: 760;
-  }
-
-  input {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip: rect(0 0 0 0);
-    clip-path: inset(50%);
-    white-space: nowrap;
-  }
-
-  .switch-track {
-    display: flex;
-    width: 2.8rem;
-    height: 1.55rem;
-    align-items: center;
-    padding: 0.16rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: 999px;
-    background: var(--color-surface-soft);
-    transition: border-color 140ms ease, background 140ms ease;
-  }
-
-  .switch-track span {
-    width: 1.08rem;
-    height: 1.08rem;
-    border-radius: 50%;
-    background: var(--color-ink-muted);
-    box-shadow: 0 0.1rem 0.3rem rgb(0 0 0 / 18%);
-    transition: transform 140ms ease, background 140ms ease;
-  }
-
-  input:checked + .switch-track {
-    border-color: var(--color-accent-strong);
-    background: color-mix(in srgb, var(--color-accent-strong) 18%, var(--color-surface-soft));
-  }
-
-  input:checked + .switch-track span {
-    background: var(--color-accent-strong);
-    transform: translateX(1.2rem);
-  }
-
-  input:focus-visible + .switch-track {
-    outline: 0.18rem solid var(--color-accent-strong);
-    outline-offset: 0.18rem;
   }
 
   @media (max-width: 34rem) {

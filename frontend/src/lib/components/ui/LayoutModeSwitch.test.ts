@@ -1,11 +1,11 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
-import AssetLayoutControls from './AssetLayoutControls.svelte';
+import LayoutModeSwitch from './LayoutModeSwitch.svelte';
 
-describe('AssetLayoutControls', () => {
-  it('offers a discoverable normal and condensed card layout switch', () => {
-    const { body } = render(AssetLayoutControls, {
+describe('LayoutModeSwitch', () => {
+  it('offers the shared normal and condensed layout options', () => {
+    const { body } = render(LayoutModeSwitch, {
       props: {
         mode: 'condensed',
         onchange: () => undefined,

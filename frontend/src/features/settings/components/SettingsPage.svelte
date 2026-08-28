@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
+  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import { loadSyncRuntimeSettings, loadSyncSchedules, saveSyncRuntimeSettings, saveSyncSchedule } from '../api/settingsApi';
   import type { SyncRuntimeSettings, SyncSchedule } from '../types/settings';
 
@@ -111,8 +112,8 @@
       </div>
       <div class="runtime-context">
         <p class="hint">Trashed assets are kept as lightweight Restore records. Choose whether to retain their optional restoration context.</p>
-        <label class="toggle"><input type="checkbox" checked={runtimeDraft.sync_trashed_album_context} onchange={(event) => runtimeDraft = { ...runtimeDraft, sync_trashed_album_context: event.currentTarget.checked }} /><span>Keep album context for trashed assets</span></label>
-        <label class="toggle"><input type="checkbox" checked={runtimeDraft.sync_trashed_tag_context} onchange={(event) => runtimeDraft = { ...runtimeDraft, sync_trashed_tag_context: event.currentTarget.checked }} /><span>Keep tag context for trashed assets</span></label>
+        <Checkbox checked={runtimeDraft.sync_trashed_album_context} label="Keep album context for trashed assets" onchange={(checked) => runtimeDraft = { ...runtimeDraft, sync_trashed_album_context: checked }} />
+        <Checkbox checked={runtimeDraft.sync_trashed_tag_context} label="Keep tag context for trashed assets" onchange={(checked) => runtimeDraft = { ...runtimeDraft, sync_trashed_tag_context: checked }} />
       </div>
       <button class="save" type="button" disabled={runtimeSaving || !Number.isInteger(runtimeDraft.full_batch_size) || runtimeDraft.full_batch_size < 1 || runtimeDraft.full_batch_size > 500 || runtimeDraft.full_min_batch_delay_seconds < 0 || runtimeDraft.full_min_batch_delay_seconds > 60} onclick={() => void saveRuntime()}>{runtimeSaving ? 'Saving…' : 'Save load settings'}</button>
     </article>
@@ -125,10 +126,7 @@
               <p class="eyebrow">{schedule.name === 'asset-sync-full' ? 'Authoritative catalog pass' : 'Recent changes'}</p>
               <h2>{labels[schedule.name] ?? schedule.name}</h2>
             </div>
-            <label class="toggle">
-              <input type="checkbox" checked={draft?.enabled ?? false} onchange={(event) => setDraft(schedule.name, { enabled: (event.currentTarget as HTMLInputElement).checked })} />
-              <span>Enabled</span>
-            </label>
+            <Checkbox checked={draft?.enabled ?? false} label="Enabled" onchange={(checked) => setDraft(schedule.name, { enabled: checked })} />
           </div>
           <label class="field" for={`cron-${schedule.name}`}>
             <span>Cron expression</span>
@@ -163,9 +161,8 @@
   .runtime-card .hint { max-width: 48rem; line-height: 1.5; }
   .runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(10rem, 1fr)); gap: .75rem; grid-column: 1 / -1; }
   .card-heading { display: flex; justify-content: space-between; gap: 1rem; }
-  .toggle { display: flex; align-items: center; gap: 0.45rem; color: var(--color-ink-muted); font-size: 0.78rem; font-weight: 700; white-space: nowrap; }
   .field { display: grid; gap: 0.45rem; color: var(--color-ink-muted); font-size: 0.78rem; font-weight: 700; }
-  input:not([type='checkbox']) { width: 100%; padding: 0.7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: 0.9rem ui-monospace, monospace; }
+  .field input { width: 100%; padding: 0.7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: 0.9rem ui-monospace, monospace; }
   .presets { display: flex; flex-wrap: wrap; gap: 0.4rem; }
   .presets button, .save { padding: 0.5rem 0.65rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); color: var(--color-ink-muted); background: var(--color-surface-soft); font: inherit; font-size: 0.72rem; cursor: pointer; }
   .presets button.chosen { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }

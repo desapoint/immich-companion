@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import {
     createEmptyRelationCondition,
@@ -34,10 +35,14 @@
           compact
           onchange={(value) => (group.operator = value as 'and' | 'or')}
         />
-        <label class="negate-control">
-          <input type="checkbox" bind:checked={group.negate} {disabled} />
-          <span>NOT this whole group</span>
-        </label>
+        <div class="negate-control">
+          <Checkbox
+            checked={group.negate}
+            label="NOT this whole group"
+            {disabled}
+            onchange={(checked) => (group.negate = checked)}
+          />
+        </div>
       </div>
     </header>
 
@@ -120,12 +125,6 @@
     color: var(--color-ink-muted);
     font-size: 0.74rem;
     font-weight: 720;
-  }
-
-  .negate-control input {
-    width: 1rem;
-    height: 1rem;
-    accent-color: var(--color-accent-strong);
   }
 
   .group-children {

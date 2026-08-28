@@ -1,11 +1,12 @@
 <script lang="ts">
-  import Icon from '../../../lib/components/ui/Icon.svelte';
-  import type { AssetLayoutMode } from '../types/assets';
+  import Icon from './Icon.svelte';
+
+  type LayoutMode = 'normal' | 'condensed';
 
   interface Props {
-    mode: AssetLayoutMode;
+    mode: LayoutMode;
     disabled?: boolean;
-    onchange: (mode: AssetLayoutMode) => void;
+    onchange: (mode: LayoutMode) => void;
   }
 
   let { mode, disabled = false, onchange }: Props = $props();
@@ -69,8 +70,8 @@
 
   button.active {
     border-color: var(--color-accent-strong);
-    color: var(--color-accent-strong);
-    background: var(--color-canvas);
+    color: var(--color-ink-inverse);
+    background: var(--color-accent-strong);
   }
 
   button:hover:not(:disabled),

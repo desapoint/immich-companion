@@ -72,7 +72,7 @@
   import AssetEmptyState from './AssetEmptyState.svelte';
   import AssetErrorState from './AssetErrorState.svelte';
   import AssetGrid from './AssetGrid.svelte';
-  import AssetLayoutControls from './AssetLayoutControls.svelte';
+  import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
   import AssetLoadingState from './AssetLoadingState.svelte';
   import AssetPagination from './AssetPagination.svelte';
   import AssetResultStatus from './AssetResultStatus.svelte';
@@ -1306,7 +1306,7 @@
         onmodechange={changeListMode}
         showPagination={false}
       />
-      <AssetLayoutControls mode={layoutMode} disabled={loading} onchange={changeLayoutMode} />
+      <LayoutModeSwitch mode={layoutMode} disabled={loading} onchange={changeLayoutMode} />
     </div>
     <AssetGrid
       assets={results.items}
