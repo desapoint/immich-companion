@@ -53,6 +53,8 @@
     syncBusy?: boolean;
     syncError?: string | null;
     actionsEnabled?: boolean;
+    selectionEnabled?: boolean;
+    restoreBusy?: boolean;
     apiOnly?: boolean;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
@@ -78,6 +80,7 @@
     ) => void;
     onconfirmaction: () => void;
     oncancelaction: () => void;
+    onrestore?: (assetId: string) => void;
     onsync: (assetId: string) => void;
     onclose: () => void;
   }
@@ -99,6 +102,8 @@
     syncBusy = false,
     syncError = null,
     actionsEnabled = true,
+    selectionEnabled,
+    restoreBusy = false,
     apiOnly = false,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
@@ -116,6 +121,7 @@
     onrelationconfirm,
     onconfirmaction,
     oncancelaction,
+    onrestore,
     onsync,
     onclose,
   }: Props = $props();
@@ -138,6 +144,7 @@
   let nextLoading = $state(false);
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(selectedAsset ?? assets[currentIndex]);
+  const selectionAvailable = $derived(selectionEnabled ?? actionsEnabled);
   const comparisonMembers = $derived(
     comparisonSource === 'stack' ? stackMembersForAsset(currentAsset) : comparisonAssets,
   );
@@ -408,6 +415,9 @@
     {actionBusy}
     {actionError}
     {actionsEnabled}
+    selectionEnabled={selectionAvailable}
+    {restoreBusy}
+    onrestore={onrestore ? () => onrestore(currentAsset.id) : undefined}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
     onsetprimary={() => onsetprimary?.(visibleAsset.id)}
     onrelationconfirm={(action, relationIds) =>

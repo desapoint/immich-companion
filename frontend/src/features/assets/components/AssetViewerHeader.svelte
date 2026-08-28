@@ -26,6 +26,9 @@
     actionBusy?: boolean;
     actionError?: string | null;
     actionsEnabled?: boolean;
+    selectionEnabled?: boolean;
+    restoreBusy?: boolean;
+    onrestore?: () => void;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
     onsetprimary?: () => void;
     onrelationconfirm: (
@@ -58,6 +61,9 @@
     actionBusy = false,
     actionError = null,
     actionsEnabled = true,
+    selectionEnabled = actionsEnabled,
+    restoreBusy = false,
+    onrestore,
     onaction,
     onsetprimary,
     onrelationconfirm,
@@ -80,28 +86,41 @@
   </div>
 
   <div class="viewer-actions">
-    {#if actionsEnabled}<AssetActionControls
-      summary={actionSummary}
-      {albums}
-      {tags}
-      targetCount={1}
-      targetLabel="selected image"
-      allowStack={false}
-      allowStackRemoval={hasStack}
-      isStackPrimary={isVisibleStackPrimary}
-      {onsetprimary}
-      busy={actionBusy}
-      onplan={onaction}
-      {onrelationconfirm}
-    />
-    <span class="viewer-action-separator" aria-hidden="true"></span>{/if}
     {#if actionsEnabled}
+      <AssetActionControls
+        summary={actionSummary}
+        {albums}
+        {tags}
+        targetCount={1}
+        targetLabel="selected image"
+        allowStack={false}
+        allowStackRemoval={hasStack}
+        isStackPrimary={isVisibleStackPrimary}
+        {onsetprimary}
+        busy={actionBusy}
+        onplan={onaction}
+        {onrelationconfirm}
+      />
+    {/if}
+    {#if onrestore}
+      <IconButton
+        icon="restore"
+        label={restoreBusy ? 'Restoring image…' : 'Restore image'}
+        tone="accent"
+        disabled={restoreBusy}
+        onclick={onrestore}
+      />
+    {/if}
+    {#if selectionEnabled}
     <IconButton
       icon={selected ? 'check' : 'select'}
       label={selected ? 'Deselect image' : 'Select image'}
       tone={selected ? 'accent' : 'default'}
       onclick={ontoggleselection}
     />
+    {/if}
+    {#if actionsEnabled || onrestore || selectionEnabled}
+      <span class="viewer-action-separator" aria-hidden="true"></span>
     {/if}
     <IconButton
       icon={scaleMode === 'fit' ? 'actual-size' : 'fit'}

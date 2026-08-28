@@ -200,7 +200,7 @@
   <AssetViewerDialog
     assets={items}
     initialIndex={viewerIndex}
-    selectedIds={new Set()}
+    {selectedIds}
     {detail}
     {detailLoading}
     {detailError}
@@ -209,14 +209,20 @@
     actionPlan={null}
     actionSummary={null}
     actionsEnabled={false}
+    selectionEnabled={true}
+    restoreBusy={restoring !== null}
     apiOnly={true}
     onnavigate={(index) => void openViewer(index)}
-    ontoggleselection={() => {}}
+    ontoggleselection={toggleSelection}
     onvisiblechange={(assetId) => { const index = items.findIndex((asset) => asset.id === assetId); if (index >= 0) void openViewer(index); }}
     onaction={() => {}}
     onrelationconfirm={() => {}}
     onconfirmaction={() => {}}
     oncancelaction={() => {}}
+    onrestore={(assetId) => {
+      const asset = items.find((candidate) => candidate.id === assetId);
+      if (asset) void restoreOne(asset);
+    }}
     onsync={() => {}}
     onclose={closeViewer}
   />
