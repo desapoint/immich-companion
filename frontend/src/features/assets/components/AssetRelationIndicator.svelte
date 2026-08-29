@@ -1,9 +1,14 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import type { Snippet } from 'svelte';
 
   import { clickOutside } from '../../../lib/actions/clickOutside';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import type { IconName } from '../../../lib/types/ui';
+  import {
+    floatingPopoverLayout,
+    type FloatingPopoverLayout,
+  } from '../../../lib/utils/floatingPopover';
 
   interface Props {
     kind: Extract<IconName, 'album' | 'tag' | 'stack' | 'external'>;
@@ -14,31 +19,88 @@
   }
 
   let { kind, label, count, popoverSizing = 'default', children }: Props = $props();
+  let triggerElement = $state<HTMLButtonElement>();
+  let popoverElement = $state<HTMLElement>();
   let pinned = $state(false);
+  let popoverLayout = $state<FloatingPopoverLayout | null>(null);
   const componentId = $props.id();
+
+  function updatePopoverLayout(): void {
+    if (!triggerElement || !popoverElement) return;
+
+    const measuredWidth = popoverElement.getBoundingClientRect().width;
+    popoverLayout = floatingPopoverLayout(
+      triggerElement.getBoundingClientRect(),
+      window.innerWidth,
+      window.innerHeight,
+      {
+        preferredWidth: measuredWidth || (popoverSizing === 'content' ? 384 : 304),
+        preferredHeight: Math.min(popoverElement.scrollHeight || 320, 320),
+      },
+    );
+  }
+
+  async function togglePinned(): Promise<void> {
+    pinned = !pinned;
+    if (!pinned) return;
+    await tick();
+    updatePopoverLayout();
+  }
+
+  function preparePopover(): void {
+    updatePopoverLayout();
+  }
+
+  $effect(() => {
+    if (!pinned) return;
+    const update = () => updatePopoverLayout();
+    window.addEventListener('resize', update);
+    window.addEventListener('scroll', update, true);
+    return () => {
+      window.removeEventListener('resize', update);
+      window.removeEventListener('scroll', update, true);
+    };
+  });
 </script>
 
 <div
   use:clickOutside={{ enabled: pinned, onoutside: () => (pinned = false) }}
   class:pinned
   class="relation-indicator"
+  onmouseenter={preparePopover}
+  onfocusin={preparePopover}
 >
   <button
+    bind:this={triggerElement}
     type="button"
     aria-label={label}
     aria-expanded={pinned}
     aria-controls={`${componentId}-details`}
     title={label}
-    onclick={() => (pinned = !pinned)}
+    onclick={() => void togglePinned()}
   >
     <Icon name={kind} />
     {#if count !== undefined}<span>{count}</span>{/if}
   </button>
   <aside
+    bind:this={popoverElement}
     id={`${componentId}-details`}
     class:content-sized={popoverSizing === 'content'}
     class="relation-popover"
     aria-label={`${label} details`}
+    style:left={popoverLayout ? `${popoverLayout.left}px` : undefined}
+    style:top={popoverLayout?.top === null
+      ? 'auto'
+      : popoverLayout
+        ? `${popoverLayout.top}px`
+        : undefined}
+    style:bottom={popoverLayout?.bottom === null
+      ? 'auto'
+      : popoverLayout
+        ? `${popoverLayout.bottom}px`
+        : undefined}
+    style:width={popoverLayout ? `${popoverLayout.width}px` : undefined}
+    style:max-height={popoverLayout ? `${popoverLayout.maxHeight}px` : undefined}
   >
     <strong>{label}</strong>
     <div class="popover-content">{@render children()}</div>
@@ -86,12 +148,11 @@
   }
 
   .relation-popover {
-    position: absolute;
-    z-index: 40;
-    top: calc(100% + 0.38rem);
-    left: 0;
+    position: fixed;
+    z-index: 1000;
     width: min(19rem, calc(100vw - 2rem));
     padding: 0.7rem;
+    overflow: auto;
     visibility: hidden;
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
