@@ -32,7 +32,6 @@
     { value: 'aspect_ratio', label: 'Aspect ratio' },
     { value: 'favorite', label: 'Favorite' },
     { value: 'archived', label: 'Archived' },
-    { value: 'trashed', label: 'Trashed' },
     { value: 'album', label: 'Album' },
     { value: 'tag', label: 'Tag' },
   ];
@@ -129,7 +128,7 @@
       compact
       onchange={(value) => (condition.value = value)}
     />
-  {:else if condition.field === 'favorite' || condition.field === 'archived' || condition.field === 'trashed'}
+  {:else if condition.field === 'favorite' || condition.field === 'archived'}
     <SelectField
       id={`${condition.id}-value`}
       label="Value"

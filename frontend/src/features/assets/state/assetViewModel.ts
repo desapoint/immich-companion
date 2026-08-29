@@ -34,7 +34,6 @@ const DEFAULT_OPERATOR: Record<SearchField, SearchOperator> = {
   aspect_ratio: 'at_least',
   favorite: 'equals',
   archived: 'equals',
-  trashed: 'equals',
   album: 'in_any',
   tag: 'in_any',
 };
@@ -42,7 +41,7 @@ const DEFAULT_OPERATOR: Record<SearchField, SearchOperator> = {
 export function createSearchCondition(field: SearchField = 'filename'): SearchCondition {
   const value = field === 'type'
     ? 'IMAGE'
-    : field === 'favorite' || field === 'archived' || field === 'trashed'
+    : field === 'favorite' || field === 'archived'
       ? 'true'
       : field === 'album' || field === 'tag'
         ? []
@@ -92,7 +91,6 @@ export function createSimpleAssetSearchFilters(): SimpleAssetSearchFilters {
     assetType: '',
     favorite: 'any',
     archived: 'any',
-    trashed: 'false',
     albumIds: [],
     tagIds: [],
     noAlbum: false,
@@ -122,7 +120,7 @@ export function simpleFiltersToSearchGroup(filters: SimpleAssetSearchFilters): S
     condition.value = filters.assetType;
     group.children.push(condition);
   }
-  for (const field of ['favorite', 'archived', 'trashed'] as const) {
+  for (const field of ['favorite', 'archived'] as const) {
     const value = filters[field];
     if (value === 'any') continue;
     const condition = createSearchCondition(field);
@@ -182,7 +180,7 @@ function serializeNode(node: SearchNode): Record<string, unknown> {
     : node.value;
   if (node.field === 'width' || node.field === 'height') value = Number.parseInt(String(node.value), 10);
   if (node.field === 'aspect_ratio') value = parseAspectRatioInput(String(node.value));
-  if (node.field === 'favorite' || node.field === 'archived' || node.field === 'trashed') {
+  if (node.field === 'favorite' || node.field === 'archived') {
     value = node.value === 'true';
   }
   if (node.field === 'taken_at') value = new Date(String(node.value)).toISOString();

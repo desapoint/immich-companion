@@ -19,13 +19,11 @@ import {
 import type { AssetSummary } from '../types/assets';
 
 describe('asset view model', () => {
-  it('excludes trashed assets from the default simple search', () => {
+  it('starts simple search without a redundant trashed-state predicate', () => {
     const filters = createSimpleAssetSearchFilters();
 
-    expect(filters.trashed).toBe('false');
-    expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
-      children: [{ field: 'trashed', operator: 'equals', value: false }],
-    });
+    expect(filters).not.toHaveProperty('trashed');
+    expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({ children: [] });
   });
 
   it('keeps viewer navigation inside result boundaries', () => {
@@ -114,7 +112,6 @@ describe('asset view model', () => {
     filters.query = '  family trip  ';
     filters.assetType = 'IMAGE';
     filters.favorite = 'true';
-    filters.trashed = 'false';
 
     const group = simpleFiltersToSearchGroup(filters);
 
@@ -123,13 +120,11 @@ describe('asset view model', () => {
       { field: 'filename', operator: 'contains', value: 'family trip' },
       { field: 'type', operator: 'equals', value: 'IMAGE' },
       { field: 'favorite', operator: 'equals', value: 'true' },
-      { field: 'trashed', operator: 'equals', value: 'false' },
     ]);
   });
 
   it('restores typed date, dimension, and aspect-ratio ranges in simple search', () => {
     const filters = createSimpleAssetSearchFilters();
-    filters.trashed = 'any';
     filters.takenAfter = '2026-01-01T08:30';
     filters.takenBefore = '2026-06-30T17:45';
     filters.minWidth = '1280';
@@ -169,7 +164,6 @@ describe('asset view model', () => {
 
     expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
       children: [
-        { field: 'trashed', operator: 'equals', value: false },
         { field: 'album', operator: 'in_any', value: filters.albumIds },
         { field: 'tag', operator: 'in_any', value: filters.tagIds },
       ],
@@ -179,7 +173,6 @@ describe('asset view model', () => {
     filters.noTag = true;
     expect(serializeSearchGroup(simpleFiltersToSearchGroup(filters))).toMatchObject({
       children: [
-        { field: 'trashed', operator: 'equals', value: false },
         { field: 'album', operator: 'has_none', value: [] },
         { field: 'tag', operator: 'has_none', value: [] },
       ],

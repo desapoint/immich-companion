@@ -84,14 +84,6 @@
       {disabled}
       onchange={(value) => onchange({ ...filters, archived: value as SearchBooleanFilter })}
     />
-    <SelectField
-      id="simple-search-trashed"
-      label="Trashed"
-      value={filters.trashed}
-      options={stateOptions}
-      {disabled}
-      onchange={(value) => onchange({ ...filters, trashed: value as SearchBooleanFilter })}
-    />
   </div>
 
   <SimpleAdvancedFilters {filters} {albums} {tags} {disabled} {onchange} />
@@ -105,7 +97,7 @@
 
   .simple-fields {
     display: grid;
-    grid-template-columns: minmax(16rem, 2fr) repeat(4, minmax(7.5rem, 0.72fr));
+    grid-template-columns: minmax(16rem, 2fr) repeat(3, minmax(7.5rem, 0.72fr));
     align-items: end;
     gap: 0.65rem;
   }

@@ -23,7 +23,6 @@ export interface SimpleAssetSearchFilters {
   assetType: '' | AssetType;
   favorite: SearchBooleanFilter;
   archived: SearchBooleanFilter;
-  trashed: SearchBooleanFilter;
   albumIds: string[];
   tagIds: string[];
   noAlbum: boolean;
@@ -134,7 +133,6 @@ export type SearchField =
   | 'aspect_ratio'
   | 'favorite'
   | 'archived'
-  | 'trashed'
   | 'album'
   | 'tag';
 
