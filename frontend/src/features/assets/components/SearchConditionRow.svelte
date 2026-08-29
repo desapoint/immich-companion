@@ -195,7 +195,10 @@
     </label>
   {/if}
 
-  <button class="remove" type="button" onclick={onremove} {disabled} aria-label="Remove condition" title="Remove condition">×</button>
+  <div class="remove-field">
+    <span aria-hidden="true">Action</span>
+    <button class="remove" type="button" onclick={onremove} {disabled} aria-label="Remove condition" title="Remove condition">×</button>
+  </div>
 </div>
 
 <style>
@@ -275,9 +278,17 @@
     font-size: 1.1rem;
   }
 
-  .remove {
-    align-self: start;
-    margin-top: 1.42rem;
+  .remove-field {
+    display: grid;
+    gap: 0.35rem;
+  }
+
+  .remove-field > span {
+    visibility: hidden;
+    font-size: 0.68rem;
+    font-weight: 760;
+    letter-spacing: 0.045em;
+    text-transform: uppercase;
   }
 
   @media (max-width: 52rem) {
@@ -285,9 +296,12 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .remove {
+    .remove-field {
       justify-self: end;
-      margin-top: 0;
+    }
+
+    .remove-field > span {
+      display: none;
     }
   }
 

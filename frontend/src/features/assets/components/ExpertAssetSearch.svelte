@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { AlbumOption, SearchGroup, TagOption } from '../types/assets';
   import AssetSearchFormHeader from './AssetSearchFormHeader.svelte';
+  import SavedExpertSearches from './SavedExpertSearches.svelte';
   import SearchExpressionBuilder from './SearchExpressionBuilder.svelte';
 
   interface Props {
@@ -8,11 +9,12 @@
     albums: AlbumOption[];
     tags: TagOption[];
     disabled?: boolean;
+    onload: (expression: SearchGroup) => void;
     onsearch: () => void;
     onreset: () => void;
   }
 
-  let { expression, albums, tags, disabled = false, onsearch, onreset }: Props = $props();
+  let { expression, albums, tags, disabled = false, onload, onsearch, onreset }: Props = $props();
 
   function submit(event: SubmitEvent): void {
     event.preventDefault();
@@ -29,6 +31,7 @@
     {onreset}
   />
 
+  <SavedExpertSearches {expression} {disabled} {onload} />
   <SearchExpressionBuilder {expression} {albums} {tags} {disabled} />
 </form>
 

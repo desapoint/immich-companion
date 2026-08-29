@@ -81,6 +81,7 @@
       {albums}
       {tags}
       {disabled}
+      onload={(expression) => (expertExpression = copySearchGroup(expression))}
       onsearch={searchExpert}
       onreset={resetExpert}
     />

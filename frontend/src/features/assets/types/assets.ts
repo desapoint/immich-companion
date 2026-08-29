@@ -167,6 +167,13 @@ export interface SearchGroup {
 
 export type SearchNode = SearchCondition | SearchGroup;
 
+export interface SavedExpertSearch {
+  id: string;
+  name: string;
+  expression: SearchGroup;
+  updated_at: string;
+}
+
 export interface AlbumOption {
   id: string;
   name: string;
