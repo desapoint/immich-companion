@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
 
   import {
     getAlbumOptions,
@@ -46,6 +46,15 @@
     searchedTagIds,
   } from '../state/assetViewModel';
   import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
+  import {
+    ASSET_LIST_MODE_STORAGE_KEY,
+    decodeAssetListMode,
+    firstSurvivingScrollAnchor,
+    infiniteWindowPages,
+    mergeInfiniteWindowItems,
+    type AssetListMode,
+    type InfiniteScrollAnchor,
+  } from '../state/assetInfiniteWindow';
   import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
@@ -93,7 +102,7 @@
   let results = $state<AssetSearchResponse | null>(null);
   let page = $state(1);
   let pageSize = $state(DEFAULT_ASSET_PAGE_SIZE);
-  let listMode = $state<'paged' | 'infinite'>('paged');
+  let listMode = $state<AssetListMode>('paged');
   let layoutMode = $state<AssetLayoutMode>('normal');
   let infiniteLoading = $state(false);
   let infiniteSentinel = $state<HTMLDivElement | undefined>(undefined);
@@ -160,6 +169,12 @@
   const viewerComparisonSource: AssetComparisonSource = 'stack';
   const viewerComparisonActivation: AssetComparisonActivation = 'click';
 
+  interface InfiniteRefreshSnapshot {
+    anchors: InfiniteScrollAnchor[];
+    loadedThroughPage: number;
+    scrollY: number;
+  }
+
   function handleTaskUpdate(task: AssetTaskStatus): void {
     if (task.task_type === 'asset_action') {
       actionTaskHistory = [task, ...actionTaskHistory.filter((item) => item.id !== task.id)].slice(0, 10);
@@ -218,6 +233,7 @@
 
   async function loadAssets(): Promise<void> {
     const generation = ++assetLoadGeneration;
+    infiniteLoading = false;
     searchController?.abort();
     searchController = new AbortController();
     loading = true;
@@ -253,12 +269,124 @@
     }
   }
 
+  function captureInfiniteRefreshSnapshot(): InfiniteRefreshSnapshot {
+    const cards = Array.from(
+      document.querySelectorAll<HTMLElement>('.asset-grid .asset-card[data-asset-id]'),
+    );
+    const firstRelevantIndex = cards.findIndex((card) => card.getBoundingClientRect().bottom > 0);
+    const anchorLimit = Math.max(pageSize, 24);
+    const relevantCards = firstRelevantIndex >= 0
+      ? cards.slice(firstRelevantIndex, firstRelevantIndex + anchorLimit)
+      : [];
+    return {
+      anchors: relevantCards.flatMap((card) => {
+        const id = card.dataset.assetId;
+        return id ? [{ id, top: card.getBoundingClientRect().top }] : [];
+      }),
+      loadedThroughPage: Math.max(1, page),
+      scrollY: window.scrollY,
+    };
+  }
+
+  async function restoreInfiniteScrollPosition(snapshot: InfiniteRefreshSnapshot): Promise<void> {
+    await tick();
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+    const loadedIds = new Set(results?.items.map((asset) => asset.id) ?? []);
+    const anchor = firstSurvivingScrollAnchor(snapshot.anchors, loadedIds);
+    if (anchor) {
+      const card = Array.from(
+        document.querySelectorAll<HTMLElement>('.asset-grid .asset-card[data-asset-id]'),
+      ).find((candidate) => candidate.dataset.assetId === anchor.id);
+      if (card) {
+        window.scrollBy({ top: card.getBoundingClientRect().top - anchor.top, behavior: 'auto' });
+        return;
+      }
+    }
+    const maxScroll = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    window.scrollTo({ top: Math.min(snapshot.scrollY, maxScroll), behavior: 'auto' });
+  }
+
+  async function loadInfiniteWindow(loadedThroughPage: number): Promise<boolean> {
+    const generation = ++assetLoadGeneration;
+    infiniteLoading = false;
+    searchController?.abort();
+    const controller = new AbortController();
+    searchController = controller;
+    loading = true;
+    error = null;
+    try {
+      const first = await searchAssets(
+        expression,
+        1,
+        pageSize,
+        sort,
+        controller.signal,
+        selection.selectionId,
+      );
+      if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
+      const pageNumbers = infiniteWindowPages(loadedThroughPage, first.pages);
+      const loadedPages: AssetSearchResponse[] = [first];
+      const remainingPages = pageNumbers.slice(1);
+      for (let offset = 0; offset < remainingPages.length; offset += 4) {
+        const batch = remainingPages.slice(offset, offset + 4);
+        const responses = await Promise.all(batch.map((pageNumber) => searchAssets(
+          expression,
+          pageNumber,
+          pageSize,
+          sort,
+          controller.signal,
+          selection.selectionId,
+        )));
+        if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
+        loadedPages.push(...responses);
+      }
+      const lastPage = pageNumbers.at(-1) ?? 1;
+      page = lastPage;
+      results = {
+        ...first,
+        page: lastPage,
+        items: mergeInfiniteWindowItems(loadedPages.map((response) => response.items)),
+      };
+      if (first.selection) {
+        selection = setServerSelection(
+          selection,
+          first.selection.id,
+          first.selection.revision,
+          first.selection.selected_count,
+          first.selection.selected_ids,
+        );
+      }
+      if (selection.selectionId) await refreshServerPageMembership(controller.signal);
+      if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
+      return true;
+    } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return false;
+      if (generation === assetLoadGeneration) {
+        error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+      }
+      return false;
+    } finally {
+      if (generation === assetLoadGeneration) loading = false;
+    }
+  }
+
+  async function refreshAssetsAfterMutation(): Promise<void> {
+    if (listMode !== 'infinite' || !results) {
+      await loadAssets();
+      return;
+    }
+    const snapshot = captureInfiniteRefreshSnapshot();
+    if (await loadInfiniteWindow(snapshot.loadedThroughPage)) {
+      await restoreInfiniteScrollPosition(snapshot);
+    }
+  }
+
   const infiniteHasMore = $derived(
     listMode === 'infinite' && Boolean(results) && page < (results?.pages ?? 0),
   );
 
   async function loadNextInfinitePage(): Promise<boolean> {
-    if (!infiniteHasMore || infiniteLoading || !results) return false;
+    if (!infiniteHasMore || loading || infiniteLoading || !results) return false;
     const generation = assetLoadGeneration;
     const nextPage = page + 1;
     let appended = false;
@@ -318,9 +446,10 @@
     return results?.items.length ? results.items.length - 1 : null;
   }
 
-  function changeListMode(nextMode: 'paged' | 'infinite'): void {
+  function changeListMode(nextMode: AssetListMode): void {
     if (nextMode === listMode) return;
     listMode = nextMode;
+    localStorage.setItem(ASSET_LIST_MODE_STORAGE_KEY, nextMode);
     page = 1;
     viewerIndex = null;
     viewerSelectedAsset = null;
@@ -334,7 +463,7 @@
   }
 
   $effect(() => {
-    if (!infiniteSentinel || !infiniteHasMore) return;
+    if (loading || !infiniteSentinel || !infiniteHasMore) return;
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) void loadNextInfinitePage();
@@ -460,7 +589,7 @@
       const refreshedAsset = await matchAssetSearch(assetId, expression);
       if (!refreshedAsset) {
         closeViewer();
-        await loadAssets();
+        await refreshAssetsAfterMutation();
         return;
       }
       const refreshedIndex = patchResultAsset(refreshedAsset);
@@ -489,8 +618,7 @@
         actionCompletionMessage = `${result.synced} assets synchronized.`;
         detailCache.clear();
         clearSelection();
-        page = 1;
-        await Promise.all([loadRelationOptions(), loadAssets()]);
+        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
     } catch (requestError) {
       selectionSyncError = requestError instanceof Error
@@ -533,7 +661,7 @@
       actionCompletionMessage = `${summary?.synced ?? next.counters.synced ?? 0} assets synchronized.`;
       detailCache.clear();
       clearSelection();
-      await Promise.all([loadRelationOptions(), loadAssets()]);
+      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
     } catch (requestError) {
       selectionSyncError = requestError instanceof Error
         ? requestError.message
@@ -881,22 +1009,22 @@
     if (confirmedContext === 'selection') {
       detailCache.clear();
       clearSelection();
-      await Promise.all([loadRelationOptions(), loadAssets()]);
+      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
     } else {
       if (!confirmedTargetId) {
         closeViewer();
-        await Promise.all([loadRelationOptions(), loadAssets()]);
+        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       } else {
         // A stack mutation changes every member, not only the image used to
-        // open the viewer. Refresh the current page and re-read every target
-        // reported by the action so sibling cards/detail entries cannot keep
-        // stale stack metadata.
+        // open the viewer. Refresh the loaded result window and re-read every
+        // target reported by the action so sibling cards/detail entries cannot
+        // keep stale stack metadata.
         const affectedIds = [...new Set([
           ...result.applied_ids,
           ...result.failed_ids,
           confirmedTargetId,
         ])];
-        await Promise.all([loadRelationOptions(), loadAssets()]);
+        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
         const refreshedAssets = await Promise.all(
           affectedIds.map(async (assetId) => {
             detailCache.delete(assetId);
@@ -1067,7 +1195,7 @@
       localStorage.removeItem('immich-companion:asset-action-task');
       const summary = next.result?.summary ?? {};
       detailCache.clear();
-      await Promise.all([loadRelationOptions(), loadAssets()]);
+      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       if (next.status === 'failed') {
         actionError = next.error?.message ?? 'The bulk action failed.';
         return;
@@ -1161,7 +1289,7 @@
         }
         detailCache.clear();
         clearSelection();
-        await Promise.all([loadRelationOptions(), loadAssets()]);
+        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
       if (nextFailureId !== null) handledSyncFailureId = nextFailureId;
     } catch (requestError) {
@@ -1191,6 +1319,7 @@
   onMount(() => {
     const savedLayout = localStorage.getItem('immich-companion:asset-layout');
     if (savedLayout === 'normal' || savedLayout === 'condensed') layoutMode = savedLayout;
+    listMode = decodeAssetListMode(localStorage.getItem(ASSET_LIST_MODE_STORAGE_KEY));
     startTaskUpdates();
     void loadActionTaskHistory();
     const url = new URL(window.location.href);
