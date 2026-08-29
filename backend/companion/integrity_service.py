@@ -42,7 +42,9 @@ def same_source(left: ImmichAsset, right: ImmichAsset) -> bool:
 
     if left.id != right.id or left.is_trashed or right.is_trashed:
         return False
-    if left.checksum is not None or right.checksum is not None:
+    if left.library_id is None and right.library_id is None and (
+        left.checksum is not None or right.checksum is not None
+    ):
         return left.checksum is not None and left.checksum == right.checksum
     if left.file_modified_at != right.file_modified_at:
         return False
@@ -150,8 +152,26 @@ class IntegrityTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         asset_id = UUID(str(payload["asset_id"]))
+        report = await self.analyze(context, asset_id)
+        return TaskResult(
+            summary={
+                "asset_id": str(asset_id),
+                "classification": report.classification,
+                "byte_size": report.byte_size,
+            },
+            counters={"bytes_processed": report.byte_size},
+        )
+
+    async def analyze(
+        self,
+        context: TaskContext,
+        asset_id: UUID,
+    ) -> AssetIntegrityReport:
+        """Run the shared bounded analyzer for one known synchronized asset."""
+
         source = await self._active_asset(asset_id)
-        analyzer = FileIntegrityAnalyzer(source.original_mime_type, source.checksum)
+        immich_content_checksum = source.checksum if source.library_id is None else None
+        analyzer = FileIntegrityAnalyzer(source.original_mime_type, immich_content_checksum)
         started = monotonic()
 
         await context.checkpoint(
@@ -187,6 +207,9 @@ class IntegrityTaskHandler:
         await self._checkpoint(context, asset_id, analyzer.byte_size, total, started)
         await context.ensure_active()
         result = analyzer.finalize()
+        expected_size = source_file_size(source)
+        if expected_size is not None and result.byte_size != expected_size:
+            raise RetryableTaskError("The streamed original size did not match Immich metadata.")
         await context.checkpoint(
             checkpoint={
                 "phase": "finalizing",
@@ -206,15 +229,7 @@ class IntegrityTaskHandler:
         current = await self._active_asset(asset_id)
         if not same_source(source, current):
             raise RetryableTaskError("The source changed during integrity analysis.")
-        report: AssetIntegrityReport = await self._reports.save(current, result)
-        return TaskResult(
-            summary={
-                "asset_id": str(asset_id),
-                "classification": report.classification,
-                "byte_size": report.byte_size,
-            },
-            counters={"bytes_processed": report.byte_size},
-        )
+        return await self._reports.save(current, result)
 
     @staticmethod
     async def _checkpoint(

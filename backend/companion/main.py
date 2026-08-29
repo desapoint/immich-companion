@@ -67,6 +67,15 @@ from companion.asset_schema import (
 from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
+from companion.duplicate_repository import DuplicateRepository
+from companion.duplicate_schema import (
+    CrossSourceDuplicateResult,
+    CrossSourceDuplicateTaskStart,
+)
+from companion.duplicate_service import (
+    CrossSourceDuplicateService,
+    CrossSourceDuplicateTaskHandler,
+)
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_schema import (
@@ -117,6 +126,7 @@ def create_app(
     )
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
+    duplicate_repository = DuplicateRepository(database) if database is not None else None
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
     )
@@ -196,13 +206,40 @@ def create_app(
         and integrity_repository is not None
         else None
     )
+    integrity_handler = (
+        IntegrityTaskHandler(immich, asset_repository, integrity_repository)
+        if asset_repository is not None and integrity_repository is not None
+        else None
+    )
     if (
         task_coordinator is not None
-        and asset_repository is not None
+        and integrity_handler is not None
+    ):
+        task_coordinator.register_handler(integrity_handler)
+    duplicate_service = (
+        CrossSourceDuplicateService(
+            duplicate_repository,
+            integrity_repository,
+            task_coordinator,
+        )
+        if duplicate_repository is not None
         and integrity_repository is not None
+        and task_coordinator is not None
+        else None
+    )
+    if (
+        task_coordinator is not None
+        and duplicate_repository is not None
+        and duplicate_service is not None
+        and integrity_handler is not None
     ):
         task_coordinator.register_handler(
-            IntegrityTaskHandler(immich, asset_repository, integrity_repository)
+            CrossSourceDuplicateTaskHandler(
+                immich,
+                duplicate_repository,
+                duplicate_service,
+                integrity_handler,
+            )
         )
 
     @asynccontextmanager
@@ -319,6 +356,7 @@ def create_app(
                 "hybrid_staged_sync",
                 "persistent_sync_status",
                 "file_integrity_analysis",
+                "cross_source_duplicate_analysis",
             ],
             "planned": [
                 "action_jobs",
@@ -375,6 +413,14 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return integrity_service
+
+    def require_duplicate_service() -> CrossSourceDuplicateService:
+        if duplicate_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return duplicate_service
 
     def map_action_error(error: RuntimeError) -> HTTPException:
         if isinstance(error, ActionPlanNotFoundError):
@@ -1096,6 +1142,21 @@ def create_app(
         if result.state == "pending":
             response.status_code = status.HTTP_202_ACCEPTED
         return result
+
+    @app.get(
+        "/api/assets/duplicates/cross-source",
+        response_model=CrossSourceDuplicateResult,
+    )
+    async def cross_source_duplicate_result() -> CrossSourceDuplicateResult:
+        return await require_duplicate_service().result()
+
+    @app.post(
+        "/api/assets/duplicates/cross-source/analyze",
+        response_model=CrossSourceDuplicateTaskStart,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def analyze_cross_source_duplicates() -> CrossSourceDuplicateTaskStart:
+        return await require_duplicate_service().start()
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:

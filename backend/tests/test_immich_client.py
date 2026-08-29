@@ -98,6 +98,29 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_demand_metadata_traversal_can_request_file_sizes() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["withExif"] is True
+        return httpx.Response(
+            200,
+            json={
+                "assets": {
+                    "count": 1,
+                    "total": 1,
+                    "items": [asset_payload(ASSET_ONE, "sized.jpg")],
+                    "nextPage": None,
+                }
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    pages = [page async for _, page in client.iter_asset_pages(with_exif=True)]
+
+    assert pages[0].items[0].file_size_bytes == 4096
+
+
+@pytest.mark.asyncio
 async def test_full_asset_count_uses_statistics_and_window_count_is_indeterminate() -> None:
     requests: list[httpx.Request] = []
 

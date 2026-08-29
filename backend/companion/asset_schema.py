@@ -304,8 +304,6 @@ class AssetSummary(BaseModel):
     def from_immich(cls, asset: ImmichAsset) -> AssetSummary:
         """Build a card directly from an authoritative Immich API response."""
 
-        exif = asset.exif_info or {}
-        file_size = exif.get("fileSizeInByte")
         compact_tags: list[AssetTagSummary] = []
         for index, tag in enumerate(asset.tags):
             name = tag.get("name") or tag.get("value")
@@ -386,7 +384,7 @@ class AssetSummary(BaseModel):
             visibility=asset.visibility,
             has_metadata=asset.has_metadata,
             live_photo_video_id=asset.live_photo_video_id,
-            file_size_bytes=file_size if isinstance(file_size, int) else None,
+            file_size_bytes=asset.file_size_bytes,
             people_count=len(asset.people),
             tag_count=len(compact_tags),
             stack_count=compact_stack.asset_count if compact_stack else stack_asset_count,
@@ -408,8 +406,6 @@ class AssetSummary(BaseModel):
         albums: list[AssetAlbumSummary] | None = None,
         tags: list[AssetTagSummary] | None = None,
     ) -> AssetSummary:
-        exif = asset.exif_info or {}
-        file_size = exif.get("fileSizeInByte")
         stack = asset.stack or {}
         stack_assets = stack.get("assets", [])
         stack_asset_count = stack.get("assetCount")
@@ -494,7 +490,7 @@ class AssetSummary(BaseModel):
             visibility=asset.visibility,
             has_metadata=asset.has_metadata,
             live_photo_video_id=asset.live_photo_video_id,
-            file_size_bytes=file_size if isinstance(file_size, int) else None,
+            file_size_bytes=asset.file_size_bytes,
             people_count=len(asset.people or []),
             tag_count=len(compact_tags),
             stack_count=compact_stack.asset_count if compact_stack else stack_asset_count,

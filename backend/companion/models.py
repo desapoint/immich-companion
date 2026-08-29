@@ -39,6 +39,7 @@ class AssetRecord(Base):
     original_path: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
     checksum: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)
     height: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -74,6 +75,7 @@ class AssetRecord(Base):
     __table_args__ = (
         Index("ix_assets_original_file_name_lower", func.lower(original_file_name)),
         Index("ix_assets_dimensions", width, height),
+        Index("ix_assets_cross_source_candidate", file_size_bytes, asset_type),
     )
 
 

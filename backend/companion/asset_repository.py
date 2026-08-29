@@ -84,6 +84,7 @@ class AssetRepository:
             "original_path": asset.original_path,
             "original_mime_type": asset.original_mime_type,
             "checksum": asset.checksum,
+            "file_size_bytes": asset.file_size_bytes,
             "width": asset.width,
             "height": asset.height,
             "duration": asset.duration,
@@ -138,6 +139,10 @@ class AssetRepository:
                 update_columns = {
                     name: getattr(statement.excluded, name) for name in rows[0] if name != "id"
                 }
+                update_columns["file_size_bytes"] = func.coalesce(
+                    statement.excluded.file_size_bytes,
+                    AssetRecord.file_size_bytes,
+                )
                 await session.execute(
                     statement.on_conflict_do_update(
                         index_elements=[AssetRecord.id],
@@ -393,8 +398,11 @@ class AssetRepository:
             for name in rows[0]:
                 if name in {"id", "sync_generation", "stack", "stack_generation"}:
                     continue
+                incoming = getattr(statement.excluded, name)
+                if name == "file_size_bytes":
+                    incoming = func.coalesce(incoming, AssetRecord.file_size_bytes)
                 update_columns[name] = case(
-                    (payload_changed, getattr(statement.excluded, name)),
+                    (payload_changed, incoming),
                     else_=getattr(AssetRecord, name),
                 )
             await session.execute(
@@ -434,6 +442,8 @@ class AssetRepository:
         update_values.pop("id", None)
         update_values.pop("sync_generation", None)
         update_values.pop("stack_generation", None)
+        if asset.file_size_bytes is None:
+            update_values.pop("file_size_bytes", None)
         async with self._database.sessions() as session, session.begin():
             await session.execute(
                 insert(AssetRecord)

@@ -22,7 +22,13 @@ ASSET_ID = UUID("11111111-1111-4111-8111-111111111111")
 TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
 
-def asset(*, checksum: str = "base64-checksum", modified: str = "2026-08-28T12:00:00Z"):
+def asset(
+    *,
+    checksum: str = "base64-checksum",
+    modified: str = "2026-08-28T12:00:00Z",
+    library_id: UUID | None = None,
+    size: int = 4,
+):
     return ImmichAsset.model_validate(
         {
             "id": str(ASSET_ID),
@@ -30,9 +36,10 @@ def asset(*, checksum: str = "base64-checksum", modified: str = "2026-08-28T12:0
             "originalFileName": "fixture.jpg",
             "originalMimeType": "image/jpeg",
             "checksum": checksum,
+            "libraryId": str(library_id) if library_id is not None else None,
             "fileCreatedAt": "2026-08-28T12:00:00Z",
             "fileModifiedAt": modified,
-            "exifInfo": {"fileSizeInByte": 4},
+            "exifInfo": {"fileSizeInByte": size},
         }
     )
 
@@ -182,6 +189,51 @@ async def test_handler_does_not_save_when_source_changes_during_stream() -> None
 
     with pytest.raises(RetryableTaskError, match="source changed"):
         await handler.execute(FakeContext(), {"asset_id": str(ASSET_ID)})
+
+    assert reports.saved == []
+
+
+@pytest.mark.asyncio
+async def test_external_integrity_does_not_compare_immich_path_checksum() -> None:
+    external = asset(library_id=UUID("22222222-2222-4222-8222-222222222222"))
+    reports = FakeReports()
+
+    await IntegrityTaskHandler(FakeImmich(external), FakeAssets(), reports).execute(
+        FakeContext(), {"asset_id": str(ASSET_ID)}
+    )
+
+    assert reports.saved[0][1].immich_checksum_match is None
+
+
+@pytest.mark.asyncio
+async def test_external_source_change_uses_size_and_mtime_not_path_checksum() -> None:
+    library_id = UUID("22222222-2222-4222-8222-222222222222")
+    reports = FakeReports()
+    handler = IntegrityTaskHandler(
+        FakeImmich(
+            asset(library_id=library_id, size=4),
+            asset(library_id=library_id, size=5),
+        ),
+        FakeAssets(),
+        reports,
+    )
+
+    with pytest.raises(RetryableTaskError, match="source changed"):
+        await handler.execute(FakeContext(), {"asset_id": str(ASSET_ID)})
+
+    assert reports.saved == []
+
+
+@pytest.mark.asyncio
+async def test_stream_size_must_match_external_metadata_before_caching() -> None:
+    library_id = UUID("22222222-2222-4222-8222-222222222222")
+    reports = FakeReports()
+    external = asset(library_id=library_id, size=5)
+
+    with pytest.raises(RetryableTaskError, match="size did not match"):
+        await IntegrityTaskHandler(FakeImmich(external), FakeAssets(), reports).execute(
+            FakeContext(), {"asset_id": str(ASSET_ID)}
+        )
 
     assert reports.saved == []
 

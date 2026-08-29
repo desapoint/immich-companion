@@ -234,6 +234,15 @@ def test_asset_search_requires_companion_database_configuration() -> None:
     assert response.json()["detail"] == "The companion database is not configured."
 
 
+def test_cross_source_duplicate_api_requires_companion_database() -> None:
+    with TestClient(create_app(settings(), pong_transport())) as client:
+        result = client.get("/api/assets/duplicates/cross-source")
+        start = client.post("/api/assets/duplicates/cross-source/analyze")
+
+    assert result.status_code == 503
+    assert start.status_code == 503
+
+
 def test_restore_listing_is_paged_directly_from_immich() -> None:
     active_id = "11111111-1111-4111-8111-111111111111"
     first_trashed_id = "22222222-2222-4222-8222-222222222222"

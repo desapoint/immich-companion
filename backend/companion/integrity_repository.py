@@ -16,8 +16,7 @@ from companion.models import AssetIntegrityReportRecord
 
 
 def source_file_size(asset: ImmichAsset) -> int | None:
-    value = (asset.exif_info or {}).get("fileSizeInByte")
-    return value if isinstance(value, int) and value >= 0 else None
+    return asset.file_size_bytes
 
 
 def report_freshness(
@@ -28,11 +27,13 @@ def report_freshness(
         return "missing"
     if record.analyzer_version != ANALYZER_VERSION:
         return "stale"
-    if asset.checksum is not None:
+    if asset.library_id is None and asset.checksum is not None:
         return "current" if record.source_checksum == asset.checksum else "stale"
     if record.source_file_modified_at != asset.file_modified_at:
         return "stale"
     live_size = source_file_size(asset)
+    if asset.library_id is not None and live_size is None:
+        return "stale"
     if live_size is not None and record.source_file_size_bytes != live_size:
         return "stale"
     return "current"
@@ -66,6 +67,18 @@ class IntegrityRepository:
         async with self._database.sessions() as session:
             return await session.get(AssetIntegrityReportRecord, asset_id)
 
+    async def get_many(
+        self, asset_ids: list[UUID]
+    ) -> dict[UUID, AssetIntegrityReportRecord]:
+        if not asset_ids:
+            return {}
+        statement = select(AssetIntegrityReportRecord).where(
+            AssetIntegrityReportRecord.asset_id.in_(list(dict.fromkeys(asset_ids)))
+        )
+        async with self._database.sessions() as session:
+            records = list((await session.scalars(statement)).all())
+        return {record.asset_id: record for record in records}
+
     async def save(
         self,
         asset: ImmichAsset,
@@ -76,7 +89,7 @@ class IntegrityRepository:
             "analyzer_version": result.analyzer_version,
             "source_checksum": asset.checksum,
             "source_file_modified_at": asset.file_modified_at,
-            "source_file_size_bytes": source_file_size(asset),
+            "source_file_size_bytes": result.byte_size,
             "source_mime_type": asset.original_mime_type,
             "byte_size": result.byte_size,
             "sha1_hex": result.sha1_hex,

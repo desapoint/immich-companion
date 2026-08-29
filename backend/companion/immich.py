@@ -127,6 +127,13 @@ class ImmichAsset(ImmichModel):
 
         return "tags" in self.model_fields_set
 
+    @property
+    def file_size_bytes(self) -> int | None:
+        """Return the exact original size when Immich included that metadata."""
+
+        value = (self.exif_info or {}).get("fileSizeInByte")
+        return value if isinstance(value, int) and value >= 0 else None
+
 
 class ImmichAlbum(ImmichModel):
     """Album metadata plus membership resolved through supported Immich APIs."""
@@ -466,6 +473,7 @@ class ImmichApiClient:
         trashed: bool | None = None,
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
+        with_exif: bool = False,
     ) -> ImmichAssetSearchPage:
         """Retrieve one lightweight active-asset metadata-search page."""
 
@@ -473,7 +481,7 @@ class ImmichApiClient:
             "page": page,
             "size": size,
             "order": "asc",
-            "withExif": False,
+            "withExif": with_exif,
             "withPeople": False,
             # Immich hides stack children when this is false. Keep the complete
             # inventory here; stack relationships are still synchronized by
@@ -526,6 +534,7 @@ class ImmichApiClient:
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
         start_page: int = 1,
+        with_exif: bool = False,
     ) -> AsyncIterator[tuple[int, ImmichAssetSearchPage]]:
         """Yield bounded active-asset pages with their durable page number."""
 
@@ -537,6 +546,7 @@ class ImmichApiClient:
                 size=page_size,
                 updated_after=updated_after,
                 updated_before=updated_before,
+                with_exif=with_exif,
             )
             yield page_number, page
 
