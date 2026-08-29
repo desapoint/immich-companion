@@ -73,4 +73,36 @@ describe('AssetViewerHeader', () => {
     expect(body).toContain('aria-label="Deselect image"');
     expect(body).toContain('disabled');
   });
+
+  it('keeps a direct integrity action in the normal viewer header', () => {
+    const { body } = render(AssetViewerHeader, {
+      props: {
+        filename: 'active.jpg',
+        selectedFilename: 'active.jpg',
+        selected: false,
+        scaleMode: 'fit',
+        infoOpen: false,
+        helpOpen: false,
+        zoomPercent: 100,
+        actionSummary: null,
+        albums: [],
+        tags: [],
+        actionsEnabled: false,
+        selectionEnabled: false,
+        onintegrity: () => undefined,
+        onaction: () => undefined,
+        onrelationconfirm: () => undefined,
+        ontoggleselection: () => undefined,
+        ontogglescale: () => undefined,
+        onzoomout: () => undefined,
+        onzoomreset: () => undefined,
+        onzoomin: () => undefined,
+        ontoggleinfo: () => undefined,
+        ontogglehelp: () => undefined,
+        onclose: () => undefined,
+      },
+    });
+
+    expect(body).toContain('aria-label="Analyze file integrity"');
+  });
 });

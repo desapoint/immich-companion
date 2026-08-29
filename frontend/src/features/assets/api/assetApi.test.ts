@@ -2,12 +2,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createSearchCondition, createSearchGroup } from '../state/assetViewModel';
 import {
+  analyzeAssetIntegrity,
   assetOriginalUrl,
   buildAssetPreviewItems,
   buildAssetSearchRequest,
   executeAssetAction,
   getRestoreAssets,
   getAssetSyncStatus,
+  getAssetIntegrity,
   matchAssetSearch,
   normalizeAssetSearchResponse,
   planAssetAction,
@@ -117,6 +119,28 @@ describe('structured asset API', () => {
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/assets/asset%20id/sync');
     expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: 'POST' });
+  });
+
+  it('reads and starts integrity analysis with encoded asset ids', async () => {
+    const fetcher = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+        state: 'pending',
+        freshness: 'missing',
+        report: null,
+        task_id: 'task-1',
+      }), { status: 200, headers: { 'content-type': 'application/json' } }),
+    );
+    vi.stubGlobal('fetch', fetcher);
+
+    await getAssetIntegrity('asset id');
+    await analyzeAssetIntegrity('asset id', true);
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/assets/asset%20id/integrity');
+    expect(String(fetcher.mock.calls[1]?.[0])).toBe(
+      '/api/assets/asset%20id/integrity/analyze',
+    );
+    expect(fetcher.mock.calls[1]?.[1]).toMatchObject({ method: 'POST' });
+    expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toEqual({ force: true });
   });
 
   it('builds reusable thumbnail-strip items from comparable assets', () => {

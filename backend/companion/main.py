@@ -68,6 +68,17 @@ from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
+from companion.integrity_repository import IntegrityRepository
+from companion.integrity_schema import (
+    AssetIntegrityAnalyzeRequest,
+    AssetIntegrityAnalyzeResponse,
+    AssetIntegrityState,
+)
+from companion.integrity_service import (
+    IntegrityAssetUnavailableError,
+    IntegrityService,
+    IntegrityTaskHandler,
+)
 from companion.migrate import run_migrations
 from companion.relation_schema import (
     AlbumCreateRequest,
@@ -105,6 +116,7 @@ def create_app(
         else None
     )
     asset_repository = AssetRepository(database) if database is not None else None
+    integrity_repository = IntegrityRepository(database) if database is not None else None
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
     )
@@ -177,6 +189,21 @@ def create_app(
     )
     if task_coordinator is not None and action_service is not None:
         task_coordinator.register_handler(AssetActionTaskHandler(action_service))
+    integrity_service = (
+        IntegrityService(immich, asset_repository, integrity_repository, task_coordinator)
+        if task_coordinator is not None
+        and asset_repository is not None
+        and integrity_repository is not None
+        else None
+    )
+    if (
+        task_coordinator is not None
+        and asset_repository is not None
+        and integrity_repository is not None
+    ):
+        task_coordinator.register_handler(
+            IntegrityTaskHandler(immich, asset_repository, integrity_repository)
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -291,10 +318,10 @@ def create_app(
                 "reviewed_asset_actions",
                 "hybrid_staged_sync",
                 "persistent_sync_status",
+                "file_integrity_analysis",
             ],
             "planned": [
                 "action_jobs",
-                "integrity",
                 "exact_dedupe",
                 "tagging",
                 "visual_similarity",
@@ -340,6 +367,14 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return action_service
+
+    def require_integrity_service() -> IntegrityService:
+        if integrity_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return integrity_service
 
     def map_action_error(error: RuntimeError) -> HTTPException:
         if isinstance(error, ActionPlanNotFoundError):
@@ -1030,6 +1065,37 @@ def create_app(
         )
         await task_coordinator.start()
         return AssetActionTaskStart(task_id=task.id)
+
+    @app.get(
+        "/api/assets/{asset_id}/integrity",
+        response_model=AssetIntegrityState,
+    )
+    async def asset_integrity_state(asset_id: UUID) -> AssetIntegrityState:
+        try:
+            return await require_integrity_service().state(asset_id)
+        except IntegrityAssetUnavailableError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
+    @app.post(
+        "/api/assets/{asset_id}/integrity/analyze",
+        response_model=AssetIntegrityAnalyzeResponse,
+    )
+    async def analyze_asset_integrity(
+        asset_id: UUID,
+        request: AssetIntegrityAnalyzeRequest,
+        response: Response,
+    ) -> AssetIntegrityAnalyzeResponse:
+        try:
+            result = await require_integrity_service().analyze(asset_id, force=request.force)
+        except IntegrityAssetUnavailableError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        if result.state == "pending":
+            response.status_code = status.HTTP_202_ACCEPTED
+        return result
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:

@@ -22,6 +22,7 @@ export type IconName =
   | 'favorite'
   | 'fit'
   | 'info'
+  | 'integrity'
   | 'immich'
   | 'invert-selection'
   | 'restore'

@@ -28,7 +28,9 @@
     actionsEnabled?: boolean;
     selectionEnabled?: boolean;
     restoreBusy?: boolean;
+    integrityActive?: boolean;
     onrestore?: () => void;
+    onintegrity?: () => void;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
     onsetprimary?: () => void;
     onrelationconfirm: (
@@ -63,7 +65,9 @@
     actionsEnabled = true,
     selectionEnabled = actionsEnabled,
     restoreBusy = false,
+    integrityActive = false,
     onrestore,
+    onintegrity,
     onaction,
     onsetprimary,
     onrelationconfirm,
@@ -121,6 +125,14 @@
     {/if}
     {#if actionsEnabled || onrestore || selectionEnabled}
       <span class="viewer-action-separator" aria-hidden="true"></span>
+    {/if}
+    {#if onintegrity}
+      <IconButton
+        icon="integrity"
+        label={integrityActive ? 'Show file integrity progress' : 'Analyze file integrity'}
+        tone={integrityActive ? 'accent' : 'default'}
+        onclick={onintegrity}
+      />
     {/if}
     <IconButton
       icon={scaleMode === 'fit' ? 'actual-size' : 'fit'}

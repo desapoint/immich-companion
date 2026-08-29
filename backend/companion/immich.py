@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from json import JSONDecodeError, JSONDecoder
@@ -35,6 +35,16 @@ class ImmichApiError(RuntimeError):
         super().__init__(detail + ".")
         self.operation = operation
         self.status_code = status_code
+
+
+@dataclass(frozen=True, slots=True)
+class ImmichOriginalStream:
+    """Metadata and bounded chunks for one live original response."""
+
+    chunks: AsyncIterator[bytes]
+    media_type: str
+    content_length: int | None
+    etag: str | None
 
 
 class ImmichModel(BaseModel):
@@ -630,6 +640,71 @@ class ImmichApiClient:
             etag=response.headers.get("etag"),
             cache_control=response.headers.get("cache-control"),
         )
+
+    @asynccontextmanager
+    async def stream_original(
+        self,
+        asset_id: UUID,
+        *,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[ImmichOriginalStream]:
+        """Stream an original through the shared pool without buffering its body."""
+
+        attempts = self._settings.immich_retry_attempts
+        response: httpx.Response | None = None
+        for attempt in range(attempts):
+            try:
+                request = self._client().build_request(
+                    "GET", f"/api/assets/{asset_id}/original"
+                )
+                response = await self._client().send(request, stream=True)
+            except httpx.RequestError as error:
+                if attempt + 1 >= attempts:
+                    raise ImmichApiError("stream original asset") from error
+            else:
+                if response.status_code not in TRANSIENT_STATUS_CODES:
+                    try:
+                        response.raise_for_status()
+                    except httpx.HTTPStatusError as error:
+                        await response.aclose()
+                        raise ImmichApiError(
+                            "stream original asset", response.status_code
+                        ) from error
+                    break
+                status_code = response.status_code
+                await response.aclose()
+                response = None
+                if attempt + 1 >= attempts:
+                    raise ImmichApiError("stream original asset", status_code)
+
+            backoff = self._settings.immich_retry_backoff_seconds * (2**attempt)
+            if backoff:
+                await asyncio.sleep(backoff)
+
+        if response is None:
+            raise ImmichApiError("stream original asset")
+
+        content_length: int | None = None
+        raw_content_length = response.headers.get("content-length")
+        if raw_content_length is not None:
+            try:
+                parsed_length = int(raw_content_length)
+            except ValueError:
+                pass
+            else:
+                content_length = parsed_length if parsed_length >= 0 else None
+
+        try:
+            yield ImmichOriginalStream(
+                chunks=response.aiter_bytes(chunk_size),
+                media_type=response.headers.get("content-type", "application/octet-stream"),
+                content_length=content_length,
+                etag=response.headers.get("etag"),
+            )
+        except httpx.RequestError as error:
+            raise ImmichApiError("stream original asset") from error
+        finally:
+            await response.aclose()
 
     async def remove_assets_from_album(self, album_id: UUID, asset_ids: list[UUID]) -> None:
         """Remove current members from one album through the supported API."""

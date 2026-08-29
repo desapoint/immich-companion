@@ -22,7 +22,13 @@
 <script lang="ts">
   import { flushSync, onMount, untrack } from 'svelte';
 
-  import { buildAssetPreviewItems } from '../api/assetApi';
+  import {
+    analyzeAssetIntegrity,
+    buildAssetPreviewItems,
+    getAssetIntegrity,
+    getTaskStatus,
+    openTaskStream,
+  } from '../api/assetApi';
   import {
     assetAsStackMember,
     comparisonPreviewState,
@@ -46,13 +52,16 @@
     AssetComparisonActivation,
     AssetComparisonSource,
     AssetDetail,
+    AssetIntegrityReport,
     AssetStackMember,
     AssetSummary,
     AssetSelectionSummary,
+    AssetTaskStatus,
     TagOption,
     ViewerScaleMode,
   } from '../types/assets';
   import AssetInfoPanel from './AssetInfoPanel.svelte';
+  import AssetIntegrityDialog from './AssetIntegrityDialog.svelte';
   import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
   import AssetViewerComparisonTray from './AssetViewerComparisonTray.svelte';
   import AssetViewerFooter from './AssetViewerFooter.svelte';
@@ -168,6 +177,15 @@
   let mediaLoadGeneration = 0;
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   let nextLoading = $state(false);
+  let integrityDialogOpen = $state(false);
+  let integrityAssetId = $state('');
+  let integrityFilename = $state('');
+  let integrityReport = $state.raw<AssetIntegrityReport | null>(null);
+  let integrityTask = $state.raw<AssetTaskStatus | null>(null);
+  let integrityError = $state<string | null>(null);
+  let integritySocket: WebSocket | null = null;
+  let integrityPollTimer: ReturnType<typeof setInterval> | null = null;
+  let integrityGeneration = 0;
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(selectedAsset ?? assets[currentIndex]);
   const selectionAvailable = $derived(selectionEnabled ?? actionsEnabled);
@@ -203,6 +221,136 @@
   const displayWidth = $derived(Math.max(1, naturalWidth * effectiveScale));
   const displayHeight = $derived(Math.max(1, naturalHeight * effectiveScale));
   const zoomPercent = $derived(Math.round(zoom * 100));
+  const integrityActive = $derived(
+    integrityTask !== null
+      && integrityAssetId === visibleAsset.id
+      && !isTaskTerminal(integrityTask.status),
+  );
+
+  function isTaskTerminal(status: AssetTaskStatus['status']): boolean {
+    return status === 'completed' || status === 'failed' || status === 'cancelled';
+  }
+
+  function stopIntegrityWatch(): void {
+    integritySocket?.close();
+    integritySocket = null;
+    if (integrityPollTimer !== null) {
+      clearInterval(integrityPollTimer);
+      integrityPollTimer = null;
+    }
+  }
+
+  async function refreshIntegrityReport(assetId: string, generation: number): Promise<void> {
+    try {
+      const state = await getAssetIntegrity(assetId);
+      if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+      if (state.freshness !== 'current' || !state.report) {
+        integrityError = 'The completed report is no longer current for this asset.';
+        return;
+      }
+      integrityError = null;
+      integrityReport = state.report;
+      integrityTask = null;
+    } catch (requestError) {
+      if (generation !== integrityGeneration) return;
+      integrityError = requestError instanceof Error
+        ? requestError.message
+        : 'The integrity report could not be loaded.';
+    }
+  }
+
+  async function handleIntegrityTask(
+    task: AssetTaskStatus,
+    assetId: string,
+    generation: number,
+  ): Promise<void> {
+    if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+    integrityError = null;
+    integrityTask = task;
+    if (!isTaskTerminal(task.status)) return;
+    stopIntegrityWatch();
+    if (task.status === 'completed') {
+      await refreshIntegrityReport(assetId, generation);
+      return;
+    }
+    integrityError = task.error?.message
+      ?? (task.status === 'cancelled'
+        ? 'Integrity analysis was cancelled.'
+        : 'Integrity analysis failed.');
+  }
+
+  async function pollIntegrityTask(
+    taskId: string,
+    assetId: string,
+    generation: number,
+  ): Promise<void> {
+    try {
+      await handleIntegrityTask(await getTaskStatus(taskId), assetId, generation);
+    } catch (requestError) {
+      if (generation !== integrityGeneration) return;
+      integrityError = requestError instanceof Error
+        ? requestError.message
+        : 'Integrity progress is temporarily unavailable.';
+    }
+  }
+
+  function startIntegrityPolling(taskId: string, assetId: string, generation: number): void {
+    if (
+      generation !== integrityGeneration
+      || assetId !== integrityAssetId
+      || !integrityDialogOpen
+    ) return;
+    if (integrityPollTimer !== null) return;
+    void pollIntegrityTask(taskId, assetId, generation);
+    integrityPollTimer = setInterval(
+      () => void pollIntegrityTask(taskId, assetId, generation),
+      1000,
+    );
+  }
+
+  function watchIntegrityTask(taskId: string, assetId: string, generation: number): void {
+    stopIntegrityWatch();
+    integritySocket = openTaskStream(
+      taskId,
+      (task) => void handleIntegrityTask(task, assetId, generation),
+      () => startIntegrityPolling(taskId, assetId, generation),
+    );
+  }
+
+  async function openIntegrity(force = false): Promise<void> {
+    const assetId = visibleAsset.id;
+    const generation = ++integrityGeneration;
+    stopIntegrityWatch();
+    integrityDialogOpen = true;
+    integrityAssetId = assetId;
+    integrityFilename = visibleFilename;
+    integrityReport = null;
+    integrityTask = null;
+    integrityError = null;
+    try {
+      const response = await analyzeAssetIntegrity(assetId, force);
+      if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+      integrityReport = response.state === 'ready' ? response.report : null;
+      if (response.state === 'ready' && response.report) return;
+      if (!response.task_id) {
+        integrityError = 'Companion did not return an integrity task.';
+        return;
+      }
+      watchIntegrityTask(response.task_id, assetId, generation);
+    } catch (requestError) {
+      if (generation !== integrityGeneration) return;
+      integrityError = requestError instanceof Error
+        ? requestError.message
+        : 'Integrity analysis could not be started.';
+    }
+  }
+
+  function closeIntegrity(): void {
+    integrityGeneration += 1;
+    stopIntegrityWatch();
+    integrityDialogOpen = false;
+    integrityTask = null;
+  }
 
   function normalizedZoom(value: number): number {
     return Math.min(8, Math.max(0.25, Math.round(value * 100) / 100));
@@ -440,6 +588,7 @@
     });
     resizeObserver.observe(viewerScroll);
     return () => {
+      stopIntegrityWatch();
       resizeObserver.disconnect();
       window.removeEventListener('keydown', handleKeydown);
       document.body.style.overflow = previousOverflow;
@@ -472,7 +621,9 @@
     {actionsEnabled}
     selectionEnabled={selectionAvailable}
     {restoreBusy}
+    {integrityActive}
     onrestore={onrestore ? () => onrestore(currentAsset.id) : undefined}
+    onintegrity={apiOnly ? undefined : () => void openIntegrity()}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
     onsetprimary={() => onsetprimary?.(visibleAsset.id)}
     onrelationconfirm={(action, relationIds) =>
@@ -495,6 +646,17 @@
       busy={actionBusy}
       onconfirm={onconfirmaction}
       onclose={oncancelaction}
+    />
+  {/if}
+
+  {#if integrityDialogOpen}
+    <AssetIntegrityDialog
+      filename={integrityFilename}
+      report={integrityReport}
+      task={integrityTask}
+      error={integrityError}
+      onreanalyze={() => void openIntegrity(true)}
+      onclose={closeIntegrity}
     />
   {/if}
 

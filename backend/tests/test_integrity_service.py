@@ -1,0 +1,205 @@
+"""Task and cache behavior for bounded integrity analysis."""
+
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import UUID
+
+import pytest
+
+from companion.immich import ImmichAsset
+from companion.integrity_repository import public_report
+from companion.integrity_schema import AssetIntegrityReport
+from companion.integrity_service import (
+    IntegrityService,
+    IntegrityTaskHandler,
+    RetryableTaskError,
+)
+from companion.models import AssetIntegrityReportRecord
+from companion.task_schema import TaskStatusView
+
+ASSET_ID = UUID("11111111-1111-4111-8111-111111111111")
+TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+
+def asset(*, checksum: str = "base64-checksum", modified: str = "2026-08-28T12:00:00Z"):
+    return ImmichAsset.model_validate(
+        {
+            "id": str(ASSET_ID),
+            "type": "IMAGE",
+            "originalFileName": "fixture.jpg",
+            "originalMimeType": "image/jpeg",
+            "checksum": checksum,
+            "fileCreatedAt": "2026-08-28T12:00:00Z",
+            "fileModifiedAt": modified,
+            "exifInfo": {"fileSizeInByte": 4},
+        }
+    )
+
+
+class FakeAssets:
+    async def has_asset(self, _asset_id):
+        return True
+
+
+class FakeReports:
+    def __init__(self, record=None):
+        self.record = record
+        self.saved = []
+
+    async def get(self, _asset_id):
+        return self.record
+
+    async def save(self, current, result):
+        self.saved.append((current, result))
+        return AssetIntegrityReport(
+            asset_id=current.id,
+            analyzer_version=result.analyzer_version,
+            byte_size=result.byte_size,
+            sha1_hex=result.sha1_hex,
+            sha256_hex=result.sha256_hex,
+            detected_format=result.detected_format,
+            classification=result.classification,
+            structurally_valid=result.structurally_valid,
+            jpeg_eoi_offset=result.jpeg_eoi_offset,
+            trailing_byte_count=result.trailing_byte_count,
+            immich_checksum_match=result.immich_checksum_match,
+            issues=list(result.issues),
+            analyzed_at=datetime.now(UTC),
+        )
+
+
+class FakeImmich:
+    def __init__(self, before, after=None):
+        self.assets = [before, after or before]
+
+    async def get_asset(self, _asset_id):
+        return self.assets.pop(0) if len(self.assets) > 1 else self.assets[0]
+
+    @asynccontextmanager
+    async def stream_original(self, _asset_id, *, chunk_size):
+        async def chunks():
+            yield b"\xff\xd8"
+            yield b"\xff\xd9"
+
+        yield SimpleNamespace(chunks=chunks(), content_length=4)
+
+
+class FakeContext:
+    def __init__(self):
+        self.checkpoints = []
+
+    async def checkpoint(self, **payload):
+        self.checkpoints.append(payload)
+
+    async def ensure_active(self):
+        return None
+
+
+class FakeTasks:
+    def __init__(self, active=None):
+        self.active = active
+        self.submitted = []
+
+    async def find_active(self, *_args):
+        return self.active
+
+    async def submit(self, task_type, payload, **options):
+        self.submitted.append((task_type, payload, options))
+        return task_status()
+
+
+def task_status():
+    now = datetime.now(UTC)
+    return TaskStatusView(
+        id=TASK_ID,
+        task_type="asset_integrity",
+        status="queued",
+        priority=60,
+        deduplication_key=f"asset:{ASSET_ID}",
+        lane_key="asset_integrity",
+        payload={"asset_id": str(ASSET_ID)},
+        checkpoint={},
+        counters={},
+        progress={},
+        result=None,
+        error=None,
+        attempt=0,
+        next_attempt_at=now,
+        lease_owner=None,
+        lease_expires_at=None,
+        created_at=now,
+        started_at=None,
+        heartbeat_at=None,
+        completed_at=None,
+    )
+
+
+def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
+    return AssetIntegrityReportRecord(
+        asset_id=current.id,
+        analyzer_version=1,
+        source_checksum=current.checksum,
+        source_file_modified_at=current.file_modified_at,
+        source_file_size_bytes=4,
+        source_mime_type="image/jpeg",
+        byte_size=4,
+        sha1_hex="0" * 40,
+        sha256_hex="1" * 64,
+        detected_format="jpeg",
+        classification="healthy",
+        structurally_valid=True,
+        jpeg_eoi_offset=4,
+        trailing_byte_count=0,
+        immich_checksum_match=None,
+        issues=[],
+        analyzed_at=datetime.now(UTC),
+    )
+
+
+@pytest.mark.asyncio
+async def test_handler_streams_then_saves_only_after_source_verification() -> None:
+    current = asset()
+    reports = FakeReports()
+    context = FakeContext()
+    handler = IntegrityTaskHandler(FakeImmich(current), FakeAssets(), reports)
+
+    result = await handler.execute(context, {"asset_id": str(ASSET_ID)})
+
+    assert result.summary["classification"] == "healthy"
+    assert reports.saved[0][1].byte_size == 4
+    assert context.checkpoints[-1]["progress"]["phase"] == "finalizing"
+
+
+@pytest.mark.asyncio
+async def test_handler_does_not_save_when_source_changes_during_stream() -> None:
+    reports = FakeReports()
+    handler = IntegrityTaskHandler(
+        FakeImmich(asset(checksum="before"), asset(checksum="after")),
+        FakeAssets(),
+        reports,
+    )
+
+    with pytest.raises(RetryableTaskError, match="source changed"):
+        await handler.execute(FakeContext(), {"asset_id": str(ASSET_ID)})
+
+    assert reports.saved == []
+
+
+@pytest.mark.asyncio
+async def test_service_reuses_current_report_and_force_queues_reanalysis() -> None:
+    current = asset()
+    record = report_record(current)
+    tasks = FakeTasks()
+    service = IntegrityService(
+        FakeImmich(current), FakeAssets(), FakeReports(record), tasks
+    )
+
+    cached = await service.analyze(ASSET_ID, force=False)
+    forced = await service.analyze(ASSET_ID, force=True)
+
+    assert cached.state == "ready"
+    assert cached.report == public_report(record)
+    assert forced.state == "pending"
+    assert forced.task_id == TASK_ID
+    assert len(tasks.submitted) == 1

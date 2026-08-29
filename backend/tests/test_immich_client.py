@@ -474,6 +474,40 @@ async def test_stack_contract_includes_all_typed_members() -> None:
 
 
 @pytest.mark.asyncio
+async def test_original_stream_is_chunked_and_reuses_the_shared_client() -> None:
+    payload = b"0123456789"
+
+    class OriginalStream(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield payload[:3]
+            yield payload[3:]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == f"/api/assets/{ASSET_ONE}":
+            return httpx.Response(200, json=asset_payload(ASSET_ONE, "streamed.jpg"))
+        assert request.url.path == f"/api/assets/{ASSET_ONE}/original"
+        return httpx.Response(
+            200,
+            stream=OriginalStream(),
+            headers={"content-type": "image/jpeg", "content-length": str(len(payload))},
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+
+    async with client.stream_original(ASSET_ONE, chunk_size=4) as original:
+        chunks = [chunk async for chunk in original.chunks]
+        shared_client = client._http_client
+
+    assert b"".join(chunks) == payload
+    assert all(len(chunk) <= 4 for chunk in chunks)
+    assert original.content_length == len(payload)
+    assert original.media_type == "image/jpeg"
+    assert shared_client is not None
+    await client.get_asset(ASSET_ONE)
+    assert client._http_client is shared_client
+
+
+@pytest.mark.asyncio
 async def test_stack_mutations_use_supported_stack_routes() -> None:
     stack_id = UUID("55555555-5555-4555-8555-555555555555")
     requests: list[tuple[str, str]] = []

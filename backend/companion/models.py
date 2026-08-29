@@ -77,6 +77,38 @@ class AssetRecord(Base):
     )
 
 
+class AssetIntegrityReportRecord(Base):
+    """Latest successful integrity analysis for one active asset."""
+
+    __tablename__ = "asset_integrity_reports"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    analyzer_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_mime_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    byte_size: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    sha1_hex: Mapped[str] = mapped_column(String(40), nullable=False)
+    sha256_hex: Mapped[str] = mapped_column(String(64), nullable=False)
+    detected_format: Mapped[str] = mapped_column(String(24), nullable=False)
+    classification: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    structurally_valid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    jpeg_eoi_offset: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    trailing_byte_count: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    immich_checksum_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    issues: Mapped[list[str]] = mapped_column(JSON, default=list)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        Index("ix_asset_integrity_exact_hash", byte_size, sha256_hex),
+    )
+
+
 class AlbumRecord(Base):
     """Synchronized Immich album metadata."""
 

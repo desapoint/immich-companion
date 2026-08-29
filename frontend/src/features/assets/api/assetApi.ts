@@ -20,6 +20,8 @@ import type {
   SelectionSetView,
   SearchGroup,
   AssetViewerMedia,
+  AssetIntegrityAnalyzeResponse,
+  AssetIntegrityState,
   TagOption,
   StackResolution,
 } from '../types/assets';
@@ -318,6 +320,24 @@ export function executeAssetActionTask(planId: string): Promise<AssetActionTaskS
 
 export function getAssetDetail(assetId: string, signal?: AbortSignal): Promise<AssetDetail> {
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}`, { signal });
+}
+
+export function getAssetIntegrity(
+  assetId: string,
+  signal?: AbortSignal,
+): Promise<AssetIntegrityState> {
+  return requestJson(`/api/assets/${encodeURIComponent(assetId)}/integrity`, { signal });
+}
+
+export function analyzeAssetIntegrity(
+  assetId: string,
+  force = false,
+): Promise<AssetIntegrityAnalyzeResponse> {
+  return requestJson(`/api/assets/${encodeURIComponent(assetId)}/integrity/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force }),
+  });
 }
 
 export function getRestoreAssetDetail(assetId: string, signal?: AbortSignal): Promise<AssetDetail> {

@@ -86,6 +86,9 @@
     <path d="M5 8V4M5 8h4M5.2 8a8 8 0 1 1-.8 7" /><circle cx="12" cy="12" r="2" />
   {:else if name === 'info'}
     <circle cx="12" cy="12" r="9" /><path d="M12 10.5v6M12 7.5h.01" />
+  {:else if name === 'integrity'}
+    <path d="M12 3.2 19 6v5.1c0 4.4-2.8 7.7-7 9.7-4.2-2-7-5.3-7-9.7V6l7-2.8Z" />
+    <path d="m8.7 12 2.1 2.1 4.5-4.5" />
   {:else if name === 'keyboard'}
     <rect x="3" y="6" width="18" height="12" rx="2" /><path d="M6 9h1M10 9h1M14 9h1M18 9h.01M6 12h1M10 12h1M14 12h4M7 15h10" />
   {:else if name === 'more'}

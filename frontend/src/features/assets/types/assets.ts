@@ -332,6 +332,7 @@ export interface AssetTaskStatus {
     minimum_delay_seconds?: number | null;
     assets_per_second?: number | null;
     estimated_remaining_seconds?: number | null;
+    bytes_per_second?: number | null;
   };
   result: {
     summary?: {
@@ -342,6 +343,9 @@ export interface AssetTaskStatus {
       failed_ids?: string[];
       missing_ids?: string[];
       errors?: Array<{ error: string; count: number }>;
+      asset_id?: string;
+      classification?: AssetIntegrityClassification;
+      byte_size?: number;
     };
   } | null;
   error: { type?: string; message?: string } | null;
@@ -350,6 +354,38 @@ export interface AssetTaskStatus {
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
+}
+
+export type AssetIntegrityClassification = 'healthy' | 'warning' | 'malformed' | 'hash_only';
+export type AssetIntegrityFreshness = 'current' | 'stale' | 'missing';
+
+export interface AssetIntegrityReport {
+  asset_id: string;
+  analyzer_version: number;
+  byte_size: number;
+  sha1_hex: string;
+  sha256_hex: string;
+  detected_format: 'jpeg' | 'other';
+  classification: AssetIntegrityClassification;
+  structurally_valid: boolean | null;
+  jpeg_eoi_offset: number | null;
+  trailing_byte_count: number;
+  immich_checksum_match: boolean | null;
+  issues: string[];
+  analyzed_at: string;
+}
+
+export interface AssetIntegrityState {
+  freshness: AssetIntegrityFreshness;
+  report: AssetIntegrityReport | null;
+  active_task_id: string | null;
+}
+
+export interface AssetIntegrityAnalyzeResponse {
+  state: 'ready' | 'pending';
+  freshness: AssetIntegrityFreshness;
+  report: AssetIntegrityReport | null;
+  task_id: string | null;
 }
 
 export type AssetActionIntent =
