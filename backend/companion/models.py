@@ -75,7 +75,6 @@ class AssetRecord(Base):
     __table_args__ = (
         Index("ix_assets_original_file_name_lower", func.lower(original_file_name)),
         Index("ix_assets_dimensions", width, height),
-        Index("ix_assets_cross_source_candidate", file_size_bytes, asset_type),
     )
 
 

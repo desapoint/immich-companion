@@ -8,6 +8,7 @@
   import AlbumsPage from '../features/relations/components/AlbumsPage.svelte';
   import TagsPage from '../features/relations/components/TagsPage.svelte';
   import RestorePage from '../features/assets/components/RestorePage.svelte';
+  import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
 
   const currentPath = window.location.pathname;
 </script>
@@ -22,6 +23,8 @@
       <TagsPage />
     {:else if currentPath === '/restore'}
       <RestorePage />
+    {:else if currentPath === '/duplicates'}
+      <DuplicatesPage />
     {:else}
       {#if currentPath === '/settings'}
         <SettingsPage />

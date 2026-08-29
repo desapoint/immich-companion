@@ -10,7 +10,12 @@ import httpx
 import pytest
 
 from companion.config import Settings
-from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
+from companion.immich import (
+    ImmichApiClient,
+    ImmichApiError,
+    ImmichAsset,
+    ImmichDuplicateResolution,
+)
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -626,4 +631,60 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
         ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": False}),
         ("DELETE", "/api/assets", {"ids": [str(ASSET_ONE)], "force": False}),
         ("POST", "/api/trash/restore/assets", {"ids": [str(ASSET_ONE)]}),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_duplicate_groups_and_resolution_use_immich_api_contract() -> None:
+    duplicate_id = UUID("77777777-7777-4777-8777-777777777777")
+    requests: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        requests.append((request.method, request.url.path, body))
+        if request.method == "GET":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "duplicateId": str(duplicate_id),
+                        "assets": [
+                            asset_payload(ASSET_ONE, "keeper.jpg"),
+                            asset_payload(ASSET_TWO, "duplicate.jpg"),
+                        ],
+                    }
+                ],
+            )
+        return httpx.Response(200, json=[{"success": True}])
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    groups = await client.list_duplicate_groups()
+    response = await client.resolve_duplicate_groups(
+        [
+            ImmichDuplicateResolution(
+                duplicate_id=duplicate_id,
+                keep_asset_id=ASSET_ONE,
+                trash_asset_ids=[ASSET_TWO],
+            )
+        ]
+    )
+
+    assert groups[0].duplicate_id == duplicate_id
+    assert [item.id for item in groups[0].assets] == [ASSET_ONE, ASSET_TWO]
+    assert response == [{"success": True}]
+    assert requests == [
+        ("GET", "/api/duplicates", None),
+        (
+            "POST",
+            "/api/duplicates/resolve",
+            {
+                "groups": [
+                    {
+                        "duplicateId": str(duplicate_id),
+                        "keepAssetIds": [str(ASSET_ONE)],
+                        "trashAssetIds": [str(ASSET_TWO)],
+                    }
+                ]
+            },
+        ),
     ]

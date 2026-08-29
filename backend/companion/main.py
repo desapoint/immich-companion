@@ -67,14 +67,18 @@ from companion.asset_schema import (
 from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
-from companion.duplicate_repository import DuplicateRepository
 from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
+    DuplicateAnalysisOptions,
+    DuplicateResolutionExecuteRequest,
+    DuplicateResolutionPlan,
+    DuplicateResolutionPlanRequest,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
     CrossSourceDuplicateTaskHandler,
+    DuplicateResolutionTaskHandler,
 )
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
 from companion.integrity_repository import IntegrityRepository
@@ -126,7 +130,7 @@ def create_app(
     )
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
-    duplicate_repository = DuplicateRepository(database) if database is not None else None
+    action_repository = ActionRepository(database) if database is not None else None
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
     )
@@ -190,11 +194,14 @@ def create_app(
             runtime_settings,
             immich,
             asset_repository,
-            ActionRepository(database),
+            action_repository,
             asset_sync,
             runtime_sync_settings,
         )
-        if database is not None and asset_repository is not None and asset_sync is not None
+        if database is not None
+        and asset_repository is not None
+        and asset_sync is not None
+        and action_repository is not None
         else None
     )
     if task_coordinator is not None and action_service is not None:
@@ -218,29 +225,35 @@ def create_app(
         task_coordinator.register_handler(integrity_handler)
     duplicate_service = (
         CrossSourceDuplicateService(
-            duplicate_repository,
+            runtime_settings,
+            immich,
+            asset_repository,
             integrity_repository,
+            action_repository,
             task_coordinator,
+            runtime_sync_settings,
         )
-        if duplicate_repository is not None
+        if asset_repository is not None
         and integrity_repository is not None
+        and action_repository is not None
         and task_coordinator is not None
+        and runtime_sync_settings is not None
         else None
     )
     if (
         task_coordinator is not None
-        and duplicate_repository is not None
         and duplicate_service is not None
         and integrity_handler is not None
     ):
         task_coordinator.register_handler(
             CrossSourceDuplicateTaskHandler(
                 immich,
-                duplicate_repository,
-                duplicate_service,
+                asset_repository,
+                integrity_repository,
                 integrity_handler,
             )
         )
+        task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -1148,15 +1161,64 @@ def create_app(
         response_model=CrossSourceDuplicateResult,
     )
     async def cross_source_duplicate_result() -> CrossSourceDuplicateResult:
-        return await require_duplicate_service().result()
+        try:
+            return await require_duplicate_service().result()
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/cross-source/search",
+        response_model=CrossSourceDuplicateResult,
+    )
+    async def search_cross_source_duplicates(
+        request: DuplicateAnalysisOptions,
+    ) -> CrossSourceDuplicateResult:
+        try:
+            return await require_duplicate_service().result(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
 
     @app.post(
         "/api/assets/duplicates/cross-source/analyze",
         response_model=CrossSourceDuplicateTaskStart,
         status_code=status.HTTP_202_ACCEPTED,
     )
-    async def analyze_cross_source_duplicates() -> CrossSourceDuplicateTaskStart:
-        return await require_duplicate_service().start()
+    async def analyze_cross_source_duplicates(
+        request: DuplicateAnalysisOptions | None = None,
+    ) -> CrossSourceDuplicateTaskStart:
+        try:
+            return await require_duplicate_service().start(
+                request or DuplicateAnalysisOptions()
+            )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/cross-source/plan",
+        response_model=DuplicateResolutionPlan,
+    )
+    async def plan_duplicate_resolution(
+        request: DuplicateResolutionPlanRequest,
+    ) -> DuplicateResolutionPlan:
+        try:
+            return await require_duplicate_service().plan(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/cross-source/execute",
+        response_model=CrossSourceDuplicateTaskStart,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def execute_duplicate_resolution(
+        request: DuplicateResolutionExecuteRequest,
+    ) -> CrossSourceDuplicateTaskStart:
+        try:
+            return await require_duplicate_service().start_resolution(request)
+        except RuntimeError as error:
+            raise map_action_error(error) from error
 
     @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
     async def asset_detail(asset_id: UUID) -> AssetDetail:

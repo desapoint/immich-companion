@@ -57,6 +57,41 @@ class ActionRepository:
             session.add(record)
         return record
 
+    async def create_duplicate_plan(
+        self,
+        *,
+        groups: list[dict[str, Any]],
+        options: dict[str, Any],
+        target_digest: str,
+        expires_at: datetime,
+    ) -> ActionPlanRecord:
+        """Persist an immutable reviewed Immich duplicate resolution."""
+
+        target_ids = [
+            asset_id
+            for group in groups
+            for asset_id in [group["keeper_asset_id"], *group["trash_asset_ids"]]
+        ]
+        trash_ids = [asset_id for group in groups for asset_id in group["trash_asset_ids"]]
+        record = ActionPlanRecord(
+            action="resolve_duplicates",
+            operation="resolve_duplicates",
+            relation_ids=[],
+            relation_work={"groups": groups, "options": options},
+            selection={"mode": "duplicate_groups"},
+            target_ids=target_ids,
+            target_digest=target_digest,
+            applicable_ids=trash_ids,
+            skipped_ids=[],
+            missing_ids=[],
+            destructive=True,
+            status="planned",
+            expires_at=expires_at,
+        )
+        async with self._database.sessions() as session, session.begin():
+            session.add(record)
+        return record
+
     async def get_plan(self, plan_id: UUID) -> ActionPlanRecord | None:
         """Load one action plan without changing its state."""
 

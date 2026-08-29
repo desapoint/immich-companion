@@ -200,6 +200,21 @@ class ImmichSearchResponse(ImmichModel):
     assets: ImmichAssetSearchPage
 
 
+class ImmichDuplicateGroup(ImmichModel):
+    """One duplicate candidate group discovered by Immich."""
+
+    duplicate_id: UUID = Field(alias="duplicateId")
+    assets: list[ImmichAsset]
+
+
+class ImmichDuplicateResolution(ImmichModel):
+    """One reviewed duplicate mutation sent to Immich."""
+
+    duplicate_id: UUID
+    keep_asset_id: UUID
+    trash_asset_ids: list[UUID]
+
+
 @dataclass(frozen=True, slots=True)
 class ImmichMedia:
     """Binary media returned by Immich with safe response metadata."""
@@ -614,6 +629,44 @@ class ImmichApiClient:
             operation="get asset",
         )
         return ImmichAsset.model_validate(response.json())
+
+    async def list_duplicate_groups(self) -> list[ImmichDuplicateGroup]:
+        """Return the authenticated user's live Immich duplicate groups."""
+
+        response = await self._request(
+            "GET",
+            "/api/duplicates",
+            operation="list duplicate groups",
+        )
+        return [ImmichDuplicateGroup.model_validate(item) for item in response.json()]
+
+    async def resolve_duplicate_groups(
+        self,
+        resolutions: list[ImmichDuplicateResolution],
+    ) -> list[dict[str, Any]]:
+        """Merge metadata and trash reviewed copies through Immich's API."""
+
+        if not resolutions:
+            return []
+        response = await self._request(
+            "POST",
+            "/api/duplicates/resolve",
+            operation="resolve duplicate groups",
+            json={
+                "groups": [
+                    {
+                        "duplicateId": str(item.duplicate_id),
+                        "keepAssetIds": [str(item.keep_asset_id)],
+                        "trashAssetIds": [str(asset_id) for asset_id in item.trash_asset_ids],
+                    }
+                    for item in resolutions
+                ]
+            },
+        )
+        payload = response.json()
+        if not isinstance(payload, list):
+            raise ImmichApiError("resolve duplicate groups")
+        return [item for item in payload if isinstance(item, dict)]
 
     async def get_thumbnail(
         self,

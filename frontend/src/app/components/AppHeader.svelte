@@ -21,6 +21,7 @@
       <a class:active={activePath === '/'} href="/">Status</a>
       <a class:active={activePath.startsWith('/assets')} href="/assets">Assets</a>
       <a class:active={activePath === '/restore'} href="/restore">Restore</a>
+      <a class:active={activePath === '/duplicates'} href="/duplicates">Duplicates</a>
       <a class:active={activePath === '/albums'} href="/albums">Albums</a>
       <a class:active={activePath === '/tags'} href="/tags">Tags</a>
       <a class:active={activePath === '/settings'} href="/settings">Settings</a>
