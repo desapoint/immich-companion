@@ -14,7 +14,7 @@
     children: Snippet;
   }
 
-  type Placement = 'right' | 'left' | 'below' | 'above';
+  type Placement = 'below-left' | 'below-right' | 'above-left' | 'above-right';
 
   interface PopoverLayout {
     placement: Placement;
@@ -54,7 +54,6 @@
 
     const anchor = triggerElement.getBoundingClientRect();
     const availableWidth = Math.max(0, window.innerWidth - VIEWPORT_PADDING * 2);
-    const availableHeight = Math.max(0, window.innerHeight - VIEWPORT_PADDING * 2);
     const preferredWidth = popoverSizing === 'content' ? CONTENT_WIDTH : DEFAULT_WIDTH;
     const measuredWidth = popoverElement.scrollWidth;
     const width = Math.min(
@@ -62,79 +61,40 @@
       availableWidth,
     );
     const desiredHeight = Math.min(popoverElement.scrollHeight || PREFERRED_HEIGHT, PREFERRED_HEIGHT);
-    const height = Math.min(desiredHeight, availableHeight);
 
-    const spaceRight = window.innerWidth - VIEWPORT_PADDING - anchor.right - ANCHOR_GAP;
-    const spaceLeft = anchor.left - VIEWPORT_PADDING - ANCHOR_GAP;
-    const spaceBelow = window.innerHeight - VIEWPORT_PADDING - anchor.bottom - ANCHOR_GAP;
-    const spaceAbove = anchor.top - VIEWPORT_PADDING - ANCHOR_GAP;
+    const spaceBelow = Math.max(0, window.innerHeight - VIEWPORT_PADDING - anchor.bottom - ANCHOR_GAP);
+    const spaceAbove = Math.max(0, anchor.top - VIEWPORT_PADDING - ANCHOR_GAP);
+    const vertical = spaceBelow >= Math.min(desiredHeight, spaceAbove) ? 'below' : 'above';
+    const maxHeight = vertical === 'below' ? spaceBelow : spaceAbove;
+    const renderedHeight = Math.min(desiredHeight, maxHeight);
 
-    const horizontalCenter = anchor.left + anchor.width / 2;
-    const verticalCenter = anchor.top + anchor.height / 2;
-    const horizontalOrder: Placement[] = horizontalCenter <= window.innerWidth / 2
-      ? ['right', 'left']
-      : ['left', 'right'];
-    const verticalOrder: Placement[] = verticalCenter <= window.innerHeight / 2
-      ? ['below', 'above']
-      : ['above', 'below'];
-    const candidates = [...horizontalOrder, ...verticalOrder];
+    const leftAligned = anchor.left;
+    const rightAligned = anchor.right - width;
+    const leftFits = leftAligned >= VIEWPORT_PADDING && leftAligned + width <= window.innerWidth - VIEWPORT_PADDING;
+    const rightFits = rightAligned >= VIEWPORT_PADDING && rightAligned + width <= window.innerWidth - VIEWPORT_PADDING;
 
-    const fits = (placement: Placement): boolean => {
-      if (placement === 'right') return spaceRight >= width;
-      if (placement === 'left') return spaceLeft >= width;
-      if (placement === 'below') return spaceBelow >= height;
-      return spaceAbove >= height;
-    };
+    const anchorCenter = anchor.left + anchor.width / 2;
+    const preferLeftAlignment = anchorCenter <= window.innerWidth / 2;
 
-    const placement = candidates.find(fits) ?? candidates.reduce((best, candidate) => {
-      const available = candidate === 'right'
-        ? spaceRight
-        : candidate === 'left'
-          ? spaceLeft
-          : candidate === 'below'
-            ? spaceBelow
-            : spaceAbove;
-      const bestAvailable = best === 'right'
-        ? spaceRight
-        : best === 'left'
-          ? spaceLeft
-          : best === 'below'
-            ? spaceBelow
-            : spaceAbove;
-      return available > bestAvailable ? candidate : best;
-    }, candidates[0]);
-
-    let left: number;
-    let top: number;
-    let maxHeight = availableHeight;
-
-    if (placement === 'right') {
-      left = anchor.right + ANCHOR_GAP;
-      top = clamp(anchor.top, VIEWPORT_PADDING, window.innerHeight - VIEWPORT_PADDING - height);
-      maxHeight = availableHeight;
-    } else if (placement === 'left') {
-      left = anchor.left - ANCHOR_GAP - width;
-      top = clamp(anchor.top, VIEWPORT_PADDING, window.innerHeight - VIEWPORT_PADDING - height);
-      maxHeight = availableHeight;
-    } else if (placement === 'below') {
-      left = clamp(anchor.left, VIEWPORT_PADDING, window.innerWidth - VIEWPORT_PADDING - width);
-      top = anchor.bottom + ANCHOR_GAP;
-      maxHeight = Math.max(0, spaceBelow);
+    let alignment: 'left' | 'right';
+    if (preferLeftAlignment) {
+      alignment = leftFits ? 'left' : rightFits ? 'right' : 'left';
     } else {
-      left = clamp(anchor.left, VIEWPORT_PADDING, window.innerWidth - VIEWPORT_PADDING - width);
-      top = anchor.top - ANCHOR_GAP - Math.min(height, Math.max(0, spaceAbove));
-      maxHeight = Math.max(0, spaceAbove);
+      alignment = rightFits ? 'right' : leftFits ? 'left' : 'right';
     }
 
-    left = clamp(left, VIEWPORT_PADDING, window.innerWidth - VIEWPORT_PADDING - width);
-    top = clamp(top, VIEWPORT_PADDING, window.innerHeight - VIEWPORT_PADDING - Math.min(height, maxHeight));
+    const desiredLeft = alignment === 'left' ? leftAligned : rightAligned;
+    const left = clamp(desiredLeft, VIEWPORT_PADDING, window.innerWidth - VIEWPORT_PADDING - width);
+    const top = vertical === 'below'
+      ? anchor.bottom + ANCHOR_GAP
+      : anchor.top - ANCHOR_GAP - renderedHeight;
 
     popoverLayout = {
-      placement,
+      placement: `${vertical}-${alignment}`,
       left,
-      top,
+      top: clamp(top, VIEWPORT_PADDING, window.innerHeight - VIEWPORT_PADDING - renderedHeight),
       width,
-      maxHeight: Math.max(0, maxHeight),
+      maxHeight,
     };
   }
 
@@ -304,25 +264,17 @@
     transition: opacity 120ms ease, transform 120ms ease;
   }
 
-  .relation-popover[data-placement='right'] {
-    transform: translateX(-0.2rem);
-  }
-
-  .relation-popover[data-placement='left'] {
-    transform: translateX(0.2rem);
-  }
-
-  .relation-popover[data-placement='below'] {
+  .relation-popover[data-placement^='below'] {
     transform: translateY(-0.2rem);
   }
 
-  .relation-popover[data-placement='above'] {
+  .relation-popover[data-placement^='above'] {
     transform: translateY(0.2rem);
   }
 
   .relation-popover:popover-open {
     opacity: 1;
-    transform: translate(0);
+    transform: translateY(0);
   }
 
   .relation-popover.content-sized {
