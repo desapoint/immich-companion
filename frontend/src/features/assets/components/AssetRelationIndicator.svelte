@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onDestroy, tick } from 'svelte';
   import type { Snippet } from 'svelte';
 
   import { clickOutside } from '../../../lib/actions/clickOutside';
@@ -22,6 +22,8 @@
   let triggerElement = $state<HTMLButtonElement>();
   let popoverElement = $state<HTMLElement>();
   let pinned = $state(false);
+  let hovered = $state(false);
+  let hoverExitTimer: ReturnType<typeof setTimeout> | undefined;
   let popoverLayout = $state<FloatingPopoverLayout | null>(null);
   const componentId = $props.id();
 
@@ -40,6 +42,26 @@
     );
   }
 
+  function cancelHoverExit(): void {
+    if (hoverExitTimer === undefined) return;
+    clearTimeout(hoverExitTimer);
+    hoverExitTimer = undefined;
+  }
+
+  function enterPopoverArea(): void {
+    cancelHoverExit();
+    hovered = true;
+    updatePopoverLayout();
+  }
+
+  function leavePopoverArea(): void {
+    cancelHoverExit();
+    hoverExitTimer = setTimeout(() => {
+      hovered = false;
+      hoverExitTimer = undefined;
+    }, 120);
+  }
+
   async function togglePinned(): Promise<void> {
     pinned = !pinned;
     if (!pinned) return;
@@ -47,12 +69,8 @@
     updatePopoverLayout();
   }
 
-  function preparePopover(): void {
-    updatePopoverLayout();
-  }
-
   $effect(() => {
-    if (!pinned) return;
+    if (!pinned && !hovered) return;
     const update = () => updatePopoverLayout();
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
@@ -61,14 +79,18 @@
       window.removeEventListener('scroll', update, true);
     };
   });
+
+  onDestroy(cancelHoverExit);
 </script>
 
 <div
   use:clickOutside={{ enabled: pinned, onoutside: () => (pinned = false) }}
   class:pinned
+  class:hovered
   class="relation-indicator"
-  onmouseenter={preparePopover}
-  onfocusin={preparePopover}
+  onmouseenter={enterPopoverArea}
+  onmouseleave={leavePopoverArea}
+  onfocusin={updatePopoverLayout}
 >
   <button
     bind:this={triggerElement}
@@ -101,6 +123,8 @@
         : undefined}
     style:width={popoverLayout ? `${popoverLayout.width}px` : undefined}
     style:max-height={popoverLayout ? `${popoverLayout.maxHeight}px` : undefined}
+    onmouseenter={enterPopoverArea}
+    onmouseleave={leavePopoverArea}
   >
     <strong>{label}</strong>
     <div class="popover-content">{@render children()}</div>
@@ -110,16 +134,6 @@
 <style>
   .relation-indicator {
     position: relative;
-  }
-
-  .relation-indicator::after {
-    position: absolute;
-    z-index: 39;
-    top: 100%;
-    left: -0.25rem;
-    width: calc(100% + 0.5rem);
-    height: 0.55rem;
-    content: '';
   }
 
   button {
@@ -170,7 +184,7 @@
     max-width: min(24rem, calc(100vw - 2rem));
   }
 
-  .relation-indicator:hover .relation-popover,
+  .relation-indicator.hovered .relation-popover,
   .relation-indicator:focus-within .relation-popover,
   .relation-indicator.pinned .relation-popover {
     visibility: visible;
