@@ -27,7 +27,7 @@
   const VIEWPORT_PADDING = 12;
   const ANCHOR_GAP = 8;
   const DEFAULT_WIDTH = 304;
-  const CONTENT_WIDTH = 384;
+  const CONTENT_WIDTH = 352;
   const PREFERRED_HEIGHT = 320;
 
   let { kind, label, count, popoverSizing = 'default', children }: Props = $props();
