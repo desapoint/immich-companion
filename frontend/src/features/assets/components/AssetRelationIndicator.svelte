@@ -172,6 +172,8 @@
 
 <div
   bind:this={containerElement}
+  role="group"
+  aria-label={label}
   use:clickOutside={{ enabled: pinned, onoutside: () => {
     pinned = false;
     hidePopoverIfInactive();
@@ -187,7 +189,7 @@
     bind:this={triggerElement}
     type="button"
     aria-label={label}
-    aria-expanded={pinned}
+    aria-expanded={pinned || hovered || focused}
     aria-controls={`${componentId}-details`}
     title={label}
     onclick={() => void togglePinned()}
