@@ -19,6 +19,7 @@
   }
 
   let { kind, label, count, popoverSizing = 'default', children }: Props = $props();
+  let containerElement = $state<HTMLDivElement>();
   let triggerElement = $state<HTMLButtonElement>();
   let popoverElement = $state<HTMLElement>();
   let pinned = $state(false);
@@ -30,8 +31,9 @@
   const componentId = $props.id();
 
   function updatePopoverLayout(): void {
-    if (!triggerElement || !popoverElement) return;
+    if (!containerElement || !triggerElement || !popoverElement) return;
 
+    const containerRect = containerElement.getBoundingClientRect();
     const anchorRect = triggerElement.getBoundingClientRect();
     const popoverRect = popoverElement.getBoundingClientRect();
     const measuredWidth = popoverRect.width;
@@ -50,8 +52,8 @@
     const viewportTop = layout.top ?? Math.max(12, anchorRect.top - 6 - renderedHeight);
 
     popoverLayout = layout;
-    popoverLeft = layout.left - anchorRect.left;
-    popoverTop = viewportTop - anchorRect.top;
+    popoverLeft = layout.left - containerRect.left;
+    popoverTop = viewportTop - containerRect.top;
   }
 
   function cancelHoverExit(): void {
@@ -96,6 +98,7 @@
 </script>
 
 <div
+  bind:this={containerElement}
   use:clickOutside={{ enabled: pinned, onoutside: () => (pinned = false) }}
   class:pinned
   class:hovered
