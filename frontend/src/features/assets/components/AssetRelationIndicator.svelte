@@ -24,21 +24,24 @@
   let popoverElement = $state<HTMLElement>();
   let pinned = $state(false);
   let hovered = $state(false);
+  let focused = $state(false);
   let hoverExitTimer: ReturnType<typeof setTimeout> | undefined;
   let popoverLayout = $state<FloatingPopoverLayout | null>(null);
-  let popoverLeft = $state(0);
-  let popoverTop = $state(0);
   const componentId = $props.id();
 
-  function updatePopoverLayout(): void {
-    if (!containerElement || !triggerElement || !popoverElement) return;
+  function isPopoverOpen(): boolean {
+    return popoverElement?.matches(':popover-open') ?? false;
+  }
 
-    const containerRect = containerElement.getBoundingClientRect();
+  function updatePopoverLayout(): void {
+    if (!triggerElement || !popoverElement || !isPopoverOpen()) return;
+
     const anchorRect = triggerElement.getBoundingClientRect();
     const popoverRect = popoverElement.getBoundingClientRect();
     const measuredWidth = popoverRect.width;
     const preferredHeight = Math.min(popoverElement.scrollHeight || 320, 320);
-    const layout = floatingPopoverLayout(
+
+    popoverLayout = floatingPopoverLayout(
       anchorRect,
       window.innerWidth,
       window.innerHeight,
@@ -47,13 +50,19 @@
         preferredHeight,
       },
     );
+  }
 
-    const renderedHeight = Math.min(preferredHeight, layout.maxHeight);
-    const viewportTop = layout.top ?? Math.max(12, anchorRect.top - 6 - renderedHeight);
+  async function showPopover(): Promise<void> {
+    if (!popoverElement) return;
+    if (!isPopoverOpen()) popoverElement.showPopover();
+    await tick();
+    updatePopoverLayout();
+  }
 
-    popoverLayout = layout;
-    popoverLeft = layout.left - containerRect.left;
-    popoverTop = viewportTop - containerRect.top;
+  function hidePopoverIfInactive(): void {
+    if (pinned || hovered || focused || !popoverElement || !isPopoverOpen()) return;
+    popoverElement.hidePopover();
+    popoverLayout = null;
   }
 
   function cancelHoverExit(): void {
@@ -65,7 +74,7 @@
   function enterPopoverArea(): void {
     cancelHoverExit();
     hovered = true;
-    updatePopoverLayout();
+    void showPopover();
   }
 
   function leavePopoverArea(): void {
@@ -73,18 +82,33 @@
     hoverExitTimer = setTimeout(() => {
       hovered = false;
       hoverExitTimer = undefined;
+      hidePopoverIfInactive();
     }, 120);
+  }
+
+  function handleFocusIn(): void {
+    focused = true;
+    void showPopover();
+  }
+
+  function handleFocusOut(): void {
+    queueMicrotask(() => {
+      focused = containerElement?.contains(document.activeElement) ?? false;
+      hidePopoverIfInactive();
+    });
   }
 
   async function togglePinned(): Promise<void> {
     pinned = !pinned;
-    if (!pinned) return;
-    await tick();
-    updatePopoverLayout();
+    if (pinned) {
+      await showPopover();
+    } else {
+      hidePopoverIfInactive();
+    }
   }
 
   $effect(() => {
-    if (!pinned && !hovered) return;
+    if (!pinned && !hovered && !focused) return;
     const update = () => updatePopoverLayout();
     window.addEventListener('resize', update);
     window.addEventListener('scroll', update, true);
@@ -94,18 +118,24 @@
     };
   });
 
-  onDestroy(cancelHoverExit);
+  onDestroy(() => {
+    cancelHoverExit();
+    if (popoverElement && isPopoverOpen()) popoverElement.hidePopover();
+  });
 </script>
 
 <div
   bind:this={containerElement}
-  use:clickOutside={{ enabled: pinned, onoutside: () => (pinned = false) }}
+  use:clickOutside={{ enabled: pinned, onoutside: () => {
+    pinned = false;
+    hidePopoverIfInactive();
+  } }}
   class:pinned
-  class:hovered
   class="relation-indicator"
   onmouseenter={enterPopoverArea}
   onmouseleave={leavePopoverArea}
-  onfocusin={updatePopoverLayout}
+  onfocusin={handleFocusIn}
+  onfocusout={handleFocusOut}
 >
   <button
     bind:this={triggerElement}
@@ -122,15 +152,27 @@
   <aside
     bind:this={popoverElement}
     id={`${componentId}-details`}
+    popover="manual"
     class:content-sized={popoverSizing === 'content'}
     class="relation-popover"
     aria-label={`${label} details`}
-    style:left={`${popoverLeft}px`}
-    style:top={`${popoverTop}px`}
+    style:left={popoverLayout ? `${popoverLayout.left}px` : '0px'}
+    style:top={popoverLayout?.top === null
+      ? 'auto'
+      : popoverLayout
+        ? `${popoverLayout.top}px`
+        : '0px'}
+    style:bottom={popoverLayout?.bottom === null
+      ? 'auto'
+      : popoverLayout
+        ? `${popoverLayout.bottom}px`
+        : 'auto'}
     style:width={popoverLayout ? `${popoverLayout.width}px` : undefined}
     style:max-height={popoverLayout ? `${popoverLayout.maxHeight}px` : undefined}
     onmouseenter={enterPopoverArea}
     onmouseleave={leavePopoverArea}
+    onfocusin={handleFocusIn}
+    onfocusout={handleFocusOut}
   >
     <strong>{label}</strong>
     <div class="popover-content">{@render children()}</div>
@@ -168,35 +210,31 @@
   }
 
   .relation-popover {
-    position: absolute;
+    position: fixed;
     z-index: 1000;
+    inset: auto;
     width: min(19rem, calc(100vw - 2rem));
+    margin: 0;
     padding: 0.7rem;
     overflow: auto;
-    visibility: hidden;
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
     color: var(--color-ink-strong);
     background: var(--color-surface-raised);
     box-shadow: 0 0.9rem 2.4rem rgb(17 24 19 / 22%);
     opacity: 0;
-    pointer-events: none;
     transform: translateY(-0.2rem);
-    transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+  }
+
+  .relation-popover:popover-open {
+    opacity: 1;
+    transform: translateY(0);
+    transition: opacity 120ms ease, transform 120ms ease;
   }
 
   .relation-popover.content-sized {
     width: max-content;
     max-width: min(24rem, calc(100vw - 2rem));
-  }
-
-  .relation-indicator.hovered .relation-popover,
-  .relation-indicator:focus-within .relation-popover,
-  .relation-indicator.pinned .relation-popover {
-    visibility: visible;
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateY(0);
   }
 
   .relation-popover > strong {
