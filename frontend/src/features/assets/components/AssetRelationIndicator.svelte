@@ -25,21 +25,33 @@
   let hovered = $state(false);
   let hoverExitTimer: ReturnType<typeof setTimeout> | undefined;
   let popoverLayout = $state<FloatingPopoverLayout | null>(null);
+  let popoverLeft = $state(0);
+  let popoverTop = $state(0);
   const componentId = $props.id();
 
   function updatePopoverLayout(): void {
     if (!triggerElement || !popoverElement) return;
 
-    const measuredWidth = popoverElement.getBoundingClientRect().width;
-    popoverLayout = floatingPopoverLayout(
-      triggerElement.getBoundingClientRect(),
+    const anchorRect = triggerElement.getBoundingClientRect();
+    const popoverRect = popoverElement.getBoundingClientRect();
+    const measuredWidth = popoverRect.width;
+    const preferredHeight = Math.min(popoverElement.scrollHeight || 320, 320);
+    const layout = floatingPopoverLayout(
+      anchorRect,
       window.innerWidth,
       window.innerHeight,
       {
         preferredWidth: measuredWidth || (popoverSizing === 'content' ? 384 : 304),
-        preferredHeight: Math.min(popoverElement.scrollHeight || 320, 320),
+        preferredHeight,
       },
     );
+
+    const renderedHeight = Math.min(preferredHeight, layout.maxHeight);
+    const viewportTop = layout.top ?? Math.max(12, anchorRect.top - 6 - renderedHeight);
+
+    popoverLayout = layout;
+    popoverLeft = layout.left - anchorRect.left;
+    popoverTop = viewportTop - anchorRect.top;
   }
 
   function cancelHoverExit(): void {
@@ -110,17 +122,8 @@
     class:content-sized={popoverSizing === 'content'}
     class="relation-popover"
     aria-label={`${label} details`}
-    style:left={popoverLayout ? `${popoverLayout.left}px` : undefined}
-    style:top={popoverLayout?.top === null
-      ? 'auto'
-      : popoverLayout
-        ? `${popoverLayout.top}px`
-        : undefined}
-    style:bottom={popoverLayout?.bottom === null
-      ? 'auto'
-      : popoverLayout
-        ? `${popoverLayout.bottom}px`
-        : undefined}
+    style:left={`${popoverLeft}px`}
+    style:top={`${popoverTop}px`}
     style:width={popoverLayout ? `${popoverLayout.width}px` : undefined}
     style:max-height={popoverLayout ? `${popoverLayout.maxHeight}px` : undefined}
     onmouseenter={enterPopoverArea}
@@ -162,7 +165,7 @@
   }
 
   .relation-popover {
-    position: fixed;
+    position: absolute;
     z-index: 1000;
     width: min(19rem, calc(100vw - 2rem));
     padding: 0.7rem;
