@@ -5,7 +5,12 @@ import json
 import httpx
 
 from companion import test_bootstrap
-from companion.test_bootstrap import has_reusable_state, reconcile_tags
+from companion.test_bootstrap import (
+    has_reusable_state,
+    mixed_duplicate_group_count,
+    reconcile_external_libraries,
+    reconcile_tags,
+)
 
 
 def test_reusable_bootstrap_state_requires_a_previous_success(tmp_path) -> None:
@@ -115,3 +120,77 @@ def test_reconcile_tags_creates_updates_and_converges_seed_assignments() -> None
         "/api/tags/tag-created/assets",
         {"ids": ["asset-three", "asset-two"]},
     ) in requests
+
+
+def test_reconcile_external_library_uses_admin_api_and_queues_scan() -> None:
+    requests: list[tuple[str, str, dict[str, object] | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content) if request.content else None
+        requests.append((request.method, request.url.path, body))
+        if request.method == "GET":
+            return httpx.Response(200, json=[])
+        if request.method == "POST" and request.url.path == "/api/libraries":
+            return httpx.Response(
+                201,
+                json={"id": "library-1", "name": "Demo external"},
+            )
+        if request.method == "POST":
+            return httpx.Response(204)
+        return httpx.Response(200, json={"id": "library-1"})
+
+    relationships = {
+        "external_libraries": [
+            {"name": "Demo external", "import_path": "/external-library"}
+        ]
+    }
+    with httpx.Client(
+        base_url="http://immich.test",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = reconcile_external_libraries(
+            client,
+            "test-key",
+            "owner-1",
+            relationships,
+        )
+
+    assert result == [{"id": "library-1", "name": "Demo external"}]
+    assert (
+        "POST",
+        "/api/libraries",
+        {
+            "ownerId": "owner-1",
+            "name": "Demo external",
+            "importPaths": ["/external-library"],
+            "exclusionPatterns": [],
+        },
+    ) in requests
+    assert (
+        "PUT",
+        "/api/libraries/library-1",
+        {
+            "name": "Demo external",
+            "importPaths": ["/external-library"],
+            "exclusionPatterns": [],
+        },
+    ) in requests
+    assert ("POST", "/api/libraries/library-1/scan", None) in requests
+
+
+def test_mixed_duplicate_group_count_ignores_single_source_groups() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[
+                {"assets": [{"libraryId": None}, {"libraryId": "library-1"}]},
+                {"assets": [{"libraryId": None}, {"libraryId": None}]},
+                {"assets": [{"libraryId": "library-1"}]},
+            ],
+        )
+
+    with httpx.Client(
+        base_url="http://immich.test",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        assert mixed_duplicate_group_count(client, "test-key") == 1

@@ -51,6 +51,7 @@ services:
       IMMICH_MACHINE_LEARNING_URL: http://immich-machine-learning:3003
     volumes:
       - immich-upload:/data
+      - ../generated_dataset/immich-seed/external-library:/external-library:ro
     ports:
       - "${IMMICH_TEST_BIND:-0.0.0.0}:${IMMICH_TEST_PORT:-22830}:2283"
     depends_on:

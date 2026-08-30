@@ -8,7 +8,7 @@ import hashlib
 from dataclasses import dataclass, replace
 from typing import Literal
 
-ANALYZER_VERSION = 3
+ANALYZER_VERSION = 4
 JPEG_MIME_TYPES = frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})
 FORMAT_MIME_TYPES: dict[str, frozenset[str]] = {
     "jpeg": JPEG_MIME_TYPES,
@@ -21,6 +21,7 @@ FORMAT_MIME_TYPES: dict[str, frozenset[str]] = {
     "tiff": frozenset({"image/tiff", "image/x-tiff"}),
 }
 _SIGNATURE_PREFIX_BYTES = 64
+_PNG_END_MARKER = b"\x00\x00\x00\x00IEND\xaeB\x60\x82"
 
 IntegrityClassification = Literal["healthy", "warning", "malformed", "hash_only"]
 DetectedFormat = Literal["jpeg", "heic", "heif", "avif", "png", "webp", "gif", "tiff", "unknown"]
@@ -288,6 +289,39 @@ class JpegStructureAnalyzer:
         )
 
 
+class PngStructureAnalyzer:
+    """Locate the terminal PNG IEND chunk without retaining image payloads."""
+
+    def __init__(self) -> None:
+        self._offset = 0
+        self._tail = b""
+        self._end_offset: int | None = None
+        self._trailing_bytes = 0
+
+    def update(self, chunk: bytes) -> None:
+        if self._end_offset is not None:
+            self._offset += len(chunk)
+            self._trailing_bytes += len(chunk)
+            return
+        start_offset = self._offset - len(self._tail)
+        self._offset += len(chunk)
+        combined = self._tail + chunk
+        marker_index = combined.find(_PNG_END_MARKER)
+        if marker_index >= 0:
+            self._end_offset = start_offset + marker_index + len(_PNG_END_MARKER)
+            self._trailing_bytes = self._offset - self._end_offset
+            self._tail = b""
+            return
+        self._tail = combined[-(len(_PNG_END_MARKER) - 1) :]
+
+    def finalize(self) -> tuple[bool, int, tuple[str, ...]]:
+        if self._end_offset is None:
+            return False, 0, ("png_missing_iend",)
+        if self._trailing_bytes:
+            return False, self._trailing_bytes, ("png_trailing_bytes",)
+        return True, 0, ()
+
+
 class FileIntegrityAnalyzer:
     """Hash bytes and optionally inspect JPEG structure one chunk at a time."""
 
@@ -299,6 +333,7 @@ class FileIntegrityAnalyzer:
         self._size = 0
         self._prefix = bytearray()
         self._jpeg: JpegStructureAnalyzer | None = None
+        self._png: PngStructureAnalyzer | None = None
 
     @property
     def byte_size(self) -> int:
@@ -318,6 +353,9 @@ class FileIntegrityAnalyzer:
         if self._jpeg is not None:
             self._jpeg.update(chunk)
             return
+        if self._png is not None:
+            self._png.update(chunk)
+            return
 
         if len(self._prefix) >= 2 and self._prefix[:2] == b"\xff\xd8":
             self._jpeg = JpegStructureAnalyzer()
@@ -325,6 +363,12 @@ class FileIntegrityAnalyzer:
             replayed_prefix = bytes(self._prefix)
             self._jpeg.update(replayed_prefix)
             self._jpeg.update(chunk[prefix_from_chunk:])
+        elif len(self._prefix) >= 8 and self._prefix[:8] == b"\x89PNG\r\n\x1a\n":
+            self._png = PngStructureAnalyzer()
+            prefix_from_chunk = min(needed, len(chunk))
+            replayed_prefix = bytes(self._prefix)
+            self._png.update(replayed_prefix)
+            self._png.update(chunk[prefix_from_chunk:])
 
     def finalize(self) -> FileIntegrityResult:
         sha1_digest = self._sha1.digest()
@@ -345,6 +389,10 @@ class FileIntegrityAnalyzer:
             structurally_valid, eoi_offset, trailing_bytes, jpeg_issues = self._jpeg.finalize()
             container_valid = structurally_valid
             issues.extend(jpeg_issues)
+        elif self._png is not None:
+            structurally_valid, trailing_bytes, png_issues = self._png.finalize()
+            container_valid = structurally_valid
+            issues.extend(png_issues)
         if mime_matches is False:
             issues.append("mime_format_mismatch")
         if checksum_match is False:

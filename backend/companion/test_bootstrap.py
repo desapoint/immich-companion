@@ -102,9 +102,175 @@ def resolve_api_key(client: httpx.Client, access_token: str, path: Path) -> str:
 def load_manifest(seed_root: Path) -> tuple[dict[str, Any], Path]:
     manifest_path = seed_root / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != 2 or not isinstance(manifest.get("files"), list):
+    if manifest.get("schema_version") != 3 or not isinstance(manifest.get("files"), list):
         raise RuntimeError("Unsupported or invalid deterministic media manifest")
     return manifest, manifest_path
+
+
+def current_user_id(client: httpx.Client, access_token: str) -> str:
+    response = client.get(
+        "/api/users/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    response.raise_for_status()
+    user_id = response.json().get("id")
+    if not isinstance(user_id, str) or not user_id:
+        raise RuntimeError("Immich current-user response did not contain an ID")
+    return user_id
+
+
+def reconcile_external_libraries(
+    client: httpx.Client,
+    api_key: str,
+    owner_id: str,
+    relationships: dict[str, Any],
+) -> list[dict[str, str]]:
+    configured = relationships.get("external_libraries")
+    if not isinstance(configured, list) or not configured:
+        raise RuntimeError("Media manifest external libraries must be a non-empty list")
+
+    headers = {"x-api-key": api_key}
+    response = client.get("/api/libraries", headers=headers)
+    response.raise_for_status()
+    existing = {
+        library.get("name"): library
+        for library in response.json()
+        if isinstance(library, dict) and isinstance(library.get("name"), str)
+    }
+    resolved: list[dict[str, str]] = []
+    for fixture in configured:
+        if not isinstance(fixture, dict):
+            raise RuntimeError("Media manifest contains an invalid external library")
+        name = fixture.get("name")
+        import_path = fixture.get("import_path")
+        if not isinstance(name, str) or not isinstance(import_path, str):
+            raise RuntimeError("Media manifest contains invalid external library metadata")
+        current = existing.get(name)
+        if current is None:
+            created = client.post(
+                "/api/libraries",
+                headers=headers,
+                json={
+                    "ownerId": owner_id,
+                    "name": name,
+                    "importPaths": [import_path],
+                    "exclusionPatterns": [],
+                },
+            )
+            created.raise_for_status()
+            current = created.json()
+        library_id = current.get("id") if isinstance(current, dict) else None
+        if not isinstance(library_id, str):
+            raise RuntimeError(f"Immich external library {name!r} did not provide an ID")
+        updated = client.put(
+            f"/api/libraries/{library_id}",
+            headers=headers,
+            json={
+                "name": name,
+                "importPaths": [import_path],
+                "exclusionPatterns": [],
+            },
+        )
+        updated.raise_for_status()
+        scanned = client.post(f"/api/libraries/{library_id}/scan", headers=headers)
+        scanned.raise_for_status()
+        resolved.append({"id": library_id, "name": name})
+    return resolved
+
+
+def wait_for_external_assets(
+    client: httpx.Client,
+    api_key: str,
+    libraries: list[dict[str, str]],
+    expected_total: int,
+    timeout_seconds: int = 180,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    headers = {"x-api-key": api_key}
+    while time.monotonic() < deadline:
+        total = 0
+        for library in libraries:
+            response = client.get(
+                f"/api/libraries/{library['id']}/statistics",
+                headers=headers,
+            )
+            response.raise_for_status()
+            total += int(response.json().get("total", 0))
+        if total >= expected_total:
+            return
+        time.sleep(1)
+    raise RuntimeError("Immich did not import the expected external-library assets")
+
+
+def wait_for_queues(
+    client: httpx.Client,
+    api_key: str,
+    queue_names: set[str],
+    timeout_seconds: int = 180,
+    settle_seconds: float = 1,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    headers = {"x-api-key": api_key}
+    quiet_since: float | None = None
+    while time.monotonic() < deadline:
+        response = client.get("/api/jobs", headers=headers)
+        response.raise_for_status()
+        queues = response.json()
+        busy = False
+        for name in queue_names:
+            queue = queues.get(name, {}) if isinstance(queues, dict) else {}
+            counts = queue.get("jobCounts", {}) if isinstance(queue, dict) else {}
+            if sum(int(counts.get(key, 0)) for key in ("active", "waiting", "delayed")):
+                busy = True
+                break
+        now = time.monotonic()
+        if busy:
+            quiet_since = None
+        elif quiet_since is None:
+            quiet_since = now
+        elif now - quiet_since >= settle_seconds:
+            return
+        time.sleep(0.5)
+    raise RuntimeError(f"Immich queues did not become idle: {sorted(queue_names)}")
+
+
+def run_queue(client: httpx.Client, api_key: str, name: str) -> None:
+    response = client.put(
+        f"/api/jobs/{name}",
+        headers={"x-api-key": api_key},
+        json={"command": "start", "force": True},
+    )
+    response.raise_for_status()
+
+
+def mixed_duplicate_group_count(client: httpx.Client, api_key: str) -> int:
+    response = client.get("/api/duplicates", headers={"x-api-key": api_key})
+    response.raise_for_status()
+    count = 0
+    for group in response.json():
+        assets = group.get("assets", []) if isinstance(group, dict) else []
+        source_kinds = {
+            "external" if asset.get("libraryId") is not None else "upload"
+            for asset in assets
+            if isinstance(asset, dict)
+        }
+        if source_kinds == {"upload", "external"}:
+            count += 1
+    return count
+
+
+def wait_for_mixed_duplicate_groups(
+    client: httpx.Client,
+    api_key: str,
+    timeout_seconds: int = 180,
+) -> int:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        count = mixed_duplicate_group_count(client, api_key)
+        if count:
+            return count
+        time.sleep(1)
+    raise RuntimeError("Immich did not produce an upload/external duplicate group")
 
 
 def upload_assets(
@@ -497,26 +663,63 @@ def main() -> None:
     source_files = int(expected.get("source_files", 0))
     expected_tags = int(expected.get("tags", 0))
     expected_tagged_assets = int(expected.get("tagged_assets", 0))
-    if min(expected_assets, source_files, expected_tags, expected_tagged_assets) <= 0:
+    expected_external_assets = int(expected.get("external_assets", 0))
+    if min(
+        expected_assets,
+        source_files,
+        expected_tags,
+        expected_tagged_assets,
+        expected_external_assets,
+    ) <= 0:
         raise RuntimeError("Media manifest has invalid expected counts")
 
     with httpx.Client(base_url=base_url, timeout=60, follow_redirects=False) as client:
         wait_for_immich(client)
         access_token = login(client, email, password, name)
         api_key = resolve_api_key(client, access_token, api_key_path)
+        owner_id = current_user_id(client, access_token)
         upload_result = upload_assets(client, api_key, seed_root, manifest)
         resolved_ids = upload_result["asset_ids"]
         assert isinstance(resolved_ids, dict)
+        external_libraries = reconcile_external_libraries(
+            client,
+            api_key,
+            owner_id,
+            relationships,
+        )
+        wait_for_external_assets(
+            client,
+            api_key,
+            external_libraries,
+            expected_external_assets,
+        )
+        wait_for_queues(
+            client,
+            api_key,
+            {"library", "metadataExtraction", "thumbnailGeneration"},
+        )
+        run_queue(client, api_key, "smartSearch")
+        wait_for_queues(client, api_key, {"smartSearch"}, settle_seconds=3)
+        run_queue(client, api_key, "duplicateDetection")
+        wait_for_queues(client, api_key, {"duplicateDetection"}, settle_seconds=3)
+        mixed_duplicate_groups = wait_for_mixed_duplicate_groups(client, api_key)
         album_count = reconcile_albums(client, api_key, relationships, resolved_ids)
         stack_count = reconcile_stacks(client, api_key, relationships, resolved_ids)
         tag_counts = reconcile_tags(client, api_key, relationships, resolved_ids)
         state_counts = reconcile_asset_states(client, api_key, relationships, resolved_ids)
         statistics = asset_statistics(client, api_key)
 
-    if statistics["total"] < expected_assets:
-        raise RuntimeError("Immich asset count is smaller than the deterministic seed")
-    if clean_reset and statistics["total"] != expected_assets:
-        raise RuntimeError("A clean reset did not produce the exact deterministic asset count")
+    expected_total_assets = expected_assets + expected_external_assets
+    if statistics["total"] < expected_total_assets:
+        raise RuntimeError(
+            "Immich asset count is smaller than the deterministic seed: "
+            f"received {statistics['total']}, expected at least {expected_total_assets}"
+        )
+    if clean_reset and statistics["total"] != expected_total_assets:
+        raise RuntimeError(
+            "A clean reset did not produce the exact deterministic asset count: "
+            f"received {statistics['total']}, expected {expected_total_assets}"
+        )
     if tag_counts["tags"] != expected_tags:
         raise RuntimeError("Immich tag count does not match the deterministic manifest")
     if tag_counts["tagged_assets"] != expected_tagged_assets:
@@ -529,7 +732,7 @@ def main() -> None:
         "clean_reset": clean_reset,
         "manifest_sha256": manifest_hash,
         "source_files": source_files,
-        "expected_seed_assets": expected_assets,
+        "expected_seed_assets": expected_total_assets,
         "immich_assets": statistics,
         "upload_result": {
             "created": upload_result["created"],
@@ -538,6 +741,9 @@ def main() -> None:
         "fixture_relations": {
             "albums": album_count,
             "stacks": stack_count,
+            "external_libraries": len(external_libraries),
+            "external_assets": expected_external_assets,
+            "mixed_duplicate_groups": mixed_duplicate_groups,
             **tag_counts,
             **state_counts,
         },

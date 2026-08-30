@@ -21,17 +21,30 @@ PixelFactory = Callable[[int, int], Pixel]
 # Generated once with Pillow from a 32x24 solid RGB image. Keeping the bytes
 # inline preserves the generator's standard-library-only runtime contract.
 HEALTHY_JPEG = base64.b64decode(
-    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsN"
-    "DhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQU"
-    "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAYACADASIAAhEBAxEB/8QA"
-    "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIh"
-    "MUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVW"
-    "V1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
-    "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQF"
-    "BgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAV"
-    "YnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
-    "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq"
-    "8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDCooor+gD8HCiiigAooooAKKKKAP/Z"
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8Q"
+    "EBEQCgwSExIQEw8QEBD/2wBDAQMDAwQDBAgEBAgQCwkLEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ"
+    "EBAQEBAQEBD/wAARCABAAGADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUF"
+    "BAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVW"
+    "V1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi"
+    "4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAEC"
+    "AxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVm"
+    "Z2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq"
+    "8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD5zh0//Zq7Dp/tWxFp/wDs1dh0/wD2a/YqmMPzPB4/zMaLT/8AZq7Fp/tWzDp/+zV2HT/9"
+    "muCpjD6vB4/zMaLT/wDZq7Dp/wDs1sRaf/s1dh0//ZrhqYw+qweP8zGi0/8A2auw6f8A7NbMWn+1XYtP/wBmuGpjD6vB4/zMaHT/"
+    "APZq7Fp/+zWxFp/tV2HT/wDZrgqYzzPq8Hj/ADMaLT/9mrsWn/7NbMOn/wCzV2HT/wDZrhqYw+qweP8AM8Yi0/8A2auw6f8A7NbE"
+    "On/7NXYtP/2a96pjD/PXB4/zOeuLd7aJZI0UksByPY0kU1z/AM8o/wAj/jXRajp/+jJ8v8Y/karQ6f8A7NfjXGXE2YYHMnRw9Zxj"
+    "ZaI+4yvFwlBNlOGa5/55R/kf8auwzXP/ADyi/I/41bh0/wD2auxaf/s18XU4yzf/AKCJH2ODxNPTQtw6f/s1ch0//ZrZh0//AGau"
+    "xaf/ALNft1TGHr4PH+ZjQ6f/ALNXYdP/ANmtmLT/APZq5Fp/+zXBUxh9Vg8f5mPFp/8As1ci0/2rZi0//Zq7Dp/+zXDUxh9Xg8f5"
+    "njEWn+1XYtP/ANmtmHT/APZq5Fp/+zXu1MYf56YPH7anM6jp/wDoyfL/ABj+RqtFp/8As11+oaf/AKMny/xj+RqtDp/+zX4Px7jP"
+    "+FeX+GJ95lWP/drUxotP9quw6f8A7NbMWn/7NXIdP/2a+BqYw+yweP21LcWn/wCzVyLT/wDZrZi0/wD2auw6f/s1/RdTGHpYPH7a"
+    "mNFp/wDs1dh0/wBq2YdP/wBmrkOn/wCzXBUxh9Xg8ftqY8On/wCzVyHT/wDZrZh0/wD2auxaf/s1w1MYfVYPH7anjEOn/wCzV2LT"
+    "/wDZrzSL9rH9nT/ooX/lIvv/AIzVyH9rH9nT/ooX/lIvv/jNfdVMkzz/AKA6v/guf+R/DGD4c4j0/wBgr/8Agqp/8ieizaN9qjEe"
+    "duG3ZxmnQ+F/+m//AI5/9euFh/ax/Z04/wCLhf8AlIvv/jNXYf2sf2dP+ihf+Ui+/wDjNfLZlwFicyrOvisvqyltfkqrb0sj6/AZ"
+    "FxNBJRwNf/wVP/5E7qHwv/03/wDHP/r1ch8L/wDTf/xz/wCvXDRftY/s6f8ARQv/ACkX3/xmrkX7WH7On/RQv/KRff8AxmvFqeGb"
+    "/wChbV/8BrH1uDyXijT/AGGv/wCCZ/8AyJ6ZDp/+zV2LT/8AZrzOH9rD9nT/AKKF/wCUi+/+M1di/aw/Z0/6KF/5SL7/AOM17FTJ"
+    "M8/6A6v/AILn/kfSYPhziPT/AGCv/wCCqn/yJ6XFp/tV2LT/APZrzSH9rH9nT/ooX/lIvv8A4zVyH9rH9nT/AKKF/wCUi+/+M1wV"
+    "Mkzz/oDq/wDguf8AkfV4PhziPT/YK/8A4Kqf/InpkWn+1XYtP/2a8zi/ax/Z0/6KF/5SL7/4zV2H9rH9nT/ooX/lIvv/AIzXDUyT"
+    "PP8AoDq/+C5/5H1eD4c4j0/2Cv8A+Cqn/wAif//Z"
 )
 
 
@@ -195,9 +208,13 @@ def generate(output: Path) -> dict[str, object]:
     if output in {Path("/"), Path.home().resolve(), Path.cwd().resolve()}:
         raise ValueError(f"Refusing unsafe output directory: {output}")
 
+    # These directories are wholly owned by this generator. Recreate all of
+    # them so renamed fixtures cannot linger and become unexpected Immich
+    # external-library assets on the next deterministic reset.
     images = output / "images"
-    if images.exists():
-        shutil.rmtree(images)
+    for generated_directory in (images, output / "external-library", output / "diagnostics"):
+        if generated_directory.exists():
+            shutil.rmtree(generated_directory)
     images.mkdir(parents=True, exist_ok=True)
 
     payloads: list[tuple[str, bytes, str, int, int, bool]] = []
@@ -303,8 +320,8 @@ def generate(output: Path) -> dict[str, object]:
                 "images/duplicate-cases/healthy-reference.jpg",
                 HEALTHY_JPEG,
                 "duplicate-integrity-reference",
-                32,
-                24,
+                96,
+                64,
                 False,
             ),
             (
@@ -351,11 +368,11 @@ def generate(output: Path) -> dict[str, object]:
             False,
         ),
         (
-            "external-library/integrity/healthy-with-trailing-data.jpg",
-            HEALTHY_JPEG + b"COMPANION-DEMO-TRAILING-DATA",
-            "cross-source-integrity-warning",
-            32,
-            24,
+            "external-library/integrity/base-scene-with-trailing-data.png",
+            base + b"COMPANION-DEMO-TRAILING-DATA",
+            "cross-source-integrity-malformed",
+            192,
+            128,
             False,
         ),
         (
@@ -557,12 +574,12 @@ def generate(output: Path) -> dict[str, object]:
                     "expected_integrity": "healthy",
                 },
                 {
-                    "case": "decodable-jpeg-trailing-data",
-                    "upload_path": "images/duplicate-cases/healthy-reference.jpg",
-                    "external_path": "external-library/integrity/healthy-with-trailing-data.jpg",
+                    "case": "decodable-png-trailing-data",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/integrity/base-scene-with-trailing-data.png",
                     "expected_byte_relation": "different",
                     "expected_pixel_relation": "equal",
-                    "expected_integrity": "warning",
+                    "expected_integrity": "malformed",
                 },
                 {
                     "case": "same-filename-different-content",

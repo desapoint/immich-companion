@@ -63,6 +63,30 @@ def test_jpeg_trailing_bytes_are_counted_without_affecting_hashes() -> None:
     assert result.trailing_byte_count == 8
 
 
+@pytest.mark.parametrize("chunks", [[1000], [1] * 32, [7, 4, 3, 2, 1]])
+def test_png_trailing_bytes_are_detected_across_chunk_boundaries(chunks: list[int]) -> None:
+    payload = b"\x89PNG\r\n\x1a\n" + b"payload" + b"\x00\x00\x00\x00IEND\xaeB\x60\x82"
+
+    healthy = analyze(payload, chunks, mime="image/png")
+    trailing = analyze(payload + b"trailing", chunks, mime="image/png")
+
+    assert healthy.classification == "healthy"
+    assert healthy.structurally_valid is True
+    assert healthy.trailing_byte_count == 0
+    assert trailing.classification == "malformed"
+    assert trailing.structurally_valid is False
+    assert trailing.trailing_byte_count == 8
+    assert trailing.issues == ("png_trailing_bytes",)
+
+
+def test_png_without_iend_is_malformed() -> None:
+    result = analyze(b"\x89PNG\r\n\x1a\npayload", [1] * 15, mime="image/png")
+
+    assert result.classification == "malformed"
+    assert result.structurally_valid is False
+    assert result.issues == ("png_missing_iend",)
+
+
 @pytest.mark.parametrize(
     ("payload", "issue"),
     [

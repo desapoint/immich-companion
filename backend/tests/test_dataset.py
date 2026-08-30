@@ -30,8 +30,13 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
 
     manifest = generator.generate(first)
     generator.generate(second)
+    stale_external = first / "external-library" / "retired-fixture.jpg"
+    stale_external.write_bytes(b"retired")
+    regenerated = generator.generate(first)
 
     assert (first / "manifest.json").read_bytes() == (second / "manifest.json").read_bytes()
+    assert regenerated == manifest
+    assert not stale_external.exists()
     for record in manifest["files"]:
         assert (first / record["path"]).read_bytes() == (second / record["path"]).read_bytes()
     for record in manifest["external_files"]:
@@ -63,7 +68,7 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
     assert set(duplicate_groups) == {
         "byte-perfect-cross-source",
         "pixel-identical-different-bytes",
-        "decodable-jpeg-trailing-data",
+        "decodable-png-trailing-data",
         "same-filename-different-content",
         "same-filesize-different-content",
         "similar-brightness-darker",
@@ -111,16 +116,17 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
     assert (first / same_size["upload_path"]).stat().st_size == (
         first / same_size["external_path"]
     ).stat().st_size
-    trailing = duplicate_groups["decodable-jpeg-trailing-data"]
+    trailing = duplicate_groups["decodable-png-trailing-data"]
     assert (first / trailing["external_path"]).read_bytes().endswith(
         b"COMPANION-DEMO-TRAILING-DATA"
     )
     trailing_bytes = (first / trailing["external_path"]).read_bytes()
-    analyzer = FileIntegrityAnalyzer("image/jpeg", None)
+    analyzer = FileIntegrityAnalyzer("image/png", None)
     analyzer.update(trailing_bytes)
     integrity = analyzer.finalize()
     decoded = decode_image(io.BytesIO(trailing_bytes), integrity.detected_format)
-    assert integrity.classification == "warning"
+    assert integrity.classification == "malformed"
+    assert integrity.structurally_valid is False
     assert integrity.trailing_byte_count == len(b"COMPANION-DEMO-TRAILING-DATA")
     assert decoded.valid is True
     assert {
