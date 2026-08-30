@@ -360,6 +360,7 @@
   .page-intro p { max-width: 44rem; margin: 0; color: var(--color-ink-muted); line-height: 1.65; }
   .controls { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.2fr) auto auto minmax(7rem, auto); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .apply-rules { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
+  .apply-rules:hover:not(:disabled) { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: color-mix(in srgb, var(--color-accent-strong) 88%, black); }
   .analysis-state { display: grid; min-height: 2.45rem; align-content: center; gap: .12rem; padding: .35rem .65rem; border-left: 1px solid var(--color-border-subtle); }
   .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
   .analysis-state strong { font-size: .72rem; }
