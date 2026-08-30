@@ -365,9 +365,13 @@ export interface AssetIntegrityReport {
   byte_size: number;
   sha1_hex: string;
   sha256_hex: string;
-  detected_format: 'jpeg' | 'other';
+  detected_format: 'jpeg' | 'heic' | 'heif' | 'avif' | 'png' | 'webp' | 'gif' | 'tiff' | 'unknown';
+  format_matches_declared: boolean | null;
   classification: AssetIntegrityClassification;
   structurally_valid: boolean | null;
+  container_valid: boolean | null;
+  decode_supported: boolean;
+  decode_valid: boolean | null;
   jpeg_eoi_offset: number | null;
   trailing_byte_count: number;
   immich_checksum_match: boolean | null;

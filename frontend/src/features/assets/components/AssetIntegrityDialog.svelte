@@ -22,7 +22,7 @@
   const percent = $derived(task?.progress.percent ?? null);
   const progressWidth = $derived(`${Math.max(0, Math.min(100, percent ?? 0))}%`);
   const classificationLabel = $derived(({
-    healthy: 'Healthy JPEG structure',
+    healthy: 'Healthy file structure',
     warning: 'Integrity warning',
     malformed: 'Malformed file structure',
     hash_only: 'Hashes calculated',
@@ -37,7 +37,20 @@
     jpeg_unexpected_soi: 'The JPEG contains an unexpected second start marker.',
     jpeg_unexpected_data_between_markers: 'Unexpected bytes occur between JPEG segments.',
     immich_checksum_mismatch: 'The calculated SHA-1 does not match Immich\'s checksum.',
+    mime_format_mismatch: 'The detected file format does not match Immich\'s MIME type.',
   };
+
+  const formatLabels = {
+    jpeg: 'JPEG',
+    heic: 'HEIC',
+    heif: 'HEIF',
+    avif: 'AVIF',
+    png: 'PNG',
+    webp: 'WebP',
+    gif: 'GIF',
+    tiff: 'TIFF',
+    unknown: 'Unknown / hash only',
+  } as const;
 </script>
 
 <Dialog
@@ -86,10 +99,25 @@
   {:else if report}
     <dl>
       <div><dt>Size</dt><dd>{formatAssetBytes(report.byte_size)}</dd></div>
-      <div><dt>Detected format</dt><dd>{report.detected_format === 'jpeg' ? 'JPEG' : 'Other / hash only'}</dd></div>
+      <div><dt>Detected format</dt><dd>{formatLabels[report.detected_format]}</dd></div>
+      {#if report.format_matches_declared !== null}
+        <div><dt>Declared format</dt><dd>{report.format_matches_declared ? 'Matches content' : 'Does not match content'}</dd></div>
+      {/if}
       {#if report.structurally_valid !== null}
         <div><dt>JPEG structure</dt><dd>{report.structurally_valid ? 'Valid' : 'Malformed'}</dd></div>
       {/if}
+      <div>
+        <dt>Full decode</dt>
+        <dd>
+          {#if !report.decode_supported}
+            Not supported by this analyzer
+          {:else if report.decode_valid === null}
+            Not attempted
+          {:else}
+            {report.decode_valid ? 'Successful' : 'Failed'}
+          {/if}
+        </dd>
+      </div>
       {#if report.jpeg_eoi_offset !== null}
         <div><dt>JPEG end offset</dt><dd>{report.jpeg_eoi_offset.toLocaleString()} bytes</dd></div>
       {/if}

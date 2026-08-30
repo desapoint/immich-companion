@@ -8,11 +8,57 @@ import hashlib
 from dataclasses import dataclass
 from typing import Literal
 
-ANALYZER_VERSION = 1
+ANALYZER_VERSION = 2
 JPEG_MIME_TYPES = frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})
+FORMAT_MIME_TYPES: dict[str, frozenset[str]] = {
+    "jpeg": JPEG_MIME_TYPES,
+    "heic": frozenset({"image/heic", "image/heic-sequence"}),
+    "heif": frozenset({"image/heif", "image/heif-sequence"}),
+    "avif": frozenset({"image/avif", "image/avif-sequence"}),
+    "png": frozenset({"image/png"}),
+    "webp": frozenset({"image/webp"}),
+    "gif": frozenset({"image/gif"}),
+    "tiff": frozenset({"image/tiff", "image/x-tiff"}),
+}
+_SIGNATURE_PREFIX_BYTES = 64
 
 IntegrityClassification = Literal["healthy", "warning", "malformed", "hash_only"]
-DetectedFormat = Literal["jpeg", "other"]
+DetectedFormat = Literal["jpeg", "heic", "heif", "avif", "png", "webp", "gif", "tiff", "unknown"]
+
+
+def detect_file_format(prefix: bytes) -> DetectedFormat:
+    """Identify supported containers from a small content prefix."""
+
+    if prefix.startswith(b"\xff\xd8"):
+        return "jpeg"
+    if prefix.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if len(prefix) >= 12 and prefix[:4] == b"RIFF" and prefix[8:12] == b"WEBP":
+        return "webp"
+    if prefix.startswith((b"GIF87a", b"GIF89a")):
+        return "gif"
+    if prefix.startswith((b"II*\x00", b"MM\x00*")):
+        return "tiff"
+    if len(prefix) >= 12 and prefix[4:8] == b"ftyp":
+        brands = {prefix[8:12]}
+        brands.update(prefix[offset : offset + 4] for offset in range(16, len(prefix) - 3, 4))
+        if brands & {b"avif", b"avis"}:
+            return "avif"
+        if brands & {b"heic", b"heix", b"hevc", b"hevx"}:
+            return "heic"
+        if brands & {b"mif1", b"msf1", b"heim", b"heis"}:
+            return "heif"
+    return "unknown"
+
+
+def format_matches_mime(detected_format: DetectedFormat, mime_type: str | None) -> bool | None:
+    """Compare known content identity with a known declared image MIME type."""
+
+    declared = (mime_type or "").lower().split(";", 1)[0].strip()
+    if detected_format == "unknown" or not declared.startswith("image/"):
+        return None
+    expected = FORMAT_MIME_TYPES.get(detected_format)
+    return declared in expected if expected is not None else None
 
 
 def decode_immich_sha1(value: str | None) -> bytes | None:
@@ -46,8 +92,12 @@ class FileIntegrityResult:
     sha1_hex: str
     sha256_hex: str
     detected_format: DetectedFormat
+    format_matches_declared: bool | None
     classification: IntegrityClassification
     structurally_valid: bool | None
+    container_valid: bool | None
+    decode_supported: bool
+    decode_valid: bool | None
     jpeg_eoi_offset: int | None
     trailing_byte_count: int
     immich_checksum_match: bool | None
@@ -192,15 +242,13 @@ class FileIntegrityAnalyzer:
     """Hash bytes and optionally inspect JPEG structure one chunk at a time."""
 
     def __init__(self, declared_mime_type: str | None, immich_checksum: str | None) -> None:
-        self._declared_jpeg = (declared_mime_type or "").lower() in JPEG_MIME_TYPES
+        self._declared_mime_type = declared_mime_type
         self._immich_sha1 = decode_immich_sha1(immich_checksum)
         self._sha1 = hashlib.sha1(usedforsecurity=False)
         self._sha256 = hashlib.sha256()
         self._size = 0
         self._prefix = bytearray()
-        self._jpeg: JpegStructureAnalyzer | None = (
-            JpegStructureAnalyzer() if self._declared_jpeg else None
-        )
+        self._jpeg: JpegStructureAnalyzer | None = None
 
     @property
     def byte_size(self) -> int:
@@ -213,7 +261,7 @@ class FileIntegrityAnalyzer:
         self._sha256.update(chunk)
         self._size += len(chunk)
 
-        needed = max(0, 2 - len(self._prefix))
+        needed = max(0, _SIGNATURE_PREFIX_BYTES - len(self._prefix))
         if needed:
             self._prefix.extend(chunk[:needed])
 
@@ -221,10 +269,12 @@ class FileIntegrityAnalyzer:
             self._jpeg.update(chunk)
             return
 
-        if len(self._prefix) == 2 and self._prefix == b"\xff\xd8":
+        if len(self._prefix) >= 2 and self._prefix[:2] == b"\xff\xd8":
             self._jpeg = JpegStructureAnalyzer()
-            self._jpeg.update(bytes(self._prefix))
-            self._jpeg.update(chunk[needed:])
+            prefix_from_chunk = min(needed, len(chunk))
+            replayed_prefix = bytes(self._prefix)
+            self._jpeg.update(replayed_prefix)
+            self._jpeg.update(chunk[prefix_from_chunk:])
 
     def finalize(self) -> FileIntegrityResult:
         sha1_digest = self._sha1.digest()
@@ -235,18 +285,24 @@ class FileIntegrityAnalyzer:
         structurally_valid: bool | None = None
         eoi_offset: int | None = None
         trailing_bytes = 0
-        detected_format: DetectedFormat = "other"
+        detected_format = detect_file_format(bytes(self._prefix))
+        mime_matches = format_matches_mime(detected_format, self._declared_mime_type)
+        container_valid: bool | None = None
+        decode_supported = False
+        decode_valid: bool | None = None
 
         if self._jpeg is not None:
-            detected_format = "jpeg" if bytes(self._prefix[:2]) == b"\xff\xd8" else "other"
             structurally_valid, eoi_offset, trailing_bytes, jpeg_issues = self._jpeg.finalize()
+            container_valid = structurally_valid
             issues.extend(jpeg_issues)
+        if mime_matches is False:
+            issues.append("mime_format_mismatch")
         if checksum_match is False:
             issues.append("immich_checksum_mismatch")
 
         if structurally_valid is False:
             classification: IntegrityClassification = "malformed"
-        elif trailing_bytes or checksum_match is False:
+        elif trailing_bytes or checksum_match is False or mime_matches is False:
             classification = "warning"
         elif structurally_valid is True:
             classification = "healthy"
@@ -259,8 +315,12 @@ class FileIntegrityAnalyzer:
             sha1_hex=sha1_digest.hex(),
             sha256_hex=self._sha256.hexdigest(),
             detected_format=detected_format,
+            format_matches_declared=mime_matches,
             classification=classification,
             structurally_valid=structurally_valid,
+            container_valid=container_valid,
+            decode_supported=decode_supported,
+            decode_valid=decode_valid,
             jpeg_eoi_offset=eoi_offset,
             trailing_byte_count=trailing_bytes,
             immich_checksum_match=checksum_match,

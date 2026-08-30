@@ -17,6 +17,7 @@ from companion.duplicate_service import (
     CrossSourceDuplicateTaskHandler,
 )
 from companion.immich import ImmichAsset, ImmichDuplicateGroup
+from companion.integrity import ANALYZER_VERSION
 from companion.models import AssetIntegrityReportRecord
 from companion.task_coordinator import PermanentTaskError
 
@@ -82,7 +83,7 @@ def report(
 ) -> AssetIntegrityReportRecord:
     return AssetIntegrityReportRecord(
         asset_id=identifier,
-        analyzer_version=1,
+        analyzer_version=ANALYZER_VERSION,
         source_checksum="external-sha1-path-not-content",
         source_file_modified_at=modified,
         source_file_size_bytes=size,
@@ -91,8 +92,12 @@ def report(
         sha1_hex=sha1(content),
         sha256_hex=hashlib.sha256(content).hexdigest(),
         detected_format="jpeg",
+        format_matches_declared=True,
         classification="healthy",
         structurally_valid=True,
+        container_valid=True,
+        decode_supported=False,
+        decode_valid=None,
         jpeg_eoi_offset=len(content),
         trailing_byte_count=0,
         immich_checksum_match=None,

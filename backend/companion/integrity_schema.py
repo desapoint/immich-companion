@@ -21,8 +21,12 @@ class AssetIntegrityReport(BaseModel):
     sha1_hex: str
     sha256_hex: str
     detected_format: DetectedFormat
+    format_matches_declared: bool | None
     classification: IntegrityClassification
     structurally_valid: bool | None
+    container_valid: bool | None
+    decode_supported: bool
+    decode_valid: bool | None
     jpeg_eoi_offset: int | None
     trailing_byte_count: int
     immich_checksum_match: bool | None

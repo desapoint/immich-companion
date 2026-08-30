@@ -8,6 +8,7 @@ from uuid import UUID
 import pytest
 
 from companion.immich import ImmichAsset
+from companion.integrity import ANALYZER_VERSION
 from companion.integrity_repository import public_report, report_freshness
 from companion.integrity_schema import AssetIntegrityReport
 from companion.integrity_service import (
@@ -66,8 +67,12 @@ class FakeReports:
             sha1_hex=result.sha1_hex,
             sha256_hex=result.sha256_hex,
             detected_format=result.detected_format,
+            format_matches_declared=result.format_matches_declared,
             classification=result.classification,
             structurally_valid=result.structurally_valid,
+            container_valid=result.container_valid,
+            decode_supported=result.decode_supported,
+            decode_valid=result.decode_valid,
             jpeg_eoi_offset=result.jpeg_eoi_offset,
             trailing_byte_count=result.trailing_byte_count,
             immich_checksum_match=result.immich_checksum_match,
@@ -145,7 +150,7 @@ def task_status():
 def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
     return AssetIntegrityReportRecord(
         asset_id=current.id,
-        analyzer_version=1,
+        analyzer_version=ANALYZER_VERSION,
         source_checksum=current.checksum,
         source_file_modified_at=current.file_modified_at,
         source_file_size_bytes=4,
@@ -154,8 +159,12 @@ def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
         sha1_hex="0" * 40,
         sha256_hex="1" * 64,
         detected_format="jpeg",
+        format_matches_declared=True,
         classification="healthy",
         structurally_valid=True,
+        container_valid=True,
+        decode_supported=False,
+        decode_valid=None,
         jpeg_eoi_offset=4,
         trailing_byte_count=0,
         immich_checksum_match=None,
