@@ -5,6 +5,8 @@
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import type { SelectOption } from '../../../lib/types/ui';
   import GroupEvidencePills from './GroupEvidencePills.svelte';
   import {
     executeDuplicateResolution,
@@ -30,6 +32,12 @@
   let { onpreview }: Props = $props();
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
+  const keeperPolicyOptions: SelectOption[] = [
+    { value: 'most_recent', label: 'Most recently uploaded' },
+    { value: 'prefer_upload', label: 'Prefer uploads' },
+    { value: 'prefer_external', label: 'Prefer external files' },
+    { value: 'first', label: 'First Immich result' },
+  ];
   const defaultOptions: DuplicateAnalysisOptions = {
     keeper_policy: 'most_recent',
     external_library_ids: [],
@@ -226,14 +234,14 @@
   </header>
 
   <section class="controls" aria-label="Duplicate rules">
-    <label>Keeper rule
-      <select value={options.keeper_policy} onchange={(event) => setPolicy(event.currentTarget.value)} disabled={busy}>
-        <option value="most_recent">Most recently uploaded</option>
-        <option value="prefer_upload">Prefer uploads</option>
-        <option value="prefer_external">Prefer external files</option>
-        <option value="first">First Immich result</option>
-      </select>
-    </label>
+    <SelectField
+      id="duplicate-keeper-policy"
+      label="Keeper rule"
+      value={options.keeper_policy}
+      options={keeperPolicyOptions}
+      disabled={busy}
+      onchange={setPolicy}
+    />
     <label class="library-filter">External library IDs <input value={libraryFilter} oninput={(event) => libraryFilter = event.currentTarget.value} onblur={() => void load()} placeholder="Optional, comma-separated" disabled={busy} /></label>
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
     <div class="analysis-state">
@@ -334,7 +342,7 @@
   .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
   .analysis-state strong { font-size: .72rem; }
   label:not(.checkbox) { display: grid; gap: .35rem; color: var(--color-ink-muted); font-size: .72rem; font-weight: 760; }
-  select, input, button { min-height: 2.45rem; padding: .5rem .7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: inherit; }
+  input, button { min-height: 2.45rem; padding: .5rem .7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: inherit; }
   button { cursor: pointer; font-size: .75rem; font-weight: 780; }
   button:hover:not(:disabled) { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
   button:disabled { cursor: default; opacity: .5; }
