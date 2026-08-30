@@ -31,7 +31,7 @@
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
   const defaultOptions: DuplicateAnalysisOptions = {
-    keeper_policy: 'prefer_upload',
+    keeper_policy: 'most_recent',
     external_library_ids: [],
     verify_upload_streams: false,
   };
@@ -49,8 +49,9 @@
   let plan = $state.raw<DuplicateResolutionPlan | null>(null);
   let confirmOpen = $state(false);
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let selectionInitialized = false;
 
-  const exactGroups = $derived(result?.groups.filter((group) => group.eligible) ?? []);
+  const autoReadyGroups = $derived(result?.groups.filter((group) => group.auto_selected) ?? []);
   const selectedCount = $derived(selected.size);
 
   function configuredOptions(): DuplicateAnalysisOptions {
@@ -68,8 +69,14 @@
     error = null;
     try {
       result = await loadDuplicateGroups(configuredOptions());
-      const eligibleIds = new SvelteSet(result.groups.filter((group) => group.eligible).map((group) => group.duplicate_id));
+      const eligibleIds = new SvelteSet(result.groups
+        .filter((group) => group.auto_resolvable || (group.eligible && keeperOverrides[group.duplicate_id]))
+        .map((group) => group.duplicate_id));
       for (const id of selected) if (!eligibleIds.has(id)) selected.delete(id);
+      if (!selectionInitialized) {
+        for (const group of result.groups) if (group.auto_selected) selected.add(group.duplicate_id);
+        selectionInitialized = true;
+      }
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not load duplicate groups.';
     } finally {
@@ -95,6 +102,7 @@
           ? 'Duplicate candidates were verified.'
           : 'The reviewed duplicate batch completed.';
         selected.clear();
+        selectionInitialized = false;
         keeperOverrides = {};
         await load();
       } else {
@@ -126,16 +134,17 @@
   }
 
   function toggleAllEligible(): void {
-    if (selected.size === exactGroups.length) {
+    if (selected.size === autoReadyGroups.length) {
       selected.clear();
       return;
     }
     selected.clear();
-    for (const group of exactGroups) selected.add(group.duplicate_id);
+    for (const group of autoReadyGroups) selected.add(group.duplicate_id);
   }
 
   function setKeeper(group: ExactDuplicateGroup, assetId: string): void {
     keeperOverrides = { ...keeperOverrides, [group.duplicate_id]: assetId };
+    if (group.eligible) selected.add(group.duplicate_id);
   }
 
   function selectedKeeper(group: ExactDuplicateGroup): string | null {
@@ -151,6 +160,7 @@
       keeper_policy: options.keeper_policy,
       recommended_keeper_asset_id: group.keeper_asset_id,
       selected_keeper_asset_id: selectedKeeper(group),
+      recommendation_reason_codes: group.recommendation_reason_codes,
       members: group.members,
       initial_index: initialIndex,
     };
@@ -194,6 +204,8 @@
   function setPolicy(value: string): void {
     options.keeper_policy = value as DuplicateKeeperPolicy;
     keeperOverrides = {};
+    selected.clear();
+    selectionInitialized = false;
     void load();
   }
 
@@ -219,6 +231,7 @@
   <section class="controls" aria-label="Duplicate rules">
     <label>Keeper rule
       <select value={options.keeper_policy} onchange={(event) => setPolicy(event.currentTarget.value)} disabled={busy}>
+        <option value="most_recent">Most recently uploaded</option>
         <option value="prefer_upload">Prefer uploads</option>
         <option value="prefer_external">Prefer external files</option>
         <option value="first">First Immich result</option>
@@ -247,7 +260,7 @@
     </section>
 
     <div class="batch-bar">
-      <Checkbox checked={exactGroups.length > 0 && selectedCount === exactGroups.length} label="Select all exact groups" shape="circle" disabled={!exactGroups.length || busy} onchange={toggleAllEligible} />
+      <Checkbox checked={autoReadyGroups.length > 0 && selectedCount === autoReadyGroups.length} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
       <span>{selectedCount} selected</span>
       <button type="button" disabled={!selectedCount || busy} onclick={() => void reviewBatch()}>Review batch</button>
     </div>
@@ -262,8 +275,8 @@
           <article class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
-                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={!group.eligible || busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span></div>
+                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={(!group.auto_resolvable && !(group.eligible && keeperOverrides[group.duplicate_id])) || busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{group.auto_selected ? 'Auto ready' : group.eligible ? 'Choose keeper' : 'Needs review'}</span></div>
               </div>
               <p>{group.reason}</p>
             </header>
@@ -274,7 +287,7 @@
                     <button class="preview-button" type="button" aria-label={`Preview ${member.original_file_name}`} onclick={() => onpreview(previewRequest(group, memberIndex))}>
                       <img src={`/api/assets/${encodeURIComponent(member.id)}/thumbnail`} alt="" loading="lazy" />
                     </button>
-                    <button class="keeper-button" type="button" class:active={selectedKeeper(group) === member.id} disabled={!group.eligible || busy} aria-pressed={selectedKeeper(group) === member.id} aria-label={selectedKeeper(group) === member.id ? `${member.original_file_name} is the keeper` : `Keep ${member.original_file_name}`} onclick={() => setKeeper(group, member.id)}><Icon name="star" size=".92rem" /></button>
+                    <button class="keeper-button" type="button" class:active={selectedKeeper(group) === member.id} disabled={busy} aria-pressed={selectedKeeper(group) === member.id} aria-label={selectedKeeper(group) === member.id ? `${member.original_file_name} is the keeper` : `Choose ${member.original_file_name} as the manual keeper`} onclick={() => setKeeper(group, member.id)}><Icon name="star" size=".92rem" /></button>
                     <button class="view-button" type="button" aria-label={`View complete details for ${member.original_file_name}`} onclick={() => onpreview(previewRequest(group, memberIndex))}><Icon name="view" size=".95rem" /></button>
                     {#if selectedKeeper(group) === member.id}<span class="keeper-label">Keeper</span>{/if}
                   </div>
@@ -347,6 +360,7 @@
   .status.exact { color: var(--color-positive-ink); background: var(--color-positive-surface); }
   .status.unverified { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .status.mismatch, .status.ineligible { color: var(--color-negative-ink); background: var(--color-negative-surface); }
+  .workflow-status { color: var(--color-ink-muted); font-size: .6rem; font-weight: 760; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
   .member { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }
   .member.keeper { border-color: var(--color-accent-strong); box-shadow: inset 0 0 0 1px var(--color-accent-strong); }

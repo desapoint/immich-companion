@@ -397,9 +397,10 @@ export interface DuplicateReviewContext {
   status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
   reason: string | null;
   eligible: boolean;
-  keeper_policy: 'prefer_upload' | 'prefer_external' | 'first';
+  keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
+  recommendation_reason_codes: string[];
   members: DuplicateReviewMember[];
   current_integrity: AssetIntegrityState | null;
 }

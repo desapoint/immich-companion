@@ -47,6 +47,7 @@ def asset(
     filename: str,
     size: int = 4,
     modified: datetime = MODIFIED,
+    uploaded: datetime | None = None,
     offline: bool = False,
 ) -> ImmichAsset:
     return ImmichAsset.model_validate(
@@ -61,6 +62,7 @@ def asset(
             "checksum": checksum,
             "fileCreatedAt": MODIFIED.isoformat(),
             "fileModifiedAt": modified.isoformat(),
+            "createdAt": uploaded.isoformat() if uploaded is not None else None,
             "isOffline": offline,
             "exifInfo": {"fileSizeInByte": size},
         }
@@ -124,6 +126,11 @@ def test_same_file_across_sources_is_exact_with_different_names() -> None:
 
     assert result.groups[0].status == "exact"
     assert result.groups[0].keeper_asset_id == UPLOAD_1
+    assert result.groups[0].discovery_source == "immich_duplicate"
+    assert result.groups[0].classification == "exact_file"
+    assert result.groups[0].recommended_action == "resolve"
+    assert result.groups[0].auto_resolvable is True
+    assert result.groups[0].auto_selected is True
     assert {item.content_checksum for item in result.groups[0].members} == {sha1(content)}
 
 
@@ -167,6 +174,35 @@ def test_multiple_uploads_and_externals_form_one_exact_group() -> None:
 
     assert result.exact_group_count == 1
     assert len(result.groups[0].members) == 4
+    assert result.groups[0].recommended_primary_asset_id is None
+    assert result.groups[0].auto_selected is False
+    assert "multiple_equal_candidates" in result.groups[0].recommendation_reason_codes
+
+
+def test_newest_otherwise_equal_upload_is_recommended() -> None:
+    content = b"same"
+    result = assemble(
+        group(
+            asset(
+                UPLOAD_1,
+                external=False,
+                checksum=immich_sha1(content),
+                filename="old.jpg",
+                uploaded=MODIFIED,
+            ),
+            asset(
+                UPLOAD_2,
+                external=False,
+                checksum=immich_sha1(content),
+                filename="new.jpg",
+                uploaded=MODIFIED + timedelta(seconds=1),
+            ),
+        ),
+        [],
+    )
+
+    assert result.groups[0].recommended_primary_asset_id == UPLOAD_2
+    assert "most_recent_upload" in result.groups[0].recommendation_reason_codes
 
 
 def test_external_immich_checksum_is_never_used_as_content_sha1() -> None:
@@ -387,4 +423,37 @@ async def test_review_plan_applies_policy_and_explicit_keeper_override() -> None
     assert plan.group_count == 1
     assert plan.groups[0].keeper_asset_id == EXTERNAL_1
     assert plan.groups[0].trash_asset_ids == [UPLOAD_1]
-    assert actions.created["options"]["keeper_policy"] == "prefer_upload"
+    assert actions.created["options"]["keeper_policy"] == "most_recent"
+
+
+@pytest.mark.asyncio
+async def test_manual_keeper_makes_an_ambiguous_exact_group_plannable() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(UPLOAD_2, external=False, checksum=immich_sha1(content), filename="two.jpg"),
+    )
+    actions = FakeActions()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([]),
+        actions,
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    result = await service.result()
+    assert result.groups[0].eligible is True
+    assert result.groups[0].auto_resolvable is False
+
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            duplicate_ids=[GROUP_ID],
+            keeper_overrides={GROUP_ID: UPLOAD_2},
+        )
+    )
+
+    assert plan.groups[0].keeper_asset_id == UPLOAD_2
+    assert plan.groups[0].trash_asset_ids == [UPLOAD_1]

@@ -22,9 +22,10 @@
     status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
     reason: string | null;
     eligible: boolean;
-    keeper_policy: 'prefer_upload' | 'prefer_external' | 'first';
+    keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
     recommended_keeper_asset_id: string | null;
     selected_keeper_asset_id: string | null;
+    recommendation_reason_codes: string[];
     members: Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
       content_checksum: string | null;
@@ -86,6 +87,7 @@
     keeper_policy: review.keeper_policy,
     recommended_keeper_asset_id: review.recommended_keeper_asset_id,
     selected_keeper_asset_id: review.selected_keeper_asset_id,
+    recommendation_reason_codes: review.recommendation_reason_codes,
     members: members.map((member) => ({
       id: member.id,
       filename: member.original_file_name,

@@ -1,4 +1,4 @@
-export type DuplicateKeeperPolicy = 'prefer_upload' | 'prefer_external' | 'first';
+export type DuplicateKeeperPolicy = 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
 
 export interface DuplicateAnalysisOptions {
@@ -15,6 +15,7 @@ export interface DuplicateMember {
   original_mime_type: string | null;
   file_size_bytes: number | null;
   file_modified_at: string;
+  uploaded_at: string | null;
   is_offline: boolean;
   immich_url: string | null;
   verification: 'matching' | 'mismatch' | 'unverified';
@@ -23,9 +24,19 @@ export interface DuplicateMember {
 
 export interface ExactDuplicateGroup {
   duplicate_id: string;
+  group_id: string;
+  discovery_source: 'immich_duplicate' | 'companion_similarity';
+  classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';
   status: DuplicateGroupStatus;
   reason: string | null;
   keeper_asset_id: string | null;
+  recommended_action: 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+  recommended_primary_asset_id: string | null;
+  recommendation_reason_codes: string[];
+  auto_resolvable: boolean;
+  auto_selected: boolean;
+  action_source: 'automatic' | 'manual' | 'none';
+  primary_source: 'automatic' | 'manual' | 'none';
   members: DuplicateMember[];
   eligible: boolean;
 }
@@ -38,6 +49,7 @@ export interface DuplicatePreviewRequest {
   keeper_policy: DuplicateKeeperPolicy;
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
+  recommendation_reason_codes: string[];
   members: DuplicateMember[];
   initial_index: number;
 }

@@ -35,6 +35,7 @@
   );
   const automaticRuleRespected = $derived(
     duplicateContext !== null
+      && duplicateContext.recommended_keeper_asset_id !== null
       && duplicateContext.selected_keeper_asset_id === duplicateContext.recommended_keeper_asset_id,
   );
 
@@ -46,6 +47,7 @@
   }
 
   function keeperPolicyLabel(value: DuplicateReviewContext['keeper_policy']): string {
+    if (value === 'most_recent') return 'Most recently uploaded';
     if (value === 'prefer_upload') return 'Prefer Immich uploads';
     if (value === 'prefer_external') return 'Prefer external files';
     return 'Keep first Immich result';
@@ -87,9 +89,10 @@
         <div><dt>Matching type</dt><dd>{duplicateContext.status === 'exact' ? 'Byte-exact content' : duplicateContext.status}</dd></div>
         <div><dt>Batch eligible</dt><dd>{duplicateContext.eligible ? 'Yes' : 'No'}</dd></div>
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
-        <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{automaticRuleRespected ? 'Yes' : 'No — manually overridden'}</dd></div>
-        <div><dt>This copy</dt><dd>{duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected keeper' : 'Will be removed'}</dd></div>
-        <div><dt>Rule recommendation</dt><dd>{duplicateContext.recommended_keeper_asset_id === asset.id ? 'Keep this copy' : 'Keep another copy'}</dd></div>
+        <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{duplicateContext.recommended_keeper_asset_id === null ? 'No unique recommendation' : automaticRuleRespected ? 'Yes' : 'No — manually overridden'}</dd></div>
+        <div><dt>This copy</dt><dd>{duplicateContext.selected_keeper_asset_id === null ? 'Undecided' : duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected keeper' : 'Will be removed'}</dd></div>
+        <div><dt>Rule recommendation</dt><dd>{duplicateContext.recommended_keeper_asset_id === null ? 'None — manual choice required' : duplicateContext.recommended_keeper_asset_id === asset.id ? 'Keep this copy' : 'Keep another copy'}</dd></div>
+        <div><dt>Decision reasons</dt><dd>{duplicateContext.recommendation_reason_codes.join(', ') || 'No automatic recommendation'}</dd></div>
       </dl>
 
       <h4>Current copy validation</h4>

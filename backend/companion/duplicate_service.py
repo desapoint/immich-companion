@@ -28,6 +28,14 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     ExactDuplicateGroup,
 )
+from companion.group_decision import (
+    CandidateGroup,
+    CandidateMember,
+    DiscoverySource,
+    GroupClassification,
+    ResolutionPolicy,
+    decide_group,
+)
 from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
@@ -62,16 +70,6 @@ def _options_key(options: DuplicateAnalysisOptions) -> str:
 def _plan_digest(groups: list[dict[str, Any]]) -> str:
     raw = json.dumps(groups, sort_keys=True, separators=(",", ":"))
     return sha256(raw.encode()).hexdigest()
-
-
-def _preferred_keeper(assets: list[ImmichAsset], policy: str) -> ImmichAsset:
-    if policy == "prefer_upload":
-        preferred = [asset for asset in assets if asset.library_id is None]
-    elif policy == "prefer_external":
-        preferred = [asset for asset in assets if asset.library_id is not None]
-    else:
-        preferred = []
-    return (preferred or assets)[0]
 
 
 def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
@@ -229,8 +227,43 @@ class CrossSourceDuplicateService:
                     status = "mismatch"
                     reason = "Immich grouped these assets, but their file contents differ."
 
-            keeper = _preferred_keeper(assets, options.keeper_policy) if assets else None
-            reference_hash = hashes.get(keeper.id) if keeper is not None else None
+            classification = (
+                GroupClassification.EXACT_FILE
+                if status == "exact"
+                else GroupClassification.MISMATCH
+                if status == "mismatch"
+                else GroupClassification.INELIGIBLE
+                if status == "ineligible"
+                else GroupClassification.UNAVAILABLE
+                if any(asset.is_offline for asset in assets)
+                else GroupClassification.UNVERIFIED
+            )
+            candidate = CandidateGroup(
+                group_id=f"immich:{group.duplicate_id}",
+                discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+                provider_group_id=group.duplicate_id,
+                classification=classification,
+                members=tuple(
+                    CandidateMember(
+                        asset_id=asset.id,
+                        source_kind=(
+                            "upload" if asset.library_id is None else "external"
+                        ),
+                        uploaded_at=asset.created_at,
+                        available=not asset.is_offline,
+                    )
+                    for asset in assets
+                ),
+            )
+            decision = decide_group(
+                candidate,
+                ResolutionPolicy(keeper_preference=options.keeper_policy),
+            )
+            reference_hash = (
+                hashes.get(decision.recommended_primary_asset_id)
+                if decision.recommended_primary_asset_id is not None
+                else next((value for value in hashes.values() if value is not None), None)
+            )
             members = [
                 DuplicateMember(
                     id=asset.id,
@@ -240,6 +273,7 @@ class CrossSourceDuplicateService:
                     original_mime_type=asset.original_mime_type,
                     file_size_bytes=asset.file_size_bytes,
                     file_modified_at=asset.file_modified_at,
+                    uploaded_at=asset.created_at,
                     is_offline=asset.is_offline,
                     immich_url=immich.public_asset_url(asset.id) if immich is not None else None,
                     verification=(
@@ -256,9 +290,21 @@ class CrossSourceDuplicateService:
             public_groups.append(
                 ExactDuplicateGroup(
                     duplicate_id=group.duplicate_id,
+                    group_id=candidate.group_id,
+                    discovery_source=candidate.discovery_source.value,
+                    classification=candidate.classification.value,
                     status=status,
                     reason=reason,
-                    keeper_asset_id=keeper.id if keeper is not None else None,
+                    keeper_asset_id=decision.recommended_primary_asset_id,
+                    recommended_action=decision.recommended_action.value,
+                    recommended_primary_asset_id=decision.recommended_primary_asset_id,
+                    recommendation_reason_codes=[
+                        code.value for code in decision.recommendation_reason_codes
+                    ],
+                    auto_resolvable=decision.auto_resolvable,
+                    auto_selected=decision.auto_selected,
+                    action_source=decision.action_source.value,
+                    primary_source=decision.primary_source.value,
                     members=members,
                     eligible=status == "exact",
                 )
@@ -280,7 +326,7 @@ class CrossSourceDuplicateService:
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
         result = await self.result(request.options)
         selected = (
-            [group for group in result.groups if group.eligible]
+            [group for group in result.groups if group.auto_resolvable]
             if request.all_eligible
             else [group for group in result.groups if group.duplicate_id in request.duplicate_ids]
         )

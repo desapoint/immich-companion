@@ -8,15 +8,28 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
-DuplicateKeeperPolicy = Literal["prefer_upload", "prefer_external", "first"]
+DuplicateKeeperPolicy = Literal["most_recent", "prefer_upload", "prefer_external", "first"]
 DuplicateGroupStatus = Literal["exact", "unverified", "mismatch", "ineligible"]
 DuplicateMemberStatus = Literal["matching", "mismatch", "unverified"]
+DuplicateDiscoverySource = Literal["immich_duplicate", "companion_similarity"]
+DuplicateClassification = Literal[
+    "exact_file",
+    "exact_pixels",
+    "likely_same",
+    "similar",
+    "mismatch",
+    "unverified",
+    "unavailable",
+    "ineligible",
+]
+DuplicateGroupAction = Literal["resolve", "keep_all", "delete_all", "stack_all", "none"]
+DuplicateDecisionSource = Literal["automatic", "manual", "none"]
 
 
 class DuplicateAnalysisOptions(BaseModel):
     """Filters and keeper rule shared by analysis, review, and planning."""
 
-    keeper_policy: DuplicateKeeperPolicy = "prefer_upload"
+    keeper_policy: DuplicateKeeperPolicy = "most_recent"
     external_library_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     verify_upload_streams: bool = False
 
@@ -34,6 +47,7 @@ class DuplicateMember(BaseModel):
     original_mime_type: str | None
     file_size_bytes: int | None
     file_modified_at: datetime
+    uploaded_at: datetime | None = None
     is_offline: bool
     immich_url: str | None = None
     verification: DuplicateMemberStatus
@@ -42,9 +56,19 @@ class DuplicateMember(BaseModel):
 
 class ExactDuplicateGroup(BaseModel):
     duplicate_id: UUID
+    group_id: str
+    discovery_source: DuplicateDiscoverySource
+    classification: DuplicateClassification
     status: DuplicateGroupStatus
     reason: str | None = None
     keeper_asset_id: UUID | None = None
+    recommended_action: DuplicateGroupAction
+    recommended_primary_asset_id: UUID | None = None
+    recommendation_reason_codes: list[str] = Field(default_factory=list)
+    auto_resolvable: bool = False
+    auto_selected: bool = False
+    action_source: DuplicateDecisionSource = "none"
+    primary_source: DuplicateDecisionSource = "none"
     members: list[DuplicateMember]
     eligible: bool
 
