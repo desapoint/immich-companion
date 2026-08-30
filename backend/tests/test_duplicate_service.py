@@ -303,6 +303,23 @@ class FakeActions:
         )
 
 
+class FakeTasks:
+    def __init__(self):
+        self.submissions = []
+        self.task = None
+
+    async def find_active(self, *_args):
+        return self.task
+
+    async def submit(self, task_type, payload, **options):
+        self.submissions.append((task_type, payload, options))
+        self.task = SimpleNamespace(id=UPLOAD_2)
+        return self.task
+
+    async def start(self):
+        return None
+
+
 class FakeIntegrity:
     def __init__(self, *, unavailable: bool = False):
         self.calls: list[UUID] = []
@@ -323,6 +340,84 @@ class TaskContext:
 
     async def checkpoint(self, **payload):
         self.checkpoints.append(payload)
+
+
+@pytest.mark.asyncio
+async def test_review_automatically_queues_missing_external_evidence_once() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    tasks = FakeTasks()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([]),
+        FakeActions(),
+        tasks,
+        SimpleNamespace(),
+    )
+
+    first = await service.review()
+    second = await service.review()
+
+    assert first.analysis_pending_count == 1
+    assert first.analysis_task_id == UPLOAD_2
+    assert second.analysis_task_id == UPLOAD_2
+    assert len(tasks.submissions) == 1
+
+
+@pytest.mark.asyncio
+async def test_review_does_not_queue_current_or_offline_external_evidence() -> None:
+    content = b"same"
+    current_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    tasks = FakeTasks()
+    current_service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(current_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        tasks,
+        SimpleNamespace(),
+    )
+
+    current = await current_service.review()
+
+    assert current.analysis_pending_count == 0
+    assert current.analysis_task_id is None
+    assert tasks.submissions == []
+
+    offline_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(
+            EXTERNAL_1,
+            external=True,
+            checksum="path",
+            filename="two.jpg",
+            offline=True,
+        ),
+    )
+    offline_service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(offline_group),
+        FakeAssets(),
+        FakeReports([]),
+        FakeActions(),
+        tasks,
+        SimpleNamespace(),
+    )
+
+    offline = await offline_service.review()
+
+    assert offline.analysis_pending_count == 0
+    assert offline.analysis_task_id is None
+    assert tasks.submissions == []
 
 
 @pytest.mark.asyncio

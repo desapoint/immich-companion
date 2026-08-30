@@ -75,6 +75,8 @@ class ExactDuplicateGroup(BaseModel):
 
 class CrossSourceDuplicateResult(BaseModel):
     generated_at: datetime
+    analysis_task_id: UUID | None = None
+    analysis_pending_count: int = 0
     group_count: int
     exact_group_count: int
     unverified_group_count: int

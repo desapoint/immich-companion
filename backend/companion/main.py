@@ -1162,7 +1162,7 @@ def create_app(
     )
     async def cross_source_duplicate_result() -> CrossSourceDuplicateResult:
         try:
-            return await require_duplicate_service().result()
+            return await require_duplicate_service().review()
         except ImmichApiError as error:
             raise map_immich_error(error) from error
 
@@ -1174,7 +1174,7 @@ def create_app(
         request: DuplicateAnalysisOptions,
     ) -> CrossSourceDuplicateResult:
         try:
-            return await require_duplicate_service().result(request)
+            return await require_duplicate_service().review(request)
         except ImmichApiError as error:
             raise map_immich_error(error) from error
 

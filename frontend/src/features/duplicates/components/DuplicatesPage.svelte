@@ -6,7 +6,6 @@
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import {
-    analyzeDuplicateGroups,
     executeDuplicateResolution,
     loadDuplicateGroups,
     loadDuplicateTask,
@@ -68,7 +67,8 @@
     loading = true;
     error = null;
     try {
-      result = await loadDuplicateGroups(configuredOptions());
+      const loaded = await loadDuplicateGroups(configuredOptions());
+      result = loaded;
       const eligibleIds = new SvelteSet(result.groups
         .filter((group) => group.auto_resolvable || (group.eligible && keeperOverrides[group.duplicate_id]))
         .map((group) => group.duplicate_id));
@@ -76,6 +76,16 @@
       if (!selectionInitialized) {
         for (const group of result.groups) if (group.auto_selected) selected.add(group.duplicate_id);
         selectionInitialized = true;
+      }
+      if (
+        loaded.analysis_task_id
+        && (task?.id !== loaded.analysis_task_id || terminalStatuses.has(task.status))
+      ) {
+        task = await loadDuplicateTask(loaded.analysis_task_id);
+        if (!terminalStatuses.has(task.status)) {
+          busy = true;
+          schedulePoll(task.id, 'analysis');
+        }
       }
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not load duplicate groups.';
@@ -111,20 +121,6 @@
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not read task progress.';
-    }
-  }
-
-  async function analyze(): Promise<void> {
-    busy = true;
-    error = null;
-    message = null;
-    try {
-      const started = await analyzeDuplicateGroups(configuredOptions());
-      task = await loadDuplicateTask(started.task_id);
-      schedulePoll(started.task_id, 'analysis');
-    } catch (reason) {
-      busy = false;
-      error = reason instanceof Error ? reason.message : 'Could not start duplicate analysis.';
     }
   }
 
@@ -239,7 +235,10 @@
     </label>
     <label class="library-filter">External library IDs <input value={libraryFilter} oninput={(event) => libraryFilter = event.currentTarget.value} onblur={() => void load()} placeholder="Optional, comma-separated" disabled={busy} /></label>
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
-    <button class="primary" type="button" disabled={busy} onclick={() => void analyze()}>{busy && task?.status !== 'completed' ? 'Working…' : 'Verify candidates'}</button>
+    <div class="analysis-state">
+      <span>Candidate analysis</span>
+      <strong>{result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : 'Current'}</strong>
+    </div>
   </section>
 
   {#if task && !terminalStatuses.has(task.status)}
@@ -328,13 +327,15 @@
   .page-intro span { color: var(--color-accent-strong); font-size: .68rem; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
   h1 { margin: .28rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.055em; line-height: .98; }
   .page-intro p { max-width: 44rem; margin: 0; color: var(--color-ink-muted); line-height: 1.65; }
-  .controls { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.2fr) auto auto; gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .controls { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.2fr) auto minmax(7rem, auto); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .analysis-state { display: grid; min-height: 2.45rem; align-content: center; gap: .12rem; padding: .35rem .65rem; border-left: 1px solid var(--color-border-subtle); }
+  .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
+  .analysis-state strong { font-size: .72rem; }
   label:not(.checkbox) { display: grid; gap: .35rem; color: var(--color-ink-muted); font-size: .72rem; font-weight: 760; }
   select, input, button { min-height: 2.45rem; padding: .5rem .7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: inherit; }
   button { cursor: pointer; font-size: .75rem; font-weight: 780; }
   button:hover:not(:disabled) { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
   button:disabled { cursor: default; opacity: .5; }
-  button.primary { border-color: var(--color-accent-strong); color: var(--color-ink-inverse); background: var(--color-accent-strong); }
   .progress, .notice, .batch-bar, .summary, .empty { border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); }
   .progress { display: grid; gap: .6rem; padding: .8rem 1rem; }
   .progress div { display: flex; justify-content: space-between; gap: 1rem; font-size: .76rem; }

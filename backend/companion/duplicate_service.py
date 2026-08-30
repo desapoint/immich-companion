@@ -142,6 +142,36 @@ class CrossSourceDuplicateService:
         options: DuplicateAnalysisOptions | None = None,
     ) -> CrossSourceDuplicateResult:
         options = options or DuplicateAnalysisOptions()
+        _, _, result = await self._snapshot(options)
+        return result
+
+    async def review(
+        self,
+        options: DuplicateAnalysisOptions | None = None,
+    ) -> CrossSourceDuplicateResult:
+        """Return live Immich groups and idempotently queue missing verification."""
+
+        options = options or DuplicateAnalysisOptions()
+        groups, reports, result = await self._snapshot(options)
+        pending_count = len(self._pending_verification(groups, reports, options))
+        task_id: UUID | None = None
+        if pending_count:
+            task_id = (await self.start(options)).task_id
+        return result.model_copy(
+            update={
+                "analysis_task_id": task_id,
+                "analysis_pending_count": pending_count,
+            }
+        )
+
+    async def _snapshot(
+        self,
+        options: DuplicateAnalysisOptions,
+    ) -> tuple[
+        list[ImmichDuplicateGroup],
+        dict[UUID, AssetIntegrityReportRecord],
+        CrossSourceDuplicateResult,
+    ]:
         groups = await self._live_groups()
         report_ids = [
             asset.id
@@ -150,7 +180,26 @@ class CrossSourceDuplicateService:
             if asset.library_id is not None or options.verify_upload_streams
         ]
         reports = await self._reports.get_many(report_ids)
-        return self.assemble(groups, reports, options, self._immich)
+        return groups, reports, self.assemble(groups, reports, options, self._immich)
+
+    @staticmethod
+    def _pending_verification(
+        groups: list[ImmichDuplicateGroup],
+        reports: dict[UUID, AssetIntegrityReportRecord],
+        options: DuplicateAnalysisOptions,
+    ) -> list[ImmichAsset]:
+        candidates = {
+            asset.id: asset
+            for group in groups
+            for asset in group.assets
+            if not asset.is_offline
+            and (asset.library_id is not None or options.verify_upload_streams)
+        }
+        return [
+            asset
+            for asset in candidates.values()
+            if report_freshness(reports.get(asset.id), asset) != "current"
+        ]
 
     @staticmethod
     def assemble(

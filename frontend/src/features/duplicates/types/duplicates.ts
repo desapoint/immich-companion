@@ -56,6 +56,8 @@ export interface DuplicatePreviewRequest {
 
 export interface DuplicateResult {
   generated_at: string;
+  analysis_task_id: string | null;
+  analysis_pending_count: number;
   group_count: number;
   exact_group_count: number;
   unverified_group_count: number;
