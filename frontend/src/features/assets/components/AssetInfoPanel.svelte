@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import { formatAssetDate } from '../state/assetViewModel';
-  import type { AssetDetail, AssetSummary } from '../types/assets';
+  import type { AssetDetail, AssetSummary, DuplicateReviewContext } from '../types/assets';
   import AssetInfoRelationships from './AssetInfoRelationships.svelte';
 
   interface Props {
@@ -14,6 +14,7 @@
     syncError?: string | null;
     onsync?: () => void;
     apiOnly?: boolean;
+    duplicateContext?: DuplicateReviewContext | null;
   }
 
   let {
@@ -26,7 +27,29 @@
     syncError = null,
     onsync = () => undefined,
     apiOnly = false,
+    duplicateContext = null,
   }: Props = $props();
+
+  const currentDuplicateMember = $derived(
+    duplicateContext?.members.find((member) => member.id === asset.id) ?? null,
+  );
+  const automaticRuleRespected = $derived(
+    duplicateContext !== null
+      && duplicateContext.selected_keeper_asset_id === duplicateContext.recommended_keeper_asset_id,
+  );
+
+  function formatBytes(value: number | null): string {
+    if (value === null) return 'Unavailable';
+    if (value < 1024) return `${value} B`;
+    if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`;
+    return `${(value / 1024 ** 2).toFixed(1)} MB`;
+  }
+
+  function keeperPolicyLabel(value: DuplicateReviewContext['keeper_policy']): string {
+    if (value === 'prefer_upload') return 'Prefer Immich uploads';
+    if (value === 'prefer_external') return 'Prefer external files';
+    return 'Keep first Immich result';
+  }
 
   function displayValue(value: unknown): string {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -55,6 +78,49 @@
 
   {#if !apiOnly}<AssetInfoRelationships {asset} />{/if}
 
+  {#if duplicateContext}
+    <section class="duplicate-review" aria-label="Duplicate group validation">
+      <div class="section-heading"><h3>Duplicate review</h3><span class={`duplicate-status ${duplicateContext.status}`}>{duplicateContext.status}</span></div>
+      <p>{duplicateContext.reason ?? 'No group explanation was provided.'}</p>
+      <dl>
+        <div><dt>Group ID</dt><dd>{duplicateContext.duplicate_id}</dd></div>
+        <div><dt>Matching type</dt><dd>{duplicateContext.status === 'exact' ? 'Byte-exact content' : duplicateContext.status}</dd></div>
+        <div><dt>Batch eligible</dt><dd>{duplicateContext.eligible ? 'Yes' : 'No'}</dd></div>
+        <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
+        <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{automaticRuleRespected ? 'Yes' : 'No — manually overridden'}</dd></div>
+        <div><dt>This copy</dt><dd>{duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected keeper' : 'Will be removed'}</dd></div>
+        <div><dt>Rule recommendation</dt><dd>{duplicateContext.recommended_keeper_asset_id === asset.id ? 'Keep this copy' : 'Keep another copy'}</dd></div>
+      </dl>
+
+      <h4>Current copy validation</h4>
+      <dl>
+        <div><dt>Content SHA-1</dt><dd>{currentDuplicateMember?.verification ?? 'unverified'}</dd></div>
+        <div><dt>Source</dt><dd>{currentDuplicateMember?.source_kind === 'external' ? 'External library' : 'Immich upload'}</dd></div>
+        <div><dt>Library ID</dt><dd>{currentDuplicateMember?.library_id ?? 'Upload storage'}</dd></div>
+        <div><dt>File size</dt><dd>{formatBytes(currentDuplicateMember?.file_size_bytes ?? null)}</dd></div>
+        <div><dt>Availability</dt><dd>{currentDuplicateMember?.is_offline ? 'Offline / unverified' : 'Available'}</dd></div>
+        <div><dt>Integrity cache</dt><dd>{duplicateContext.current_integrity?.freshness ?? 'missing'}</dd></div>
+        <div><dt>Structure</dt><dd>{duplicateContext.current_integrity?.report?.classification ?? 'Not analyzed'}</dd></div>
+        <div><dt>Pixel identity</dt><dd>Planned validation</dd></div>
+        <div><dt>Visual similarity</dt><dd>Immich candidate; Companion validation planned</dd></div>
+        <div><dt>Metadata comparison</dt><dd>Planned validation</dd></div>
+        {#if currentDuplicateMember?.content_checksum}<div><dt>Content hash</dt><dd>{currentDuplicateMember.content_checksum}</dd></div>{/if}
+      </dl>
+
+      <details>
+        <summary>All {duplicateContext.members.length} group members</summary>
+        <ul class="duplicate-members">
+          {#each duplicateContext.members as member (member.id)}
+            <li class:current={member.id === asset.id}>
+              <strong>{member.filename}</strong>
+              <span>{member.source_kind === 'upload' ? 'Upload' : `External · ${member.library_id ?? 'unknown library'}`} · {member.verification}{member.id === duplicateContext.selected_keeper_asset_id ? ' · keeper' : ''}</span>
+            </li>
+          {/each}
+        </ul>
+      </details>
+    </section>
+  {/if}
+
   <h3>Immich metadata</h3>
 
   {#if loading}
@@ -78,7 +144,7 @@
       <details open>
         <summary>EXIF information</summary>
         <dl>
-          {#each Object.entries(detail.exif_info) as [key, value]}
+          {#each Object.entries(detail.exif_info) as [key, value] (key)}
             {#if value !== null && value !== ''}
               <div><dt>{key}</dt><dd>{displayValue(value)}</dd></div>
             {/if}
@@ -181,6 +247,21 @@
     color: var(--color-accent-strong);
     font-size: 0.72rem;
   }
+
+  h4 { margin: 0.8rem 0 0; font-size: 0.68rem; }
+  .duplicate-review { margin-top: .8rem; padding: .65rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface-soft); }
+  .duplicate-review h3 { margin: 0; }
+  .duplicate-review > p { margin: .45rem 0 0; color: var(--color-ink-muted); line-height: 1.45; }
+  .section-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+  .duplicate-status { padding: .16rem .38rem; border-radius: 999px; background: var(--color-canvas); font-size: .58rem; font-weight: 820; text-transform: uppercase; }
+  .duplicate-status.exact, .positive { color: var(--color-positive-ink); }
+  .duplicate-status.unverified, .warning { color: var(--color-warning-ink); }
+  .duplicate-status.mismatch, .duplicate-status.ineligible { color: var(--color-negative-ink); }
+  .duplicate-members { display: grid; gap: .4rem; margin: .55rem 0 0; padding: 0; list-style: none; }
+  .duplicate-members li { display: grid; gap: .1rem; padding: .4rem; border-left: 2px solid var(--color-border-strong); background: var(--color-canvas); }
+  .duplicate-members li.current { border-left-color: var(--color-accent-strong); }
+  .duplicate-members strong { overflow: hidden; font-size: .66rem; text-overflow: ellipsis; white-space: nowrap; }
+  .duplicate-members span { color: var(--color-ink-muted); font-size: .6rem; overflow-wrap: anywhere; }
 
   dl {
     display: grid;

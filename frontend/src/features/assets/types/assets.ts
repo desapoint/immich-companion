@@ -381,6 +381,29 @@ export interface AssetIntegrityState {
   active_task_id: string | null;
 }
 
+export interface DuplicateReviewMember {
+  id: string;
+  filename: string;
+  source_kind: 'upload' | 'external';
+  library_id: string | null;
+  verification: 'matching' | 'mismatch' | 'unverified';
+  content_checksum: string | null;
+  file_size_bytes: number | null;
+  is_offline: boolean;
+}
+
+export interface DuplicateReviewContext {
+  duplicate_id: string;
+  status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
+  reason: string | null;
+  eligible: boolean;
+  keeper_policy: 'prefer_upload' | 'prefer_external' | 'first';
+  recommended_keeper_asset_id: string | null;
+  selected_keeper_asset_id: string | null;
+  members: DuplicateReviewMember[];
+  current_integrity: AssetIntegrityState | null;
+}
+
 export interface AssetIntegrityAnalyzeResponse {
   state: 'ready' | 'pending';
   freshness: AssetIntegrityFreshness;

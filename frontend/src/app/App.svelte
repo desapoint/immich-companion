@@ -9,8 +9,15 @@
   import TagsPage from '../features/relations/components/TagsPage.svelte';
   import RestorePage from '../features/assets/components/RestorePage.svelte';
   import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
+  import DuplicateAssetViewerController from '../features/assets/components/DuplicateAssetViewerController.svelte';
+  import type { DuplicatePreviewRequest } from '../features/duplicates/types/duplicates';
 
   const currentPath = window.location.pathname;
+  let duplicatePreview = $state.raw<DuplicatePreviewRequest | null>(null);
+
+  function openDuplicatePreview(request: DuplicatePreviewRequest): void {
+    duplicatePreview = request;
+  }
 </script>
 
 <svelte:boundary>
@@ -24,7 +31,7 @@
     {:else if currentPath === '/restore'}
       <RestorePage />
     {:else if currentPath === '/duplicates'}
-      <DuplicatesPage />
+      <DuplicatesPage onpreview={openDuplicatePreview} />
     {:else}
       {#if currentPath === '/settings'}
         <SettingsPage />
@@ -33,6 +40,13 @@
       {/if}
     {/if}
   </AppShell>
+
+  {#if duplicatePreview}
+    <DuplicateAssetViewerController
+      review={duplicatePreview}
+      onclose={() => (duplicatePreview = null)}
+    />
+  {/if}
 
   {#snippet failed(error, reset)}
     <AppRuntimeError message={errorMessage(error)} onretry={reset} />

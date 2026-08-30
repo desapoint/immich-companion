@@ -28,6 +28,8 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
     assert (first / "manifest.json").read_bytes() == (second / "manifest.json").read_bytes()
     for record in manifest["files"]:
         assert (first / record["path"]).read_bytes() == (second / record["path"]).read_bytes()
+    for record in manifest["relationships"]["analysis_fixtures"]:
+        assert (first / record["path"]).read_bytes() == (second / record["path"]).read_bytes()
 
     expected = manifest["expected"]
     relationships = manifest["relationships"]
@@ -44,6 +46,14 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
         for second_tag in relationships["tags"][index + 1 :]
     )
     assert relationships["pixel_identical_groups"]
+    assert relationships["visually_similar_groups"]
+    assert {
+        record["expected_case"] for record in relationships["analysis_fixtures"]
+    } == {"healthy", "trailing-bytes", "truncated-segment", "missing-soi"}
+    assert all(
+        record["upload_to_immich"] is False
+        for record in relationships["analysis_fixtures"]
+    )
     assert any(record["has_alpha"] for record in manifest["files"])
     assert len({record["aspect_ratio"] for record in manifest["files"]}) >= 4
 

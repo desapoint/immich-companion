@@ -4,6 +4,7 @@
 
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
+  import Icon from '../../../lib/components/ui/Icon.svelte';
   import {
     analyzeDuplicateGroups,
     executeDuplicateResolution,
@@ -17,8 +18,16 @@
     DuplicateResolutionPlan,
     DuplicateResult,
     DuplicateTaskStatus,
+    DuplicateMember,
+    DuplicatePreviewRequest,
     ExactDuplicateGroup,
   } from '../types/duplicates';
+
+  interface Props {
+    onpreview: (request: DuplicatePreviewRequest) => void;
+  }
+
+  let { onpreview }: Props = $props();
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
   const defaultOptions: DuplicateAnalysisOptions = {
@@ -133,6 +142,20 @@
     return keeperOverrides[group.duplicate_id] ?? group.keeper_asset_id;
   }
 
+  function previewRequest(group: ExactDuplicateGroup, initialIndex: number): DuplicatePreviewRequest {
+    return {
+      duplicate_id: group.duplicate_id,
+      status: group.status,
+      reason: group.reason,
+      eligible: group.eligible,
+      keeper_policy: options.keeper_policy,
+      recommended_keeper_asset_id: group.keeper_asset_id,
+      selected_keeper_asset_id: selectedKeeper(group),
+      members: group.members,
+      initial_index: initialIndex,
+    };
+  }
+
   async function reviewBatch(): Promise<void> {
     if (!selected.size) return;
     busy = true;
@@ -245,17 +268,21 @@
               <p>{group.reason}</p>
             </header>
             <div class="members">
-              {#each group.members as member (member.id)}
+              {#each group.members as member, memberIndex (member.id)}
                 <div class:keeper={selectedKeeper(group) === member.id} class="member">
-                  <img src={`/api/assets/${encodeURIComponent(member.id)}/thumbnail`} alt="" loading="lazy" />
+                  <div class="member-image">
+                    <button class="preview-button" type="button" aria-label={`Preview ${member.original_file_name}`} onclick={() => onpreview(previewRequest(group, memberIndex))}>
+                      <img src={`/api/assets/${encodeURIComponent(member.id)}/thumbnail`} alt="" loading="lazy" />
+                    </button>
+                    <button class="keeper-button" type="button" class:active={selectedKeeper(group) === member.id} disabled={!group.eligible || busy} aria-pressed={selectedKeeper(group) === member.id} aria-label={selectedKeeper(group) === member.id ? `${member.original_file_name} is the keeper` : `Keep ${member.original_file_name}`} onclick={() => setKeeper(group, member.id)}><Icon name="star" size=".92rem" /></button>
+                    <button class="view-button" type="button" aria-label={`View complete details for ${member.original_file_name}`} onclick={() => onpreview(previewRequest(group, memberIndex))}><Icon name="view" size=".95rem" /></button>
+                    {#if selectedKeeper(group) === member.id}<span class="keeper-label">Keeper</span>{/if}
+                  </div>
                   <div class="member-body">
-                    <div class="member-title"><strong title={member.original_file_name}>{member.original_file_name}</strong><span>{member.source_kind}</span></div>
+                    <strong title={member.original_file_name}>{member.original_file_name}</strong>
+                    <span class={`source-kind ${member.source_kind}`}>{member.source_kind === 'upload' ? 'Immich upload' : 'External library'}</span>
+                    {#if member.library_id}<small class="library-id" title={member.library_id}>{member.library_id}</small>{/if}
                     <small>{formatSize(member.file_size_bytes)} · {member.verification}</small>
-                    {#if member.library_id}<small title={member.library_id}>Library {member.library_id}</small>{/if}
-                    <div class="member-actions">
-                      <button type="button" disabled={!group.eligible || busy} aria-pressed={selectedKeeper(group) === member.id} onclick={() => setKeeper(group, member.id)}>{selectedKeeper(group) === member.id ? 'Keeping' : 'Keep this'}</button>
-                      {#if member.immich_url}<a href={member.immich_url} target="_blank" rel="noreferrer">Open in Immich</a>{/if}
-                    </div>
                   </div>
                 </div>
               {/each}
@@ -320,19 +347,23 @@
   .status.exact { color: var(--color-positive-ink); background: var(--color-positive-surface); }
   .status.unverified { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .status.mismatch, .status.ineligible { color: var(--color-negative-ink); background: var(--color-negative-surface); }
-  .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .75rem; padding: .75rem; }
-  .member { display: grid; grid-template-columns: 6rem minmax(0, 1fr); min-height: 6rem; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }
+  .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
+  .member { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }
   .member.keeper { border-color: var(--color-accent-strong); box-shadow: inset 0 0 0 1px var(--color-accent-strong); }
-  .member img { width: 6rem; height: 100%; min-height: 6rem; object-fit: cover; background: var(--color-surface-soft); }
-  .member-body { display: grid; align-content: space-between; gap: .35rem; min-width: 0; padding: .55rem; }
-  .member-title { display: grid; gap: .1rem; min-width: 0; }
-  .member-title strong { overflow: hidden; font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
-  .member-title span { color: var(--color-accent-strong); font-size: .6rem; font-weight: 800; text-transform: uppercase; }
+  .member-image { position: relative; aspect-ratio: 1; overflow: hidden; background: var(--color-surface-soft); }
+  .preview-button { display: block; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
+  .preview-button img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .18s ease; }
+  .preview-button:hover img { transform: scale(1.025); }
+  .keeper-button, .view-button { position: absolute; top: .45rem; display: grid; width: 2rem; height: 2rem; min-height: 0; padding: 0; place-items: center; border: 1px solid rgb(255 255 255 / .4); border-radius: 999px; color: white; background: rgb(12 16 18 / .72); box-shadow: 0 2px 8px rgb(0 0 0 / .28); backdrop-filter: blur(5px); }
+  .keeper-button { left: .45rem; } .view-button { right: .45rem; }
+  .keeper-button.active { border-color: var(--color-accent-strong); color: var(--color-ink-inverse); background: var(--color-accent-strong); }
+  .keeper-label { position: absolute; bottom: .45rem; left: .45rem; padding: .2rem .42rem; border-radius: 999px; color: white; background: rgb(12 16 18 / .76); font-size: .58rem; font-weight: 820; text-transform: uppercase; }
+  .member-body { display: grid; gap: .28rem; min-width: 0; padding: .6rem; }
+  .member-body strong { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
+  .source-kind { width: fit-content; padding: .16rem .38rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .57rem; font-weight: 820; text-transform: uppercase; }
+  .source-kind.external { color: var(--color-warning-ink); background: var(--color-warning-surface); }
+  .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
-  .member-actions { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; }
-  .member-actions button, .member-actions a { min-height: 1.8rem; padding: .3rem .45rem; font-size: .62rem; }
-  .member-actions button[aria-pressed='true'] { border-color: var(--color-accent-strong); color: var(--color-ink-inverse); background: var(--color-accent-strong); }
-  .member-actions a { display: inline-flex; align-items: center; color: var(--color-accent-strong); font-weight: 760; text-decoration: none; }
   @media (max-width: 58rem) { .controls { grid-template-columns: 1fr 1fr; } }
   @media (max-width: 46rem) { .page-intro, .controls { grid-template-columns: 1fr; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header { align-items: flex-start; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>

@@ -57,6 +57,7 @@
     AssetSummary,
     AssetSelectionSummary,
     AssetTaskStatus,
+    DuplicateReviewContext,
     TagOption,
     ViewerScaleMode,
   } from '../types/assets';
@@ -87,6 +88,8 @@
     selectionEnabled?: boolean;
     restoreBusy?: boolean;
     apiOnly?: boolean;
+    integrityEnabled?: boolean;
+    duplicateContext?: DuplicateReviewContext | null;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
@@ -136,6 +139,8 @@
     selectionEnabled,
     restoreBusy = false,
     apiOnly = false,
+    integrityEnabled = !apiOnly,
+    duplicateContext = null,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
@@ -577,6 +582,7 @@
   });
 
   onMount(() => {
+    if (duplicateContext) infoOpen = true;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     dialogElement.showModal();
@@ -623,7 +629,7 @@
     {restoreBusy}
     {integrityActive}
     onrestore={onrestore ? () => onrestore(currentAsset.id) : undefined}
-    onintegrity={apiOnly ? undefined : () => void openIntegrity()}
+    onintegrity={integrityEnabled ? () => void openIntegrity() : undefined}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
     onsetprimary={() => onsetprimary?.(visibleAsset.id)}
     onrelationconfirm={(action, relationIds) =>
@@ -729,6 +735,7 @@
         syncError={syncError}
         onsync={() => onsync(currentAsset.id)}
         {apiOnly}
+        {duplicateContext}
       />
     {/if}
 

@@ -8,7 +8,7 @@ from uuid import UUID
 import pytest
 
 from companion.immich import ImmichAsset
-from companion.integrity_repository import public_report
+from companion.integrity_repository import public_report, report_freshness
 from companion.integrity_schema import AssetIntegrityReport
 from companion.integrity_service import (
     IntegrityService,
@@ -255,3 +255,27 @@ async def test_service_reuses_current_report_and_force_queues_reanalysis() -> No
     assert forced.state == "pending"
     assert forced.task_id == TASK_ID
     assert len(tasks.submitted) == 1
+
+
+def test_upload_report_becomes_stale_when_size_or_mtime_changes() -> None:
+    current = asset()
+    record = report_record(current)
+
+    assert report_freshness(record, current) == "current"
+    assert report_freshness(record, asset(size=5)) == "stale"
+    assert report_freshness(
+        record,
+        asset(modified="2026-08-28T12:01:00Z"),
+    ) == "stale"
+
+
+def test_external_report_ignores_path_checksum_changes() -> None:
+    library_id = UUID("22222222-2222-4222-8222-222222222222")
+    current = asset(library_id=library_id)
+    record = report_record(current)
+
+    assert report_freshness(record, current) == "current"
+    assert report_freshness(
+        record,
+        asset(library_id=library_id, checksum="new-path-checksum"),
+    ) == "current"

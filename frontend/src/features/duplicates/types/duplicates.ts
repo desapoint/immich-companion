@@ -30,6 +30,18 @@ export interface ExactDuplicateGroup {
   eligible: boolean;
 }
 
+export interface DuplicatePreviewRequest {
+  duplicate_id: string;
+  status: DuplicateGroupStatus;
+  reason: string | null;
+  eligible: boolean;
+  keeper_policy: DuplicateKeeperPolicy;
+  recommended_keeper_asset_id: string | null;
+  selected_keeper_asset_id: string | null;
+  members: DuplicateMember[];
+  initial_index: number;
+}
+
 export interface DuplicateResult {
   generated_at: string;
   group_count: number;

@@ -27,14 +27,14 @@ def report_freshness(
         return "missing"
     if record.analyzer_version != ANALYZER_VERSION:
         return "stale"
-    if asset.library_id is None and asset.checksum is not None:
-        return "current" if record.source_checksum == asset.checksum else "stale"
+    if asset.library_id is None and record.source_checksum != asset.checksum:
+        return "stale"
     if record.source_file_modified_at != asset.file_modified_at:
         return "stale"
     live_size = source_file_size(asset)
-    if asset.library_id is not None and live_size is None:
+    if live_size is None:
         return "stale"
-    if live_size is not None and record.source_file_size_bytes != live_size:
+    if record.source_file_size_bytes != live_size:
         return "stale"
     return "current"
 

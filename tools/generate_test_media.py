@@ -262,6 +262,42 @@ def generate(output: Path) -> dict[str, object]:
         (output / relative_path).write_bytes(payload)
         records.append(file_record(relative_path, payload, family, width, height, alpha=alpha))
 
+    # These deterministic byte streams document the integrity/corruption cases
+    # needed by the later non-exact duplicate workflow. They are intentionally
+    # not uploaded: malformed originals are analysis fixtures, not baseline
+    # Immich assets, until that guarded workflow is implemented.
+    diagnostic_dir = output / "diagnostics"
+    diagnostic_dir.mkdir(parents=True, exist_ok=True)
+    healthy_jpeg = b"\xff\xd8\xff\xd9"
+    diagnostic_payloads = (
+        ("diagnostics/jpeg-minimal-healthy.jpg", healthy_jpeg, "healthy"),
+        (
+            "diagnostics/jpeg-trailing-bytes.jpg",
+            healthy_jpeg + b"COMPANION-TRAILING-DATA",
+            "trailing-bytes",
+        ),
+        (
+            "diagnostics/jpeg-truncated-segment.jpg",
+            b"\xff\xd8\xff\xe1\x00\x10truncated",
+            "truncated-segment",
+        ),
+        ("diagnostics/jpeg-missing-soi.jpg", b"not-a-jpeg", "missing-soi"),
+    )
+    diagnostic_records: list[dict[str, object]] = []
+    for relative_path, payload, classification in diagnostic_payloads:
+        (output / relative_path).write_bytes(payload)
+        diagnostic_records.append(
+            {
+                "path": relative_path,
+                "family": "corruption-diagnostic",
+                "expected_case": classification,
+                "bytes": len(payload),
+                "sha1": hashlib.sha1(payload).hexdigest(),  # noqa: S324
+                "sha256": hashlib.sha256(payload).hexdigest(),
+                "upload_to_immich": False,
+            }
+        )
+
     unique_paths = [
         str(record["path"])
         for record in records
@@ -331,6 +367,7 @@ def generate(output: Path) -> dict[str, object]:
                 *[f"images/base-scene-metadata-{index:02d}.png" for index in range(1, 10)],
             ]],
             "visually_similar_groups": [base_family, album_c],
+            "analysis_fixtures": diagnostic_records,
             "albums": [
                 {
                     "name": "Companion Test · Album A",
@@ -380,6 +417,7 @@ def generate(output: Path) -> dict[str, object]:
             "trashed_assets": 6,
             "default_page_size": 48,
             "minimum_search_pages": 2,
+            "analysis_fixtures": len(diagnostic_records),
         },
     }
     manifest_path = output / "manifest.json"

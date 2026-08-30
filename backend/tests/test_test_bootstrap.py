@@ -49,6 +49,22 @@ def test_bootstrap_skips_all_immich_work_when_state_is_already_ready(
     test_bootstrap.main()
 
 
+def test_resolve_api_key_reuses_the_persisted_valid_secret(
+    tmp_path, monkeypatch
+) -> None:
+    key_path = tmp_path / "api-key"
+    key_path.write_text("stable-test-key\n", encoding="utf-8")
+    monkeypatch.setattr(test_bootstrap, "api_key_is_valid", lambda *_args: True)
+    monkeypatch.setattr(
+        test_bootstrap,
+        "create_api_key",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("API key must not rotate")),
+    )
+
+    assert test_bootstrap.resolve_api_key(object(), "token", key_path) == "stable-test-key"
+    assert key_path.read_text(encoding="utf-8") == "stable-test-key\n"
+
+
 def test_reconcile_tags_creates_updates_and_converges_seed_assignments() -> None:
     requests: list[tuple[str, str, dict[str, object] | None]] = []
 
