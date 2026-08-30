@@ -13,5 +13,7 @@ describe('DuplicatesPage', () => {
     expect(body).toContain('aria-haspopup="listbox"');
     expect(body).toContain('Most recently uploaded');
     expect(body).not.toContain('<select');
+    expect(body).toContain('Verify upload streams too');
+    expect(body).toContain('Apply automatic rules');
   });
 });

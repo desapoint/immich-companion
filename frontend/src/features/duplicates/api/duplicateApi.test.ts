@@ -23,7 +23,7 @@ describe('duplicate API', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     await loadDuplicateGroups(options);
-    await analyzeDuplicateGroups(options);
+    await analyzeDuplicateGroups({ ...options, verify_upload_streams: true });
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/assets/duplicates/cross-source/search', expect.objectContaining({
       method: 'POST',
@@ -31,7 +31,7 @@ describe('duplicate API', () => {
     }));
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/assets/duplicates/cross-source/analyze', expect.objectContaining({
       method: 'POST',
-      body: JSON.stringify(options),
+      body: JSON.stringify({ ...options, verify_upload_streams: true }),
     }));
   });
 

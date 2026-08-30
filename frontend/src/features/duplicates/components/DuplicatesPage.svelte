@@ -9,6 +9,7 @@
   import type { SelectOption } from '../../../lib/types/ui';
   import GroupEvidencePills from './GroupEvidencePills.svelte';
   import {
+    analyzeDuplicateGroups,
     executeDuplicateResolution,
     loadDuplicateGroups,
     loadDuplicateTask,
@@ -46,6 +47,7 @@
 
   let result = $state.raw<DuplicateResult | null>(null);
   let options = $state<DuplicateAnalysisOptions>({ ...defaultOptions });
+  let appliedOptions = $state.raw<DuplicateAnalysisOptions>({ ...defaultOptions });
   let libraryFilter = $state('');
   const selected = new SvelteSet<string>();
   let keeperOverrides = $state<Record<string, string>>({});
@@ -61,6 +63,9 @@
 
   const autoReadyGroups = $derived(result?.groups.filter((group) => group.auto_selected) ?? []);
   const selectedCount = $derived(selected.size);
+  const rulesChanged = $derived(
+    JSON.stringify(configuredOptions()) !== JSON.stringify(appliedOptions),
+  );
 
   function configuredOptions(): DuplicateAnalysisOptions {
     return {
@@ -76,7 +81,7 @@
     loading = true;
     error = null;
     try {
-      const loaded = await loadDuplicateGroups(configuredOptions());
+      const loaded = await loadDuplicateGroups(appliedOptions);
       result = loaded;
       const eligibleIds = new SvelteSet(result.groups
         .filter((group) => group.auto_resolvable || (group.eligible && keeperOverrides[group.duplicate_id]))
@@ -162,7 +167,7 @@
       status: group.status,
       reason: group.reason,
       eligible: group.eligible,
-      keeper_policy: options.keeper_policy,
+      keeper_policy: appliedOptions.keeper_policy,
       recommended_keeper_asset_id: group.keeper_asset_id,
       selected_keeper_asset_id: selectedKeeper(group),
       recommendation_reason_codes: group.recommendation_reason_codes,
@@ -178,7 +183,7 @@
     message = null;
     try {
       plan = await planDuplicateResolution({
-        options: configuredOptions(),
+        options: appliedOptions,
         duplicate_ids: [...selected],
         all_eligible: false,
         keeper_overrides: keeperOverrides,
@@ -208,10 +213,25 @@
 
   function setPolicy(value: string): void {
     options.keeper_policy = value as DuplicateKeeperPolicy;
+  }
+
+  async function applyRules(): Promise<void> {
+    const nextOptions = configuredOptions();
+    busy = true;
+    error = null;
+    message = null;
+    appliedOptions = nextOptions;
     keeperOverrides = {};
     selected.clear();
     selectionInitialized = false;
-    void load();
+    try {
+      const started = await analyzeDuplicateGroups(nextOptions);
+      task = await loadDuplicateTask(started.task_id);
+      schedulePoll(started.task_id, 'analysis');
+    } catch (reason) {
+      busy = false;
+      error = reason instanceof Error ? reason.message : 'Could not apply duplicate rules.';
+    }
   }
 
   function formatSize(value: number | null): string {
@@ -242,11 +262,12 @@
       disabled={busy}
       onchange={setPolicy}
     />
-    <label class="library-filter">External library IDs <input value={libraryFilter} oninput={(event) => libraryFilter = event.currentTarget.value} onblur={() => void load()} placeholder="Optional, comma-separated" disabled={busy} /></label>
+    <label class="library-filter">External library IDs <input value={libraryFilter} oninput={(event) => libraryFilter = event.currentTarget.value} placeholder="Optional, comma-separated" disabled={busy} /></label>
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
+    <button class="apply-rules" type="button" disabled={busy || loading} onclick={() => void applyRules()}>Apply automatic rules</button>
     <div class="analysis-state">
       <span>Candidate analysis</span>
-      <strong>{result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : 'Current'}</strong>
+      <strong>{rulesChanged ? 'Rules changed' : result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : 'Current'}</strong>
     </div>
   </section>
 
@@ -337,7 +358,8 @@
   .page-intro span { color: var(--color-accent-strong); font-size: .68rem; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
   h1 { margin: .28rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.055em; line-height: .98; }
   .page-intro p { max-width: 44rem; margin: 0; color: var(--color-ink-muted); line-height: 1.65; }
-  .controls { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.2fr) auto minmax(7rem, auto); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .controls { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.2fr) auto auto minmax(7rem, auto); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .apply-rules { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
   .analysis-state { display: grid; min-height: 2.45rem; align-content: center; gap: .12rem; padding: .35rem .65rem; border-left: 1px solid var(--color-border-subtle); }
   .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
   .analysis-state strong { font-size: .72rem; }
