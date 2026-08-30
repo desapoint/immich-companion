@@ -6,7 +6,7 @@ import AssetIntegrityDialog from './AssetIntegrityDialog.svelte';
 
 const report: AssetIntegrityReport = {
   asset_id: '11111111-1111-4111-8111-111111111111',
-  analyzer_version: 2,
+  analyzer_version: 3,
   byte_size: 4096,
   sha1_hex: 'a'.repeat(40),
   sha256_hex: 'b'.repeat(64),
@@ -17,6 +17,9 @@ const report: AssetIntegrityReport = {
   container_valid: true,
   decode_supported: false,
   decode_valid: null,
+  decoded_width: null,
+  decoded_height: null,
+  dimensions_match_immich: null,
   jpeg_eoi_offset: 4088,
   trailing_byte_count: 8,
   immich_checksum_match: true,

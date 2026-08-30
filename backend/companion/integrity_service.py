@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+from tempfile import SpooledTemporaryFile
 from time import monotonic
 from typing import Any
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
+from companion.image_decode import decode_image
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import FileIntegrityAnalyzer
 from companion.integrity_repository import (
@@ -31,6 +34,7 @@ from companion.task_schema import TaskResult
 INTEGRITY_TASK_TYPE = "asset_integrity"
 INTEGRITY_CHUNK_SIZE = 1024 * 1024
 INTEGRITY_PROGRESS_INTERVAL_SECONDS = 0.5
+INTEGRITY_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
 
 
 class IntegrityAssetUnavailableError(RuntimeError):
@@ -125,7 +129,7 @@ class IntegrityTaskHandler:
 
     task_type = INTEGRITY_TASK_TYPE
     lane_key = INTEGRITY_TASK_TYPE
-    max_concurrency = 2
+    max_concurrency = 1
 
     def __init__(
         self,
@@ -186,27 +190,41 @@ class IntegrityTaskHandler:
             },
         )
 
-        try:
-            async with self._immich.stream_original(
-                asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
-            ) as original:
-                total = original.content_length
-                last_reported = monotonic()
-                async for chunk in original.chunks:
-                    analyzer.update(chunk)
-                    now = monotonic()
-                    if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
-                        continue
-                    await self._checkpoint(context, asset_id, analyzer.byte_size, total, started)
-                    last_reported = now
-        except ImmichApiError as error:
-            if error.status_code == 404:
-                raise PermanentTaskError("The Immich original was not found.") from error
-            raise RetryableTaskError("The Immich original stream was interrupted.") from error
+        with SpooledTemporaryFile(max_size=INTEGRITY_SPOOL_MEMORY_BYTES) as spool:
+            try:
+                async with self._immich.stream_original(
+                    asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
+                ) as original:
+                    total = original.content_length
+                    last_reported = monotonic()
+                    async for chunk in original.chunks:
+                        analyzer.update(chunk)
+                        spool.write(chunk)
+                        now = monotonic()
+                        if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
+                            continue
+                        await self._checkpoint(
+                            context, asset_id, analyzer.byte_size, total, started
+                        )
+                        last_reported = now
+            except ImmichApiError as error:
+                if error.status_code == 404:
+                    raise PermanentTaskError("The Immich original was not found.") from error
+                raise RetryableTaskError("The Immich original stream was interrupted.") from error
 
-        await self._checkpoint(context, asset_id, analyzer.byte_size, total, started)
-        await context.ensure_active()
-        result = analyzer.finalize()
+            await self._checkpoint(context, asset_id, analyzer.byte_size, total, started)
+            await context.ensure_active()
+            result = analyzer.finalize()
+            decoded = await asyncio.to_thread(decode_image, spool, result.detected_format)
+            result = result.with_decode(
+                supported=decoded.supported,
+                valid=decoded.valid,
+                width=decoded.width,
+                height=decoded.height,
+                immich_width=source.width,
+                immich_height=source.height,
+                issue=decoded.issue,
+            )
         expected_size = source_file_size(source)
         if expected_size is not None and result.byte_size != expected_size:
             raise RetryableTaskError("The streamed original size did not match Immich metadata.")

@@ -40,19 +40,23 @@ def report_freshness(
 
 
 def public_report(record: AssetIntegrityReportRecord) -> AssetIntegrityReport:
+    detected_format = "unknown" if record.detected_format == "other" else record.detected_format
     return AssetIntegrityReport(
         asset_id=record.asset_id,
         analyzer_version=record.analyzer_version,
         byte_size=record.byte_size,
         sha1_hex=record.sha1_hex,
         sha256_hex=record.sha256_hex,
-        detected_format=record.detected_format,  # type: ignore[arg-type]
+        detected_format=detected_format,  # type: ignore[arg-type]
         format_matches_declared=record.format_matches_declared,
         classification=record.classification,  # type: ignore[arg-type]
         structurally_valid=record.structurally_valid,
         container_valid=record.container_valid,
         decode_supported=record.decode_supported,
         decode_valid=record.decode_valid,
+        decoded_width=record.decoded_width,
+        decoded_height=record.decoded_height,
+        dimensions_match_immich=record.dimensions_match_immich,
         jpeg_eoi_offset=record.jpeg_eoi_offset,
         trailing_byte_count=record.trailing_byte_count,
         immich_checksum_match=record.immich_checksum_match,
@@ -105,6 +109,9 @@ class IntegrityRepository:
             "container_valid": result.container_valid,
             "decode_supported": result.decode_supported,
             "decode_valid": result.decode_valid,
+            "decoded_width": result.decoded_width,
+            "decoded_height": result.decoded_height,
+            "dimensions_match_immich": result.dimensions_match_immich,
             "jpeg_eoi_offset": result.jpeg_eoi_offset,
             "trailing_byte_count": result.trailing_byte_count,
             "immich_checksum_match": result.immich_checksum_match,

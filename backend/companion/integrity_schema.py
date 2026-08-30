@@ -27,6 +27,9 @@ class AssetIntegrityReport(BaseModel):
     container_valid: bool | None
     decode_supported: bool
     decode_valid: bool | None
+    decoded_width: int | None
+    decoded_height: int | None
+    dimensions_match_immich: bool | None
     jpeg_eoi_offset: int | None
     trailing_byte_count: int
     immich_checksum_match: bool | None

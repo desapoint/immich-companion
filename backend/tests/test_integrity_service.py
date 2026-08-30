@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 
+from companion.image_decode import ImageDecodeResult
 from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION
 from companion.integrity_repository import public_report, report_freshness
@@ -73,6 +74,9 @@ class FakeReports:
             container_valid=result.container_valid,
             decode_supported=result.decode_supported,
             decode_valid=result.decode_valid,
+            decoded_width=result.decoded_width,
+            decoded_height=result.decoded_height,
+            dimensions_match_immich=result.dimensions_match_immich,
             jpeg_eoi_offset=result.jpeg_eoi_offset,
             trailing_byte_count=result.trailing_byte_count,
             immich_checksum_match=result.immich_checksum_match,
@@ -165,6 +169,9 @@ def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
         container_valid=True,
         decode_supported=False,
         decode_valid=None,
+        decoded_width=None,
+        decoded_height=None,
+        dimensions_match_immich=None,
         jpeg_eoi_offset=4,
         trailing_byte_count=0,
         immich_checksum_match=None,
@@ -174,11 +181,15 @@ def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
 
 
 @pytest.mark.asyncio
-async def test_handler_streams_then_saves_only_after_source_verification() -> None:
+async def test_handler_streams_then_saves_only_after_source_verification(monkeypatch) -> None:
     current = asset()
     reports = FakeReports()
     context = FakeContext()
     handler = IntegrityTaskHandler(FakeImmich(current), FakeAssets(), reports)
+    monkeypatch.setattr(
+        "companion.integrity_service.decode_image",
+        lambda *_args: ImageDecodeResult(supported=True, valid=True, width=1, height=1),
+    )
 
     result = await handler.execute(context, {"asset_id": str(ASSET_ID)})
 
@@ -276,6 +287,16 @@ def test_upload_report_becomes_stale_when_size_or_mtime_changes() -> None:
         record,
         asset(modified="2026-08-28T12:01:00Z"),
     ) == "stale"
+
+
+def test_legacy_other_format_report_remains_readable_while_stale() -> None:
+    current = asset()
+    record = report_record(current)
+    record.analyzer_version = 1
+    record.detected_format = "other"
+
+    assert report_freshness(record, current) == "stale"
+    assert public_report(record).detected_format == "unknown"
 
 
 def test_external_report_ignores_path_checksum_changes() -> None:

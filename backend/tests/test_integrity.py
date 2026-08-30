@@ -156,3 +156,32 @@ def test_known_checksum_encodings_decode_and_unknown_values_do_not() -> None:
     assert decode_immich_sha1(base64.b64encode(digest).decode().rstrip("=")) == digest
     assert decode_immich_sha1("base64-checksum") is None
     assert decode_immich_sha1(None) is None
+
+
+def test_decode_failure_and_dimension_mismatch_update_normalized_classification() -> None:
+    base = analyze(b"plain bytes", [2, 3], mime="application/octet-stream")
+
+    failed = base.with_decode(
+        supported=True,
+        valid=False,
+        width=None,
+        height=None,
+        immich_width=10,
+        immich_height=10,
+        issue="image_decode_failed",
+    )
+    mismatched = base.with_decode(
+        supported=True,
+        valid=True,
+        width=10,
+        height=20,
+        immich_width=20,
+        immich_height=10,
+        issue=None,
+    )
+
+    assert failed.classification == "malformed"
+    assert failed.issues == ("image_decode_failed",)
+    assert mismatched.classification == "warning"
+    assert mismatched.dimensions_match_immich is False
+    assert mismatched.issues == ("dimensions_mismatch",)

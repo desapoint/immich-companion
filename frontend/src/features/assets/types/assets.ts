@@ -372,6 +372,9 @@ export interface AssetIntegrityReport {
   container_valid: boolean | null;
   decode_supported: boolean;
   decode_valid: boolean | null;
+  decoded_width: number | null;
+  decoded_height: number | null;
+  dimensions_match_immich: boolean | null;
   jpeg_eoi_offset: number | null;
   trailing_byte_count: number;
   immich_checksum_match: boolean | null;

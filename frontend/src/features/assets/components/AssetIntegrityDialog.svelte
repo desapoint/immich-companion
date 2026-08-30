@@ -38,6 +38,9 @@
     jpeg_unexpected_data_between_markers: 'Unexpected bytes occur between JPEG segments.',
     immich_checksum_mismatch: 'The calculated SHA-1 does not match Immich\'s checksum.',
     mime_format_mismatch: 'The detected file format does not match Immich\'s MIME type.',
+    image_decode_failed: 'The installed decoder could not fully decode this image.',
+    image_decode_limit_exceeded: 'Full decode was skipped because the image exceeds the safety limit.',
+    dimensions_mismatch: 'Decoded dimensions do not match Immich\'s metadata.',
   };
 
   const formatLabels = {
@@ -118,6 +121,12 @@
           {/if}
         </dd>
       </div>
+      {#if report.decoded_width !== null && report.decoded_height !== null}
+        <div><dt>Decoded size</dt><dd>{report.decoded_width.toLocaleString()} × {report.decoded_height.toLocaleString()}</dd></div>
+      {/if}
+      {#if report.dimensions_match_immich !== null}
+        <div><dt>Immich dimensions</dt><dd>{report.dimensions_match_immich ? 'Match' : 'Mismatch'}</dd></div>
+      {/if}
       {#if report.jpeg_eoi_offset !== null}
         <div><dt>JPEG end offset</dt><dd>{report.jpeg_eoi_offset.toLocaleString()} bytes</dd></div>
       {/if}

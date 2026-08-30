@@ -5,10 +5,10 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
-ANALYZER_VERSION = 2
+ANALYZER_VERSION = 3
 JPEG_MIME_TYPES = frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})
 FORMAT_MIME_TYPES: dict[str, frozenset[str]] = {
     "jpeg": JPEG_MIME_TYPES,
@@ -98,10 +98,60 @@ class FileIntegrityResult:
     container_valid: bool | None
     decode_supported: bool
     decode_valid: bool | None
+    decoded_width: int | None
+    decoded_height: int | None
+    dimensions_match_immich: bool | None
     jpeg_eoi_offset: int | None
     trailing_byte_count: int
     immich_checksum_match: bool | None
     issues: tuple[str, ...]
+
+    def with_decode(
+        self,
+        *,
+        supported: bool,
+        valid: bool | None,
+        width: int | None,
+        height: int | None,
+        immich_width: int | None,
+        immich_height: int | None,
+        issue: str | None,
+    ) -> FileIntegrityResult:
+        """Merge decoder evidence while preserving stronger structural findings."""
+
+        dimensions_match = (
+            width == immich_width and height == immich_height
+            if None not in {width, height, immich_width, immich_height}
+            else None
+        )
+        issues = list(self.issues)
+        if issue is not None:
+            issues.append(issue)
+        if dimensions_match is False:
+            issues.append("dimensions_mismatch")
+
+        classification = self.classification
+        if valid is False:
+            classification = "malformed"
+        elif issue is not None or dimensions_match is False:
+            if classification != "malformed":
+                classification = "warning"
+        elif valid is True and classification == "hash_only":
+            classification = "healthy"
+
+        return replace(
+            self,
+            decode_supported=supported,
+            decode_valid=valid,
+            decoded_width=width,
+            decoded_height=height,
+            dimensions_match_immich=dimensions_match,
+            container_valid=(
+                True if valid is True and self.container_valid is None else self.container_valid
+            ),
+            classification=classification,
+            issues=tuple(dict.fromkeys(issues)),
+        )
 
 
 class JpegStructureAnalyzer:
@@ -321,6 +371,9 @@ class FileIntegrityAnalyzer:
             container_valid=container_valid,
             decode_supported=decode_supported,
             decode_valid=decode_valid,
+            decoded_width=None,
+            decoded_height=None,
+            dimensions_match_immich=None,
             jpeg_eoi_offset=eoi_offset,
             trailing_byte_count=trailing_bytes,
             immich_checksum_match=checksum_match,
