@@ -397,6 +397,7 @@ export interface DuplicateReviewMember {
   content_checksum: string | null;
   file_size_bytes: number | null;
   is_offline: boolean;
+  is_stacked: boolean;
 }
 
 export interface DuplicateReviewContext {
@@ -407,6 +408,7 @@ export interface DuplicateReviewContext {
   keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
+  selected_action: 'resolve' | 'stack_all' | 'none';
   recommendation_reason_codes: string[];
   members: DuplicateReviewMember[];
   current_integrity: AssetIntegrityState | null;

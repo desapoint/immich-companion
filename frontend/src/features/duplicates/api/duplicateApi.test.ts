@@ -45,6 +45,7 @@ describe('duplicate API', () => {
       duplicate_ids: ['group-1'],
       all_eligible: false,
       keeper_overrides: { 'group-1': 'asset-1' },
+      action_overrides: { 'group-1': 'resolve' as const },
     };
 
     await planDuplicateResolution(request);

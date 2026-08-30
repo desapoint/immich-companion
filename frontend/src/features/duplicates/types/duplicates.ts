@@ -1,5 +1,6 @@
 export type DuplicateKeeperPolicy = 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
+export type DuplicatePlanAction = 'resolve' | 'stack_all' | 'none';
 
 export interface DuplicateAnalysisOptions {
   keeper_policy: DuplicateKeeperPolicy;
@@ -17,6 +18,7 @@ export interface DuplicateMember {
   file_modified_at: string;
   uploaded_at: string | null;
   is_offline: boolean;
+  is_stacked: boolean;
   immich_url: string | null;
   verification: 'matching' | 'mismatch' | 'unverified';
   content_checksum: string | null;
@@ -61,9 +63,12 @@ export interface DuplicatePreviewRequest {
   keeper_policy: DuplicateKeeperPolicy;
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
+  selected_action: DuplicatePlanAction;
   recommendation_reason_codes: string[];
   members: DuplicateMember[];
   initial_index: number;
+  onkeeperchange?: (assetId: string) => DuplicatePlanAction;
+  onactionchange?: (action: DuplicatePlanAction) => void;
 }
 
 export interface DuplicateResult {
@@ -96,10 +101,14 @@ export interface DuplicateResolutionPlan {
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
   groups: Array<{
     duplicate_id: string;
+    action: Exclude<DuplicatePlanAction, 'none'>;
     keeper_asset_id: string;
+    member_asset_ids: string[];
     trash_asset_ids: string[];
   }>;
   group_count: number;
+  resolve_group_count: number;
+  stack_group_count: number;
   trash_asset_count: number;
   expires_at: string;
   destructive: boolean;

@@ -18,6 +18,7 @@
   import type {
     DuplicateAnalysisOptions,
     DuplicateKeeperPolicy,
+    DuplicatePlanAction,
     DuplicateResolutionPlan,
     DuplicateResult,
     DuplicateTaskStatus,
@@ -51,6 +52,7 @@
   let libraryFilter = $state('');
   const selected = new SvelteSet<string>();
   let keeperOverrides = $state<Record<string, string>>({});
+  let actionOverrides = $state<Record<string, DuplicatePlanAction>>({});
   let loading = $state(true);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -63,6 +65,10 @@
 
   const autoReadyGroups = $derived(result?.groups.filter((group) => group.auto_selected) ?? []);
   const selectedCount = $derived(selected.size);
+  const allAutoReadySelected = $derived(
+    autoReadyGroups.length > 0
+      && autoReadyGroups.every((group) => selected.has(group.duplicate_id)),
+  );
   const rulesChanged = $derived(
     JSON.stringify(configuredOptions()) !== JSON.stringify(appliedOptions),
   );
@@ -84,7 +90,7 @@
       const loaded = await loadDuplicateGroups(appliedOptions);
       result = loaded;
       const eligibleIds = new SvelteSet(result.groups
-        .filter((group) => group.auto_resolvable || (group.eligible && keeperOverrides[group.duplicate_id]))
+        .filter((group) => isActionable(group))
         .map((group) => group.duplicate_id));
       for (const id of selected) if (!eligibleIds.has(id)) selected.delete(id);
       if (!selectionInitialized) {
@@ -128,6 +134,7 @@
         selected.clear();
         selectionInitialized = false;
         keeperOverrides = {};
+        actionOverrides = {};
         await load();
       } else {
         error = task.error?.message ?? `${kind === 'analysis' ? 'Analysis' : 'Resolution'} failed.`;
@@ -144,21 +151,70 @@
   }
 
   function toggleAllEligible(): void {
-    if (selected.size === autoReadyGroups.length) {
-      selected.clear();
+    if (allAutoReadySelected) {
+      for (const group of autoReadyGroups) selected.delete(group.duplicate_id);
       return;
     }
-    selected.clear();
-    for (const group of autoReadyGroups) selected.add(group.duplicate_id);
+    for (const group of autoReadyGroups) {
+      actionOverrides = { ...actionOverrides, [group.duplicate_id]: 'resolve' };
+      selected.add(group.duplicate_id);
+    }
   }
 
   function setKeeper(group: ExactDuplicateGroup, assetId: string): void {
     keeperOverrides = { ...keeperOverrides, [group.duplicate_id]: assetId };
-    if (group.eligible) selected.add(group.duplicate_id);
+    if (group.eligible && !actionOverrides[group.duplicate_id]) {
+      actionOverrides = { ...actionOverrides, [group.duplicate_id]: 'resolve' };
+      selected.add(group.duplicate_id);
+    } else if (actionFor(group) !== 'none') {
+      selected.add(group.duplicate_id);
+    }
   }
 
   function selectedKeeper(group: ExactDuplicateGroup): string | null {
     return keeperOverrides[group.duplicate_id] ?? group.keeper_asset_id;
+  }
+
+  function actionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
+    return actionOverrides[group.duplicate_id] ?? (group.auto_selected ? 'resolve' : 'none');
+  }
+
+  function isActionable(group: ExactDuplicateGroup): boolean {
+    const action = actionFor(group);
+    return action !== 'none'
+      && selectedKeeper(group) !== null
+      && !group.members.some((member) => member.is_offline)
+      && (action !== 'resolve' || group.eligible)
+      && (action !== 'stack_all' || !group.members.some((member) => member.is_stacked));
+  }
+
+  function actionOptions(group: ExactDuplicateGroup): SelectOption[] {
+    return [
+      { value: 'none', label: 'Skip / review later' },
+      { value: 'resolve', label: 'Resolve — keep primary', disabled: !group.eligible },
+      {
+        value: 'stack_all',
+        label: 'Stack all — keep every copy',
+        disabled: group.members.some((member) => member.is_offline || member.is_stacked),
+      },
+    ];
+  }
+
+  function setGroupAction(group: ExactDuplicateGroup, value: string): void {
+    const action = value as DuplicatePlanAction;
+    if (action === 'none') {
+      actionOverrides = { ...actionOverrides, [group.duplicate_id]: 'none' };
+      selected.delete(group.duplicate_id);
+      return;
+    }
+    actionOverrides = { ...actionOverrides, [group.duplicate_id]: action };
+    if (isActionable(group)) selected.add(group.duplicate_id);
+    else selected.delete(group.duplicate_id);
+  }
+
+  function progressPercent(status: DuplicateTaskStatus): number | undefined {
+    if (typeof status.progress.percent !== 'number') return undefined;
+    return Math.min(100, Math.max(0, status.progress.percent));
   }
 
   function previewRequest(group: ExactDuplicateGroup, initialIndex: number): DuplicatePreviewRequest {
@@ -170,9 +226,15 @@
       keeper_policy: appliedOptions.keeper_policy,
       recommended_keeper_asset_id: group.keeper_asset_id,
       selected_keeper_asset_id: selectedKeeper(group),
+      selected_action: actionFor(group),
       recommendation_reason_codes: group.recommendation_reason_codes,
       members: group.members,
       initial_index: initialIndex,
+      onkeeperchange: (assetId) => {
+        setKeeper(group, assetId);
+        return actionFor(group);
+      },
+      onactionchange: (action) => setGroupAction(group, action),
     };
   }
 
@@ -187,6 +249,11 @@
         duplicate_ids: [...selected],
         all_eligible: false,
         keeper_overrides: keeperOverrides,
+        action_overrides: Object.fromEntries(
+          result?.groups
+            .filter((group) => selected.has(group.duplicate_id))
+            .map((group) => [group.duplicate_id, actionFor(group)]) ?? [],
+        ) as Record<string, Exclude<DuplicatePlanAction, 'none'>>,
       });
       confirmOpen = true;
     } catch (reason) {
@@ -222,6 +289,7 @@
     message = null;
     appliedOptions = nextOptions;
     keeperOverrides = {};
+    actionOverrides = {};
     selected.clear();
     selectionInitialized = false;
     try {
@@ -273,8 +341,8 @@
 
   {#if task && !terminalStatuses.has(task.status)}
     <section class="progress" aria-live="polite">
-      <div><strong>{task.progress.detail ?? 'Processing duplicate candidates…'}</strong><span>{task.progress.completed ?? 0}{task.progress.total ? ` / ${task.progress.total}` : ''}</span></div>
-      <progress value={task.progress.percent ?? undefined} max="100"></progress>
+      <div><strong>{task.progress.detail ?? 'Processing duplicate candidates…'}</strong><span>{task.progress.total ? `${task.progress.completed ?? 0} / ${task.progress.total}` : 'Preparing…'}{progressPercent(task) !== undefined ? ` · ${Math.round(progressPercent(task) ?? 0)}%` : ''}</span></div>
+      <progress value={progressPercent(task)} max="100"></progress>
     </section>
   {/if}
   {#if error}<p class="notice error" role="alert">{error}</p>{/if}
@@ -289,7 +357,7 @@
     </section>
 
     <div class="batch-bar">
-      <Checkbox checked={autoReadyGroups.length > 0 && selectedCount === autoReadyGroups.length} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
+      <Checkbox checked={allAutoReadySelected} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
       <span>{selectedCount} selected</span>
       <button type="button" disabled={!selectedCount || busy} onclick={() => void reviewBatch()}>Review batch</button>
     </div>
@@ -304,10 +372,13 @@
           <article class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
-                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={(!group.auto_resolvable && !(group.eligible && keeperOverrides[group.duplicate_id])) || busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{group.auto_selected ? 'Auto ready' : group.eligible ? 'Choose keeper' : 'Needs review'}</span></div>
+                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={!isActionable(group) || busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{actionFor(group) === 'resolve' ? 'Will resolve' : actionFor(group) === 'stack_all' ? 'Will stack' : group.eligible ? 'Choose action' : 'Needs review'}</span></div>
               </div>
-              <p>{group.reason}</p>
+              <div class="group-controls">
+                <SelectField id={`duplicate-action-${group.duplicate_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy} onchange={(value) => setGroupAction(group, value)} />
+                <p>{group.reason}</p>
+              </div>
             </header>
             <div class="members">
               {#each group.members as member, memberIndex (member.id)}
@@ -341,11 +412,11 @@
 
 {#if confirmOpen && plan}
   <ConfirmDialog
-    title="Resolve exact duplicates"
-    message={`Keep one copy in each of ${plan.group_count} groups and ask Immich to merge metadata then trash ${plan.trash_asset_count} duplicate assets?`}
-    confirmLabel="Resolve batch"
-    icon="trash"
-    destructive
+    title="Process reviewed duplicates"
+    message={`Process ${plan.group_count} groups: resolve ${plan.resolve_group_count}, create ${plan.stack_group_count} stacks, and trash ${plan.trash_asset_count} exact duplicate assets?`}
+    confirmLabel="Process batch"
+    icon={plan.destructive ? 'trash' : 'stack'}
+    destructive={plan.destructive}
     {busy}
     onconfirm={() => void executePlan()}
     onclose={() => { if (!busy) confirmOpen = false; }}
@@ -388,6 +459,8 @@
   .group-card.eligible { border-color: var(--color-positive-border); }
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
   .group-card header p { margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
+  .group-controls { display: flex; min-width: min(100%, 31rem); align-items: end; justify-content: flex-end; gap: .75rem; }
+  .group-controls > :global(.select-field) { min-width: 12.5rem; }
   .group-heading { display: flex; align-items: center; gap: .65rem; }
   .group-heading > div { display: flex; align-items: center; gap: .55rem; white-space: nowrap; }
   .status { padding: .2rem .45rem; border-radius: 999px; background: var(--color-surface-soft); font-size: .62rem; font-weight: 800; text-transform: uppercase; }
@@ -413,5 +486,5 @@
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
   @media (max-width: 58rem) { .controls { grid-template-columns: 1fr 1fr; } }
-  @media (max-width: 46rem) { .page-intro, .controls { grid-template-columns: 1fr; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header { align-items: flex-start; flex-direction: column; } .group-card header p { text-align: left; } }
+  @media (max-width: 46rem) { .page-intro, .controls { grid-template-columns: 1fr; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>

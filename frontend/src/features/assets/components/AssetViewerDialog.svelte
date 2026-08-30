@@ -90,6 +90,8 @@
     apiOnly?: boolean;
     integrityEnabled?: boolean;
     duplicateContext?: DuplicateReviewContext | null;
+    onduplicatekeeper?: (assetId: string) => void;
+    onduplicateaction?: (action: 'resolve' | 'stack_all' | 'none') => void;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
@@ -141,6 +143,8 @@
     apiOnly = false,
     integrityEnabled = !apiOnly,
     duplicateContext = null,
+    onduplicatekeeper,
+    onduplicateaction,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
@@ -736,6 +740,8 @@
         onsync={() => onsync(currentAsset.id)}
         {apiOnly}
         {duplicateContext}
+        {onduplicatekeeper}
+        {onduplicateaction}
       />
     {/if}
 

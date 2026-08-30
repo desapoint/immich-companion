@@ -14,6 +14,7 @@ const member: DuplicateMember = {
   file_modified_at: '2026-08-30T12:00:00Z',
   uploaded_at: '2026-08-30T12:00:00Z',
   is_offline: false,
+  is_stacked: false,
   immich_url: null,
   verification: 'matching',
   content_checksum: 'a'.repeat(40),

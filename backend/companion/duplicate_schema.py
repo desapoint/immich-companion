@@ -65,6 +65,7 @@ class DuplicateMember(BaseModel):
     file_modified_at: datetime
     uploaded_at: datetime | None = None
     is_offline: bool
+    is_stacked: bool
     immich_url: str | None = None
     verification: DuplicateMemberStatus
     content_checksum: str | None = None
@@ -111,6 +112,9 @@ class DuplicateResolutionPlanRequest(BaseModel):
     duplicate_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     all_eligible: bool = False
     keeper_overrides: dict[UUID, UUID] = Field(default_factory=dict)
+    action_overrides: dict[UUID, Literal["resolve", "stack_all"]] = Field(
+        default_factory=dict
+    )
 
     @model_validator(mode="after")
     def validate_selection(self) -> DuplicateResolutionPlanRequest:
@@ -122,7 +126,9 @@ class DuplicateResolutionPlanRequest(BaseModel):
 
 class DuplicateResolutionPlanGroup(BaseModel):
     duplicate_id: UUID
+    action: Literal["resolve", "stack_all"] = "resolve"
     keeper_asset_id: UUID
+    member_asset_ids: list[UUID] = Field(default_factory=list)
     trash_asset_ids: list[UUID]
 
 
@@ -131,6 +137,8 @@ class DuplicateResolutionPlan(BaseModel):
     status: Literal["planned", "running", "completed", "failed", "drifted", "expired"]
     groups: list[DuplicateResolutionPlanGroup]
     group_count: int
+    resolve_group_count: int = 0
+    stack_group_count: int = 0
     trash_asset_count: int
     expires_at: datetime
     destructive: bool = True

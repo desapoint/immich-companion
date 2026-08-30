@@ -3,6 +3,7 @@ import type {
   DuplicateResolutionPlan,
   DuplicateResult,
   DuplicateTaskStatus,
+  DuplicatePlanAction,
 } from '../types/duplicates';
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -44,6 +45,7 @@ export function planDuplicateResolution(request: {
   duplicate_ids: string[];
   all_eligible: boolean;
   keeper_overrides: Record<string, string>;
+  action_overrides: Record<string, Exclude<DuplicatePlanAction, 'none'>>;
 }): Promise<DuplicateResolutionPlan> {
   return requestJson('/api/assets/duplicates/cross-source/plan', jsonBody(request));
 }

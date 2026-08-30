@@ -67,11 +67,7 @@ class ActionRepository:
     ) -> ActionPlanRecord:
         """Persist an immutable reviewed Immich duplicate resolution."""
 
-        target_ids = [
-            asset_id
-            for group in groups
-            for asset_id in [group["keeper_asset_id"], *group["trash_asset_ids"]]
-        ]
+        target_ids = [asset_id for group in groups for asset_id in group["member_asset_ids"]]
         trash_ids = [asset_id for group in groups for asset_id in group["trash_asset_ids"]]
         record = ActionPlanRecord(
             action="resolve_duplicates",
@@ -84,7 +80,7 @@ class ActionRepository:
             applicable_ids=trash_ids,
             skipped_ids=[],
             missing_ids=[],
-            destructive=True,
+            destructive=bool(trash_ids),
             status="planned",
             expires_at=expires_at,
         )

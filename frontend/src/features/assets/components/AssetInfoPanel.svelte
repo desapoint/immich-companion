@@ -1,5 +1,7 @@
 <script lang="ts">
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import type { SelectOption } from '../../../lib/types/ui';
   import { formatAssetDate } from '../state/assetViewModel';
   import type { AssetDetail, AssetSummary, DuplicateReviewContext } from '../types/assets';
   import AssetInfoRelationships from './AssetInfoRelationships.svelte';
@@ -15,6 +17,8 @@
     onsync?: () => void;
     apiOnly?: boolean;
     duplicateContext?: DuplicateReviewContext | null;
+    onduplicatekeeper?: (assetId: string) => void;
+    onduplicateaction?: (action: 'resolve' | 'stack_all' | 'none') => void;
   }
 
   let {
@@ -28,7 +32,23 @@
     onsync = () => undefined,
     apiOnly = false,
     duplicateContext = null,
+    onduplicatekeeper,
+    onduplicateaction,
   }: Props = $props();
+
+  const duplicateActionOptions = $derived<SelectOption[]>([
+    { value: 'none', label: 'Skip / review later' },
+    {
+      value: 'resolve',
+      label: 'Resolve — keep primary',
+      disabled: !duplicateContext?.eligible,
+    },
+    {
+      value: 'stack_all',
+      label: 'Stack all — keep every copy',
+      disabled: duplicateContext?.members.some((member) => member.is_offline || member.is_stacked),
+    },
+  ]);
 
   const currentDuplicateMember = $derived(
     duplicateContext?.members.find((member) => member.id === asset.id) ?? null,
@@ -84,13 +104,32 @@
     <section class="duplicate-review" aria-label="Duplicate group validation">
       <div class="section-heading"><h3>Duplicate review</h3><span class={`duplicate-status ${duplicateContext.status}`}>{duplicateContext.status}</span></div>
       <p>{duplicateContext.reason ?? 'No group explanation was provided.'}</p>
+      {#if onduplicateaction && onduplicatekeeper}
+        <div class="duplicate-controls">
+          <SelectField
+            id={`viewer-duplicate-action-${duplicateContext.duplicate_id}`}
+            label="Group action"
+            value={duplicateContext.selected_action}
+            options={duplicateActionOptions}
+            compact
+            onchange={(value) => onduplicateaction?.(value as 'resolve' | 'stack_all' | 'none')}
+          />
+          <button
+            type="button"
+            class:active-primary={duplicateContext.selected_keeper_asset_id === asset.id}
+            onclick={() => onduplicatekeeper?.(asset.id)}
+          >
+            {duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected primary' : 'Use viewed as primary'}
+          </button>
+        </div>
+      {/if}
       <dl>
         <div><dt>Group ID</dt><dd>{duplicateContext.duplicate_id}</dd></div>
         <div><dt>Matching type</dt><dd>{duplicateContext.status === 'exact' ? 'Byte-exact content' : duplicateContext.status}</dd></div>
         <div><dt>Batch eligible</dt><dd>{duplicateContext.eligible ? 'Yes' : 'No'}</dd></div>
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
         <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{duplicateContext.recommended_keeper_asset_id === null ? 'No unique recommendation' : automaticRuleRespected ? 'Yes' : 'No — manually overridden'}</dd></div>
-        <div><dt>This copy</dt><dd>{duplicateContext.selected_keeper_asset_id === null ? 'Undecided' : duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected keeper' : 'Will be removed'}</dd></div>
+        <div><dt>This copy</dt><dd>{duplicateContext.selected_keeper_asset_id === null ? 'Undecided' : duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected primary' : duplicateContext.selected_action === 'resolve' ? 'Will be removed' : 'Retained in stack'}</dd></div>
         <div><dt>Rule recommendation</dt><dd>{duplicateContext.recommended_keeper_asset_id === null ? 'None — manual choice required' : duplicateContext.recommended_keeper_asset_id === asset.id ? 'Keep this copy' : 'Keep another copy'}</dd></div>
         <div><dt>Decision reasons</dt><dd>{duplicateContext.recommendation_reason_codes.join(', ') || 'No automatic recommendation'}</dd></div>
       </dl>
@@ -102,6 +141,7 @@
         <div><dt>Library ID</dt><dd>{currentDuplicateMember?.library_id ?? 'Upload storage'}</dd></div>
         <div><dt>File size</dt><dd>{formatBytes(currentDuplicateMember?.file_size_bytes ?? null)}</dd></div>
         <div><dt>Availability</dt><dd>{currentDuplicateMember?.is_offline ? 'Offline / unverified' : 'Available'}</dd></div>
+        <div><dt>Existing stack</dt><dd>{currentDuplicateMember?.is_stacked ? 'Already stacked' : 'None'}</dd></div>
         <div><dt>Integrity cache</dt><dd>{duplicateContext.current_integrity?.freshness ?? 'missing'}</dd></div>
         <div><dt>Structure</dt><dd>{duplicateContext.current_integrity?.report?.classification ?? 'Not analyzed'}</dd></div>
         <div><dt>Pixel identity</dt><dd>Planned validation</dd></div>
@@ -255,6 +295,9 @@
   .duplicate-review { margin-top: .8rem; padding: .65rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface-soft); }
   .duplicate-review h3 { margin: 0; }
   .duplicate-review > p { margin: .45rem 0 0; color: var(--color-ink-muted); line-height: 1.45; }
+  .duplicate-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: end; margin-top: .65rem; }
+  .duplicate-controls button { min-height: 2.35rem; padding: .45rem .6rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .65rem; font-weight: 780; }
+  .duplicate-controls button:hover, .duplicate-controls button:focus-visible, .duplicate-controls button.active-primary { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
   .section-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
   .duplicate-status { padding: .16rem .38rem; border-radius: 999px; background: var(--color-canvas); font-size: .58rem; font-weight: 820; text-transform: uppercase; }
   .duplicate-status.exact, .positive { color: var(--color-positive-ink); }

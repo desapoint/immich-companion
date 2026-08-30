@@ -14,6 +14,7 @@
     file_size_bytes: number | null;
     file_modified_at: string;
     is_offline: boolean;
+    is_stacked: boolean;
     immich_url: string | null;
   }
 
@@ -25,12 +26,15 @@
     keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
     recommended_keeper_asset_id: string | null;
     selected_keeper_asset_id: string | null;
+    selected_action: 'resolve' | 'stack_all' | 'none';
     recommendation_reason_codes: string[];
     members: Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
       content_checksum: string | null;
     }>;
     initial_index: number;
+    onkeeperchange?: (assetId: string) => 'resolve' | 'stack_all' | 'none';
+    onactionchange?: (action: 'resolve' | 'stack_all' | 'none') => void;
   }
 
   interface Props {
@@ -46,6 +50,8 @@
   let detailLoading = $state(true);
   let detailError = $state<string | null>(null);
   let detailGeneration = 0;
+  let selectedKeeperId = $state<string | null>(null);
+  let selectedAction = $state<'resolve' | 'stack_all' | 'none'>('none');
   const selectedIds = new Set<string>();
   const assets = $derived<AssetSummary[]>(members.map((member) => ({
     id: member.id,
@@ -86,7 +92,8 @@
     eligible: review.eligible,
     keeper_policy: review.keeper_policy,
     recommended_keeper_asset_id: review.recommended_keeper_asset_id,
-    selected_keeper_asset_id: review.selected_keeper_asset_id,
+    selected_keeper_asset_id: selectedKeeperId,
+    selected_action: selectedAction,
     recommendation_reason_codes: review.recommendation_reason_codes,
     members: members.map((member) => ({
       id: member.id,
@@ -97,6 +104,7 @@
       content_checksum: member.content_checksum,
       file_size_bytes: member.file_size_bytes,
       is_offline: member.is_offline,
+      is_stacked: member.is_stacked,
     })),
     current_integrity: integrity,
   });
@@ -127,7 +135,21 @@
     }
   }
 
-  onMount(() => void navigate(review.initial_index));
+  function chooseKeeper(assetId: string): void {
+    selectedKeeperId = assetId;
+    selectedAction = review.onkeeperchange?.(assetId) ?? selectedAction;
+  }
+
+  function chooseAction(action: 'resolve' | 'stack_all' | 'none'): void {
+    selectedAction = action;
+    review.onactionchange?.(action);
+  }
+
+  onMount(() => {
+    selectedKeeperId = review.selected_keeper_asset_id;
+    selectedAction = review.selected_action;
+    void navigate(review.initial_index);
+  });
 </script>
 
 {#if assets.length}
@@ -147,6 +169,8 @@
     apiOnly={true}
     integrityEnabled={true}
     {duplicateContext}
+    onduplicatekeeper={chooseKeeper}
+    onduplicateaction={chooseAction}
     onnavigate={(index) => void navigate(index)}
     ontoggleselection={() => {}}
     onvisiblechange={(assetId) => {

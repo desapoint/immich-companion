@@ -288,12 +288,19 @@ def test_keeper_policy_can_prefer_external() -> None:
 class FakeImmich:
     def __init__(self, candidate_group: ImmichDuplicateGroup):
         self.candidate_group = candidate_group
+        self.created_stacks: list[list[UUID]] = []
 
     async def list_duplicate_groups(self):
         return [self.candidate_group]
 
     async def get_asset(self, asset_id):
         return next(item for item in self.candidate_group.assets if item.id == asset_id)
+
+    async def create_stack(self, asset_ids):
+        self.created_stacks.append(asset_ids)
+        for item in self.candidate_group.assets:
+            if item.id in asset_ids:
+                item.stack = {"id": "ffffffff-ffff-4fff-8fff-ffffffffffff"}
 
     def public_asset_url(self, asset_id):
         return f"https://immich.test/photos/{asset_id}"
@@ -302,9 +309,13 @@ class FakeImmich:
 class FakeAssets:
     def __init__(self):
         self.refreshed: list[UUID] = []
+        self.removed: list[UUID] = []
 
     async def refresh_asset(self, item):
         self.refreshed.append(item.id)
+
+    async def remove_assets(self, asset_ids):
+        self.removed.extend(asset_ids)
 
 
 class FakeReports:
@@ -316,17 +327,37 @@ class FakeReports:
 
 
 class FakeActions:
-    def __init__(self):
+    def __init__(self, record=None):
         self.created = None
+        self.record = record
+        self.finished = None
 
     async def create_duplicate_plan(self, **values):
         self.created = values
+        destructive = any(group["trash_asset_ids"] for group in values["groups"])
         return SimpleNamespace(
             id=GROUP_ID,
             status="planned",
             relation_work={"groups": values["groups"]},
             expires_at=values["expires_at"],
+            destructive=destructive,
         )
+
+    async def get_plan(self, _plan_id):
+        return self.record
+
+    async def claim_plan(self, _plan_id):
+        self.record.status = "running"
+        return self.record
+
+    async def finish_plan(self, _plan_id, status, result):
+        self.record.status = status
+        self.finished = (status, result)
+
+
+class FakeRuntimeSettings:
+    async def get(self):
+        return SimpleNamespace(full_batch_size=100, full_min_batch_delay_seconds=0)
 
 
 class FakeTasks:
@@ -615,3 +646,82 @@ async def test_manual_keeper_makes_an_ambiguous_exact_group_plannable() -> None:
 
     assert plan.groups[0].keeper_asset_id == UPLOAD_2
     assert plan.groups[0].trash_asset_ids == [UPLOAD_1]
+
+
+@pytest.mark.asyncio
+async def test_mismatch_group_can_be_manually_planned_as_a_non_destructive_stack() -> None:
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(b"left"), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    actions = FakeActions()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, b"right")]),
+        actions,
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            duplicate_ids=[GROUP_ID],
+            keeper_overrides={GROUP_ID: UPLOAD_1},
+            action_overrides={GROUP_ID: "stack_all"},
+        )
+    )
+
+    assert plan.destructive is False
+    assert plan.resolve_group_count == 0
+    assert plan.stack_group_count == 1
+    assert plan.groups[0].action == "stack_all"
+    assert plan.groups[0].member_asset_ids == [UPLOAD_1, EXTERNAL_1]
+    assert plan.groups[0].trash_asset_ids == []
+
+
+@pytest.mark.asyncio
+async def test_non_destructive_stack_plan_executes_in_safe_mode() -> None:
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(b"left"), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    assets = FakeAssets()
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=False,
+        relation_work={
+            "options": DuplicateAnalysisOptions().model_dump(mode="json"),
+            "groups": [
+                {
+                    "duplicate_id": str(GROUP_ID),
+                    "action": "stack_all",
+                    "keeper_asset_id": str(UPLOAD_1),
+                    "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                    "trash_asset_ids": [],
+                }
+            ],
+        },
+    )
+    actions = FakeActions(record)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=False),
+        immich,
+        assets,
+        FakeReports([report(EXTERNAL_1, b"right")]),
+        actions,
+        SimpleNamespace(),
+        FakeRuntimeSettings(),
+    )
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "completed"
+    assert outcome.counters["groups_stacked"] == 1
+    assert immich.created_stacks == [[UPLOAD_1, EXTERNAL_1]]
+    assert assets.refreshed == [UPLOAD_1, EXTERNAL_1]
+    assert actions.finished[0] == "completed"
