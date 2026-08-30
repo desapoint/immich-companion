@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import shutil
@@ -16,6 +17,22 @@ RgbPixel = tuple[int, int, int]
 RgbaPixel = tuple[int, int, int, int]
 Pixel = RgbPixel | RgbaPixel
 PixelFactory = Callable[[int, int], Pixel]
+
+# Generated once with Pillow from a 32x24 solid RGB image. Keeping the bytes
+# inline preserves the generator's standard-library-only runtime contract.
+HEALTHY_JPEG = base64.b64decode(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsN"
+    "DhIQDQ4RDgsLEBYQERMUFRUVDA8XGBYUGBIUFRT/2wBDAQMEBAUEBQkFBQkUDQsNFBQUFBQUFBQUFBQU"
+    "FBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBT/wAARCAAYACADASIAAhEBAxEB/8QA"
+    "HwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIh"
+    "MUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVW"
+    "V1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXG"
+    "x8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQF"
+    "BgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAV"
+    "YnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOE"
+    "hYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq"
+    "8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDCooor+gD8HCiiigAooooAKKKKAP/Z"
+)
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -82,6 +99,28 @@ def edited_scene(index: int) -> PixelFactory:
         if box_x <= x < box_x + box_size and box_y <= y < box_y + box_size:
             return color
         return base_scene(x, y)
+
+    return pixel
+
+
+def brightness_scene(percent: int) -> PixelFactory:
+    def pixel(x: int, y: int) -> RgbPixel:
+        adjusted = tuple(
+            min(255, max(0, value * percent // 100)) for value in base_scene(x, y)
+        )
+        return adjusted  # type: ignore[return-value]
+
+    return pixel
+
+
+def color_shift_scene(red_delta: int, blue_delta: int) -> PixelFactory:
+    def pixel(x: int, y: int) -> RgbPixel:
+        red, green, blue = base_scene(x, y)
+        return (
+            min(255, max(0, red + red_delta)),
+            green,
+            min(255, max(0, blue + blue_delta)),
+        )
 
     return pixel
 
@@ -257,10 +296,141 @@ def generate(output: Path) -> dict[str, object]:
             )
         )
 
+    same_size_upload = encode_png(96, 64, negative_scene(2), comment="same-size-a")
+    payloads.extend(
+        (
+            (
+                "images/duplicate-cases/healthy-reference.jpg",
+                HEALTHY_JPEG,
+                "duplicate-integrity-reference",
+                32,
+                24,
+                False,
+            ),
+            (
+                "images/duplicate-cases/same-name.png",
+                encode_png(96, 64, negative_scene(3), comment="same-name-upload"),
+                "duplicate-negative-control",
+                96,
+                64,
+                False,
+            ),
+            (
+                "images/duplicate-cases/same-size.png",
+                same_size_upload,
+                "duplicate-negative-control",
+                96,
+                64,
+                False,
+            ),
+        )
+    )
+
     records: list[dict[str, str | int | bool | float]] = []
     for relative_path, payload, family, width, height, alpha in payloads:
-        (output / relative_path).write_bytes(payload)
+        media_path = output / relative_path
+        media_path.parent.mkdir(parents=True, exist_ok=True)
+        media_path.write_bytes(payload)
         records.append(file_record(relative_path, payload, family, width, height, alpha=alpha))
+
+    external_payloads = (
+        (
+            "external-library/byte-perfect/base-scene-external.png",
+            base,
+            "cross-source-byte-perfect",
+            192,
+            128,
+            False,
+        ),
+        (
+            "external-library/pixel-identical/base-scene-external-metadata.png",
+            encode_png(192, 128, base_scene, comment="external-metadata-variant"),
+            "cross-source-pixel-identical",
+            192,
+            128,
+            False,
+        ),
+        (
+            "external-library/integrity/healthy-with-trailing-data.jpg",
+            HEALTHY_JPEG + b"COMPANION-DEMO-TRAILING-DATA",
+            "cross-source-integrity-warning",
+            32,
+            24,
+            False,
+        ),
+        (
+            "external-library/negative-controls/same-name.png",
+            encode_png(96, 64, negative_scene(8), comment="same-name-other!"),
+            "cross-source-negative-control",
+            96,
+            64,
+            False,
+        ),
+        (
+            "external-library/negative-controls/same-size.png",
+            encode_png(96, 64, negative_scene(6), comment="same-size-b"),
+            "cross-source-negative-control",
+            96,
+            64,
+            False,
+        ),
+        (
+            "external-library/similarity/brightness-95-percent.png",
+            encode_png(192, 128, brightness_scene(95), comment="brightness-95"),
+            "cross-source-similarity",
+            192,
+            128,
+            False,
+        ),
+        (
+            "external-library/similarity/brightness-105-percent.png",
+            encode_png(192, 128, brightness_scene(105), comment="brightness-105"),
+            "cross-source-similarity",
+            192,
+            128,
+            False,
+        ),
+        (
+            "external-library/similarity/warmer-color-balance.png",
+            encode_png(192, 128, color_shift_scene(8, -6), comment="warmer-color"),
+            "cross-source-similarity",
+            192,
+            128,
+            False,
+        ),
+        (
+            "external-library/similarity/small-occlusion.png",
+            encode_png(192, 128, edited_scene(1), comment="small-occlusion"),
+            "cross-source-similarity",
+            192,
+            128,
+            False,
+        ),
+        (
+            "external-library/similarity/cropped.png",
+            encode_png(160, 104, cropped_scene(1, 160, 104), comment="cropped"),
+            "cross-source-similarity",
+            160,
+            104,
+            False,
+        ),
+        (
+            "external-library/similarity/resized.png",
+            encode_png(256, 192, scaled_scene(256, 192), comment="resized"),
+            "cross-source-similarity",
+            256,
+            192,
+            False,
+        ),
+    )
+    external_records: list[dict[str, str | int | bool | float]] = []
+    for relative_path, payload, family, width, height, alpha in external_payloads:
+        external_path = output / relative_path
+        external_path.parent.mkdir(parents=True, exist_ok=True)
+        external_path.write_bytes(payload)
+        external_records.append(
+            file_record(relative_path, payload, family, width, height, alpha=alpha)
+        )
 
     # These deterministic byte streams document the integrity/corruption cases
     # needed by the later non-exact duplicate workflow. They are intentionally
@@ -268,7 +438,7 @@ def generate(output: Path) -> dict[str, object]:
     # Immich assets, until that guarded workflow is implemented.
     diagnostic_dir = output / "diagnostics"
     diagnostic_dir.mkdir(parents=True, exist_ok=True)
-    healthy_jpeg = b"\xff\xd8\xff\xd9"
+    healthy_jpeg = HEALTHY_JPEG
     diagnostic_payloads = (
         ("diagnostics/jpeg-minimal-healthy.jpg", healthy_jpeg, "healthy"),
         (
@@ -357,9 +527,10 @@ def generate(output: Path) -> dict[str, object]:
     unique_sha1 = {str(record["sha1"]) for record in records}
 
     manifest: dict[str, object] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generator": "tools/generate_test_media.py",
         "files": records,
+        "external_files": external_records,
         "relationships": {
             "exact_duplicate_groups": [["images/base-scene.png", "images/base-scene-copy.png"]],
             "pixel_identical_groups": [[
@@ -368,6 +539,110 @@ def generate(output: Path) -> dict[str, object]:
             ]],
             "visually_similar_groups": [base_family, album_c],
             "analysis_fixtures": diagnostic_records,
+            "duplicate_demo_groups": [
+                {
+                    "case": "byte-perfect-cross-source",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/byte-perfect/base-scene-external.png",
+                    "expected_byte_relation": "equal",
+                    "expected_pixel_relation": "equal",
+                    "expected_integrity": "healthy",
+                },
+                {
+                    "case": "pixel-identical-different-bytes",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/pixel-identical/base-scene-external-metadata.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "equal",
+                    "expected_integrity": "healthy",
+                },
+                {
+                    "case": "decodable-jpeg-trailing-data",
+                    "upload_path": "images/duplicate-cases/healthy-reference.jpg",
+                    "external_path": "external-library/integrity/healthy-with-trailing-data.jpg",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "equal",
+                    "expected_integrity": "warning",
+                },
+                {
+                    "case": "same-filename-different-content",
+                    "upload_path": "images/duplicate-cases/same-name.png",
+                    "external_path": "external-library/negative-controls/same-name.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "different",
+                    "expected_integrity": "healthy",
+                },
+                {
+                    "case": "same-filesize-different-content",
+                    "upload_path": "images/duplicate-cases/same-size.png",
+                    "external_path": "external-library/negative-controls/same-size.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "different",
+                    "expected_integrity": "healthy",
+                },
+                {
+                    "case": "similar-brightness-darker",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/similarity/brightness-95-percent.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "similar",
+                    "expected_integrity": "healthy",
+                    "transformation": "brightness_95_percent",
+                },
+                {
+                    "case": "similar-brightness-lighter",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/similarity/brightness-105-percent.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "similar",
+                    "expected_integrity": "healthy",
+                    "transformation": "brightness_105_percent",
+                },
+                {
+                    "case": "similar-color-balance",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/similarity/warmer-color-balance.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "similar",
+                    "expected_integrity": "healthy",
+                    "transformation": "red_plus_8_blue_minus_6",
+                },
+                {
+                    "case": "similar-small-occlusion",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/similarity/small-occlusion.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "similar",
+                    "expected_integrity": "healthy",
+                    "transformation": "small_occlusion",
+                },
+                {
+                    "case": "similar-crop",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/similarity/cropped.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "similar",
+                    "expected_integrity": "healthy",
+                    "transformation": "crop_and_resample",
+                },
+                {
+                    "case": "similar-resize",
+                    "upload_path": "images/base-scene.png",
+                    "external_path": "external-library/similarity/resized.png",
+                    "expected_byte_relation": "different",
+                    "expected_pixel_relation": "similar",
+                    "expected_integrity": "healthy",
+                    "transformation": "resize",
+                },
+            ],
+            "external_libraries": [
+                {
+                    "name": "Companion Demo · External Originals",
+                    "import_path": "/external-library",
+                    "manifest_prefix": "external-library/",
+                    "read_only": True,
+                }
+            ],
             "albums": [
                 {
                     "name": "Companion Test · Album A",
@@ -418,6 +693,8 @@ def generate(output: Path) -> dict[str, object]:
             "default_page_size": 48,
             "minimum_search_pages": 2,
             "analysis_fixtures": len(diagnostic_records),
+            "external_assets": len(external_records),
+            "duplicate_demo_groups": 11,
         },
     }
     manifest_path = output / "manifest.json"
