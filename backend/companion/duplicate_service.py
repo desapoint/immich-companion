@@ -22,6 +22,7 @@ from companion.duplicate_schema import (
     CrossSourceDuplicateTaskStart,
     DuplicateAnalysisOptions,
     DuplicateMember,
+    DuplicateMemberEvidence,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanGroup,
@@ -333,6 +334,10 @@ class CrossSourceDuplicateService:
                         else "mismatch"
                     ),
                     content_checksum=hashes.get(asset.id),
+                    evidence=CrossSourceDuplicateService._member_evidence(
+                        asset,
+                        reports.get(asset.id),
+                    ),
                 )
                 for asset in assets
             ]
@@ -370,6 +375,28 @@ class CrossSourceDuplicateService:
             mismatch_group_count=counts["mismatch"],
             ineligible_group_count=counts["ineligible"],
             groups=public_groups,
+        )
+
+    @staticmethod
+    def _member_evidence(
+        asset: ImmichAsset,
+        report: AssetIntegrityReportRecord | None,
+    ) -> DuplicateMemberEvidence:
+        freshness = report_freshness(report, asset)
+        if report is None:
+            return DuplicateMemberEvidence(analysis_freshness=freshness)
+        detected_format = "unknown" if report.detected_format == "other" else report.detected_format
+        return DuplicateMemberEvidence(
+            analysis_freshness=freshness,
+            integrity_status=report.classification,  # type: ignore[arg-type]
+            issue_codes=list(report.issues or []),
+            detected_format=detected_format,  # type: ignore[arg-type]
+            format_matches_declared=report.format_matches_declared,
+            decode_supported=report.decode_supported,
+            decode_valid=report.decode_valid,
+            decoded_width=report.decoded_width,
+            decoded_height=report.decoded_height,
+            dimensions_match_immich=report.dimensions_match_immich,
         )
 
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:

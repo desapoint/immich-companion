@@ -133,6 +133,10 @@ def test_same_file_across_sources_is_exact_with_different_names() -> None:
     )
 
     assert result.groups[0].status == "exact"
+    assert result.groups[0].members[0].evidence.analysis_freshness == "missing"
+    assert result.groups[0].members[1].evidence.analysis_freshness == "current"
+    assert result.groups[0].members[1].evidence.integrity_status == "healthy"
+    assert result.groups[0].members[1].evidence.detected_format == "jpeg"
     assert result.groups[0].keeper_asset_id == UPLOAD_1
     assert result.groups[0].discovery_source == "immich_duplicate"
     assert result.groups[0].classification == "exact_file"
@@ -246,6 +250,25 @@ def test_unavailable_external_is_unverified_not_a_mismatch() -> None:
 
     assert result.groups[0].status == "unverified"
     assert "offline" in (result.groups[0].reason or "")
+
+
+def test_stale_member_evidence_is_exposed_but_not_used_as_current_hash() -> None:
+    content = b"same"
+    stale = report(EXTERNAL_1, content, modified=MODIFIED - timedelta(seconds=1))
+
+    result = assemble(
+        group(
+            asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+            asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+        ),
+        [stale],
+    )
+
+    member = result.groups[0].members[1]
+    assert result.groups[0].status == "unverified"
+    assert member.content_checksum is None
+    assert member.evidence.analysis_freshness == "stale"
+    assert member.evidence.integrity_status == "healthy"
 
 
 def test_keeper_policy_can_prefer_external() -> None:

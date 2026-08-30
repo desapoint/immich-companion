@@ -8,6 +8,9 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from companion.integrity import DetectedFormat, IntegrityClassification
+from companion.integrity_schema import IntegrityFreshness
+
 DuplicateKeeperPolicy = Literal["most_recent", "prefer_upload", "prefer_external", "first"]
 DuplicateGroupStatus = Literal["exact", "unverified", "mismatch", "ineligible"]
 DuplicateMemberStatus = Literal["matching", "mismatch", "unverified"]
@@ -39,6 +42,19 @@ class DuplicateAnalysisOptions(BaseModel):
         return self
 
 
+class DuplicateMemberEvidence(BaseModel):
+    analysis_freshness: IntegrityFreshness
+    integrity_status: IntegrityClassification | None = None
+    issue_codes: list[str] = Field(default_factory=list)
+    detected_format: DetectedFormat | None = None
+    format_matches_declared: bool | None = None
+    decode_supported: bool | None = None
+    decode_valid: bool | None = None
+    decoded_width: int | None = None
+    decoded_height: int | None = None
+    dimensions_match_immich: bool | None = None
+
+
 class DuplicateMember(BaseModel):
     id: UUID
     source_kind: Literal["upload", "external"]
@@ -52,6 +68,7 @@ class DuplicateMember(BaseModel):
     immich_url: str | None = None
     verification: DuplicateMemberStatus
     content_checksum: str | None = None
+    evidence: DuplicateMemberEvidence
 
 
 class ExactDuplicateGroup(BaseModel):

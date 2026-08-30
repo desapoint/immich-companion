@@ -20,6 +20,18 @@ export interface DuplicateMember {
   immich_url: string | null;
   verification: 'matching' | 'mismatch' | 'unverified';
   content_checksum: string | null;
+  evidence: {
+    analysis_freshness: 'current' | 'stale' | 'missing';
+    integrity_status: 'healthy' | 'warning' | 'malformed' | 'hash_only' | null;
+    issue_codes: string[];
+    detected_format: 'jpeg' | 'heic' | 'heif' | 'avif' | 'png' | 'webp' | 'gif' | 'tiff' | 'unknown' | null;
+    format_matches_declared: boolean | null;
+    decode_supported: boolean | null;
+    decode_valid: boolean | null;
+    decoded_width: number | null;
+    decoded_height: number | null;
+    dimensions_match_immich: boolean | null;
+  };
 }
 
 export interface ExactDuplicateGroup {

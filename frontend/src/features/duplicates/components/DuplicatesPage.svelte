@@ -5,6 +5,7 @@
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import GroupEvidencePills from './GroupEvidencePills.svelte';
   import {
     executeDuplicateResolution,
     loadDuplicateGroups,
@@ -294,7 +295,8 @@
                     <strong title={member.original_file_name}>{member.original_file_name}</strong>
                     <span class={`source-kind ${member.source_kind}`}>{member.source_kind === 'upload' ? 'Immich upload' : 'External library'}</span>
                     {#if member.library_id}<small class="library-id" title={member.library_id}>{member.library_id}</small>{/if}
-                    <small>{formatSize(member.file_size_bytes)} · {member.verification}</small>
+                    <GroupEvidencePills {member} analysisPending={result.analysis_task_id !== null && member.evidence.analysis_freshness !== 'current'} />
+                    <small>{formatSize(member.file_size_bytes)}</small>
                   </div>
                 </div>
               {/each}
