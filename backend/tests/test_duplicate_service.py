@@ -351,8 +351,9 @@ class FakeIntegrity:
         self.calls: list[UUID] = []
         self.unavailable = unavailable
 
-    async def analyze(self, _context, asset_id):
+    async def analyze(self, _context, asset_id, *, publish_progress=True):
         self.calls.append(asset_id)
+        assert publish_progress is False
         if self.unavailable:
             raise PermanentTaskError("The Immich original was not found.")
 
@@ -519,6 +520,37 @@ async def test_unavailable_candidate_does_not_fail_the_whole_analysis() -> None:
 
     assert result.counters["files_unavailable"] == 1
     assert context.checkpoints[-1]["progress"]["percent"] == 100.0
+
+
+@pytest.mark.asyncio
+async def test_duplicate_analysis_progress_is_monotonic_across_member_analysis() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+        asset(EXTERNAL_2, external=True, checksum="other-path", filename="three.jpg"),
+    )
+    context = TaskContext()
+    handler = CrossSourceDuplicateTaskHandler(
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([]),
+        FakeIntegrity(),
+    )
+
+    await handler.execute(
+        context,
+        DuplicateAnalysisOptions().model_dump(mode="json"),
+    )
+
+    progress = [checkpoint["progress"] for checkpoint in context.checkpoints]
+    assert [item["percent"] for item in progress] == [0.0, 50.0, 100.0, 100.0]
+    assert [(item["completed"], item["total"]) for item in progress] == [
+        (0, 2),
+        (1, 2),
+        (2, 2),
+        (2, 2),
+    ]
 
 
 @pytest.mark.asyncio

@@ -170,6 +170,8 @@ class IntegrityTaskHandler:
         self,
         context: TaskContext,
         asset_id: UUID,
+        *,
+        publish_progress: bool = True,
     ) -> AssetIntegrityReport:
         """Run the shared bounded analyzer for one known synchronized asset."""
 
@@ -178,17 +180,20 @@ class IntegrityTaskHandler:
         analyzer = FileIntegrityAnalyzer(source.original_mime_type, immich_content_checksum)
         started = monotonic()
 
-        await context.checkpoint(
-            checkpoint={"phase": "opening", "asset_id": str(asset_id)},
-            counters={"bytes_processed": 0},
-            progress={
-                "phase": "integrity",
-                "completed": 0,
-                "total": None,
-                "percent": None,
-                "detail": "Opening original from Immich…",
-            },
-        )
+        if publish_progress:
+            await context.checkpoint(
+                checkpoint={"phase": "opening", "asset_id": str(asset_id)},
+                counters={"bytes_processed": 0},
+                progress={
+                    "phase": "integrity",
+                    "completed": 0,
+                    "total": None,
+                    "percent": None,
+                    "detail": "Opening original from Immich…",
+                },
+            )
+        else:
+            await context.ensure_active()
 
         with SpooledTemporaryFile(max_size=INTEGRITY_SPOOL_MEMORY_BYTES) as spool:
             try:
@@ -204,7 +209,12 @@ class IntegrityTaskHandler:
                         if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
                             continue
                         await self._checkpoint(
-                            context, asset_id, analyzer.byte_size, total, started
+                            context,
+                            asset_id,
+                            analyzer.byte_size,
+                            total,
+                            started,
+                            publish_progress=publish_progress,
                         )
                         last_reported = now
             except ImmichApiError as error:
@@ -212,7 +222,14 @@ class IntegrityTaskHandler:
                     raise PermanentTaskError("The Immich original was not found.") from error
                 raise RetryableTaskError("The Immich original stream was interrupted.") from error
 
-            await self._checkpoint(context, asset_id, analyzer.byte_size, total, started)
+            await self._checkpoint(
+                context,
+                asset_id,
+                analyzer.byte_size,
+                total,
+                started,
+                publish_progress=publish_progress,
+            )
             await context.ensure_active()
             result = analyzer.finalize()
             decoded = await asyncio.to_thread(decode_image, spool, result.detected_format)
@@ -228,21 +245,24 @@ class IntegrityTaskHandler:
         expected_size = source_file_size(source)
         if expected_size is not None and result.byte_size != expected_size:
             raise RetryableTaskError("The streamed original size did not match Immich metadata.")
-        await context.checkpoint(
-            checkpoint={
-                "phase": "finalizing",
-                "asset_id": str(asset_id),
-                "bytes_processed": result.byte_size,
-            },
-            counters={"bytes_processed": result.byte_size},
-            progress={
-                "phase": "finalizing",
-                "completed": result.byte_size,
-                "total": None,
-                "percent": None,
-                "detail": "Verifying the source and saving the report…",
-            },
-        )
+        if publish_progress:
+            await context.checkpoint(
+                checkpoint={
+                    "phase": "finalizing",
+                    "asset_id": str(asset_id),
+                    "bytes_processed": result.byte_size,
+                },
+                counters={"bytes_processed": result.byte_size},
+                progress={
+                    "phase": "finalizing",
+                    "completed": result.byte_size,
+                    "total": None,
+                    "percent": None,
+                    "detail": "Verifying the source and saving the report…",
+                },
+            )
+        else:
+            await context.ensure_active()
 
         current = await self._active_asset(asset_id)
         if not same_source(source, current):
@@ -256,8 +276,12 @@ class IntegrityTaskHandler:
         completed: int,
         total: int | None,
         started: float,
+        *,
+        publish_progress: bool,
     ) -> None:
         await context.ensure_active()
+        if not publish_progress:
+            return
         elapsed = max(monotonic() - started, 0.001)
         percent = min(round(completed / total * 100, 1), 99.0) if total else None
         await context.checkpoint(

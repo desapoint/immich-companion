@@ -631,11 +631,30 @@ class CrossSourceDuplicateTaskHandler:
             and report_freshness(reports.get(asset.id), asset) != "current"
         ]
         unavailable = 0
+        await context.checkpoint(
+            checkpoint={"phase": "fingerprinting"},
+            counters={"files_attempted": 0, "files_unavailable": 0},
+            progress={
+                "phase": "duplicate_fingerprints",
+                "completed": 0,
+                "total": len(pending),
+                "percent": 0.0,
+                "detail": (
+                    f"Preparing to verify {len(pending)} duplicate candidate files…"
+                    if pending
+                    else "All duplicate candidate evidence is current."
+                ),
+            },
+        )
         for index, asset in enumerate(pending, start=1):
             await context.ensure_active()
             await self._assets.refresh_asset(asset)
             try:
-                await self._integrity.analyze(context, asset.id)
+                await self._integrity.analyze(
+                    context,
+                    asset.id,
+                    publish_progress=False,
+                )
             except (PermanentTaskError, RetryableTaskError, ImmichApiError):
                 unavailable += 1
             await context.checkpoint(
@@ -646,7 +665,9 @@ class CrossSourceDuplicateTaskHandler:
                     "completed": index,
                     "total": len(pending),
                     "percent": round(index / len(pending) * 100, 1),
-                    "detail": "Verifying duplicate candidate contents…",
+                    "detail": (
+                        f"Verified {index} of {len(pending)} duplicate candidate files"
+                    ),
                 },
             )
         await context.checkpoint(
@@ -654,8 +675,8 @@ class CrossSourceDuplicateTaskHandler:
             counters={"files_attempted": len(pending), "files_unavailable": unavailable},
             progress={
                 "phase": "complete",
-                "completed": 1,
-                "total": 1,
+                "completed": len(pending),
+                "total": len(pending),
                 "percent": 100.0,
                 "detail": "Duplicate candidate verification is ready.",
             },
