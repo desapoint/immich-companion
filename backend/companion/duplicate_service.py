@@ -80,17 +80,6 @@ CROSS_SOURCE_DUPLICATE_TASK_TYPE = "cross_source_duplicates"
 DUPLICATE_RESOLUTION_TASK_TYPE = "duplicate_resolution"
 
 
-def _immich_provider_id(group: DiscoveredGroup) -> UUID:
-    """Map the generic snapshot at the current Immich-only public boundary."""
-
-    if (
-        group.discovery_source is not DiscoverySource.IMMICH_DUPLICATE
-        or group.provider_group_id is None
-    ):
-        raise ValueError("The current duplicate API only accepts Immich duplicate groups")
-    return UUID(group.provider_group_id)
-
-
 def _options_key(options: DuplicateAnalysisOptions) -> str:
     raw = json.dumps(options.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
     return sha256(raw.encode()).hexdigest()
@@ -135,9 +124,15 @@ def _member_dispositions(
 
 
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
-    """Read plans created before mixed group actions without invalidating them."""
+    """Read legacy Immich plans without invalidating them."""
 
     normalized = dict(group)
+    legacy_id = normalized.get("duplicate_id")
+    if "group_id" not in normalized and legacy_id is not None:
+        normalized["group_id"] = f"immich:{legacy_id}"
+    normalized.setdefault("discovery_source", DiscoverySource.IMMICH_DUPLICATE.value)
+    if "provider_group_id" not in normalized:
+        normalized["provider_group_id"] = legacy_id
     normalized.setdefault("action", "resolve")
     normalized.setdefault(
         "member_asset_ids",
@@ -328,7 +323,7 @@ class CrossSourceDuplicateService:
 
     async def similarity_reference(
         self,
-        duplicate_id: UUID,
+        group_id: str,
         request: DuplicateSimilarityReferenceRequest,
     ) -> ExactDuplicateGroup:
         """Return one live group relative to a requested member-owned reference."""
@@ -339,7 +334,7 @@ class CrossSourceDuplicateService:
             (
                 group
                 for group in await self._live_groups()
-                if group.provider_group_id == str(duplicate_id)
+                if group.group_id == group_id
             ),
             None,
         )
@@ -396,10 +391,10 @@ class CrossSourceDuplicateService:
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
         features: dict[UUID, AssetSimilarityFeatureRecord],
     ) -> CrossSourceDuplicateResult:
-        source_by_id = {_immich_provider_id(group): group for group in source_groups}
+        source_by_id = {group.group_id: group for group in source_groups}
         updated_groups: list[ExactDuplicateGroup] = []
         for group in result.groups:
-            source = source_by_id[group.duplicate_id]
+            source = source_by_id[group.group_id]
             if not source.assets:
                 updated_groups.append(group)
                 continue
@@ -484,13 +479,38 @@ class CrossSourceDuplicateService:
         result: CrossSourceDuplicateResult,
     ) -> CrossSourceDuplicateResult:
         assert self._reviews is not None
-        states = await self._reviews.get_many(
-            "immich_duplicate",
-            [str(group.duplicate_id) for group in result.groups],
-        )
+        states_by_source: dict[tuple[str, str], Any] = {}
+        for discovery_source in {group.discovery_source for group in result.groups}:
+            source_groups = [
+                group
+                for group in result.groups
+                if group.discovery_source == discovery_source
+            ]
+            review_keys = list(
+                dict.fromkeys(
+                    [group.group_id for group in source_groups]
+                    + [
+                        group.provider_group_id
+                        for group in source_groups
+                        if group.provider_group_id is not None
+                    ]
+                )
+            )
+            states = await self._reviews.get_many(
+                discovery_source,
+                review_keys,
+            )
+            states_by_source.update(
+                ((discovery_source, provider_id), state)
+                for provider_id, state in states.items()
+            )
         groups: list[ExactDuplicateGroup] = []
         for group in result.groups:
-            state = states.get(str(group.duplicate_id))
+            state = states_by_source.get((group.discovery_source, group.group_id)) or (
+                states_by_source.get((group.discovery_source, group.provider_group_id))
+                if group.provider_group_id
+                else None
+            )
             if state is None:
                 groups.append(group)
                 continue
@@ -664,7 +684,7 @@ class CrossSourceDuplicateService:
             candidate = CandidateGroup(
                 group_id=group.group_id,
                 discovery_source=group.discovery_source,
-                provider_group_id=_immich_provider_id(group),
+                provider_group_id=group.provider_group_id,
                 classification=classification,
                 members=tuple(
                     CandidateMember(
@@ -720,9 +740,9 @@ class CrossSourceDuplicateService:
             ]
             public_groups.append(
                 ExactDuplicateGroup(
-                    duplicate_id=_immich_provider_id(group),
                     group_id=candidate.group_id,
                     discovery_source=candidate.discovery_source.value,
+                    provider_group_id=group.provider_group_id,
                     classification=candidate.classification.value,
                     status=status,
                     reason=reason,
@@ -792,7 +812,7 @@ class CrossSourceDuplicateService:
             (
                 candidate
                 for candidate in result.groups
-                if candidate.duplicate_id == request.duplicate_id
+                if candidate.group_id == request.group_id
             ),
             None,
         )
@@ -819,8 +839,8 @@ class CrossSourceDuplicateService:
             else "manually_configured"
         )
         await self._reviews.save(
-            discovery_source="immich_duplicate",
-            provider_group_id=str(group.duplicate_id),
+            discovery_source=group.discovery_source,
+            provider_group_id=group.group_id,
             member_fingerprint=group.member_fingerprint,
             manual_action=action,
             manual_primary_asset_id=primary_id,
@@ -830,7 +850,7 @@ class CrossSourceDuplicateService:
         return next(
             candidate
             for candidate in refreshed.groups
-            if candidate.duplicate_id == request.duplicate_id
+            if candidate.group_id == request.group_id
         )
 
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
@@ -838,21 +858,21 @@ class CrossSourceDuplicateService:
         selected = (
             [group for group in result.groups if group.auto_resolvable]
             if request.all_eligible
-            else [group for group in result.groups if group.duplicate_id in request.duplicate_ids]
+            else [group for group in result.groups if group.group_id in request.group_ids]
         )
         if not selected:
             raise ValueError("No duplicate groups were selected")
-        if not request.all_eligible and {group.duplicate_id for group in selected} != set(
-            request.duplicate_ids
+        if not request.all_eligible and {group.group_id for group in selected} != set(
+            request.group_ids
         ):
             raise ActionPlanConflictError("A selected duplicate group is no longer available")
         plan_groups: list[dict[str, Any]] = []
         for group in selected:
             member_ids = {member.id for member in group.members}
             action = request.action_overrides.get(
-                group.duplicate_id,
+                group.group_id,
                 "resolve"
-                if request.all_eligible or group.duplicate_id in request.keeper_overrides
+                if request.all_eligible or group.group_id in request.keeper_overrides
                 else group.effective_action,
             )
             if action == "none":
@@ -872,7 +892,7 @@ class CrossSourceDuplicateService:
             primary_required = action in {"resolve", "stack_all"}
             keeper_id = (
                 request.keeper_overrides.get(
-                    group.duplicate_id,
+                    group.group_id,
                     group.effective_primary_asset_id or group.keeper_asset_id,
                 )
                 if primary_required
@@ -897,7 +917,9 @@ class CrossSourceDuplicateService:
             )
             plan_groups.append(
                 {
-                    "duplicate_id": str(group.duplicate_id),
+                    "group_id": group.group_id,
+                    "discovery_source": group.discovery_source,
+                    "provider_group_id": group.provider_group_id,
                     "action": action,
                     "keeper_asset_id": str(keeper_id) if keeper_id is not None else None,
                     "member_asset_ids": [str(asset_id) for asset_id in ordered_members],
@@ -906,7 +928,7 @@ class CrossSourceDuplicateService:
                     "members": _member_dispositions(action, ordered_members, keeper_id),
                 }
             )
-        plan_groups.sort(key=lambda item: item["duplicate_id"])
+        plan_groups.sort(key=lambda item: item["group_id"])
         record = await self._actions.create_duplicate_plan(
             groups=plan_groups,
             options=request.options.model_dump(mode="json"),
@@ -953,10 +975,9 @@ class CrossSourceDuplicateService:
             _normalize_plan_group(item) for item in existing.relation_work.get("groups", [])
         ]
         options = DuplicateAnalysisOptions.model_validate(existing.relation_work.get("options", {}))
-        reviewed = {group.duplicate_id: group for group in (await self.result(options)).groups}
+        reviewed = {group.group_id: group for group in (await self.result(options)).groups}
         for planned in raw_groups:
-            duplicate_id = UUID(planned["duplicate_id"])
-            live_group = reviewed.get(duplicate_id)
+            live_group = reviewed.get(planned["group_id"])
             planned_members = {UUID(value) for value in planned["member_asset_ids"]}
             if (
                 live_group is None
@@ -1013,18 +1034,29 @@ class CrossSourceDuplicateService:
             batch = resolve_groups[offset : offset + batch_size]
             resolutions = [
                 ImmichDuplicateResolution(
-                    duplicate_id=UUID(item["duplicate_id"]),
+                    duplicate_id=UUID(item["provider_group_id"]),
                     keep_asset_id=UUID(item["keeper_asset_id"]),
                     trash_asset_ids=[UUID(value) for value in item["trash_asset_ids"]],
                 )
                 for item in batch
+                if item["discovery_source"] == DiscoverySource.IMMICH_DUPLICATE.value
+                and item.get("provider_group_id") is not None
             ]
+            if len(resolutions) != len(batch):
+                await self._actions.finish_plan(
+                    plan_id,
+                    "failed",
+                    {"error": "unsupported_discovery_provider"},
+                )
+                raise PermanentTaskError(
+                    "Duplicate resolution is not supported for this discovery provider"
+                )
             try:
                 responses = await self._immich.resolve_duplicate_groups(resolutions)
             except ImmichApiError:
                 responses = []
             for index, resolution in enumerate(resolutions):
-                identifier = str(resolution.duplicate_id)
+                identifier = batch[index]["group_id"]
                 response = responses[index] if index < len(responses) else {}
                 if response.get("success") is True:
                     successful_ids.add(identifier)
@@ -1042,7 +1074,7 @@ class CrossSourceDuplicateService:
 
         for planned in delete_groups:
             await context.ensure_active()
-            identifier = planned["duplicate_id"]
+            identifier = planned["group_id"]
             member_ids = [UUID(value) for value in planned["member_asset_ids"]]
             verified_trashed: list[UUID] = []
             try:
@@ -1064,7 +1096,7 @@ class CrossSourceDuplicateService:
 
         for planned in keep_groups:
             await context.ensure_active()
-            identifier = planned["duplicate_id"]
+            identifier = planned["group_id"]
             successful_ids.add(identifier)
             kept_ids.add(identifier)
             processed += 1
@@ -1072,7 +1104,7 @@ class CrossSourceDuplicateService:
 
         for planned in stack_groups:
             await context.ensure_active()
-            identifier = planned["duplicate_id"]
+            identifier = planned["group_id"]
             try:
                 member_ids = [UUID(value) for value in planned["member_asset_ids"]]
                 await self._immich.create_stack(member_ids)
@@ -1091,11 +1123,13 @@ class CrossSourceDuplicateService:
             processed += 1
             await checkpoint("Creating reviewed Immich duplicate stacks…")
 
-        remaining = {group.duplicate_id for group in await self._immich.list_duplicate_groups()}
+        remaining = {
+            str(group.duplicate_id) for group in await self._immich.list_duplicate_groups()
+        }
         unresolved = [
-            item["duplicate_id"]
+            item["group_id"]
             for item in resolve_groups
-            if item["action"] == "resolve" and UUID(item["duplicate_id"]) in remaining
+            if item["action"] == "resolve" and item.get("provider_group_id") in remaining
         ]
         for identifier in unresolved:
             successful_ids.discard(identifier)
@@ -1111,11 +1145,11 @@ class CrossSourceDuplicateService:
                 "stack_all": "reviewed_stack_all",
             }
             for planned in raw_groups:
-                if planned["duplicate_id"] not in successful_ids:
+                if planned["group_id"] not in successful_ids:
                     continue
                 await self._reviews.save(
-                    discovery_source="immich_duplicate",
-                    provider_group_id=planned["duplicate_id"],
+                    discovery_source=planned["discovery_source"],
+                    provider_group_id=planned["group_id"],
                     member_fingerprint=planned["member_fingerprint"],
                     manual_action=planned["action"],
                     manual_primary_asset_id=(

@@ -21,7 +21,7 @@
   }
 
   interface DuplicatePreviewReview {
-    duplicate_id: string;
+    group_id: string;
     status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
     reason: string | null;
     eligible: boolean;
@@ -97,7 +97,7 @@
     immich_url: member.immich_url,
   })));
   const duplicateContext = $derived<DuplicateReviewContext>({
-    duplicate_id: review.duplicate_id,
+    group_id: review.group_id,
     status: review.status,
     reason: review.reason,
     eligible: review.eligible,

@@ -28,7 +28,7 @@ function jsonBody(value: unknown, method = 'POST'): RequestInit {
 }
 
 export function saveDuplicateReview(request: {
-  duplicate_id: string;
+  group_id: string;
   options: DuplicateAnalysisOptions;
   manual_action: DuplicatePlanAction | null;
   manual_primary_asset_id: string | null;
@@ -65,7 +65,7 @@ export function loadDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> 
 
 export function planDuplicateResolution(request: {
   options: DuplicateAnalysisOptions;
-  duplicate_ids: string[];
+  group_ids: string[];
   all_eligible: boolean;
   keeper_overrides: Record<string, string>;
   action_overrides: Record<string, Exclude<DuplicatePlanAction, 'none'>>;

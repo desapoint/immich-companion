@@ -48,7 +48,7 @@ describe('duplicate API', () => {
     vi.stubGlobal('fetch', fetchMock);
     const request = {
       options,
-      duplicate_ids: ['group-1'],
+      group_ids: ['group-1'],
       all_eligible: false,
       keeper_overrides: { 'group-1': 'asset-1' },
       action_overrides: { 'group-1': 'resolve' as const },
@@ -67,11 +67,11 @@ describe('duplicate API', () => {
 
   it('persists a fingerprint-bound manual group decision', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ duplicate_id: 'group-1' }), { status: 200 }),
+      new Response(JSON.stringify({ group_id: 'group-1' }), { status: 200 }),
     );
     vi.stubGlobal('fetch', fetchMock);
     const request = {
-      duplicate_id: 'group-1',
+      group_id: 'group-1',
       options,
       manual_action: 'keep_all' as const,
       manual_primary_asset_id: 'asset-1',
@@ -87,7 +87,7 @@ describe('duplicate API', () => {
 
   it('requests a group-scoped similarity reference', async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
-      new Response(JSON.stringify({ duplicate_id: 'group/one' }), { status: 200 }),
+      new Response(JSON.stringify({ group_id: 'group/one' }), { status: 200 }),
     );
     vi.stubGlobal('fetch', fetchMock);
 

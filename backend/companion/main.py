@@ -1259,16 +1259,16 @@ def create_app(
             raise map_action_error(error) from error
 
     @app.post(
-        "/api/assets/duplicates/cross-source/{duplicate_id}/similarity-reference",
+        "/api/assets/duplicates/cross-source/{group_id}/similarity-reference",
         response_model=ExactDuplicateGroup,
     )
     async def switch_cross_source_similarity_reference(
-        duplicate_id: UUID,
+        group_id: str,
         request: DuplicateSimilarityReferenceRequest,
     ) -> ExactDuplicateGroup:
         try:
             return await require_duplicate_service().similarity_reference(
-                duplicate_id,
+                group_id,
                 request,
             )
         except ImmichApiError as error:

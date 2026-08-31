@@ -45,6 +45,7 @@ EXTERNAL_1 = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 EXTERNAL_2 = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 LIBRARY_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 GROUP_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+PUBLIC_GROUP_ID = f"immich:{GROUP_ID}"
 MODIFIED = datetime(2026, 8, 29, 12, tzinfo=UTC)
 
 
@@ -240,6 +241,9 @@ def test_multiple_uploads_and_externals_form_one_exact_group() -> None:
 
     assert result.exact_group_count == 1
     assert len(result.groups[0].members) == 4
+    assert result.groups[0].group_id == PUBLIC_GROUP_ID
+    assert result.groups[0].provider_group_id == str(GROUP_ID)
+    assert "duplicate_id" not in result.groups[0].model_dump()
     assert result.groups[0].recommended_primary_asset_id is None
     assert result.groups[0].auto_selected is False
     assert "multiple_equal_candidates" in result.groups[0].recommendation_reason_codes
@@ -625,7 +629,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
     )
 
     result = await service.similarity_reference(
-        GROUP_ID,
+        PUBLIC_GROUP_ID,
         DuplicateSimilarityReferenceRequest(reference_asset_id=EXTERNAL_1),
     )
 
@@ -637,7 +641,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
 
     with pytest.raises(ActionPlanConflictError, match="not a member"):
         await service.similarity_reference(
-            GROUP_ID,
+            PUBLIC_GROUP_ID,
             DuplicateSimilarityReferenceRequest(reference_asset_id=UPLOAD_2),
         )
 
@@ -841,14 +845,18 @@ async def test_review_plan_applies_policy_and_explicit_keeper_override() -> None
 
     plan = await service.plan(
         DuplicateResolutionPlanRequest(
-            duplicate_ids=[GROUP_ID],
-            keeper_overrides={GROUP_ID: EXTERNAL_1},
+            group_ids=[PUBLIC_GROUP_ID],
+            keeper_overrides={PUBLIC_GROUP_ID: EXTERNAL_1},
         )
     )
 
     assert plan.group_count == 1
     assert plan.groups[0].keeper_asset_id == EXTERNAL_1
     assert plan.groups[0].trash_asset_ids == [UPLOAD_1]
+    assert plan.groups[0].group_id == PUBLIC_GROUP_ID
+    assert plan.groups[0].provider_group_id == str(GROUP_ID)
+    assert actions.created["groups"][0]["group_id"] == PUBLIC_GROUP_ID
+    assert "duplicate_id" not in actions.created["groups"][0]
     assert actions.created["options"]["keeper_policy"] == "most_recent"
 
 
@@ -876,8 +884,8 @@ async def test_manual_keeper_makes_an_ambiguous_exact_group_plannable() -> None:
 
     plan = await service.plan(
         DuplicateResolutionPlanRequest(
-            duplicate_ids=[GROUP_ID],
-            keeper_overrides={GROUP_ID: UPLOAD_2},
+            group_ids=[PUBLIC_GROUP_ID],
+            keeper_overrides={PUBLIC_GROUP_ID: UPLOAD_2},
         )
     )
 
@@ -904,9 +912,9 @@ async def test_mismatch_group_can_be_manually_planned_as_a_non_destructive_stack
 
     plan = await service.plan(
         DuplicateResolutionPlanRequest(
-            duplicate_ids=[GROUP_ID],
-            keeper_overrides={GROUP_ID: UPLOAD_1},
-            action_overrides={GROUP_ID: "stack_all"},
+            group_ids=[PUBLIC_GROUP_ID],
+            keeper_overrides={PUBLIC_GROUP_ID: UPLOAD_1},
+            action_overrides={PUBLIC_GROUP_ID: "stack_all"},
         )
     )
 
@@ -995,8 +1003,8 @@ async def test_whole_group_actions_have_explicit_member_dispositions(
 
     plan = await service.plan(
         DuplicateResolutionPlanRequest(
-            duplicate_ids=[GROUP_ID],
-            action_overrides={GROUP_ID: action},
+            group_ids=[PUBLIC_GROUP_ID],
+            action_overrides={PUBLIC_GROUP_ID: action},
         )
     )
 
@@ -1027,7 +1035,7 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
 
     saved = await service.save_review(
         DuplicateReviewUpdate(
-            duplicate_id=GROUP_ID,
+            group_id=PUBLIC_GROUP_ID,
             manual_action="keep_all",
             manual_primary_asset_id=EXTERNAL_1,
         )
@@ -1036,6 +1044,7 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
     assert saved.manual_action == "keep_all"
     assert saved.effective_action == "keep_all"
     assert saved.review_status == "manually_configured"
+    assert reviews.saved["provider_group_id"] == PUBLIC_GROUP_ID
     reviews.record.member_fingerprint = "different-membership"
     drifted = await service.result()
     assert drifted.groups[0].manual_action is None

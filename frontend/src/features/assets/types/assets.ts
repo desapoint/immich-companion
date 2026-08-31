@@ -432,7 +432,7 @@ export interface DuplicateReviewMember {
 }
 
 export interface DuplicateReviewContext {
-  duplicate_id: string;
+  group_id: string;
   status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
   reason: string | null;
   eligible: boolean;

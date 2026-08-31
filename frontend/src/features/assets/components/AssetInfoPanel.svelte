@@ -118,7 +118,7 @@
       {#if onduplicateaction && onduplicatekeeper}
         <div class="duplicate-controls">
           <SelectField
-            id={`viewer-duplicate-action-${duplicateContext.duplicate_id}`}
+            id={`viewer-duplicate-action-${duplicateContext.group_id}`}
             label="Group action"
             value={duplicateContext.selected_action}
             options={duplicateActionOptions}
@@ -141,7 +141,7 @@
         </div>
       {/if}
       <dl>
-        <div><dt>Group ID</dt><dd>{duplicateContext.duplicate_id}</dd></div>
+        <div><dt>Group ID</dt><dd>{duplicateContext.group_id}</dd></div>
         <div><dt>Matching type</dt><dd>{duplicateContext.status === 'exact' ? 'Byte-exact content' : duplicateContext.status}</dd></div>
         <div><dt>Batch eligible</dt><dd>{duplicateContext.eligible ? 'Yes' : 'No'}</dd></div>
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>

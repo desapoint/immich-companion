@@ -35,7 +35,7 @@ def exact(*members: CandidateMember) -> CandidateGroup:
     return CandidateGroup(
         group_id="immich:test",
         discovery_source=DiscoverySource.IMMICH_DUPLICATE,
-        provider_group_id=UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd"),
+        provider_group_id="dddddddd-dddd-4ddd-8ddd-dddddddddddd",
         classification=GroupClassification.EXACT_FILE,
         members=members,
     )

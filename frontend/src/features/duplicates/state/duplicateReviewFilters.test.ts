@@ -43,9 +43,9 @@ function member(overrides: Partial<DuplicateMember> = {}): DuplicateMember {
 
 function group(overrides: Partial<ExactDuplicateGroup> = {}): ExactDuplicateGroup {
   return {
-    duplicate_id: 'group-1',
     group_id: 'group-1',
     discovery_source: 'immich_duplicate',
+    provider_group_id: 'provider-1',
     classification: 'exact_file',
     status: 'exact',
     reason: null,
@@ -125,11 +125,11 @@ describe('duplicate review filters', () => {
     const entries = [
       projection(),
       projection({
-        group: group({ duplicate_id: 'group-2', auto_selected: false, recommended_action: 'stack_all' }),
+        group: group({ group_id: 'group-2', auto_selected: false, recommended_action: 'stack_all' }),
         effectiveAction: 'stack_all',
       }),
       projection({
-        group: group({ duplicate_id: 'group-3', auto_selected: false, manual_action: 'resolve' }),
+        group: group({ group_id: 'group-3', auto_selected: false, manual_action: 'resolve' }),
       }),
     ];
 

@@ -124,9 +124,9 @@ class DuplicateMember(BaseModel):
 
 
 class ExactDuplicateGroup(BaseModel):
-    duplicate_id: UUID
     group_id: str
     discovery_source: DuplicateDiscoverySource
+    provider_group_id: str | None = None
     classification: DuplicateClassification
     status: DuplicateGroupStatus
     reason: str | None = None
@@ -168,18 +168,18 @@ class CrossSourceDuplicateTaskStart(BaseModel):
 
 class DuplicateResolutionPlanRequest(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
-    duplicate_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
     all_eligible: bool = False
-    keeper_overrides: dict[UUID, UUID] = Field(default_factory=dict)
+    keeper_overrides: dict[str, UUID] = Field(default_factory=dict)
     action_overrides: dict[
-        UUID,
+        str,
         Literal["resolve", "keep_all", "delete_all", "stack_all"],
     ] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_selection(self) -> DuplicateResolutionPlanRequest:
-        self.duplicate_ids = list(dict.fromkeys(self.duplicate_ids))
-        if self.all_eligible == bool(self.duplicate_ids):
+        self.group_ids = list(dict.fromkeys(self.group_ids))
+        if self.all_eligible == bool(self.group_ids):
             raise ValueError("Choose explicit duplicate groups or all eligible groups")
         return self
 
@@ -191,7 +191,9 @@ class DuplicatePlanMember(BaseModel):
 
 
 class DuplicateResolutionPlanGroup(BaseModel):
-    duplicate_id: UUID
+    group_id: str
+    discovery_source: DuplicateDiscoverySource
+    provider_group_id: str | None = None
     action: Literal["resolve", "keep_all", "delete_all", "stack_all"] = "resolve"
     keeper_asset_id: UUID | None = None
     member_asset_ids: list[UUID] = Field(default_factory=list)
@@ -221,7 +223,7 @@ class DuplicateResolutionExecuteRequest(BaseModel):
 
 
 class DuplicateReviewUpdate(BaseModel):
-    duplicate_id: UUID
+    group_id: str
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     manual_action: DuplicateGroupAction | None
     manual_primary_asset_id: UUID | None = None

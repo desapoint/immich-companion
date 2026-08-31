@@ -79,9 +79,9 @@ export interface DuplicatePreservationEvidence {
 }
 
 export interface ExactDuplicateGroup {
-  duplicate_id: string;
   group_id: string;
   discovery_source: 'immich_duplicate' | 'companion_similarity';
+  provider_group_id: string | null;
   classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';
   status: DuplicateGroupStatus;
   reason: string | null;
@@ -104,7 +104,7 @@ export interface ExactDuplicateGroup {
 }
 
 export interface DuplicatePreviewRequest {
-  duplicate_id: string;
+  group_id: string;
   status: DuplicateGroupStatus;
   reason: string | null;
   eligible: boolean;
@@ -153,7 +153,9 @@ export interface DuplicateResolutionPlan {
   id: string;
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
   groups: Array<{
-    duplicate_id: string;
+    group_id: string;
+    discovery_source: 'immich_duplicate' | 'companion_similarity';
+    provider_group_id: string | null;
     action: Exclude<DuplicatePlanAction, 'none'>;
     keeper_asset_id: string | null;
     member_asset_ids: string[];

@@ -105,12 +105,12 @@
   const selectedReady = $derived(
     selectedCount > 0
       && (result?.groups
-        .filter((group) => selected.has(group.duplicate_id))
+        .filter((group) => selected.has(group.group_id))
         .every((group) => isActionable(group)) ?? false),
   );
   const allAutoReadySelected = $derived(
     autoReadyGroups.length > 0
-      && autoReadyGroups.every((group) => selected.has(group.duplicate_id)),
+      && autoReadyGroups.every((group) => selected.has(group.group_id)),
   );
   const rulesChanged = $derived(
     JSON.stringify(configuredOptions()) !== JSON.stringify(appliedOptions),
@@ -140,10 +140,10 @@
     try {
       const loaded = await loadDuplicateGroups(appliedOptions);
       result = loaded;
-      const liveIds = new SvelteSet(result.groups.map((group) => group.duplicate_id));
+      const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
       for (const id of selected) if (!liveIds.has(id)) selected.delete(id);
       if (!selectionInitialized) {
-        for (const group of autoReadyGroups) selected.add(group.duplicate_id);
+        for (const group of autoReadyGroups) selected.add(group.group_id);
         selectionInitialized = true;
       }
       if (
@@ -201,29 +201,29 @@
 
   function toggleAllEligible(): void {
     if (allAutoReadySelected) {
-      for (const group of autoReadyGroups) selected.delete(group.duplicate_id);
+      for (const group of autoReadyGroups) selected.delete(group.group_id);
       return;
     }
     for (const group of autoReadyGroups) {
-      selected.add(group.duplicate_id);
+      selected.add(group.group_id);
     }
   }
 
   function setKeeper(group: ExactDuplicateGroup, assetId: string): void {
-    keeperOverrides = { ...keeperOverrides, [group.duplicate_id]: assetId };
-    if (effectiveActionFor(group) !== 'none') selected.add(group.duplicate_id);
+    keeperOverrides = { ...keeperOverrides, [group.group_id]: assetId };
+    if (effectiveActionFor(group) !== 'none') selected.add(group.group_id);
     void persistReview(group, actionFor(group), assetId);
   }
 
   function selectedKeeper(group: ExactDuplicateGroup): string | null {
-    return keeperOverrides[group.duplicate_id]
+    return keeperOverrides[group.group_id]
       ?? group.manual_primary_asset_id
       ?? group.effective_primary_asset_id
       ?? group.keeper_asset_id;
   }
 
   function actionFor(group: ExactDuplicateGroup): DuplicateActionSelection {
-    return actionOverrides[group.duplicate_id] ?? group.manual_action ?? 'automatic';
+    return actionOverrides[group.group_id] ?? group.manual_action ?? 'automatic';
   }
 
   function effectiveActionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
@@ -257,11 +257,11 @@
 
   function setGroupAction(group: ExactDuplicateGroup, value: string): void {
     const action = value as DuplicateActionSelection;
-    actionOverrides = { ...actionOverrides, [group.duplicate_id]: action };
+    actionOverrides = { ...actionOverrides, [group.group_id]: action };
     if (effectiveActionFor(group) === 'none') {
-      selected.delete(group.duplicate_id);
+      selected.delete(group.group_id);
     } else if (isActionable(group)) {
-      selected.add(group.duplicate_id);
+      selected.add(group.group_id);
     }
     void persistReview(group, action, selectedKeeper(group));
   }
@@ -271,11 +271,11 @@
     selection: DuplicateActionSelection,
     primaryId: string | null,
   ): Promise<void> {
-    savingGroups.add(group.duplicate_id);
+    savingGroups.add(group.group_id);
     error = null;
     try {
       const updated = await saveDuplicateReview({
-        duplicate_id: group.duplicate_id,
+        group_id: group.group_id,
         options: appliedOptions,
         manual_action: selection === 'automatic' ? null : selection,
         manual_primary_asset_id: primaryId,
@@ -284,21 +284,21 @@
         result = {
           ...result,
           groups: result.groups.map((candidate) => (
-            candidate.duplicate_id === updated.duplicate_id ? updated : candidate
+            candidate.group_id === updated.group_id ? updated : candidate
           )),
         };
       }
       const nextActions = { ...actionOverrides };
       const nextKeepers = { ...keeperOverrides };
-      delete nextActions[group.duplicate_id];
-      delete nextKeepers[group.duplicate_id];
+      delete nextActions[group.group_id];
+      delete nextKeepers[group.group_id];
       actionOverrides = nextActions;
       keeperOverrides = nextKeepers;
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
       await load();
     } finally {
-      savingGroups.delete(group.duplicate_id);
+      savingGroups.delete(group.group_id);
     }
   }
 
@@ -306,10 +306,10 @@
     if (!result || !selected.size) return;
     busy = true;
     error = null;
-    const groups = result.groups.filter((group) => selected.has(group.duplicate_id));
+    const groups = result.groups.filter((group) => selected.has(group.group_id));
     actionOverrides = {
       ...actionOverrides,
-      ...Object.fromEntries(groups.map((group) => [group.duplicate_id, bulkAction])),
+      ...Object.fromEntries(groups.map((group) => [group.group_id, bulkAction])),
     };
     try {
       for (const group of groups) {
@@ -328,9 +328,9 @@
 
   function previewRequest(group: ExactDuplicateGroup, initialIndex: number): DuplicatePreviewRequest {
     const groups = result?.groups ?? [];
-    const groupIndex = groups.findIndex((candidate) => candidate.duplicate_id === group.duplicate_id);
+    const groupIndex = groups.findIndex((candidate) => candidate.group_id === group.group_id);
     return {
-      duplicate_id: group.duplicate_id,
+      group_id: group.group_id,
       status: group.status,
       reason: group.reason,
       eligible: group.eligible,
@@ -347,12 +347,12 @@
       },
       onactionchange: (action) => setGroupAction(group, action),
       onsimilarityreferencechange: async (assetId) => {
-        const updated = await switchDuplicateSimilarityReference(group.duplicate_id, assetId);
+        const updated = await switchDuplicateSimilarityReference(group.group_id, assetId);
         if (result) {
           result = {
             ...result,
             groups: result.groups.map((candidate) => (
-              candidate.duplicate_id === updated.duplicate_id ? updated : candidate
+              candidate.group_id === updated.group_id ? updated : candidate
             )),
           };
         }
@@ -375,13 +375,13 @@
     try {
       plan = await planDuplicateResolution({
         options: appliedOptions,
-        duplicate_ids: [...selected],
+        group_ids: [...selected],
         all_eligible: false,
         keeper_overrides: keeperOverrides,
         action_overrides: Object.fromEntries(
           result?.groups
-            .filter((group) => selected.has(group.duplicate_id))
-            .map((group) => [group.duplicate_id, effectiveActionFor(group)]) ?? [],
+            .filter((group) => selected.has(group.group_id))
+            .map((group) => [group.group_id, effectiveActionFor(group)]) ?? [],
         ) as Record<string, Exclude<DuplicatePlanAction, 'none'>>,
       });
       confirmOpen = true;
@@ -537,16 +537,16 @@
       <p class="empty">No duplicate groups match this review filter.</p>
     {:else}
       <div class="groups">
-        {#each visibleReviewEntries as entry (entry.group.duplicate_id)}
+        {#each visibleReviewEntries as entry (entry.group.group_id)}
           {@const group = entry.group}
           <article class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
-                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
+                <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
                 <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
               </div>
               <div class="group-controls">
-                <SelectField id={`duplicate-action-${group.duplicate_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy || savingGroups.has(group.duplicate_id)} onchange={(value) => setGroupAction(group, value)} />
+                <SelectField id={`duplicate-action-${group.group_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy || savingGroups.has(group.group_id)} onchange={(value) => setGroupAction(group, value)} />
                 <p>{group.reason}</p>
               </div>
             </header>

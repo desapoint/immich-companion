@@ -67,7 +67,7 @@ class CandidateMember:
 class CandidateGroup:
     group_id: str
     discovery_source: DiscoverySource
-    provider_group_id: UUID | None
+    provider_group_id: str | None
     classification: GroupClassification
     members: tuple[CandidateMember, ...]
 

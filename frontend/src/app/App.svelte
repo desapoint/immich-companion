@@ -42,7 +42,7 @@
   </AppShell>
 
   {#if duplicatePreview}
-    {#key duplicatePreview.duplicate_id}
+    {#key duplicatePreview.group_id}
       <DuplicateAssetViewerController
         review={duplicatePreview}
         onclose={() => (duplicatePreview = null)}
