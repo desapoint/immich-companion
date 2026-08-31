@@ -67,6 +67,7 @@ from companion.asset_schema import (
 from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
+from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
@@ -74,6 +75,8 @@ from companion.duplicate_schema import (
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
+    DuplicateReviewUpdate,
+    ExactDuplicateGroup,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
@@ -131,6 +134,9 @@ def create_app(
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
     action_repository = ActionRepository(database) if database is not None else None
+    duplicate_review_repository = (
+        DuplicateReviewRepository(database) if database is not None else None
+    )
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
     )
@@ -232,6 +238,7 @@ def create_app(
             action_repository,
             task_coordinator,
             runtime_sync_settings,
+            duplicate_review_repository,
         )
         if asset_repository is not None
         and integrity_repository is not None
@@ -1192,6 +1199,23 @@ def create_app(
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+
+    @app.put(
+        "/api/assets/duplicates/cross-source/review",
+        response_model=ExactDuplicateGroup,
+    )
+    async def save_cross_source_duplicate_review(
+        request: DuplicateReviewUpdate,
+    ) -> ExactDuplicateGroup:
+        try:
+            return await require_duplicate_service().save_review(
+                request,
+                request.options,
+            )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
 
     @app.post(
         "/api/assets/duplicates/cross-source/plan",

@@ -26,15 +26,15 @@
     keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
     recommended_keeper_asset_id: string | null;
     selected_keeper_asset_id: string | null;
-    selected_action: 'resolve' | 'stack_all' | 'none';
+    selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
     recommendation_reason_codes: string[];
     members: Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
       content_checksum: string | null;
     }>;
     initial_index: number;
-    onkeeperchange?: (assetId: string) => 'resolve' | 'stack_all' | 'none';
-    onactionchange?: (action: 'resolve' | 'stack_all' | 'none') => void;
+    onkeeperchange?: (assetId: string) => DuplicatePreviewReview['selected_action'];
+    onactionchange?: (action: DuplicatePreviewReview['selected_action']) => void;
   }
 
   interface Props {
@@ -51,7 +51,7 @@
   let detailError = $state<string | null>(null);
   let detailGeneration = 0;
   let selectedKeeperId = $state<string | null>(null);
-  let selectedAction = $state<'resolve' | 'stack_all' | 'none'>('none');
+  let selectedAction = $state<DuplicatePreviewReview['selected_action']>('automatic');
   const selectedIds = new Set<string>();
   const assets = $derived<AssetSummary[]>(members.map((member) => ({
     id: member.id,
@@ -140,7 +140,7 @@
     selectedAction = review.onkeeperchange?.(assetId) ?? selectedAction;
   }
 
-  function chooseAction(action: 'resolve' | 'stack_all' | 'none'): void {
+  function chooseAction(action: DuplicatePreviewReview['selected_action']): void {
     selectedAction = action;
     review.onactionchange?.(action);
   }

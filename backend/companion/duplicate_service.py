@@ -17,6 +17,7 @@ from companion.action_service import (
 )
 from companion.asset_repository import AssetRepository
 from companion.config import Settings
+from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
@@ -27,6 +28,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlan,
     DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
+    DuplicateReviewUpdate,
     ExactDuplicateGroup,
 )
 from companion.group_decision import (
@@ -73,6 +75,39 @@ def _plan_digest(groups: list[dict[str, Any]]) -> str:
     return sha256(raw.encode()).hexdigest()
 
 
+def _member_fingerprint(asset_ids: list[UUID]) -> str:
+    raw = ",".join(sorted(str(asset_id) for asset_id in asset_ids))
+    return sha256(raw.encode()).hexdigest()
+
+
+def _member_dispositions(
+    action: str,
+    member_ids: list[UUID],
+    primary_id: UUID | None,
+) -> list[dict[str, Any]]:
+    dispositions: list[dict[str, Any]] = []
+    for asset_id in member_ids:
+        disposition = (
+            "keep"
+            if action == "resolve" and asset_id == primary_id
+            else "delete"
+            if action in {"resolve", "delete_all"}
+            else "stack"
+            if action == "stack_all"
+            else "keep"
+            if action == "keep_all"
+            else "no_change"
+        )
+        dispositions.append(
+            {
+                "asset_id": str(asset_id),
+                "disposition": disposition,
+                "primary": asset_id == primary_id,
+            }
+        )
+    return dispositions
+
+
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     """Read plans created before mixed group actions without invalidating them."""
 
@@ -81,6 +116,17 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault(
         "member_asset_ids",
         [normalized["keeper_asset_id"], *normalized.get("trash_asset_ids", [])],
+    )
+    member_ids = [UUID(value) for value in normalized["member_asset_ids"]]
+    primary_id = (
+        UUID(normalized["keeper_asset_id"])
+        if normalized.get("keeper_asset_id") is not None
+        else None
+    )
+    normalized.setdefault("member_fingerprint", _member_fingerprint(member_ids))
+    normalized.setdefault(
+        "members",
+        _member_dispositions(normalized["action"], member_ids, primary_id),
     )
     return normalized
 
@@ -96,8 +142,16 @@ def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         groups=groups,
         group_count=len(groups),
         resolve_group_count=sum(group.action == "resolve" for group in groups),
+        keep_all_group_count=sum(group.action == "keep_all" for group in groups),
+        delete_all_group_count=sum(group.action == "delete_all" for group in groups),
         stack_group_count=sum(group.action == "stack_all" for group in groups),
         trash_asset_count=sum(len(group.trash_asset_ids) for group in groups),
+        retained_asset_count=sum(
+            member.disposition in {"keep", "stack"}
+            for group in groups
+            for member in group.members
+        ),
+        zero_survivor_group_count=sum(group.action == "delete_all" for group in groups),
         expires_at=record.expires_at,
         destructive=getattr(record, "destructive", True),
     )
@@ -115,6 +169,7 @@ class CrossSourceDuplicateService:
         actions: ActionRepository,
         tasks: TaskCoordinator,
         runtime_sync_settings: object,
+        reviews: DuplicateReviewRepository | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -123,6 +178,7 @@ class CrossSourceDuplicateService:
         self._actions = actions
         self._tasks = tasks
         self._runtime_sync_settings = runtime_sync_settings
+        self._reviews = reviews
 
     async def start(
         self,
@@ -196,7 +252,60 @@ class CrossSourceDuplicateService:
             if asset.library_id is not None or options.verify_upload_streams
         ]
         reports = await self._reports.get_many(report_ids)
-        return groups, reports, self.assemble(groups, reports, options, self._immich)
+        result = self.assemble(groups, reports, options, self._immich)
+        if self._reviews is not None:
+            result = await self._apply_review_states(result)
+        return groups, reports, result
+
+    async def _apply_review_states(
+        self,
+        result: CrossSourceDuplicateResult,
+    ) -> CrossSourceDuplicateResult:
+        assert self._reviews is not None
+        states = await self._reviews.get_many(
+            "immich_duplicate",
+            [str(group.duplicate_id) for group in result.groups],
+        )
+        groups: list[ExactDuplicateGroup] = []
+        for group in result.groups:
+            state = states.get(str(group.duplicate_id))
+            if state is None:
+                groups.append(group)
+                continue
+            if state.member_fingerprint != group.member_fingerprint:
+                groups.append(group.model_copy(update={"review_status": "drifted"}))
+                continue
+            manual_action = state.manual_action
+            manual_primary = state.manual_primary_asset_id
+            effective_action = manual_action or group.recommended_action
+            primary_required = effective_action in {"resolve", "stack_all"}
+            effective_primary = (
+                manual_primary or group.recommended_primary_asset_id
+                if effective_action in {"resolve", "stack_all"}
+                else None
+            )
+            groups.append(
+                group.model_copy(
+                    update={
+                        "manual_action": manual_action,
+                        "manual_primary_asset_id": manual_primary,
+                        "effective_action": effective_action,
+                        "effective_primary_asset_id": effective_primary,
+                        "action_source": (
+                            "manual" if manual_action is not None else group.action_source
+                        ),
+                        "primary_source": (
+                            "manual"
+                            if primary_required and manual_primary is not None
+                            else group.primary_source
+                            if effective_primary is not None
+                            else "none"
+                        ),
+                        "review_status": state.review_status,
+                    }
+                )
+            )
+        return result.model_copy(update={"groups": groups})
 
     @staticmethod
     def _pending_verification(
@@ -375,6 +484,11 @@ class CrossSourceDuplicateService:
                     auto_selected=decision.auto_selected,
                     action_source=decision.action_source.value,
                     primary_source=decision.primary_source.value,
+                    effective_action=decision.recommended_action.value,
+                    effective_primary_asset_id=decision.recommended_primary_asset_id,
+                    member_fingerprint=_member_fingerprint(
+                        [asset.id for asset in assets]
+                    ),
                     members=members,
                     eligible=status == "exact",
                 )
@@ -415,6 +529,59 @@ class CrossSourceDuplicateService:
             dimensions_match_immich=report.dimensions_match_immich,
         )
 
+    async def save_review(
+        self,
+        request: DuplicateReviewUpdate,
+        options: DuplicateAnalysisOptions | None = None,
+    ) -> ExactDuplicateGroup:
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        result = await self.result(options)
+        group = next(
+            (
+                candidate
+                for candidate in result.groups
+                if candidate.duplicate_id == request.duplicate_id
+            ),
+            None,
+        )
+        if group is None:
+            raise ActionPlanConflictError("The duplicate group is no longer available")
+        member_ids = {member.id for member in group.members}
+        action = request.manual_action
+        primary_id = request.manual_primary_asset_id
+        if primary_id is not None and primary_id not in member_ids:
+            raise ActionPlanConflictError("The selected primary is not a group member")
+        if action == "resolve" and not group.eligible:
+            raise ActionPlanConflictError("Only verified exact groups can be resolved")
+        if action == "stack_all" and any(
+            member.is_offline or member.is_stacked for member in group.members
+        ):
+            raise ActionPlanConflictError(
+                "Offline or already-stacked members cannot form a new stack"
+            )
+        review_status = (
+            "pending"
+            if action is None
+            else "review_later"
+            if action == "none"
+            else "manually_configured"
+        )
+        await self._reviews.save(
+            discovery_source="immich_duplicate",
+            provider_group_id=str(group.duplicate_id),
+            member_fingerprint=group.member_fingerprint,
+            manual_action=action,
+            manual_primary_asset_id=primary_id,
+            review_status=review_status,
+        )
+        refreshed = await self.result(options)
+        return next(
+            candidate
+            for candidate in refreshed.groups
+            if candidate.duplicate_id == request.duplicate_id
+        )
+
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
         result = await self.result(request.options)
         selected = (
@@ -423,7 +590,7 @@ class CrossSourceDuplicateService:
             else [group for group in result.groups if group.duplicate_id in request.duplicate_ids]
         )
         if not selected:
-            raise ValueError("No eligible exact duplicate groups were selected")
+            raise ValueError("No duplicate groups were selected")
         if not request.all_eligible and {
             group.duplicate_id for group in selected
         } != set(request.duplicate_ids):
@@ -431,38 +598,61 @@ class CrossSourceDuplicateService:
         plan_groups: list[dict[str, Any]] = []
         for group in selected:
             member_ids = {member.id for member in group.members}
-            action = request.action_overrides.get(group.duplicate_id, "resolve")
-            if action == "resolve" and not group.eligible:
-                raise ActionPlanConflictError(
-                    "Only verified exact groups can be resolved; choose Stack all instead"
-                )
-            if any(member.is_offline for member in group.members):
-                raise ActionPlanConflictError("Offline duplicate members cannot be processed")
-            if action == "stack_all" and any(member.is_stacked for member in group.members):
-                raise ActionPlanConflictError(
-                    "A duplicate member already belongs to an Immich stack"
-                )
-            keeper_id = request.keeper_overrides.get(
+            action = request.action_overrides.get(
                 group.duplicate_id,
-                group.keeper_asset_id,
+                "resolve"
+                if request.all_eligible or group.duplicate_id in request.keeper_overrides
+                else group.effective_action,
             )
-            if keeper_id is None or keeper_id not in member_ids:
+            if action == "none":
+                raise ActionPlanConflictError("Every selected group needs an action")
+            if action == "resolve" and (
+                not group.eligible or any(member.is_offline for member in group.members)
+            ):
+                raise ActionPlanConflictError(
+                    "Only available, verified exact groups can be resolved"
+                )
+            if action == "stack_all" and any(
+                member.is_offline or member.is_stacked for member in group.members
+            ):
+                raise ActionPlanConflictError(
+                    "Offline or already-stacked members cannot form a new stack"
+                )
+            primary_required = action in {"resolve", "stack_all"}
+            keeper_id = (
+                request.keeper_overrides.get(
+                    group.duplicate_id,
+                    group.effective_primary_asset_id or group.keeper_asset_id,
+                )
+                if primary_required
+                else None
+            )
+            if primary_required and (keeper_id is None or keeper_id not in member_ids):
                 raise ActionPlanConflictError("A primary asset must be chosen from the group")
-            ordered_members = [
-                keeper_id,
-                *(member.id for member in group.members if member.id != keeper_id),
-            ]
+            ordered_members = (
+                [
+                    keeper_id,
+                    *(member.id for member in group.members if member.id != keeper_id),
+                ]
+                if keeper_id is not None
+                else [member.id for member in group.members]
+            )
+            trash_ids = (
+                [member.id for member in group.members if member.id != keeper_id]
+                if action == "resolve"
+                else [member.id for member in group.members]
+                if action == "delete_all"
+                else []
+            )
             plan_groups.append(
                 {
                     "duplicate_id": str(group.duplicate_id),
                     "action": action,
-                    "keeper_asset_id": str(keeper_id),
+                    "keeper_asset_id": str(keeper_id) if keeper_id is not None else None,
                     "member_asset_ids": [str(asset_id) for asset_id in ordered_members],
-                    "trash_asset_ids": [
-                        str(member.id)
-                        for member in group.members
-                        if action == "resolve" and member.id != keeper_id
-                    ],
+                    "trash_asset_ids": [str(asset_id) for asset_id in trash_ids],
+                    "member_fingerprint": group.member_fingerprint,
+                    "members": _member_dispositions(action, ordered_members, keeper_id),
                 }
             )
         plan_groups.sort(key=lambda item: item["duplicate_id"])
@@ -526,10 +716,14 @@ class CrossSourceDuplicateService:
             if (
                 live_group is None
                 or {asset.id for asset in live_group.members} != planned_members
+                or live_group.member_fingerprint != planned["member_fingerprint"]
                 or (planned["action"] == "resolve" and not live_group.eligible)
                 or (
                     planned["action"] == "stack_all"
-                    and any(member.is_stacked for member in live_group.members)
+                    and any(
+                        member.is_offline or member.is_stacked
+                        for member in live_group.members
+                    )
                 )
             ):
                 await self._actions.finish_plan(plan_id, "drifted", {"error": "group_drift"})
@@ -542,110 +736,162 @@ class CrossSourceDuplicateService:
 
         pacing = await self._runtime_sync_settings.get()
         batch_size = pacing.full_batch_size
-        completed = 0
-        resolved = 0
-        stacked = 0
+        processed = 0
+        successful_ids: set[str] = set()
+        resolved_ids: set[str] = set()
+        kept_ids: set[str] = set()
+        deleted_ids: set[str] = set()
+        stacked_ids: set[str] = set()
         failed_ids: list[str] = []
         trashed_ids: list[UUID] = []
-        try:
-            resolve_groups = [item for item in raw_groups if item["action"] == "resolve"]
-            stack_groups = [item for item in raw_groups if item["action"] == "stack_all"]
-            for offset in range(0, len(resolve_groups), batch_size):
-                await context.ensure_active()
-                batch = resolve_groups[offset : offset + batch_size]
-                resolutions = [
-                    ImmichDuplicateResolution(
-                        duplicate_id=UUID(item["duplicate_id"]),
-                        keep_asset_id=UUID(item["keeper_asset_id"]),
-                        trash_asset_ids=[UUID(value) for value in item["trash_asset_ids"]],
-                    )
-                    for item in batch
-                ]
-                responses = await self._immich.resolve_duplicate_groups(resolutions)
-                for index, resolution in enumerate(resolutions):
-                    response = responses[index] if index < len(responses) else {}
-                    if response.get("success") is True:
-                        completed += 1
-                        resolved += 1
-                        trashed_ids.extend(resolution.trash_asset_ids)
-                    else:
-                        failed_ids.append(str(resolution.duplicate_id))
-                await context.checkpoint(
-                    checkpoint={"phase": "resolving", "groups_completed": completed},
-                    counters={"groups_completed": completed, "groups_failed": len(failed_ids)},
-                    progress={
-                        "phase": "duplicate_resolution",
-                        "completed": completed + len(failed_ids),
-                        "total": len(raw_groups),
-                        "percent": round(
-                            (completed + len(failed_ids)) / len(raw_groups) * 100,
-                            1,
-                        ),
-                        "detail": "Resolving reviewed duplicate groups through Immich…",
-                    },
-                )
-                if offset + len(batch) < len(resolve_groups):
-                    await asyncio.sleep(pacing.full_min_batch_delay_seconds)
 
-            await self._assets.remove_assets(trashed_ids)
-            for planned in stack_groups:
-                await context.ensure_active()
-                duplicate_id = planned["duplicate_id"]
-                try:
-                    member_ids = [UUID(value) for value in planned["member_asset_ids"]]
-                    await self._immich.create_stack(member_ids)
-                    refreshed_assets: list[ImmichAsset] = []
-                    for asset_id in member_ids:
-                        asset = await self._immich.get_asset(asset_id)
-                        refreshed_assets.append(asset)
-                        await self._assets.refresh_asset(asset)
-                    if any(asset.stack is None for asset in refreshed_assets):
-                        raise ImmichApiError("verify created stack")
-                    stacked += 1
-                    completed += 1
-                except ImmichApiError:
-                    failed_ids.append(duplicate_id)
-                await context.checkpoint(
-                    checkpoint={"phase": "stacking", "groups_completed": completed},
-                    counters={"groups_completed": completed, "groups_failed": len(failed_ids)},
-                    progress={
-                        "phase": "duplicate_resolution",
-                        "completed": completed + len(failed_ids),
-                        "total": len(raw_groups),
-                        "percent": round(
-                            (completed + len(failed_ids)) / len(raw_groups) * 100,
-                            1,
-                        ),
-                        "detail": "Creating reviewed Immich duplicate stacks…",
-                    },
-                )
-        except ImmichApiError as error:
-            await self._assets.remove_assets(trashed_ids)
-            await self._actions.finish_plan(
-                plan_id,
-                "failed",
-                {
-                    "error": str(error),
-                    "resolved_group_count": completed,
-                    "trashed_asset_count": len(trashed_ids),
+        async def checkpoint(detail: str) -> None:
+            await context.checkpoint(
+                checkpoint={"phase": "processing", "groups_completed": processed},
+                counters={
+                    "groups_completed": len(successful_ids),
+                    "groups_failed": len(failed_ids),
+                },
+                progress={
+                    "phase": "duplicate_resolution",
+                    "completed": processed,
+                    "total": len(raw_groups),
+                    "percent": round(processed / len(raw_groups) * 100, 1),
+                    "detail": detail,
                 },
             )
-            raise PermanentTaskError("Immich duplicate resolution failed") from error
 
-        await self._assets.remove_assets(trashed_ids)
+        resolve_groups = [item for item in raw_groups if item["action"] == "resolve"]
+        delete_groups = [item for item in raw_groups if item["action"] == "delete_all"]
+        keep_groups = [item for item in raw_groups if item["action"] == "keep_all"]
+        stack_groups = [item for item in raw_groups if item["action"] == "stack_all"]
+
+        for offset in range(0, len(resolve_groups), batch_size):
+            await context.ensure_active()
+            batch = resolve_groups[offset : offset + batch_size]
+            resolutions = [
+                ImmichDuplicateResolution(
+                    duplicate_id=UUID(item["duplicate_id"]),
+                    keep_asset_id=UUID(item["keeper_asset_id"]),
+                    trash_asset_ids=[UUID(value) for value in item["trash_asset_ids"]],
+                )
+                for item in batch
+            ]
+            try:
+                responses = await self._immich.resolve_duplicate_groups(resolutions)
+            except ImmichApiError:
+                responses = []
+            for index, resolution in enumerate(resolutions):
+                identifier = str(resolution.duplicate_id)
+                response = responses[index] if index < len(responses) else {}
+                if response.get("success") is True:
+                    successful_ids.add(identifier)
+                    resolved_ids.add(identifier)
+                    trashed_ids.extend(resolution.trash_asset_ids)
+                else:
+                    failed_ids.append(identifier)
+                processed += 1
+            await checkpoint("Resolving reviewed duplicate groups through Immich…")
+            if offset + len(batch) < len(resolve_groups):
+                await asyncio.sleep(pacing.full_min_batch_delay_seconds)
+
+        if trashed_ids:
+            await self._assets.remove_assets(trashed_ids)
+
+        for planned in delete_groups:
+            await context.ensure_active()
+            identifier = planned["duplicate_id"]
+            member_ids = [UUID(value) for value in planned["member_asset_ids"]]
+            verified_trashed: list[UUID] = []
+            try:
+                await self._immich.trash_assets(member_ids)
+                for asset_id in member_ids:
+                    asset = await self._immich.get_asset(asset_id)
+                    if not asset.is_trashed:
+                        raise ImmichApiError("verify trashed duplicate member")
+                    verified_trashed.append(asset_id)
+            except ImmichApiError:
+                failed_ids.append(identifier)
+            else:
+                successful_ids.add(identifier)
+                deleted_ids.add(identifier)
+                trashed_ids.extend(verified_trashed)
+                await self._assets.remove_assets(verified_trashed)
+            processed += 1
+            await checkpoint("Trashing every member of approved duplicate groups…")
+
+        for planned in keep_groups:
+            await context.ensure_active()
+            identifier = planned["duplicate_id"]
+            successful_ids.add(identifier)
+            kept_ids.add(identifier)
+            processed += 1
+            await checkpoint("Recording groups that should keep every copy…")
+
+        for planned in stack_groups:
+            await context.ensure_active()
+            identifier = planned["duplicate_id"]
+            try:
+                member_ids = [UUID(value) for value in planned["member_asset_ids"]]
+                await self._immich.create_stack(member_ids)
+                refreshed_assets: list[ImmichAsset] = []
+                for asset_id in member_ids:
+                    asset = await self._immich.get_asset(asset_id)
+                    refreshed_assets.append(asset)
+                    await self._assets.refresh_asset(asset)
+                if any(asset.stack is None for asset in refreshed_assets):
+                    raise ImmichApiError("verify created stack")
+            except ImmichApiError:
+                failed_ids.append(identifier)
+            else:
+                successful_ids.add(identifier)
+                stacked_ids.add(identifier)
+            processed += 1
+            await checkpoint("Creating reviewed Immich duplicate stacks…")
+
         remaining = {group.duplicate_id for group in await self._immich.list_duplicate_groups()}
         unresolved = [
             item["duplicate_id"]
-            for item in raw_groups
+            for item in resolve_groups
             if item["action"] == "resolve" and UUID(item["duplicate_id"]) in remaining
         ]
-        failed_ids.extend(identifier for identifier in unresolved if identifier not in failed_ids)
+        for identifier in unresolved:
+            successful_ids.discard(identifier)
+            resolved_ids.discard(identifier)
+            if identifier not in failed_ids:
+                failed_ids.append(identifier)
+
+        if self._reviews is not None:
+            review_statuses = {
+                "resolve": "reviewed_resolve",
+                "keep_all": "reviewed_keep_all",
+                "delete_all": "reviewed_delete_all",
+                "stack_all": "reviewed_stack_all",
+            }
+            for planned in raw_groups:
+                if planned["duplicate_id"] not in successful_ids:
+                    continue
+                await self._reviews.save(
+                    discovery_source="immich_duplicate",
+                    provider_group_id=planned["duplicate_id"],
+                    member_fingerprint=planned["member_fingerprint"],
+                    manual_action=planned["action"],
+                    manual_primary_asset_id=(
+                        UUID(planned["keeper_asset_id"])
+                        if planned.get("keeper_asset_id") is not None
+                        else None
+                    ),
+                    review_status=review_statuses[planned["action"]],
+                )
+
         status = "completed" if not failed_ids else "failed"
         result = {
             "group_count": len(raw_groups),
-            "processed_group_count": len(raw_groups) - len(failed_ids),
-            "resolved_group_count": resolved,
-            "stacked_group_count": stacked,
+            "processed_group_count": len(successful_ids),
+            "resolved_group_count": len(resolved_ids),
+            "kept_all_group_count": len(kept_ids),
+            "deleted_all_group_count": len(deleted_ids),
+            "stacked_group_count": len(stacked_ids),
             "failed_group_ids": failed_ids,
             "trashed_asset_count": len(trashed_ids),
             "verified": not failed_ids,
@@ -655,9 +901,11 @@ class CrossSourceDuplicateService:
             status=status,
             summary=result,
             counters={
-                "groups_processed": len(raw_groups) - len(failed_ids),
-                "groups_resolved": resolved,
-                "groups_stacked": stacked,
+                "groups_processed": len(successful_ids),
+                "groups_resolved": len(resolved_ids),
+                "groups_kept_all": len(kept_ids),
+                "groups_deleted_all": len(deleted_ids),
+                "groups_stacked": len(stacked_ids),
                 "groups_failed": len(failed_ids),
                 "assets_trashed": len(trashed_ids),
             },

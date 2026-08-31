@@ -18,7 +18,7 @@
     apiOnly?: boolean;
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatekeeper?: (assetId: string) => void;
-    onduplicateaction?: (action: 'resolve' | 'stack_all' | 'none') => void;
+    onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
   }
 
   let {
@@ -37,12 +37,15 @@
   }: Props = $props();
 
   const duplicateActionOptions = $derived<SelectOption[]>([
+    { value: 'automatic', label: 'Automatic recommendation' },
     { value: 'none', label: 'Skip / review later' },
     {
       value: 'resolve',
       label: 'Resolve — keep primary',
       disabled: !duplicateContext?.eligible,
     },
+    { value: 'keep_all', label: 'Keep all — reviewed copies' },
+    { value: 'delete_all', label: 'Delete all — keep no copy' },
     {
       value: 'stack_all',
       label: 'Stack all — keep every copy',
@@ -112,7 +115,7 @@
             value={duplicateContext.selected_action}
             options={duplicateActionOptions}
             compact
-            onchange={(value) => onduplicateaction?.(value as 'resolve' | 'stack_all' | 'none')}
+            onchange={(value) => onduplicateaction?.(value as DuplicateReviewContext['selected_action'])}
           />
           <button
             type="button"
@@ -129,7 +132,7 @@
         <div><dt>Batch eligible</dt><dd>{duplicateContext.eligible ? 'Yes' : 'No'}</dd></div>
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
         <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{duplicateContext.recommended_keeper_asset_id === null ? 'No unique recommendation' : automaticRuleRespected ? 'Yes' : 'No — manually overridden'}</dd></div>
-        <div><dt>This copy</dt><dd>{duplicateContext.selected_keeper_asset_id === null ? 'Undecided' : duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected primary' : duplicateContext.selected_action === 'resolve' ? 'Will be removed' : 'Retained in stack'}</dd></div>
+        <div><dt>This copy</dt><dd>{duplicateContext.selected_action === 'delete_all' ? 'Will be trashed' : duplicateContext.selected_action === 'keep_all' ? 'Will be retained' : duplicateContext.selected_keeper_asset_id === null ? 'Undecided' : duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected primary' : duplicateContext.selected_action === 'resolve' ? 'Will be removed' : duplicateContext.selected_action === 'stack_all' ? 'Retained in stack' : 'No change planned'}</dd></div>
         <div><dt>Rule recommendation</dt><dd>{duplicateContext.recommended_keeper_asset_id === null ? 'None — manual choice required' : duplicateContext.recommended_keeper_asset_id === asset.id ? 'Keep this copy' : 'Keep another copy'}</dd></div>
         <div><dt>Decision reasons</dt><dd>{duplicateContext.recommendation_reason_codes.join(', ') || 'No automatic recommendation'}</dd></div>
       </dl>

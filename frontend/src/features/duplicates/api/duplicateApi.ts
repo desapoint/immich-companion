@@ -4,6 +4,7 @@ import type {
   DuplicateResult,
   DuplicateTaskStatus,
   DuplicatePlanAction,
+  ExactDuplicateGroup,
 } from '../types/duplicates';
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
@@ -18,12 +19,24 @@ async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   return await response.json() as T;
 }
 
-function jsonBody(value: unknown): RequestInit {
+function jsonBody(value: unknown, method = 'POST'): RequestInit {
   return {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(value),
   };
+}
+
+export function saveDuplicateReview(request: {
+  duplicate_id: string;
+  options: DuplicateAnalysisOptions;
+  manual_action: DuplicatePlanAction | null;
+  manual_primary_asset_id: string | null;
+}): Promise<ExactDuplicateGroup> {
+  return requestJson(
+    '/api/assets/duplicates/cross-source/review',
+    jsonBody(request, 'PUT'),
+  );
 }
 
 export function loadDuplicateGroups(options: DuplicateAnalysisOptions): Promise<DuplicateResult> {

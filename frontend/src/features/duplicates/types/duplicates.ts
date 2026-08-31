@@ -1,6 +1,7 @@
 export type DuplicateKeeperPolicy = 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
-export type DuplicatePlanAction = 'resolve' | 'stack_all' | 'none';
+export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+export type DuplicateActionSelection = DuplicatePlanAction | 'automatic';
 
 export interface DuplicateAnalysisOptions {
   keeper_policy: DuplicateKeeperPolicy;
@@ -51,6 +52,12 @@ export interface ExactDuplicateGroup {
   auto_selected: boolean;
   action_source: 'automatic' | 'manual' | 'none';
   primary_source: 'automatic' | 'manual' | 'none';
+  manual_action: DuplicatePlanAction | null;
+  manual_primary_asset_id: string | null;
+  effective_action: DuplicatePlanAction;
+  effective_primary_asset_id: string | null;
+  review_status: 'pending' | 'manually_configured' | 'reviewed_keep_all' | 'reviewed_resolve' | 'reviewed_delete_all' | 'reviewed_stack_all' | 'review_later' | 'drifted';
+  member_fingerprint: string;
   members: DuplicateMember[];
   eligible: boolean;
 }
@@ -63,12 +70,12 @@ export interface DuplicatePreviewRequest {
   keeper_policy: DuplicateKeeperPolicy;
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
-  selected_action: DuplicatePlanAction;
+  selected_action: DuplicateActionSelection;
   recommendation_reason_codes: string[];
   members: DuplicateMember[];
   initial_index: number;
-  onkeeperchange?: (assetId: string) => DuplicatePlanAction;
-  onactionchange?: (action: DuplicatePlanAction) => void;
+  onkeeperchange?: (assetId: string) => DuplicateActionSelection;
+  onactionchange?: (action: DuplicateActionSelection) => void;
 }
 
 export interface DuplicateResult {
@@ -102,14 +109,20 @@ export interface DuplicateResolutionPlan {
   groups: Array<{
     duplicate_id: string;
     action: Exclude<DuplicatePlanAction, 'none'>;
-    keeper_asset_id: string;
+    keeper_asset_id: string | null;
     member_asset_ids: string[];
     trash_asset_ids: string[];
+    member_fingerprint: string;
+    members: Array<{ asset_id: string; disposition: 'keep' | 'delete' | 'stack' | 'no_change'; primary: boolean }>;
   }>;
   group_count: number;
   resolve_group_count: number;
+  keep_all_group_count: number;
+  delete_all_group_count: number;
   stack_group_count: number;
   trash_asset_count: number;
+  retained_asset_count: number;
+  zero_survivor_group_count: number;
   expires_at: string;
   destructive: boolean;
 }

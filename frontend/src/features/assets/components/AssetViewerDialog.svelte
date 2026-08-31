@@ -91,7 +91,7 @@
     integrityEnabled?: boolean;
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatekeeper?: (assetId: string) => void;
-    onduplicateaction?: (action: 'resolve' | 'stack_all' | 'none') => void;
+    onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];

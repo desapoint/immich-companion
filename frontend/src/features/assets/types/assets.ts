@@ -408,7 +408,7 @@ export interface DuplicateReviewContext {
   keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
-  selected_action: 'resolve' | 'stack_all' | 'none';
+  selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
   recommendation_reason_codes: string[];
   members: DuplicateReviewMember[];
   current_integrity: AssetIntegrityState | null;

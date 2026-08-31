@@ -8,9 +8,12 @@ from uuid import UUID
 
 import pytest
 
+from companion.action_service import DestructiveActionsDisabledError
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
+    DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlanRequest,
+    DuplicateReviewUpdate,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
@@ -289,6 +292,7 @@ class FakeImmich:
     def __init__(self, candidate_group: ImmichDuplicateGroup):
         self.candidate_group = candidate_group
         self.created_stacks: list[list[UUID]] = []
+        self.trashed: list[list[UUID]] = []
 
     async def list_duplicate_groups(self):
         return [self.candidate_group]
@@ -301,6 +305,12 @@ class FakeImmich:
         for item in self.candidate_group.assets:
             if item.id in asset_ids:
                 item.stack = {"id": "ffffffff-ffff-4fff-8fff-ffffffffffff"}
+
+    async def trash_assets(self, asset_ids):
+        self.trashed.append(asset_ids)
+        for item in self.candidate_group.assets:
+            if item.id in asset_ids:
+                item.is_trashed = True
 
     def public_asset_url(self, asset_id):
         return f"https://immich.test/photos/{asset_id}"
@@ -324,6 +334,22 @@ class FakeReports:
 
     async def get_many(self, _ids):
         return self.records
+
+
+class FakeReviews:
+    def __init__(self, record=None):
+        self.record = record
+        self.saved = None
+
+    async def get_many(self, _source, provider_group_ids):
+        if self.record is None or self.record.provider_group_id not in provider_group_ids:
+            return {}
+        return {self.record.provider_group_id: self.record}
+
+    async def save(self, **values):
+        self.saved = values
+        self.record = SimpleNamespace(**values)
+        return self.record
 
 
 class FakeActions:
@@ -725,3 +751,155 @@ async def test_non_destructive_stack_plan_executes_in_safe_mode() -> None:
     assert immich.created_stacks == [[UPLOAD_1, EXTERNAL_1]]
     assert assets.refreshed == [UPLOAD_1, EXTERNAL_1]
     assert actions.finished[0] == "completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("action", "expected_disposition", "destructive", "zero_survivors"),
+    [
+        ("keep_all", "keep", False, 0),
+        ("delete_all", "delete", True, 1),
+    ],
+)
+async def test_whole_group_actions_have_explicit_member_dispositions(
+    action: str,
+    expected_disposition: str,
+    destructive: bool,
+    zero_survivors: int,
+) -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+    )
+
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            duplicate_ids=[GROUP_ID],
+            action_overrides={GROUP_ID: action},
+        )
+    )
+
+    assert plan.destructive is destructive
+    assert plan.groups[0].keeper_asset_id is None
+    assert {member.disposition for member in plan.groups[0].members} == {
+        expected_disposition
+    }
+    assert plan.zero_survivor_group_count == zero_survivors
+
+
+@pytest.mark.asyncio
+async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+
+    saved = await service.save_review(
+        DuplicateReviewUpdate(
+            duplicate_id=GROUP_ID,
+            manual_action="keep_all",
+            manual_primary_asset_id=EXTERNAL_1,
+        )
+    )
+
+    assert saved.manual_action == "keep_all"
+    assert saved.effective_action == "keep_all"
+    assert saved.review_status == "manually_configured"
+    reviews.record.member_fingerprint = "different-membership"
+    drifted = await service.result()
+    assert drifted.groups[0].manual_action is None
+    assert drifted.groups[0].review_status == "drifted"
+
+
+@pytest.mark.asyncio
+async def test_delete_all_trashes_and_verifies_every_member_through_immich() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    assets = FakeAssets()
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=True,
+        relation_work={
+            "options": DuplicateAnalysisOptions().model_dump(mode="json"),
+            "groups": [
+                {
+                    "duplicate_id": str(GROUP_ID),
+                    "action": "delete_all",
+                    "keeper_asset_id": None,
+                    "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                    "trash_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                }
+            ],
+        },
+    )
+    actions = FakeActions(record)
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=True),
+        immich,
+        assets,
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        SimpleNamespace(),
+        FakeRuntimeSettings(),
+        reviews,
+    )
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "completed"
+    assert outcome.counters["groups_deleted_all"] == 1
+    assert immich.trashed == [[UPLOAD_1, EXTERNAL_1]]
+    assert assets.removed == [UPLOAD_1, EXTERNAL_1]
+    assert reviews.saved["review_status"] == "reviewed_delete_all"
+
+
+@pytest.mark.asyncio
+async def test_delete_all_plan_is_blocked_by_safe_mode_before_task_submission() -> None:
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=True,
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=False),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        FakeActions(record),
+        FakeTasks(),
+        SimpleNamespace(),
+    )
+
+    with pytest.raises(DestructiveActionsDisabledError):
+        await service.start_resolution(DuplicateResolutionExecuteRequest(plan_id=GROUP_ID))

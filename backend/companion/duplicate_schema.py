@@ -27,6 +27,17 @@ DuplicateClassification = Literal[
 ]
 DuplicateGroupAction = Literal["resolve", "keep_all", "delete_all", "stack_all", "none"]
 DuplicateDecisionSource = Literal["automatic", "manual", "none"]
+DuplicateReviewStatus = Literal[
+    "pending",
+    "manually_configured",
+    "reviewed_keep_all",
+    "reviewed_resolve",
+    "reviewed_delete_all",
+    "reviewed_stack_all",
+    "review_later",
+    "drifted",
+]
+DuplicateMemberDisposition = Literal["keep", "delete", "stack", "no_change"]
 
 
 class DuplicateAnalysisOptions(BaseModel):
@@ -87,6 +98,12 @@ class ExactDuplicateGroup(BaseModel):
     auto_selected: bool = False
     action_source: DuplicateDecisionSource = "none"
     primary_source: DuplicateDecisionSource = "none"
+    manual_action: DuplicateGroupAction | None = None
+    manual_primary_asset_id: UUID | None = None
+    effective_action: DuplicateGroupAction = "none"
+    effective_primary_asset_id: UUID | None = None
+    review_status: DuplicateReviewStatus = "pending"
+    member_fingerprint: str
     members: list[DuplicateMember]
     eligible: bool
 
@@ -112,7 +129,10 @@ class DuplicateResolutionPlanRequest(BaseModel):
     duplicate_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     all_eligible: bool = False
     keeper_overrides: dict[UUID, UUID] = Field(default_factory=dict)
-    action_overrides: dict[UUID, Literal["resolve", "stack_all"]] = Field(
+    action_overrides: dict[
+        UUID,
+        Literal["resolve", "keep_all", "delete_all", "stack_all"],
+    ] = Field(
         default_factory=dict
     )
 
@@ -124,12 +144,20 @@ class DuplicateResolutionPlanRequest(BaseModel):
         return self
 
 
+class DuplicatePlanMember(BaseModel):
+    asset_id: UUID
+    disposition: DuplicateMemberDisposition
+    primary: bool = False
+
+
 class DuplicateResolutionPlanGroup(BaseModel):
     duplicate_id: UUID
-    action: Literal["resolve", "stack_all"] = "resolve"
-    keeper_asset_id: UUID
+    action: Literal["resolve", "keep_all", "delete_all", "stack_all"] = "resolve"
+    keeper_asset_id: UUID | None = None
     member_asset_ids: list[UUID] = Field(default_factory=list)
     trash_asset_ids: list[UUID]
+    member_fingerprint: str
+    members: list[DuplicatePlanMember]
 
 
 class DuplicateResolutionPlan(BaseModel):
@@ -138,11 +166,22 @@ class DuplicateResolutionPlan(BaseModel):
     groups: list[DuplicateResolutionPlanGroup]
     group_count: int
     resolve_group_count: int = 0
+    keep_all_group_count: int = 0
+    delete_all_group_count: int = 0
     stack_group_count: int = 0
     trash_asset_count: int
+    retained_asset_count: int = 0
+    zero_survivor_group_count: int = 0
     expires_at: datetime
     destructive: bool = True
 
 
 class DuplicateResolutionExecuteRequest(BaseModel):
     plan_id: UUID
+
+
+class DuplicateReviewUpdate(BaseModel):
+    duplicate_id: UUID
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    manual_action: DuplicateGroupAction | None
+    manual_primary_asset_id: UUID | None = None

@@ -16,6 +16,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     Uuid,
     func,
 )
@@ -377,6 +378,38 @@ class ActionPlanRecord(Base):
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DuplicateGroupReviewRecord(Base):
+    """Manual duplicate decision bound to one exact discovered membership."""
+
+    __tablename__ = "duplicate_group_reviews"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    discovery_source: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    manual_action: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    manual_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    last_reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "discovery_source",
+            "provider_group_id",
+            name="uq_duplicate_group_reviews_provider",
+        ),
+        Index("ix_duplicate_group_reviews_status", review_status),
+    )
 
 
 class SelectionSetRecord(Base):

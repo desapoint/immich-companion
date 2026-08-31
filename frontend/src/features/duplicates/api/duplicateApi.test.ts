@@ -5,6 +5,7 @@ import {
   executeDuplicateResolution,
   loadDuplicateGroups,
   planDuplicateResolution,
+  saveDuplicateReview,
 } from './duplicateApi';
 
 const options = {
@@ -57,5 +58,25 @@ describe('duplicate API', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/assets/duplicates/cross-source/execute', expect.objectContaining({
       body: JSON.stringify({ plan_id: 'plan-1' }),
     }));
+  });
+
+  it('persists a fingerprint-bound manual group decision', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ duplicate_id: 'group-1' }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const request = {
+      duplicate_id: 'group-1',
+      options,
+      manual_action: 'keep_all' as const,
+      manual_primary_asset_id: 'asset-1',
+    };
+
+    await saveDuplicateReview(request);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/assets/duplicates/cross-source/review',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify(request) }),
+    );
   });
 });

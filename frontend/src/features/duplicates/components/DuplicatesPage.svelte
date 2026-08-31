@@ -14,9 +14,11 @@
     loadDuplicateGroups,
     loadDuplicateTask,
     planDuplicateResolution,
+    saveDuplicateReview,
   } from '../api/duplicateApi';
   import type {
     DuplicateAnalysisOptions,
+    DuplicateActionSelection,
     DuplicateKeeperPolicy,
     DuplicatePlanAction,
     DuplicateResolutionPlan,
@@ -40,6 +42,13 @@
     { value: 'prefer_external', label: 'Prefer external files' },
     { value: 'first', label: 'First Immich result' },
   ];
+  const bulkActionOptions: SelectOption[] = [
+    { value: 'resolve', label: 'Resolve — keep each primary' },
+    { value: 'keep_all', label: 'Keep all copies' },
+    { value: 'delete_all', label: 'Delete every copy' },
+    { value: 'stack_all', label: 'Stack each group' },
+    { value: 'none', label: 'Skip / review later' },
+  ];
   const defaultOptions: DuplicateAnalysisOptions = {
     keeper_policy: 'most_recent',
     external_library_ids: [],
@@ -50,9 +59,11 @@
   let options = $state<DuplicateAnalysisOptions>({ ...defaultOptions });
   let appliedOptions = $state.raw<DuplicateAnalysisOptions>({ ...defaultOptions });
   let libraryFilter = $state('');
+  let bulkAction = $state<DuplicatePlanAction>('keep_all');
   const selected = new SvelteSet<string>();
   let keeperOverrides = $state<Record<string, string>>({});
-  let actionOverrides = $state<Record<string, DuplicatePlanAction>>({});
+  let actionOverrides = $state<Record<string, DuplicateActionSelection>>({});
+  const savingGroups = new SvelteSet<string>();
   let loading = $state(true);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -63,8 +74,18 @@
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let selectionInitialized = false;
 
-  const autoReadyGroups = $derived(result?.groups.filter((group) => group.auto_selected) ?? []);
+  const autoReadyGroups = $derived(
+    result?.groups.filter(
+      (group) => group.auto_selected && group.manual_action === null && group.review_status === 'pending',
+    ) ?? [],
+  );
   const selectedCount = $derived(selected.size);
+  const selectedReady = $derived(
+    selectedCount > 0
+      && (result?.groups
+        .filter((group) => selected.has(group.duplicate_id))
+        .every((group) => isActionable(group)) ?? false),
+  );
   const allAutoReadySelected = $derived(
     autoReadyGroups.length > 0
       && autoReadyGroups.every((group) => selected.has(group.duplicate_id)),
@@ -89,12 +110,10 @@
     try {
       const loaded = await loadDuplicateGroups(appliedOptions);
       result = loaded;
-      const eligibleIds = new SvelteSet(result.groups
-        .filter((group) => isActionable(group))
-        .map((group) => group.duplicate_id));
-      for (const id of selected) if (!eligibleIds.has(id)) selected.delete(id);
+      const liveIds = new SvelteSet(result.groups.map((group) => group.duplicate_id));
+      for (const id of selected) if (!liveIds.has(id)) selected.delete(id);
       if (!selectionInitialized) {
-        for (const group of result.groups) if (group.auto_selected) selected.add(group.duplicate_id);
+        for (const group of autoReadyGroups) selected.add(group.duplicate_id);
         selectionInitialized = true;
       }
       if (
@@ -156,42 +175,48 @@
       return;
     }
     for (const group of autoReadyGroups) {
-      actionOverrides = { ...actionOverrides, [group.duplicate_id]: 'resolve' };
       selected.add(group.duplicate_id);
     }
   }
 
   function setKeeper(group: ExactDuplicateGroup, assetId: string): void {
     keeperOverrides = { ...keeperOverrides, [group.duplicate_id]: assetId };
-    if (group.eligible && !actionOverrides[group.duplicate_id]) {
-      actionOverrides = { ...actionOverrides, [group.duplicate_id]: 'resolve' };
-      selected.add(group.duplicate_id);
-    } else if (actionFor(group) !== 'none') {
-      selected.add(group.duplicate_id);
-    }
+    if (effectiveActionFor(group) !== 'none') selected.add(group.duplicate_id);
+    void persistReview(group, actionFor(group), assetId);
   }
 
   function selectedKeeper(group: ExactDuplicateGroup): string | null {
-    return keeperOverrides[group.duplicate_id] ?? group.keeper_asset_id;
+    return keeperOverrides[group.duplicate_id]
+      ?? group.manual_primary_asset_id
+      ?? group.effective_primary_asset_id
+      ?? group.keeper_asset_id;
   }
 
-  function actionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
-    return actionOverrides[group.duplicate_id] ?? (group.auto_selected ? 'resolve' : 'none');
+  function actionFor(group: ExactDuplicateGroup): DuplicateActionSelection {
+    return actionOverrides[group.duplicate_id] ?? group.manual_action ?? 'automatic';
+  }
+
+  function effectiveActionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
+    const selection = actionFor(group);
+    return selection === 'automatic' ? group.recommended_action : selection;
   }
 
   function isActionable(group: ExactDuplicateGroup): boolean {
-    const action = actionFor(group);
+    const action = effectiveActionFor(group);
+    const requiresPrimary = action === 'resolve' || action === 'stack_all';
     return action !== 'none'
-      && selectedKeeper(group) !== null
-      && !group.members.some((member) => member.is_offline)
-      && (action !== 'resolve' || group.eligible)
-      && (action !== 'stack_all' || !group.members.some((member) => member.is_stacked));
+      && (!requiresPrimary || selectedKeeper(group) !== null)
+      && (action !== 'resolve' || (group.eligible && !group.members.some((member) => member.is_offline)))
+      && (action !== 'stack_all' || !group.members.some((member) => member.is_offline || member.is_stacked));
   }
 
   function actionOptions(group: ExactDuplicateGroup): SelectOption[] {
     return [
+      { value: 'automatic', label: `Automatic — ${group.recommended_action.replaceAll('_', ' ')}` },
       { value: 'none', label: 'Skip / review later' },
       { value: 'resolve', label: 'Resolve — keep primary', disabled: !group.eligible },
+      { value: 'keep_all', label: 'Keep all — mark reviewed' },
+      { value: 'delete_all', label: 'Delete all — keep no copy' },
       {
         value: 'stack_all',
         label: 'Stack all — keep every copy',
@@ -201,15 +226,69 @@
   }
 
   function setGroupAction(group: ExactDuplicateGroup, value: string): void {
-    const action = value as DuplicatePlanAction;
-    if (action === 'none') {
-      actionOverrides = { ...actionOverrides, [group.duplicate_id]: 'none' };
-      selected.delete(group.duplicate_id);
-      return;
-    }
+    const action = value as DuplicateActionSelection;
     actionOverrides = { ...actionOverrides, [group.duplicate_id]: action };
-    if (isActionable(group)) selected.add(group.duplicate_id);
-    else selected.delete(group.duplicate_id);
+    if (effectiveActionFor(group) === 'none') {
+      selected.delete(group.duplicate_id);
+    } else if (isActionable(group)) {
+      selected.add(group.duplicate_id);
+    }
+    void persistReview(group, action, selectedKeeper(group));
+  }
+
+  async function persistReview(
+    group: ExactDuplicateGroup,
+    selection: DuplicateActionSelection,
+    primaryId: string | null,
+  ): Promise<void> {
+    savingGroups.add(group.duplicate_id);
+    error = null;
+    try {
+      const updated = await saveDuplicateReview({
+        duplicate_id: group.duplicate_id,
+        options: appliedOptions,
+        manual_action: selection === 'automatic' ? null : selection,
+        manual_primary_asset_id: primaryId,
+      });
+      if (result) {
+        result = {
+          ...result,
+          groups: result.groups.map((candidate) => (
+            candidate.duplicate_id === updated.duplicate_id ? updated : candidate
+          )),
+        };
+      }
+      const nextActions = { ...actionOverrides };
+      const nextKeepers = { ...keeperOverrides };
+      delete nextActions[group.duplicate_id];
+      delete nextKeepers[group.duplicate_id];
+      actionOverrides = nextActions;
+      keeperOverrides = nextKeepers;
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
+      await load();
+    } finally {
+      savingGroups.delete(group.duplicate_id);
+    }
+  }
+
+  async function applyBulkAction(): Promise<void> {
+    if (!result || !selected.size) return;
+    busy = true;
+    error = null;
+    const groups = result.groups.filter((group) => selected.has(group.duplicate_id));
+    actionOverrides = {
+      ...actionOverrides,
+      ...Object.fromEntries(groups.map((group) => [group.duplicate_id, bulkAction])),
+    };
+    try {
+      for (const group of groups) {
+        await persistReview(group, bulkAction, selectedKeeper(group));
+      }
+      if (bulkAction === 'none') selected.clear();
+    } finally {
+      busy = false;
+    }
   }
 
   function progressPercent(status: DuplicateTaskStatus): number | undefined {
@@ -252,7 +331,7 @@
         action_overrides: Object.fromEntries(
           result?.groups
             .filter((group) => selected.has(group.duplicate_id))
-            .map((group) => [group.duplicate_id, actionFor(group)]) ?? [],
+            .map((group) => [group.duplicate_id, effectiveActionFor(group)]) ?? [],
         ) as Record<string, Exclude<DuplicatePlanAction, 'none'>>,
       });
       confirmOpen = true;
@@ -359,7 +438,9 @@
     <div class="batch-bar">
       <Checkbox checked={allAutoReadySelected} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
       <span>{selectedCount} selected</span>
-      <button type="button" disabled={!selectedCount || busy} onclick={() => void reviewBatch()}>Review batch</button>
+      <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!selectedCount || busy} onchange={(value) => bulkAction = value as DuplicatePlanAction} />
+      <button type="button" disabled={!selectedCount || busy} onclick={() => void applyBulkAction()}>Apply action</button>
+      <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review batch</button>
     </div>
 
     {#if loading}
@@ -372,11 +453,11 @@
           <article class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
-                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={!isActionable(group) || busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{actionFor(group) === 'resolve' ? 'Will resolve' : actionFor(group) === 'stack_all' ? 'Will stack' : group.eligible ? 'Choose action' : 'Needs review'}</span></div>
+                <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{effectiveActionFor(group).replaceAll('_', ' ')} · {group.review_status.replaceAll('_', ' ')}</span></div>
               </div>
               <div class="group-controls">
-                <SelectField id={`duplicate-action-${group.duplicate_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy} onchange={(value) => setGroupAction(group, value)} />
+                <SelectField id={`duplicate-action-${group.duplicate_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy || savingGroups.has(group.duplicate_id)} onchange={(value) => setGroupAction(group, value)} />
                 <p>{group.reason}</p>
               </div>
             </header>
@@ -413,7 +494,7 @@
 {#if confirmOpen && plan}
   <ConfirmDialog
     title="Process reviewed duplicates"
-    message={`Process ${plan.group_count} groups: resolve ${plan.resolve_group_count}, create ${plan.stack_group_count} stacks, and trash ${plan.trash_asset_count} exact duplicate assets?`}
+    message={`Process ${plan.group_count} groups: resolve ${plan.resolve_group_count}, keep all in ${plan.keep_all_group_count}, delete every copy in ${plan.delete_all_group_count}, create ${plan.stack_group_count} stacks, and trash ${plan.trash_asset_count} assets.${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
     confirmLabel="Process batch"
     icon={plan.destructive ? 'trash' : 'stack'}
     destructive={plan.destructive}
