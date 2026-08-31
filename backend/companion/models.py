@@ -200,6 +200,66 @@ class AssetSimilarityEdgeRecord(Base):
     )
 
 
+class SimilarityScanRecord(Base):
+    """One versioned whole-library similarity discovery run."""
+
+    __tablename__ = "similarity_scans"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    status: Mapped[str] = mapped_column(String(24), nullable=False, index=True)
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    comparison_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    maximum_perceptual_distance: Mapped[int] = mapped_column(Integer, nullable=False)
+    maximum_aspect_difference: Mapped[float] = mapped_column(Float, nullable=False)
+    maximum_neighbors_per_asset: Mapped[int] = mapped_column(Integer, nullable=False)
+    asset_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    match_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+
+
+class SimilarityScanPairRecord(Base):
+    """One accepted pair and immutable evidence in a completed scan snapshot."""
+
+    __tablename__ = "similarity_scan_pairs"
+
+    scan_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("similarity_scans.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_id_low: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_id_high: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_low_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset_high_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    similarity_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    structural_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    perceptual_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    color_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    exact_pixel_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+
+    __table_args__ = (
+        Index("ix_similarity_scan_pairs_assets", asset_id_low, asset_id_high),
+    )
+
+
 class AlbumRecord(Base):
     """Synchronized Immich album metadata."""
 
