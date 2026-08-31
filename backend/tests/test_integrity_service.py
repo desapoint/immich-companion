@@ -10,14 +10,23 @@ import pytest
 from companion.image_decode import ImageDecodeResult
 from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION
-from companion.integrity_repository import public_report, report_freshness
+from companion.integrity_repository import (
+    public_report,
+    report_freshness,
+    similarity_feature_freshness,
+)
 from companion.integrity_schema import AssetIntegrityReport
 from companion.integrity_service import (
     IntegrityService,
     IntegrityTaskHandler,
     RetryableTaskError,
 )
-from companion.models import AssetIntegrityReportRecord
+from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
+from companion.similarity_features import (
+    SIMILARITY_FEATURE_VERSION,
+    SIMILARITY_MODEL_VERSION,
+    VisualFeatureResult,
+)
 from companion.task_schema import TaskStatusView
 
 ASSET_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -59,8 +68,8 @@ class FakeReports:
     async def get(self, _asset_id):
         return self.record
 
-    async def save(self, current, result):
-        self.saved.append((current, result))
+    async def save(self, current, result, visual_feature=None):
+        self.saved.append((current, result, visual_feature))
         return AssetIntegrityReport(
             asset_id=current.id,
             analyzer_version=result.analyzer_version,
@@ -180,6 +189,24 @@ def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
     )
 
 
+def feature_record(current: ImmichAsset) -> AssetSimilarityFeatureRecord:
+    return AssetSimilarityFeatureRecord(
+        asset_id=current.id,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        source_file_modified_at=current.file_modified_at,
+        source_file_size_bytes=4,
+        source_sha256="1" * 64,
+        width=1,
+        height=1,
+        luminance_vector=bytes([128] * 256),
+        perceptual_hash="0" * 16,
+        color_histogram=bytes([0] * 48),
+        thumbnail_sha256="2" * 64,
+        analyzed_at=datetime.now(UTC),
+    )
+
+
 @pytest.mark.asyncio
 async def test_handler_streams_then_saves_only_after_source_verification(monkeypatch) -> None:
     current = asset()
@@ -190,11 +217,26 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
         "companion.integrity_service.decode_image",
         lambda *_args: ImageDecodeResult(supported=True, valid=True, width=1, height=1),
     )
+    visual_feature = VisualFeatureResult(
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        width=1,
+        height=1,
+        luminance_vector=bytes([128] * 256),
+        perceptual_hash="0" * 16,
+        color_histogram=bytes([0] * 48),
+        thumbnail_sha256="2" * 64,
+    )
+    monkeypatch.setattr(
+        "companion.integrity_service.extract_visual_features",
+        lambda *_args: visual_feature,
+    )
 
     result = await handler.execute(context, {"asset_id": str(ASSET_ID)})
 
     assert result.summary["classification"] == "healthy"
     assert reports.saved[0][1].byte_size == 4
+    assert reports.saved[0][2] == visual_feature
     assert context.checkpoints[-1]["progress"]["phase"] == "finalizing"
 
 
@@ -287,6 +329,23 @@ def test_upload_report_becomes_stale_when_size_or_mtime_changes() -> None:
         record,
         asset(modified="2026-08-28T12:01:00Z"),
     ) == "stale"
+
+
+def test_similarity_feature_reuses_only_compatible_source_and_versions() -> None:
+    current = asset()
+    record = feature_record(current)
+
+    assert similarity_feature_freshness(record, current) == "current"
+    assert similarity_feature_freshness(record, asset(size=5)) == "stale"
+    assert similarity_feature_freshness(
+        record,
+        asset(modified="2026-08-28T12:01:00Z"),
+    ) == "stale"
+    record.feature_version += 1
+    assert similarity_feature_freshness(record, current) == "stale"
+    record.feature_version = SIMILARITY_FEATURE_VERSION
+    record.model_version = "appearance-future"
+    assert similarity_feature_freshness(record, current) == "stale"
 
 
 def test_legacy_other_format_report_remains_readable_while_stale() -> None:

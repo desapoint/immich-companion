@@ -23,6 +23,7 @@ from companion.integrity_schema import (
     AssetIntegrityReport,
     AssetIntegrityState,
 )
+from companion.similarity_features import extract_visual_features
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -242,6 +243,13 @@ class IntegrityTaskHandler:
                 immich_height=source.height,
                 issue=decoded.issue,
             )
+            visual_feature = None
+            if decoded.valid is True:
+                visual_feature = await asyncio.to_thread(
+                    extract_visual_features,
+                    spool,
+                    result.detected_format,
+                )
         expected_size = source_file_size(source)
         if expected_size is not None and result.byte_size != expected_size:
             raise RetryableTaskError("The streamed original size did not match Immich metadata.")
@@ -267,7 +275,7 @@ class IntegrityTaskHandler:
         current = await self._active_asset(asset_id)
         if not same_source(source, current):
             raise RetryableTaskError("The source changed during integrity analysis.")
-        return await self._reports.save(current, result)
+        return await self._reports.save(current, result, visual_feature)
 
     @staticmethod
     async def _checkpoint(

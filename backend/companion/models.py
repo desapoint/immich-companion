@@ -14,6 +14,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     String,
     Text,
     UniqueConstraint,
@@ -115,6 +116,38 @@ class AssetIntegrityReportRecord(Base):
 
     __table_args__ = (
         Index("ix_asset_integrity_exact_hash", byte_size, sha256_hex),
+    )
+
+
+class AssetSimilarityFeatureRecord(Base):
+    """Latest compatible compact visual feature for one active asset."""
+
+    __tablename__ = "asset_similarity_features"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    luminance_vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    perceptual_hash: Mapped[str] = mapped_column(String(16), nullable=False)
+    color_histogram: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    thumbnail_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        Index(
+            "ix_asset_similarity_features_version",
+            model_version,
+            feature_version,
+        ),
     )
 
 

@@ -5,14 +5,19 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
 from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION, FileIntegrityResult
 from companion.integrity_schema import AssetIntegrityReport, IntegrityFreshness
-from companion.models import AssetIntegrityReportRecord
+from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
+from companion.similarity_features import (
+    SIMILARITY_FEATURE_VERSION,
+    SIMILARITY_MODEL_VERSION,
+    VisualFeatureResult,
+)
 
 
 def source_file_size(asset: ImmichAsset) -> int | None:
@@ -35,6 +40,25 @@ def report_freshness(
     if live_size is None:
         return "stale"
     if record.source_file_size_bytes != live_size:
+        return "stale"
+    return "current"
+
+
+def similarity_feature_freshness(
+    record: AssetSimilarityFeatureRecord | None,
+    asset: ImmichAsset,
+) -> IntegrityFreshness:
+    if record is None:
+        return "missing"
+    if (
+        record.model_version != SIMILARITY_MODEL_VERSION
+        or record.feature_version != SIMILARITY_FEATURE_VERSION
+    ):
+        return "stale"
+    live_size = source_file_size(asset)
+    if live_size is None or record.source_file_size_bytes != live_size:
+        return "stale"
+    if record.source_file_modified_at != asset.file_modified_at:
         return "stale"
     return "current"
 
@@ -87,10 +111,18 @@ class IntegrityRepository:
             records = list((await session.scalars(statement)).all())
         return {record.asset_id: record for record in records}
 
+    async def get_similarity_feature(
+        self,
+        asset_id: UUID,
+    ) -> AssetSimilarityFeatureRecord | None:
+        async with self._database.sessions() as session:
+            return await session.get(AssetSimilarityFeatureRecord, asset_id)
+
     async def save(
         self,
         asset: ImmichAsset,
         result: FileIntegrityResult,
+        visual_feature: VisualFeatureResult | None = None,
     ) -> AssetIntegrityReport:
         values = {
             "asset_id": asset.id,
@@ -130,6 +162,41 @@ class IntegrityRepository:
                     },
                 )
             )
+            if visual_feature is None:
+                await session.execute(
+                    delete(AssetSimilarityFeatureRecord).where(
+                        AssetSimilarityFeatureRecord.asset_id == asset.id
+                    )
+                )
+            else:
+                feature_values = {
+                    "asset_id": asset.id,
+                    "model_version": visual_feature.model_version,
+                    "feature_version": visual_feature.feature_version,
+                    "source_file_modified_at": asset.file_modified_at,
+                    "source_file_size_bytes": result.byte_size,
+                    "source_sha256": result.sha256_hex,
+                    "width": visual_feature.width,
+                    "height": visual_feature.height,
+                    "luminance_vector": visual_feature.luminance_vector,
+                    "perceptual_hash": visual_feature.perceptual_hash,
+                    "color_histogram": visual_feature.color_histogram,
+                    "thumbnail_sha256": visual_feature.thumbnail_sha256,
+                    "analyzed_at": datetime.now(UTC),
+                }
+                feature_statement = insert(AssetSimilarityFeatureRecord).values(
+                    feature_values
+                )
+                await session.execute(
+                    feature_statement.on_conflict_do_update(
+                        index_elements=[AssetSimilarityFeatureRecord.asset_id],
+                        set_={
+                            key: getattr(feature_statement.excluded, key)
+                            for key in feature_values
+                            if key != "asset_id"
+                        },
+                    )
+                )
         record = await self.get(asset.id)
         assert record is not None
         return public_report(record)
