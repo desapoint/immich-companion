@@ -12,6 +12,7 @@ from companion.action_service import (
     ActionPlanConflictError,
     DestructiveActionsDisabledError,
 )
+from companion.discovery import DiscoveredGroup
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateResolutionExecuteRequest,
@@ -23,6 +24,7 @@ from companion.duplicate_service import (
     CrossSourceDuplicateService,
     CrossSourceDuplicateTaskHandler,
 )
+from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset, ImmichDuplicateGroup
 from companion.integrity import ANALYZER_VERSION
 from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
@@ -161,8 +163,14 @@ def assemble(
     *,
     policy: str = "prefer_upload",
 ):
+    discovered = DiscoveredGroup(
+        group_id=f"immich:{candidate_group.duplicate_id}",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id=str(candidate_group.duplicate_id),
+        assets=tuple(candidate_group.assets),
+    )
     return CrossSourceDuplicateService.assemble(
-        [candidate_group],
+        [discovered],
         {item.asset_id: item for item in reports},
         DuplicateAnalysisOptions(keeper_policy=policy),
     )

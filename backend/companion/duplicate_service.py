@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from typing import Any
@@ -17,6 +18,11 @@ from companion.action_service import (
 )
 from companion.asset_repository import AssetRepository
 from companion.config import Settings
+from companion.discovery import (
+    DiscoveredGroup,
+    GroupDiscoveryProvider,
+    ImmichDuplicateProvider,
+)
 from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
@@ -47,7 +53,6 @@ from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
-    ImmichDuplicateGroup,
     ImmichDuplicateResolution,
 )
 from companion.integrity import decode_immich_sha1
@@ -73,6 +78,17 @@ from companion.task_schema import TaskResult
 
 CROSS_SOURCE_DUPLICATE_TASK_TYPE = "cross_source_duplicates"
 DUPLICATE_RESOLUTION_TASK_TYPE = "duplicate_resolution"
+
+
+def _immich_provider_id(group: DiscoveredGroup) -> UUID:
+    """Map the generic snapshot at the current Immich-only public boundary."""
+
+    if (
+        group.discovery_source is not DiscoverySource.IMMICH_DUPLICATE
+        or group.provider_group_id is None
+    ):
+        raise ValueError("The current duplicate API only accepts Immich duplicate groups")
+    return UUID(group.provider_group_id)
 
 
 def _options_key(options: DuplicateAnalysisOptions) -> str:
@@ -180,6 +196,7 @@ class CrossSourceDuplicateService:
         reviews: DuplicateReviewRepository | None = None,
         policy: DuplicatePolicyRepository | None = None,
         similarity: SimilarityRepository | None = None,
+        discovery: GroupDiscoveryProvider | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -191,6 +208,7 @@ class CrossSourceDuplicateService:
         self._reviews = reviews
         self._policy = policy
         self._similarity = similarity
+        self._discovery = discovery or ImmichDuplicateProvider(immich)
 
     async def _options(
         self,
@@ -217,17 +235,8 @@ class CrossSourceDuplicateService:
             await self._tasks.start()
         return CrossSourceDuplicateTaskStart(task_id=active.id)
 
-    async def _live_groups(self) -> list[ImmichDuplicateGroup]:
-        groups = await self._immich.list_duplicate_groups()
-        hydrated: list[ImmichDuplicateGroup] = []
-        for group in groups:
-            assets: list[ImmichAsset] = []
-            for asset in group.assets:
-                if asset.library_id is not None and asset.file_size_bytes is None:
-                    asset = await self._immich.get_asset(asset.id)
-                assets.append(asset)
-            hydrated.append(group.model_copy(update={"assets": assets}))
-        return hydrated
+    async def _live_groups(self) -> list[DiscoveredGroup]:
+        return await self._discovery.discover()
 
     async def result(
         self,
@@ -276,7 +285,7 @@ class CrossSourceDuplicateService:
         self,
         options: DuplicateAnalysisOptions,
     ) -> tuple[
-        list[ImmichDuplicateGroup],
+        list[DiscoveredGroup],
         dict[UUID, AssetIntegrityReportRecord],
         dict[UUID, AssetSimilarityFeatureRecord],
         CrossSourceDuplicateResult,
@@ -327,7 +336,11 @@ class CrossSourceDuplicateService:
         if self._similarity is None:
             raise RuntimeError("Duplicate similarity persistence is unavailable")
         source = next(
-            (group for group in await self._live_groups() if group.duplicate_id == duplicate_id),
+            (
+                group
+                for group in await self._live_groups()
+                if group.provider_group_id == str(duplicate_id)
+            ),
             None,
         )
         if source is None:
@@ -362,8 +375,9 @@ class CrossSourceDuplicateService:
         ]
         edges = await self._similarity.reference_edges([ordered_ids], features)
         result = self.assemble([source], reports, options, self._immich)
-        reordered_source = source.model_copy(
-            update={"assets": [members[asset_id] for asset_id in ordered_ids]}
+        reordered_source = replace(
+            source,
+            assets=tuple(members[asset_id] for asset_id in ordered_ids),
         )
         result = self._apply_similarity(
             result,
@@ -378,11 +392,11 @@ class CrossSourceDuplicateService:
     @staticmethod
     def _apply_similarity(
         result: CrossSourceDuplicateResult,
-        source_groups: list[ImmichDuplicateGroup],
+        source_groups: list[DiscoveredGroup],
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
         features: dict[UUID, AssetSimilarityFeatureRecord],
     ) -> CrossSourceDuplicateResult:
-        source_by_id = {group.duplicate_id: group for group in source_groups}
+        source_by_id = {_immich_provider_id(group): group for group in source_groups}
         updated_groups: list[ExactDuplicateGroup] = []
         for group in result.groups:
             source = source_by_id[group.duplicate_id]
@@ -517,7 +531,7 @@ class CrossSourceDuplicateService:
 
     @staticmethod
     def _verification_candidates(
-        groups: list[ImmichDuplicateGroup],
+        groups: list[DiscoveredGroup],
         options: DuplicateAnalysisOptions,
         *,
         include_similarity: bool = False,
@@ -539,7 +553,7 @@ class CrossSourceDuplicateService:
     @classmethod
     def _pending_verification(
         cls,
-        groups: list[ImmichDuplicateGroup],
+        groups: list[DiscoveredGroup],
         reports: dict[UUID, AssetIntegrityReportRecord],
         features: dict[UUID, AssetSimilarityFeatureRecord],
         options: DuplicateAnalysisOptions,
@@ -566,7 +580,7 @@ class CrossSourceDuplicateService:
 
     @staticmethod
     def assemble(
-        groups: list[ImmichDuplicateGroup],
+        groups: list[DiscoveredGroup],
         reports: dict[UUID, AssetIntegrityReportRecord],
         options: DuplicateAnalysisOptions,
         immich: ImmichApiClient | None = None,
@@ -648,9 +662,9 @@ class CrossSourceDuplicateService:
                 else GroupClassification.UNVERIFIED
             )
             candidate = CandidateGroup(
-                group_id=f"immich:{group.duplicate_id}",
-                discovery_source=DiscoverySource.IMMICH_DUPLICATE,
-                provider_group_id=group.duplicate_id,
+                group_id=group.group_id,
+                discovery_source=group.discovery_source,
+                provider_group_id=_immich_provider_id(group),
                 classification=classification,
                 members=tuple(
                     CandidateMember(
@@ -706,7 +720,7 @@ class CrossSourceDuplicateService:
             ]
             public_groups.append(
                 ExactDuplicateGroup(
-                    duplicate_id=group.duplicate_id,
+                    duplicate_id=_immich_provider_id(group),
                     group_id=candidate.group_id,
                     discovery_source=candidate.discovery_source.value,
                     classification=candidate.classification.value,

@@ -67,6 +67,7 @@ from companion.asset_schema import (
 from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
+from companion.discovery import ImmichDuplicateProvider
 from companion.duplicate_policy import DuplicatePolicy, DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
@@ -248,6 +249,7 @@ def create_app(
             duplicate_review_repository,
             duplicate_policy_repository,
             similarity_repository,
+            ImmichDuplicateProvider(immich),
         )
         if asset_repository is not None
         and integrity_repository is not None
