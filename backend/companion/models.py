@@ -64,9 +64,7 @@ class AssetRecord(Base):
     has_metadata: Mapped[bool] = mapped_column(Boolean, default=False)
     visibility: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     live_photo_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    exif_info: Mapped[dict[str, Any] | None] = mapped_column(
-        JSON(none_as_null=True), nullable=True
-    )
+    exif_info: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True), nullable=True)
     people: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     tags: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     stack: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -115,9 +113,7 @@ class AssetIntegrityReportRecord(Base):
     issues: Mapped[list[str]] = mapped_column(JSON, default=list)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
-    __table_args__ = (
-        Index("ix_asset_integrity_exact_hash", byte_size, sha256_hex),
-    )
+    __table_args__ = (Index("ix_asset_integrity_exact_hash", byte_size, sha256_hex),)
 
 
 class AssetSimilarityFeatureRecord(Base):
@@ -141,6 +137,20 @@ class AssetSimilarityFeatureRecord(Base):
     perceptual_hash: Mapped[str] = mapped_column(String(16), nullable=False)
     color_histogram: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     thumbnail_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    pixel_normalization_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    pixel_sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    bit_depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    channel_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    has_alpha: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    color_space: Mapped[str] = mapped_column(String(24), nullable=False)
+    orientation: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    icc_profile_present: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    has_exif: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    has_capture_time: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    has_camera_info: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    has_gps: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    has_orientation_metadata: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    metadata_richness: Mapped[int] = mapped_column(Integer, nullable=False)
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
@@ -177,6 +187,7 @@ class AssetSimilarityEdgeRecord(Base):
     perceptual_percent: Mapped[float] = mapped_column(Float, nullable=False)
     color_percent: Mapped[float] = mapped_column(Float, nullable=False)
     exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    exact_pixel_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
     calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (

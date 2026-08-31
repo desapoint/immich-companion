@@ -68,6 +68,7 @@
       && duplicateContext.selected_keeper_asset_id === duplicateContext.recommended_keeper_asset_id,
   );
   const currentSimilarity = $derived(currentDuplicateMember?.similarity ?? null);
+  const currentPreservation = $derived(currentDuplicateMember?.preservation ?? null);
 
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
@@ -178,14 +179,21 @@
         <div><dt>Existing stack</dt><dd>{currentDuplicateMember?.is_stacked ? 'Already stacked' : 'None'}</dd></div>
         <div><dt>Integrity cache</dt><dd>{duplicateContext.current_integrity?.freshness ?? 'missing'}</dd></div>
         <div><dt>Structure</dt><dd>{duplicateContext.current_integrity?.report?.classification ?? 'Not analyzed'}</dd></div>
-        <div><dt>Pixel identity</dt><dd>Planned validation</dd></div>
         <div><dt>Visual similarity</dt><dd>{currentSimilarity?.state === 'reference' ? 'Reference (100%)' : currentSimilarity?.state === 'current' ? `${currentSimilarity.similarity_percent?.toFixed(2)}%` : currentSimilarity?.state ?? 'Not analyzed'}</dd></div>
         {#if currentSimilarity?.state === 'current'}
           <div><dt>Structure</dt><dd>{currentSimilarity.structural_percent?.toFixed(2)}%</dd></div>
           <div><dt>Perceptual hash</dt><dd>{currentSimilarity.perceptual_percent?.toFixed(2)}%</dd></div>
           <div><dt>Color</dt><dd>{currentSimilarity.color_percent?.toFixed(2)}%</dd></div>
           <div><dt>Normalized thumbnail</dt><dd>{currentSimilarity.exact_thumbnail_match ? 'Exact' : 'Different'}</dd></div>
+          <div><dt>Normalized decoded pixels</dt><dd>{currentSimilarity.exact_pixel_match ? 'Exact' : 'Different'}</dd></div>
           <div><dt>Similarity model</dt><dd>{currentSimilarity.model_version ?? 'Unknown'} · comparison v{currentSimilarity.comparison_version ?? '?'}</dd></div>
+        {/if}
+        {#if currentPreservation}
+          <div><dt>Normalized pixels</dt><dd>v{currentPreservation.pixel_normalization_version} · {currentPreservation.pixel_sha256}</dd></div>
+          <div><dt>Decoded quality</dt><dd>{currentPreservation.decoded_width}×{currentPreservation.decoded_height} · {currentPreservation.bit_depth}-bit · {currentPreservation.channel_count} channels</dd></div>
+          <div><dt>Color / alpha</dt><dd>{currentPreservation.color_space} · {currentPreservation.has_alpha ? 'alpha retained' : 'opaque'}</dd></div>
+          <div><dt>Profile / orientation</dt><dd>{currentPreservation.icc_profile_present ? 'ICC profile' : 'No ICC profile'} · {currentPreservation.orientation === null ? 'no EXIF orientation' : `orientation ${currentPreservation.orientation}`}</dd></div>
+          <div><dt>Metadata preservation</dt><dd>Richness {currentPreservation.metadata_richness}/6 · {currentPreservation.has_capture_time ? 'capture time' : 'no capture time'} · {currentPreservation.has_camera_info ? 'camera' : 'no camera'} · {currentPreservation.has_gps ? 'GPS' : 'no GPS'}</dd></div>
         {/if}
         <div><dt>Metadata comparison</dt><dd>Planned validation</dd></div>
         {#if currentDuplicateMember?.content_checksum}<div><dt>Content hash</dt><dd>{currentDuplicateMember.content_checksum}</dd></div>{/if}

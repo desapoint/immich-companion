@@ -18,7 +18,7 @@ from companion.similarity_features import (
     compare_visual_features,
 )
 
-SIMILARITY_COMPARISON_VERSION = 1
+SIMILARITY_COMPARISON_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,6 +28,7 @@ class PairSimilarityEvidence:
     perceptual_percent: float
     color_percent: float
     exact_thumbnail_match: bool
+    exact_pixel_match: bool
     model_version: str
     feature_version: int
     comparison_version: int
@@ -65,6 +66,20 @@ def _feature(record: AssetSimilarityFeatureRecord) -> VisualFeatureResult:
         perceptual_hash=record.perceptual_hash,
         color_histogram=record.color_histogram,
         thumbnail_sha256=record.thumbnail_sha256,
+        pixel_normalization_version=record.pixel_normalization_version,
+        pixel_sha256=record.pixel_sha256,
+        bit_depth=record.bit_depth,
+        channel_count=record.channel_count,
+        has_alpha=record.has_alpha,
+        color_space=record.color_space,
+        orientation=record.orientation,
+        icc_profile_present=record.icc_profile_present,
+        has_exif=record.has_exif,
+        has_capture_time=record.has_capture_time,
+        has_camera_info=record.has_camera_info,
+        has_gps=record.has_gps,
+        has_orientation_metadata=record.has_orientation_metadata,
+        metadata_richness=record.metadata_richness,
     )
 
 
@@ -75,6 +90,7 @@ def _public(record: AssetSimilarityEdgeRecord) -> PairSimilarityEvidence:
         perceptual_percent=record.perceptual_percent,
         color_percent=record.color_percent,
         exact_thumbnail_match=record.exact_thumbnail_match,
+        exact_pixel_match=record.exact_pixel_match,
         model_version=record.model_version,
         feature_version=record.feature_version,
         comparison_version=record.comparison_version,
@@ -104,8 +120,7 @@ class SimilarityRepository:
             ).in_(canonical),
             AssetSimilarityEdgeRecord.model_version == SIMILARITY_MODEL_VERSION,
             AssetSimilarityEdgeRecord.feature_version == SIMILARITY_FEATURE_VERSION,
-            AssetSimilarityEdgeRecord.comparison_version
-            == SIMILARITY_COMPARISON_VERSION,
+            AssetSimilarityEdgeRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
         )
         async with self._database.sessions() as session:
             cached = list((await session.scalars(statement)).all())
@@ -133,6 +148,11 @@ class SimilarityRepository:
                 exact_thumbnail_match=(
                     low_feature.thumbnail_sha256 == high_feature.thumbnail_sha256
                 ),
+                exact_pixel_match=(
+                    low_feature.pixel_normalization_version
+                    == high_feature.pixel_normalization_version
+                    and low_feature.pixel_sha256 == high_feature.pixel_sha256
+                ),
                 model_version=SIMILARITY_MODEL_VERSION,
                 feature_version=SIMILARITY_FEATURE_VERSION,
                 comparison_version=SIMILARITY_COMPARISON_VERSION,
@@ -149,6 +169,7 @@ class SimilarityRepository:
                     "perceptual_percent": evidence.perceptual_percent,
                     "color_percent": evidence.color_percent,
                     "exact_thumbnail_match": evidence.exact_thumbnail_match,
+                    "exact_pixel_match": evidence.exact_pixel_match,
                     "model_version": evidence.model_version,
                     "feature_version": evidence.feature_version,
                     "comparison_version": evidence.comparison_version,
@@ -178,8 +199,4 @@ class SimilarityRepository:
                         set_={key: getattr(statement.excluded, key) for key in update_keys},
                     )
                 )
-        return {
-            original: current[pair]
-            for original, pair in requested.items()
-            if pair in current
-        }
+        return {original: current[pair] for original, pair in requested.items() if pair in current}

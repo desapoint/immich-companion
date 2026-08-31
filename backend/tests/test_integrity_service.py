@@ -203,6 +203,20 @@ def feature_record(current: ImmichAsset) -> AssetSimilarityFeatureRecord:
         perceptual_hash="0" * 16,
         color_histogram=bytes([0] * 48),
         thumbnail_sha256="2" * 64,
+        pixel_normalization_version=1,
+        pixel_sha256="3" * 64,
+        bit_depth=8,
+        channel_count=3,
+        has_alpha=False,
+        color_space="RGB",
+        orientation=None,
+        icc_profile_present=False,
+        has_exif=False,
+        has_capture_time=False,
+        has_camera_info=False,
+        has_gps=False,
+        has_orientation_metadata=False,
+        metadata_richness=0,
         analyzed_at=datetime.now(UTC),
     )
 
@@ -226,6 +240,20 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
         perceptual_hash="0" * 16,
         color_histogram=bytes([0] * 48),
         thumbnail_sha256="2" * 64,
+        pixel_normalization_version=1,
+        pixel_sha256="3" * 64,
+        bit_depth=8,
+        channel_count=3,
+        has_alpha=False,
+        color_space="RGB",
+        orientation=None,
+        icc_profile_present=False,
+        has_exif=False,
+        has_capture_time=False,
+        has_camera_info=False,
+        has_gps=False,
+        has_orientation_metadata=False,
+        metadata_richness=0,
     )
     monkeypatch.setattr(
         "companion.integrity_service.extract_visual_features",
@@ -305,9 +333,7 @@ async def test_service_reuses_current_report_and_force_queues_reanalysis() -> No
     current = asset()
     record = report_record(current)
     tasks = FakeTasks()
-    service = IntegrityService(
-        FakeImmich(current), FakeAssets(), FakeReports(record), tasks
-    )
+    service = IntegrityService(FakeImmich(current), FakeAssets(), FakeReports(record), tasks)
 
     cached = await service.analyze(ASSET_ID, force=False)
     forced = await service.analyze(ASSET_ID, force=True)
@@ -325,10 +351,13 @@ def test_upload_report_becomes_stale_when_size_or_mtime_changes() -> None:
 
     assert report_freshness(record, current) == "current"
     assert report_freshness(record, asset(size=5)) == "stale"
-    assert report_freshness(
-        record,
-        asset(modified="2026-08-28T12:01:00Z"),
-    ) == "stale"
+    assert (
+        report_freshness(
+            record,
+            asset(modified="2026-08-28T12:01:00Z"),
+        )
+        == "stale"
+    )
 
 
 def test_similarity_feature_reuses_only_compatible_source_and_versions() -> None:
@@ -337,10 +366,13 @@ def test_similarity_feature_reuses_only_compatible_source_and_versions() -> None
 
     assert similarity_feature_freshness(record, current) == "current"
     assert similarity_feature_freshness(record, asset(size=5)) == "stale"
-    assert similarity_feature_freshness(
-        record,
-        asset(modified="2026-08-28T12:01:00Z"),
-    ) == "stale"
+    assert (
+        similarity_feature_freshness(
+            record,
+            asset(modified="2026-08-28T12:01:00Z"),
+        )
+        == "stale"
+    )
     record.feature_version += 1
     assert similarity_feature_freshness(record, current) == "stale"
     record.feature_version = SIMILARITY_FEATURE_VERSION
@@ -364,7 +396,10 @@ def test_external_report_ignores_path_checksum_changes() -> None:
     record = report_record(current)
 
     assert report_freshness(record, current) == "current"
-    assert report_freshness(
-        record,
-        asset(library_id=library_id, checksum="new-path-checksum"),
-    ) == "current"
+    assert (
+        report_freshness(
+            record,
+            asset(library_id=library_id, checksum="new-path-checksum"),
+        )
+        == "current"
+    )

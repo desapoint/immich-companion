@@ -38,9 +38,28 @@ const member: DuplicateMember = {
     perceptual_percent: 97,
     color_percent: 95,
     exact_thumbnail_match: false,
+    exact_pixel_match: false,
     model_version: 'appearance-v1',
     feature_version: 1,
     comparison_version: 1,
+  },
+  preservation: {
+    pixel_normalization_version: 1,
+    pixel_sha256: 'b'.repeat(64),
+    decoded_width: 4032,
+    decoded_height: 3024,
+    bit_depth: 8,
+    channel_count: 3,
+    has_alpha: false,
+    color_space: 'RGB',
+    orientation: 1,
+    icc_profile_present: true,
+    has_exif: true,
+    has_capture_time: true,
+    has_camera_info: true,
+    has_gps: false,
+    has_orientation_metadata: true,
+    metadata_richness: 5,
   },
 };
 
@@ -55,6 +74,22 @@ describe('GroupEvidencePills', () => {
     expect(body).toContain('HEIC');
     expect(body).toContain('Decoded');
     expect(body).toContain('98.3% similar');
+    expect(body).toContain('4032×3024');
+    expect(body).toContain('ICC');
+  });
+
+  it('surfaces normalized pixel equality separately from visual similarity', () => {
+    const { body } = render(GroupEvidencePills, {
+      props: {
+        member: {
+          ...member,
+          similarity: { ...member.similarity!, exact_pixel_match: true },
+        },
+        analysisPending: false,
+      },
+    });
+
+    expect(body).toContain('Pixel match');
   });
 
   it('distinguishes pending stale evidence from a corruption result', () => {

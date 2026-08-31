@@ -57,6 +57,14 @@
   {:else if member.similarity?.state === 'pending'}
     <span class="pill pending">Similarity pending</span>
   {/if}
+  {#if member.similarity?.exact_pixel_match}
+    <span class="pill positive">Pixel match</span>
+  {/if}
+  {#if member.preservation}
+    <span class="pill neutral">{member.preservation.decoded_width}×{member.preservation.decoded_height}</span>
+    {#if member.preservation.icc_profile_present}<span class="pill neutral">ICC</span>{/if}
+    {#if member.preservation.has_alpha}<span class="pill neutral">Alpha</span>{/if}
+  {/if}
 </div>
 
 <style>

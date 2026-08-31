@@ -79,9 +79,29 @@ class DuplicateSimilarityEvidence(BaseModel):
     perceptual_percent: float | None = None
     color_percent: float | None = None
     exact_thumbnail_match: bool | None = None
+    exact_pixel_match: bool | None = None
     model_version: str | None = None
     feature_version: int | None = None
     comparison_version: int | None = None
+
+
+class DuplicatePreservationEvidence(BaseModel):
+    pixel_normalization_version: int
+    pixel_sha256: str
+    decoded_width: int
+    decoded_height: int
+    bit_depth: int
+    channel_count: int
+    has_alpha: bool
+    color_space: str
+    orientation: int | None
+    icc_profile_present: bool
+    has_exif: bool
+    has_capture_time: bool
+    has_camera_info: bool
+    has_gps: bool
+    has_orientation_metadata: bool
+    metadata_richness: int
 
 
 class DuplicateMember(BaseModel):
@@ -100,6 +120,7 @@ class DuplicateMember(BaseModel):
     content_checksum: str | None = None
     evidence: DuplicateMemberEvidence
     similarity: DuplicateSimilarityEvidence | None = None
+    preservation: DuplicatePreservationEvidence | None = None
 
 
 class ExactDuplicateGroup(BaseModel):
@@ -131,6 +152,8 @@ class CrossSourceDuplicateResult(BaseModel):
     generated_at: datetime
     analysis_task_id: UUID | None = None
     analysis_pending_count: int = 0
+    analysis_candidate_count: int = 0
+    analysis_cached_count: int = 0
     group_count: int
     exact_group_count: int
     unverified_group_count: int
@@ -151,9 +174,7 @@ class DuplicateResolutionPlanRequest(BaseModel):
     action_overrides: dict[
         UUID,
         Literal["resolve", "keep_all", "delete_all", "stack_all"],
-    ] = Field(
-        default_factory=dict
-    )
+    ] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_selection(self) -> DuplicateResolutionPlanRequest:

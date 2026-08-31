@@ -42,6 +42,7 @@ export interface DuplicateMember {
     dimensions_match_immich: boolean | null;
   };
   similarity: DuplicateSimilarityEvidence | null;
+  preservation: DuplicatePreservationEvidence | null;
 }
 
 export interface DuplicateSimilarityEvidence {
@@ -52,9 +53,29 @@ export interface DuplicateSimilarityEvidence {
   perceptual_percent: number | null;
   color_percent: number | null;
   exact_thumbnail_match: boolean | null;
+  exact_pixel_match: boolean | null;
   model_version: string | null;
   feature_version: number | null;
   comparison_version: number | null;
+}
+
+export interface DuplicatePreservationEvidence {
+  pixel_normalization_version: number;
+  pixel_sha256: string;
+  decoded_width: number;
+  decoded_height: number;
+  bit_depth: number;
+  channel_count: number;
+  has_alpha: boolean;
+  color_space: string;
+  orientation: number | null;
+  icc_profile_present: boolean;
+  has_exif: boolean;
+  has_capture_time: boolean;
+  has_camera_info: boolean;
+  has_gps: boolean;
+  has_orientation_metadata: boolean;
+  metadata_richness: number;
 }
 
 export interface ExactDuplicateGroup {
@@ -105,6 +126,8 @@ export interface DuplicateResult {
   generated_at: string;
   analysis_task_id: string | null;
   analysis_pending_count: number;
+  analysis_candidate_count: number;
+  analysis_cached_count: number;
   group_count: number;
   exact_group_count: number;
   unverified_group_count: number;

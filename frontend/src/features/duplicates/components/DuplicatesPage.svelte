@@ -496,7 +496,7 @@
     <button class="apply-rules" type="button" disabled={busy || loading} onclick={() => void applyRules()}>Apply automatic rules</button>
     <div class="analysis-state">
       <span>Candidate analysis</span>
-      <strong>{rulesChanged ? 'Rules changed' : result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : 'Current'}</strong>
+      <strong>{rulesChanged ? 'Rules changed' : result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : result ? `${result.analysis_cached_count} cached` : 'Current'}</strong>
     </div>
   </section>
 

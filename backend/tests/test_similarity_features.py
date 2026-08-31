@@ -3,7 +3,7 @@
 from io import BytesIO
 
 import pytest
-from PIL import Image, ImageDraw, ImageEnhance
+from PIL import Image, ImageCms, ImageDraw, ImageEnhance
 
 from companion.similarity_features import (
     COLOR_HISTOGRAM_LENGTH,
@@ -39,7 +39,87 @@ def test_visual_features_are_fixed_size_and_deterministic() -> None:
     assert len(first.perceptual_hash) == 16
     assert len(first.color_histogram) == COLOR_HISTOGRAM_LENGTH
     assert len(first.thumbnail_sha256) == 64
-    assert compare_visual_features(first, second).similarity_percent == 100
+    assert len(first.pixel_sha256) == 64
+    comparison = compare_visual_features(first, second)
+    assert comparison.similarity_percent == 100
+    assert comparison.color_percent == 100
+
+
+def test_lossless_container_and_opaque_alpha_share_normalized_pixels() -> None:
+    rgb = scene()
+    opaque_rgba = rgb.convert("RGBA")
+
+    rgb_payload = BytesIO()
+    rgb.save(rgb_payload, format="TIFF")
+    rgba_payload = BytesIO()
+    opaque_rgba.save(rgba_payload, format="PNG")
+
+    rgb_result = extract_visual_features(rgb_payload, "tiff")
+    rgba_result = extract_visual_features(rgba_payload, "png")
+
+    assert rgb_result is not None
+    assert rgba_result is not None
+    assert rgb_result.pixel_sha256 == rgba_result.pixel_sha256
+    assert rgb_result.has_alpha is False
+    assert rgba_result.has_alpha is True
+
+
+def test_meaningful_alpha_and_dimensions_change_normalized_pixel_identity() -> None:
+    opaque = scene().convert("RGBA")
+    translucent = opaque.copy()
+    translucent.putalpha(127)
+
+    opaque_result = features(opaque)
+    translucent_result = features(translucent)
+    resized_result = features(opaque.resize((96, 256)))
+
+    assert opaque_result.pixel_sha256 != translucent_result.pixel_sha256
+    assert opaque_result.pixel_sha256 != resized_result.pixel_sha256
+
+
+def test_palette_transparency_is_retained_in_normalized_pixels() -> None:
+    palette = scene().convert("P", palette=Image.Palette.ADAPTIVE, colors=16)
+    palette.info["transparency"] = 0
+    payload = BytesIO()
+    palette.save(payload, format="PNG", transparency=0)
+
+    result = extract_visual_features(payload, "png")
+
+    assert result is not None
+    assert result.has_alpha is True
+
+
+def test_compact_metadata_preservation_facts_are_extracted() -> None:
+    payload = BytesIO()
+    exif = Image.Exif()
+    exif[274] = 6
+    exif[36867] = "2026:08:31 12:34:56"
+    exif[271] = "Companion Camera"
+    exif[272] = "Test Model"
+    scene().save(payload, format="JPEG", exif=exif)
+
+    result = extract_visual_features(payload, "jpeg")
+
+    assert result is not None
+    assert result.has_exif is True
+    assert result.has_capture_time is True
+    assert result.has_camera_info is True
+    assert result.has_orientation_metadata is True
+    assert result.orientation == 6
+    assert result.has_gps is False
+    assert result.metadata_richness == 4
+
+
+def test_embedded_color_profile_is_preserved_as_compact_evidence() -> None:
+    payload = BytesIO()
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    scene().save(payload, format="PNG", icc_profile=profile)
+
+    result = extract_visual_features(payload, "png")
+
+    assert result is not None
+    assert result.icc_profile_present is True
+    assert result.metadata_richness == 1
 
 
 @pytest.mark.parametrize("factor", [0.95, 1.05])

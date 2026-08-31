@@ -36,6 +36,7 @@ function member(overrides: Partial<DuplicateMember> = {}): DuplicateMember {
       dimensions_match_immich: true,
     },
     similarity: null,
+    preservation: null,
     ...overrides,
   };
 }

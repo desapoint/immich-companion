@@ -25,6 +25,7 @@ from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateMember,
     DuplicateMemberEvidence,
+    DuplicatePreservationEvidence,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanGroup,
@@ -156,9 +157,7 @@ def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         stack_group_count=sum(group.action == "stack_all" for group in groups),
         trash_asset_count=sum(len(group.trash_asset_ids) for group in groups),
         retained_asset_count=sum(
-            member.disposition in {"keep", "stack"}
-            for group in groups
-            for member in group.members
+            member.disposition in {"keep", "stack"} for group in groups for member in group.members
         ),
         zero_survivor_group_count=sum(group.action == "delete_all" for group in groups),
         expires_at=record.expires_at,
@@ -246,13 +245,19 @@ class CrossSourceDuplicateService:
 
         options = await self._options(options)
         groups, reports, features, result = await self._snapshot(options)
+        include_similarity = self._similarity is not None
+        candidates = self._verification_candidates(
+            groups,
+            options,
+            include_similarity=include_similarity,
+        )
         pending_count = len(
             self._pending_verification(
                 groups,
                 reports,
                 features,
                 options,
-                include_similarity=self._similarity is not None,
+                include_similarity=include_similarity,
             )
         )
         task_id: UUID | None = None
@@ -262,6 +267,8 @@ class CrossSourceDuplicateService:
             update={
                 "analysis_task_id": task_id,
                 "analysis_pending_count": pending_count,
+                "analysis_candidate_count": len(candidates),
+                "analysis_cached_count": len(candidates) - pending_count,
             }
         )
 
@@ -293,9 +300,7 @@ class CrossSourceDuplicateService:
             if self._similarity is not None
             else {}
         )
-        source_assets = {
-            asset.id: asset for group in groups for asset in group.assets
-        }
+        source_assets = {asset.id: asset for group in groups for asset in group.assets}
         features = {
             asset_id: feature
             for asset_id, feature in loaded_features.items()
@@ -307,7 +312,7 @@ class CrossSourceDuplicateService:
                 [[asset.id for asset in group.assets] for group in groups],
                 features,
             )
-            result = self._apply_similarity(result, groups, edges)
+            result = self._apply_similarity(result, groups, edges, features)
         if self._reviews is not None:
             result = await self._apply_review_states(result)
         return groups, reports, features, result
@@ -322,11 +327,7 @@ class CrossSourceDuplicateService:
         if self._similarity is None:
             raise RuntimeError("Duplicate similarity persistence is unavailable")
         source = next(
-            (
-                group
-                for group in await self._live_groups()
-                if group.duplicate_id == duplicate_id
-            ),
+            (group for group in await self._live_groups() if group.duplicate_id == duplicate_id),
             None,
         )
         if source is None:
@@ -344,9 +345,7 @@ class CrossSourceDuplicateService:
         ]
         reports = await self._reports.get_many(report_ids)
         image_assets = [
-            asset
-            for asset in source.assets
-            if asset.asset_type == "IMAGE" and not asset.is_offline
+            asset for asset in source.assets if asset.asset_type == "IMAGE" and not asset.is_offline
         ]
         loaded_features = await self._reports.get_similarity_features(
             [asset.id for asset in image_assets]
@@ -355,8 +354,7 @@ class CrossSourceDuplicateService:
             asset.id: loaded_features[asset.id]
             for asset in image_assets
             if asset.id in loaded_features
-            and similarity_feature_freshness(loaded_features[asset.id], asset)
-            == "current"
+            and similarity_feature_freshness(loaded_features[asset.id], asset) == "current"
         }
         ordered_ids = [
             request.reference_asset_id,
@@ -367,7 +365,12 @@ class CrossSourceDuplicateService:
         reordered_source = source.model_copy(
             update={"assets": [members[asset_id] for asset_id in ordered_ids]}
         )
-        result = self._apply_similarity(result, [reordered_source], edges)
+        result = self._apply_similarity(
+            result,
+            [reordered_source],
+            edges,
+            features,
+        )
         if self._reviews is not None:
             result = await self._apply_review_states(result)
         return result.groups[0]
@@ -377,6 +380,7 @@ class CrossSourceDuplicateService:
         result: CrossSourceDuplicateResult,
         source_groups: list[ImmichDuplicateGroup],
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
+        features: dict[UUID, AssetSimilarityFeatureRecord],
     ) -> CrossSourceDuplicateResult:
         source_by_id = {group.duplicate_id: group for group in source_groups}
         updated_groups: list[ExactDuplicateGroup] = []
@@ -391,6 +395,7 @@ class CrossSourceDuplicateService:
             for member in group.members:
                 source_member = source_members[member.id]
                 edge = edges.get((reference.id, member.id))
+                feature = features.get(member.id)
                 if member.id == reference.id:
                     similarity = DuplicateSimilarityEvidence(
                         state="reference",
@@ -399,7 +404,10 @@ class CrossSourceDuplicateService:
                         structural_percent=100.0,
                         perceptual_percent=100.0,
                         color_percent=100.0,
-                        exact_thumbnail_match=True,
+                        exact_thumbnail_match=True if feature is not None else None,
+                        exact_pixel_match=True if feature is not None else None,
+                        model_version=feature.model_version if feature is not None else None,
+                        feature_version=feature.feature_version if feature is not None else None,
                     )
                 elif edge is not None:
                     similarity = DuplicateSimilarityEvidence(
@@ -410,6 +418,7 @@ class CrossSourceDuplicateService:
                         perceptual_percent=edge.perceptual_percent,
                         color_percent=edge.color_percent,
                         exact_thumbnail_match=edge.exact_thumbnail_match,
+                        exact_pixel_match=edge.exact_pixel_match,
                         model_version=edge.model_version,
                         feature_version=edge.feature_version,
                         comparison_version=edge.comparison_version,
@@ -418,13 +427,41 @@ class CrossSourceDuplicateService:
                     similarity = DuplicateSimilarityEvidence(
                         state=(
                             "unavailable"
-                            if source_member.is_offline
-                            or source_member.asset_type != "IMAGE"
+                            if source_member.is_offline or source_member.asset_type != "IMAGE"
                             else "pending"
                         ),
                         reference_asset_id=reference.id,
                     )
-                members.append(member.model_copy(update={"similarity": similarity}))
+                preservation = (
+                    DuplicatePreservationEvidence(
+                        pixel_normalization_version=feature.pixel_normalization_version,
+                        pixel_sha256=feature.pixel_sha256,
+                        decoded_width=feature.width,
+                        decoded_height=feature.height,
+                        bit_depth=feature.bit_depth,
+                        channel_count=feature.channel_count,
+                        has_alpha=feature.has_alpha,
+                        color_space=feature.color_space,
+                        orientation=feature.orientation,
+                        icc_profile_present=feature.icc_profile_present,
+                        has_exif=feature.has_exif,
+                        has_capture_time=feature.has_capture_time,
+                        has_camera_info=feature.has_camera_info,
+                        has_gps=feature.has_gps,
+                        has_orientation_metadata=feature.has_orientation_metadata,
+                        metadata_richness=feature.metadata_richness,
+                    )
+                    if feature is not None
+                    else None
+                )
+                members.append(
+                    member.model_copy(
+                        update={
+                            "similarity": similarity,
+                            "preservation": preservation,
+                        }
+                    )
+                )
             updated_groups.append(group.model_copy(update={"members": members}))
         return result.model_copy(update={"groups": updated_groups})
 
@@ -479,10 +516,8 @@ class CrossSourceDuplicateService:
         return result.model_copy(update={"groups": groups})
 
     @staticmethod
-    def _pending_verification(
+    def _verification_candidates(
         groups: list[ImmichDuplicateGroup],
-        reports: dict[UUID, AssetIntegrityReportRecord],
-        features: dict[UUID, AssetSimilarityFeatureRecord],
         options: DuplicateAnalysisOptions,
         *,
         include_similarity: bool = False,
@@ -495,23 +530,37 @@ class CrossSourceDuplicateService:
             and (
                 asset.library_id is not None
                 or options.verify_upload_streams
-                or include_similarity and asset.asset_type == "IMAGE"
+                or include_similarity
+                and asset.asset_type == "IMAGE"
             )
         }
+        return list(candidates.values())
+
+    @classmethod
+    def _pending_verification(
+        cls,
+        groups: list[ImmichDuplicateGroup],
+        reports: dict[UUID, AssetIntegrityReportRecord],
+        features: dict[UUID, AssetSimilarityFeatureRecord],
+        options: DuplicateAnalysisOptions,
+        *,
+        include_similarity: bool = False,
+    ) -> list[ImmichAsset]:
         return [
             asset
-            for asset in candidates.values()
+            for asset in cls._verification_candidates(
+                groups,
+                options,
+                include_similarity=include_similarity,
+            )
             if (
-                (
-                    asset.library_id is not None or options.verify_upload_streams
-                )
+                (asset.library_id is not None or options.verify_upload_streams)
                 and report_freshness(reports.get(asset.id), asset) != "current"
             )
             or (
                 include_similarity
                 and asset.asset_type == "IMAGE"
-                and similarity_feature_freshness(features.get(asset.id), asset)
-                != "current"
+                and similarity_feature_freshness(features.get(asset.id), asset) != "current"
             )
         ]
 
@@ -538,9 +587,7 @@ class CrossSourceDuplicateService:
                 reason = "The group contains a trashed asset."
                 status = "ineligible"
             elif any(
-                asset.library_id is not None
-                and allowed
-                and asset.library_id not in allowed
+                asset.library_id is not None and allowed and asset.library_id not in allowed
                 for asset in assets
             ):
                 reason = "The group contains an external library excluded by this review."
@@ -551,8 +598,7 @@ class CrossSourceDuplicateService:
                     if options.verify_upload_streams:
                         report = reports.get(asset.id)
                         current = (
-                            report is not None
-                            and report_freshness(report, asset) == "current"
+                            report is not None and report_freshness(report, asset) == "current"
                         )
                         invalid_upload_checksum = invalid_upload_checksum or bool(
                             current and report.immich_checksum_match is False
@@ -609,9 +655,7 @@ class CrossSourceDuplicateService:
                 members=tuple(
                     CandidateMember(
                         asset_id=asset.id,
-                        source_kind=(
-                            "upload" if asset.library_id is None else "external"
-                        ),
+                        source_kind=("upload" if asset.library_id is None else "external"),
                         uploaded_at=asset.created_at,
                         available=not asset.is_offline,
                     )
@@ -680,17 +724,16 @@ class CrossSourceDuplicateService:
                     primary_source=decision.primary_source.value,
                     effective_action=decision.recommended_action.value,
                     effective_primary_asset_id=decision.recommended_primary_asset_id,
-                    member_fingerprint=_member_fingerprint(
-                        [asset.id for asset in assets]
-                    ),
+                    member_fingerprint=_member_fingerprint([asset.id for asset in assets]),
                     members=members,
                     eligible=status == "exact",
                 )
             )
 
-        counts = {name: sum(group.status == name for group in public_groups) for name in (
-            "exact", "unverified", "mismatch", "ineligible"
-        )}
+        counts = {
+            name: sum(group.status == name for group in public_groups)
+            for name in ("exact", "unverified", "mismatch", "ineligible")
+        }
         return CrossSourceDuplicateResult(
             generated_at=datetime.now(UTC),
             group_count=len(public_groups),
@@ -785,9 +828,9 @@ class CrossSourceDuplicateService:
         )
         if not selected:
             raise ValueError("No duplicate groups were selected")
-        if not request.all_eligible and {
-            group.duplicate_id for group in selected
-        } != set(request.duplicate_ids):
+        if not request.all_eligible and {group.duplicate_id for group in selected} != set(
+            request.duplicate_ids
+        ):
             raise ActionPlanConflictError("A selected duplicate group is no longer available")
         plan_groups: list[dict[str, Any]] = []
         for group in selected:
@@ -854,9 +897,8 @@ class CrossSourceDuplicateService:
             groups=plan_groups,
             options=request.options.model_dump(mode="json"),
             target_digest=_plan_digest(plan_groups),
-            expires_at=datetime.now(UTC) + timedelta(
-                seconds=self._settings.action_plan_ttl_seconds
-            ),
+            expires_at=datetime.now(UTC)
+            + timedelta(seconds=self._settings.action_plan_ttl_seconds),
         )
         return _public_plan(record)
 
@@ -894,15 +936,10 @@ class CrossSourceDuplicateService:
             raise PermanentTaskError("Duplicate resolution is disabled in safe mode")
 
         raw_groups = [
-            _normalize_plan_group(item)
-            for item in existing.relation_work.get("groups", [])
+            _normalize_plan_group(item) for item in existing.relation_work.get("groups", [])
         ]
-        options = DuplicateAnalysisOptions.model_validate(
-            existing.relation_work.get("options", {})
-        )
-        reviewed = {
-            group.duplicate_id: group for group in (await self.result(options)).groups
-        }
+        options = DuplicateAnalysisOptions.model_validate(existing.relation_work.get("options", {}))
+        reviewed = {group.duplicate_id: group for group in (await self.result(options)).groups}
         for planned in raw_groups:
             duplicate_id = UUID(planned["duplicate_id"])
             live_group = reviewed.get(duplicate_id)
@@ -914,10 +951,7 @@ class CrossSourceDuplicateService:
                 or (planned["action"] == "resolve" and not live_group.eligible)
                 or (
                     planned["action"] == "stack_all"
-                    and any(
-                        member.is_offline or member.is_stacked
-                        for member in live_group.members
-                    )
+                    and any(member.is_offline or member.is_stacked for member in live_group.members)
                 )
             ):
                 await self._actions.finish_plan(plan_id, "drifted", {"error": "group_drift"})
@@ -1137,7 +1171,8 @@ class CrossSourceDuplicateTaskHandler:
                 if (
                     asset.library_id is not None
                     or options.verify_upload_streams
-                    or self._include_similarity and asset.asset_type == "IMAGE"
+                    or self._include_similarity
+                    and asset.asset_type == "IMAGE"
                 ):
                     if asset.file_size_bytes is None:
                         asset = await self._immich.get_asset(asset.id)
@@ -1156,7 +1191,8 @@ class CrossSourceDuplicateTaskHandler:
             and (
                 (
                     (
-                        asset.library_id is None and options.verify_upload_streams
+                        asset.library_id is None
+                        and options.verify_upload_streams
                         or asset.library_id is not None
                     )
                     and report_freshness(reports.get(asset.id), asset) != "current"
@@ -1164,8 +1200,7 @@ class CrossSourceDuplicateTaskHandler:
                 or (
                     self._include_similarity
                     and asset.asset_type == "IMAGE"
-                    and similarity_feature_freshness(features.get(asset.id), asset)
-                    != "current"
+                    and similarity_feature_freshness(features.get(asset.id), asset) != "current"
                 )
             )
         ]
@@ -1204,9 +1239,7 @@ class CrossSourceDuplicateTaskHandler:
                     "completed": index,
                     "total": len(pending),
                     "percent": round(index / len(pending) * 100, 1),
-                    "detail": (
-                        f"Verified {index} of {len(pending)} duplicate candidate files"
-                    ),
+                    "detail": (f"Verified {index} of {len(pending)} duplicate candidate files"),
                 },
             )
         await context.checkpoint(

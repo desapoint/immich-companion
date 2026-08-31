@@ -17,6 +17,7 @@
     is_stacked: boolean;
     immich_url: string | null;
     similarity: DuplicateReviewContext['members'][number]['similarity'];
+    preservation: DuplicateReviewContext['members'][number]['preservation'];
   }
 
   interface DuplicatePreviewReview {
@@ -116,6 +117,7 @@
       is_offline: member.is_offline,
       is_stacked: member.is_stacked,
       similarity: member.similarity,
+      preservation: member.preservation,
     })),
     current_integrity: integrity,
     similarity_loading: similarityLoading,

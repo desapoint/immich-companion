@@ -51,9 +51,7 @@ def sha1(payload: bytes) -> str:
 
 
 def immich_sha1(payload: bytes) -> str:
-    return base64.b64encode(
-        hashlib.sha1(payload, usedforsecurity=False).digest()
-    ).decode()
+    return base64.b64encode(hashlib.sha1(payload, usedforsecurity=False).digest()).decode()
 
 
 def asset(
@@ -139,6 +137,20 @@ def feature(identifier: UUID, *, digest: str | None = None) -> AssetSimilarityFe
         perceptual_hash="0" * 16,
         color_histogram=bytes([5] * 48),
         thumbnail_sha256=(digest or "a" * 64),
+        pixel_normalization_version=1,
+        pixel_sha256=(digest or "b" * 64),
+        bit_depth=8,
+        channel_count=3,
+        has_alpha=False,
+        color_space="RGB",
+        orientation=None,
+        icc_profile_present=False,
+        has_exif=False,
+        has_capture_time=False,
+        has_camera_info=False,
+        has_gps=False,
+        has_orientation_metadata=False,
+        metadata_richness=0,
         analyzed_at=MODIFIED,
     )
 
@@ -508,6 +520,8 @@ async def test_review_automatically_queues_missing_external_evidence_once() -> N
     second = await service.review()
 
     assert first.analysis_pending_count == 1
+    assert first.analysis_candidate_count == 1
+    assert first.analysis_cached_count == 0
     assert first.analysis_task_id == UPLOAD_2
     assert second.analysis_task_id == UPLOAD_2
     assert len(tasks.submissions) == 1
@@ -528,6 +542,7 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
         perceptual_percent=95.0,
         color_percent=91.0,
         exact_thumbnail_match=False,
+        exact_pixel_match=True,
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
         comparison_version=1,
@@ -550,10 +565,21 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     result = await service.review()
 
     assert result.analysis_pending_count == 0
+    assert result.analysis_candidate_count == 2
+    assert result.analysis_cached_count == 2
     assert result.groups[0].members[0].similarity is not None
     assert result.groups[0].members[0].similarity.state == "reference"
+    assert result.groups[0].members[0].similarity.exact_pixel_match is True
+    assert (
+        result.groups[0].members[0].similarity.feature_version
+        == SIMILARITY_FEATURE_VERSION
+    )
     assert result.groups[0].members[1].similarity is not None
     assert result.groups[0].members[1].similarity.similarity_percent == 96.5
+    assert result.groups[0].members[1].similarity.exact_pixel_match is True
+    assert result.groups[0].members[1].preservation is not None
+    assert result.groups[0].members[1].preservation.pixel_sha256 == "2" * 64
+    assert result.groups[0].members[1].preservation.metadata_richness == 0
     assert similarity.calls[0][0] == [[UPLOAD_1, EXTERNAL_1]]
 
 
@@ -570,6 +596,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
         perceptual_percent=92.0,
         color_percent=90.0,
         exact_thumbnail_match=False,
+        exact_pixel_match=False,
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
         comparison_version=1,
@@ -749,9 +776,7 @@ async def test_unavailable_candidate_does_not_fail_the_whole_analysis() -> None:
         FakeIntegrity(unavailable=True),
     )
 
-    result = await handler.execute(
-        context, DuplicateAnalysisOptions().model_dump(mode="json")
-    )
+    result = await handler.execute(context, DuplicateAnalysisOptions().model_dump(mode="json"))
 
     assert result.counters["files_unavailable"] == 1
     assert context.checkpoints[-1]["progress"]["percent"] == 100.0
@@ -969,9 +994,7 @@ async def test_whole_group_actions_have_explicit_member_dispositions(
 
     assert plan.destructive is destructive
     assert plan.groups[0].keeper_asset_id is None
-    assert {member.disposition for member in plan.groups[0].members} == {
-        expected_disposition
-    }
+    assert {member.disposition for member in plan.groups[0].members} == {expected_disposition}
     assert plan.zero_survivor_group_count == zero_survivors
 
 

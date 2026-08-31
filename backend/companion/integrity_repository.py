@@ -99,9 +99,7 @@ class IntegrityRepository:
         async with self._database.sessions() as session:
             return await session.get(AssetIntegrityReportRecord, asset_id)
 
-    async def get_many(
-        self, asset_ids: list[UUID]
-    ) -> dict[UUID, AssetIntegrityReportRecord]:
+    async def get_many(self, asset_ids: list[UUID]) -> dict[UUID, AssetIntegrityReportRecord]:
         if not asset_ids:
             return {}
         statement = select(AssetIntegrityReportRecord).where(
@@ -169,9 +167,7 @@ class IntegrityRepository:
                 statement.on_conflict_do_update(
                     index_elements=[AssetIntegrityReportRecord.asset_id],
                     set_={
-                        key: getattr(statement.excluded, key)
-                        for key in values
-                        if key != "asset_id"
+                        key: getattr(statement.excluded, key) for key in values if key != "asset_id"
                     },
                 )
             )
@@ -195,11 +191,23 @@ class IntegrityRepository:
                     "perceptual_hash": visual_feature.perceptual_hash,
                     "color_histogram": visual_feature.color_histogram,
                     "thumbnail_sha256": visual_feature.thumbnail_sha256,
+                    "pixel_normalization_version": visual_feature.pixel_normalization_version,
+                    "pixel_sha256": visual_feature.pixel_sha256,
+                    "bit_depth": visual_feature.bit_depth,
+                    "channel_count": visual_feature.channel_count,
+                    "has_alpha": visual_feature.has_alpha,
+                    "color_space": visual_feature.color_space,
+                    "orientation": visual_feature.orientation,
+                    "icc_profile_present": visual_feature.icc_profile_present,
+                    "has_exif": visual_feature.has_exif,
+                    "has_capture_time": visual_feature.has_capture_time,
+                    "has_camera_info": visual_feature.has_camera_info,
+                    "has_gps": visual_feature.has_gps,
+                    "has_orientation_metadata": visual_feature.has_orientation_metadata,
+                    "metadata_richness": visual_feature.metadata_richness,
                     "analyzed_at": datetime.now(UTC),
                 }
-                feature_statement = insert(AssetSimilarityFeatureRecord).values(
-                    feature_values
-                )
+                feature_statement = insert(AssetSimilarityFeatureRecord).values(feature_values)
                 await session.execute(
                     feature_statement.on_conflict_do_update(
                         index_elements=[AssetSimilarityFeatureRecord.asset_id],
