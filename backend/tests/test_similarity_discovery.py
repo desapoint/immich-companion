@@ -21,6 +21,7 @@ from companion.similarity_scan_repository import (
 
 LOW = UUID("11111111-1111-4111-8111-111111111111")
 HIGH = UUID("22222222-2222-4222-8222-222222222222")
+THIRD = UUID("33333333-3333-4333-8333-333333333333")
 SCAN_ONE = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SCAN_TWO = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
@@ -38,7 +39,35 @@ def asset(identifier: UUID) -> ImmichAsset:
     )
 
 
-def snapshot(scan_id: UUID) -> SimilarityScanSnapshot:
+def scan_pair(
+    low: UUID = LOW,
+    high: UUID = HIGH,
+    score: float = 98.5,
+) -> SimilarityScanPair:
+    return SimilarityScanPair(
+        asset_id_low=low,
+        asset_id_high=high,
+        asset_low_source_sha256="a" * 64,
+        asset_high_source_sha256="b" * 64,
+        evidence=PairSimilarityEvidence(
+            similarity_percent=score,
+            structural_percent=98,
+            perceptual_percent=99,
+            color_percent=97,
+            exact_thumbnail_match=False,
+            exact_pixel_match=False,
+            model_version="companion-image-v1",
+            feature_version=1,
+            comparison_version=1,
+        ),
+    )
+
+
+def snapshot(
+    scan_id: UUID,
+    pairs: tuple[SimilarityScanPair, ...] | None = None,
+) -> SimilarityScanSnapshot:
+    current_pairs = pairs or (scan_pair(),)
     return SimilarityScanSnapshot(
         id=scan_id,
         parameters=SimilarityScanParameters(
@@ -52,28 +81,16 @@ def snapshot(scan_id: UUID) -> SimilarityScanSnapshot:
             maximum_neighbors_per_asset=8,
             maximum_matches=5000,
         ),
-        asset_count=2,
-        candidate_count=1,
-        completed_at=NOW,
-        pairs=(
-            SimilarityScanPair(
-                asset_id_low=LOW,
-                asset_id_high=HIGH,
-                asset_low_source_sha256="a" * 64,
-                asset_high_source_sha256="b" * 64,
-                evidence=PairSimilarityEvidence(
-                    similarity_percent=98.5,
-                    structural_percent=98,
-                    perceptual_percent=99,
-                    color_percent=97,
-                    exact_thumbnail_match=False,
-                    exact_pixel_match=False,
-                    model_version="companion-image-v1",
-                    feature_version=1,
-                    comparison_version=1,
-                ),
-            ),
+        asset_count=len(
+            {
+                asset_id
+                for pair in current_pairs
+                for asset_id in (pair.asset_id_low, pair.asset_id_high)
+            }
         ),
+        candidate_count=len(current_pairs),
+        completed_at=NOW,
+        pairs=current_pairs,
     )
 
 
@@ -131,6 +148,49 @@ async def test_similarity_provider_skips_pairs_with_unsynchronized_members() -> 
     )
 
     assert await provider.discover() == []
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_publishes_fully_cohesive_triangle() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (
+            scan_pair(LOW, HIGH, 99),
+            scan_pair(LOW, THIRD, 97),
+            scan_pair(HIGH, THIRD, 96),
+        ),
+    )
+    provider = SimilarityDuplicateProvider(
+        FakeScans(current),
+        FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH), THIRD: asset(THIRD)}),
+    )
+
+    groups = await provider.discover()
+
+    assert len(groups) == 1
+    assert tuple(member.id for member in groups[0].assets) == (LOW, HIGH, THIRD)
+    assert groups[0].provider_metadata["minimum_similarity_percent"] == "96"
+    assert groups[0].provider_metadata["maximum_similarity_percent"] == "99"
+    assert groups[0].provider_metadata["cohesive_pair_count"] == "3"
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_does_not_collapse_non_transitive_chain() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (scan_pair(LOW, HIGH, 98), scan_pair(HIGH, THIRD, 97)),
+    )
+    provider = SimilarityDuplicateProvider(
+        FakeScans(current),
+        FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH), THIRD: asset(THIRD)}),
+    )
+
+    groups = await provider.discover()
+
+    assert [tuple(member.id for member in group.assets) for group in groups] == [
+        (LOW, HIGH),
+        (HIGH, THIRD),
+    ]
 
 
 @pytest.mark.asyncio
