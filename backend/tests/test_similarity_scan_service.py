@@ -7,7 +7,12 @@ import pytest
 
 from companion.duplicate_schema import SimilarityScanRequest
 from companion.similarity_repository import PairSimilarityEvidence
-from companion.similarity_scan_service import SimilarityScanTaskHandler
+from companion.similarity_scan_service import (
+    SimilarityScanAlreadyRunningError,
+    SimilarityScanService,
+    SimilarityScanTaskHandler,
+)
+from companion.task_coordinator import TaskCancelledError
 
 SCAN_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
@@ -63,6 +68,7 @@ class FakeScans:
         self.parameters = None
         self.completed = None
         self.failed = None
+        self.cancelled = None
 
     async def create(self, parameters):
         self.parameters = parameters
@@ -73,6 +79,9 @@ class FakeScans:
 
     async def fail(self, scan_id, error):
         self.failed = (scan_id, error)
+
+    async def cancel(self, scan_id):
+        self.cancelled = scan_id
 
 
 class FakeContext:
@@ -126,3 +135,54 @@ async def test_failed_scan_is_not_completed() -> None:
 
     assert scans.completed is None
     assert scans.failed == (SCAN_ID, "comparison unavailable")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_scan_is_not_failed_or_completed() -> None:
+    scans = FakeScans()
+    handler = SimilarityScanTaskHandler(FakeFeatures(), FakeSimilarity(), scans)
+
+    class CancelledContext(FakeContext):
+        async def ensure_active(self):
+            raise TaskCancelledError("cancelled")
+
+    with pytest.raises(TaskCancelledError):
+        await handler.execute(CancelledContext(), SimilarityScanRequest().model_dump(mode="json"))
+
+    assert scans.cancelled == SCAN_ID
+    assert scans.failed is None
+    assert scans.completed is None
+
+
+@pytest.mark.asyncio
+async def test_service_coalesces_same_scan_and_rejects_incompatible_active_scan() -> None:
+    active = SimpleNamespace(id=SCAN_ID, deduplication_key="active")
+
+    class Tasks:
+        same = None
+        incompatible = None
+
+        async def find_active(self, *_args):
+            return self.same
+
+        async def find_active_by_type(self, *_args):
+            return self.incompatible
+
+        async def submit(self, *_args, **_kwargs):
+            return active
+
+        async def start(self):
+            return None
+
+    tasks = Tasks()
+    service = SimilarityScanService(tasks, SimpleNamespace())  # type: ignore[arg-type]
+    first = await service.start(SimilarityScanRequest())
+    assert first.task_id == SCAN_ID
+
+    tasks.same = active
+    assert (await service.start(SimilarityScanRequest())).task_id == SCAN_ID
+
+    tasks.same = None
+    tasks.incompatible = active
+    with pytest.raises(SimilarityScanAlreadyRunningError):
+        await service.start(SimilarityScanRequest(similarity_threshold=90))

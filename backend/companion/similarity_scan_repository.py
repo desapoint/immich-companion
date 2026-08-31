@@ -18,6 +18,7 @@ class SimilarityScanParameters:
     model_version: str
     feature_version: int
     comparison_version: int
+    scope: str
     similarity_threshold: float
     maximum_perceptual_distance: int
     maximum_aspect_difference: float
@@ -25,8 +26,8 @@ class SimilarityScanParameters:
     maximum_matches: int
 
     def __post_init__(self) -> None:
-        if not 0 <= self.similarity_threshold <= 100:
-            raise ValueError("similarity_threshold must be between 0 and 100")
+        if not 50 <= self.similarity_threshold <= 100:
+            raise ValueError("similarity_threshold must be between 50 and 100")
         if not 0 <= self.maximum_perceptual_distance <= 64:
             raise ValueError("maximum_perceptual_distance must be between 0 and 64")
         if not 0 <= self.maximum_aspect_difference <= 1:
@@ -35,6 +36,8 @@ class SimilarityScanParameters:
             raise ValueError("maximum_neighbors_per_asset must be positive")
         if not 1 <= self.maximum_matches <= 50_000:
             raise ValueError("maximum_matches must be between 1 and 50000")
+        if self.scope != "all_eligible_assets":
+            raise ValueError("Unsupported similarity scan scope")
 
 
 @dataclass(frozen=True, slots=True)
@@ -54,6 +57,16 @@ class SimilarityScanSnapshot:
     candidate_count: int
     completed_at: datetime
     pairs: tuple[SimilarityScanPair, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SimilarityScanRunSummary:
+    id: UUID
+    parameters: SimilarityScanParameters
+    asset_count: int
+    candidate_count: int
+    match_count: int
+    completed_at: datetime
 
 
 def normalize_scan_pairs(pairs: list[SimilarityScanPair]) -> list[SimilarityScanPair]:
@@ -94,6 +107,7 @@ class SimilarityScanRepository:
             model_version=parameters.model_version,
             feature_version=parameters.feature_version,
             comparison_version=parameters.comparison_version,
+            scope=parameters.scope,
             similarity_threshold=parameters.similarity_threshold,
             maximum_perceptual_distance=parameters.maximum_perceptual_distance,
             maximum_aspect_difference=parameters.maximum_aspect_difference,
@@ -167,6 +181,51 @@ class SimilarityScanRepository:
                 .values(status="failed", error=error[:4000], completed_at=datetime.now(UTC))
             )
 
+    async def cancel(self, scan_id: UUID) -> None:
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(
+                update(SimilarityScanRecord)
+                .where(
+                    SimilarityScanRecord.id == scan_id,
+                    SimilarityScanRecord.status == "running",
+                )
+                .values(status="cancelled", error=None, completed_at=datetime.now(UTC))
+            )
+
+    @staticmethod
+    def _parameters(record: SimilarityScanRecord) -> SimilarityScanParameters:
+        return SimilarityScanParameters(
+            model_version=record.model_version,
+            feature_version=record.feature_version,
+            comparison_version=record.comparison_version,
+            scope=record.scope,
+            similarity_threshold=record.similarity_threshold,
+            maximum_perceptual_distance=record.maximum_perceptual_distance,
+            maximum_aspect_difference=record.maximum_aspect_difference,
+            maximum_neighbors_per_asset=record.maximum_neighbors_per_asset,
+            maximum_matches=record.maximum_matches,
+        )
+
+    async def latest_completed_summary(self) -> SimilarityScanRunSummary | None:
+        statement = (
+            select(SimilarityScanRecord)
+            .where(SimilarityScanRecord.status == "completed")
+            .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
+            .limit(1)
+        )
+        async with self._database.sessions() as session:
+            record = await session.scalar(statement)
+        if record is None or record.completed_at is None:
+            return None
+        return SimilarityScanRunSummary(
+            id=record.id,
+            parameters=self._parameters(record),
+            asset_count=record.asset_count,
+            candidate_count=record.candidate_count,
+            match_count=record.match_count,
+            completed_at=record.completed_at,
+        )
+
     async def latest_completed(self) -> SimilarityScanSnapshot | None:
         statement = (
             select(SimilarityScanRecord)
@@ -189,16 +248,7 @@ class SimilarityScanRepository:
             pair_records = list((await session.scalars(pair_statement)).all())
         return SimilarityScanSnapshot(
             id=record.id,
-            parameters=SimilarityScanParameters(
-                model_version=record.model_version,
-                feature_version=record.feature_version,
-                comparison_version=record.comparison_version,
-                similarity_threshold=record.similarity_threshold,
-                maximum_perceptual_distance=record.maximum_perceptual_distance,
-                maximum_aspect_difference=record.maximum_aspect_difference,
-                maximum_neighbors_per_asset=record.maximum_neighbors_per_asset,
-                maximum_matches=record.maximum_matches,
-            ),
+            parameters=self._parameters(record),
             asset_count=record.asset_count,
             candidate_count=record.candidate_count,
             completed_at=record.completed_at,

@@ -85,6 +85,7 @@ from companion.duplicate_schema import (
     DuplicateSimilarityReferenceRequest,
     ExactDuplicateGroup,
     SimilarityScanRequest,
+    SimilarityScanSummary,
     SimilarityScanTaskStart,
 )
 from companion.duplicate_service import (
@@ -117,7 +118,11 @@ from companion.relation_schema import (
 )
 from companion.similarity_repository import SimilarityRepository
 from companion.similarity_scan_repository import SimilarityScanRepository
-from companion.similarity_scan_service import SimilarityScanService, SimilarityScanTaskHandler
+from companion.similarity_scan_service import (
+    SimilarityScanAlreadyRunningError,
+    SimilarityScanService,
+    SimilarityScanTaskHandler,
+)
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
     SyncCoordinatorStatus,
@@ -292,7 +297,7 @@ def create_app(
         )
         task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))
     similarity_scan_service = (
-        SimilarityScanService(task_coordinator)
+        SimilarityScanService(task_coordinator, similarity_scan_repository)
         if task_coordinator is not None
         and integrity_repository is not None
         and similarity_repository is not None
@@ -1295,7 +1300,17 @@ def create_app(
     async def start_similarity_scan(
         request: SimilarityScanRequest,
     ) -> SimilarityScanTaskStart:
-        return await require_similarity_scan_service().start(request)
+        try:
+            return await require_similarity_scan_service().start(request)
+        except SimilarityScanAlreadyRunningError as error:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+    @app.get(
+        "/api/assets/duplicates/similarity-scan/latest",
+        response_model=SimilarityScanSummary | None,
+    )
+    async def latest_similarity_scan() -> SimilarityScanSummary | None:
+        return await require_similarity_scan_service().latest()
 
     @app.put(
         "/api/assets/duplicates/cross-source/review",

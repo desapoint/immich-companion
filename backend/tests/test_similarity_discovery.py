@@ -45,6 +45,7 @@ def snapshot(scan_id: UUID) -> SimilarityScanSnapshot:
             model_version="companion-image-v1",
             feature_version=1,
             comparison_version=1,
+            scope="all_eligible_assets",
             similarity_threshold=95,
             maximum_perceptual_distance=12,
             maximum_aspect_difference=0.05,

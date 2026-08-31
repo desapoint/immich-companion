@@ -440,6 +440,23 @@ class TaskRepository:
             )
             return _public(record)
 
+    async def find_active_by_type(self, task_type: str) -> TaskStatusView | None:
+        """Return the oldest active task of a type, regardless of request key."""
+
+        async with self._database.sessions() as session:
+            record = await session.scalar(
+                select(TaskRecord)
+                .where(
+                    TaskRecord.task_type == task_type,
+                    TaskRecord.status.in_(
+                        ("queued", "running", "retrying", "recovering", "cancel_requested")
+                    ),
+                )
+                .order_by(TaskRecord.created_at)
+                .limit(1)
+            )
+            return _public(record)
+
     async def ensure_schedule(
         self,
         *,
@@ -806,6 +823,11 @@ class TaskCoordinator:
         """Find an active task for idempotent domain submissions."""
 
         return await self._repository.find_active(task_type, deduplication_key)
+
+    async def find_active_by_type(self, task_type: str) -> TaskStatusView | None:
+        """Find active work before accepting incompatible domain submissions."""
+
+        return await self._repository.find_active_by_type(task_type)
 
     async def list_tasks(
         self, *, task_type: str | None = None, limit: int = 50

@@ -32,6 +32,7 @@ describe('duplicate policy API', () => {
       analyze_automatically: true,
       verify_upload_streams: false,
       external_library_ids: [],
+      similarity_threshold_percent: 95,
     };
     const fetcher = vi.fn<typeof fetch>(async (input) => new Response(JSON.stringify(
       String(input).endsWith('/libraries') ? [] : policy,

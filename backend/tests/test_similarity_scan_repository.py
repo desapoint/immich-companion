@@ -70,6 +70,7 @@ def test_rejects_unsafe_scan_parameters(field: str, value: int | float) -> None:
         "model_version": "appearance-v1",
         "feature_version": 2,
         "comparison_version": 2,
+        "scope": "all_eligible_assets",
         "similarity_threshold": 95.0,
         "maximum_perceptual_distance": 12,
         "maximum_aspect_difference": 0.05,

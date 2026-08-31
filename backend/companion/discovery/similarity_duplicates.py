@@ -68,6 +68,7 @@ class SimilarityDuplicateProvider:
                     provider_metadata={
                         "scan_id": str(snapshot.id),
                         "scan_threshold_percent": str(parameters.similarity_threshold),
+                        "scan_scope": parameters.scope,
                         "similarity_percent": str(pair.evidence.similarity_percent),
                         "model_version": parameters.model_version,
                         "feature_version": str(parameters.feature_version),

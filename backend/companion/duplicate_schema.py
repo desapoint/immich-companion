@@ -168,7 +168,8 @@ class CrossSourceDuplicateTaskStart(BaseModel):
 
 
 class SimilarityScanRequest(BaseModel):
-    similarity_threshold: float = Field(default=95.0, ge=0, le=100)
+    similarity_threshold: float = Field(default=95.0, ge=50, le=100)
+    scope: Literal["all_eligible_assets"] = "all_eligible_assets"
     maximum_perceptual_distance: int = Field(default=12, ge=0, le=64)
     maximum_aspect_difference: float = Field(default=0.05, ge=0, le=1)
     maximum_neighbors_per_asset: int = Field(default=8, ge=1, le=64)
@@ -177,6 +178,19 @@ class SimilarityScanRequest(BaseModel):
 
 class SimilarityScanTaskStart(BaseModel):
     task_id: UUID
+
+
+class SimilarityScanSummary(BaseModel):
+    scan_id: UUID
+    similarity_threshold: float
+    scope: Literal["all_eligible_assets"]
+    model_version: str
+    feature_version: int
+    comparison_version: int
+    asset_count: int
+    candidate_count: int
+    match_count: int
+    completed_at: datetime
 
 
 class DuplicateResolutionPlanRequest(BaseModel):

@@ -2,8 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   analyzeDuplicateGroups,
+  cancelDuplicateTask,
   executeDuplicateResolution,
   loadDuplicateGroups,
+  loadLatestSimilarityScan,
+  loadSimilarityScanTasks,
   planDuplicateResolution,
   saveDuplicateReview,
   startDuplicateSimilarityScan,
@@ -109,14 +112,15 @@ describe('duplicate API', () => {
     );
     vi.stubGlobal('fetch', fetchMock);
 
-    await startDuplicateSimilarityScan();
+    await startDuplicateSimilarityScan(92.5);
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/assets/duplicates/similarity-scan',
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({
-          similarity_threshold: 95,
+          similarity_threshold: 92.5,
+          scope: 'all_eligible_assets',
           maximum_perceptual_distance: 12,
           maximum_aspect_difference: 0.05,
           maximum_neighbors_per_asset: 8,
@@ -124,5 +128,21 @@ describe('duplicate API', () => {
         }),
       }),
     );
+  });
+
+  it('loads scan provenance and cancels through the shared task API', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ scan_id: 'scan-1' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'task-1' }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'task-1', status: 'cancelled' }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await loadLatestSimilarityScan();
+    await loadSimilarityScanTasks();
+    await cancelDuplicateTask('task/1');
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/assets/duplicates/similarity-scan/latest', expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/tasks?task_type=similarity_scan&limit=1', expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/tasks/task%2F1/cancel', expect.objectContaining({ method: 'POST' }));
   });
 });

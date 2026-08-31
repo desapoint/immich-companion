@@ -9,7 +9,11 @@ from hashlib import sha256
 from typing import Any
 
 from companion.discovery import bounded_similarity_candidates
-from companion.duplicate_schema import SimilarityScanRequest, SimilarityScanTaskStart
+from companion.duplicate_schema import (
+    SimilarityScanRequest,
+    SimilarityScanSummary,
+    SimilarityScanTaskStart,
+)
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.similarity_features import SIMILARITY_FEATURE_VERSION, SIMILARITY_MODEL_VERSION
@@ -19,11 +23,15 @@ from companion.similarity_scan_repository import (
     SimilarityScanParameters,
     SimilarityScanRepository,
 )
-from companion.task_coordinator import TaskContext, TaskCoordinator
+from companion.task_coordinator import TaskCancelledError, TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult
 
 SIMILARITY_SCAN_TASK_TYPE = "similarity_scan"
 SIMILARITY_SCORE_BATCH_SIZE = 500
+
+
+class SimilarityScanAlreadyRunningError(RuntimeError):
+    """Raised when an incompatible whole-library scan is already active."""
 
 
 def _request_key(request: SimilarityScanRequest) -> str:
@@ -34,13 +42,23 @@ def _request_key(request: SimilarityScanRequest) -> str:
 class SimilarityScanService:
     """Submit idempotent similarity scans through the shared coordinator."""
 
-    def __init__(self, tasks: TaskCoordinator) -> None:
+    def __init__(
+        self,
+        tasks: TaskCoordinator,
+        scans: SimilarityScanRepository,
+    ) -> None:
         self._tasks = tasks
+        self._scans = scans
 
     async def start(self, request: SimilarityScanRequest) -> SimilarityScanTaskStart:
         key = _request_key(request)
         task = await self._tasks.find_active(SIMILARITY_SCAN_TASK_TYPE, key)
         if task is None:
+            active = await self._tasks.find_active_by_type(SIMILARITY_SCAN_TASK_TYPE)
+            if active is not None:
+                raise SimilarityScanAlreadyRunningError(
+                    "A similarity scan with different settings is already active."
+                )
             task = await self._tasks.submit(
                 SIMILARITY_SCAN_TASK_TYPE,
                 request.model_dump(mode="json"),
@@ -50,6 +68,23 @@ class SimilarityScanService:
             )
             await self._tasks.start()
         return SimilarityScanTaskStart(task_id=task.id)
+
+    async def latest(self) -> SimilarityScanSummary | None:
+        run = await self._scans.latest_completed_summary()
+        if run is None:
+            return None
+        return SimilarityScanSummary(
+            scan_id=run.id,
+            similarity_threshold=run.parameters.similarity_threshold,
+            scope=run.parameters.scope,
+            model_version=run.parameters.model_version,
+            feature_version=run.parameters.feature_version,
+            comparison_version=run.parameters.comparison_version,
+            asset_count=run.asset_count,
+            candidate_count=run.candidate_count,
+            match_count=run.match_count,
+            completed_at=run.completed_at,
+        )
 
 
 class SimilarityScanTaskHandler:
@@ -75,6 +110,7 @@ class SimilarityScanTaskHandler:
             model_version=SIMILARITY_MODEL_VERSION,
             feature_version=SIMILARITY_FEATURE_VERSION,
             comparison_version=SIMILARITY_COMPARISON_VERSION,
+            scope=request.scope,
             similarity_threshold=request.similarity_threshold,
             maximum_perceptual_distance=request.maximum_perceptual_distance,
             maximum_aspect_difference=request.maximum_aspect_difference,
@@ -184,6 +220,9 @@ class SimilarityScanTaskHandler:
                 candidate_count=total,
                 pairs=matches,
             )
+        except TaskCancelledError:
+            await self._scans.cancel(scan_id)
+            raise
         except Exception as error:
             await self._scans.fail(scan_id, str(error))
             raise
@@ -208,6 +247,7 @@ class SimilarityScanTaskHandler:
             summary={
                 "scan_id": str(scan_id),
                 "similarity_threshold": request.similarity_threshold,
+                "scope": request.scope,
                 "result_limit_reached": len(matches) == request.maximum_matches,
             },
             counters={

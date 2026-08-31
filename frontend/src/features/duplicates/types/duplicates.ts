@@ -142,6 +142,7 @@ export interface DuplicateResult {
 
 export interface DuplicateTaskStatus {
   id: string;
+  task_type: string;
   status: 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
   progress: {
     percent?: number | null;
@@ -151,6 +152,19 @@ export interface DuplicateTaskStatus {
   };
   error: { message?: string } | null;
   result: { summary?: Record<string, unknown> } | null;
+}
+
+export interface SimilarityScanSummary {
+  scan_id: string;
+  similarity_threshold: number;
+  scope: 'all_eligible_assets';
+  model_version: string;
+  feature_version: number;
+  comparison_version: number;
+  asset_count: number;
+  candidate_count: number;
+  match_count: number;
+  completed_at: string;
 }
 
 export interface DuplicateResolutionPlan {

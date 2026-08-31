@@ -9,6 +9,7 @@ export interface DuplicatePolicy {
   analyze_automatically: boolean;
   verify_upload_streams: boolean;
   external_library_ids: string[];
+  similarity_threshold_percent: number;
 }
 
 export interface ImmichLibraryOption {

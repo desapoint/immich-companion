@@ -23,6 +23,7 @@ class DuplicatePolicy(BaseModel):
     analyze_automatically: bool = True
     verify_upload_streams: bool = False
     external_library_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
+    similarity_threshold_percent: float = Field(default=95.0, ge=50, le=100)
 
     @model_validator(mode="after")
     def unique_libraries(self) -> DuplicatePolicy:
@@ -69,6 +70,7 @@ class DuplicatePolicyRepository:
                     "analyze_automatically": record.analyze_automatically,
                     "verify_upload_streams": record.verify_upload_streams,
                     "external_library_ids": record.external_library_ids,
+                    "similarity_threshold_percent": record.similarity_threshold_percent,
                 }
             )
 

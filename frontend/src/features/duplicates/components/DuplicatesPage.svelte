@@ -13,9 +13,12 @@
   import DuplicateReviewFilters from './DuplicateReviewFilters.svelte';
   import {
     analyzeDuplicateGroups,
+    cancelDuplicateTask,
     executeDuplicateResolution,
     loadDuplicateGroups,
     loadDuplicateTask,
+    loadLatestSimilarityScan,
+    loadSimilarityScanTasks,
     planDuplicateResolution,
     saveDuplicateReview,
     startDuplicateSimilarityScan,
@@ -32,6 +35,7 @@
     DuplicateMember,
     DuplicatePreviewRequest,
     ExactDuplicateGroup,
+    SimilarityScanSummary,
   } from '../types/duplicates';
   import {
     countDuplicateReviewFilters,
@@ -91,6 +95,8 @@
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
   let task = $state.raw<DuplicateTaskStatus | null>(null);
+  let latestScan = $state.raw<SimilarityScanSummary | null>(null);
+  let similarityThreshold = $state(95);
   let plan = $state.raw<DuplicateResolutionPlan | null>(null);
   let confirmOpen = $state(false);
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -139,15 +145,25 @@
     loading = true;
     error = null;
     try {
-      const loaded = await loadDuplicateGroups(appliedOptions);
+      const [loaded, latest, scanTasks] = await Promise.all([
+        loadDuplicateGroups(appliedOptions),
+        loadLatestSimilarityScan(),
+        loadSimilarityScanTasks(),
+      ]);
       result = loaded;
+      latestScan = latest;
       const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
       for (const id of selected) if (!liveIds.has(id)) selected.delete(id);
       if (!selectionInitialized) {
         for (const group of autoReadyGroups) selected.add(group.group_id);
         selectionInitialized = true;
       }
-      if (
+      const activeScan = scanTasks.find((candidate) => !terminalStatuses.has(candidate.status));
+      if (activeScan) {
+        task = activeScan;
+        busy = true;
+        schedulePoll(activeScan.id, 'similarity');
+      } else if (
         loaded.analysis_task_id
         && (task?.id !== loaded.analysis_task_id || terminalStatuses.has(task.status))
       ) {
@@ -191,6 +207,9 @@
           keeperOverrides = {};
           actionOverrides = {};
         }
+        await load();
+      } else if (task.status === 'cancelled' && kind === 'similarity') {
+        message = 'Similarity scan cancelled. The last completed scan remains active.';
         await load();
       } else {
         error = task.error?.message ?? `${kind === 'analysis' ? 'Analysis' : kind === 'similarity' ? 'Similarity scan' : 'Resolution'} failed.`;
@@ -440,6 +459,7 @@
         analyze_automatically: nextOptions.analyze_automatically,
         verify_upload_streams: nextOptions.verify_upload_streams,
         external_library_ids: nextOptions.external_library_ids,
+        similarity_threshold_percent: similarityThreshold,
       });
       if (nextOptions.analyze_automatically) {
         const started = await analyzeDuplicateGroups(nextOptions);
@@ -461,12 +481,33 @@
     error = null;
     message = null;
     try {
-      const started = await startDuplicateSimilarityScan();
+      await saveDuplicatePolicy({
+        ...appliedOptions,
+        similarity_threshold_percent: similarityThreshold,
+      });
+      const started = await startDuplicateSimilarityScan(similarityThreshold);
       task = await loadDuplicateTask(started.task_id);
       schedulePoll(started.task_id, 'similarity');
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not start the similarity scan.';
+    }
+  }
+
+  async function cancelSimilarityScan(): Promise<void> {
+    if (!task || task.task_type !== 'similarity_scan') return;
+    error = null;
+    try {
+      task = await cancelDuplicateTask(task.id);
+      if (task.status === 'cancelled') {
+        busy = false;
+        message = 'Similarity scan cancelled. The last completed scan remains active.';
+        await load();
+      } else {
+        schedulePoll(task.id, 'similarity');
+      }
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not cancel the similarity scan.';
     }
   }
 
@@ -492,6 +533,7 @@
         ]);
         options = { ...policy };
         appliedOptions = { ...policy };
+        similarityThreshold = policy.similarity_threshold_percent;
         libraryOptions = libraries.map((library) => ({
           value: library.id,
           label: `${library.name}${library.assetCount === null ? '' : ` · ${library.assetCount} assets`}`,
@@ -524,17 +566,37 @@
     <MultiSelectField id="duplicate-library-filter" label="External libraries" values={options.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable disabled={busy} onchange={(values) => options.external_library_ids = values} />
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
     <button class="apply-rules" type="button" disabled={busy || loading} onclick={() => void applyRules()}>Apply automatic rules</button>
-    <button class="scan-similar" type="button" disabled={busy || loading} onclick={() => void scanForSimilarImages()}><Icon name="integrity" size=".9rem" /> Scan for similar images</button>
     <div class="analysis-state">
       <span>Candidate analysis</span>
       <strong>{rulesChanged ? 'Rules changed' : result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : result ? `${result.analysis_cached_count} cached` : 'Current'}</strong>
     </div>
   </section>
 
+  <section class="similarity-controls" aria-labelledby="similarity-scan-title">
+    <div class="similarity-copy">
+      <span>Companion discovery</span>
+      <strong id="similarity-scan-title">Similarity scan</strong>
+      <small>Scope: all eligible assets. Similarity is review evidence, never permission to delete.</small>
+    </div>
+    <label for="similarity-threshold">
+      <span>Minimum similarity</span>
+      <input id="similarity-threshold" type="number" min="50" max="100" step="0.1" bind:value={similarityThreshold} disabled={busy} />
+    </label>
+    <button class="scan-similar" type="button" disabled={busy || loading || similarityThreshold < 50 || similarityThreshold > 100} onclick={() => void scanForSimilarImages()}><Icon name="integrity" size=".9rem" /> {latestScan ? 'Scan again' : 'Scan for similar images'}</button>
+    {#if latestScan}
+      <div class="last-scan">
+        <span>Last completed</span>
+        <strong>{latestScan.similarity_threshold.toFixed(1)}% · {latestScan.match_count} matches</strong>
+        <small>{latestScan.asset_count} assets · model {latestScan.model_version} · {new Date(latestScan.completed_at).toLocaleString()}</small>
+      </div>
+    {/if}
+  </section>
+
   {#if task && !terminalStatuses.has(task.status)}
     <section class="progress" aria-live="polite">
       <div><strong>{task.progress.detail ?? 'Processing duplicate candidates…'}</strong><span>{task.progress.total ? `${task.progress.completed ?? 0} / ${task.progress.total}` : 'Preparing…'}{progressPercent(task) !== undefined ? ` · ${Math.round(progressPercent(task) ?? 0)}%` : ''}</span></div>
       <progress value={progressPercent(task)} max="100"></progress>
+      {#if task.task_type === 'similarity_scan'}<button class="cancel-scan" type="button" onclick={() => void cancelSimilarityScan()}>Cancel scan</button>{/if}
     </section>
   {/if}
   {#if error}<p class="notice error" role="alert">{error}</p>{/if}
@@ -634,6 +696,12 @@
   .apply-rules { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
   .apply-rules:hover:not(:disabled) { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: color-mix(in srgb, var(--color-accent-strong) 88%, black); }
   .scan-similar { display: flex; align-items: center; justify-content: center; gap: .4rem; }
+  .similarity-controls { display: grid; grid-template-columns: minmax(14rem, 1.2fr) minmax(10rem, .5fr) auto minmax(15rem, .8fr); gap: 1rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .similarity-copy, .last-scan, .similarity-controls label { display: grid; gap: .25rem; }
+  .similarity-copy > span, .last-scan > span, .similarity-controls label > span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 780; text-transform: uppercase; }
+  .similarity-controls input { min-height: 2.45rem; padding: .45rem .6rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: inherit; }
+  .last-scan { padding-left: 1rem; border-left: 1px solid var(--color-border-subtle); }
+  .cancel-scan { justify-self: end; }
   .analysis-state { display: grid; min-height: 2.45rem; align-content: center; gap: .12rem; padding: .35rem .65rem; border-left: 1px solid var(--color-border-subtle); }
   .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
   .analysis-state strong { font-size: .72rem; }
@@ -687,6 +755,6 @@
   .source-kind.external { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
-  @media (max-width: 58rem) { .controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } }
-  @media (max-width: 46rem) { .page-intro, .controls { grid-template-columns: 1fr; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
+  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>
