@@ -10,6 +10,7 @@
   import { loadDuplicatePolicy, loadImmichLibraries, saveDuplicatePolicy } from '../../../lib/api/duplicatePolicyApi';
   import type { SelectOption } from '../../../lib/types/ui';
   import GroupEvidencePills from './GroupEvidencePills.svelte';
+  import DuplicateReviewFilters from './DuplicateReviewFilters.svelte';
   import {
     analyzeDuplicateGroups,
     executeDuplicateResolution,
@@ -30,6 +31,13 @@
     DuplicatePreviewRequest,
     ExactDuplicateGroup,
   } from '../types/duplicates';
+  import {
+    countDuplicateReviewFilters,
+    duplicateGroupMatchesFilter,
+    duplicateWorkflowLabel,
+    type DuplicateReviewFilter,
+    type DuplicateReviewProjection,
+  } from '../state/duplicateReviewFilters';
 
   interface Props {
     onpreview: (request: DuplicatePreviewRequest) => void;
@@ -85,6 +93,7 @@
   let confirmOpen = $state(false);
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let selectionInitialized = false;
+  let activeFilter = $state<DuplicateReviewFilter>('all');
 
   const autoReadyGroups = $derived(
     result?.groups.filter(
@@ -104,6 +113,20 @@
   );
   const rulesChanged = $derived(
     JSON.stringify(configuredOptions()) !== JSON.stringify(appliedOptions),
+  );
+  const reviewEntries = $derived.by<DuplicateReviewProjection[]>(() => {
+    const loaded = result;
+    if (!loaded) return [];
+    return loaded.groups.map((group) => ({
+      group,
+      effectiveAction: effectiveActionFor(group),
+      actionable: isActionable(group),
+      analysisPending: loaded.analysis_pending_count > 0,
+    }));
+  });
+  const reviewFilterCounts = $derived(countDuplicateReviewFilters(reviewEntries));
+  const visibleReviewEntries = $derived(
+    reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
   );
 
   function configuredOptions(): DuplicateAnalysisOptions {
@@ -476,10 +499,14 @@
   {#if result}
     <section class="summary" aria-label="Duplicate summary">
       <div><strong>{result.group_count}</strong><span>Immich groups</span></div>
-      <div><strong>{result.exact_group_count}</strong><span>Exact</span></div>
-      <div><strong>{result.unverified_group_count}</strong><span>Need verification</span></div>
-      <div><strong>{result.mismatch_group_count}</strong><span>Not byte-exact</span></div>
+      <div><strong>{reviewFilterCounts.auto_ready}</strong><span>Auto ready</span></div>
+      <div><strong>{reviewFilterCounts.resolve_ready}</strong><span>Resolve ready</span></div>
+      <div><strong>{reviewFilterCounts.stack_ready}</strong><span>Stack ready</span></div>
+      <div><strong>{reviewFilterCounts.needs_review}</strong><span>Needs review</span></div>
+      <div><strong>{reviewFilterCounts.analyzing}</strong><span>Analyzing</span></div>
     </section>
+
+    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading} onchange={(filter) => activeFilter = filter} />
 
     <div class="batch-bar">
       <Checkbox checked={allAutoReadySelected} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
@@ -493,14 +520,17 @@
       <p class="empty">Refreshing duplicate groups…</p>
     {:else if !result.groups.length}
       <p class="empty">Immich currently reports no duplicate groups.</p>
+    {:else if !visibleReviewEntries.length}
+      <p class="empty">No duplicate groups match this review filter.</p>
     {:else}
       <div class="groups">
-        {#each result.groups as group (group.duplicate_id)}
+        {#each visibleReviewEntries as entry (entry.group.duplicate_id)}
+          {@const group = entry.group}
           <article class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.duplicate_id)} label={`Select duplicate group ${group.duplicate_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.duplicate_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{effectiveActionFor(group).replaceAll('_', ' ')} · {group.review_status.replaceAll('_', ' ')}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
               </div>
               <div class="group-controls">
                 <SelectField id={`duplicate-action-${group.duplicate_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy || savingGroups.has(group.duplicate_id)} onchange={(value) => setGroupAction(group, value)} />
@@ -573,7 +603,7 @@
   .notice, .empty { margin: 0; padding: .8rem 1rem; color: var(--color-ink-muted); }
   .notice.error { color: var(--color-negative-ink); border-color: var(--color-negative-border); background: var(--color-negative-surface); }
   .notice.success { color: var(--color-positive-ink); border-color: var(--color-positive-border); background: var(--color-positive-surface); }
-  .summary { display: grid; grid-template-columns: repeat(4, 1fr); overflow: hidden; }
+  .summary { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; }
   .summary div { display: grid; gap: .15rem; padding: .8rem 1rem; border-right: 1px solid var(--color-border-subtle); }
   .summary div:last-child { border: 0; }
   .summary strong { font-size: 1.3rem; }
@@ -611,6 +641,6 @@
   .source-kind.external { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
-  @media (max-width: 58rem) { .controls { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 58rem) { .controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } }
   @media (max-width: 46rem) { .page-intro, .controls { grid-template-columns: 1fr; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>
