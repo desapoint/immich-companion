@@ -1,4 +1,4 @@
-export type MediaPreviewSource = 'stack' | 'similar';
+export type MediaPreviewSource = 'stack' | 'similar' | 'duplicate';
 export type MediaPreviewActivation = 'click' | 'hover' | 'press';
 
 export interface MediaPreviewItem {

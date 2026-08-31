@@ -8,11 +8,11 @@ const items = [
   { id: 'viewed', label: 'Viewed', thumbnailUrl: '/viewed.jpg' },
 ];
 
-function renderTray(visibleId: string): string {
+function renderTray(visibleId: string, source: 'stack' | 'duplicate' = 'stack'): string {
   return render(AssetViewerComparisonTray, {
     props: {
       items,
-      source: 'stack',
+      source,
       activation: 'click',
       selectedId: 'selected',
       visibleId,
@@ -34,5 +34,14 @@ describe('AssetViewerComparisonTray', () => {
     expect(selected).toContain('disabled');
     expect(viewed).not.toMatch(/class="select-viewed[^"]* hidden/);
     expect(viewed.indexOf('Use viewed as selected')).toBeLessThan(viewed.indexOf('2 images'));
+  });
+
+  it('identifies duplicate group members without calling them similar images', () => {
+    const body = renderTray('selected', 'duplicate');
+
+    expect(body).toContain('Duplicate copies');
+    expect(body).not.toContain('Similar images');
+    expect(body).toContain('aria-label="duplicate image comparison"');
+    expect(body).toContain('aria-label="Duplicate copies"');
   });
 });

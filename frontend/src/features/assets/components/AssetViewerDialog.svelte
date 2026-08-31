@@ -17,6 +17,12 @@
       'input, textarea, select, button, a, summary, [role="button"], [contenteditable="true"]',
     );
   }
+
+  export function duplicateViewerShortcut(
+    key: string,
+  ): 'primary' | 'resolve' | 'stack_all' | 'none' | null {
+    return ({ k: 'primary', r: 'resolve', s: 'stack_all', x: 'none' } as const)[key] ?? null;
+  }
 </script>
 
 <script lang="ts">
@@ -92,6 +98,8 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatekeeper?: (assetId: string) => void;
     onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
+    onduplicatepreviousgroup?: () => void;
+    onduplicatenextgroup?: () => void;
     comparisonSource?: AssetComparisonSource;
     comparisonActivation?: AssetComparisonActivation;
     comparisonAssets?: AssetStackMember[];
@@ -145,6 +153,8 @@
     duplicateContext = null,
     onduplicatekeeper,
     onduplicateaction,
+    onduplicatepreviousgroup,
+    onduplicatenextgroup,
     comparisonSource = 'stack',
     comparisonActivation = 'click',
     comparisonAssets = [],
@@ -454,6 +464,7 @@
   function handleKeydown(event: KeyboardEvent): void {
     if (!shouldHandleViewerShortcut(event.target, dialogElement)) return;
     const key = event.key.toLowerCase();
+    const duplicateShortcut = duplicateContext ? duplicateViewerShortcut(key) : null;
 
     if (event.key === 'ArrowLeft' || key === 'h') {
       event.preventDefault();
@@ -464,6 +475,12 @@
     } else if (event.key === ' ') {
       event.preventDefault();
       ontoggleselection(currentAsset.id);
+    } else if (duplicateShortcut === 'primary' && onduplicatekeeper) {
+      event.preventDefault();
+      onduplicatekeeper(currentAsset.id);
+    } else if (duplicateShortcut && duplicateShortcut !== 'primary' && onduplicateaction) {
+      event.preventDefault();
+      onduplicateaction(duplicateShortcut);
     } else if (key === 'i') {
       event.preventDefault();
       infoOpen = !infoOpen;
@@ -632,6 +649,7 @@
     selectionEnabled={selectionAvailable}
     {restoreBusy}
     {integrityActive}
+    duplicateMode={duplicateContext !== null}
     onrestore={onrestore ? () => onrestore(currentAsset.id) : undefined}
     onintegrity={integrityEnabled ? () => void openIntegrity() : undefined}
     onaction={(action, relationIds) => onaction(currentAsset.id, action, relationIds)}
@@ -742,6 +760,8 @@
         {duplicateContext}
         {onduplicatekeeper}
         {onduplicateaction}
+        {onduplicatepreviousgroup}
+        {onduplicatenextgroup}
       />
     {/if}
 

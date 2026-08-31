@@ -1,4 +1,6 @@
 <script lang="ts">
+  interface Props { duplicateMode?: boolean; }
+  let { duplicateMode = false }: Props = $props();
 </script>
 
 <div class="keyboard-help" role="tooltip" aria-label="Viewer keyboard shortcuts">
@@ -7,6 +9,12 @@
     <div><dt><kbd>Space</kbd></dt><dd>Toggle selection</dd></div>
     <div><dt><kbd>←</kbd> / <kbd>H</kbd></dt><dd>Previous image</dd></div>
     <div><dt><kbd>→</kbd> / <kbd>L</kbd></dt><dd>Next image</dd></div>
+    {#if duplicateMode}
+      <div><dt><kbd>K</kbd></dt><dd>Use viewed copy as primary</dd></div>
+      <div><dt><kbd>R</kbd></dt><dd>Resolve duplicate group</dd></div>
+      <div><dt><kbd>S</kbd></dt><dd>Stack all copies</dd></div>
+      <div><dt><kbd>X</kbd></dt><dd>Skip / review later</dd></div>
+    {/if}
     <div><dt><kbd>I</kbd></dt><dd>Toggle more info</dd></div>
     <div><dt><kbd>M</kbd></dt><dd>Toggle image size</dd></div>
     <div><dt><kbd>+</kbd> / <kbd>−</kbd></dt><dd>Zoom in or out</dd></div>

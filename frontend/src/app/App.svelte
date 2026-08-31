@@ -42,10 +42,12 @@
   </AppShell>
 
   {#if duplicatePreview}
-    <DuplicateAssetViewerController
-      review={duplicatePreview}
-      onclose={() => (duplicatePreview = null)}
-    />
+    {#key duplicatePreview.duplicate_id}
+      <DuplicateAssetViewerController
+        review={duplicatePreview}
+        onclose={() => (duplicatePreview = null)}
+      />
+    {/key}
   {/if}
 
   {#snippet failed(error, reset)}

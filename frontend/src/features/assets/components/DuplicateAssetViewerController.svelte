@@ -35,6 +35,8 @@
     initial_index: number;
     onkeeperchange?: (assetId: string) => DuplicatePreviewReview['selected_action'];
     onactionchange?: (action: DuplicatePreviewReview['selected_action']) => void;
+    onpreviousgroup?: () => void;
+    onnextgroup?: () => void;
   }
 
   interface Props {
@@ -141,6 +143,8 @@
   }
 
   function chooseAction(action: DuplicatePreviewReview['selected_action']): void {
+    if (action === 'resolve' && !review.eligible) return;
+    if (action === 'stack_all' && members.some((member) => member.is_offline || member.is_stacked)) return;
     selectedAction = action;
     review.onactionchange?.(action);
   }
@@ -171,6 +175,11 @@
     {duplicateContext}
     onduplicatekeeper={chooseKeeper}
     onduplicateaction={chooseAction}
+    onduplicatepreviousgroup={review.onpreviousgroup}
+    onduplicatenextgroup={review.onnextgroup}
+    comparisonSource="duplicate"
+    comparisonActivation="click"
+    comparisonAssets={assets}
     onnavigate={(index) => void navigate(index)}
     ontoggleselection={() => {}}
     onvisiblechange={(assetId) => {

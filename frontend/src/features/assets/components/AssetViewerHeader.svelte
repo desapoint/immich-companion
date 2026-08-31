@@ -29,6 +29,7 @@
     selectionEnabled?: boolean;
     restoreBusy?: boolean;
     integrityActive?: boolean;
+    duplicateMode?: boolean;
     onrestore?: () => void;
     onintegrity?: () => void;
     onaction: (action: AssetActionIntent, relationIds?: string[]) => void;
@@ -66,6 +67,7 @@
     selectionEnabled = actionsEnabled,
     restoreBusy = false,
     integrityActive = false,
+    duplicateMode = false,
     onrestore,
     onintegrity,
     onaction,
@@ -163,7 +165,7 @@
         tone={helpOpen ? 'accent' : 'default'}
         onclick={ontogglehelp}
       />
-      {#if helpOpen}<AssetKeyboardHelp />{/if}
+      {#if helpOpen}<AssetKeyboardHelp {duplicateMode} />{/if}
     </div>
     <IconButton icon="close" label="Close asset viewer" onclick={onclose} />
   </div>

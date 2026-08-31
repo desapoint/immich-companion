@@ -38,6 +38,9 @@
         ? 'Hold to compare'
         : 'Click to view',
   );
+  const sourceLabel = $derived(
+    source === 'stack' ? 'Stack images' : source === 'duplicate' ? 'Duplicate copies' : 'Similar images',
+  );
 </script>
 
 <section
@@ -47,7 +50,7 @@
 >
   <header>
     <div class="tray-heading">
-      <span>{source === 'stack' ? 'Stack images' : 'Similar images'}</span>
+      <span>{sourceLabel}</span>
       <small>{interactionLabel}</small>
     </div>
     <div class="tray-status">

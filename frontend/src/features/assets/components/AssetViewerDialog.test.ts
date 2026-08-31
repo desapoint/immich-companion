@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldHandleViewerShortcut } from './AssetViewerDialog.svelte';
+import { duplicateViewerShortcut, shouldHandleViewerShortcut } from './AssetViewerDialog.svelte';
 
 interface TargetStub {
   closest: (selector: string) => object | null;
@@ -15,6 +15,14 @@ function targetStub(closestDialog: object | null, closestControl: object | null)
 }
 
 describe('AssetViewerDialog keyboard shortcuts', () => {
+  it('maps duplicate review shortcuts without affecting unrelated keys', () => {
+    expect(duplicateViewerShortcut('k')).toBe('primary');
+    expect(duplicateViewerShortcut('r')).toBe('resolve');
+    expect(duplicateViewerShortcut('s')).toBe('stack_all');
+    expect(duplicateViewerShortcut('x')).toBe('none');
+    expect(duplicateViewerShortcut('i')).toBeNull();
+  });
+
   it('allows shortcuts from the viewer surface', () => {
     const viewer = {};
     expect(shouldHandleViewerShortcut(targetStub(viewer, null), viewer)).toBe(true);

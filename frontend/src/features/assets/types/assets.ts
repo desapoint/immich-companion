@@ -508,7 +508,7 @@ export interface AssetActionRelationResult {
 }
 
 export type ViewerScaleMode = 'fit' | 'actual';
-export type AssetComparisonSource = 'stack' | 'similar';
+export type AssetComparisonSource = 'stack' | 'similar' | 'duplicate';
 export type AssetComparisonActivation = 'click' | 'hover' | 'press';
 
 export interface AssetViewerMedia {

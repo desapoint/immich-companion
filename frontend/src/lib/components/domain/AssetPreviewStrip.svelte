@@ -32,6 +32,9 @@
   }: Props = $props();
 
   let pressedId = $state<string | null>(null);
+  const sourceLabel = $derived(
+    source === 'stack' ? 'Stack images' : source === 'duplicate' ? 'Duplicate copies' : 'Similar images',
+  );
 
   function clickItem(event: MouseEvent, assetId: string): void {
     if (!interactive) return;
@@ -73,7 +76,7 @@
   class:compact
   class:interactive
   class="asset-preview-strip"
-  aria-label={source === 'stack' ? 'Stack images' : 'Similar images'}
+  aria-label={sourceLabel}
 >
   {#each items as item (item.id)}
     {#if interactive}

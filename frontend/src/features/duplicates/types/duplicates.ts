@@ -82,6 +82,8 @@ export interface DuplicatePreviewRequest {
   initial_index: number;
   onkeeperchange?: (assetId: string) => DuplicateActionSelection;
   onactionchange?: (action: DuplicateActionSelection) => void;
+  onpreviousgroup?: () => void;
+  onnextgroup?: () => void;
 }
 
 export interface DuplicateResult {

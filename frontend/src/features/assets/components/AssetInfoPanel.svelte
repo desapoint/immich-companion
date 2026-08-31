@@ -19,6 +19,8 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatekeeper?: (assetId: string) => void;
     onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
+    onduplicatepreviousgroup?: () => void;
+    onduplicatenextgroup?: () => void;
   }
 
   let {
@@ -34,6 +36,8 @@
     duplicateContext = null,
     onduplicatekeeper,
     onduplicateaction,
+    onduplicatepreviousgroup,
+    onduplicatenextgroup,
   }: Props = $props();
 
   const duplicateActionOptions = $derived<SelectOption[]>([
@@ -124,6 +128,12 @@
           >
             {duplicateContext.selected_keeper_asset_id === asset.id ? 'Selected primary' : 'Use viewed as primary'}
           </button>
+        </div>
+      {/if}
+      {#if onduplicatepreviousgroup || onduplicatenextgroup}
+        <div class="duplicate-group-navigation" aria-label="Duplicate group navigation">
+          <button type="button" disabled={!onduplicatepreviousgroup} onclick={() => onduplicatepreviousgroup?.()}>← Previous group</button>
+          <button type="button" disabled={!onduplicatenextgroup} onclick={() => onduplicatenextgroup?.()}>Next group →</button>
         </div>
       {/if}
       <dl>
@@ -301,6 +311,10 @@
   .duplicate-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .5rem; align-items: end; margin-top: .65rem; }
   .duplicate-controls button { min-height: 2.35rem; padding: .45rem .6rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .65rem; font-weight: 780; }
   .duplicate-controls button:hover, .duplicate-controls button:focus-visible, .duplicate-controls button.active-primary { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
+  .duplicate-group-navigation { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .5rem; }
+  .duplicate-group-navigation button { min-width: 0; min-height: 2rem; padding: .35rem .5rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .62rem; font-weight: 760; }
+  .duplicate-group-navigation button:hover:not(:disabled), .duplicate-group-navigation button:focus-visible { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
+  .duplicate-group-navigation button:disabled { opacity: .45; cursor: default; }
   .section-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
   .duplicate-status { padding: .16rem .38rem; border-radius: 999px; background: var(--color-canvas); font-size: .58rem; font-weight: 820; text-transform: uppercase; }
   .duplicate-status.exact, .positive { color: var(--color-positive-ink); }

@@ -303,6 +303,8 @@
   }
 
   function previewRequest(group: ExactDuplicateGroup, initialIndex: number): DuplicatePreviewRequest {
+    const groups = result?.groups ?? [];
+    const groupIndex = groups.findIndex((candidate) => candidate.duplicate_id === group.duplicate_id);
     return {
       duplicate_id: group.duplicate_id,
       status: group.status,
@@ -320,6 +322,12 @@
         return actionFor(group);
       },
       onactionchange: (action) => setGroupAction(group, action),
+      onpreviousgroup: groupIndex > 0
+        ? () => onpreview(previewRequest(groups[groupIndex - 1], 0))
+        : undefined,
+      onnextgroup: groupIndex >= 0 && groupIndex < groups.length - 1
+        ? () => onpreview(previewRequest(groups[groupIndex + 1], 0))
+        : undefined,
     };
   }
 
