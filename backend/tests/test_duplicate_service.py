@@ -33,6 +33,7 @@ from companion.similarity_features import (
     SIMILARITY_MODEL_VERSION,
 )
 from companion.similarity_repository import (
+    SIMILARITY_COMPARISON_VERSION,
     PairSimilarityEvidence,
     canonical_pair,
     requested_reference_pairs,
@@ -553,11 +554,16 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
         structural_percent=98.0,
         perceptual_percent=95.0,
         color_percent=91.0,
+        normalized_luminance_mae=0.01,
+        normalized_luminance_rmse=0.02,
+        normalized_luminance_ssim=0.99,
+        aspect_ratio_difference=0.0,
+        dimensions_equal=True,
         exact_thumbnail_match=False,
         exact_pixel_match=True,
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
-        comparison_version=1,
+        comparison_version=SIMILARITY_COMPARISON_VERSION,
     )
     similarity = FakeSimilarity({(UPLOAD_1, EXTERNAL_1): pair})
     service = CrossSourceDuplicateService(
@@ -588,6 +594,9 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     )
     assert result.groups[0].members[1].similarity is not None
     assert result.groups[0].members[1].similarity.similarity_percent == 96.5
+    assert result.groups[0].members[1].similarity.normalized_luminance_rmse == 0.02
+    assert result.groups[0].members[1].similarity.normalized_luminance_ssim == 0.99
+    assert result.groups[0].members[1].similarity.dimensions_equal is True
     assert result.groups[0].members[1].similarity.exact_pixel_match is True
     assert result.groups[0].members[1].preservation is not None
     assert result.groups[0].members[1].preservation.pixel_sha256 == "2" * 64

@@ -188,6 +188,11 @@
           <div><dt>Structure</dt><dd>{currentSimilarity.structural_percent?.toFixed(2)}%</dd></div>
           <div><dt>Perceptual hash</dt><dd>{currentSimilarity.perceptual_percent?.toFixed(2)}%</dd></div>
           <div><dt>Color</dt><dd>{currentSimilarity.color_percent?.toFixed(2)}%</dd></div>
+          <div><dt>Normalized luminance MAE (16×16)</dt><dd>{currentSimilarity.normalized_luminance_mae === null ? 'Unavailable' : `${(currentSimilarity.normalized_luminance_mae * 100).toFixed(2)}% error`}</dd></div>
+          <div><dt>Normalized luminance RMSE (16×16)</dt><dd>{currentSimilarity.normalized_luminance_rmse === null ? 'Unavailable' : `${(currentSimilarity.normalized_luminance_rmse * 100).toFixed(2)}% error`}</dd></div>
+          <div><dt>Normalized luminance SSIM (16×16)</dt><dd>{currentSimilarity.normalized_luminance_ssim === null ? 'Unavailable' : `${(currentSimilarity.normalized_luminance_ssim * 100).toFixed(2)}%`}</dd></div>
+          <div><dt>Aspect ratio difference</dt><dd>{currentSimilarity.aspect_ratio_difference === null ? 'Unavailable' : `${(currentSimilarity.aspect_ratio_difference * 100).toFixed(2)}%`}</dd></div>
+          <div><dt>Decoded dimensions</dt><dd>{currentSimilarity.dimensions_equal === null ? 'Unavailable' : currentSimilarity.dimensions_equal ? 'Same' : 'Different'}</dd></div>
           <div><dt>Normalized thumbnail</dt><dd>{currentSimilarity.exact_thumbnail_match ? 'Exact' : 'Different'}</dd></div>
           <div><dt>Normalized decoded pixels</dt><dd>{currentSimilarity.exact_pixel_match ? 'Exact' : 'Different'}</dd></div>
           <div><dt>Similarity model</dt><dd>{currentSimilarity.model_version ?? 'Unknown'} · comparison v{currentSimilarity.comparison_version ?? '?'}</dd></div>

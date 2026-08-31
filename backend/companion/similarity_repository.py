@@ -18,7 +18,7 @@ from companion.similarity_features import (
     compare_visual_features,
 )
 
-SIMILARITY_COMPARISON_VERSION = 2
+SIMILARITY_COMPARISON_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,6 +32,11 @@ class PairSimilarityEvidence:
     model_version: str
     feature_version: int
     comparison_version: int
+    normalized_luminance_mae: float | None = None
+    normalized_luminance_rmse: float | None = None
+    normalized_luminance_ssim: float | None = None
+    aspect_ratio_difference: float | None = None
+    dimensions_equal: bool | None = None
 
 
 def canonical_pair(left: UUID, right: UUID) -> tuple[UUID, UUID]:
@@ -94,6 +99,11 @@ def _public(record: AssetSimilarityEdgeRecord) -> PairSimilarityEvidence:
         model_version=record.model_version,
         feature_version=record.feature_version,
         comparison_version=record.comparison_version,
+        normalized_luminance_mae=record.normalized_luminance_mae,
+        normalized_luminance_rmse=record.normalized_luminance_rmse,
+        normalized_luminance_ssim=record.normalized_luminance_ssim,
+        aspect_ratio_difference=record.aspect_ratio_difference,
+        dimensions_equal=record.dimensions_equal,
     )
 
 
@@ -156,6 +166,11 @@ class SimilarityRepository:
                 model_version=SIMILARITY_MODEL_VERSION,
                 feature_version=SIMILARITY_FEATURE_VERSION,
                 comparison_version=SIMILARITY_COMPARISON_VERSION,
+                normalized_luminance_mae=comparison.normalized_luminance_mae,
+                normalized_luminance_rmse=comparison.normalized_luminance_rmse,
+                normalized_luminance_ssim=comparison.normalized_luminance_ssim,
+                aspect_ratio_difference=comparison.aspect_ratio_difference,
+                dimensions_equal=comparison.dimensions_equal,
             )
             current[(low, high)] = evidence
             values.append(
@@ -168,6 +183,11 @@ class SimilarityRepository:
                     "structural_percent": evidence.structural_percent,
                     "perceptual_percent": evidence.perceptual_percent,
                     "color_percent": evidence.color_percent,
+                    "normalized_luminance_mae": evidence.normalized_luminance_mae,
+                    "normalized_luminance_rmse": evidence.normalized_luminance_rmse,
+                    "normalized_luminance_ssim": evidence.normalized_luminance_ssim,
+                    "aspect_ratio_difference": evidence.aspect_ratio_difference,
+                    "dimensions_equal": evidence.dimensions_equal,
                     "exact_thumbnail_match": evidence.exact_thumbnail_match,
                     "exact_pixel_match": evidence.exact_pixel_match,
                     "model_version": evidence.model_version,

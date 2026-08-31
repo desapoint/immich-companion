@@ -145,6 +145,11 @@ class SimilarityScanRepository:
                 "structural_percent": pair.evidence.structural_percent,
                 "perceptual_percent": pair.evidence.perceptual_percent,
                 "color_percent": pair.evidence.color_percent,
+                "normalized_luminance_mae": pair.evidence.normalized_luminance_mae,
+                "normalized_luminance_rmse": pair.evidence.normalized_luminance_rmse,
+                "normalized_luminance_ssim": pair.evidence.normalized_luminance_ssim,
+                "aspect_ratio_difference": pair.evidence.aspect_ratio_difference,
+                "dimensions_equal": pair.evidence.dimensions_equal,
                 "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
                 "exact_pixel_match": pair.evidence.exact_pixel_match,
             }
@@ -268,6 +273,11 @@ class SimilarityScanRepository:
                         model_version=record.model_version,
                         feature_version=record.feature_version,
                         comparison_version=record.comparison_version,
+                        normalized_luminance_mae=pair.normalized_luminance_mae,
+                        normalized_luminance_rmse=pair.normalized_luminance_rmse,
+                        normalized_luminance_ssim=pair.normalized_luminance_ssim,
+                        aspect_ratio_difference=pair.aspect_ratio_difference,
+                        dimensions_equal=pair.dimensions_equal,
                     ),
                 )
                 for pair in pair_records

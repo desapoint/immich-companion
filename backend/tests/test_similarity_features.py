@@ -43,6 +43,11 @@ def test_visual_features_are_fixed_size_and_deterministic() -> None:
     comparison = compare_visual_features(first, second)
     assert comparison.similarity_percent == 100
     assert comparison.color_percent == 100
+    assert comparison.normalized_luminance_mae == 0
+    assert comparison.normalized_luminance_rmse == 0
+    assert comparison.normalized_luminance_ssim == 1
+    assert comparison.aspect_ratio_difference == 0
+    assert comparison.dimensions_equal is True
 
 
 def test_lossless_container_and_opaque_alpha_share_normalized_pixels() -> None:
@@ -131,6 +136,8 @@ def test_mild_brightness_changes_remain_very_similar(factor: float) -> None:
 
     assert comparison.similarity_percent >= 94
     assert comparison.structural_percent >= 98
+    assert comparison.normalized_luminance_rmse <= 0.03
+    assert comparison.normalized_luminance_ssim >= 0.99
 
 
 def test_mild_color_change_remains_similar_but_is_not_pixel_identical() -> None:
@@ -157,7 +164,11 @@ def test_resize_preserves_appearance_features() -> None:
     base = features(scene())
     resized = features(scene().resize((96, 64), Image.Resampling.LANCZOS))
 
-    assert compare_visual_features(base, resized).similarity_percent >= 98
+    comparison = compare_visual_features(base, resized)
+
+    assert comparison.similarity_percent >= 98
+    assert comparison.aspect_ratio_difference == 0
+    assert comparison.dimensions_equal is False
 
 
 def test_unrelated_composition_scores_materially_lower() -> None:
@@ -166,9 +177,11 @@ def test_unrelated_composition_scores_materially_lower() -> None:
     for offset in range(0, 192, 16):
         draw.rectangle((offset, 0, offset + 7, 127), fill=(20, 30, 180))
 
-    assert compare_visual_features(
-        features(scene()), features(unrelated)
-    ).similarity_percent < 80
+    comparison = compare_visual_features(features(scene()), features(unrelated))
+
+    assert comparison.similarity_percent < 80
+    assert comparison.normalized_luminance_rmse > 0.2
+    assert comparison.normalized_luminance_ssim < 0.5
 
 
 def test_corrupt_or_unsupported_input_has_no_visual_feature() -> None:

@@ -61,6 +61,45 @@ class VisualSimilarityResult:
     structural_percent: float
     perceptual_percent: float
     color_percent: float
+    normalized_luminance_mae: float
+    normalized_luminance_rmse: float
+    normalized_luminance_ssim: float
+    aspect_ratio_difference: float
+    dimensions_equal: bool
+
+
+def _normalized_luminance_evidence(
+    left: bytes,
+    right: bytes,
+) -> tuple[float, float, float]:
+    """Return normalized MAE/RMSE and standard global SSIM for compact samples."""
+
+    if len(left) != len(right) or not left:
+        raise ValueError("Luminance samples must have the same non-zero length.")
+    count = len(left)
+    differences = [float(a) - float(b) for a, b in zip(left, right, strict=True)]
+    mae = sum(abs(value) for value in differences) / count / 255
+    rmse = math.sqrt(sum(value * value for value in differences) / count) / 255
+
+    left_mean = sum(left) / count
+    right_mean = sum(right) / count
+    left_variance = sum((value - left_mean) ** 2 for value in left) / count
+    right_variance = sum((value - right_mean) ** 2 for value in right) / count
+    covariance = sum(
+        (a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True)
+    ) / count
+    c1 = (0.01 * 255) ** 2
+    c2 = (0.03 * 255) ** 2
+    numerator = (2 * left_mean * right_mean + c1) * (2 * covariance + c2)
+    denominator = (left_mean**2 + right_mean**2 + c1) * (
+        left_variance + right_variance + c2
+    )
+    ssim = numerator / denominator if denominator else 1.0
+    return (
+        round(max(0.0, min(1.0, mae)), 6),
+        round(max(0.0, min(1.0, rmse)), 6),
+        round(max(-1.0, min(1.0, ssim)), 6),
+    )
 
 
 def _srgb_image(image: Image.Image) -> Image.Image:
@@ -243,6 +282,10 @@ def compare_visual_features(
 
     if left.model_version != right.model_version or left.feature_version != right.feature_version:
         raise ValueError("Visual feature versions are incompatible.")
+    luminance_mae, luminance_rmse, luminance_ssim = _normalized_luminance_evidence(
+        left.luminance_vector,
+        right.luminance_vector,
+    )
     structural = 1 - sum(
         abs(a - b) for a, b in zip(left.luminance_vector, right.luminance_vector, strict=True)
     ) / (len(left.luminance_vector) * 255)
@@ -255,10 +298,18 @@ def compare_visual_features(
         )
         / (3 * 255),
     )
+    left_aspect = left.width / left.height
+    right_aspect = right.width / right.height
+    aspect_ratio_difference = abs(left_aspect - right_aspect) / max(left_aspect, right_aspect)
     combined = 0.65 * structural + 0.25 * perceptual + 0.10 * color
     return VisualSimilarityResult(
         similarity_percent=round(max(0.0, min(1.0, combined)) * 100, 2),
         structural_percent=round(structural * 100, 2),
         perceptual_percent=round(perceptual * 100, 2),
         color_percent=round(color * 100, 2),
+        normalized_luminance_mae=luminance_mae,
+        normalized_luminance_rmse=luminance_rmse,
+        normalized_luminance_ssim=luminance_ssim,
+        aspect_ratio_difference=round(aspect_ratio_difference, 6),
+        dimensions_equal=(left.width, left.height) == (right.width, right.height),
     )

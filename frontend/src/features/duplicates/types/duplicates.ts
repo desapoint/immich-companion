@@ -52,6 +52,11 @@ export interface DuplicateSimilarityEvidence {
   structural_percent: number | null;
   perceptual_percent: number | null;
   color_percent: number | null;
+  normalized_luminance_mae: number | null;
+  normalized_luminance_rmse: number | null;
+  normalized_luminance_ssim: number | null;
+  aspect_ratio_difference: number | null;
+  dimensions_equal: boolean | null;
   exact_thumbnail_match: boolean | null;
   exact_pixel_match: boolean | null;
   model_version: string | null;

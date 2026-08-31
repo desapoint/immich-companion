@@ -78,6 +78,11 @@ class DuplicateSimilarityEvidence(BaseModel):
     structural_percent: float | None = None
     perceptual_percent: float | None = None
     color_percent: float | None = None
+    normalized_luminance_mae: float | None = None
+    normalized_luminance_rmse: float | None = None
+    normalized_luminance_ssim: float | None = None
+    aspect_ratio_difference: float | None = None
+    dimensions_equal: bool | None = None
     exact_thumbnail_match: bool | None = None
     exact_pixel_match: bool | None = None
     model_version: str | None = None
