@@ -596,6 +596,69 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
 
 
 @pytest.mark.asyncio
+async def test_companion_similarity_group_exposes_provenance_without_automatic_action() -> None:
+    content = b"same"
+    members = (
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    discovered = DiscoveredGroup(
+        group_id=f"companion:v1:{UPLOAD_1}:{EXTERNAL_1}",
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id=f"scan:{UPLOAD_1}:{EXTERNAL_1}",
+        assets=members,
+        provider_metadata={
+            "scan_id": str(GROUP_ID),
+            "scan_threshold_percent": "95.0",
+            "similarity_percent": "99.2",
+        },
+    )
+
+    class Discovery:
+        async def discover(self):
+            return [discovered]
+
+    pair = PairSimilarityEvidence(
+        similarity_percent=99.2,
+        structural_percent=99.0,
+        perceptual_percent=99.5,
+        color_percent=98.0,
+        exact_thumbnail_match=False,
+        exact_pixel_match=False,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        comparison_version=1,
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(group(*members)),
+        FakeAssets(),
+        FakeReports(
+            [report(EXTERNAL_1, content)],
+            [feature(UPLOAD_1, digest="1" * 64), feature(EXTERNAL_1, digest="2" * 64)],
+        ),
+        FakeActions(),
+        FakeTasks(),
+        SimpleNamespace(),
+        similarity=FakeSimilarity({(UPLOAD_1, EXTERNAL_1): pair}),
+        discovery=Discovery(),
+    )
+
+    result = await service.result()
+    found = result.groups[0]
+
+    assert found.discovery_source == "companion_similarity"
+    assert found.discovery_metadata["scan_id"] == str(GROUP_ID)
+    assert found.classification == "likely_same"
+    assert found.status == "exact"
+    assert found.eligible is False
+    assert found.auto_resolvable is False
+    assert found.recommended_action == "none"
+    assert found.effective_action == "none"
+    assert "99.2% visual match" in (found.reason or "")
+
+
+@pytest.mark.asyncio
 async def test_similarity_reference_is_scoped_to_group_members() -> None:
     content = b"same"
     candidate_group = group(

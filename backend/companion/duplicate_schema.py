@@ -127,6 +127,7 @@ class ExactDuplicateGroup(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
+    discovery_metadata: dict[str, str] = Field(default_factory=dict)
     classification: DuplicateClassification
     status: DuplicateGroupStatus
     reason: str | None = None

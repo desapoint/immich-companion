@@ -18,6 +18,7 @@
     loadDuplicateTask,
     planDuplicateResolution,
     saveDuplicateReview,
+    startDuplicateSimilarityScan,
     switchDuplicateSimilarityReference,
   } from '../api/duplicateApi';
   import type {
@@ -163,12 +164,14 @@
     }
   }
 
-  function schedulePoll(taskId: string, kind: 'analysis' | 'resolution'): void {
+  type DuplicateTaskKind = 'analysis' | 'similarity' | 'resolution';
+
+  function schedulePoll(taskId: string, kind: DuplicateTaskKind): void {
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = setTimeout(() => void pollTask(taskId, kind), 700);
   }
 
-  async function pollTask(taskId: string, kind: 'analysis' | 'resolution'): Promise<void> {
+  async function pollTask(taskId: string, kind: DuplicateTaskKind): Promise<void> {
     try {
       task = await loadDuplicateTask(taskId);
       if (!terminalStatuses.has(task.status)) {
@@ -179,14 +182,18 @@
       if (task.status === 'completed') {
         message = kind === 'analysis'
           ? 'Duplicate candidates were verified.'
-          : 'The reviewed duplicate batch completed.';
-        selected.clear();
-        selectionInitialized = false;
-        keeperOverrides = {};
-        actionOverrides = {};
+          : kind === 'similarity'
+            ? 'The visual similarity scan completed and its matches are ready to review.'
+            : 'The reviewed duplicate batch completed.';
+        if (kind !== 'similarity') {
+          selected.clear();
+          selectionInitialized = false;
+          keeperOverrides = {};
+          actionOverrides = {};
+        }
         await load();
       } else {
-        error = task.error?.message ?? `${kind === 'analysis' ? 'Analysis' : 'Resolution'} failed.`;
+        error = task.error?.message ?? `${kind === 'analysis' ? 'Analysis' : kind === 'similarity' ? 'Similarity scan' : 'Resolution'} failed.`;
       }
     } catch (reason) {
       busy = false;
@@ -331,6 +338,9 @@
     const groupIndex = groups.findIndex((candidate) => candidate.group_id === group.group_id);
     return {
       group_id: group.group_id,
+      discovery_source: group.discovery_source,
+      discovery_metadata: group.discovery_metadata ?? {},
+      classification: group.classification,
       status: group.status,
       reason: group.reason,
       eligible: group.eligible,
@@ -446,6 +456,26 @@
     }
   }
 
+  async function scanForSimilarImages(): Promise<void> {
+    busy = true;
+    error = null;
+    message = null;
+    try {
+      const started = await startDuplicateSimilarityScan();
+      task = await loadDuplicateTask(started.task_id);
+      schedulePoll(started.task_id, 'similarity');
+    } catch (reason) {
+      busy = false;
+      error = reason instanceof Error ? reason.message : 'Could not start the similarity scan.';
+    }
+  }
+
+  function discoveryLabel(group: ExactDuplicateGroup): string {
+    if (group.discovery_source === 'immich_duplicate') return 'Immich duplicate';
+    const score = group.discovery_metadata?.similarity_percent;
+    return score ? `Companion scan · ${Number(score).toFixed(1)}%` : 'Companion similarity scan';
+  }
+
   function formatSize(value: number | null): string {
     if (value === null) return 'Size unavailable';
     if (value < 1024) return `${value} B`;
@@ -494,6 +524,7 @@
     <MultiSelectField id="duplicate-library-filter" label="External libraries" values={options.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable disabled={busy} onchange={(values) => options.external_library_ids = values} />
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
     <button class="apply-rules" type="button" disabled={busy || loading} onclick={() => void applyRules()}>Apply automatic rules</button>
+    <button class="scan-similar" type="button" disabled={busy || loading} onclick={() => void scanForSimilarImages()}><Icon name="integrity" size=".9rem" /> Scan for similar images</button>
     <div class="analysis-state">
       <span>Candidate analysis</span>
       <strong>{rulesChanged ? 'Rules changed' : result?.analysis_pending_count ? `${result.analysis_pending_count} queued` : loading ? 'Checking…' : result ? `${result.analysis_cached_count} cached` : 'Current'}</strong>
@@ -511,7 +542,7 @@
 
   {#if result}
     <section class="summary" aria-label="Duplicate summary">
-      <div><strong>{result.group_count}</strong><span>Immich groups</span></div>
+      <div><strong>{result.group_count}</strong><span>Review groups</span></div>
       <div><strong>{reviewFilterCounts.auto_ready}</strong><span>Auto ready</span></div>
       <div><strong>{reviewFilterCounts.resolve_ready}</strong><span>Resolve ready</span></div>
       <div><strong>{reviewFilterCounts.stack_ready}</strong><span>Stack ready</span></div>
@@ -543,7 +574,7 @@
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
               </div>
               <div class="group-controls">
                 <SelectField id={`duplicate-action-${group.group_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy || savingGroups.has(group.group_id)} onchange={(value) => setGroupAction(group, value)} />
@@ -602,6 +633,7 @@
   .controls { display: grid; grid-template-columns: repeat(3, minmax(12rem, 1fr)); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .apply-rules { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
   .apply-rules:hover:not(:disabled) { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: color-mix(in srgb, var(--color-accent-strong) 88%, black); }
+  .scan-similar { display: flex; align-items: center; justify-content: center; gap: .4rem; }
   .analysis-state { display: grid; min-height: 2.45rem; align-content: center; gap: .12rem; padding: .35rem .65rem; border-left: 1px solid var(--color-border-subtle); }
   .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
   .analysis-state strong { font-size: .72rem; }
@@ -637,6 +669,7 @@
   .status.unverified { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .status.mismatch, .status.ineligible { color: var(--color-negative-ink); background: var(--color-negative-surface); }
   .workflow-status { color: var(--color-ink-muted); font-size: .6rem; font-weight: 760; }
+  .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
   .member { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }
   .member.keeper { border-color: var(--color-accent-strong); box-shadow: inset 0 0 0 1px var(--color-accent-strong); }

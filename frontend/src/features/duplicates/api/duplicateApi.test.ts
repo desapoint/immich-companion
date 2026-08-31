@@ -6,6 +6,7 @@ import {
   loadDuplicateGroups,
   planDuplicateResolution,
   saveDuplicateReview,
+  startDuplicateSimilarityScan,
   switchDuplicateSimilarityReference,
 } from './duplicateApi';
 
@@ -98,6 +99,29 @@ describe('duplicate API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ reference_asset_id: 'asset-2' }),
+      }),
+    );
+  });
+
+  it('starts a bounded conservative similarity scan', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ task_id: 'scan-task' }), { status: 202 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await startDuplicateSimilarityScan();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/assets/duplicates/similarity-scan',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({
+          similarity_threshold: 95,
+          maximum_perceptual_distance: 12,
+          maximum_aspect_difference: 0.05,
+          maximum_neighbors_per_asset: 8,
+          maximum_matches: 5000,
+        }),
       }),
     );
   });

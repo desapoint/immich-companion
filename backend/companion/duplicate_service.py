@@ -471,7 +471,58 @@ class CrossSourceDuplicateService:
                         }
                     )
                 )
-            updated_groups.append(group.model_copy(update={"members": members}))
+            group_update: dict[str, object] = {"members": members}
+            if source.discovery_source is DiscoverySource.COMPANION_SIMILARITY:
+                pair_evidence = next(
+                    (
+                        member.similarity
+                        for member in members
+                        if member.similarity is not None
+                        and member.similarity.state == "current"
+                    ),
+                    None,
+                )
+                threshold = source.provider_metadata.get("scan_threshold_percent")
+                if pair_evidence is not None:
+                    score = pair_evidence.similarity_percent
+                    classification = (
+                        GroupClassification.EXACT_PIXELS.value
+                        if pair_evidence.exact_pixel_match
+                        else GroupClassification.LIKELY_SAME.value
+                        if score is not None and score >= 98
+                        else GroupClassification.SIMILAR.value
+                    )
+                    threshold_detail = f" at a {threshold}% scan threshold" if threshold else ""
+                    group_update.update(
+                        {
+                            "classification": classification,
+                            "reason": (
+                                f"Companion found a {score:.1f}% visual match"
+                                f"{threshold_detail}. Review it manually before acting."
+                                if score is not None
+                                else (
+                                    "Companion found a visual match. Review it manually "
+                                    "before acting."
+                                )
+                            ),
+                        }
+                    )
+                group_update.update(
+                    {
+                        "eligible": False,
+                        "auto_resolvable": False,
+                        "auto_selected": False,
+                        "recommended_action": "none",
+                        "recommended_primary_asset_id": None,
+                        "keeper_asset_id": None,
+                        "effective_action": "none",
+                        "effective_primary_asset_id": None,
+                        "action_source": "none",
+                        "primary_source": "none",
+                        "recommendation_reason_codes": ["non_exact_match"],
+                    }
+                )
+            updated_groups.append(group.model_copy(update=group_update))
         return result.model_copy(update={"groups": updated_groups})
 
     async def _apply_review_states(
@@ -670,17 +721,18 @@ class CrossSourceDuplicateService:
                     status = "mismatch"
                     reason = "Immich grouped these assets, but their file contents differ."
 
-            classification = (
-                GroupClassification.EXACT_FILE
-                if status == "exact"
-                else GroupClassification.MISMATCH
-                if status == "mismatch"
-                else GroupClassification.INELIGIBLE
-                if status == "ineligible"
-                else GroupClassification.UNAVAILABLE
-                if any(asset.is_offline for asset in assets)
-                else GroupClassification.UNVERIFIED
-            )
+            if group.discovery_source is DiscoverySource.COMPANION_SIMILARITY:
+                classification = GroupClassification.SIMILAR
+            elif status == "exact":
+                classification = GroupClassification.EXACT_FILE
+            elif status == "mismatch":
+                classification = GroupClassification.MISMATCH
+            elif status == "ineligible":
+                classification = GroupClassification.INELIGIBLE
+            elif any(asset.is_offline for asset in assets):
+                classification = GroupClassification.UNAVAILABLE
+            else:
+                classification = GroupClassification.UNVERIFIED
             candidate = CandidateGroup(
                 group_id=group.group_id,
                 discovery_source=group.discovery_source,
@@ -743,6 +795,7 @@ class CrossSourceDuplicateService:
                     group_id=candidate.group_id,
                     discovery_source=candidate.discovery_source.value,
                     provider_group_id=group.provider_group_id,
+                    discovery_metadata=dict(group.provider_metadata),
                     classification=candidate.classification.value,
                     status=status,
                     reason=reason,
@@ -760,7 +813,10 @@ class CrossSourceDuplicateService:
                     effective_primary_asset_id=decision.recommended_primary_asset_id,
                     member_fingerprint=_member_fingerprint([asset.id for asset in assets]),
                     members=members,
-                    eligible=status == "exact",
+                    eligible=(
+                        status == "exact"
+                        and group.discovery_source is not DiscoverySource.COMPANION_SIMILARITY
+                    ),
                 )
             )
 

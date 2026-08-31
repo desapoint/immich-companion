@@ -433,6 +433,9 @@ export interface DuplicateReviewMember {
 
 export interface DuplicateReviewContext {
   group_id: string;
+  discovery_source: 'immich_duplicate' | 'companion_similarity';
+  discovery_metadata: Record<string, string>;
+  classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';
   status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
   reason: string | null;
   eligible: boolean;

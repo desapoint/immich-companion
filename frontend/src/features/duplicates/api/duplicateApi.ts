@@ -59,6 +59,16 @@ export function analyzeDuplicateGroups(
   return requestJson('/api/assets/duplicates/cross-source/analyze', jsonBody(options));
 }
 
+export function startDuplicateSimilarityScan(): Promise<{ task_id: string }> {
+  return requestJson('/api/assets/duplicates/similarity-scan', jsonBody({
+    similarity_threshold: 95,
+    maximum_perceptual_distance: 12,
+    maximum_aspect_difference: 0.05,
+    maximum_neighbors_per_asset: 8,
+    maximum_matches: 5000,
+  }));
+}
+
 export function loadDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
   return requestJson(`/api/tasks/${encodeURIComponent(taskId)}`);
 }

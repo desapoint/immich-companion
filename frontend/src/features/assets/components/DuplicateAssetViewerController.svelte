@@ -22,6 +22,9 @@
 
   interface DuplicatePreviewReview {
     group_id: string;
+    discovery_source: 'immich_duplicate' | 'companion_similarity';
+    discovery_metadata: Record<string, string>;
+    classification: DuplicateReviewContext['classification'];
     status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
     reason: string | null;
     eligible: boolean;
@@ -98,6 +101,9 @@
   })));
   const duplicateContext = $derived<DuplicateReviewContext>({
     group_id: review.group_id,
+    discovery_source: review.discovery_source,
+    discovery_metadata: review.discovery_metadata,
+    classification: review.classification,
     status: review.status,
     reason: review.reason,
     eligible: review.eligible,

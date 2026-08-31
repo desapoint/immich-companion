@@ -142,7 +142,11 @@
       {/if}
       <dl>
         <div><dt>Group ID</dt><dd>{duplicateContext.group_id}</dd></div>
-        <div><dt>Matching type</dt><dd>{duplicateContext.status === 'exact' ? 'Byte-exact content' : duplicateContext.status}</dd></div>
+        <div><dt>Discovery source</dt><dd>{duplicateContext.discovery_source === 'companion_similarity' ? 'Companion similarity scan' : 'Immich duplicates API'}</dd></div>
+        {#if duplicateContext.discovery_metadata.scan_id}<div><dt>Scan ID</dt><dd>{duplicateContext.discovery_metadata.scan_id}</dd></div>{/if}
+        {#if duplicateContext.discovery_metadata.similarity_percent}<div><dt>Scan similarity</dt><dd>{Number(duplicateContext.discovery_metadata.similarity_percent).toFixed(2)}%</dd></div>{/if}
+        {#if duplicateContext.discovery_metadata.scan_threshold_percent}<div><dt>Scan threshold</dt><dd>{Number(duplicateContext.discovery_metadata.scan_threshold_percent).toFixed(2)}%</dd></div>{/if}
+        <div><dt>Matching type</dt><dd>{duplicateContext.classification.replaceAll('_', ' ')}</dd></div>
         <div><dt>Batch eligible</dt><dd>{duplicateContext.eligible ? 'Yes' : 'No'}</dd></div>
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
         <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{duplicateContext.recommended_keeper_asset_id === null ? 'No unique recommendation' : automaticRuleRespected ? 'Yes' : 'No — manually overridden'}</dd></div>
