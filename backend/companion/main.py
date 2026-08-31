@@ -80,6 +80,8 @@ from companion.duplicate_schema import (
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
     ExactDuplicateGroup,
+    SimilarityScanRequest,
+    SimilarityScanTaskStart,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
@@ -110,6 +112,8 @@ from companion.relation_schema import (
     TagUpdateRequest,
 )
 from companion.similarity_repository import SimilarityRepository
+from companion.similarity_scan_repository import SimilarityScanRepository
+from companion.similarity_scan_service import SimilarityScanService, SimilarityScanTaskHandler
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
     SyncCoordinatorStatus,
@@ -138,6 +142,9 @@ def create_app(
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
     similarity_repository = SimilarityRepository(database) if database is not None else None
+    similarity_scan_repository = (
+        SimilarityScanRepository(database) if database is not None else None
+    )
     action_repository = ActionRepository(database) if database is not None else None
     duplicate_review_repository = (
         DuplicateReviewRepository(database) if database is not None else None
@@ -273,6 +280,26 @@ def create_app(
             )
         )
         task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))
+    similarity_scan_service = (
+        SimilarityScanService(task_coordinator)
+        if task_coordinator is not None
+        and integrity_repository is not None
+        and similarity_repository is not None
+        and similarity_scan_repository is not None
+        else None
+    )
+    if similarity_scan_service is not None:
+        assert task_coordinator is not None
+        assert integrity_repository is not None
+        assert similarity_repository is not None
+        assert similarity_scan_repository is not None
+        task_coordinator.register_handler(
+            SimilarityScanTaskHandler(
+                integrity_repository,
+                similarity_repository,
+                similarity_scan_repository,
+            )
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
@@ -453,6 +480,14 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return duplicate_service
+
+    def require_similarity_scan_service() -> SimilarityScanService:
+        if similarity_scan_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return similarity_scan_service
 
     def map_action_error(error: RuntimeError) -> HTTPException:
         if isinstance(error, ActionPlanNotFoundError):
@@ -1240,6 +1275,16 @@ def create_app(
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/similarity-scan",
+        response_model=SimilarityScanTaskStart,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def start_similarity_scan(
+        request: SimilarityScanRequest,
+    ) -> SimilarityScanTaskStart:
+        return await require_similarity_scan_service().start(request)
 
     @app.put(
         "/api/assets/duplicates/cross-source/review",

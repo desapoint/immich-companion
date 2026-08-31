@@ -214,6 +214,7 @@ class SimilarityScanRecord(Base):
     maximum_perceptual_distance: Mapped[int] = mapped_column(Integer, nullable=False)
     maximum_aspect_difference: Mapped[float] = mapped_column(Float, nullable=False)
     maximum_neighbors_per_asset: Mapped[int] = mapped_column(Integer, nullable=False)
+    maximum_matches: Mapped[int] = mapped_column(Integer, nullable=False)
     asset_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     match_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

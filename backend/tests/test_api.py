@@ -238,9 +238,14 @@ def test_cross_source_duplicate_api_requires_companion_database() -> None:
     with TestClient(create_app(settings(), pong_transport())) as client:
         result = client.get("/api/assets/duplicates/cross-source")
         start = client.post("/api/assets/duplicates/cross-source/analyze")
+        similarity_scan = client.post(
+            "/api/assets/duplicates/similarity-scan",
+            json={},
+        )
 
     assert result.status_code == 503
     assert start.status_code == 503
+    assert similarity_scan.status_code == 503
 
 
 def test_restore_listing_is_paged_directly_from_immich() -> None:

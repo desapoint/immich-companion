@@ -22,6 +22,7 @@ class SimilarityScanParameters:
     maximum_perceptual_distance: int
     maximum_aspect_difference: float
     maximum_neighbors_per_asset: int
+    maximum_matches: int
 
     def __post_init__(self) -> None:
         if not 0 <= self.similarity_threshold <= 100:
@@ -32,6 +33,8 @@ class SimilarityScanParameters:
             raise ValueError("maximum_aspect_difference must be between 0 and 1")
         if self.maximum_neighbors_per_asset < 1:
             raise ValueError("maximum_neighbors_per_asset must be positive")
+        if not 1 <= self.maximum_matches <= 50_000:
+            raise ValueError("maximum_matches must be between 1 and 50000")
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,6 +98,7 @@ class SimilarityScanRepository:
             maximum_perceptual_distance=parameters.maximum_perceptual_distance,
             maximum_aspect_difference=parameters.maximum_aspect_difference,
             maximum_neighbors_per_asset=parameters.maximum_neighbors_per_asset,
+            maximum_matches=parameters.maximum_matches,
             asset_count=0,
             candidate_count=0,
             match_count=0,
@@ -193,6 +197,7 @@ class SimilarityScanRepository:
                 maximum_perceptual_distance=record.maximum_perceptual_distance,
                 maximum_aspect_difference=record.maximum_aspect_difference,
                 maximum_neighbors_per_asset=record.maximum_neighbors_per_asset,
+                maximum_matches=record.maximum_matches,
             ),
             asset_count=record.asset_count,
             candidate_count=record.candidate_count,

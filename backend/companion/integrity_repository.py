@@ -12,7 +12,7 @@ from companion.database import DatabaseManager
 from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION, FileIntegrityResult
 from companion.integrity_schema import AssetIntegrityReport, IntegrityFreshness
-from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
+from companion.models import AssetIntegrityReportRecord, AssetRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
@@ -128,6 +128,29 @@ class IntegrityRepository:
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
         return {record.asset_id: record for record in records}
+
+    async def list_current_similarity_features(self) -> list[AssetSimilarityFeatureRecord]:
+        """Return current cached image features in stable order for bounded discovery."""
+
+        statement = (
+            select(AssetSimilarityFeatureRecord)
+            .join(AssetRecord, AssetRecord.id == AssetSimilarityFeatureRecord.asset_id)
+            .where(
+                AssetRecord.asset_type == "IMAGE",
+                AssetRecord.is_trashed.is_(False),
+                AssetRecord.is_offline.is_(False),
+                AssetRecord.file_size_bytes.is_not(None),
+                AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
+                AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetSimilarityFeatureRecord.source_file_modified_at
+                == AssetRecord.file_modified_at,
+                AssetSimilarityFeatureRecord.source_file_size_bytes
+                == AssetRecord.file_size_bytes,
+            )
+            .order_by(AssetSimilarityFeatureRecord.asset_id)
+        )
+        async with self._database.sessions() as session:
+            return list((await session.scalars(statement)).all())
 
     async def save(
         self,

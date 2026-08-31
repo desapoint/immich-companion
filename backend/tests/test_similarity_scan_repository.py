@@ -62,6 +62,7 @@ def test_rejects_duplicate_and_self_pairs() -> None:
         ("maximum_perceptual_distance", 65),
         ("maximum_aspect_difference", 1.1),
         ("maximum_neighbors_per_asset", 0),
+        ("maximum_matches", 50_001),
     ],
 )
 def test_rejects_unsafe_scan_parameters(field: str, value: int | float) -> None:
@@ -73,6 +74,7 @@ def test_rejects_unsafe_scan_parameters(field: str, value: int | float) -> None:
         "maximum_perceptual_distance": 12,
         "maximum_aspect_difference": 0.05,
         "maximum_neighbors_per_asset": 8,
+        "maximum_matches": 5000,
         field: value,
     }
     with pytest.raises(ValueError):
