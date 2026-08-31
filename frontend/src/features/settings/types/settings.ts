@@ -15,3 +15,5 @@ export interface SyncRuntimeSettings {
   full_batch_size: number;
   full_min_batch_delay_seconds: number;
 }
+
+export type { DuplicatePolicy, ExactFilePolicyAction, ImmichLibraryOption } from '../../../lib/types/duplicatePolicy';

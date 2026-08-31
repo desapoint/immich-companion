@@ -67,6 +67,7 @@ from companion.asset_schema import (
 from companion.asset_service import AssetSyncService, batches
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
+from companion.duplicate_policy import DuplicatePolicy, DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
@@ -83,7 +84,7 @@ from companion.duplicate_service import (
     CrossSourceDuplicateTaskHandler,
     DuplicateResolutionTaskHandler,
 )
-from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
+from companion.immich import ImmichApiClient, ImmichApiError, ImmichLibrary, ImmichTag
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_schema import (
     AssetIntegrityAnalyzeRequest,
@@ -136,6 +137,9 @@ def create_app(
     action_repository = ActionRepository(database) if database is not None else None
     duplicate_review_repository = (
         DuplicateReviewRepository(database) if database is not None else None
+    )
+    duplicate_policy_repository = (
+        DuplicatePolicyRepository(database) if database is not None else None
     )
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
@@ -239,6 +243,7 @@ def create_app(
             task_coordinator,
             runtime_sync_settings,
             duplicate_review_repository,
+            duplicate_policy_repository,
         )
         if asset_repository is not None
         and integrity_repository is not None
@@ -608,6 +613,35 @@ def create_app(
         if database is None:
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
         return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
+
+    @app.get("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
+    async def duplicate_policy_settings() -> DuplicatePolicy:
+        if duplicate_policy_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return await duplicate_policy_repository.get()
+
+    @app.put("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
+    async def update_duplicate_policy_settings(
+        request: DuplicatePolicy,
+    ) -> DuplicatePolicy:
+        if duplicate_policy_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return await duplicate_policy_repository.update(request)
+
+    @app.get(
+        "/api/settings/duplicates/libraries",
+        response_model=list[ImmichLibrary],
+    )
+    async def duplicate_policy_libraries() -> list[ImmichLibrary]:
+        try:
+            libraries = await require_immich().list_libraries()
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        return [
+            library
+            for library in libraries
+            if library.library_type is None or library.library_type.upper() == "EXTERNAL"
+        ]
 
     @app.put("/api/settings/sync/runtime")
     async def update_sync_runtime_settings(

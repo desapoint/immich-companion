@@ -1,4 +1,5 @@
 import type { SyncRuntimeSettings, SyncSchedule } from '../types/settings';
+export { loadDuplicatePolicy, loadImmichLibraries, saveDuplicatePolicy } from '../../../lib/api/duplicatePolicyApi';
 
 async function requestRuntimeSettings(
   method: 'GET' | 'PUT', value?: SyncRuntimeSettings,

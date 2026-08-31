@@ -17,6 +17,7 @@ from companion.action_service import (
 )
 from companion.asset_repository import AssetRepository
 from companion.config import Settings
+from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
@@ -170,6 +171,7 @@ class CrossSourceDuplicateService:
         tasks: TaskCoordinator,
         runtime_sync_settings: object,
         reviews: DuplicateReviewRepository | None = None,
+        policy: DuplicatePolicyRepository | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -179,6 +181,15 @@ class CrossSourceDuplicateService:
         self._tasks = tasks
         self._runtime_sync_settings = runtime_sync_settings
         self._reviews = reviews
+        self._policy = policy
+
+    async def _options(
+        self,
+        options: DuplicateAnalysisOptions | None,
+    ) -> DuplicateAnalysisOptions:
+        if options is not None or self._policy is None:
+            return options or DuplicateAnalysisOptions()
+        return (await self._policy.get()).analysis_options()
 
     async def start(
         self,
@@ -213,7 +224,7 @@ class CrossSourceDuplicateService:
         self,
         options: DuplicateAnalysisOptions | None = None,
     ) -> CrossSourceDuplicateResult:
-        options = options or DuplicateAnalysisOptions()
+        options = await self._options(options)
         _, _, result = await self._snapshot(options)
         return result
 
@@ -223,11 +234,11 @@ class CrossSourceDuplicateService:
     ) -> CrossSourceDuplicateResult:
         """Return live Immich groups and idempotently queue missing verification."""
 
-        options = options or DuplicateAnalysisOptions()
+        options = await self._options(options)
         groups, reports, result = await self._snapshot(options)
         pending_count = len(self._pending_verification(groups, reports, options))
         task_id: UUID | None = None
-        if pending_count:
+        if pending_count and options.analyze_automatically:
             task_id = (await self.start(options)).task_id
         return result.model_copy(
             update={
@@ -431,7 +442,12 @@ class CrossSourceDuplicateService:
             )
             decision = decide_group(
                 candidate,
-                ResolutionPolicy(keeper_preference=options.keeper_policy),
+                ResolutionPolicy(
+                    keeper_preference=options.keeper_policy,
+                    automatic_handling=options.automatic_handling_enabled,
+                    preselect_safe_groups=options.preselect_safe_groups,
+                    exact_file_action=options.exact_file_action,
+                ),
             )
             reference_hash = (
                 hashes.get(decision.recommended_primary_asset_id)

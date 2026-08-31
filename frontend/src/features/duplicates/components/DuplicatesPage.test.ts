@@ -11,7 +11,9 @@ describe('DuplicatesPage', () => {
 
     expect(body).toContain('id="duplicate-keeper-policy"');
     expect(body).toContain('aria-haspopup="listbox"');
-    expect(body).toContain('Most recently uploaded');
+    expect(body).toContain('Prefer uploads');
+    expect(body).toContain('id="duplicate-exact-policy"');
+    expect(body).toContain('id="duplicate-library-filter"');
     expect(body).not.toContain('<select');
     expect(body).toContain('Verify upload streams too');
     expect(body).toContain('Apply automatic rules');

@@ -120,7 +120,6 @@ class ImmichAsset(ImmichModel):
     people: list[dict[str, Any]] = Field(default_factory=list)
     tags: list[dict[str, Any]] = Field(default_factory=list)
     stack: dict[str, Any] | None = None
-
     @property
     def includes_tags(self) -> bool:
         """Whether the response explicitly included the tags relationship."""
@@ -133,6 +132,15 @@ class ImmichAsset(ImmichModel):
 
         value = (self.exif_info or {}).get("fileSizeInByte")
         return value if isinstance(value, int) and value >= 0 else None
+
+
+class ImmichLibrary(ImmichModel):
+    """Compact Immich library descriptor used by policy selectors."""
+
+    id: UUID
+    name: str
+    library_type: str | None = Field(default=None, alias="type")
+    asset_count: int | None = Field(default=None, alias="assetCount")
 
 
 class ImmichAlbum(ImmichModel):
@@ -860,6 +868,12 @@ class ImmichApiClient:
 
         response = await self._request("GET", "/api/albums", operation="list albums")
         return [ImmichAlbum.model_validate(payload) for payload in response.json()]
+
+    async def list_libraries(self) -> list[ImmichLibrary]:
+        """Fetch libraries through Immich for user-facing policy selection."""
+
+        response = await self._request("GET", "/api/libraries", operation="list libraries")
+        return [ImmichLibrary.model_validate(payload) for payload in response.json()]
 
     async def create_album(self, name: str, description: str = "") -> ImmichAlbum:
         response = await self._request(

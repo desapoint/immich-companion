@@ -79,6 +79,7 @@ class ResolutionPolicy:
     ]
     automatic_handling: bool = True
     preselect_safe_groups: bool = True
+    exact_file_action: Literal["resolve", "keep_all", "stack_all", "review"] = "resolve"
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,14 +170,32 @@ def decide_group(group: CandidateGroup, policy: ResolutionPolicy) -> GroupDecisi
         else:
             reasons.append(DecisionReason.MULTIPLE_EQUAL_CANDIDATES)
 
-    auto_resolvable = winner is not None and policy.automatic_handling
+    recommended_action = (
+        GroupAction.NONE
+        if policy.exact_file_action == "review"
+        else GroupAction(policy.exact_file_action)
+    )
+    primary_required = recommended_action in {GroupAction.RESOLVE, GroupAction.STACK_ALL}
+    auto_resolvable = (
+        recommended_action is not GroupAction.NONE
+        and policy.automatic_handling
+        and (winner is not None or not primary_required)
+        and (
+            recommended_action is not GroupAction.STACK_ALL
+            or all(member.available for member in group.members)
+        )
+    )
     auto_selected = auto_resolvable and policy.preselect_safe_groups
     return GroupDecision(
-        recommended_action=GroupAction.RESOLVE,
+        recommended_action=recommended_action,
         recommended_primary_asset_id=winner.asset_id if winner else None,
         recommendation_reason_codes=tuple(reasons),
         auto_resolvable=auto_resolvable,
         auto_selected=auto_selected,
-        action_source=DecisionSource.AUTOMATIC,
+        action_source=(
+            DecisionSource.AUTOMATIC
+            if recommended_action is not GroupAction.NONE
+            else DecisionSource.NONE
+        ),
         primary_source=(DecisionSource.AUTOMATIC if winner else DecisionSource.NONE),
     )

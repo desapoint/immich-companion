@@ -353,6 +353,24 @@ class SyncRuntimeSettingsRecord(Base):
     )
 
 
+class DuplicatePolicyRecord(Base):
+    """Singleton, user-editable policy for Immich duplicate review."""
+
+    __tablename__ = "duplicate_policy"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    automatic_handling_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    preselect_safe_groups: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    exact_file_action: Mapped[str] = mapped_column(String(24), nullable=False)
+    keeper_policy: Mapped[str] = mapped_column(String(24), nullable=False)
+    analyze_automatically: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    verify_upload_streams: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    external_library_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ActionPlanRecord(Base):
     """Immutable reviewed action target plus its execution audit."""
 

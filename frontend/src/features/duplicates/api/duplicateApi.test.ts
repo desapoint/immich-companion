@@ -12,6 +12,10 @@ const options = {
   keeper_policy: 'prefer_upload' as const,
   external_library_ids: ['library-1'],
   verify_upload_streams: false,
+  automatic_handling_enabled: true,
+  preselect_safe_groups: true,
+  exact_file_action: 'resolve' as const,
+  analyze_automatically: true,
 };
 
 describe('duplicate API', () => {

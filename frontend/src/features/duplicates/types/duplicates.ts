@@ -1,4 +1,6 @@
-export type DuplicateKeeperPolicy = 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
+import type { DuplicateKeeperPolicy, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
+
+export type { DuplicateKeeperPolicy } from '../../../lib/types/duplicatePolicy';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
 export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
 export type DuplicateActionSelection = DuplicatePlanAction | 'automatic';
@@ -7,6 +9,10 @@ export interface DuplicateAnalysisOptions {
   keeper_policy: DuplicateKeeperPolicy;
   external_library_ids: string[];
   verify_upload_streams: boolean;
+  automatic_handling_enabled: boolean;
+  preselect_safe_groups: boolean;
+  exact_file_action: ExactFilePolicyAction;
+  analyze_automatically: boolean;
 }
 
 export interface DuplicateMember {

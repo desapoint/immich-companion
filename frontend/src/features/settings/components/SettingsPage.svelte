@@ -2,8 +2,11 @@
   import { onMount } from 'svelte';
 
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
-  import { loadSyncRuntimeSettings, loadSyncSchedules, saveSyncRuntimeSettings, saveSyncSchedule } from '../api/settingsApi';
-  import type { SyncRuntimeSettings, SyncSchedule } from '../types/settings';
+  import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import type { SelectOption } from '../../../lib/types/ui';
+  import { loadDuplicatePolicy, loadImmichLibraries, loadSyncRuntimeSettings, loadSyncSchedules, saveDuplicatePolicy, saveSyncRuntimeSettings, saveSyncSchedule } from '../api/settingsApi';
+  import type { DuplicatePolicy, ImmichLibraryOption, SyncRuntimeSettings, SyncSchedule } from '../types/settings';
 
   const defaults: Record<string, string> = {
     'asset-sync-incremental': '*/15 * * * *',
@@ -29,6 +32,26 @@
   let runtime = $state<SyncRuntimeSettings | null>(null);
   let runtimeDraft = $state<SyncRuntimeSettings>({ full_batch_size: 50, full_min_batch_delay_seconds: 0.2 });
   let runtimeSaving = $state(false);
+  let duplicatePolicy = $state<DuplicatePolicy | null>(null);
+  let duplicateDraft = $state<DuplicatePolicy | null>(null);
+  let libraries = $state<ImmichLibraryOption[]>([]);
+  let duplicateSaving = $state(false);
+  const exactActionOptions: SelectOption[] = [
+    { value: 'resolve', label: 'Resolve exact files' },
+    { value: 'keep_all', label: 'Keep all exact copies' },
+    { value: 'stack_all', label: 'Stack exact copies' },
+    { value: 'review', label: 'Always review' },
+  ];
+  const keeperOptions: SelectOption[] = [
+    { value: 'prefer_upload', label: 'Prefer Immich uploads' },
+    { value: 'prefer_external', label: 'Prefer external files' },
+    { value: 'most_recent', label: 'Most recently uploaded' },
+    { value: 'first', label: 'First Immich result' },
+  ];
+  const libraryOptions = $derived<SelectOption[]>(libraries.map((library) => ({
+    value: library.id,
+    label: `${library.name}${library.assetCount === null ? '' : ` · ${library.assetCount} assets`}`,
+  })));
 
   function hydrate(items: SyncSchedule[]): void {
     schedules = items;
@@ -74,12 +97,33 @@
     }
   }
 
+  async function saveDuplicates(): Promise<void> {
+    if (!duplicateDraft) return;
+    duplicateSaving = true;
+    message = null;
+    error = null;
+    try {
+      duplicatePolicy = await saveDuplicatePolicy(duplicateDraft);
+      duplicateDraft = { ...duplicatePolicy };
+      message = 'Duplicate handling policy saved.';
+    } catch (requestError) {
+      error = requestError instanceof Error ? requestError.message : 'Could not save duplicate policy.';
+    } finally {
+      duplicateSaving = false;
+    }
+  }
+
   onMount(async () => {
     try {
-      const [loadedSchedules, loadedRuntime] = await Promise.all([loadSyncSchedules(), loadSyncRuntimeSettings()]);
+      const [loadedSchedules, loadedRuntime, loadedPolicy, loadedLibraries] = await Promise.all([
+        loadSyncSchedules(), loadSyncRuntimeSettings(), loadDuplicatePolicy(), loadImmichLibraries(),
+      ]);
       hydrate(loadedSchedules);
       runtime = loadedRuntime;
       runtimeDraft = { ...loadedRuntime };
+      duplicatePolicy = loadedPolicy;
+      duplicateDraft = { ...loadedPolicy };
+      libraries = loadedLibraries;
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Could not load settings.';
     } finally {
@@ -112,8 +156,29 @@
       </div>
       <button class="save" type="button" disabled={runtimeSaving || !Number.isInteger(runtimeDraft.full_batch_size) || runtimeDraft.full_batch_size < 1 || runtimeDraft.full_batch_size > 500 || runtimeDraft.full_min_batch_delay_seconds < 0 || runtimeDraft.full_min_batch_delay_seconds > 60} onclick={() => void saveRuntime()}>{runtimeSaving ? 'Saving…' : 'Save load settings'}</button>
     </article>
+    {#if duplicateDraft}
+      <article class="duplicate-policy-card" aria-labelledby="duplicate-policy-title">
+        <div>
+          <p class="eyebrow">Duplicate review</p>
+          <h2 id="duplicate-policy-title">Automatic handling policy</h2>
+          <p class="hint">These defaults recompute automatic recommendations only. Saved manual group choices remain unchanged. Delete all is always manual.</p>
+        </div>
+        <div class="policy-fields">
+          <SelectField id="duplicate-exact-action" label="Exact-file action" value={duplicateDraft.exact_file_action} options={exactActionOptions} onchange={(value) => duplicateDraft = { ...duplicateDraft!, exact_file_action: value as DuplicatePolicy['exact_file_action'] }} />
+          <SelectField id="duplicate-keeper-policy" label="Primary rule" value={duplicateDraft.keeper_policy} options={keeperOptions} onchange={(value) => duplicateDraft = { ...duplicateDraft!, keeper_policy: value as DuplicatePolicy['keeper_policy'] }} />
+          <MultiSelectField id="duplicate-library-policy" label="External libraries" values={duplicateDraft.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable onchange={(values) => duplicateDraft = { ...duplicateDraft!, external_library_ids: values }} />
+        </div>
+        <div class="policy-toggles">
+          <Checkbox checked={duplicateDraft.automatic_handling_enabled} label="Enable automatic recommendations" variant="switch" onchange={(checked) => duplicateDraft = { ...duplicateDraft!, automatic_handling_enabled: checked }} />
+          <Checkbox checked={duplicateDraft.preselect_safe_groups} label="Preselect safe groups" variant="switch" onchange={(checked) => duplicateDraft = { ...duplicateDraft!, preselect_safe_groups: checked }} />
+          <Checkbox checked={duplicateDraft.analyze_automatically} label="Analyze candidate files automatically" variant="switch" onchange={(checked) => duplicateDraft = { ...duplicateDraft!, analyze_automatically: checked }} />
+          <Checkbox checked={duplicateDraft.verify_upload_streams} label="Verify upload streams too" variant="switch" onchange={(checked) => duplicateDraft = { ...duplicateDraft!, verify_upload_streams: checked }} />
+        </div>
+        <button class="save" type="button" disabled={duplicateSaving} onclick={() => void saveDuplicates()}>{duplicateSaving ? 'Saving…' : 'Save duplicate policy'}</button>
+      </article>
+    {/if}
     <div class="cards">
-      {#each schedules as schedule}
+      {#each schedules as schedule (schedule.id)}
         {@const draft = drafts[schedule.name]}
         <article class="schedule-card">
           <div class="card-heading">
@@ -128,7 +193,7 @@
             <input id={`cron-${schedule.name}`} value={draft?.cron_expression ?? ''} oninput={(event) => setDraft(schedule.name, { cron_expression: (event.currentTarget as HTMLInputElement).value })} spellcheck="false" />
           </label>
           <div class="presets" aria-label="Common schedules">
-            {#each common as option}
+            {#each common as option (option.value)}
               <button type="button" class:chosen={draft?.cron_expression === option.value} onclick={() => setDraft(schedule.name, { cron_expression: option.value })}>{option.label}</button>
             {/each}
           </div>
@@ -151,10 +216,12 @@
   h2 { font-size: 1.25rem; }
   .intro > p:last-child { color: var(--color-ink-muted); line-height: 1.6; }
   .cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; }
-  .schedule-card, .runtime-card { display: grid; gap: 1.1rem; padding: 1.25rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); }
+  .schedule-card, .runtime-card, .duplicate-policy-card { display: grid; gap: 1.1rem; padding: 1.25rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); }
   .runtime-card { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .runtime-card .hint { max-width: 48rem; line-height: 1.5; }
   .runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(10rem, 1fr)); gap: .75rem; grid-column: 1 / -1; }
+  .policy-fields { display: grid; grid-template-columns: repeat(2, minmax(12rem, 1fr)); gap: .75rem; }
+  .policy-toggles { display: grid; grid-template-columns: repeat(2, minmax(12rem, 1fr)); gap: .75rem; }
   .card-heading { display: flex; justify-content: space-between; gap: 1rem; }
   .field { display: grid; gap: 0.45rem; color: var(--color-ink-muted); font-size: 0.78rem; font-weight: 700; }
   .field input { width: 100%; padding: 0.7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: 0.9rem ui-monospace, monospace; }
@@ -166,5 +233,5 @@
   .hint, .state, .success { margin: 0; color: var(--color-ink-muted); font-size: 0.78rem; }
   .error { color: var(--color-danger, #b42318); }
   .success { color: var(--color-accent-strong); font-weight: 700; }
-  @media (max-width: 46rem) { .cards, .runtime-fields { grid-template-columns: 1fr; } .runtime-card { grid-template-columns: 1fr; } }
+  @media (max-width: 46rem) { .cards, .runtime-fields, .policy-fields, .policy-toggles { grid-template-columns: 1fr; } .runtime-card { grid-template-columns: 1fr; } }
 </style>

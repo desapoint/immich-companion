@@ -12,6 +12,7 @@ from companion.integrity import DetectedFormat, IntegrityClassification
 from companion.integrity_schema import IntegrityFreshness
 
 DuplicateKeeperPolicy = Literal["most_recent", "prefer_upload", "prefer_external", "first"]
+DuplicateExactFilePolicyAction = Literal["resolve", "keep_all", "stack_all", "review"]
 DuplicateGroupStatus = Literal["exact", "unverified", "mismatch", "ineligible"]
 DuplicateMemberStatus = Literal["matching", "mismatch", "unverified"]
 DuplicateDiscoverySource = Literal["immich_duplicate", "companion_similarity"]
@@ -46,6 +47,10 @@ class DuplicateAnalysisOptions(BaseModel):
     keeper_policy: DuplicateKeeperPolicy = "most_recent"
     external_library_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     verify_upload_streams: bool = False
+    automatic_handling_enabled: bool = True
+    preselect_safe_groups: bool = True
+    exact_file_action: DuplicateExactFilePolicyAction = "resolve"
+    analyze_automatically: bool = True
 
     @model_validator(mode="after")
     def unique_libraries(self) -> DuplicateAnalysisOptions:

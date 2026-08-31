@@ -140,3 +140,32 @@ def test_content_mismatch_has_an_accurate_reason() -> None:
     )
 
     assert decision.recommendation_reason_codes == (DecisionReason.CONTENT_MISMATCH,)
+
+
+def test_keep_all_policy_is_safe_even_when_no_unique_primary_exists() -> None:
+    decision = decide_group(
+        exact(candidate(A, "upload"), candidate(B, "upload")),
+        ResolutionPolicy(
+            keeper_preference="prefer_upload",
+            exact_file_action="keep_all",
+        ),
+    )
+
+    assert decision.recommended_action is GroupAction.KEEP_ALL
+    assert decision.recommended_primary_asset_id is None
+    assert decision.auto_resolvable is True
+    assert decision.auto_selected is True
+
+
+def test_review_policy_never_preselects_exact_groups() -> None:
+    decision = decide_group(
+        exact(candidate(A, "upload"), candidate(B, "external")),
+        ResolutionPolicy(
+            keeper_preference="prefer_upload",
+            exact_file_action="review",
+        ),
+    )
+
+    assert decision.recommended_action is GroupAction.NONE
+    assert decision.auto_resolvable is False
+    assert decision.auto_selected is False

@@ -5,7 +5,9 @@
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import { loadDuplicatePolicy, loadImmichLibraries, saveDuplicatePolicy } from '../../../lib/api/duplicatePolicyApi';
   import type { SelectOption } from '../../../lib/types/ui';
   import GroupEvidencePills from './GroupEvidencePills.svelte';
   import {
@@ -42,6 +44,12 @@
     { value: 'prefer_external', label: 'Prefer external files' },
     { value: 'first', label: 'First Immich result' },
   ];
+  const exactActionOptions: SelectOption[] = [
+    { value: 'resolve', label: 'Resolve exact files' },
+    { value: 'keep_all', label: 'Keep all exact copies' },
+    { value: 'stack_all', label: 'Stack exact copies' },
+    { value: 'review', label: 'Always review' },
+  ];
   const bulkActionOptions: SelectOption[] = [
     { value: 'resolve', label: 'Resolve — keep each primary' },
     { value: 'keep_all', label: 'Keep all copies' },
@@ -50,15 +58,19 @@
     { value: 'none', label: 'Skip / review later' },
   ];
   const defaultOptions: DuplicateAnalysisOptions = {
-    keeper_policy: 'most_recent',
+    keeper_policy: 'prefer_upload',
     external_library_ids: [],
     verify_upload_streams: false,
+    automatic_handling_enabled: true,
+    preselect_safe_groups: true,
+    exact_file_action: 'resolve',
+    analyze_automatically: true,
   };
 
   let result = $state.raw<DuplicateResult | null>(null);
   let options = $state<DuplicateAnalysisOptions>({ ...defaultOptions });
   let appliedOptions = $state.raw<DuplicateAnalysisOptions>({ ...defaultOptions });
-  let libraryFilter = $state('');
+  let libraryOptions = $state<SelectOption[]>([]);
   let bulkAction = $state<DuplicatePlanAction>('keep_all');
   const selected = new SvelteSet<string>();
   let keeperOverrides = $state<Record<string, string>>({});
@@ -95,13 +107,7 @@
   );
 
   function configuredOptions(): DuplicateAnalysisOptions {
-    return {
-      ...options,
-      external_library_ids: libraryFilter
-        .split(',')
-        .map((value) => value.trim())
-        .filter(Boolean),
-    };
+    return { ...options };
   }
 
   async function load(): Promise<void> {
@@ -372,9 +378,24 @@
     selected.clear();
     selectionInitialized = false;
     try {
-      const started = await analyzeDuplicateGroups(nextOptions);
-      task = await loadDuplicateTask(started.task_id);
-      schedulePoll(started.task_id, 'analysis');
+      await saveDuplicatePolicy({
+        automatic_handling_enabled: nextOptions.automatic_handling_enabled,
+        preselect_safe_groups: nextOptions.preselect_safe_groups,
+        exact_file_action: nextOptions.exact_file_action,
+        keeper_policy: nextOptions.keeper_policy,
+        analyze_automatically: nextOptions.analyze_automatically,
+        verify_upload_streams: nextOptions.verify_upload_streams,
+        external_library_ids: nextOptions.external_library_ids,
+      });
+      if (nextOptions.analyze_automatically) {
+        const started = await analyzeDuplicateGroups(nextOptions);
+        task = await loadDuplicateTask(started.task_id);
+        schedulePoll(started.task_id, 'analysis');
+      } else {
+        busy = false;
+        message = 'Duplicate policy saved without starting candidate analysis.';
+        await load();
+      }
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not apply duplicate rules.';
@@ -389,7 +410,23 @@
   }
 
   onMount(() => {
-    void load();
+    void (async () => {
+      try {
+        const [policy, libraries] = await Promise.all([
+          loadDuplicatePolicy(),
+          loadImmichLibraries(),
+        ]);
+        options = { ...policy };
+        appliedOptions = { ...policy };
+        libraryOptions = libraries.map((library) => ({
+          value: library.id,
+          label: `${library.name}${library.assetCount === null ? '' : ` · ${library.assetCount} assets`}`,
+        }));
+      } catch (reason) {
+        error = reason instanceof Error ? reason.message : 'Could not load duplicate policy.';
+      }
+      await load();
+    })();
     return () => { if (pollTimer) clearTimeout(pollTimer); };
   });
 </script>
@@ -409,7 +446,8 @@
       disabled={busy}
       onchange={setPolicy}
     />
-    <label class="library-filter">External library IDs <input value={libraryFilter} oninput={(event) => libraryFilter = event.currentTarget.value} placeholder="Optional, comma-separated" disabled={busy} /></label>
+    <SelectField id="duplicate-exact-policy" label="Exact-file default" value={options.exact_file_action} options={exactActionOptions} disabled={busy} onchange={(value) => options.exact_file_action = value as DuplicateAnalysisOptions['exact_file_action']} />
+    <MultiSelectField id="duplicate-library-filter" label="External libraries" values={options.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable disabled={busy} onchange={(values) => options.external_library_ids = values} />
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
     <button class="apply-rules" type="button" disabled={busy || loading} onclick={() => void applyRules()}>Apply automatic rules</button>
     <div class="analysis-state">
@@ -510,14 +548,13 @@
   .page-intro span { color: var(--color-accent-strong); font-size: .68rem; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
   h1 { margin: .28rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.055em; line-height: .98; }
   .page-intro p { max-width: 44rem; margin: 0; color: var(--color-ink-muted); line-height: 1.65; }
-  .controls { display: grid; grid-template-columns: minmax(10rem, .7fr) minmax(16rem, 1.2fr) auto auto minmax(7rem, auto); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .controls { display: grid; grid-template-columns: repeat(3, minmax(12rem, 1fr)); gap: .8rem; align-items: end; padding: 1rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .apply-rules { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: var(--color-accent-strong); }
   .apply-rules:hover:not(:disabled) { color: var(--color-ink-inverse); border-color: var(--color-accent-strong); background: color-mix(in srgb, var(--color-accent-strong) 88%, black); }
   .analysis-state { display: grid; min-height: 2.45rem; align-content: center; gap: .12rem; padding: .35rem .65rem; border-left: 1px solid var(--color-border-subtle); }
   .analysis-state span { color: var(--color-ink-muted); font-size: .62rem; font-weight: 760; }
   .analysis-state strong { font-size: .72rem; }
-  label:not(.checkbox) { display: grid; gap: .35rem; color: var(--color-ink-muted); font-size: .72rem; font-weight: 760; }
-  input, button { min-height: 2.45rem; padding: .5rem .7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: inherit; }
+  button { min-height: 2.45rem; padding: .5rem .7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); font: inherit; }
   button { cursor: pointer; font-size: .75rem; font-weight: 780; }
   button:hover:not(:disabled) { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
   button:disabled { cursor: default; opacity: .5; }

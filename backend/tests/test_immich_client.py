@@ -688,3 +688,30 @@ async def test_duplicate_groups_and_resolution_use_immich_api_contract() -> None
             },
         ),
     ]
+
+
+@pytest.mark.asyncio
+async def test_library_catalog_is_typed_and_uses_immich_api() -> None:
+    library_id = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/libraries"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": str(library_id),
+                    "name": "External photos",
+                    "type": "EXTERNAL",
+                    "assetCount": 25000,
+                }
+            ],
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+
+    libraries = await client.list_libraries()
+
+    assert libraries[0].id == library_id
+    assert libraries[0].name == "External photos"
+    assert libraries[0].asset_count == 25000
