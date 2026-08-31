@@ -19,6 +19,7 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatekeeper?: (assetId: string) => void;
     onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
+    onduplicatesimilarityreference?: (assetId: string) => void;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
   }
@@ -36,6 +37,7 @@
     duplicateContext = null,
     onduplicatekeeper,
     onduplicateaction,
+    onduplicatesimilarityreference,
     onduplicatepreviousgroup,
     onduplicatenextgroup,
   }: Props = $props();
@@ -65,6 +67,7 @@
       && duplicateContext.recommended_keeper_asset_id !== null
       && duplicateContext.selected_keeper_asset_id === duplicateContext.recommended_keeper_asset_id,
   );
+  const currentSimilarity = $derived(currentDuplicateMember?.similarity ?? null);
 
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
@@ -148,6 +151,24 @@
       </dl>
 
       <h4>Current copy validation</h4>
+      {#if onduplicatesimilarityreference}
+        <button
+          class="similarity-reference-button"
+          class:active-reference={currentSimilarity?.state === 'reference'}
+          type="button"
+          disabled={duplicateContext.similarity_loading || currentSimilarity?.state === 'reference'}
+          onclick={() => onduplicatesimilarityreference?.(asset.id)}
+        >
+          {duplicateContext.similarity_loading
+            ? 'Changing similarity reference…'
+            : currentSimilarity?.state === 'reference'
+              ? 'Viewed copy is similarity reference'
+              : 'Use viewed as similarity reference'}
+        </button>
+        {#if duplicateContext.similarity_error}
+          <p class="error" role="alert">{duplicateContext.similarity_error}</p>
+        {/if}
+      {/if}
       <dl>
         <div><dt>Content SHA-1</dt><dd>{currentDuplicateMember?.verification ?? 'unverified'}</dd></div>
         <div><dt>Source</dt><dd>{currentDuplicateMember?.source_kind === 'external' ? 'External library' : 'Immich upload'}</dd></div>
@@ -158,7 +179,14 @@
         <div><dt>Integrity cache</dt><dd>{duplicateContext.current_integrity?.freshness ?? 'missing'}</dd></div>
         <div><dt>Structure</dt><dd>{duplicateContext.current_integrity?.report?.classification ?? 'Not analyzed'}</dd></div>
         <div><dt>Pixel identity</dt><dd>Planned validation</dd></div>
-        <div><dt>Visual similarity</dt><dd>Immich candidate; Companion validation planned</dd></div>
+        <div><dt>Visual similarity</dt><dd>{currentSimilarity?.state === 'reference' ? 'Reference (100%)' : currentSimilarity?.state === 'current' ? `${currentSimilarity.similarity_percent?.toFixed(2)}%` : currentSimilarity?.state ?? 'Not analyzed'}</dd></div>
+        {#if currentSimilarity?.state === 'current'}
+          <div><dt>Structure</dt><dd>{currentSimilarity.structural_percent?.toFixed(2)}%</dd></div>
+          <div><dt>Perceptual hash</dt><dd>{currentSimilarity.perceptual_percent?.toFixed(2)}%</dd></div>
+          <div><dt>Color</dt><dd>{currentSimilarity.color_percent?.toFixed(2)}%</dd></div>
+          <div><dt>Normalized thumbnail</dt><dd>{currentSimilarity.exact_thumbnail_match ? 'Exact' : 'Different'}</dd></div>
+          <div><dt>Similarity model</dt><dd>{currentSimilarity.model_version ?? 'Unknown'} · comparison v{currentSimilarity.comparison_version ?? '?'}</dd></div>
+        {/if}
         <div><dt>Metadata comparison</dt><dd>Planned validation</dd></div>
         {#if currentDuplicateMember?.content_checksum}<div><dt>Content hash</dt><dd>{currentDuplicateMember.content_checksum}</dd></div>{/if}
       </dl>
@@ -315,6 +343,9 @@
   .duplicate-group-navigation button { min-width: 0; min-height: 2rem; padding: .35rem .5rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .62rem; font-weight: 760; }
   .duplicate-group-navigation button:hover:not(:disabled), .duplicate-group-navigation button:focus-visible { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
   .duplicate-group-navigation button:disabled { opacity: .45; cursor: default; }
+  .similarity-reference-button { width: 100%; min-height: 2.15rem; margin-top: .5rem; padding: .4rem .55rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .64rem; font-weight: 780; }
+  .similarity-reference-button:hover:not(:disabled), .similarity-reference-button:focus-visible, .similarity-reference-button.active-reference { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
+  .similarity-reference-button:disabled { cursor: default; opacity: .65; }
   .section-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
   .duplicate-status { padding: .16rem .38rem; border-radius: 999px; background: var(--color-canvas); font-size: .58rem; font-weight: 820; text-transform: uppercase; }
   .duplicate-status.exact, .positive { color: var(--color-positive-ink); }

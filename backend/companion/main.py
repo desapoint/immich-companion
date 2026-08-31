@@ -77,6 +77,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
+    DuplicateSimilarityReferenceRequest,
     ExactDuplicateGroup,
 )
 from companion.duplicate_service import (
@@ -1249,6 +1250,24 @@ def create_app(
             return await require_duplicate_service().save_review(
                 request,
                 request.options,
+            )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/cross-source/{duplicate_id}/similarity-reference",
+        response_model=ExactDuplicateGroup,
+    )
+    async def switch_cross_source_similarity_reference(
+        duplicate_id: UUID,
+        request: DuplicateSimilarityReferenceRequest,
+    ) -> ExactDuplicateGroup:
+        try:
+            return await require_duplicate_service().similarity_reference(
+                duplicate_id,
+                request,
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error

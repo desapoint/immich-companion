@@ -8,12 +8,16 @@ from uuid import UUID
 
 import pytest
 
-from companion.action_service import DestructiveActionsDisabledError
+from companion.action_service import (
+    ActionPlanConflictError,
+    DestructiveActionsDisabledError,
+)
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
+    DuplicateSimilarityReferenceRequest,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
@@ -551,6 +555,56 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     assert result.groups[0].members[1].similarity is not None
     assert result.groups[0].members[1].similarity.similarity_percent == 96.5
     assert similarity.calls[0][0] == [[UPLOAD_1, EXTERNAL_1]]
+
+
+@pytest.mark.asyncio
+async def test_similarity_reference_is_scoped_to_group_members() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    pair = PairSimilarityEvidence(
+        similarity_percent=93.0,
+        structural_percent=94.0,
+        perceptual_percent=92.0,
+        color_percent=90.0,
+        exact_thumbnail_match=False,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        comparison_version=1,
+    )
+    similarity = FakeSimilarity({(EXTERNAL_1, UPLOAD_1): pair})
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports(
+            [report(EXTERNAL_1, content)],
+            [feature(UPLOAD_1), feature(EXTERNAL_1)],
+        ),
+        FakeActions(),
+        FakeTasks(),
+        SimpleNamespace(),
+        similarity=similarity,
+    )
+
+    result = await service.similarity_reference(
+        GROUP_ID,
+        DuplicateSimilarityReferenceRequest(reference_asset_id=EXTERNAL_1),
+    )
+
+    assert similarity.calls[0][0] == [[EXTERNAL_1, UPLOAD_1]]
+    assert result.members[0].similarity is not None
+    assert result.members[0].similarity.similarity_percent == 93.0
+    assert result.members[1].similarity is not None
+    assert result.members[1].similarity.state == "reference"
+
+    with pytest.raises(ActionPlanConflictError, match="not a member"):
+        await service.similarity_reference(
+            GROUP_ID,
+            DuplicateSimilarityReferenceRequest(reference_asset_id=UPLOAD_2),
+        )
 
 
 @pytest.mark.asyncio

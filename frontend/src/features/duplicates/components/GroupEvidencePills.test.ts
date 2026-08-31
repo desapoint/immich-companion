@@ -30,6 +30,18 @@ const member: DuplicateMember = {
     decoded_height: 3024,
     dimensions_match_immich: true,
   },
+  similarity: {
+    state: 'current',
+    reference_asset_id: '33333333-3333-4333-8333-333333333333',
+    similarity_percent: 98.25,
+    structural_percent: 99,
+    perceptual_percent: 97,
+    color_percent: 95,
+    exact_thumbnail_match: false,
+    model_version: 'appearance-v1',
+    feature_version: 1,
+    comparison_version: 1,
+  },
 };
 
 describe('GroupEvidencePills', () => {
@@ -42,6 +54,7 @@ describe('GroupEvidencePills', () => {
     expect(body).toContain('Byte match');
     expect(body).toContain('HEIC');
     expect(body).toContain('Decoded');
+    expect(body).toContain('98.3% similar');
   });
 
   it('distinguishes pending stale evidence from a corruption result', () => {

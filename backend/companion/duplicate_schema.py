@@ -204,3 +204,7 @@ class DuplicateReviewUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     manual_action: DuplicateGroupAction | None
     manual_primary_asset_id: UUID | None = None
+
+
+class DuplicateSimilarityReferenceRequest(BaseModel):
+    reference_asset_id: UUID

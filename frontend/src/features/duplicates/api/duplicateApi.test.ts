@@ -6,6 +6,7 @@ import {
   loadDuplicateGroups,
   planDuplicateResolution,
   saveDuplicateReview,
+  switchDuplicateSimilarityReference,
 } from './duplicateApi';
 
 const options = {
@@ -81,6 +82,23 @@ describe('duplicate API', () => {
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/assets/duplicates/cross-source/review',
       expect.objectContaining({ method: 'PUT', body: JSON.stringify(request) }),
+    );
+  });
+
+  it('requests a group-scoped similarity reference', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ duplicate_id: 'group/one' }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await switchDuplicateSimilarityReference('group/one', 'asset-2');
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/assets/duplicates/cross-source/group%2Fone/similarity-reference',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ reference_asset_id: 'asset-2' }),
+      }),
     );
   });
 });

@@ -50,6 +50,13 @@
   {#if decodeLabel}
     <span class:negative={evidence.decode_valid === false} class:positive={evidence.decode_valid === true} class="pill">{decodeLabel}</span>
   {/if}
+  {#if member.similarity?.state === 'reference'}
+    <span class="pill reference">Similarity reference</span>
+  {:else if member.similarity?.state === 'current'}
+    <span class="pill positive">{member.similarity.similarity_percent?.toFixed(1)}% similar</span>
+  {:else if member.similarity?.state === 'pending'}
+    <span class="pill pending">Similarity pending</span>
+  {/if}
 </div>
 
 <style>
@@ -58,4 +65,5 @@
   .positive, .match.matching { color: var(--color-positive-ink); background: var(--color-positive-surface); }
   .warning, .pending { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .negative, .match.mismatch { color: var(--color-negative-ink); background: var(--color-negative-surface); }
+  .reference { color: var(--color-accent-strong); background: var(--color-surface-soft); }
 </style>

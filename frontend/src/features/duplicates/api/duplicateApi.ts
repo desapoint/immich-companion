@@ -39,6 +39,16 @@ export function saveDuplicateReview(request: {
   );
 }
 
+export function switchDuplicateSimilarityReference(
+  duplicateId: string,
+  referenceAssetId: string,
+): Promise<ExactDuplicateGroup> {
+  return requestJson(
+    `/api/assets/duplicates/cross-source/${encodeURIComponent(duplicateId)}/similarity-reference`,
+    jsonBody({ reference_asset_id: referenceAssetId }),
+  );
+}
+
 export function loadDuplicateGroups(options: DuplicateAnalysisOptions): Promise<DuplicateResult> {
   return requestJson('/api/assets/duplicates/cross-source/search', jsonBody(options));
 }

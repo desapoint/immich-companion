@@ -16,6 +16,7 @@
     is_offline: boolean;
     is_stacked: boolean;
     immich_url: string | null;
+    similarity: DuplicateReviewContext['members'][number]['similarity'];
   }
 
   interface DuplicatePreviewReview {
@@ -35,6 +36,10 @@
     initial_index: number;
     onkeeperchange?: (assetId: string) => DuplicatePreviewReview['selected_action'];
     onactionchange?: (action: DuplicatePreviewReview['selected_action']) => void;
+    onsimilarityreferencechange?: (assetId: string) => Promise<Array<DuplicatePreviewMember & {
+      verification: 'matching' | 'mismatch' | 'unverified';
+      content_checksum: string | null;
+    }>>;
     onpreviousgroup?: () => void;
     onnextgroup?: () => void;
   }
@@ -45,7 +50,8 @@
   }
 
   let { review, onclose }: Props = $props();
-  const members = $derived(review.members);
+  let similarityMembers = $state.raw<DuplicatePreviewReview['members'] | null>(null);
+  const members = $derived(similarityMembers ?? review.members);
   let viewerIndex = $state(0);
   let detail = $state.raw<AssetDetail | null>(null);
   let integrity = $state.raw<AssetIntegrityState | null>(null);
@@ -54,6 +60,8 @@
   let detailGeneration = 0;
   let selectedKeeperId = $state<string | null>(null);
   let selectedAction = $state<DuplicatePreviewReview['selected_action']>('automatic');
+  let similarityLoading = $state(false);
+  let similarityError = $state<string | null>(null);
   const selectedIds = new Set<string>();
   const assets = $derived<AssetSummary[]>(members.map((member) => ({
     id: member.id,
@@ -107,8 +115,11 @@
       file_size_bytes: member.file_size_bytes,
       is_offline: member.is_offline,
       is_stacked: member.is_stacked,
+      similarity: member.similarity,
     })),
     current_integrity: integrity,
+    similarity_loading: similarityLoading,
+    similarity_error: similarityError,
   });
 
   async function navigate(index: number): Promise<void> {
@@ -149,6 +160,21 @@
     review.onactionchange?.(action);
   }
 
+  async function chooseSimilarityReference(assetId: string): Promise<void> {
+    if (!review.onsimilarityreferencechange || similarityLoading) return;
+    similarityLoading = true;
+    similarityError = null;
+    try {
+      similarityMembers = await review.onsimilarityreferencechange(assetId);
+    } catch (reason) {
+      similarityError = reason instanceof Error
+        ? reason.message
+        : 'Could not change the similarity reference.';
+    } finally {
+      similarityLoading = false;
+    }
+  }
+
   onMount(() => {
     selectedKeeperId = review.selected_keeper_asset_id;
     selectedAction = review.selected_action;
@@ -175,6 +201,7 @@
     {duplicateContext}
     onduplicatekeeper={chooseKeeper}
     onduplicateaction={chooseAction}
+    onduplicatesimilarityreference={(assetId) => void chooseSimilarityReference(assetId)}
     onduplicatepreviousgroup={review.onpreviousgroup}
     onduplicatenextgroup={review.onnextgroup}
     comparisonSource="duplicate"

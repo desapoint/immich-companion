@@ -18,6 +18,7 @@
     loadDuplicateTask,
     planDuplicateResolution,
     saveDuplicateReview,
+    switchDuplicateSimilarityReference,
   } from '../api/duplicateApi';
   import type {
     DuplicateAnalysisOptions,
@@ -345,6 +346,18 @@
         return actionFor(group);
       },
       onactionchange: (action) => setGroupAction(group, action),
+      onsimilarityreferencechange: async (assetId) => {
+        const updated = await switchDuplicateSimilarityReference(group.duplicate_id, assetId);
+        if (result) {
+          result = {
+            ...result,
+            groups: result.groups.map((candidate) => (
+              candidate.duplicate_id === updated.duplicate_id ? updated : candidate
+            )),
+          };
+        }
+        return updated.members;
+      },
       onpreviousgroup: groupIndex > 0
         ? () => onpreview(previewRequest(groups[groupIndex - 1], 0))
         : undefined,

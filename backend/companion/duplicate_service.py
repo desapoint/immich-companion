@@ -31,6 +31,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityEvidence,
+    DuplicateSimilarityReferenceRequest,
     ExactDuplicateGroup,
 )
 from companion.group_decision import (
@@ -287,11 +288,19 @@ class CrossSourceDuplicateService:
             for asset in group.assets
             if asset.asset_type == "IMAGE" and not asset.is_offline
         ]
-        features = (
+        loaded_features = (
             await self._reports.get_similarity_features(image_ids)
             if self._similarity is not None
             else {}
         )
+        source_assets = {
+            asset.id: asset for group in groups for asset in group.assets
+        }
+        features = {
+            asset_id: feature
+            for asset_id, feature in loaded_features.items()
+            if similarity_feature_freshness(feature, source_assets[asset_id]) == "current"
+        }
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
             edges = await self._similarity.reference_edges(
@@ -302,6 +311,66 @@ class CrossSourceDuplicateService:
         if self._reviews is not None:
             result = await self._apply_review_states(result)
         return groups, reports, features, result
+
+    async def similarity_reference(
+        self,
+        duplicate_id: UUID,
+        request: DuplicateSimilarityReferenceRequest,
+    ) -> ExactDuplicateGroup:
+        """Return one live group relative to a requested member-owned reference."""
+
+        if self._similarity is None:
+            raise RuntimeError("Duplicate similarity persistence is unavailable")
+        source = next(
+            (
+                group
+                for group in await self._live_groups()
+                if group.duplicate_id == duplicate_id
+            ),
+            None,
+        )
+        if source is None:
+            raise ActionPlanNotFoundError("The duplicate group is no longer available")
+        members = {asset.id: asset for asset in source.assets}
+        if request.reference_asset_id not in members:
+            raise ActionPlanConflictError(
+                "The similarity reference is not a member of this duplicate group"
+            )
+        options = await self._options(None)
+        report_ids = [
+            asset.id
+            for asset in source.assets
+            if asset.library_id is not None or options.verify_upload_streams
+        ]
+        reports = await self._reports.get_many(report_ids)
+        image_assets = [
+            asset
+            for asset in source.assets
+            if asset.asset_type == "IMAGE" and not asset.is_offline
+        ]
+        loaded_features = await self._reports.get_similarity_features(
+            [asset.id for asset in image_assets]
+        )
+        features = {
+            asset.id: loaded_features[asset.id]
+            for asset in image_assets
+            if asset.id in loaded_features
+            and similarity_feature_freshness(loaded_features[asset.id], asset)
+            == "current"
+        }
+        ordered_ids = [
+            request.reference_asset_id,
+            *(asset.id for asset in source.assets if asset.id != request.reference_asset_id),
+        ]
+        edges = await self._similarity.reference_edges([ordered_ids], features)
+        result = self.assemble([source], reports, options, self._immich)
+        reordered_source = source.model_copy(
+            update={"assets": [members[asset_id] for asset_id in ordered_ids]}
+        )
+        result = self._apply_similarity(result, [reordered_source], edges)
+        if self._reviews is not None:
+            result = await self._apply_review_states(result)
+        return result.groups[0]
 
     @staticmethod
     def _apply_similarity(

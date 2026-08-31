@@ -35,6 +35,7 @@ function member(overrides: Partial<DuplicateMember> = {}): DuplicateMember {
       decoded_height: 10,
       dimensions_match_immich: true,
     },
+    similarity: null,
     ...overrides,
   };
 }

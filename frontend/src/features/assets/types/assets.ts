@@ -398,6 +398,18 @@ export interface DuplicateReviewMember {
   file_size_bytes: number | null;
   is_offline: boolean;
   is_stacked: boolean;
+  similarity: {
+    state: 'reference' | 'current' | 'pending' | 'unavailable';
+    reference_asset_id: string;
+    similarity_percent: number | null;
+    structural_percent: number | null;
+    perceptual_percent: number | null;
+    color_percent: number | null;
+    exact_thumbnail_match: boolean | null;
+    model_version: string | null;
+    feature_version: number | null;
+    comparison_version: number | null;
+  } | null;
 }
 
 export interface DuplicateReviewContext {
@@ -412,6 +424,8 @@ export interface DuplicateReviewContext {
   recommendation_reason_codes: string[];
   members: DuplicateReviewMember[];
   current_integrity: AssetIntegrityState | null;
+  similarity_loading: boolean;
+  similarity_error: string | null;
 }
 
 export interface AssetIntegrityAnalyzeResponse {

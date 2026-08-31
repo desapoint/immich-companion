@@ -41,6 +41,20 @@ export interface DuplicateMember {
     decoded_height: number | null;
     dimensions_match_immich: boolean | null;
   };
+  similarity: DuplicateSimilarityEvidence | null;
+}
+
+export interface DuplicateSimilarityEvidence {
+  state: 'reference' | 'current' | 'pending' | 'unavailable';
+  reference_asset_id: string;
+  similarity_percent: number | null;
+  structural_percent: number | null;
+  perceptual_percent: number | null;
+  color_percent: number | null;
+  exact_thumbnail_match: boolean | null;
+  model_version: string | null;
+  feature_version: number | null;
+  comparison_version: number | null;
 }
 
 export interface ExactDuplicateGroup {
@@ -82,6 +96,7 @@ export interface DuplicatePreviewRequest {
   initial_index: number;
   onkeeperchange?: (assetId: string) => DuplicateActionSelection;
   onactionchange?: (action: DuplicateActionSelection) => void;
+  onsimilarityreferencechange?: (assetId: string) => Promise<DuplicateMember[]>;
   onpreviousgroup?: () => void;
   onnextgroup?: () => void;
 }

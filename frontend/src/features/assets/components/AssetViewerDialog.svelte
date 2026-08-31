@@ -98,6 +98,7 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatekeeper?: (assetId: string) => void;
     onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
+    onduplicatesimilarityreference?: (assetId: string) => void;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
     comparisonSource?: AssetComparisonSource;
@@ -153,6 +154,7 @@
     duplicateContext = null,
     onduplicatekeeper,
     onduplicateaction,
+    onduplicatesimilarityreference,
     onduplicatepreviousgroup,
     onduplicatenextgroup,
     comparisonSource = 'stack',
@@ -760,6 +762,7 @@
         {duplicateContext}
         {onduplicatekeeper}
         {onduplicateaction}
+        {onduplicatesimilarityreference}
         {onduplicatepreviousgroup}
         {onduplicatenextgroup}
       />
