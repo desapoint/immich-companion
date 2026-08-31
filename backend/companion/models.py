@@ -11,6 +11,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -147,6 +148,43 @@ class AssetSimilarityFeatureRecord(Base):
             "ix_asset_similarity_features_version",
             model_version,
             feature_version,
+        ),
+    )
+
+
+class AssetSimilarityEdgeRecord(Base):
+    """One sparse, versioned visual comparison between two active assets."""
+
+    __tablename__ = "asset_similarity_edges"
+
+    asset_id_low: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    asset_id_high: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    model_version: Mapped[str] = mapped_column(String(32), primary_key=True)
+    feature_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    comparison_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_low_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    asset_high_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    similarity_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    structural_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    perceptual_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    color_percent: Mapped[float] = mapped_column(Float, nullable=False)
+    exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        Index(
+            "ix_asset_similarity_edges_version",
+            model_version,
+            feature_version,
+            comparison_version,
         ),
     )
 

@@ -118,6 +118,19 @@ class IntegrityRepository:
         async with self._database.sessions() as session:
             return await session.get(AssetSimilarityFeatureRecord, asset_id)
 
+    async def get_similarity_features(
+        self,
+        asset_ids: list[UUID],
+    ) -> dict[UUID, AssetSimilarityFeatureRecord]:
+        if not asset_ids:
+            return {}
+        statement = select(AssetSimilarityFeatureRecord).where(
+            AssetSimilarityFeatureRecord.asset_id.in_(list(dict.fromkeys(asset_ids)))
+        )
+        async with self._database.sessions() as session:
+            records = list((await session.scalars(statement)).all())
+        return {record.asset_id: record for record in records}
+
     async def save(
         self,
         asset: ImmichAsset,

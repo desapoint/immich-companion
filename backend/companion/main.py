@@ -107,6 +107,7 @@ from companion.relation_schema import (
     TagManagementItem,
     TagUpdateRequest,
 )
+from companion.similarity_repository import SimilarityRepository
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
     SyncCoordinatorStatus,
@@ -134,6 +135,7 @@ def create_app(
     )
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
+    similarity_repository = SimilarityRepository(database) if database is not None else None
     action_repository = ActionRepository(database) if database is not None else None
     duplicate_review_repository = (
         DuplicateReviewRepository(database) if database is not None else None
@@ -244,6 +246,7 @@ def create_app(
             runtime_sync_settings,
             duplicate_review_repository,
             duplicate_policy_repository,
+            similarity_repository,
         )
         if asset_repository is not None
         and integrity_repository is not None
@@ -263,6 +266,7 @@ def create_app(
                 asset_repository,
                 integrity_repository,
                 integrity_handler,
+                include_similarity=True,
             )
         )
         task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))

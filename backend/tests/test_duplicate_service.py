@@ -21,7 +21,16 @@ from companion.duplicate_service import (
 )
 from companion.immich import ImmichAsset, ImmichDuplicateGroup
 from companion.integrity import ANALYZER_VERSION
-from companion.models import AssetIntegrityReportRecord
+from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
+from companion.similarity_features import (
+    SIMILARITY_FEATURE_VERSION,
+    SIMILARITY_MODEL_VERSION,
+)
+from companion.similarity_repository import (
+    PairSimilarityEvidence,
+    canonical_pair,
+    requested_reference_pairs,
+)
 from companion.task_coordinator import PermanentTaskError
 
 UPLOAD_1 = UUID("11111111-1111-4111-8111-111111111111")
@@ -108,6 +117,24 @@ def report(
         trailing_byte_count=0,
         immich_checksum_match=None,
         issues=[],
+        analyzed_at=MODIFIED,
+    )
+
+
+def feature(identifier: UUID, *, digest: str | None = None) -> AssetSimilarityFeatureRecord:
+    return AssetSimilarityFeatureRecord(
+        asset_id=identifier,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        source_file_modified_at=MODIFIED,
+        source_file_size_bytes=4,
+        source_sha256=digest or str(identifier).replace("-", "") * 2,
+        width=100,
+        height=80,
+        luminance_vector=bytes([128] * 256),
+        perceptual_hash="0" * 16,
+        color_histogram=bytes([5] * 48),
+        thumbnail_sha256=(digest or "a" * 64),
         analyzed_at=MODIFIED,
     )
 
@@ -235,6 +262,21 @@ def test_external_immich_checksum_is_never_used_as_content_sha1() -> None:
     assert result.groups[0].members[1].content_checksum is None
 
 
+def test_similarity_pair_identity_is_order_independent() -> None:
+    assert canonical_pair(UPLOAD_1, EXTERNAL_1) == canonical_pair(EXTERNAL_1, UPLOAD_1)
+
+
+def test_similarity_pair_plan_is_sparse_and_skips_missing_features() -> None:
+    pairs = requested_reference_pairs(
+        [[UPLOAD_1, EXTERNAL_1, EXTERNAL_2]],
+        {UPLOAD_1, EXTERNAL_1},
+    )
+
+    assert pairs == {
+        (UPLOAD_1, EXTERNAL_1): canonical_pair(UPLOAD_1, EXTERNAL_1),
+    }
+
+
 def test_unavailable_external_is_unverified_not_a_mismatch() -> None:
     content = b"same"
     result = assemble(
@@ -329,11 +371,25 @@ class FakeAssets:
 
 
 class FakeReports:
-    def __init__(self, records):
+    def __init__(self, records, features=None):
         self.records = {item.asset_id: item for item in records}
+        self.features = {item.asset_id: item for item in (features or [])}
 
     async def get_many(self, _ids):
         return self.records
+
+    async def get_similarity_features(self, _ids):
+        return self.features
+
+
+class FakeSimilarity:
+    def __init__(self, evidence):
+        self.evidence = evidence
+        self.calls = []
+
+    async def reference_edges(self, groups, features):
+        self.calls.append((groups, features))
+        return self.evidence
 
 
 class FakeReviews:
@@ -451,6 +507,74 @@ async def test_review_automatically_queues_missing_external_evidence_once() -> N
     assert first.analysis_task_id == UPLOAD_2
     assert second.analysis_task_id == UPLOAD_2
     assert len(tasks.submissions) == 1
+
+
+@pytest.mark.asyncio
+async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    upload_feature = feature(UPLOAD_1, digest="1" * 64)
+    external_feature = feature(EXTERNAL_1, digest="2" * 64)
+    pair = PairSimilarityEvidence(
+        similarity_percent=96.5,
+        structural_percent=98.0,
+        perceptual_percent=95.0,
+        color_percent=91.0,
+        exact_thumbnail_match=False,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        comparison_version=1,
+    )
+    similarity = FakeSimilarity({(UPLOAD_1, EXTERNAL_1): pair})
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports(
+            [report(EXTERNAL_1, content)],
+            [upload_feature, external_feature],
+        ),
+        FakeActions(),
+        FakeTasks(),
+        SimpleNamespace(),
+        similarity=similarity,
+    )
+
+    result = await service.review()
+
+    assert result.analysis_pending_count == 0
+    assert result.groups[0].members[0].similarity is not None
+    assert result.groups[0].members[0].similarity.state == "reference"
+    assert result.groups[0].members[1].similarity is not None
+    assert result.groups[0].members[1].similarity.similarity_percent == 96.5
+    assert similarity.calls[0][0] == [[UPLOAD_1, EXTERNAL_1]]
+
+
+@pytest.mark.asyncio
+async def test_similarity_backfill_includes_upload_images_without_stream_verification() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    integrity = FakeIntegrity()
+    handler = CrossSourceDuplicateTaskHandler(
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        integrity,
+        include_similarity=True,
+    )
+
+    await handler.execute(
+        TaskContext(),
+        DuplicateAnalysisOptions().model_dump(mode="json"),
+    )
+
+    assert integrity.calls == [UPLOAD_1, EXTERNAL_1]
 
 
 @pytest.mark.asyncio

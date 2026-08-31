@@ -71,6 +71,19 @@ class DuplicateMemberEvidence(BaseModel):
     dimensions_match_immich: bool | None = None
 
 
+class DuplicateSimilarityEvidence(BaseModel):
+    state: Literal["reference", "current", "pending", "unavailable"]
+    reference_asset_id: UUID
+    similarity_percent: float | None = None
+    structural_percent: float | None = None
+    perceptual_percent: float | None = None
+    color_percent: float | None = None
+    exact_thumbnail_match: bool | None = None
+    model_version: str | None = None
+    feature_version: int | None = None
+    comparison_version: int | None = None
+
+
 class DuplicateMember(BaseModel):
     id: UUID
     source_kind: Literal["upload", "external"]
@@ -86,6 +99,7 @@ class DuplicateMember(BaseModel):
     verification: DuplicateMemberStatus
     content_checksum: str | None = None
     evidence: DuplicateMemberEvidence
+    similarity: DuplicateSimilarityEvidence | None = None
 
 
 class ExactDuplicateGroup(BaseModel):
