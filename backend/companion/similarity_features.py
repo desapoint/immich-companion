@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import struct
 import warnings
@@ -11,8 +12,9 @@ from io import BytesIO
 from typing import BinaryIO
 
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
+import rawpy
 
-from companion.image_decode import SUPPORTED_FORMATS
+from companion.image_decode import MAX_DECODED_PIXELS, SUPPORTED_FORMATS
 from companion.integrity import DetectedFormat
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
@@ -23,6 +25,8 @@ LUMINANCE_VECTOR_LENGTH = LUMINANCE_VECTOR_SIDE**2
 COLOR_HISTOGRAM_BINS = 16
 COLOR_HISTOGRAM_LENGTH = COLOR_HISTOGRAM_BINS * 3
 PIXEL_HASH_ROWS_PER_CHUNK = 64
+
+logger = logging.getLogger("uvicorn.error")
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +197,110 @@ def _pixel_sha256(image: Image.Image) -> str:
     return digest.hexdigest()
 
 
+def _build_feature(
+    image: Image.Image,
+    *,
+    bit_depth: int,
+    channel_count: int,
+    has_alpha: bool,
+    color_space: str,
+    orientation: int | None,
+    icc_profile_present: bool,
+    has_exif: bool,
+    has_capture_time: bool,
+    has_camera_info: bool,
+    has_gps: bool,
+    has_orientation_metadata: bool,
+) -> VisualFeatureResult:
+    normalized = _srgb_image(image)
+    width, height = normalized.size
+    thumbnail = normalized.convert("RGBA").resize(
+        (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
+        Image.Resampling.LANCZOS,
+    )
+    thumbnail_sha256 = hashlib.sha256(
+        thumbnail.tobytes(), usedforsecurity=False
+    ).hexdigest()
+    metadata_richness = sum(
+        (
+            has_exif,
+            has_capture_time,
+            has_camera_info,
+            has_gps,
+            has_orientation_metadata,
+            icc_profile_present,
+        )
+    )
+    return VisualFeatureResult(
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        width=width,
+        height=height,
+        luminance_vector=_normalized_luminance(normalized),
+        perceptual_hash=_difference_hash(normalized),
+        color_histogram=_color_histogram(normalized),
+        thumbnail_sha256=thumbnail_sha256,
+        pixel_normalization_version=PIXEL_NORMALIZATION_VERSION,
+        pixel_sha256=_pixel_sha256(normalized),
+        bit_depth=bit_depth,
+        channel_count=channel_count,
+        has_alpha=has_alpha,
+        color_space=color_space,
+        orientation=orientation,
+        icc_profile_present=icc_profile_present,
+        has_exif=has_exif,
+        has_capture_time=has_capture_time,
+        has_camera_info=has_camera_info,
+        has_gps=has_gps,
+        has_orientation_metadata=has_orientation_metadata,
+        metadata_richness=metadata_richness,
+    )
+
+
+def _extract_raw_visual_features(stream: BinaryIO) -> VisualFeatureResult | None:
+    """Render a bounded DNG/RAW stream through LibRaw for similarity evidence."""
+
+    try:
+        stream.seek(0)
+        with rawpy.imread(stream) as raw:
+            width = raw.sizes.width
+            height = raw.sizes.height
+            if width * height > MAX_DECODED_PIXELS:
+                logger.warning(
+                    "RAW similarity feature unavailable: decoded dimensions %sx%s exceed limit",
+                    width,
+                    height,
+                )
+                return None
+            pixels = raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=True,
+                output_bps=8,
+            )
+        image = Image.fromarray(pixels, "RGB")
+        return _build_feature(
+            image,
+            bit_depth=8,
+            channel_count=3,
+            has_alpha=False,
+            color_space="RAW-sRGB",
+            orientation=None,
+            icc_profile_present=False,
+            has_exif=False,
+            has_capture_time=False,
+            has_camera_info=False,
+            has_gps=False,
+            has_orientation_metadata=False,
+        )
+    except (rawpy.LibRawError, OSError, ValueError) as error:
+        logger.warning(
+            "RAW similarity feature extraction failed: error_type=%s reason=%s",
+            type(error).__name__,
+            error,
+        )
+        return None
+
+
 def extract_visual_features(
     stream: BinaryIO,
     detected_format: DetectedFormat,
@@ -214,63 +322,40 @@ def extract_visual_features(
                 has_camera_info = bool(exif.get(271) or exif.get(272))
                 has_gps = bool(exif.get(34853))
                 has_orientation_metadata = orientation is not None
-                icc_profile_present = bool(source.info.get("icc_profile"))
-                has_exif = bool(exif)
-                metadata_richness = sum(
-                    (
-                        has_exif,
-                        has_capture_time,
-                        has_camera_info,
-                        has_gps,
-                        has_orientation_metadata,
-                        icc_profile_present,
-                    )
-                )
-                bit_depth = _bit_depth(source)
-                channel_count = len(source.getbands())
-                has_alpha = "A" in source.getbands() or "transparency" in source.info
-                color_space = source.mode
-                image = _srgb_image(source)
-                width, height = image.size
-                thumbnail = image.convert("RGBA").resize(
-                    (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
-                    Image.Resampling.LANCZOS,
-                )
-                thumbnail_sha256 = hashlib.sha256(
-                    thumbnail.tobytes(), usedforsecurity=False
-                ).hexdigest()
-                return VisualFeatureResult(
-                    model_version=SIMILARITY_MODEL_VERSION,
-                    feature_version=SIMILARITY_FEATURE_VERSION,
-                    width=width,
-                    height=height,
-                    luminance_vector=_normalized_luminance(image),
-                    perceptual_hash=_difference_hash(image),
-                    color_histogram=_color_histogram(image),
-                    thumbnail_sha256=thumbnail_sha256,
-                    pixel_normalization_version=PIXEL_NORMALIZATION_VERSION,
-                    pixel_sha256=_pixel_sha256(image),
-                    bit_depth=bit_depth,
-                    channel_count=channel_count,
-                    has_alpha=has_alpha,
-                    color_space=color_space,
+                return _build_feature(
+                    source,
+                    bit_depth=_bit_depth(source),
+                    channel_count=len(source.getbands()),
+                    has_alpha="A" in source.getbands() or "transparency" in source.info,
+                    color_space=source.mode,
                     orientation=orientation,
-                    icc_profile_present=icc_profile_present,
-                    has_exif=has_exif,
+                    icc_profile_present=bool(source.info.get("icc_profile")),
+                    has_exif=bool(exif),
                     has_capture_time=has_capture_time,
                     has_camera_info=has_camera_info,
                     has_gps=has_gps,
                     has_orientation_metadata=has_orientation_metadata,
-                    metadata_richness=metadata_richness,
                 )
     except (
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
-        UnidentifiedImageError,
-        OSError,
-        SyntaxError,
-        ValueError,
-    ):
+    ) as error:
+        logger.warning(
+            "Similarity feature extraction exceeded image safety limit: %s",
+            error,
+        )
+        return None
+    except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
+        if detected_format == "tiff":
+            raw_feature = _extract_raw_visual_features(stream)
+            if raw_feature is not None:
+                return raw_feature
+        logger.warning(
+            "Similarity feature extraction failed: format=%s error_type=%s reason=%s",
+            detected_format,
+            type(error).__name__,
+            error,
+        )
         return None
 
 
