@@ -389,6 +389,8 @@ class FileIntegrityAnalyzer:
             structurally_valid, eoi_offset, trailing_bytes, jpeg_issues = self._jpeg.finalize()
             container_valid = structurally_valid
             issues.extend(jpeg_issues)
+            if trailing_bytes:
+                issues.append("jpeg_trailing_bytes")
         elif self._png is not None:
             structurally_valid, trailing_bytes, png_issues = self._png.finalize()
             container_valid = structurally_valid
