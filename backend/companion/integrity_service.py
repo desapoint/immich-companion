@@ -282,6 +282,16 @@ class IntegrityTaskHandler:
                     spool,
                     result.detected_format,
                 )
+            else:
+                logger.warning(
+                    "Similarity feature skipped: asset_id=%s filename=%s format=%s decode_supported=%s decode_valid=%s issue=%s",
+                    source.id,
+                    source.original_file_name,
+                    result.detected_format,
+                    decoded.supported,
+                    decoded.valid,
+                    decoded.issue,
+                )
         expected_size = source_file_size(source)
         if expected_size is not None and result.byte_size != expected_size:
             logger.warning(
