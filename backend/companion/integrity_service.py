@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from tempfile import SpooledTemporaryFile
 from time import monotonic
 from typing import Any
@@ -36,6 +37,8 @@ INTEGRITY_TASK_TYPE = "asset_integrity"
 INTEGRITY_CHUNK_SIZE = 1024 * 1024
 INTEGRITY_PROGRESS_INTERVAL_SECONDS = 0.5
 INTEGRITY_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
+
+logger = logging.getLogger(__name__)
 
 
 class IntegrityAssetUnavailableError(RuntimeError):
@@ -144,14 +147,32 @@ class IntegrityTaskHandler:
 
     async def _active_asset(self, asset_id: UUID) -> ImmichAsset:
         if not await self._assets.has_asset(asset_id):
+            logger.warning(
+                "Integrity verification unavailable for asset %s: asset is no longer in the active workspace",
+                asset_id,
+            )
             raise PermanentTaskError("The asset is no longer in the active workspace.")
         try:
             asset = await self._immich.get_asset(asset_id)
         except ImmichApiError as error:
             if error.status_code == 404:
+                logger.warning(
+                    "Integrity verification unavailable for asset %s: Immich asset was not found",
+                    asset_id,
+                )
                 raise PermanentTaskError("The Immich asset was not found.") from error
+            logger.warning(
+                "Integrity verification unavailable for asset %s: Immich metadata request failed: %s",
+                asset_id,
+                error,
+            )
             raise RetryableTaskError("Immich metadata is temporarily unavailable.") from error
         if asset.is_trashed:
+            logger.warning(
+                "Integrity verification unavailable for asset %s (%s): asset moved to Restore",
+                asset.id,
+                asset.original_file_name,
+            )
             raise PermanentTaskError("The asset moved to Restore before analysis completed.")
         return asset
 
@@ -220,7 +241,18 @@ class IntegrityTaskHandler:
                         last_reported = now
             except ImmichApiError as error:
                 if error.status_code == 404:
+                    logger.warning(
+                        "Integrity verification unavailable for asset %s (%s): Immich original was not found",
+                        source.id,
+                        source.original_file_name,
+                    )
                     raise PermanentTaskError("The Immich original was not found.") from error
+                logger.warning(
+                    "Integrity verification unavailable for asset %s (%s): original stream failed: %s",
+                    source.id,
+                    source.original_file_name,
+                    error,
+                )
                 raise RetryableTaskError("The Immich original stream was interrupted.") from error
 
             await self._checkpoint(
@@ -252,6 +284,13 @@ class IntegrityTaskHandler:
                 )
         expected_size = source_file_size(source)
         if expected_size is not None and result.byte_size != expected_size:
+            logger.warning(
+                "Integrity verification unavailable for asset %s (%s): streamed size %s did not match Immich metadata size %s",
+                source.id,
+                source.original_file_name,
+                result.byte_size,
+                expected_size,
+            )
             raise RetryableTaskError("The streamed original size did not match Immich metadata.")
         if publish_progress:
             await context.checkpoint(
@@ -274,6 +313,11 @@ class IntegrityTaskHandler:
 
         current = await self._active_asset(asset_id)
         if not same_source(source, current):
+            logger.warning(
+                "Integrity verification unavailable for asset %s (%s): source changed during analysis",
+                source.id,
+                source.original_file_name,
+            )
             raise RetryableTaskError("The source changed during integrity analysis.")
         return await self._reports.save(current, result, visual_feature)
 
