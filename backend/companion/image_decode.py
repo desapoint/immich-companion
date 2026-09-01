@@ -6,9 +6,9 @@ import warnings
 from dataclasses import dataclass
 from typing import BinaryIO
 
+import rawpy
 from PIL import Image, UnidentifiedImageError
 from pillow_heif import register_heif_opener
-import rawpy
 
 from companion.integrity import DetectedFormat
 
