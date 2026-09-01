@@ -78,11 +78,15 @@ from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
     DuplicateAnalysisOptions,
+    DuplicateGroupDraft,
+    DuplicateGroupDraftUpdate,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspaceSelectionUpdate,
+    DuplicateWorkspaceState,
     ExactDuplicateGroup,
     SimilarityScanRequest,
     SimilarityScanSummary,
@@ -1324,6 +1328,46 @@ def create_app(
                 request,
                 request.options,
             )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.get(
+        "/api/assets/duplicates/workspace",
+        response_model=DuplicateWorkspaceState,
+    )
+    async def duplicate_workspace() -> DuplicateWorkspaceState:
+        try:
+            return await require_duplicate_service().workspace()
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.put(
+        "/api/assets/duplicates/workspace/selection",
+        response_model=DuplicateWorkspaceState,
+    )
+    async def save_duplicate_workspace_selection(
+        request: DuplicateWorkspaceSelectionUpdate,
+    ) -> DuplicateWorkspaceState:
+        try:
+            return await require_duplicate_service().save_workspace_selection(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.put(
+        "/api/assets/duplicates/workspace/group",
+        response_model=DuplicateGroupDraft,
+    )
+    async def save_duplicate_group_draft(
+        request: DuplicateGroupDraftUpdate,
+    ) -> DuplicateGroupDraft:
+        try:
+            return await require_duplicate_service().save_group_draft(request)
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         except RuntimeError as error:

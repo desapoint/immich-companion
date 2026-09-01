@@ -30,6 +30,8 @@ from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
     DuplicateAnalysisOptions,
+    DuplicateGroupDraft,
+    DuplicateGroupDraftUpdate,
     DuplicateMember,
     DuplicateMemberEvidence,
     DuplicatePreservationEvidence,
@@ -40,6 +42,9 @@ from companion.duplicate_schema import (
     DuplicateReviewUpdate,
     DuplicateSimilarityEvidence,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspaceGroupReference,
+    DuplicateWorkspaceSelectionUpdate,
+    DuplicateWorkspaceState,
     ExactDuplicateGroup,
 )
 from companion.group_decision import (
@@ -942,6 +947,165 @@ class CrossSourceDuplicateService:
             candidate
             for candidate in refreshed.groups
             if candidate.group_id == request.group_id
+        )
+
+    async def workspace(
+        self,
+        options: DuplicateAnalysisOptions | None = None,
+    ) -> DuplicateWorkspaceState:
+        """Restore durable duplicate selections and member-level drafts."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        result = await self.result(options)
+        groups_by_id = {group.group_id: group for group in result.groups}
+        workspace = await self._reviews.get_workspace()
+        selected_references = list(getattr(workspace, "selected_groups", []) or [])
+        active_reference = getattr(workspace, "active_group", None)
+        selected_ids: list[str] = []
+        stale_selected: list[DuplicateWorkspaceGroupReference] = []
+        for raw in selected_references:
+            reference = DuplicateWorkspaceGroupReference.model_validate(raw)
+            current = groups_by_id.get(reference.group_id)
+            if (
+                current is not None
+                and current.discovery_source == reference.discovery_source
+                and current.member_fingerprint == reference.member_fingerprint
+            ):
+                selected_ids.append(reference.group_id)
+            else:
+                stale_selected.append(reference)
+        active_group_id = None
+        if active_reference:
+            active = DuplicateWorkspaceGroupReference.model_validate(active_reference)
+            current = groups_by_id.get(active.group_id)
+            if (
+                current is not None
+                and current.discovery_source == active.discovery_source
+                and current.member_fingerprint == active.member_fingerprint
+            ):
+                active_group_id = active.group_id
+
+        drafts: list[DuplicateGroupDraft] = []
+        for discovery_source in {group.discovery_source for group in result.groups}:
+            source_groups = [
+                group for group in result.groups if group.discovery_source == discovery_source
+            ]
+            records = await self._reviews.get_many(
+                discovery_source,
+                [group.group_id for group in source_groups],
+            )
+            for group in source_groups:
+                record = records.get(group.group_id)
+                decisions = list(getattr(record, "member_decisions", []) or []) if record else []
+                if not decisions and not getattr(record, "stack_primary_asset_id", None):
+                    continue
+                drafts.append(
+                    DuplicateGroupDraft(
+                        group_id=group.group_id,
+                        discovery_source=group.discovery_source,
+                        member_fingerprint=record.member_fingerprint,
+                        decisions=decisions,
+                        stack_primary_asset_id=getattr(record, "stack_primary_asset_id", None),
+                        metadata_keeper_asset_id=getattr(
+                            record, "metadata_keeper_asset_id", None
+                        ),
+                        status=getattr(record, "draft_status", "pending"),
+                        stale=record.member_fingerprint != group.member_fingerprint,
+                    )
+                )
+        return DuplicateWorkspaceState(
+            selected_group_ids=selected_ids,
+            active_group_id=active_group_id,
+            stale_selected_groups=stale_selected,
+            drafts=drafts,
+        )
+
+    async def save_workspace_selection(
+        self,
+        request: DuplicateWorkspaceSelectionUpdate,
+    ) -> DuplicateWorkspaceState:
+        """Save resolved group identities without mutating Immich."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        result = await self.result(request.options)
+        groups_by_id = {group.group_id: group for group in result.groups}
+        missing = [group_id for group_id in request.selected_group_ids if group_id not in groups_by_id]
+        if request.active_group_id is not None and request.active_group_id not in groups_by_id:
+            missing.append(request.active_group_id)
+        if missing:
+            raise ActionPlanConflictError("A selected duplicate group is no longer available")
+
+        def reference(group_id: str) -> dict[str, str]:
+            group = groups_by_id[group_id]
+            return DuplicateWorkspaceGroupReference(
+                group_id=group.group_id,
+                discovery_source=group.discovery_source,
+                member_fingerprint=group.member_fingerprint,
+            ).model_dump(mode="json")
+
+        await self._reviews.save_workspace(
+            selected_groups=[reference(group_id) for group_id in request.selected_group_ids],
+            active_group=(
+                reference(request.active_group_id)
+                if request.active_group_id is not None
+                else None
+            ),
+        )
+        return await self.workspace(request.options)
+
+    async def save_group_draft(
+        self,
+        request: DuplicateGroupDraftUpdate,
+    ) -> DuplicateGroupDraft:
+        """Validate and save member-level choices independently of execution."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        result = await self.result(request.options)
+        group = next(
+            (candidate for candidate in result.groups if candidate.group_id == request.group_id),
+            None,
+        )
+        if group is None or group.member_fingerprint != request.member_fingerprint:
+            raise ActionPlanConflictError("The duplicate group changed before its draft was saved")
+        member_ids = {member.id for member in group.members}
+        decisions = {decision.asset_id: decision for decision in request.decisions}
+        if not set(decisions).issubset(member_ids):
+            raise ActionPlanConflictError("A draft decision references a non-member asset")
+        if request.stack_primary_asset_id is not None:
+            primary = decisions.get(request.stack_primary_asset_id)
+            if primary is None or primary.disposition != "stack":
+                raise ActionPlanConflictError(
+                    "The stack primary must first have the Stack disposition"
+                )
+        if request.metadata_keeper_asset_id is not None:
+            keeper = decisions.get(request.metadata_keeper_asset_id)
+            if keeper is not None and keeper.disposition == "delete":
+                raise ActionPlanConflictError("The metadata keeper cannot be marked Delete")
+            if request.metadata_keeper_asset_id not in member_ids:
+                raise ActionPlanConflictError("The metadata keeper is not a group member")
+        record = await self._reviews.save_draft(
+            discovery_source=group.discovery_source,
+            provider_group_id=group.group_id,
+            member_fingerprint=group.member_fingerprint,
+            member_decisions=[
+                decision.model_dump(mode="json") for decision in request.decisions
+            ],
+            stack_primary_asset_id=request.stack_primary_asset_id,
+            metadata_keeper_asset_id=request.metadata_keeper_asset_id,
+            draft_status=request.status,
+        )
+        return DuplicateGroupDraft(
+            group_id=group.group_id,
+            discovery_source=group.discovery_source,
+            member_fingerprint=record.member_fingerprint,
+            decisions=record.member_decisions,
+            stack_primary_asset_id=record.stack_primary_asset_id,
+            metadata_keeper_asset_id=record.metadata_keeper_asset_id,
+            status=record.draft_status,
+            stale=False,
         )
 
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:

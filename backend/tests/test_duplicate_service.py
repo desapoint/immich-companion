@@ -15,10 +15,13 @@ from companion.action_service import (
 from companion.discovery import DiscoveredGroup
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
+    DuplicateGroupDraftUpdate,
+    DuplicateMemberDraftDecision,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspaceSelectionUpdate,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
@@ -436,6 +439,7 @@ class FakeReviews:
     def __init__(self, record=None):
         self.record = record
         self.saved = None
+        self.workspace_record = None
 
     async def get_many(self, _source, provider_group_ids):
         if self.record is None or self.record.provider_group_id not in provider_group_ids:
@@ -446,6 +450,23 @@ class FakeReviews:
         self.saved = values
         self.record = SimpleNamespace(**values)
         return self.record
+
+    async def save_draft(self, **values):
+        self.saved = values
+        self.record = SimpleNamespace(
+            manual_action=None,
+            manual_primary_asset_id=None,
+            review_status="pending",
+            **values,
+        )
+        return self.record
+
+    async def get_workspace(self):
+        return self.workspace_record
+
+    async def save_workspace(self, **values):
+        self.workspace_record = SimpleNamespace(**values)
+        return self.workspace_record
 
 
 class FakeActions:
@@ -1167,6 +1188,133 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
     drifted = await service.result()
     assert drifted.groups[0].manual_action is None
     assert drifted.groups[0].review_status == "drifted"
+
+
+@pytest.mark.asyncio
+async def test_workspace_restores_group_selection_and_member_draft() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+    current = (await service.result()).groups[0]
+
+    await service.save_workspace_selection(
+        DuplicateWorkspaceSelectionUpdate(
+            selected_group_ids=[PUBLIC_GROUP_ID],
+            active_group_id=PUBLIC_GROUP_ID,
+        )
+    )
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="stack"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="keep"),
+            ],
+            stack_primary_asset_id=UPLOAD_1,
+            metadata_keeper_asset_id=EXTERNAL_1,
+        )
+    )
+
+    restored = await service.workspace()
+
+    assert restored.selected_group_ids == [PUBLIC_GROUP_ID]
+    assert restored.active_group_id == PUBLIC_GROUP_ID
+    assert restored.stale_selected_groups == []
+    assert restored.drafts[0].stack_primary_asset_id == UPLOAD_1
+    assert restored.drafts[0].metadata_keeper_asset_id == EXTERNAL_1
+    assert [decision.disposition for decision in restored.drafts[0].decisions] == [
+        "stack",
+        "keep",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_stack_primary_must_first_be_marked_stack() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        FakeReviews(),
+    )
+    current = (await service.result()).groups[0]
+
+    with pytest.raises(ActionPlanConflictError, match="must first have the Stack"):
+        await service.save_group_draft(
+            DuplicateGroupDraftUpdate(
+                group_id=PUBLIC_GROUP_ID,
+                member_fingerprint=current.member_fingerprint,
+                decisions=[
+                    DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")
+                ],
+                stack_primary_asset_id=UPLOAD_1,
+            )
+        )
+
+
+@pytest.mark.asyncio
+async def test_workspace_preserves_but_does_not_reselect_drifted_state() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+    current = (await service.result()).groups[0]
+    await service.save_workspace_selection(
+        DuplicateWorkspaceSelectionUpdate(selected_group_ids=[PUBLIC_GROUP_ID])
+    )
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")
+            ],
+        )
+    )
+    candidate_group.assets.append(
+        asset(UPLOAD_2, external=False, checksum=immich_sha1(content), filename="three.jpg")
+    )
+
+    restored = await service.workspace()
+
+    assert restored.selected_group_ids == []
+    assert [item.group_id for item in restored.stale_selected_groups] == [PUBLIC_GROUP_ID]
+    assert restored.drafts[0].stale is True
+    assert restored.drafts[0].decisions[0].asset_id == UPLOAD_1
 
 
 @pytest.mark.asyncio

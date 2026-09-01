@@ -39,6 +39,10 @@ DuplicateReviewStatus = Literal[
     "drifted",
 ]
 DuplicateMemberDisposition = Literal["keep", "delete", "stack", "no_change"]
+DuplicateDraftDisposition = Literal["keep", "delete", "stack"]
+DuplicateDraftDecisionSource = Literal["manual", "automatic"]
+DuplicateDraftDecisionStatus = Literal["pending", "completed"]
+DuplicateDraftStatus = Literal["pending", "completed"]
 DuplicateGroupExecutionState = Literal[
     "pending",
     "duplicate_resolved",
@@ -291,6 +295,65 @@ class DuplicateReviewUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     manual_action: DuplicateGroupAction | None
     manual_primary_asset_id: UUID | None = None
+
+
+class DuplicateMemberDraftDecision(BaseModel):
+    asset_id: UUID
+    disposition: DuplicateDraftDisposition
+    source: DuplicateDraftDecisionSource = "manual"
+    status: DuplicateDraftDecisionStatus = "pending"
+
+
+class DuplicateGroupDraftUpdate(BaseModel):
+    group_id: str
+    member_fingerprint: str
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    decisions: list[DuplicateMemberDraftDecision] = Field(default_factory=list)
+    stack_primary_asset_id: UUID | None = None
+    metadata_keeper_asset_id: UUID | None = None
+    status: DuplicateDraftStatus = "pending"
+
+    @model_validator(mode="after")
+    def unique_members(self) -> DuplicateGroupDraftUpdate:
+        ids = [decision.asset_id for decision in self.decisions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("A duplicate member can have only one draft decision")
+        return self
+
+
+class DuplicateWorkspaceGroupReference(BaseModel):
+    group_id: str
+    discovery_source: DuplicateDiscoverySource
+    member_fingerprint: str
+
+
+class DuplicateWorkspaceSelectionUpdate(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    selected_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    active_group_id: str | None = None
+
+    @model_validator(mode="after")
+    def unique_groups(self) -> DuplicateWorkspaceSelectionUpdate:
+        self.selected_group_ids = list(dict.fromkeys(self.selected_group_ids))
+        return self
+
+
+class DuplicateGroupDraft(BaseModel):
+    group_id: str
+    discovery_source: DuplicateDiscoverySource
+    member_fingerprint: str
+    decisions: list[DuplicateMemberDraftDecision]
+    stack_primary_asset_id: UUID | None = None
+    metadata_keeper_asset_id: UUID | None = None
+    status: DuplicateDraftStatus
+    stale: bool = False
+
+
+class DuplicateWorkspaceState(BaseModel):
+    selected_group_ids: list[str] = Field(default_factory=list)
+    active_group_id: str | None = None
+    stale_selected_groups: list[DuplicateWorkspaceGroupReference] = Field(default_factory=list)
+    drafts: list[DuplicateGroupDraft] = Field(default_factory=list)
 
 
 class DuplicateSimilarityReferenceRequest(BaseModel):

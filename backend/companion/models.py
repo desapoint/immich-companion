@@ -568,6 +568,10 @@ class DuplicateGroupReviewRecord(Base):
     member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     manual_action: Mapped[str | None] = mapped_column(String(24), nullable=True)
     manual_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    member_decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    stack_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    metadata_keeper_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    draft_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     last_seen_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -586,6 +590,19 @@ class DuplicateGroupReviewRecord(Base):
             name="uq_duplicate_group_reviews_provider",
         ),
         Index("ix_duplicate_group_reviews_status", review_status),
+    )
+
+
+class DuplicateReviewWorkspaceRecord(Base):
+    """Singleton navigation and group-selection state for duplicate review."""
+
+    __tablename__ = "duplicate_review_workspaces"
+
+    workspace_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    selected_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
+    active_group: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
 
