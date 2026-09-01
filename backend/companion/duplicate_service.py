@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -78,6 +79,8 @@ from companion.task_schema import TaskResult
 
 CROSS_SOURCE_DUPLICATE_TASK_TYPE = "cross_source_duplicates"
 DUPLICATE_RESOLUTION_TASK_TYPE = "duplicate_resolution"
+
+logger = logging.getLogger(__name__)
 
 
 def _options_key(options: DuplicateAnalysisOptions) -> str:
@@ -1343,8 +1346,16 @@ class CrossSourceDuplicateTaskHandler:
                     asset.id,
                     publish_progress=False,
                 )
-            except (PermanentTaskError, RetryableTaskError, ImmichApiError):
+            except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
                 unavailable += 1
+                logger.warning(
+                    "Duplicate candidate verification failed: asset_id=%s filename=%s source=%s error_type=%s reason=%s",
+                    asset.id,
+                    asset.original_file_name,
+                    "upload" if asset.library_id is None else "external",
+                    type(error).__name__,
+                    error,
+                )
             await context.checkpoint(
                 checkpoint={"phase": "fingerprinting", "asset_id": str(asset.id)},
                 counters={"files_attempted": index, "files_unavailable": unavailable},
@@ -1355,6 +1366,12 @@ class CrossSourceDuplicateTaskHandler:
                     "percent": round(index / len(pending) * 100, 1),
                     "detail": (f"Verified {index} of {len(pending)} duplicate candidate files"),
                 },
+            )
+        if unavailable:
+            logger.warning(
+                "Duplicate candidate verification completed with unavailable files: attempted=%s unavailable=%s",
+                len(pending),
+                unavailable,
             )
         await context.checkpoint(
             checkpoint={"phase": "complete"},
