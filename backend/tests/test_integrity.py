@@ -61,6 +61,7 @@ def test_jpeg_trailing_bytes_are_counted_without_affecting_hashes() -> None:
     assert result.structurally_valid is True
     assert result.jpeg_eoi_offset == len(base)
     assert result.trailing_byte_count == 8
+    assert result.issues == ("jpeg_trailing_bytes",)
 
 
 @pytest.mark.parametrize("chunks", [[1000], [1] * 32, [7, 4, 3, 2, 1]])
