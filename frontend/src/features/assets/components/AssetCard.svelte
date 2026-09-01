@@ -1,5 +1,6 @@
 <script lang="ts">
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
+  import StackPrimaryControl from '../../../lib/components/domain/StackPrimaryControl.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import { assetMediaUrl } from '../api/assetApi';
   import {
@@ -20,10 +21,12 @@
     selected: boolean;
     selectionActive: boolean;
     condensed?: boolean;
+    stackPrimary?: boolean;
     indicatorConfig: AssetCardIndicatorConfig;
     matchingTagIds: ReadonlySet<string>;
     onopen: () => void;
     onselect: (shiftKey: boolean) => void;
+    onsetstackprimary?: () => void;
     ondragstart: (event: PointerEvent) => void;
     ondragenter: (event: PointerEvent) => void;
   }
@@ -33,10 +36,12 @@
     selected,
     selectionActive,
     condensed = false,
+    stackPrimary = false,
     indicatorConfig,
     matchingTagIds,
     onopen,
     onselect,
+    onsetstackprimary = () => undefined,
     ondragstart,
     ondragenter,
   }: Props = $props();
@@ -116,6 +121,17 @@
       onpointerdown={(event) => event.stopPropagation()}
       onclick={(event) => { event.stopPropagation(); onopen(); }}
     ><Icon name="view" size="1.4rem" /><span class="visually-hidden">Open viewer</span></button>
+    {#if selectionActive && selected}
+      <div class="stack-primary-selector">
+        <StackPrimaryControl
+          eligible
+          selected={stackPrimary}
+          iconOnly
+          eligibleLabel="Make selected image the new stack main"
+          onchange={onsetstackprimary}
+        />
+      </div>
+    {/if}
     {#if condensed}
       <div class="condensed-indicators">
         <AssetRelationIndicators
@@ -321,6 +337,18 @@
     z-index: 12;
     width: 2rem;
     height: 2rem;
+  }
+
+  .stack-primary-selector {
+    position: absolute;
+    z-index: 13;
+    top: 3rem;
+    left: 0.55rem;
+  }
+
+  .condensed .stack-primary-selector {
+    top: 0.5rem;
+    left: 2.8rem;
   }
 
   .condensed-indicators {

@@ -261,6 +261,29 @@ describe('structured asset API', () => {
     });
   });
 
+  it('sends the reviewed stack primary separately from selection order', async () => {
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({}), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetcher);
+    const selection = {
+      mode: 'explicit' as const,
+      ids: ['asset-1', 'asset-2'],
+      excluded_ids: [],
+    };
+
+    await planAssetAction(selection, 'stack', [], 'move_selected', 'asset-2');
+
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+      selection,
+      action: 'stack',
+      relation_ids: [],
+      stack_resolution: 'move_selected',
+      stack_primary_asset_id: 'asset-2',
+    });
+  });
+
   it('starts staged sync modes and reads reload-persistent status', async () => {
     const run = {
       id: 'run-1',

@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from companion.stack_service import StackService
+from companion.stack_service import StackSelectionError, StackService
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -114,3 +114,29 @@ async def test_execute_creates_repairs_and_verifies_prepared_stack() -> None:
     assert verified is True
     assert immich.calls == [("create", None, [ASSET_ONE, ASSET_TWO])]
     assert sync.repairs == [([ASSET_ONE, ASSET_TWO], True)]
+
+
+@pytest.mark.asyncio
+async def test_prepare_keeps_the_reviewed_primary_first() -> None:
+    workflow = service(FakeImmich())
+
+    preparation = await workflow.prepare(
+        [ASSET_ONE, ASSET_TWO, ASSET_THREE],
+        "move_selected",
+        ASSET_THREE,
+    )
+
+    assert preparation.primary_asset_id == ASSET_THREE
+    assert preparation.asset_ids == [ASSET_THREE, ASSET_ONE, ASSET_TWO]
+
+
+@pytest.mark.asyncio
+async def test_keep_existing_rejects_a_primary_removed_by_resolution() -> None:
+    workflow = service(FakeImmich([stack(ASSET_ONE, ASSET_THREE)]))
+
+    with pytest.raises(StackSelectionError, match="primary is unavailable"):
+        await workflow.prepare(
+            [ASSET_ONE, ASSET_TWO],
+            "keep_existing",
+            ASSET_ONE,
+        )

@@ -289,6 +289,7 @@ export function planAssetAction(
   action: AssetActionIntent,
   relationIds: string[] = [],
   stackResolution?: StackResolution,
+  stackPrimaryAssetId?: string,
 ): Promise<AssetActionPlan> {
   return requestJson('/api/assets/actions/plan', {
     method: 'POST',
@@ -298,6 +299,7 @@ export function planAssetAction(
       action,
       relation_ids: relationIds,
       ...(stackResolution ? { stack_resolution: stackResolution } : {}),
+      ...(stackPrimaryAssetId ? { stack_primary_asset_id: stackPrimaryAssetId } : {}),
     }),
   });
 }

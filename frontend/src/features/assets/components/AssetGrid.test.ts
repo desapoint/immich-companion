@@ -77,4 +77,27 @@ describe('AssetGrid', () => {
     expect(condensed).not.toContain('class="card-content');
     expect(condensed).not.toContain('class="card-decision');
   });
+
+  it('overlays the shared stack-main control without changing card structure', () => {
+    const body = render(AssetGrid, {
+      props: {
+        assets: [asset],
+        selectedIds: new Set(['asset-1']),
+        selectionActive: true,
+        stackPrimaryId: 'asset-1',
+        indicatorConfig,
+        matchingTagIds: new Set<string>(),
+        layout: 'condensed',
+        onopen: () => undefined,
+        onselect: () => undefined,
+        onsetstackprimary: () => undefined,
+        ondragstart: () => undefined,
+        ondragenter: () => undefined,
+      },
+    }).body;
+
+    expect(body).toContain('class="stack-primary-selector');
+    expect(body).toContain('aria-label="Stack main"');
+    expect(body).toContain('aria-pressed="true"');
+  });
 });

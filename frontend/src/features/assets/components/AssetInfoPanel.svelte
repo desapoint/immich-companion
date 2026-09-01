@@ -17,6 +17,10 @@
     syncError?: string | null;
     onsync?: () => void;
     apiOnly?: boolean;
+    selectionStackActive?: boolean;
+    selectionStackEligible?: boolean;
+    selectionStackPrimary?: boolean;
+    onselectionstackprimary?: (assetId: string) => void;
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatedisposition?: (assetId: string, disposition: DuplicateDisposition) => void;
     onduplicatestackprimary?: (assetId: string) => void;
@@ -35,6 +39,10 @@
     syncError = null,
     onsync = () => undefined,
     apiOnly = false,
+    selectionStackActive = false,
+    selectionStackEligible = false,
+    selectionStackPrimary = false,
+    onselectionstackprimary,
     duplicateContext = null,
     onduplicatedisposition,
     onduplicatestackprimary,
@@ -94,6 +102,19 @@
   </header>
 
   {#if !apiOnly}<AssetInfoRelationships {asset} />{/if}
+
+  {#if selectionStackActive && onselectionstackprimary}
+    <section class="selection-stack" aria-label="New stack main image">
+      <h3>New stack main</h3>
+      <p>Choose which selected image Immich should show as the stack cover.</p>
+      <StackPrimaryControl
+        eligible={selectionStackEligible}
+        selected={selectionStackPrimary}
+        ineligibleLabel="Select this image first"
+        onchange={() => onselectionstackprimary?.(asset.id)}
+      />
+    </section>
+  {/if}
 
   {#if duplicateContext}
     <section class="duplicate-review" aria-label="Duplicate group validation">
@@ -328,6 +349,9 @@
   }
 
   h4 { margin: 0.8rem 0 0; font-size: 0.68rem; }
+  .selection-stack { display: grid; gap: .45rem; margin-top: .8rem; padding: .65rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface-soft); }
+  .selection-stack h3, .selection-stack p { margin: 0; }
+  .selection-stack p { color: var(--color-ink-muted); line-height: 1.45; }
   .duplicate-review { margin-top: .8rem; padding: .65rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-surface-soft); }
   .duplicate-review h3 { margin: 0; }
   .duplicate-review > p { margin: .45rem 0 0; color: var(--color-ink-muted); line-height: 1.45; }

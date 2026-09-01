@@ -139,6 +139,7 @@ class AssetActionPlanRequest(BaseModel):
     action: AssetActionIntent
     relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=10_000)
     stack_resolution: StackResolution | None = None
+    stack_primary_asset_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_relation(self) -> AssetActionPlanRequest:
@@ -153,6 +154,10 @@ class AssetActionPlanRequest(BaseModel):
             raise ValueError("Album and tag actions require one or more relation IDs")
         if self.stack_resolution is not None and self.action != "stack":
             raise ValueError("Stack resolution is only valid for stack actions")
+        if self.stack_primary_asset_id is not None and self.action != "stack":
+            raise ValueError("Stack primary is only valid for stack actions")
+        if self.action == "stack" and self.stack_primary_asset_id is None:
+            raise ValueError("Stack actions require an explicit primary asset")
         return self
 
 
@@ -189,6 +194,7 @@ class AssetActionPlan(BaseModel):
     status: ActionPlanStatus
     expires_at: datetime
     stack_conflicts: list[StackConflict] = Field(default_factory=list)
+    stack_primary_asset_id: UUID | None = None
 
 
 class AssetActionExecuteRequest(BaseModel):

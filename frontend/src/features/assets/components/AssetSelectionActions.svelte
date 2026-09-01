@@ -22,6 +22,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     albums: AlbumOption[];
     tags: TagOption[];
     plan: AssetActionPlan | null;
+    stackPrimaryLabel?: string | null;
     busy?: boolean;
     error?: string | null;
     onselectpage: () => void;
@@ -53,6 +54,7 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     albums,
     tags,
     plan,
+    stackPrimaryLabel = null,
     busy = false,
     error = null,
     onselectpage,
@@ -82,7 +84,12 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
 <section class="selection-actions" aria-label="Selected asset controls and actions">
   <div class="selection-summary">
     <strong>{selectedCount} selected</strong>
-    {#if allMatching}<small>All matching results except unchecked assets</small>{/if}
+    <small class="stack-primary-status">
+      {selectedCount > 0
+        ? stackPrimaryLabel ? `Stack main · ${stackPrimaryLabel}` : 'Stack main · choose on a selected image'
+        : 'Stack main · no selection'}
+    </small>
+    <small class:placeholder={!allMatching} class="selection-scope">All matching results except unchecked assets</small>
     {#if error}<small class="error" role="alert">{error}</small>{/if}
     {#if syncError}<small class="error" role="alert">{syncError}</small>{/if}
   </div>
@@ -205,6 +212,9 @@ import IconButton from '../../../lib/components/ui/IconButton.svelte';
     color: var(--color-ink-muted);
     font-size: 0.62rem;
   }
+
+  .stack-primary-status { max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .selection-scope.placeholder { visibility: hidden; }
 
   .selection-summary .error { color: #b42318; }
 

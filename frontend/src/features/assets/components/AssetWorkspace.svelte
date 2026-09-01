@@ -116,6 +116,7 @@
   let syncCompletionMessage = $state<string | null>(null);
   let syncProgress = $state<import('../types/assets').AssetSyncProgress | null>(null);
   let selection = $state(createAssetSelectionState());
+  let stackPrimaryAssetId = $state<string | null>(null);
   let selectionResolution = $state<AssetSelectionResolution | null>(null);
   let selectionLoading = $state(false);
   let actionPlan = $state<AssetActionPlan | null>(null);
@@ -221,6 +222,30 @@
       .filter((asset) => isAssetSelected(selection, asset.id))
       .map((asset) => asset.id) ?? [],
   ));
+  const stackPrimaryLabel = $derived.by(() => {
+    if (!stackPrimaryAssetId) return null;
+    return results?.items.find((asset) => asset.id === stackPrimaryAssetId)?.original_file_name
+      ?? `Asset ${stackPrimaryAssetId.slice(0, 8)}`;
+  });
+
+  function reconcileStackPrimary(changedAssetIds: string[] = []): void {
+    if (
+      stackPrimaryAssetId
+      && changedAssetIds.includes(stackPrimaryAssetId)
+      && !isAssetSelected(selection, stackPrimaryAssetId)
+    ) {
+      stackPrimaryAssetId = null;
+    }
+    if (stackPrimaryAssetId) return;
+    stackPrimaryAssetId = results?.items.find((asset) => isAssetSelected(selection, asset.id))?.id
+      ?? null;
+  }
+
+  function chooseStackPrimary(assetId: string): void {
+    if (!isAssetSelected(selection, assetId)) return;
+    stackPrimaryAssetId = assetId;
+    actionPlan = null;
+  }
 
   async function loadRelationOptions(): Promise<void> {
     const [albumResult, tagResult] = await Promise.allSettled([
@@ -760,6 +785,7 @@
 
   function toggleSelection(assetId: string): void {
     selection = toggleAssetSelection(selection, assetId);
+    reconcileStackPrimary([assetId]);
     actionPlan = null;
     void persistServerPageMembership([assetId]);
     void refreshSelection();
@@ -779,6 +805,12 @@
           shouldSelect,
         )
       : setSelectionRange(selection, items.map((item) => item.id), index, index, shouldSelect);
+    const affectedIds = shiftKey && selectionAnchorIndex !== null
+      ? items
+        .slice(Math.min(selectionAnchorIndex, index), Math.max(selectionAnchorIndex, index) + 1)
+        .map((item) => item.id)
+      : [asset.id];
+    reconcileStackPrimary(affectedIds);
     selectionAnchorIndex = index;
     actionPlan = null;
     void persistServerPageMembership(items.map((item) => item.id));
@@ -803,6 +835,7 @@
       index,
       dragSelectionValue,
     );
+    reconcileStackPrimary([asset.id]);
     actionPlan = null;
   }
 
@@ -821,6 +854,7 @@
       index,
       dragSelectionValue,
     );
+    reconcileStackPrimary(ids.slice(Math.min(dragLastIndex, index), Math.max(dragLastIndex, index) + 1));
     dragLastIndex = index;
     actionPlan = null;
   }
@@ -836,6 +870,7 @@
 
   function clearSelection(): void {
     selection = createAssetSelectionState();
+    stackPrimaryAssetId = null;
     selectionResolution = null;
     actionPlan = null;
     selectionController?.abort();
@@ -850,6 +885,7 @@
       selection,
       results?.items.map((asset) => asset.id) ?? [],
     );
+    reconcileStackPrimary();
     actionPlan = null;
     void persistServerPageMembership(results?.items.map((asset) => asset.id) ?? []);
     void refreshSelection();
@@ -868,6 +904,7 @@
         filledSelection.selected_count,
         results?.items.map((asset) => asset.id) ?? [],
       );
+      stackPrimaryAssetId = results?.items[0]?.id ?? null;
       actionPlan = null;
       await refreshSelection();
     } catch (requestError) {
@@ -884,6 +921,7 @@
       selection,
       results?.items.map((asset) => asset.id) ?? [],
     );
+    reconcileStackPrimary(results?.items.map((asset) => asset.id) ?? []);
     actionPlan = null;
     void persistServerPageMembership(results?.items.map((asset) => asset.id) ?? []);
     void refreshSelection();
@@ -930,12 +968,21 @@
     actionPlan = null;
     actionContext = context;
     actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
+    const primaryAssetId = action === 'stack'
+      ? stackPrimaryAssetId ?? request.ids[0] ?? null
+      : null;
+    if (action === 'stack' && primaryAssetId === null) {
+      actionError = 'Choose a selected image as the stack main before reviewing this action.';
+      actionBusy = false;
+      return;
+    }
     try {
       actionPlan = await planAssetAction(
         request,
         action,
         relationIds,
         stackResolution,
+        primaryAssetId ?? undefined,
       );
     } catch (requestError) {
       actionError = requestError instanceof Error
@@ -967,7 +1014,13 @@
     actionBusy = true;
     actionError = null;
     try {
-      const reviewedPlan = await planAssetAction(request, 'stack', [], stackResolution);
+      const reviewedPlan = await planAssetAction(
+        request,
+        'stack',
+        [],
+        stackResolution,
+        actionPlan.stack_primary_asset_id ?? undefined,
+      );
       const started = await executeAssetActionTask(reviewedPlan.id);
       actionTask = await getTaskStatus(started.task_id);
       localStorage.setItem('immich-companion:asset-action-task', started.task_id);
@@ -1393,6 +1446,7 @@
       {albums}
       {tags}
       plan={actionContext === 'selection' ? actionPlan : null}
+      {stackPrimaryLabel}
       busy={selectionLoading || actionBusy}
       error={actionContext === 'selection' ? actionError : null}
       syncBusy={selectionSyncing}
@@ -1444,8 +1498,10 @@
       indicatorConfig={cardIndicatorConfig}
       {matchingTagIds}
       layout={layoutMode}
+      stackPrimaryId={stackPrimaryAssetId}
       onopen={openViewer}
       onselect={selectAtIndex}
+      onsetstackprimary={chooseStackPrimary}
       ondragstart={beginDragSelection}
       ondragenter={continueDragSelection}
     />
@@ -1539,6 +1595,8 @@
     {tags}
     actionPlan={actionContext === 'viewer' ? actionPlan : null}
     actionSummary={viewerActionAssetId ? viewerActionResolution?.summary ?? null : null}
+    selectionCount={selectedCount}
+    selectionStackPrimaryId={stackPrimaryAssetId}
     {actionBusy}
     actionError={actionContext === 'viewer' ? actionError ?? viewerActionError : viewerActionError}
     syncBusy={viewerSyncing}
@@ -1552,6 +1610,7 @@
     onnavigate={navigateViewer}
     oncomparisonnavigate={(assetId) => void selectViewerComparisonAsset(assetId)}
     ontoggleselection={toggleSelection}
+    onselectionstackprimary={chooseStackPrimary}
     onvisiblechange={(assetId) => void resolveViewerActionState(assetId)}
     onaction={previewViewerAction}
     onsetprimary={(assetId) => previewViewerAction(assetId, 'set_stack_primary')}

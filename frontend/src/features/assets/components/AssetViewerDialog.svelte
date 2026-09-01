@@ -92,6 +92,8 @@
     syncError?: string | null;
     actionsEnabled?: boolean;
     selectionEnabled?: boolean;
+    selectionCount?: number;
+    selectionStackPrimaryId?: string | null;
     restoreBusy?: boolean;
     apiOnly?: boolean;
     integrityEnabled?: boolean;
@@ -111,6 +113,7 @@
     onrequestnext?: () => Promise<number | null>;
     onnavigate: (index: number) => void;
     ontoggleselection: (assetId: string) => void;
+    onselectionstackprimary?: (assetId: string) => void;
     onvisiblechange: (assetId: string) => void;
     onaction: (
       assetId: string,
@@ -148,6 +151,8 @@
     syncError = null,
     actionsEnabled = true,
     selectionEnabled,
+    selectionCount = 0,
+    selectionStackPrimaryId = null,
     restoreBusy = false,
     apiOnly = false,
     integrityEnabled = !apiOnly,
@@ -167,6 +172,7 @@
     onrequestnext,
     onnavigate,
     ontoggleselection,
+    onselectionstackprimary,
     onvisiblechange,
     onaction,
     onsetprimary,
@@ -759,6 +765,10 @@
         syncError={syncError}
         onsync={() => onsync(currentAsset.id)}
         {apiOnly}
+        selectionStackActive={selectionCount >= 2}
+        selectionStackEligible={selectedIds.has(currentAsset.id)}
+        selectionStackPrimary={selectionStackPrimaryId === currentAsset.id}
+        {onselectionstackprimary}
         {duplicateContext}
         {onduplicatedisposition}
         {onduplicatestackprimary}

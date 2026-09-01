@@ -28,4 +28,14 @@ describe('duplicate disposition controls', () => {
     expect(selected).toContain('aria-pressed="true"');
     expect(selected).toContain('Stack main');
   });
+
+  it('supports an icon-only stack-primary control for media overlays', () => {
+    const body = render(StackPrimaryControl, {
+      props: { eligible: true, selected: false, iconOnly: true },
+    }).body;
+
+    expect(body).toContain('aria-label="Make stack main"');
+    expect(body).toMatch(/class="[^\"]*icon-only/);
+    expect(body).toMatch(/class="[^\"]*visually-hidden/);
+  });
 });

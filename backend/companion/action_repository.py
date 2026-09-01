@@ -31,7 +31,7 @@ class ActionRepository:
         operation: AssetActionOperation,
         applicable_ids: list[UUID],
         skipped_ids: list[UUID],
-        relation_work: dict[str, dict[str, list[str]]],
+        relation_work: dict[str, Any],
         target_digest: str,
         expires_at: datetime,
     ) -> ActionPlanRecord:

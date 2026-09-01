@@ -13,7 +13,11 @@ from companion.action_schema import (
     AssetSelectionResolution,
     AssetSelectionSummary,
 )
-from companion.action_service import AssetActionService, DestructiveActionsDisabledError
+from companion.action_service import (
+    ActionPlanConflictError,
+    AssetActionService,
+    DestructiveActionsDisabledError,
+)
 from companion.config import Settings
 from companion.models import ActionPlanRecord
 from companion.sync_settings import SyncRuntimeSettings
@@ -217,15 +221,38 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
         AssetActionPlanRequest(
             selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
             action="stack",
+            stack_primary_asset_id=ASSET_TWO,
         )
     )
 
+    assert plan.stack_primary_asset_id == ASSET_TWO
     result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert result.status == "completed"
-    assert result.applied_ids == [ASSET_ONE, ASSET_TWO]
+    assert result.applied_ids == [ASSET_TWO, ASSET_ONE]
+    assert stack_immich.calls[0] == ("stack", None, [ASSET_TWO, ASSET_ONE])
     assert actions.finished is not None
     assert actions.finished[0] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_stack_plan_rejects_a_primary_outside_the_resolved_selection() -> None:
+    instance, _, _, _ = service(
+        resolution(),
+        [{ASSET_ONE, ASSET_TWO}],
+    )
+
+    with pytest.raises(ActionPlanConflictError, match="not part of the resolved selection"):
+        await instance.plan(
+            AssetActionPlanRequest(
+                selection=AssetSelectionRequest(
+                    mode="explicit",
+                    ids=[ASSET_ONE, ASSET_TWO],
+                ),
+                action="stack",
+                stack_primary_asset_id=RELATION_ID,
+            )
+        )
 
 
 class FakeSync:

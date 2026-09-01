@@ -512,6 +512,7 @@ export interface AssetActionPlan {
   status: 'planned' | 'running' | 'completed' | 'failed' | 'drifted' | 'expired';
   expires_at: string;
   stack_conflicts: StackConflict[];
+  stack_primary_asset_id: string | null;
 }
 
 export interface StackConflict {

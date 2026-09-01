@@ -167,6 +167,11 @@ class AssetActionService:
                 StackConflict.model_validate(item)
                 for item in record.relation_work.get("__stack_conflicts", [])
             ],
+            stack_primary_asset_id=(
+                UUID(record.relation_work["__stack_primary_asset_id"])
+                if record.relation_work.get("__stack_primary_asset_id")
+                else None
+            ),
         )
 
     async def plan(self, request: AssetActionPlanRequest) -> AssetActionPlan:
@@ -179,10 +184,29 @@ class AssetActionService:
         operation = self._operation_for_request(request, resolution)
         stack_conflicts: list[StackConflict] = []
         if operation == "stack":
+            primary_asset_id = request.stack_primary_asset_id
+            assert primary_asset_id is not None
+            if primary_asset_id not in resolution.ids:
+                raise ActionPlanConflictError(
+                    "The chosen stack primary is not part of the resolved selection"
+                )
+            resolution = resolution.model_copy(
+                update={
+                    "ids": [
+                        primary_asset_id,
+                        *(
+                            identifier
+                            for identifier in resolution.ids
+                            if identifier != primary_asset_id
+                        ),
+                    ]
+                }
+            )
             stack_conflicts = await self._stacks.conflicts(resolution.ids)
             if stack_conflicts and request.stack_resolution is None:
                 relation_work = {
-                    "__stack_conflicts": [item.model_dump(mode="json") for item in stack_conflicts]
+                    "__stack_conflicts": [item.model_dump(mode="json") for item in stack_conflicts],
+                    "__stack_primary_asset_id": str(primary_asset_id),
                 }
                 record = await self._actions.create_plan(
                     request,
@@ -206,6 +230,7 @@ class AssetActionService:
                     item.model_dump(mode="json") for item in stack_conflicts
                 ],
                 "__stack_resolution": request.stack_resolution or "move_selected",
+                "__stack_primary_asset_id": str(primary_asset_id),
             }
         else:
             relation_work = {}
@@ -520,6 +545,7 @@ class AssetActionService:
                 stack_preparation = await self._stacks.prepare(
                     target_ids,
                     claimed.relation_work.get("__stack_resolution"),
+                    UUID(claimed.relation_work["__stack_primary_asset_id"]),
                 )
                 target_ids = stack_preparation.asset_ids
             except StackSelectionError as error:

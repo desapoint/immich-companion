@@ -98,6 +98,9 @@
     {/if}
     {#if plan.missing_ids.length}<p>{plan.missing_ids.length} missing assets are excluded.</p>{/if}
     {#if plan.destructive}<p>Applicable assets will be moved out of the timeline and into trash.</p>{/if}
+    {#if plan.operation === 'stack' && plan.stack_primary_asset_id}
+      <p><strong>Stack main:</strong> {plan.stack_primary_asset_id}</p>
+    {/if}
     {#if plan.operation === 'stack' && stackConflicts.length}
       <fieldset class="stack-conflict">
         <legend>Existing stacks</legend>

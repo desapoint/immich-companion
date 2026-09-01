@@ -18,6 +18,7 @@ class StackPreparation:
 
     asset_ids: list[UUID]
     affected_ids: list[UUID]
+    primary_asset_id: UUID
 
 
 class StackSelectionError(RuntimeError):
@@ -67,10 +68,14 @@ class StackService:
         self,
         asset_ids: list[UUID],
         resolution: StackResolution | None,
+        primary_asset_id: UUID | None = None,
     ) -> StackPreparation:
         """Resolve existing memberships using the reviewed conflict mode."""
 
         resolution = resolution or "move_selected"
+        primary_asset_id = primary_asset_id or asset_ids[0]
+        if primary_asset_id not in asset_ids:
+            raise StackSelectionError("The chosen stack primary is not selected")
         selected = set(asset_ids)
         final_ids = list(asset_ids)
         affected_ids = list(asset_ids)
@@ -101,15 +106,27 @@ class StackService:
                     await self._immich.update_stack_primary(stack.id, replacement_primary)
                 for identifier in selected_members:
                     await self._immich.remove_asset_from_stack(stack.id, identifier)
+        if primary_asset_id not in final_ids:
+            raise StackSelectionError(
+                "The chosen stack primary is unavailable with this conflict resolution"
+            )
         self._require_stackable(final_ids)
-        return StackPreparation(asset_ids=final_ids, affected_ids=affected_ids)
+        ordered_ids = [
+            primary_asset_id,
+            *(identifier for identifier in final_ids if identifier != primary_asset_id),
+        ]
+        return StackPreparation(
+            asset_ids=ordered_ids,
+            affected_ids=affected_ids,
+            primary_asset_id=primary_asset_id,
+        )
 
     async def execute(self, preparation: StackPreparation) -> bool:
         """Create, repair, and verify one prepared stack through Immich APIs."""
 
         await self._immich.create_stack(preparation.asset_ids)
         await self._repair_targets(preparation.affected_ids)
-        return await self._creation_visible(preparation.asset_ids[0])
+        return await self._creation_visible(preparation.primary_asset_id)
 
     async def repair_ids(self, asset_ids: list[UUID]) -> list[UUID]:
         """Snapshot every member whose stack metadata can change."""

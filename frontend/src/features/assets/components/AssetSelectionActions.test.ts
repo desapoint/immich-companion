@@ -27,6 +27,7 @@ describe('AssetSelectionActions', () => {
     });
 
     expect(body).toContain('0 selected');
+    expect(body).toContain('Stack main · no selection');
     expect(body).toContain('aria-label="Selection controls"');
     expect(body).toContain('aria-label="Select current page"');
     expect(body).toMatch(/class="action-controls[^"]* hidden/);
@@ -78,6 +79,7 @@ describe('AssetSelectionActions', () => {
     });
 
     expect(body).toContain('aria-label="Favorite selected assets"');
+    expect(body).toContain('Stack main · choose on a selected image');
     expect(body).toContain('aria-label="Delete selected assets (move to trash)"');
     expect(body).toContain('aria-label="More actions for selected assets"');
     expect(body).toContain('aria-label="Add selected assets to album"');

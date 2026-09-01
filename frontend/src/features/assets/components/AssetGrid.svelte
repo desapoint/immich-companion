@@ -13,8 +13,10 @@
     indicatorConfig: AssetCardIndicatorConfig;
     matchingTagIds: ReadonlySet<string>;
     layout: AssetLayoutMode;
+    stackPrimaryId?: string | null;
     onopen: (index: number) => void;
     onselect: (index: number, shiftKey: boolean) => void;
+    onsetstackprimary?: (assetId: string) => void;
     ondragstart: (index: number, event: PointerEvent) => void;
     ondragenter: (index: number, event: PointerEvent) => void;
   }
@@ -26,8 +28,10 @@
     indicatorConfig,
     matchingTagIds,
     layout,
+    stackPrimaryId = null,
     onopen,
     onselect,
+    onsetstackprimary = () => undefined,
     ondragstart,
     ondragenter,
   }: Props = $props();
@@ -46,8 +50,10 @@
       {selectionActive}
       condensed={layout === 'condensed'}
       selected={selectedIds.has(asset.id)}
+      stackPrimary={stackPrimaryId === asset.id}
       onopen={() => onopen(index)}
       onselect={(shiftKey) => onselect(index, shiftKey)}
+      onsetstackprimary={() => onsetstackprimary(asset.id)}
       ondragstart={(event) => ondragstart(index, event)}
       ondragenter={(event) => ondragenter(index, event)}
     />
