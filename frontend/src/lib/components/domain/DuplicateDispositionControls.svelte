@@ -42,7 +42,7 @@
   .disposition-controls { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
   button { display: inline-flex; min-width: 0; min-height: 2.15rem; align-items: center; justify-content: center; gap: .28rem; padding: .35rem .45rem; border: 0; border-right: 1px solid var(--color-border-subtle); color: var(--color-ink-muted); background: var(--color-canvas); font: inherit; font-size: .68rem; font-weight: 780; cursor: pointer; }
   button:last-child { border-right: 0; }
-  button:hover:not(:disabled) { color: var(--color-accent-strong); background: var(--color-surface-soft); }
+  button:not(.active):hover:not(:disabled) { color: var(--color-accent-strong); background: var(--color-surface-soft); }
   button.active { color: var(--color-ink-inverse); background: var(--color-accent-strong); }
   button.delete.active { background: var(--color-negative-ink); }
   button:focus-visible { position: relative; z-index: 1; outline: .14rem solid color-mix(in srgb, var(--color-accent-strong) 55%, transparent); outline-offset: -.14rem; }

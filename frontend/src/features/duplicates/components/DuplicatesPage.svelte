@@ -746,12 +746,12 @@
                 <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
               </div>
               <div class="group-controls">
+                <p>{group.reason}</p>
                 <div class="group-presets" aria-label="Set every image decision">
                   <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
                   <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
                   <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
                 </div>
-                <p>{group.reason}</p>
               </div>
             </header>
             <div class="members">
@@ -856,9 +856,9 @@
   .group-card { overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .group-card.eligible { border-color: var(--color-positive-border); }
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
-  .group-card header p { margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
-  .group-controls { display: flex; min-width: min(100%, 31rem); align-items: end; justify-content: flex-end; gap: .75rem; }
-  .group-presets { display: inline-flex; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
+  .group-card header p { flex: 1; margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
+  .group-controls { display: flex; min-width: min(100%, 31rem); flex: 1; align-items: center; justify-content: flex-end; gap: .75rem; }
+  .group-presets { display: inline-flex; flex: none; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
   .group-presets button { min-height: 2rem; border: 0; border-right: 1px solid var(--color-border-subtle); border-radius: 0; }
   .group-presets button:last-child { border-right: 0; }
   .group-heading { display: flex; align-items: center; gap: .65rem; }
