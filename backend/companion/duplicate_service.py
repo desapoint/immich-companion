@@ -1015,6 +1015,7 @@ class CrossSourceDuplicateService:
                     )
                 )
         return DuplicateWorkspaceState(
+            initialized=workspace is not None,
             selected_group_ids=selected_ids,
             active_group_id=active_group_id,
             stale_selected_groups=stale_selected,
@@ -1080,6 +1081,17 @@ class CrossSourceDuplicateService:
                 raise ActionPlanConflictError(
                     "The stack primary must first have the Stack disposition"
                 )
+        stack_ids = [
+            decision.asset_id
+            for decision in request.decisions
+            if decision.disposition == "stack"
+        ]
+        stack_primary_asset_id = request.stack_primary_asset_id
+        if stack_ids and stack_primary_asset_id is None:
+            preferred_primary = group.effective_primary_asset_id or group.keeper_asset_id
+            stack_primary_asset_id = (
+                preferred_primary if preferred_primary in stack_ids else stack_ids[0]
+            )
         if request.metadata_keeper_asset_id is not None:
             keeper = decisions.get(request.metadata_keeper_asset_id)
             if keeper is not None and keeper.disposition == "delete":
@@ -1093,7 +1105,7 @@ class CrossSourceDuplicateService:
             member_decisions=[
                 decision.model_dump(mode="json") for decision in request.decisions
             ],
-            stack_primary_asset_id=request.stack_primary_asset_id,
+            stack_primary_asset_id=stack_primary_asset_id,
             metadata_keeper_asset_id=request.metadata_keeper_asset_id,
             draft_status=request.status,
         )

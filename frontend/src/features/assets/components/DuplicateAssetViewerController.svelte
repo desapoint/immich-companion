@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
 
   import { getAssetDetail, getAssetIntegrity } from '../api/assetApi';
+  import type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
+  import { resolveStackPrimary } from '../../../lib/utils/duplicateReview';
   import type { AssetDetail, AssetIntegrityState, AssetSummary, DuplicateReviewContext } from '../types/assets';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
 
@@ -32,14 +34,16 @@
     recommended_keeper_asset_id: string | null;
     selected_keeper_asset_id: string | null;
     selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+    member_decisions: Record<string, DuplicateDisposition>;
+    stack_primary_asset_id: string | null;
     recommendation_reason_codes: string[];
     members: Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
       content_checksum: string | null;
     }>;
     initial_index: number;
-    onkeeperchange?: (assetId: string) => DuplicatePreviewReview['selected_action'];
-    onactionchange?: (action: DuplicatePreviewReview['selected_action']) => void;
+    onmemberdispositionchange?: (assetId: string, disposition: DuplicateDisposition) => void;
+    onstackprimarychange?: (assetId: string) => void;
     onsimilarityreferencechange?: (assetId: string) => Promise<Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
       content_checksum: string | null;
@@ -64,6 +68,8 @@
   let detailGeneration = 0;
   let selectedKeeperId = $state<string | null>(null);
   let selectedAction = $state<DuplicatePreviewReview['selected_action']>('automatic');
+  let memberDecisions = $state<Record<string, DuplicateDisposition>>({});
+  let stackPrimaryAssetId = $state<string | null>(null);
   let similarityLoading = $state(false);
   let similarityError = $state<string | null>(null);
   const selectedIds = new Set<string>();
@@ -111,6 +117,7 @@
     recommended_keeper_asset_id: review.recommended_keeper_asset_id,
     selected_keeper_asset_id: selectedKeeperId,
     selected_action: selectedAction,
+    stack_primary_asset_id: stackPrimaryAssetId,
     recommendation_reason_codes: review.recommendation_reason_codes,
     members: members.map((member) => ({
       id: member.id,
@@ -122,6 +129,7 @@
       file_size_bytes: member.file_size_bytes,
       is_offline: member.is_offline,
       is_stacked: member.is_stacked,
+      disposition: memberDecisions[member.id] ?? null,
       similarity: member.similarity,
       preservation: member.preservation,
     })),
@@ -156,16 +164,22 @@
     }
   }
 
-  function chooseKeeper(assetId: string): void {
-    selectedKeeperId = assetId;
-    selectedAction = review.onkeeperchange?.(assetId) ?? selectedAction;
+  function chooseDisposition(assetId: string, disposition: DuplicateDisposition): void {
+    memberDecisions = { ...memberDecisions, [assetId]: disposition };
+    stackPrimaryAssetId = resolveStackPrimary(
+      members
+        .filter((member) => memberDecisions[member.id] === 'stack')
+        .map((member) => member.id),
+      stackPrimaryAssetId,
+      [selectedKeeperId, review.recommended_keeper_asset_id],
+    );
+    review.onmemberdispositionchange?.(assetId, disposition);
   }
 
-  function chooseAction(action: DuplicatePreviewReview['selected_action']): void {
-    if (action === 'resolve' && !review.eligible) return;
-    if (action === 'stack_all' && members.some((member) => member.is_offline || member.is_stacked)) return;
-    selectedAction = action;
-    review.onactionchange?.(action);
+  function chooseStackPrimary(assetId: string): void {
+    if (memberDecisions[assetId] !== 'stack') return;
+    stackPrimaryAssetId = assetId;
+    review.onstackprimarychange?.(assetId);
   }
 
   async function chooseSimilarityReference(assetId: string): Promise<void> {
@@ -186,6 +200,8 @@
   onMount(() => {
     selectedKeeperId = review.selected_keeper_asset_id;
     selectedAction = review.selected_action;
+    memberDecisions = { ...review.member_decisions };
+    stackPrimaryAssetId = review.stack_primary_asset_id;
     void navigate(review.initial_index);
   });
 </script>
@@ -207,8 +223,8 @@
     apiOnly={true}
     integrityEnabled={true}
     {duplicateContext}
-    onduplicatekeeper={chooseKeeper}
-    onduplicateaction={chooseAction}
+    onduplicatedisposition={chooseDisposition}
+    onduplicatestackprimary={chooseStackPrimary}
     onduplicatesimilarityreference={(assetId) => void chooseSimilarityReference(assetId)}
     onduplicatepreviousgroup={review.onpreviousgroup}
     onduplicatenextgroup={review.onnextgroup}

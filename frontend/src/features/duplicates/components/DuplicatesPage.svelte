@@ -1,14 +1,17 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { SvelteSet } from 'svelte/reactivity';
+  import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
+  import DuplicateDispositionControls from '../../../lib/components/domain/DuplicateDispositionControls.svelte';
+  import StackPrimaryControl from '../../../lib/components/domain/StackPrimaryControl.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import { loadDuplicatePolicy, loadImmichLibraries, saveDuplicatePolicy } from '../../../lib/api/duplicatePolicyApi';
   import type { SelectOption } from '../../../lib/types/ui';
+  import { resolveStackPrimary } from '../../../lib/utils/duplicateReview';
   import GroupEvidencePills from './GroupEvidencePills.svelte';
   import DuplicateReviewFilters from './DuplicateReviewFilters.svelte';
   import {
@@ -16,17 +19,21 @@
     cancelDuplicateTask,
     executeDuplicateResolution,
     loadDuplicateGroups,
+    loadDuplicateWorkspace,
     loadDuplicateTask,
     loadLatestSimilarityScan,
     loadSimilarityScanTasks,
     planDuplicateResolution,
-    saveDuplicateReview,
+    saveDuplicateGroupDraft,
+    saveDuplicateWorkspaceSelection,
     startDuplicateSimilarityScan,
     switchDuplicateSimilarityReference,
   } from '../api/duplicateApi';
   import type {
     DuplicateAnalysisOptions,
     DuplicateActionSelection,
+    DuplicateDisposition,
+    DuplicateGroupDraft,
     DuplicateKeeperPolicy,
     DuplicatePlanAction,
     DuplicateResolutionPlan,
@@ -34,6 +41,7 @@
     DuplicateTaskStatus,
     DuplicateMember,
     DuplicatePreviewRequest,
+    DuplicateWorkspaceState,
     ExactDuplicateGroup,
     SimilarityScanSummary,
   } from '../types/duplicates';
@@ -65,11 +73,9 @@
     { value: 'review', label: 'Always review' },
   ];
   const bulkActionOptions: SelectOption[] = [
-    { value: 'resolve', label: 'Resolve — keep each primary' },
     { value: 'keep_all', label: 'Keep all copies' },
     { value: 'delete_all', label: 'Delete every copy' },
     { value: 'stack_all', label: 'Stack each group' },
-    { value: 'none', label: 'Skip / review later' },
   ];
   const defaultOptions: DuplicateAnalysisOptions = {
     keeper_policy: 'prefer_upload',
@@ -87,8 +93,9 @@
   let libraryOptions = $state<SelectOption[]>([]);
   let bulkAction = $state<DuplicatePlanAction>('keep_all');
   const selected = new SvelteSet<string>();
-  let keeperOverrides = $state<Record<string, string>>({});
-  let actionOverrides = $state<Record<string, DuplicateActionSelection>>({});
+  let groupDrafts = $state.raw<Record<string, DuplicateGroupDraft>>({});
+  let workspace = $state.raw<DuplicateWorkspaceState | null>(null);
+  let activeGroupId = $state<string | null>(null);
   const savingGroups = new SvelteSet<string>();
   let loading = $state(true);
   let busy = $state(false);
@@ -100,6 +107,8 @@
   let plan = $state.raw<DuplicateResolutionPlan | null>(null);
   let confirmOpen = $state(false);
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let workspaceSaveQueue = Promise.resolve();
+  const draftSaveQueues = new SvelteMap<string, Promise<void>>();
   let selectionInitialized = false;
   let activeFilter = $state<DuplicateReviewFilter>('all');
 
@@ -157,10 +166,20 @@
       ]);
       result = loaded;
       latestScan = latest;
+      const restored = await loadDuplicateWorkspace();
+      workspace = restored;
+      groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
       const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
       for (const id of selected) if (!liveIds.has(id)) selected.delete(id);
       if (!selectionInitialized) {
-        for (const group of autoReadyGroups) selected.add(group.group_id);
+        selected.clear();
+        if (restored.initialized) {
+          for (const groupId of restored.selected_group_ids) selected.add(groupId);
+          activeGroupId = restored.active_group_id;
+        } else {
+          for (const group of autoReadyGroups) selected.add(group.group_id);
+          if (selected.size) void persistWorkspace();
+        }
         selectionInitialized = true;
       }
       const activeScan = scanTasks.find((candidate) => !terminalStatuses.has(candidate.status));
@@ -209,8 +228,7 @@
         if (kind !== 'similarity') {
           selected.clear();
           selectionInitialized = false;
-          keeperOverrides = {};
-          actionOverrides = {};
+          groupDrafts = {};
         }
         await load();
       } else if (task.status === 'cancelled' && kind === 'similarity') {
@@ -228,33 +246,70 @@
   function toggleGroup(groupId: string, checked: boolean): void {
     if (checked) selected.add(groupId);
     else selected.delete(groupId);
+    void persistWorkspace();
   }
 
   function toggleAllEligible(): void {
     if (allAutoReadySelected) {
       for (const group of autoReadyGroups) selected.delete(group.group_id);
+      void persistWorkspace();
       return;
     }
     for (const group of autoReadyGroups) {
       selected.add(group.group_id);
     }
+    void persistWorkspace();
   }
 
-  function setKeeper(group: ExactDuplicateGroup, assetId: string): void {
-    keeperOverrides = { ...keeperOverrides, [group.group_id]: assetId };
-    if (effectiveActionFor(group) !== 'none') selected.add(group.group_id);
-    void persistReview(group, actionFor(group), assetId);
+  function persistWorkspace(): void {
+    const request = {
+      options: { ...appliedOptions },
+      selected_group_ids: [...selected],
+      active_group_id: activeGroupId,
+    };
+    workspaceSaveQueue = workspaceSaveQueue.catch(() => undefined).then(async () => {
+      try {
+        workspace = await saveDuplicateWorkspaceSelection({
+          ...request,
+          selected_group_ids: request.selected_group_ids,
+        });
+      } catch (reason) {
+        error = reason instanceof Error ? reason.message : 'Could not save duplicate selection.';
+      }
+    });
+  }
+
+  function draftFor(group: ExactDuplicateGroup): DuplicateGroupDraft | null {
+    const draft = groupDrafts[group.group_id];
+    return draft && !draft.stale && draft.member_fingerprint === group.member_fingerprint
+      ? draft
+      : null;
+  }
+
+  function dispositionFor(group: ExactDuplicateGroup, assetId: string): DuplicateDisposition | null {
+    return draftFor(group)?.decisions.find((decision) => decision.asset_id === assetId)?.disposition ?? null;
   }
 
   function selectedKeeper(group: ExactDuplicateGroup): string | null {
-    return keeperOverrides[group.group_id]
-      ?? group.manual_primary_asset_id
-      ?? group.effective_primary_asset_id
-      ?? group.keeper_asset_id;
+    const draft = draftFor(group);
+    if (draft?.stack_primary_asset_id) return draft.stack_primary_asset_id;
+    const kept = draft?.decisions.filter((decision) => decision.disposition === 'keep') ?? [];
+    if (kept.length === 1) return kept[0].asset_id;
+    return group.effective_primary_asset_id ?? group.keeper_asset_id;
   }
 
   function actionFor(group: ExactDuplicateGroup): DuplicateActionSelection {
-    return actionOverrides[group.group_id] ?? group.manual_action ?? 'automatic';
+    const draft = draftFor(group);
+    if (!draft?.decisions.length) return 'automatic';
+    if (draft.decisions.length !== group.members.length) return 'none';
+    const values = new Set(draft.decisions.map((decision) => decision.disposition));
+    if (values.size === 1) {
+      const disposition = draft.decisions[0].disposition;
+      return disposition === 'keep' ? 'keep_all' : disposition === 'delete' ? 'delete_all' : 'stack_all';
+    }
+    const keepCount = draft.decisions.filter((decision) => decision.disposition === 'keep').length;
+    const deleteCount = draft.decisions.filter((decision) => decision.disposition === 'delete').length;
+    return keepCount === 1 && deleteCount === group.members.length - 1 ? 'resolve' : 'none';
   }
 
   function effectiveActionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
@@ -271,66 +326,101 @@
       && (action !== 'stack_all' || !group.members.some((member) => member.is_offline || member.is_stacked));
   }
 
-  function actionOptions(group: ExactDuplicateGroup): SelectOption[] {
-    return [
-      { value: 'automatic', label: `Automatic — ${group.recommended_action.replaceAll('_', ' ')}` },
-      { value: 'none', label: 'Skip / review later' },
-      { value: 'resolve', label: 'Resolve — keep primary', disabled: !group.eligible },
-      { value: 'keep_all', label: 'Keep all — resolve group, keep copies' },
-      { value: 'delete_all', label: 'Delete all — keep no copy' },
-      {
-        value: 'stack_all',
-        label: 'Stack all — keep every copy',
-        disabled: group.members.some((member) => member.is_offline || member.is_stacked),
-      },
-    ];
-  }
-
-  function setGroupAction(group: ExactDuplicateGroup, value: string): void {
-    const action = value as DuplicateActionSelection;
-    actionOverrides = { ...actionOverrides, [group.group_id]: action };
-    if (effectiveActionFor(group) === 'none') {
-      selected.delete(group.group_id);
-    } else if (isActionable(group)) {
-      selected.add(group.group_id);
-    }
-    void persistReview(group, action, selectedKeeper(group));
-  }
-
-  async function persistReview(
-    group: ExactDuplicateGroup,
-    selection: DuplicateActionSelection,
-    primaryId: string | null,
-  ): Promise<void> {
+  async function persistDraft(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
     savingGroups.add(group.group_id);
     error = null;
     try {
-      const updated = await saveDuplicateReview({
+      const updated = await saveDuplicateGroupDraft({
         group_id: group.group_id,
+        member_fingerprint: group.member_fingerprint,
         options: appliedOptions,
-        manual_action: selection === 'automatic' ? null : selection,
-        manual_primary_asset_id: primaryId,
+        decisions: draft.decisions,
+        stack_primary_asset_id: draft.stack_primary_asset_id,
+        metadata_keeper_asset_id: draft.metadata_keeper_asset_id,
+        status: draft.status,
       });
-      if (result) {
-        result = {
-          ...result,
-          groups: result.groups.map((candidate) => (
-            candidate.group_id === updated.group_id ? updated : candidate
-          )),
-        };
-      }
-      const nextActions = { ...actionOverrides };
-      const nextKeepers = { ...keeperOverrides };
-      delete nextActions[group.group_id];
-      delete nextKeepers[group.group_id];
-      actionOverrides = nextActions;
-      keeperOverrides = nextKeepers;
+      groupDrafts = { ...groupDrafts, [group.group_id]: updated };
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
-      await load();
     } finally {
       savingGroups.delete(group.group_id);
     }
+  }
+
+  function queueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): void {
+    const previous = draftSaveQueues.get(group.group_id) ?? Promise.resolve();
+    const next = previous.catch(() => undefined).then(() => persistDraft(group, draft));
+    draftSaveQueues.set(group.group_id, next);
+    void next.finally(() => {
+      if (draftSaveQueues.get(group.group_id) === next) draftSaveQueues.delete(group.group_id);
+    });
+  }
+
+  function updateDraft(
+    group: ExactDuplicateGroup,
+    decisions: DuplicateGroupDraft['decisions'],
+    stackPrimaryAssetId: string | null,
+  ): void {
+    const existing = draftFor(group);
+    const stackIds = decisions
+      .filter((decision) => decision.disposition === 'stack')
+      .map((decision) => decision.asset_id);
+    const resolvedPrimary = resolveStackPrimary(
+      stackIds,
+      stackPrimaryAssetId,
+      [group.effective_primary_asset_id, group.keeper_asset_id],
+    );
+    const draft: DuplicateGroupDraft = {
+      group_id: group.group_id,
+      discovery_source: group.discovery_source,
+      member_fingerprint: group.member_fingerprint,
+      decisions,
+      stack_primary_asset_id: resolvedPrimary,
+      metadata_keeper_asset_id: existing?.metadata_keeper_asset_id ?? null,
+      status: 'pending',
+      stale: false,
+    };
+    groupDrafts = { ...groupDrafts, [group.group_id]: draft };
+    selected.add(group.group_id);
+    void persistWorkspace();
+    queueDraftPersistence(group, draft);
+  }
+
+  function setMemberDisposition(
+    group: ExactDuplicateGroup,
+    assetId: string,
+    disposition: DuplicateDisposition,
+  ): void {
+    const existing = draftFor(group);
+    const decisions = [...(existing?.decisions ?? [])];
+    const index = decisions.findIndex((decision) => decision.asset_id === assetId);
+    const next = { asset_id: assetId, disposition, source: 'manual' as const, status: 'pending' as const };
+    if (index >= 0) decisions[index] = next;
+    else decisions.push(next);
+    const primary = disposition !== 'stack' && existing?.stack_primary_asset_id === assetId
+      ? null
+      : existing?.stack_primary_asset_id ?? null;
+    updateDraft(group, decisions, primary);
+  }
+
+  function setStackPrimary(group: ExactDuplicateGroup, assetId: string): void {
+    if (dispositionFor(group, assetId) !== 'stack') return;
+    const draft = draftFor(group);
+    if (!draft) return;
+    updateDraft(group, draft.decisions, assetId);
+  }
+
+  function applyGroupPreset(group: ExactDuplicateGroup, disposition: DuplicateDisposition): void {
+    updateDraft(
+      group,
+      group.members.map((member) => ({
+        asset_id: member.id,
+        disposition,
+        source: 'manual',
+        status: 'pending',
+      })),
+      disposition === 'stack' ? draftFor(group)?.stack_primary_asset_id ?? null : null,
+    );
   }
 
   async function applyBulkAction(): Promise<void> {
@@ -338,13 +428,11 @@
     busy = true;
     error = null;
     const groups = result.groups.filter((group) => selected.has(group.group_id));
-    actionOverrides = {
-      ...actionOverrides,
-      ...Object.fromEntries(groups.map((group) => [group.group_id, bulkAction])),
-    };
     try {
       for (const group of groups) {
-        await persistReview(group, bulkAction, selectedKeeper(group));
+        if (bulkAction === 'keep_all') applyGroupPreset(group, 'keep');
+        else if (bulkAction === 'delete_all') applyGroupPreset(group, 'delete');
+        else if (bulkAction === 'stack_all') applyGroupPreset(group, 'stack');
       }
       if (bulkAction === 'none') selected.clear();
     } finally {
@@ -372,14 +460,15 @@
       recommended_keeper_asset_id: group.keeper_asset_id,
       selected_keeper_asset_id: selectedKeeper(group),
       selected_action: actionFor(group),
+      member_decisions: Object.fromEntries(
+        (draftFor(group)?.decisions ?? []).map((decision) => [decision.asset_id, decision.disposition]),
+      ),
+      stack_primary_asset_id: draftFor(group)?.stack_primary_asset_id ?? null,
       recommendation_reason_codes: group.recommendation_reason_codes,
       members: group.members,
       initial_index: initialIndex,
-      onkeeperchange: (assetId) => {
-        setKeeper(group, assetId);
-        return actionFor(group);
-      },
-      onactionchange: (action) => setGroupAction(group, action),
+      onmemberdispositionchange: (assetId, disposition) => setMemberDisposition(group, assetId, disposition),
+      onstackprimarychange: (assetId) => setStackPrimary(group, assetId),
       onsimilarityreferencechange: async (assetId) => {
         const updated = await switchDuplicateSimilarityReference(group.group_id, assetId);
         if (result) {
@@ -393,12 +482,18 @@
         return updated.members;
       },
       onpreviousgroup: groupIndex > 0
-        ? () => onpreview(previewRequest(groups[groupIndex - 1], 0))
+        ? () => openPreview(groups[groupIndex - 1], 0)
         : undefined,
       onnextgroup: groupIndex >= 0 && groupIndex < groups.length - 1
-        ? () => onpreview(previewRequest(groups[groupIndex + 1], 0))
+        ? () => openPreview(groups[groupIndex + 1], 0)
         : undefined,
     };
+  }
+
+  function openPreview(group: ExactDuplicateGroup, index: number): void {
+    activeGroupId = group.group_id;
+    void persistWorkspace();
+    onpreview(previewRequest(group, index));
   }
 
   async function reviewBatch(): Promise<void> {
@@ -411,7 +506,11 @@
         options: appliedOptions,
         group_ids: [...selected],
         all_eligible: false,
-        keeper_overrides: keeperOverrides,
+        keeper_overrides: Object.fromEntries(
+          result?.groups
+            .filter((group) => selected.has(group.group_id) && selectedKeeper(group) !== null)
+            .map((group) => [group.group_id, selectedKeeper(group)!]) ?? [],
+        ),
         action_overrides: Object.fromEntries(
           result?.groups
             .filter((group) => selected.has(group.group_id))
@@ -451,10 +550,6 @@
     error = null;
     message = null;
     appliedOptions = nextOptions;
-    keeperOverrides = {};
-    actionOverrides = {};
-    selected.clear();
-    selectionInitialized = false;
     try {
       await saveDuplicatePolicy({
         automatic_handling_enabled: nextOptions.automatic_handling_enabled,
@@ -651,20 +746,28 @@
                 <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
               </div>
               <div class="group-controls">
-                <SelectField id={`duplicate-action-${group.group_id}`} label="Group action" value={actionFor(group)} options={actionOptions(group)} compact disabled={busy || savingGroups.has(group.group_id)} onchange={(value) => setGroupAction(group, value)} />
+                <div class="group-presets" aria-label="Set every image decision">
+                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
+                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
+                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
+                </div>
                 <p>{group.reason}</p>
               </div>
             </header>
             <div class="members">
               {#each group.members as member, memberIndex (member.id)}
-                <div class:keeper={selectedKeeper(group) === member.id} class="member">
+                <div
+                  class:keep={dispositionFor(group, member.id) === 'keep'}
+                  class:delete={dispositionFor(group, member.id) === 'delete'}
+                  class:stack={dispositionFor(group, member.id) === 'stack'}
+                  class="member"
+                >
                   <div class="member-image">
-                    <button class="preview-button" type="button" aria-label={`Preview ${member.original_file_name}`} onclick={() => onpreview(previewRequest(group, memberIndex))}>
+                    <button class="preview-button" type="button" aria-label={`Preview ${member.original_file_name}`} onclick={() => openPreview(group, memberIndex)}>
                       <img src={`/api/assets/${encodeURIComponent(member.id)}/thumbnail`} alt="" loading="lazy" />
                     </button>
-                    <button class="keeper-button" type="button" class:active={selectedKeeper(group) === member.id} disabled={busy} aria-pressed={selectedKeeper(group) === member.id} aria-label={selectedKeeper(group) === member.id ? `${member.original_file_name} is the keeper` : `Choose ${member.original_file_name} as the manual keeper`} onclick={() => setKeeper(group, member.id)}><Icon name="star" size=".92rem" /></button>
-                    <button class="view-button" type="button" aria-label={`View complete details for ${member.original_file_name}`} onclick={() => onpreview(previewRequest(group, memberIndex))}><Icon name="view" size=".95rem" /></button>
-                    {#if selectedKeeper(group) === member.id}<span class="keeper-label">Keeper</span>{/if}
+                    <button class="view-button" type="button" aria-label={`View complete details for ${member.original_file_name}`} onclick={() => openPreview(group, memberIndex)}><Icon name="view" size=".95rem" /></button>
+                    {#if draftFor(group)?.stack_primary_asset_id === member.id}<span class="keeper-label">Stack main</span>{/if}
                   </div>
                   <div class="member-body">
                     <strong title={member.original_file_name}>{member.original_file_name}</strong>
@@ -672,6 +775,19 @@
                     {#if member.library_id}<small class="library-id" title={member.library_id}>{member.library_id}</small>{/if}
                     <GroupEvidencePills {member} analysisPending={result.analysis_task_id !== null && member.evidence.analysis_freshness !== 'current'} />
                     <small>{formatSize(member.file_size_bytes)}</small>
+                    <DuplicateDispositionControls
+                      value={dispositionFor(group, member.id)}
+                      disabled={busy || savingGroups.has(group.group_id)}
+                      compact
+                      onchange={(disposition) => setMemberDisposition(group, member.id, disposition)}
+                    />
+                    <StackPrimaryControl
+                      eligible={dispositionFor(group, member.id) === 'stack'}
+                      selected={draftFor(group)?.stack_primary_asset_id === member.id}
+                      disabled={busy || savingGroups.has(group.group_id)}
+                      compact
+                      onchange={() => setStackPrimary(group, member.id)}
+                    />
                   </div>
                 </div>
               {/each}
@@ -742,7 +858,9 @@
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
   .group-card header p { margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
   .group-controls { display: flex; min-width: min(100%, 31rem); align-items: end; justify-content: flex-end; gap: .75rem; }
-  .group-controls > :global(.select-field) { min-width: 12.5rem; }
+  .group-presets { display: inline-flex; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
+  .group-presets button { min-height: 2rem; border: 0; border-right: 1px solid var(--color-border-subtle); border-radius: 0; }
+  .group-presets button:last-child { border-right: 0; }
   .group-heading { display: flex; align-items: center; gap: .65rem; }
   .group-heading > div { display: flex; align-items: center; gap: .55rem; white-space: nowrap; }
   .status { padding: .2rem .45rem; border-radius: 999px; background: var(--color-surface-soft); font-size: .62rem; font-weight: 800; text-transform: uppercase; }
@@ -753,14 +871,14 @@
   .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
   .member { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }
-  .member.keeper { border-color: var(--color-accent-strong); box-shadow: inset 0 0 0 1px var(--color-accent-strong); }
+  .member.keep { border-color: var(--color-positive-border); box-shadow: inset 0 0 0 1px var(--color-positive-border); }
+  .member.delete { border-color: var(--color-negative-border); box-shadow: inset 0 0 0 1px var(--color-negative-border); }
+  .member.stack { border-color: var(--color-accent-strong); box-shadow: inset 0 0 0 1px var(--color-accent-strong); }
   .member-image { position: relative; aspect-ratio: 1; overflow: hidden; background: var(--color-surface-soft); }
   .preview-button { display: block; width: 100%; height: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: transparent; }
   .preview-button img { display: block; width: 100%; height: 100%; object-fit: cover; transition: transform .18s ease; }
   .preview-button:hover img { transform: scale(1.025); }
-  .keeper-button, .view-button { position: absolute; top: .45rem; display: grid; width: 2rem; height: 2rem; min-height: 0; padding: 0; place-items: center; border: 1px solid rgb(255 255 255 / .4); border-radius: 999px; color: white; background: rgb(12 16 18 / .72); box-shadow: 0 2px 8px rgb(0 0 0 / .28); backdrop-filter: blur(5px); }
-  .keeper-button { left: .45rem; } .view-button { right: .45rem; }
-  .keeper-button.active { border-color: var(--color-accent-strong); color: var(--color-ink-inverse); background: var(--color-accent-strong); }
+  .view-button { position: absolute; top: .45rem; right: .45rem; display: grid; width: 2rem; height: 2rem; min-height: 0; padding: 0; place-items: center; border: 1px solid rgb(255 255 255 / .4); border-radius: 999px; color: white; background: rgb(12 16 18 / .72); box-shadow: 0 2px 8px rgb(0 0 0 / .28); backdrop-filter: blur(5px); }
   .keeper-label { position: absolute; bottom: .45rem; left: .45rem; padding: .2rem .42rem; border-radius: 999px; color: white; background: rgb(12 16 18 / .76); font-size: .58rem; font-weight: 820; text-transform: uppercase; }
   .member-body { display: grid; gap: .28rem; min-width: 0; padding: .6rem; }
   .member-body strong { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }

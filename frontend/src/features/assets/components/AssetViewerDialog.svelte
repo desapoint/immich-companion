@@ -20,8 +20,8 @@
 
   export function duplicateViewerShortcut(
     key: string,
-  ): 'primary' | 'resolve' | 'stack_all' | 'none' | null {
-    return ({ k: 'primary', r: 'resolve', s: 'stack_all', x: 'none' } as const)[key] ?? null;
+  ): 'keep' | 'delete' | 'stack' | 'primary' | null {
+    return ({ k: 'keep', d: 'delete', s: 'stack', p: 'primary' } as const)[key] ?? null;
   }
 </script>
 
@@ -96,8 +96,8 @@
     apiOnly?: boolean;
     integrityEnabled?: boolean;
     duplicateContext?: DuplicateReviewContext | null;
-    onduplicatekeeper?: (assetId: string) => void;
-    onduplicateaction?: (action: DuplicateReviewContext['selected_action']) => void;
+    onduplicatedisposition?: (assetId: string, disposition: 'keep' | 'delete' | 'stack') => void;
+    onduplicatestackprimary?: (assetId: string) => void;
     onduplicatesimilarityreference?: (assetId: string) => void;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
@@ -152,8 +152,8 @@
     apiOnly = false,
     integrityEnabled = !apiOnly,
     duplicateContext = null,
-    onduplicatekeeper,
-    onduplicateaction,
+    onduplicatedisposition,
+    onduplicatestackprimary,
     onduplicatesimilarityreference,
     onduplicatepreviousgroup,
     onduplicatenextgroup,
@@ -477,12 +477,12 @@
     } else if (event.key === ' ') {
       event.preventDefault();
       ontoggleselection(currentAsset.id);
-    } else if (duplicateShortcut === 'primary' && onduplicatekeeper) {
+    } else if (duplicateShortcut === 'primary' && onduplicatestackprimary) {
       event.preventDefault();
-      onduplicatekeeper(currentAsset.id);
-    } else if (duplicateShortcut && duplicateShortcut !== 'primary' && onduplicateaction) {
+      onduplicatestackprimary(currentAsset.id);
+    } else if (duplicateShortcut && duplicateShortcut !== 'primary' && onduplicatedisposition) {
       event.preventDefault();
-      onduplicateaction(duplicateShortcut);
+      onduplicatedisposition(currentAsset.id, duplicateShortcut);
     } else if (key === 'i') {
       event.preventDefault();
       infoOpen = !infoOpen;
@@ -760,8 +760,8 @@
         onsync={() => onsync(currentAsset.id)}
         {apiOnly}
         {duplicateContext}
-        {onduplicatekeeper}
-        {onduplicateaction}
+        {onduplicatedisposition}
+        {onduplicatestackprimary}
         {onduplicatesimilarityreference}
         {onduplicatepreviousgroup}
         {onduplicatenextgroup}

@@ -16,10 +16,10 @@ function targetStub(closestDialog: object | null, closestControl: object | null)
 
 describe('AssetViewerDialog keyboard shortcuts', () => {
   it('maps duplicate review shortcuts without affecting unrelated keys', () => {
-    expect(duplicateViewerShortcut('k')).toBe('primary');
-    expect(duplicateViewerShortcut('r')).toBe('resolve');
-    expect(duplicateViewerShortcut('s')).toBe('stack_all');
-    expect(duplicateViewerShortcut('x')).toBe('none');
+    expect(duplicateViewerShortcut('k')).toBe('keep');
+    expect(duplicateViewerShortcut('d')).toBe('delete');
+    expect(duplicateViewerShortcut('s')).toBe('stack');
+    expect(duplicateViewerShortcut('p')).toBe('primary');
     expect(duplicateViewerShortcut('i')).toBeNull();
   });
 

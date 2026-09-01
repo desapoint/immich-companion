@@ -1,3 +1,5 @@
+import type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
+
 export type AssetType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'OTHER';
 
 export type SearchMode = 'simple' | 'expert';
@@ -398,6 +400,7 @@ export interface DuplicateReviewMember {
   file_size_bytes: number | null;
   is_offline: boolean;
   is_stacked: boolean;
+  disposition: DuplicateDisposition | null;
   similarity: {
     state: 'reference' | 'current' | 'pending' | 'unavailable';
     reference_asset_id: string;
@@ -448,6 +451,7 @@ export interface DuplicateReviewContext {
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
   selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+  stack_primary_asset_id: string | null;
   recommendation_reason_codes: string[];
   members: DuplicateReviewMember[];
   current_integrity: AssetIntegrityState | null;

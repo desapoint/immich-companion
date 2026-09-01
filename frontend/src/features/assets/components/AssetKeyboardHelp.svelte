@@ -10,10 +10,10 @@
     <div><dt><kbd>←</kbd> / <kbd>H</kbd></dt><dd>Previous image</dd></div>
     <div><dt><kbd>→</kbd> / <kbd>L</kbd></dt><dd>Next image</dd></div>
     {#if duplicateMode}
-      <div><dt><kbd>K</kbd></dt><dd>Use viewed copy as primary</dd></div>
-      <div><dt><kbd>R</kbd></dt><dd>Resolve duplicate group</dd></div>
-      <div><dt><kbd>S</kbd></dt><dd>Stack all copies</dd></div>
-      <div><dt><kbd>X</kbd></dt><dd>Skip / review later</dd></div>
+      <div><dt><kbd>K</kbd></dt><dd>Keep viewed copy</dd></div>
+      <div><dt><kbd>D</kbd></dt><dd>Delete viewed copy</dd></div>
+      <div><dt><kbd>S</kbd></dt><dd>Stack viewed copy</dd></div>
+      <div><dt><kbd>P</kbd></dt><dd>Make viewed Stack copy the main image</dd></div>
     {/if}
     <div><dt><kbd>I</kbd></dt><dd>Toggle more info</dd></div>
     <div><dt><kbd>M</kbd></dt><dd>Toggle image size</dd></div>

@@ -350,6 +350,7 @@ class DuplicateGroupDraft(BaseModel):
 
 
 class DuplicateWorkspaceState(BaseModel):
+    initialized: bool = False
     selected_group_ids: list[str] = Field(default_factory=list)
     active_group_id: str | None = None
     stale_selected_groups: list[DuplicateWorkspaceGroupReference] = Field(default_factory=list)

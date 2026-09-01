@@ -4,6 +4,9 @@ import type {
   DuplicateResult,
   DuplicateTaskStatus,
   DuplicatePlanAction,
+  DuplicateGroupDraft,
+  DuplicateMemberDraftDecision,
+  DuplicateWorkspaceState,
   ExactDuplicateGroup,
   SimilarityScanSummary,
 } from '../types/duplicates';
@@ -40,6 +43,30 @@ export function saveDuplicateReview(request: {
     '/api/assets/duplicates/cross-source/review',
     jsonBody(request, 'PUT'),
   );
+}
+
+export function loadDuplicateWorkspace(): Promise<DuplicateWorkspaceState> {
+  return requestJson('/api/assets/duplicates/workspace');
+}
+
+export function saveDuplicateWorkspaceSelection(request: {
+  options: DuplicateAnalysisOptions;
+  selected_group_ids: string[];
+  active_group_id: string | null;
+}): Promise<DuplicateWorkspaceState> {
+  return requestJson('/api/assets/duplicates/workspace/selection', jsonBody(request, 'PUT'));
+}
+
+export function saveDuplicateGroupDraft(request: {
+  group_id: string;
+  member_fingerprint: string;
+  options: DuplicateAnalysisOptions;
+  decisions: DuplicateMemberDraftDecision[];
+  stack_primary_asset_id: string | null;
+  metadata_keeper_asset_id: string | null;
+  status: 'pending' | 'completed';
+}): Promise<DuplicateGroupDraft> {
+  return requestJson('/api/assets/duplicates/workspace/group', jsonBody(request, 'PUT'));
 }
 
 export function switchDuplicateSimilarityReference(

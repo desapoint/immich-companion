@@ -1,9 +1,11 @@
 import type { DuplicateKeeperPolicy, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
+import type { DuplicateDecisionSource, DuplicateDecisionStatus, DuplicateDisposition } from '../../../lib/types/duplicateReview';
 
 export type { DuplicateKeeperPolicy } from '../../../lib/types/duplicatePolicy';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
 export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
 export type DuplicateActionSelection = DuplicatePlanAction | 'automatic';
+export type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
 
 export interface DuplicateAnalysisOptions {
   keeper_policy: DuplicateKeeperPolicy;
@@ -121,14 +123,48 @@ export interface DuplicatePreviewRequest {
   recommended_keeper_asset_id: string | null;
   selected_keeper_asset_id: string | null;
   selected_action: DuplicateActionSelection;
+  member_decisions: Record<string, DuplicateDisposition>;
+  stack_primary_asset_id: string | null;
   recommendation_reason_codes: string[];
   members: DuplicateMember[];
   initial_index: number;
-  onkeeperchange?: (assetId: string) => DuplicateActionSelection;
-  onactionchange?: (action: DuplicateActionSelection) => void;
+  onmemberdispositionchange?: (assetId: string, disposition: DuplicateDisposition) => void;
+  onstackprimarychange?: (assetId: string) => void;
   onsimilarityreferencechange?: (assetId: string) => Promise<DuplicateMember[]>;
   onpreviousgroup?: () => void;
   onnextgroup?: () => void;
+}
+
+export interface DuplicateMemberDraftDecision {
+  asset_id: string;
+  disposition: DuplicateDisposition;
+  source: DuplicateDecisionSource;
+  status: DuplicateDecisionStatus;
+}
+
+export interface DuplicateGroupDraft {
+  group_id: string;
+  discovery_source: ExactDuplicateGroup['discovery_source'];
+  member_fingerprint: string;
+  decisions: DuplicateMemberDraftDecision[];
+  stack_primary_asset_id: string | null;
+  metadata_keeper_asset_id: string | null;
+  status: 'pending' | 'completed';
+  stale: boolean;
+}
+
+export interface DuplicateWorkspaceGroupReference {
+  group_id: string;
+  discovery_source: ExactDuplicateGroup['discovery_source'];
+  member_fingerprint: string;
+}
+
+export interface DuplicateWorkspaceState {
+  initialized: boolean;
+  selected_group_ids: string[];
+  active_group_id: string | null;
+  stale_selected_groups: DuplicateWorkspaceGroupReference[];
+  drafts: DuplicateGroupDraft[];
 }
 
 export interface DuplicateResult {

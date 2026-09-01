@@ -7,9 +7,12 @@ import {
   loadDuplicateGroups,
   loadDuplicateTask,
   loadLatestSimilarityScan,
+  loadDuplicateWorkspace,
   loadSimilarityScanTasks,
   planDuplicateResolution,
   saveDuplicateReview,
+  saveDuplicateGroupDraft,
+  saveDuplicateWorkspaceSelection,
   startDuplicateSimilarityScan,
   switchDuplicateSimilarityReference,
 } from './duplicateApi';
@@ -115,6 +118,60 @@ describe('duplicate API', () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       '/api/assets/duplicates/cross-source/review',
+      expect.objectContaining({ method: 'PUT', body: JSON.stringify(request) }),
+    );
+  });
+
+  it('restores durable workspace state and saves selected groups', async () => {
+    const restored = {
+      initialized: true,
+      selected_group_ids: ['group-1'],
+      active_group_id: 'group-1',
+      stale_selected_groups: [],
+      drafts: [],
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(restored), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(restored), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = {
+      options,
+      selected_group_ids: ['group-1'],
+      active_group_id: 'group-1',
+    };
+
+    await loadDuplicateWorkspace();
+    await saveDuplicateWorkspaceSelection(request);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/assets/duplicates/workspace', expect.any(Object));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/assets/duplicates/workspace/selection', expect.objectContaining({
+      method: 'PUT',
+      body: JSON.stringify(request),
+    }));
+  });
+
+  it('saves per-image decisions and a stack primary independently of execution', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify({ group_id: 'group-1' }), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const request = {
+      group_id: 'group-1',
+      member_fingerprint: 'fingerprint-1',
+      options,
+      decisions: [
+        { asset_id: 'asset-1', disposition: 'stack' as const, source: 'manual' as const, status: 'pending' as const },
+        { asset_id: 'asset-2', disposition: 'keep' as const, source: 'manual' as const, status: 'pending' as const },
+      ],
+      stack_primary_asset_id: 'asset-1',
+      metadata_keeper_asset_id: 'asset-2',
+      status: 'pending' as const,
+    };
+
+    await saveDuplicateGroupDraft(request);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/assets/duplicates/workspace/group',
       expect.objectContaining({ method: 'PUT', body: JSON.stringify(request) }),
     );
   });

@@ -1232,6 +1232,7 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
     restored = await service.workspace()
 
     assert restored.selected_group_ids == [PUBLIC_GROUP_ID]
+    assert restored.initialized is True
     assert restored.active_group_id == PUBLIC_GROUP_ID
     assert restored.stale_selected_groups == []
     assert restored.drafts[0].stack_primary_asset_id == UPLOAD_1
@@ -1272,6 +1273,39 @@ async def test_stack_primary_must_first_be_marked_stack() -> None:
                 stack_primary_asset_id=UPLOAD_1,
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_stack_draft_assigns_a_primary_when_client_omits_it() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        FakeReviews(),
+    )
+    current = (await service.result()).groups[0]
+
+    saved = await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="stack"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="stack"),
+            ],
+        )
+    )
+
+    assert saved.stack_primary_asset_id in {UPLOAD_1, EXTERNAL_1}
 
 
 @pytest.mark.asyncio
