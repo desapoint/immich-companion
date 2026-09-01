@@ -138,6 +138,8 @@ class DuplicateMember(BaseModel):
     evidence: DuplicateMemberEvidence
     similarity: DuplicateSimilarityEvidence | None = None
     preservation: DuplicatePreservationEvidence | None = None
+    recommended_disposition: DuplicateDraftDisposition | None = None
+    recommendation_reason_codes: list[str] = Field(default_factory=list)
 
 
 class ExactDuplicateGroup(BaseModel):

@@ -45,6 +45,8 @@ export interface DuplicateMember {
   };
   similarity: DuplicateSimilarityEvidence | null;
   preservation: DuplicatePreservationEvidence | null;
+  recommended_disposition?: DuplicateDisposition | null;
+  recommendation_reason_codes?: string[];
 }
 
 export interface DuplicateSimilarityEvidence {

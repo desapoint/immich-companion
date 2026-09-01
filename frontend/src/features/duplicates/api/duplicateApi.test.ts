@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  applyDuplicateRules,
   analyzeDuplicateGroups,
   cancelDuplicateTask,
   executeDuplicateResolution,
@@ -148,6 +149,30 @@ describe('duplicate API', () => {
       method: 'PUT',
       body: JSON.stringify(request),
     }));
+  });
+
+  it('persists safe automatic rules as per-image workspace decisions', async () => {
+    const restored = {
+      initialized: true,
+      selected_group_ids: ['group-1'],
+      active_group_id: 'group-1',
+      stale_selected_groups: [],
+      drafts: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(restored), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await applyDuplicateRules({ ...options, analyze_automatically: false });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/assets/duplicates/workspace/apply-rules',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ ...options, analyze_automatically: false }),
+      }),
+    );
   });
 
   it('saves per-image decisions and a stack primary independently of execution', async () => {

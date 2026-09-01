@@ -1374,6 +1374,20 @@ def create_app(
             raise map_action_error(error) from error
 
     @app.post(
+        "/api/assets/duplicates/workspace/apply-rules",
+        response_model=DuplicateWorkspaceState,
+    )
+    async def apply_duplicate_workspace_rules(
+        request: DuplicateAnalysisOptions,
+    ) -> DuplicateWorkspaceState:
+        try:
+            return await require_duplicate_service().apply_rules(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
         "/api/assets/duplicates/cross-source/{group_id}/similarity-reference",
         response_model=ExactDuplicateGroup,
     )

@@ -69,6 +69,12 @@ export function saveDuplicateGroupDraft(request: {
   return requestJson('/api/assets/duplicates/workspace/group', jsonBody(request, 'PUT'));
 }
 
+export function applyDuplicateRules(
+  options: DuplicateAnalysisOptions,
+): Promise<DuplicateWorkspaceState> {
+  return requestJson('/api/assets/duplicates/workspace/apply-rules', jsonBody(options));
+}
+
 export function switchDuplicateSimilarityReference(
   duplicateId: string,
   referenceAssetId: string,

@@ -150,8 +150,8 @@
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
         <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{duplicateContext.recommended_keeper_asset_id === null ? 'No unique recommendation' : automaticRuleRespected ? 'Yes' : 'No — manually overridden or undecided'}</dd></div>
         <div><dt>This copy</dt><dd>{currentDuplicateMember?.disposition === 'delete' ? 'Delete' : currentDuplicateMember?.disposition === 'keep' ? 'Keep' : currentDuplicateMember?.disposition === 'stack' ? duplicateContext.stack_primary_asset_id === asset.id ? 'Stack · main image' : 'Stack' : 'Undecided'}</dd></div>
-        <div><dt>Rule recommendation</dt><dd>{duplicateContext.recommended_keeper_asset_id === null ? 'None — manual choice required' : duplicateContext.recommended_keeper_asset_id === asset.id ? 'Keep this copy' : 'Keep another copy'}</dd></div>
-        <div><dt>Decision reasons</dt><dd>{duplicateContext.recommendation_reason_codes.join(', ') || 'No automatic recommendation'}</dd></div>
+        <div><dt>Rule recommendation</dt><dd>{currentDuplicateMember?.recommended_disposition ? `${currentDuplicateMember.recommended_disposition[0].toUpperCase()}${currentDuplicateMember.recommended_disposition.slice(1)} this copy` : 'None — manual choice required'}</dd></div>
+        <div><dt>Decision reasons</dt><dd>{[...duplicateContext.recommendation_reason_codes, ...(currentDuplicateMember?.recommendation_reason_codes ?? [])].join(', ') || 'No automatic recommendation'}</dd></div>
       </dl>
 
       <h4>Current copy validation</h4>

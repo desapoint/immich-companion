@@ -20,6 +20,8 @@
     immich_url: string | null;
     similarity: DuplicateReviewContext['members'][number]['similarity'];
     preservation: DuplicateReviewContext['members'][number]['preservation'];
+    recommended_disposition?: DuplicateDisposition | null;
+    recommendation_reason_codes?: string[];
   }
 
   interface DuplicatePreviewReview {
@@ -130,6 +132,8 @@
       is_offline: member.is_offline,
       is_stacked: member.is_stacked,
       disposition: memberDecisions[member.id] ?? null,
+      recommended_disposition: member.recommended_disposition ?? null,
+      recommendation_reason_codes: member.recommendation_reason_codes ?? [],
       similarity: member.similarity,
       preservation: member.preservation,
     })),

@@ -690,6 +690,41 @@ class CrossSourceDuplicateService:
         ]
 
     @staticmethod
+    def _recommended_disposition(
+        action: str,
+        asset_id: UUID,
+        primary_asset_id: UUID | None,
+        *,
+        auto_resolvable: bool,
+    ) -> str | None:
+        if not auto_resolvable:
+            return None
+        if action == "resolve":
+            return "keep" if asset_id == primary_asset_id else "delete"
+        if action == "keep_all":
+            return "keep"
+        if action == "stack_all":
+            return "stack"
+        return None
+
+    @staticmethod
+    def _member_recommendation_reasons(
+        disposition: str | None,
+        *,
+        primary: bool,
+    ) -> list[str]:
+        if disposition is None:
+            return []
+        if disposition == "delete":
+            return ["verified_exact_copy"]
+        if disposition == "stack":
+            return [
+                "policy_stack_all",
+                *(("recommended_stack_primary",) if primary else ()),
+            ]
+        return ["recommended_keeper" if primary else "policy_keep_all"]
+
+    @staticmethod
     def assemble(
         groups: list[DiscoveredGroup],
         reports: dict[UUID, AssetIntegrityReportRecord],
@@ -826,6 +861,20 @@ class CrossSourceDuplicateService:
                     evidence=CrossSourceDuplicateService._member_evidence(
                         asset,
                         reports.get(asset.id),
+                    ),
+                    recommended_disposition=(
+                        disposition := CrossSourceDuplicateService._recommended_disposition(
+                            decision.recommended_action.value,
+                            asset.id,
+                            decision.recommended_primary_asset_id,
+                            auto_resolvable=decision.auto_resolvable,
+                        )
+                    ),
+                    recommendation_reason_codes=(
+                        CrossSourceDuplicateService._member_recommendation_reasons(
+                            disposition,
+                            primary=asset.id == decision.recommended_primary_asset_id,
+                        )
                     ),
                 )
                 for asset in assets
@@ -1055,6 +1104,79 @@ class CrossSourceDuplicateService:
             ),
         )
         return await self.workspace(request.options)
+
+    async def apply_rules(
+        self,
+        options: DuplicateAnalysisOptions,
+    ) -> DuplicateWorkspaceState:
+        """Persist safe automatic member recommendations without replacing manual work."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        safe_options = options.model_copy(update={"analyze_automatically": False})
+        result = await self.result(safe_options)
+        current_workspace = await self.workspace(safe_options)
+        applied_group_ids: list[str] = []
+        for discovery_source in {group.discovery_source for group in result.groups}:
+            groups = [
+                group
+                for group in result.groups
+                if group.discovery_source == discovery_source and group.auto_selected
+            ]
+            records = await self._reviews.get_many(
+                discovery_source,
+                [group.group_id for group in groups],
+            )
+            for group in groups:
+                record = records.get(group.group_id)
+                existing_decisions = list(
+                    getattr(record, "member_decisions", []) or []
+                ) if record else []
+                if getattr(record, "manual_action", None) is not None or any(
+                    decision.get("source") == "manual"
+                    for decision in existing_decisions
+                    if isinstance(decision, dict)
+                ):
+                    continue
+                recommended = [
+                    {
+                        "asset_id": str(member.id),
+                        "disposition": member.recommended_disposition,
+                        "source": "automatic",
+                        "status": "pending",
+                    }
+                    for member in group.members
+                    if member.recommended_disposition is not None
+                ]
+                if len(recommended) != len(group.members):
+                    continue
+                await self._reviews.save_draft(
+                    discovery_source=group.discovery_source,
+                    provider_group_id=group.group_id,
+                    member_fingerprint=group.member_fingerprint,
+                    member_decisions=recommended,
+                    stack_primary_asset_id=(
+                        group.recommended_primary_asset_id
+                        if group.recommended_action == "stack_all"
+                        else None
+                    ),
+                    metadata_keeper_asset_id=None,
+                    draft_status="pending",
+                )
+                applied_group_ids.append(group.group_id)
+
+        selected_group_ids = list(
+            dict.fromkeys(
+                [*current_workspace.selected_group_ids, *applied_group_ids]
+            )
+        )
+        return await self.save_workspace_selection(
+            DuplicateWorkspaceSelectionUpdate(
+                options=safe_options,
+                selected_group_ids=selected_group_ids,
+                active_group_id=current_workspace.active_group_id,
+            )
+        )
 
     async def save_group_draft(
         self,

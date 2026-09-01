@@ -16,6 +16,7 @@
   import DuplicateReviewFilters from './DuplicateReviewFilters.svelte';
   import {
     analyzeDuplicateGroups,
+    applyDuplicateRules,
     cancelDuplicateTask,
     executeDuplicateResolution,
     loadDuplicateGroups,
@@ -110,6 +111,8 @@
   let workspaceSaveQueue = Promise.resolve();
   const draftSaveQueues = new SvelteMap<string, Promise<void>>();
   let selectionInitialized = false;
+  let applyRulesAfterAnalysis = false;
+  const pendingRuleApplicationTaskKey = 'immich-companion:duplicates:pending-rule-application-task';
   let activeFilter = $state<DuplicateReviewFilter>('all');
 
   const autoReadyGroups = $derived(
@@ -231,10 +234,24 @@
           groupDrafts = {};
         }
         await load();
+        const shouldApplyRules = kind === 'analysis' && (
+          applyRulesAfterAnalysis
+          || localStorage.getItem(pendingRuleApplicationTaskKey) === taskId
+        );
+        if (shouldApplyRules) {
+          applyRulesAfterAnalysis = false;
+          await persistAutomaticRules();
+          localStorage.removeItem(pendingRuleApplicationTaskKey);
+          message = 'Duplicate candidates were verified and safe automatic rules were applied.';
+        }
       } else if (task.status === 'cancelled' && kind === 'similarity') {
         message = 'Similarity scan cancelled. The last completed scan remains active.';
         await load();
       } else {
+        if (kind === 'analysis') {
+          applyRulesAfterAnalysis = false;
+          localStorage.removeItem(pendingRuleApplicationTaskKey);
+        }
         error = task.error?.message ?? `${kind === 'analysis' ? 'Analysis' : kind === 'similarity' ? 'Similarity scan' : 'Resolution'} failed.`;
       }
     } catch (reason) {
@@ -544,6 +561,19 @@
     options.keeper_policy = value as DuplicateKeeperPolicy;
   }
 
+  async function persistAutomaticRules(): Promise<void> {
+    const restored = await applyDuplicateRules({
+      ...appliedOptions,
+      analyze_automatically: false,
+    });
+    workspace = restored;
+    groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
+    selected.clear();
+    for (const groupId of restored.selected_group_ids) selected.add(groupId);
+    activeGroupId = restored.active_group_id;
+    selectionInitialized = true;
+  }
+
   async function applyRules(): Promise<void> {
     const nextOptions = configuredOptions();
     busy = true;
@@ -562,15 +592,19 @@
         similarity_threshold_percent: similarityThreshold,
       });
       if (nextOptions.analyze_automatically) {
+        applyRulesAfterAnalysis = true;
         const started = await analyzeDuplicateGroups(nextOptions);
+        localStorage.setItem(pendingRuleApplicationTaskKey, started.task_id);
         task = await loadDuplicateTask(started.task_id);
         schedulePoll(started.task_id, 'analysis');
       } else {
-        busy = false;
-        message = 'Duplicate policy saved without starting candidate analysis.';
         await load();
+        await persistAutomaticRules();
+        busy = false;
+        message = 'Duplicate policy saved and safe automatic rules were applied.';
       }
     } catch (reason) {
+      applyRulesAfterAnalysis = false;
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not apply duplicate rules.';
     }
@@ -774,6 +808,9 @@
                     <span class={`source-kind ${member.source_kind}`}>{member.source_kind === 'upload' ? 'Immich upload' : 'External library'}</span>
                     {#if member.library_id}<small class="library-id" title={member.library_id}>{member.library_id}</small>{/if}
                     <GroupEvidencePills {member} analysisPending={result.analysis_task_id !== null && member.evidence.analysis_freshness !== 'current'} />
+                    {#if member.recommended_disposition}
+                      <small class="rule-recommendation" title={(member.recommendation_reason_codes ?? []).join(', ')}>Rule · {member.recommended_disposition}</small>
+                    {/if}
                     <small>{formatSize(member.file_size_bytes)}</small>
                     <DuplicateDispositionControls
                       value={dispositionFor(group, member.id)}
@@ -884,6 +921,7 @@
   .member-body strong { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
   .source-kind { width: fit-content; padding: .16rem .38rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .57rem; font-weight: 820; text-transform: uppercase; }
   .source-kind.external { color: var(--color-warning-ink); background: var(--color-warning-surface); }
+  .rule-recommendation { width: fit-content; padding: .16rem .38rem; border-radius: 999px; color: var(--color-positive-ink); background: var(--color-positive-surface); font-weight: 780; text-transform: capitalize; }
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
   @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } }

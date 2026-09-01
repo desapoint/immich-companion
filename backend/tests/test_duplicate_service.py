@@ -203,6 +203,13 @@ def test_same_file_across_sources_is_exact_with_different_names() -> None:
     assert result.groups[0].auto_resolvable is True
     assert result.groups[0].auto_selected is True
     assert {item.content_checksum for item in result.groups[0].members} == {sha1(content)}
+    recommendations = {
+        member.id: member.recommended_disposition for member in result.groups[0].members
+    }
+    assert recommendations == {UPLOAD_1: "keep", EXTERNAL_1: "delete"}
+    assert result.groups[0].members[0].recommendation_reason_codes == [
+        "recommended_keeper"
+    ]
 
 
 @pytest.mark.parametrize("same_filename", [True, False])
@@ -1306,6 +1313,97 @@ async def test_stack_draft_assigns_a_primary_when_client_omits_it() -> None:
     )
 
     assert saved.stack_primary_asset_id in {UPLOAD_1, EXTERNAL_1}
+
+
+@pytest.mark.asyncio
+async def test_apply_rules_persists_automatic_member_decisions() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+
+    workspace = await service.apply_rules(
+        DuplicateAnalysisOptions(
+            keeper_policy="prefer_upload",
+            analyze_automatically=False,
+        )
+    )
+
+    assert workspace.selected_group_ids == [PUBLIC_GROUP_ID]
+    assert workspace.drafts[0].decisions == [
+        DuplicateMemberDraftDecision(
+            asset_id=UPLOAD_1,
+            disposition="keep",
+            source="automatic",
+        ),
+        DuplicateMemberDraftDecision(
+            asset_id=EXTERNAL_1,
+            disposition="delete",
+            source="automatic",
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_apply_rules_never_overwrites_manual_member_decisions() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+    current = (await service.result()).groups[0]
+    reviews.record = SimpleNamespace(
+        provider_group_id=PUBLIC_GROUP_ID,
+        member_fingerprint=current.member_fingerprint,
+        member_decisions=[
+            {
+                "asset_id": str(EXTERNAL_1),
+                "disposition": "keep",
+                "source": "manual",
+                "status": "pending",
+            }
+        ],
+        stack_primary_asset_id=None,
+        metadata_keeper_asset_id=None,
+        draft_status="pending",
+        manual_action=None,
+        manual_primary_asset_id=None,
+        review_status="pending",
+    )
+
+    workspace = await service.apply_rules(
+        DuplicateAnalysisOptions(
+            keeper_policy="prefer_upload",
+            analyze_automatically=False,
+        )
+    )
+
+    assert reviews.saved is None
+    assert workspace.drafts[0].decisions[0].source == "manual"
+    assert workspace.drafts[0].decisions[0].disposition == "keep"
 
 
 @pytest.mark.asyncio

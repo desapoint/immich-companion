@@ -401,6 +401,8 @@ export interface DuplicateReviewMember {
   is_offline: boolean;
   is_stacked: boolean;
   disposition: DuplicateDisposition | null;
+  recommended_disposition: DuplicateDisposition | null;
+  recommendation_reason_codes: string[];
   similarity: {
     state: 'reference' | 'current' | 'pending' | 'unavailable';
     reference_asset_id: string;
