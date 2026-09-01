@@ -38,7 +38,7 @@ INTEGRITY_CHUNK_SIZE = 1024 * 1024
 INTEGRITY_PROGRESS_INTERVAL_SECONDS = 0.5
 INTEGRITY_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
 
 
 class IntegrityAssetUnavailableError(RuntimeError):
