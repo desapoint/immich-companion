@@ -11,8 +11,8 @@ from dataclasses import dataclass
 from io import BytesIO
 from typing import BinaryIO
 
-from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 import rawpy
+from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
 from companion.image_decode import MAX_DECODED_PIXELS, SUPPORTED_FORMATS
 from companion.integrity import DetectedFormat
