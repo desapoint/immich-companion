@@ -106,6 +106,55 @@ class ActionRepository:
             record.status = "running"
         return record
 
+    async def reopen_duplicate_follow_up(self, plan_id: UUID) -> ActionPlanRecord | None:
+        """Reopen a failed plan only when durable stack follow-up work remains."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            states = (record.result or {}).get("group_execution", {}) if record else {}
+            if (
+                record is None
+                or record.action != "resolve_duplicates"
+                or record.status != "failed"
+                or not any(
+                    item.get("state") == "follow_up_pending"
+                    for item in states.values()
+                    if isinstance(item, dict)
+                )
+            ):
+                return None
+            record.status = "planned"
+            record.executed_at = None
+        return record
+
+    async def record_duplicate_group_execution(
+        self,
+        plan_id: UUID,
+        group_id: str,
+        state: str,
+        *,
+        error: str | None = None,
+    ) -> None:
+        """Durably checkpoint one duplicate group's mutation phase."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if record is None:
+                return
+            result = dict(record.result or {})
+            group_execution = dict(result.get("group_execution") or {})
+            group_execution[group_id] = {
+                "state": state,
+                "error": error,
+                "updated_at": datetime.now(UTC).isoformat(),
+            }
+            result["group_execution"] = group_execution
+            record.result = result
+
     async def finish_plan(
         self,
         plan_id: UUID,
@@ -119,5 +168,12 @@ class ActionRepository:
             if record is None:
                 return
             record.status = status
-            record.result = result
+            previous = record.result or {}
+            record.result = {
+                **result,
+                "group_execution": previous.get(
+                    "group_execution",
+                    result.get("group_execution", {}),
+                ),
+            }
             record.executed_at = datetime.now(UTC)

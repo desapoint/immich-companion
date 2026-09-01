@@ -663,7 +663,7 @@ async def test_duplicate_groups_and_resolution_use_immich_api_contract() -> None
         [
             ImmichDuplicateResolution(
                 duplicate_id=duplicate_id,
-                keep_asset_id=ASSET_ONE,
+                keep_asset_ids=[ASSET_ONE],
                 trash_asset_ids=[ASSET_TWO],
             )
         ]

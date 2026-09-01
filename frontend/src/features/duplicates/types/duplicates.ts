@@ -182,7 +182,14 @@ export interface DuplicateResolutionPlan {
     action: Exclude<DuplicatePlanAction, 'none'>;
     keeper_asset_id: string | null;
     member_asset_ids: string[];
+    keep_asset_ids: string[];
     trash_asset_ids: string[];
+    follow_up: {
+      type: 'stack';
+      primary_asset_id: string;
+      member_asset_ids: string[];
+    } | null;
+    execution_state: 'pending' | 'duplicate_resolved' | 'follow_up_pending' | 'completed' | 'failed' | 'drifted';
     member_fingerprint: string;
     members: Array<{ asset_id: string; disposition: 'keep' | 'delete' | 'stack' | 'no_change'; primary: boolean }>;
   }>;

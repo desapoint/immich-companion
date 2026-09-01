@@ -219,7 +219,7 @@ class ImmichDuplicateResolution(ImmichModel):
     """One reviewed duplicate mutation sent to Immich."""
 
     duplicate_id: UUID
-    keep_asset_id: UUID
+    keep_asset_ids: list[UUID]
     trash_asset_ids: list[UUID]
 
 
@@ -664,7 +664,7 @@ class ImmichApiClient:
                 "groups": [
                     {
                         "duplicateId": str(item.duplicate_id),
-                        "keepAssetIds": [str(item.keep_asset_id)],
+                        "keepAssetIds": [str(asset_id) for asset_id in item.keep_asset_ids],
                         "trashAssetIds": [str(asset_id) for asset_id in item.trash_asset_ids],
                     }
                     for item in resolutions

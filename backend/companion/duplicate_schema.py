@@ -39,6 +39,14 @@ DuplicateReviewStatus = Literal[
     "drifted",
 ]
 DuplicateMemberDisposition = Literal["keep", "delete", "stack", "no_change"]
+DuplicateGroupExecutionState = Literal[
+    "pending",
+    "duplicate_resolved",
+    "follow_up_pending",
+    "completed",
+    "failed",
+    "drifted",
+]
 
 
 class DuplicateAnalysisOptions(BaseModel):
@@ -222,6 +230,12 @@ class DuplicatePlanMember(BaseModel):
     primary: bool = False
 
 
+class DuplicatePlanFollowUp(BaseModel):
+    type: Literal["stack"]
+    primary_asset_id: UUID
+    member_asset_ids: list[UUID]
+
+
 class DuplicateResolutionPlanGroup(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
@@ -229,9 +243,27 @@ class DuplicateResolutionPlanGroup(BaseModel):
     action: Literal["resolve", "keep_all", "delete_all", "stack_all"] = "resolve"
     keeper_asset_id: UUID | None = None
     member_asset_ids: list[UUID] = Field(default_factory=list)
+    keep_asset_ids: list[UUID] = Field(default_factory=list)
     trash_asset_ids: list[UUID]
+    follow_up: DuplicatePlanFollowUp | None = None
+    execution_state: DuplicateGroupExecutionState = "pending"
     member_fingerprint: str
     members: list[DuplicatePlanMember]
+
+    @model_validator(mode="after")
+    def validate_resolution_partition(self) -> DuplicateResolutionPlanGroup:
+        members = set(self.member_asset_ids)
+        keep = set(self.keep_asset_ids)
+        trash = set(self.trash_asset_ids)
+        if keep & trash or keep | trash != members:
+            raise ValueError("Duplicate resolution must classify every frozen member exactly once")
+        if len(keep) != len(self.keep_asset_ids) or len(trash) != len(self.trash_asset_ids):
+            raise ValueError("Duplicate resolution member lists must not contain duplicates")
+        if self.action == "stack_all" and self.follow_up is None:
+            raise ValueError("Stack all requires an explicit stack follow-up")
+        if self.action != "stack_all" and self.follow_up is not None:
+            raise ValueError("Only Stack all may include a stack follow-up")
+        return self
 
 
 class DuplicateResolutionPlan(BaseModel):

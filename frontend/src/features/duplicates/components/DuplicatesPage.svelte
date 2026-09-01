@@ -136,6 +136,11 @@
   const visibleReviewEntries = $derived(
     reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
   );
+  const resumableFollowUp = $derived(
+    task?.status === 'failed'
+      && Array.isArray(task.result?.summary?.follow_up_pending_group_ids)
+      && task.result.summary.follow_up_pending_group_ids.length > 0,
+  );
 
   function configuredOptions(): DuplicateAnalysisOptions {
     return { ...options };
@@ -271,7 +276,7 @@
       { value: 'automatic', label: `Automatic — ${group.recommended_action.replaceAll('_', ' ')}` },
       { value: 'none', label: 'Skip / review later' },
       { value: 'resolve', label: 'Resolve — keep primary', disabled: !group.eligible },
-      { value: 'keep_all', label: 'Keep all — mark reviewed' },
+      { value: 'keep_all', label: 'Keep all — resolve group, keep copies' },
       { value: 'delete_all', label: 'Delete all — keep no copy' },
       {
         value: 'stack_all',
@@ -599,7 +604,14 @@
       {#if task.task_type === 'similarity_scan'}<button class="cancel-scan" type="button" onclick={() => void cancelSimilarityScan()}>Cancel scan</button>{/if}
     </section>
   {/if}
-  {#if error}<p class="notice error" role="alert">{error}</p>{/if}
+  {#if error}
+    <div class="notice error" role="alert">
+      <span>{error}</span>
+      {#if resumableFollowUp && plan}
+        <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete stack</button>
+      {/if}
+    </div>
+  {/if}
   {#if message}<p class="notice success" role="status">{message}</p>{/if}
 
   {#if result}
@@ -676,7 +688,7 @@
 {#if confirmOpen && plan}
   <ConfirmDialog
     title="Process reviewed duplicates"
-    message={`Process ${plan.group_count} groups: resolve ${plan.resolve_group_count}, keep all in ${plan.keep_all_group_count}, delete every copy in ${plan.delete_all_group_count}, create ${plan.stack_group_count} stacks, and trash ${plan.trash_asset_count} assets.${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
+    message={`Resolve ${plan.group_count} Immich duplicate groups first: keep one primary in ${plan.resolve_group_count}, keep every copy in ${plan.keep_all_group_count + plan.stack_group_count}, and trash every copy in ${plan.delete_all_group_count}. This trashes ${plan.trash_asset_count} assets.${plan.stack_group_count ? ` After resolution, create ${plan.stack_group_count} stacks; incomplete stacks can resume without resolving the group again.` : ''}${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
     confirmLabel="Process batch"
     icon={plan.destructive ? 'trash' : 'stack'}
     destructive={plan.destructive}
@@ -715,6 +727,7 @@
   progress { width: 100%; accent-color: var(--color-accent-strong); }
   .notice, .empty { margin: 0; padding: .8rem 1rem; color: var(--color-ink-muted); }
   .notice.error { color: var(--color-negative-ink); border-color: var(--color-negative-border); background: var(--color-negative-surface); }
+  .notice.error { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
   .notice.success { color: var(--color-positive-ink); border-color: var(--color-positive-border); background: var(--color-positive-surface); }
   .summary { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; }
   .summary div { display: grid; gap: .15rem; padding: .8rem 1rem; border-right: 1px solid var(--color-border-subtle); }

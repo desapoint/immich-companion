@@ -25,7 +25,7 @@ from companion.duplicate_service import (
     CrossSourceDuplicateTaskHandler,
 )
 from companion.group_decision import DiscoverySource
-from companion.immich import ImmichAsset, ImmichDuplicateGroup
+from companion.immich import ImmichApiError, ImmichAsset, ImmichDuplicateGroup
 from companion.integrity import ANALYZER_VERSION
 from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
@@ -363,25 +363,36 @@ class FakeImmich:
     def __init__(self, candidate_group: ImmichDuplicateGroup):
         self.candidate_group = candidate_group
         self.created_stacks: list[list[UUID]] = []
-        self.trashed: list[list[UUID]] = []
+        self.resolutions = []
+        self.events: list[str] = []
+        self.group_active = True
+        self.fail_stack_attempts = 0
 
     async def list_duplicate_groups(self):
-        return [self.candidate_group]
+        return [self.candidate_group] if self.group_active else []
+
+    async def resolve_duplicate_groups(self, resolutions):
+        self.events.append("resolve")
+        self.resolutions.extend(resolutions)
+        for resolution in resolutions:
+            for item in self.candidate_group.assets:
+                if item.id in resolution.trash_asset_ids:
+                    item.is_trashed = True
+        self.group_active = False
+        return [{"success": True} for _ in resolutions]
 
     async def get_asset(self, asset_id):
         return next(item for item in self.candidate_group.assets if item.id == asset_id)
 
     async def create_stack(self, asset_ids):
+        self.events.append("stack")
+        if self.fail_stack_attempts:
+            self.fail_stack_attempts -= 1
+            raise ImmichApiError("create stack")
         self.created_stacks.append(asset_ids)
         for item in self.candidate_group.assets:
             if item.id in asset_ids:
                 item.stack = {"id": "ffffffff-ffff-4fff-8fff-ffffffffffff"}
-
-    async def trash_assets(self, asset_ids):
-        self.trashed.append(asset_ids)
-        for item in self.candidate_group.assets:
-            if item.id in asset_ids:
-                item.is_trashed = True
 
     def public_asset_url(self, asset_id):
         return f"https://immich.test/photos/{asset_id}"
@@ -461,8 +472,33 @@ class FakeActions:
         self.record.status = "running"
         return self.record
 
+    async def reopen_duplicate_follow_up(self, _plan_id):
+        states = (getattr(self.record, "result", None) or {}).get("group_execution", {})
+        if self.record.status != "failed" or not any(
+            item.get("state") == "follow_up_pending" for item in states.values()
+        ):
+            return None
+        self.record.status = "planned"
+        return self.record
+
+    async def record_duplicate_group_execution(
+        self,
+        _plan_id,
+        group_id,
+        state,
+        *,
+        error=None,
+    ):
+        result = dict(getattr(self.record, "result", None) or {})
+        states = dict(result.get("group_execution") or {})
+        states[group_id] = {"state": state, "error": error}
+        result["group_execution"] = states
+        self.record.result = result
+
     async def finish_plan(self, _plan_id, status, result):
         self.record.status = status
+        phases = (getattr(self.record, "result", None) or {}).get("group_execution", {})
+        self.record.result = {**result, "group_execution": phases}
         self.finished = (status, result)
 
 
@@ -924,6 +960,7 @@ async def test_review_plan_applies_policy_and_explicit_keeper_override() -> None
 
     assert plan.group_count == 1
     assert plan.groups[0].keeper_asset_id == EXTERNAL_1
+    assert plan.groups[0].keep_asset_ids == [EXTERNAL_1]
     assert plan.groups[0].trash_asset_ids == [UPLOAD_1]
     assert plan.groups[0].group_id == PUBLIC_GROUP_ID
     assert plan.groups[0].provider_group_id == str(GROUP_ID)
@@ -995,7 +1032,10 @@ async def test_mismatch_group_can_be_manually_planned_as_a_non_destructive_stack
     assert plan.stack_group_count == 1
     assert plan.groups[0].action == "stack_all"
     assert plan.groups[0].member_asset_ids == [UPLOAD_1, EXTERNAL_1]
+    assert plan.groups[0].keep_asset_ids == [UPLOAD_1, EXTERNAL_1]
     assert plan.groups[0].trash_asset_ids == []
+    assert plan.groups[0].follow_up is not None
+    assert plan.groups[0].follow_up.type == "stack"
 
 
 @pytest.mark.asyncio
@@ -1039,6 +1079,9 @@ async def test_non_destructive_stack_plan_executes_in_safe_mode() -> None:
 
     assert outcome.status == "completed"
     assert outcome.counters["groups_stacked"] == 1
+    assert immich.events == ["resolve", "stack"]
+    assert immich.resolutions[0].keep_asset_ids == [UPLOAD_1, EXTERNAL_1]
+    assert immich.resolutions[0].trash_asset_ids == []
     assert immich.created_stacks == [[UPLOAD_1, EXTERNAL_1]]
     assert assets.refreshed == [UPLOAD_1, EXTERNAL_1]
     assert actions.finished[0] == "completed"
@@ -1082,6 +1125,9 @@ async def test_whole_group_actions_have_explicit_member_dispositions(
 
     assert plan.destructive is destructive
     assert plan.groups[0].keeper_asset_id is None
+    assert plan.groups[0].keep_asset_ids == (
+        [UPLOAD_1, EXTERNAL_1] if action == "keep_all" else []
+    )
     assert {member.disposition for member in plan.groups[0].members} == {expected_disposition}
     assert plan.zero_survivor_group_count == zero_survivors
 
@@ -1124,7 +1170,7 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
 
 
 @pytest.mark.asyncio
-async def test_delete_all_trashes_and_verifies_every_member_through_immich() -> None:
+async def test_delete_all_uses_explicit_all_trash_duplicate_resolution() -> None:
     content = b"same"
     candidate_group = group(
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
@@ -1167,9 +1213,108 @@ async def test_delete_all_trashes_and_verifies_every_member_through_immich() -> 
 
     assert outcome.status == "completed"
     assert outcome.counters["groups_deleted_all"] == 1
-    assert immich.trashed == [[UPLOAD_1, EXTERNAL_1]]
+    assert immich.resolutions[0].keep_asset_ids == []
+    assert immich.resolutions[0].trash_asset_ids == [UPLOAD_1, EXTERNAL_1]
     assert assets.removed == [UPLOAD_1, EXTERNAL_1]
     assert reviews.saved["review_status"] == "reviewed_delete_all"
+
+
+@pytest.mark.asyncio
+async def test_keep_all_resolves_provider_group_without_trashing_members() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=False,
+        result=None,
+        relation_work={
+            "options": DuplicateAnalysisOptions().model_dump(mode="json"),
+            "groups": [
+                {
+                    "duplicate_id": str(GROUP_ID),
+                    "action": "keep_all",
+                    "keeper_asset_id": None,
+                    "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                    "trash_asset_ids": [],
+                }
+            ],
+        },
+    )
+    actions = FakeActions(record)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=False),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        SimpleNamespace(),
+        FakeRuntimeSettings(),
+    )
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "completed"
+    assert immich.resolutions[0].keep_asset_ids == [UPLOAD_1, EXTERNAL_1]
+    assert immich.resolutions[0].trash_asset_ids == []
+    assert await immich.list_duplicate_groups() == []
+
+
+@pytest.mark.asyncio
+async def test_failed_stack_follow_up_resumes_without_replaying_resolution() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    immich.fail_stack_attempts = 1
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=False,
+        result=None,
+        relation_work={
+            "options": DuplicateAnalysisOptions().model_dump(mode="json"),
+            "groups": [
+                {
+                    "duplicate_id": str(GROUP_ID),
+                    "action": "stack_all",
+                    "keeper_asset_id": str(UPLOAD_1),
+                    "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                    "trash_asset_ids": [],
+                }
+            ],
+        },
+    )
+    actions = FakeActions(record)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=False),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        SimpleNamespace(),
+        FakeRuntimeSettings(),
+    )
+
+    first = await service.execute_plan(TaskContext(), GROUP_ID)
+    assert first.status == "failed"
+    assert record.result["group_execution"][PUBLIC_GROUP_ID]["state"] == "follow_up_pending"
+
+    record.status = "running"
+    second = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert second.status == "completed"
+    assert immich.events == ["resolve", "stack", "stack"]
+    assert len(immich.resolutions) == 1
+    assert record.result["group_execution"][PUBLIC_GROUP_ID]["state"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -1193,3 +1338,36 @@ async def test_delete_all_plan_is_blocked_by_safe_mode_before_task_submission() 
 
     with pytest.raises(DestructiveActionsDisabledError):
         await service.start_resolution(DuplicateResolutionExecuteRequest(plan_id=GROUP_ID))
+
+
+@pytest.mark.asyncio
+async def test_incomplete_stack_follow_up_can_resume_after_plan_expiry() -> None:
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="failed",
+        destructive=False,
+        expires_at=datetime.now(UTC) - timedelta(minutes=5),
+        result={
+            "group_execution": {
+                PUBLIC_GROUP_ID: {"state": "follow_up_pending", "error": "stack_follow_up_failed"}
+            }
+        },
+    )
+    tasks = FakeTasks()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=False),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        FakeActions(record),
+        tasks,
+        SimpleNamespace(),
+    )
+
+    started = await service.start_resolution(
+        DuplicateResolutionExecuteRequest(plan_id=GROUP_ID)
+    )
+
+    assert started.task_id == UPLOAD_2
+    assert tasks.submissions[0][1] == {"plan_id": str(GROUP_ID)}
