@@ -29,6 +29,10 @@ def jpeg(scan: bytes = b"\x01\xff\x00\x02\xff\xd0\x03") -> bytes:
     )
 
 
+def iso_bmff_trailer() -> bytes:
+    return b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+
+
 @pytest.mark.parametrize("chunks", [[1000], [1] * 64, [1, 2, 3, 5, 8, 13]])
 def test_hashes_and_valid_jpeg_are_independent_of_chunk_boundaries(chunks: list[int]) -> None:
     payload = jpeg()
@@ -51,17 +55,50 @@ def test_hashes_and_valid_jpeg_are_independent_of_chunk_boundaries(chunks: list[
     assert result.issues == ()
 
 
-def test_jpeg_trailing_bytes_are_counted_without_affecting_hashes() -> None:
+def test_unknown_jpeg_trailing_bytes_are_informational_not_integrity_warning() -> None:
     base = jpeg()
     payload = base + b"trailing"
 
     result = analyze(payload, [len(base) - 1, 2, 3])
 
-    assert result.classification == "warning"
+    assert result.classification == "healthy"
     assert result.structurally_valid is True
     assert result.jpeg_eoi_offset == len(base)
     assert result.trailing_byte_count == 8
-    assert result.issues == ("jpeg_trailing_bytes",)
+    assert result.issues == ("jpeg_trailing_bytes_unknown",)
+
+
+@pytest.mark.parametrize(
+    ("trailer", "expected_issue"),
+    [
+        (b"\x00\x00MotionPhoto_Data\x00payload", "jpeg_trailing_motion_photo"),
+        (b"payload-SEFH-more-SEFT", "jpeg_trailing_samsung_sef"),
+        (iso_bmff_trailer(), "jpeg_trailing_iso_bmff"),
+        (b"\x00\xff \r\n\t", "jpeg_trailing_padding"),
+    ],
+)
+def test_known_jpeg_trailing_data_is_described_without_warning(
+    trailer: bytes,
+    expected_issue: str,
+) -> None:
+    base = jpeg()
+    result = analyze(base + trailer, [len(base), 1, 2, 5, 8])
+
+    assert result.classification == "healthy"
+    assert result.structurally_valid is True
+    assert result.trailing_byte_count == len(trailer)
+    assert result.issues == (expected_issue,)
+
+
+def test_motion_photo_signature_can_be_detected_from_trailer_tail() -> None:
+    base = jpeg()
+    trailer = b"x" * (64 * 1024 + 32) + b"MotionPhoto_Data"
+
+    result = analyze(base + trailer, [len(base), len(trailer)])
+
+    assert result.classification == "healthy"
+    assert result.trailing_byte_count == len(trailer)
+    assert result.issues == ("jpeg_trailing_motion_photo",)
 
 
 @pytest.mark.parametrize("chunks", [[1000], [1] * 32, [7, 4, 3, 2, 1]])
