@@ -11,7 +11,7 @@ from pillow_heif import register_heif_opener
 
 from companion.integrity import DetectedFormat
 
-MAX_DECODED_PIXELS = 40_000_000
+MAX_DECODED_PIXELS = 64_000_000
 SUPPORTED_FORMATS = frozenset({"jpeg", "heic", "heif", "avif", "png", "webp", "gif", "tiff"})
 
 register_heif_opener()
