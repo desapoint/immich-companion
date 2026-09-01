@@ -6,13 +6,13 @@ import AssetIntegrityDialog from './AssetIntegrityDialog.svelte';
 
 const report: AssetIntegrityReport = {
   asset_id: '11111111-1111-4111-8111-111111111111',
-  analyzer_version: 3,
+  analyzer_version: 5,
   byte_size: 4096,
   sha1_hex: 'a'.repeat(40),
   sha256_hex: 'b'.repeat(64),
   detected_format: 'jpeg',
   format_matches_declared: true,
-  classification: 'warning',
+  classification: 'healthy',
   structurally_valid: true,
   container_valid: true,
   decode_supported: false,
@@ -23,7 +23,7 @@ const report: AssetIntegrityReport = {
   jpeg_eoi_offset: 4088,
   trailing_byte_count: 8,
   immich_checksum_match: true,
-  issues: [],
+  issues: ['jpeg_trailing_samsung_sef'],
   analyzed_at: '2026-08-28T12:00:00Z',
 };
 
@@ -65,7 +65,7 @@ describe('AssetIntegrityDialog', () => {
     expect(body).not.toContain('Re-analyze');
   });
 
-  it('renders the persisted report and re-analysis action', () => {
+  it('renders trailing JPEG data as useful evidence without an integrity warning', () => {
     const { body } = render(AssetIntegrityDialog, {
       props: {
         filename: 'fixture.jpg',
@@ -77,9 +77,13 @@ describe('AssetIntegrityDialog', () => {
       },
     });
 
-    expect(body).toContain('Integrity warning');
+    expect(body).toContain('Healthy file structure');
     expect(body).toContain('4.0 KB');
     expect(body).toContain('Trailing bytes');
+    expect(body).toContain('Trailing data');
+    expect(body).toContain('Samsung SEF auxiliary metadata');
+    expect(body).not.toContain('Integrity warning');
+    expect(body).not.toContain('Integrity findings');
     expect(body).toContain('Re-analyze');
     expect(body).toContain(report.sha256_hex);
   });

@@ -5,10 +5,11 @@ from __future__ import annotations
 import base64
 import binascii
 import hashlib
+from collections import deque
 from dataclasses import dataclass, replace
 from typing import Literal
 
-ANALYZER_VERSION = 4
+ANALYZER_VERSION = 5
 JPEG_MIME_TYPES = frozenset({"image/jpeg", "image/jpg", "image/pjpeg"})
 FORMAT_MIME_TYPES: dict[str, frozenset[str]] = {
     "jpeg": JPEG_MIME_TYPES,
@@ -21,6 +22,8 @@ FORMAT_MIME_TYPES: dict[str, frozenset[str]] = {
     "tiff": frozenset({"image/tiff", "image/x-tiff"}),
 }
 _SIGNATURE_PREFIX_BYTES = 64
+_JPEG_TRAILER_SAMPLE_BYTES = 64 * 1024
+_JPEG_PADDING_BYTES = frozenset({0x00, 0x09, 0x0A, 0x0D, 0x20, 0xFF})
 _PNG_END_MARKER = b"\x00\x00\x00\x00IEND\xaeB\x60\x82"
 
 IntegrityClassification = Literal["healthy", "warning", "malformed", "hash_only"]
@@ -82,6 +85,21 @@ def decode_immich_sha1(value: str | None) -> bytes | None:
     except (binascii.Error, ValueError):
         return None
     return decoded if len(decoded) == 20 else None
+
+
+def _contains_iso_bmff_ftyp(data: bytes) -> bool:
+    """Recognize a plausible ISO-BMFF ftyp box without treating random text as media."""
+
+    search_from = 0
+    while True:
+        marker = data.find(b"ftyp", search_from)
+        if marker < 0:
+            return False
+        if marker >= 4:
+            size = int.from_bytes(data[marker - 4 : marker], "big")
+            if 8 <= size <= 4096:
+                return True
+        search_from = marker + 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,7 +174,7 @@ class FileIntegrityResult:
 
 
 class JpegStructureAnalyzer:
-    """Validate JPEG marker structure without retaining segment or pixel data."""
+    """Validate JPEG structure and retain bounded evidence about post-EOI data."""
 
     _STANDALONE_MARKERS = frozenset({0x01, *range(0xD0, 0xD9)})
 
@@ -169,16 +187,27 @@ class JpegStructureAnalyzer:
         self._finished = False
         self._eoi_offset: int | None = None
         self._trailing_bytes = 0
+        self._trailer_head = bytearray()
+        self._trailer_tail: deque[int] = deque(maxlen=_JPEG_TRAILER_SAMPLE_BYTES)
+        self._trailer_padding_only = True
 
     def _issue(self, code: str) -> None:
         if code not in self._issues:
             self._issues.append(code)
 
+    def _consume_trailing_byte(self, value: int) -> None:
+        self._trailing_bytes += 1
+        if len(self._trailer_head) < _JPEG_TRAILER_SAMPLE_BYTES:
+            self._trailer_head.append(value)
+        self._trailer_tail.append(value)
+        if value not in _JPEG_PADDING_BYTES:
+            self._trailer_padding_only = False
+
     def update(self, chunk: bytes) -> None:
         for value in chunk:
             self._offset += 1
             if self._finished:
-                self._trailing_bytes += 1
+                self._consume_trailing_byte(value)
                 continue
 
             if self._state == "soi_ff":
@@ -273,7 +302,23 @@ class JpegStructureAnalyzer:
         self._state = "scan" if self._segment_marker == 0xDA else "marker_ff"
         self._segment_marker = None
 
-    def finalize(self) -> tuple[bool, int | None, int, tuple[str, ...]]:
+    def _trailer_issue(self) -> str | None:
+        if not self._trailing_bytes:
+            return None
+        head = bytes(self._trailer_head)
+        tail = bytes(self._trailer_tail)
+        sampled = head if self._trailing_bytes <= _JPEG_TRAILER_SAMPLE_BYTES else head + tail
+        if b"MotionPhoto_Data" in sampled or b"MotionPhoto" in sampled:
+            return "jpeg_trailing_motion_photo"
+        if b"SEFT" in sampled or b"SEFH" in sampled:
+            return "jpeg_trailing_samsung_sef"
+        if _contains_iso_bmff_ftyp(head) or _contains_iso_bmff_ftyp(tail):
+            return "jpeg_trailing_iso_bmff"
+        if self._trailer_padding_only:
+            return "jpeg_trailing_padding"
+        return "jpeg_trailing_bytes_unknown"
+
+    def finalize(self) -> tuple[bool, int | None, int, str | None, tuple[str, ...]]:
         if not self._finished:
             if self._state in {"soi_ff", "soi_code"}:
                 self._issue("jpeg_missing_soi")
@@ -285,6 +330,7 @@ class JpegStructureAnalyzer:
             self._finished and not self._issues,
             self._eoi_offset,
             self._trailing_bytes,
+            self._trailer_issue(),
             tuple(self._issues),
         )
 
@@ -386,11 +432,17 @@ class FileIntegrityAnalyzer:
         decode_valid: bool | None = None
 
         if self._jpeg is not None:
-            structurally_valid, eoi_offset, trailing_bytes, jpeg_issues = self._jpeg.finalize()
+            (
+                structurally_valid,
+                eoi_offset,
+                trailing_bytes,
+                trailer_issue,
+                jpeg_issues,
+            ) = self._jpeg.finalize()
             container_valid = structurally_valid
             issues.extend(jpeg_issues)
-            if trailing_bytes:
-                issues.append("jpeg_trailing_bytes")
+            if trailer_issue is not None:
+                issues.append(trailer_issue)
         elif self._png is not None:
             structurally_valid, trailing_bytes, png_issues = self._png.finalize()
             container_valid = structurally_valid
@@ -402,7 +454,7 @@ class FileIntegrityAnalyzer:
 
         if structurally_valid is False:
             classification: IntegrityClassification = "malformed"
-        elif trailing_bytes or checksum_match is False or mime_matches is False:
+        elif checksum_match is False or mime_matches is False:
             classification = "warning"
         elif structurally_valid is True:
             classification = "healthy"
