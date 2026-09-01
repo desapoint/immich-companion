@@ -12,13 +12,14 @@ from sqlalchemy.dialects.postgresql import insert
 from companion.database import DatabaseManager
 from companion.models import AssetSimilarityEdgeRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
+    PIXEL_NORMALIZATION_VERSION,
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
     VisualFeatureResult,
     compare_visual_features,
 )
 
-SIMILARITY_COMPARISON_VERSION = 3
+SIMILARITY_COMPARISON_VERSION = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,8 +160,8 @@ class SimilarityRepository:
                     low_feature.thumbnail_sha256 == high_feature.thumbnail_sha256
                 ),
                 exact_pixel_match=(
-                    low_feature.pixel_normalization_version
-                    == high_feature.pixel_normalization_version
+                    low_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+                    and high_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
                     and low_feature.pixel_sha256 == high_feature.pixel_sha256
                 ),
                 model_version=SIMILARITY_MODEL_VERSION,
