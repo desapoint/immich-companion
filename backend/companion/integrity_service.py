@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from dataclasses import replace
+from io import BytesIO
 from tempfile import SpooledTemporaryFile
 from time import monotonic
 from typing import Any
@@ -37,6 +39,7 @@ INTEGRITY_TASK_TYPE = "asset_integrity"
 INTEGRITY_CHUNK_SIZE = 1024 * 1024
 INTEGRITY_PROGRESS_INTERVAL_SECONDS = 0.5
 INTEGRITY_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
+PREVIEW_PIXEL_NORMALIZATION_VERSION = 0
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -176,6 +179,39 @@ class IntegrityTaskHandler:
             raise PermanentTaskError("The asset moved to Restore before analysis completed.")
         return asset
 
+    async def _oversized_preview_feature(self, source: ImmichAsset):
+        """Build bounded visual evidence from Immich's generated preview."""
+
+        try:
+            preview = await self._immich.get_thumbnail(source.id, size="preview")
+        except ImmichApiError as error:
+            logger.warning(
+                "Similarity preview unavailable: asset_id=%s filename=%s reason=%s",
+                source.id,
+                source.original_file_name,
+                error,
+            )
+            return None
+
+        feature = await asyncio.to_thread(
+            extract_visual_features,
+            BytesIO(preview.content),
+            "jpeg",
+        )
+        if feature is None:
+            logger.warning(
+                "Similarity preview extraction failed: asset_id=%s filename=%s",
+                source.id,
+                source.original_file_name,
+            )
+            return None
+        return replace(
+            feature,
+            width=source.width or feature.width,
+            height=source.height or feature.height,
+            pixel_normalization_version=PREVIEW_PIXEL_NORMALIZATION_VERSION,
+        )
+
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         asset_id = UUID(str(payload["asset_id"]))
         report = await self.analyze(context, asset_id)
@@ -282,6 +318,16 @@ class IntegrityTaskHandler:
                     spool,
                     result.detected_format,
                 )
+            elif decoded.issue == "image_decode_limit_exceeded":
+                visual_feature = await self._oversized_preview_feature(source)
+                if visual_feature is not None:
+                    logger.warning(
+                        "Similarity feature using bounded preview: asset_id=%s filename=%s original_dimensions=%sx%s",
+                        source.id,
+                        source.original_file_name,
+                        source.width,
+                        source.height,
+                    )
             else:
                 logger.warning(
                     "Similarity feature skipped: asset_id=%s filename=%s format=%s decode_supported=%s decode_valid=%s issue=%s",
