@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -19,6 +20,8 @@ from companion.similarity_features import (
     VisualFeatureResult,
 )
 
+logger = logging.getLogger("uvicorn.error")
+
 
 def source_file_size(asset: ImmichAsset) -> int | None:
     return asset.file_size_bytes
@@ -29,17 +32,61 @@ def report_freshness(
     asset: ImmichAsset,
 ) -> IntegrityFreshness:
     if record is None:
+        logger.warning(
+            "Integrity evidence pending: asset_id=%s filename=%s reason=missing_report live_size=%s live_modified_at=%s",
+            asset.id,
+            asset.original_file_name,
+            asset.file_size_bytes,
+            asset.file_modified_at,
+        )
         return "missing"
     if record.analyzer_version != ANALYZER_VERSION:
+        logger.warning(
+            "Integrity evidence pending: asset_id=%s filename=%s reason=analyzer_version stored=%s expected=%s",
+            asset.id,
+            asset.original_file_name,
+            record.analyzer_version,
+            ANALYZER_VERSION,
+        )
         return "stale"
     if asset.library_id is None and record.source_checksum != asset.checksum:
+        logger.warning(
+            "Integrity evidence pending: asset_id=%s filename=%s reason=checksum_changed stored=%s live=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_checksum,
+            asset.checksum,
+        )
         return "stale"
     if record.source_file_modified_at != asset.file_modified_at:
+        logger.warning(
+            "Integrity evidence pending: asset_id=%s filename=%s reason=modified_at_changed stored=%s live=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_file_modified_at,
+            asset.file_modified_at,
+        )
         return "stale"
     live_size = source_file_size(asset)
     if live_size is None:
+        logger.warning(
+            "Integrity evidence pending: asset_id=%s filename=%s reason=live_size_missing stored_size=%s live_modified_at=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_file_size_bytes,
+            asset.file_modified_at,
+        )
         return "stale"
     if record.source_file_size_bytes != live_size:
+        logger.warning(
+            "Integrity evidence pending: asset_id=%s filename=%s reason=size_changed stored=%s live=%s stored_modified_at=%s live_modified_at=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_file_size_bytes,
+            live_size,
+            record.source_file_modified_at,
+            asset.file_modified_at,
+        )
         return "stale"
     return "current"
 
@@ -49,16 +96,59 @@ def similarity_feature_freshness(
     asset: ImmichAsset,
 ) -> IntegrityFreshness:
     if record is None:
+        logger.warning(
+            "Similarity evidence pending: asset_id=%s filename=%s reason=missing_feature live_size=%s live_modified_at=%s",
+            asset.id,
+            asset.original_file_name,
+            asset.file_size_bytes,
+            asset.file_modified_at,
+        )
         return "missing"
     if (
         record.model_version != SIMILARITY_MODEL_VERSION
         or record.feature_version != SIMILARITY_FEATURE_VERSION
     ):
+        logger.warning(
+            "Similarity evidence pending: asset_id=%s filename=%s reason=feature_version stored_model=%s expected_model=%s stored_feature=%s expected_feature=%s",
+            asset.id,
+            asset.original_file_name,
+            record.model_version,
+            SIMILARITY_MODEL_VERSION,
+            record.feature_version,
+            SIMILARITY_FEATURE_VERSION,
+        )
         return "stale"
     live_size = source_file_size(asset)
-    if live_size is None or record.source_file_size_bytes != live_size:
+    if live_size is None:
+        logger.warning(
+            "Similarity evidence pending: asset_id=%s filename=%s reason=live_size_missing stored_size=%s live_modified_at=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_file_size_bytes,
+            asset.file_modified_at,
+        )
+        return "stale"
+    if record.source_file_size_bytes != live_size:
+        logger.warning(
+            "Similarity evidence pending: asset_id=%s filename=%s reason=size_changed stored=%s live=%s stored_modified_at=%s live_modified_at=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_file_size_bytes,
+            live_size,
+            record.source_file_modified_at,
+            asset.file_modified_at,
+        )
         return "stale"
     if record.source_file_modified_at != asset.file_modified_at:
+        logger.warning(
+            "Similarity evidence pending: asset_id=%s filename=%s reason=modified_at_changed stored=%s live=%s stored_size=%s live_size=%s",
+            asset.id,
+            asset.original_file_name,
+            record.source_file_modified_at,
+            asset.file_modified_at,
+            record.source_file_size_bytes,
+            live_size,
+        )
         return "stale"
     return "current"
 
