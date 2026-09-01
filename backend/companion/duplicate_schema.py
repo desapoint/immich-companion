@@ -26,7 +26,9 @@ DuplicateClassification = Literal[
     "unavailable",
     "ineligible",
 ]
-DuplicateGroupAction = Literal["resolve", "keep_all", "delete_all", "stack_all", "none"]
+DuplicateGroupAction = Literal[
+    "resolve", "keep_all", "delete_all", "stack_all", "mixed", "none"
+]
 DuplicateDecisionSource = Literal["automatic", "manual", "none"]
 DuplicateReviewStatus = Literal[
     "pending",
@@ -219,7 +221,7 @@ class DuplicateResolutionPlanRequest(BaseModel):
     keeper_overrides: dict[str, UUID] = Field(default_factory=dict)
     action_overrides: dict[
         str,
-        Literal["resolve", "keep_all", "delete_all", "stack_all"],
+        Literal["resolve", "keep_all", "delete_all", "stack_all", "mixed"],
     ] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -242,15 +244,22 @@ class DuplicatePlanFollowUp(BaseModel):
     member_asset_ids: list[UUID]
 
 
+class DuplicatePlanMetadataWork(BaseModel):
+    keeper_asset_id: UUID
+    album_ids: list[UUID] = Field(default_factory=list)
+    tag_ids: list[UUID] = Field(default_factory=list)
+
+
 class DuplicateResolutionPlanGroup(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
-    action: Literal["resolve", "keep_all", "delete_all", "stack_all"] = "resolve"
+    action: Literal["resolve", "keep_all", "delete_all", "stack_all", "mixed"] = "resolve"
     keeper_asset_id: UUID | None = None
     member_asset_ids: list[UUID] = Field(default_factory=list)
     keep_asset_ids: list[UUID] = Field(default_factory=list)
     trash_asset_ids: list[UUID]
+    metadata_work: DuplicatePlanMetadataWork | None = None
     follow_up: DuplicatePlanFollowUp | None = None
     execution_state: DuplicateGroupExecutionState = "pending"
     member_fingerprint: str
@@ -267,8 +276,8 @@ class DuplicateResolutionPlanGroup(BaseModel):
             raise ValueError("Duplicate resolution member lists must not contain duplicates")
         if self.action == "stack_all" and self.follow_up is None:
             raise ValueError("Stack all requires an explicit stack follow-up")
-        if self.action != "stack_all" and self.follow_up is not None:
-            raise ValueError("Only Stack all may include a stack follow-up")
+        if self.action not in {"stack_all", "mixed"} and self.follow_up is not None:
+            raise ValueError("Only plans with Stack dispositions may include a stack follow-up")
         return self
 
 
@@ -281,6 +290,7 @@ class DuplicateResolutionPlan(BaseModel):
     keep_all_group_count: int = 0
     delete_all_group_count: int = 0
     stack_group_count: int = 0
+    mixed_group_count: int = 0
     trash_asset_count: int
     retained_asset_count: int = 0
     zero_survivor_group_count: int = 0

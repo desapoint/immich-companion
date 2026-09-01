@@ -3,7 +3,7 @@ import type { DuplicateDecisionSource, DuplicateDecisionStatus, DuplicateDisposi
 
 export type { DuplicateKeeperPolicy } from '../../../lib/types/duplicatePolicy';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
-export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'mixed' | 'none';
 export type DuplicateActionSelection = DuplicatePlanAction | 'automatic';
 export type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
 
@@ -96,7 +96,7 @@ export interface ExactDuplicateGroup {
   status: DuplicateGroupStatus;
   reason: string | null;
   keeper_asset_id: string | null;
-  recommended_action: 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+  recommended_action: DuplicatePlanAction;
   recommended_primary_asset_id: string | null;
   recommendation_reason_codes: string[];
   auto_resolvable: boolean;
@@ -222,6 +222,11 @@ export interface DuplicateResolutionPlan {
     member_asset_ids: string[];
     keep_asset_ids: string[];
     trash_asset_ids: string[];
+    metadata_work: {
+      keeper_asset_id: string;
+      album_ids: string[];
+      tag_ids: string[];
+    } | null;
     follow_up: {
       type: 'stack';
       primary_asset_id: string;
@@ -236,6 +241,7 @@ export interface DuplicateResolutionPlan {
   keep_all_group_count: number;
   delete_all_group_count: number;
   stack_group_count: number;
+  mixed_group_count: number;
   trash_asset_count: number;
   retained_asset_count: number;
   zero_survivor_group_count: number;

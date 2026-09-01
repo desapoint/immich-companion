@@ -74,6 +74,7 @@ from companion.models import (
     AssetSimilarityFeatureRecord,
 )
 from companion.similarity_repository import PairSimilarityEvidence, SimilarityRepository
+from companion.stack_service import StackSelectionError, StackService
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -131,6 +132,23 @@ def _member_dispositions(
     return dispositions
 
 
+def _action_for_dispositions(dispositions: list[str]) -> str:
+    """Describe a complete member partition without losing mixed choices."""
+
+    values = set(dispositions)
+    if values == {"keep"}:
+        return "keep_all"
+    if values == {"delete"}:
+        return "delete_all"
+    if values == {"stack"}:
+        return "stack_all"
+    if dispositions.count("keep") == 1 and dispositions.count("delete") == len(
+        dispositions
+    ) - 1:
+        return "resolve"
+    return "mixed"
+
+
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     """Read legacy Immich plans without invalidating them."""
 
@@ -174,6 +192,7 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         else None,
     )
     normalized.setdefault("execution_state", "pending")
+    normalized.setdefault("metadata_work", None)
     normalized.setdefault("member_fingerprint", _member_fingerprint(member_ids))
     normalized.setdefault(
         "members",
@@ -195,12 +214,13 @@ def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         resolve_group_count=sum(group.action == "resolve" for group in groups),
         keep_all_group_count=sum(group.action == "keep_all" for group in groups),
         delete_all_group_count=sum(group.action == "delete_all" for group in groups),
-        stack_group_count=sum(group.action == "stack_all" for group in groups),
+        stack_group_count=sum(group.follow_up is not None for group in groups),
+        mixed_group_count=sum(group.action == "mixed" for group in groups),
         trash_asset_count=sum(len(group.trash_asset_ids) for group in groups),
         retained_asset_count=sum(
             member.disposition in {"keep", "stack"} for group in groups for member in group.members
         ),
-        zero_survivor_group_count=sum(group.action == "delete_all" for group in groups),
+        zero_survivor_group_count=sum(not group.keep_asset_ids for group in groups),
         expires_at=record.expires_at,
         destructive=getattr(record, "destructive", True),
     )
@@ -222,6 +242,7 @@ class CrossSourceDuplicateService:
         policy: DuplicatePolicyRepository | None = None,
         similarity: SimilarityRepository | None = None,
         discovery: GroupDiscoveryProvider | None = None,
+        stacks: StackService | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -234,6 +255,7 @@ class CrossSourceDuplicateService:
         self._policy = policy
         self._similarity = similarity
         self._discovery = discovery or ImmichDuplicateProvider(immich)
+        self._stacks = stacks
 
     async def _options(
         self,
@@ -1255,40 +1277,146 @@ class CrossSourceDuplicateService:
             request.group_ids
         ):
             raise ActionPlanConflictError("A selected duplicate group is no longer available")
+        review_records: dict[tuple[str, str], object] = {}
+        if self._reviews is not None:
+            for discovery_source in {group.discovery_source for group in selected}:
+                source_groups = [
+                    group for group in selected if group.discovery_source == discovery_source
+                ]
+                records = await self._reviews.get_many(
+                    discovery_source,
+                    [group.group_id for group in source_groups],
+                )
+                review_records.update(
+                    ((discovery_source, group_id), record)
+                    for group_id, record in records.items()
+                )
         plan_groups: list[dict[str, Any]] = []
         for group in selected:
             member_ids = {member.id for member in group.members}
-            action = request.action_overrides.get(
-                group.group_id,
-                "resolve"
-                if request.all_eligible or group.group_id in request.keeper_overrides
-                else group.effective_action,
+            record = review_records.get((group.discovery_source, group.group_id))
+            raw_decisions = list(getattr(record, "member_decisions", []) or [])
+            draft_dispositions = {
+                UUID(decision["asset_id"]): decision["disposition"]
+                for decision in raw_decisions
+                if isinstance(decision, dict)
+                and decision.get("asset_id")
+                and decision.get("disposition") in {"keep", "delete", "stack"}
+            }
+            draft_is_current = (
+                record is not None
+                and getattr(record, "member_fingerprint", None) == group.member_fingerprint
+                and set(draft_dispositions) == member_ids
+                and len(draft_dispositions) == len(group.members)
             )
+            if raw_decisions and not draft_is_current:
+                raise ActionPlanConflictError(
+                    "Every selected duplicate needs a complete current saved draft"
+                )
+            if draft_is_current:
+                dispositions = [draft_dispositions[member.id] for member in group.members]
+                action = _action_for_dispositions(dispositions)
+            else:
+                action = request.action_overrides.get(
+                    group.group_id,
+                    "resolve"
+                    if request.all_eligible or group.group_id in request.keeper_overrides
+                    else group.effective_action,
+                )
+                if action == "mixed":
+                    raise ActionPlanConflictError(
+                        "Mixed duplicate choices require a complete current saved draft"
+                    )
+                legacy_primary = request.keeper_overrides.get(
+                    group.group_id,
+                    group.effective_primary_asset_id or group.keeper_asset_id,
+                )
+                dispositions = [
+                    item["disposition"]
+                    for item in _member_dispositions(
+                        action,
+                        [member.id for member in group.members],
+                        legacy_primary,
+                    )
+                ]
             if action == "none":
                 raise ActionPlanConflictError("Every selected group needs an action")
-            if action == "resolve" and (
+            has_deletions = "delete" in dispositions
+            if has_deletions and action != "delete_all" and (
                 not group.eligible or any(member.is_offline for member in group.members)
             ):
                 raise ActionPlanConflictError(
                     "Only available, verified exact groups can be resolved"
                 )
-            if action == "stack_all" and any(
-                member.is_offline or member.is_stacked for member in group.members
+            stack_ids = [
+                member.id
+                for member, disposition in zip(group.members, dispositions, strict=True)
+                if disposition == "stack"
+            ]
+            if stack_ids and any(
+                member.is_offline for member in group.members if member.id in stack_ids
             ):
                 raise ActionPlanConflictError(
-                    "Offline or already-stacked members cannot form a new stack"
+                    "Offline members cannot form a reviewed stack"
                 )
-            primary_required = action in {"resolve", "stack_all"}
-            keeper_id = (
-                request.keeper_overrides.get(
-                    group.group_id,
-                    group.effective_primary_asset_id or group.keeper_asset_id,
-                )
-                if primary_required
-                else None
+            if len(stack_ids) == 1:
+                raise ActionPlanConflictError("A stack needs at least two surviving members")
+            keep_ids = [
+                member.id
+                for member, disposition in zip(group.members, dispositions, strict=True)
+                if disposition in {"keep", "stack"}
+            ]
+            trash_ids = [
+                member.id
+                for member, disposition in zip(group.members, dispositions, strict=True)
+                if disposition == "delete"
+            ]
+            stack_primary_id = getattr(record, "stack_primary_asset_id", None) if record else None
+            if stack_ids:
+                if stack_primary_id not in stack_ids:
+                    preferred = group.effective_primary_asset_id or group.keeper_asset_id
+                    stack_primary_id = preferred if preferred in stack_ids else stack_ids[0]
+            else:
+                stack_primary_id = None
+            direct_keepers = [
+                member.id
+                for member, disposition in zip(group.members, dispositions, strict=True)
+                if disposition == "keep"
+            ]
+            metadata_keeper_id = (
+                getattr(record, "metadata_keeper_asset_id", None) if record else None
             )
-            if primary_required and (keeper_id is None or keeper_id not in member_ids):
+            if trash_ids:
+                if metadata_keeper_id not in keep_ids:
+                    preferred_metadata_keeper = (
+                        group.effective_primary_asset_id or group.keeper_asset_id
+                    )
+                    metadata_keeper_id = (
+                        direct_keepers[0]
+                        if len(direct_keepers) == 1
+                        else preferred_metadata_keeper
+                        if preferred_metadata_keeper in keep_ids
+                        else keep_ids[0]
+                        if len(keep_ids) == 1
+                        else None
+                    )
+                if keep_ids and metadata_keeper_id is None:
+                    raise ActionPlanConflictError(
+                        "Choose which surviving asset keeps duplicate metadata"
+                    )
+            else:
+                metadata_keeper_id = None
+            keeper_id = metadata_keeper_id or stack_primary_id
+            if action == "resolve" and keeper_id is None:
                 raise ActionPlanConflictError("A primary asset must be chosen from the group")
+            ordered_keep_ids = (
+                [
+                    metadata_keeper_id,
+                    *(asset_id for asset_id in keep_ids if asset_id != metadata_keeper_id),
+                ]
+                if metadata_keeper_id is not None
+                else keep_ids
+            )
             ordered_members = (
                 [
                     keeper_id,
@@ -1297,20 +1425,33 @@ class CrossSourceDuplicateService:
                 if keeper_id is not None
                 else [member.id for member in group.members]
             )
-            trash_ids = (
-                [member.id for member in group.members if member.id != keeper_id]
-                if action == "resolve"
-                else [member.id for member in group.members]
-                if action == "delete_all"
-                else []
-            )
-            keep_ids = (
-                [keeper_id]
-                if action == "resolve" and keeper_id is not None
-                else ordered_members
-                if action in {"keep_all", "stack_all"}
-                else []
-            )
+            metadata_work: dict[str, Any] | None = None
+            if metadata_keeper_id is not None and trash_ids:
+                keeper_albums: set[UUID] = set()
+                keeper_tags: set[UUID] = set()
+                trash_albums: set[UUID] = set()
+                trash_tags: set[UUID] = set()
+                for member_id in member_ids:
+                    summary = await self._assets.get_asset_summary(member_id)
+                    if summary is None:
+                        continue
+                    albums = {album.id for album in summary.albums}
+                    tags = {UUID(str(tag.id)) for tag in summary.tags}
+                    if member_id == metadata_keeper_id:
+                        keeper_albums.update(albums)
+                        keeper_tags.update(tags)
+                    if member_id in trash_ids:
+                        trash_albums.update(albums)
+                        trash_tags.update(tags)
+                metadata_work = {
+                    "keeper_asset_id": str(metadata_keeper_id),
+                    "album_ids": [
+                        str(identifier) for identifier in sorted(trash_albums - keeper_albums)
+                    ],
+                    "tag_ids": [
+                        str(identifier) for identifier in sorted(trash_tags - keeper_tags)
+                    ],
+                }
             plan_groups.append(
                 {
                     "group_id": group.group_id,
@@ -1319,22 +1460,37 @@ class CrossSourceDuplicateService:
                     "action": action,
                     "keeper_asset_id": str(keeper_id) if keeper_id is not None else None,
                     "member_asset_ids": [str(asset_id) for asset_id in ordered_members],
-                    "keep_asset_ids": [str(asset_id) for asset_id in keep_ids],
+                    "keep_asset_ids": [str(asset_id) for asset_id in ordered_keep_ids],
                     "trash_asset_ids": [str(asset_id) for asset_id in trash_ids],
+                    "metadata_work": metadata_work,
                     "follow_up": (
                         {
                             "type": "stack",
-                            "primary_asset_id": str(keeper_id),
+                            "primary_asset_id": str(stack_primary_id),
                             "member_asset_ids": [
-                                str(asset_id) for asset_id in ordered_members
+                                str(stack_primary_id),
+                                *(
+                                    str(asset_id)
+                                    for asset_id in stack_ids
+                                    if asset_id != stack_primary_id
+                                ),
                             ],
                         }
-                        if action == "stack_all" and keeper_id is not None
+                        if stack_primary_id is not None
                         else None
                     ),
                     "execution_state": "pending",
                     "member_fingerprint": group.member_fingerprint,
-                    "members": _member_dispositions(action, ordered_members, keeper_id),
+                    "members": [
+                        {
+                            "asset_id": str(member.id),
+                            "disposition": draft_dispositions[member.id]
+                            if draft_is_current
+                            else dispositions[index],
+                            "primary": member.id in {stack_primary_id, metadata_keeper_id},
+                        }
+                        for index, member in enumerate(group.members)
+                    ],
                 }
             )
         plan_groups.sort(key=lambda item: item["group_id"])
@@ -1418,8 +1574,12 @@ class CrossSourceDuplicateService:
                 or live_group.member_fingerprint != planned["member_fingerprint"]
                 or (planned["action"] == "resolve" and not live_group.eligible)
                 or (
-                    planned["action"] == "stack_all"
-                    and any(member.is_offline or member.is_stacked for member in live_group.members)
+                    planned.get("follow_up") is not None
+                    and any(
+                        member.is_offline
+                        for member in live_group.members
+                        if str(member.id) in planned["follow_up"]["member_asset_ids"]
+                    )
                 )
             ):
                 await self._actions.finish_plan(plan_id, "drifted", {"error": "group_drift"})
@@ -1433,11 +1593,11 @@ class CrossSourceDuplicateService:
         pacing = await self._runtime_sync_settings.get()
         batch_size = pacing.full_batch_size
         total_steps = len(raw_groups) + sum(
-            planned["action"] == "stack_all" for planned in raw_groups
+            planned.get("follow_up") is not None for planned in raw_groups
         )
         completed_steps = sum(
             2
-            if execution_state(planned) == "completed" and planned["action"] == "stack_all"
+            if execution_state(planned) == "completed" and planned.get("follow_up") is not None
             else 1
             if execution_state(planned)
             in {"follow_up_pending", "completed"}
@@ -1487,6 +1647,41 @@ class CrossSourceDuplicateService:
             raise PermanentTaskError(
                 "Duplicate resolution is not supported for this discovery provider"
             )
+
+        metadata_ready: list[dict[str, Any]] = []
+        for planned in pending_resolution:
+            metadata_work = planned.get("metadata_work")
+            if metadata_work is None:
+                metadata_ready.append(planned)
+                continue
+            identifier = planned["group_id"]
+            keeper_asset_id = UUID(metadata_work["keeper_asset_id"])
+            try:
+                for album_id in metadata_work.get("album_ids", []):
+                    await self._immich.add_assets_to_album(
+                        UUID(album_id),
+                        [keeper_asset_id],
+                    )
+                for tag_id in metadata_work.get("tag_ids", []):
+                    await self._immich.add_assets_to_tag(
+                        UUID(tag_id),
+                        [keeper_asset_id],
+                    )
+            except ImmichApiError:
+                failed_ids.append(identifier)
+                stored_execution[identifier] = {
+                    "state": "failed",
+                    "error": "metadata_reconciliation_failed",
+                }
+                await self._actions.record_duplicate_group_execution(
+                    plan_id,
+                    identifier,
+                    "failed",
+                    error="metadata_reconciliation_failed",
+                )
+            else:
+                metadata_ready.append(planned)
+        pending_resolution = metadata_ready
 
         regular_groups = [
             item for item in pending_resolution if item["action"] != "delete_all"
@@ -1567,7 +1762,7 @@ class CrossSourceDuplicateService:
                     "failed",
                     error="provider_group_still_active",
                 )
-            elif planned["action"] != "stack_all":
+            elif planned.get("follow_up") is None:
                 stored_execution[identifier] = {"state": "completed", "error": None}
                 await self._actions.record_duplicate_group_execution(
                     plan_id,
@@ -1608,12 +1803,21 @@ class CrossSourceDuplicateService:
                     for asset in refreshed_assets
                     if asset.stack is not None and asset.stack.get("id") is not None
                 }
-                if stack_ids and (len(stack_ids) != 1 or any(
-                    asset.stack is None for asset in refreshed_assets
-                )):
-                    raise ImmichApiError("resume duplicate stack follow-up")
-                if not stack_ids:
-                    await self._immich.create_stack(member_ids)
+                existing_stack_complete = bool(stack_ids) and len(stack_ids) == 1 and all(
+                    asset.stack is not None for asset in refreshed_assets
+                )
+                if not existing_stack_complete:
+                    if self._stacks is None:
+                        raise StackSelectionError(
+                            "Shared stack execution is unavailable"
+                        )
+                    preparation = await self._stacks.prepare(
+                        member_ids,
+                        "move_selected",
+                        UUID(follow_up["primary_asset_id"]),
+                    )
+                    if not await self._stacks.execute(preparation):
+                        raise ImmichApiError("verify created stack")
                     refreshed_assets = [
                         await self._immich.get_asset(asset_id) for asset_id in member_ids
                     ]
@@ -1627,7 +1831,7 @@ class CrossSourceDuplicateService:
                     raise ImmichApiError("verify created stack")
                 for asset in refreshed_assets:
                     await self._assets.refresh_asset(asset)
-            except ImmichApiError:
+            except (ImmichApiError, StackSelectionError):
                 if identifier not in failed_ids:
                     failed_ids.append(identifier)
                 stored_execution[identifier] = {
@@ -1668,7 +1872,8 @@ class CrossSourceDuplicateService:
         stacked_ids = {
             planned["group_id"]
             for planned in raw_groups
-            if planned["action"] == "stack_all" and planned["group_id"] in successful_ids
+            if planned.get("follow_up") is not None
+            and planned["group_id"] in successful_ids
         }
 
         if self._reviews is not None:
@@ -1677,6 +1882,7 @@ class CrossSourceDuplicateService:
                 "keep_all": "reviewed_keep_all",
                 "delete_all": "reviewed_delete_all",
                 "stack_all": "reviewed_stack_all",
+                "mixed": "manually_configured",
             }
             for planned in raw_groups:
                 if planned["group_id"] not in successful_ids:

@@ -35,7 +35,7 @@
     keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
     recommended_keeper_asset_id: string | null;
     selected_keeper_asset_id: string | null;
-    selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'none';
+    selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'mixed' | 'none';
     member_decisions: Record<string, DuplicateDisposition>;
     stack_primary_asset_id: string | null;
     recommendation_reason_codes: string[];

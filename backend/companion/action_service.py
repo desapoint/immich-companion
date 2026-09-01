@@ -67,6 +67,7 @@ class AssetActionService:
         actions: ActionRepository,
         sync: AssetSyncService,
         runtime_sync_settings: object | None = None,
+        stack_service: StackService | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -78,7 +79,7 @@ class AssetActionService:
             if runtime_sync_settings is not None
             else DefaultSyncRuntimeSettingsRepository(settings)
         )
-        self._stacks = StackService(immich, assets, sync)
+        self._stacks = stack_service or StackService(immich, assets, sync)
 
     async def _pace_large_action_batch(self, started: float, *, enabled: bool) -> None:
         """Rest between large-action batches without delaying small actions."""

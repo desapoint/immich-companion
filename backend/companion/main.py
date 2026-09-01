@@ -127,6 +127,7 @@ from companion.similarity_scan_service import (
     SimilarityScanService,
     SimilarityScanTaskHandler,
 )
+from companion.stack_service import StackService
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
     SyncCoordinatorStatus,
@@ -223,6 +224,11 @@ def create_app(
             cron_expression="0 0 * * 0",
             deduplication_policy="coalesce",
         )
+    stack_service = (
+        StackService(immich, asset_repository, asset_sync)
+        if asset_repository is not None and asset_sync is not None
+        else None
+    )
     action_service = (
         AssetActionService(
             runtime_settings,
@@ -231,6 +237,7 @@ def create_app(
             action_repository,
             asset_sync,
             runtime_sync_settings,
+            stack_service,
         )
         if database is not None
         and asset_repository is not None
@@ -276,6 +283,7 @@ def create_app(
                     asset_repository,
                 ),
             ),
+            stack_service,
         )
         if asset_repository is not None
         and integrity_repository is not None

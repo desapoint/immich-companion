@@ -326,7 +326,7 @@
     }
     const keepCount = draft.decisions.filter((decision) => decision.disposition === 'keep').length;
     const deleteCount = draft.decisions.filter((decision) => decision.disposition === 'delete').length;
-    return keepCount === 1 && deleteCount === group.members.length - 1 ? 'resolve' : 'none';
+    return keepCount === 1 && deleteCount === group.members.length - 1 ? 'resolve' : 'mixed';
   }
 
   function effectiveActionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
@@ -336,11 +336,19 @@
 
   function isActionable(group: ExactDuplicateGroup): boolean {
     const action = effectiveActionFor(group);
-    const requiresPrimary = action === 'resolve' || action === 'stack_all';
+    const draft = draftFor(group);
+    const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
+    const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete') ?? action === 'resolve';
+    const requiresPrimary = action === 'resolve' || stackDecisions.length > 0;
     return action !== 'none'
+      && draft?.decisions.length === group.members.length
       && (!requiresPrimary || selectedKeeper(group) !== null)
-      && (action !== 'resolve' || (group.eligible && !group.members.some((member) => member.is_offline)))
-      && (action !== 'stack_all' || !group.members.some((member) => member.is_offline || member.is_stacked));
+      && stackDecisions.length !== 1
+      && (!hasDeletions || action === 'delete_all' || (group.eligible && !group.members.some((member) => member.is_offline)))
+      && (!stackDecisions.length || !group.members.some((member) => (
+        stackDecisions.some((decision) => decision.asset_id === member.id)
+        && (member.is_offline || member.is_stacked)
+      )));
   }
 
   async function persistDraft(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
@@ -841,7 +849,7 @@
 {#if confirmOpen && plan}
   <ConfirmDialog
     title="Process reviewed duplicates"
-    message={`Resolve ${plan.group_count} Immich duplicate groups first: keep one primary in ${plan.resolve_group_count}, keep every copy in ${plan.keep_all_group_count + plan.stack_group_count}, and trash every copy in ${plan.delete_all_group_count}. This trashes ${plan.trash_asset_count} assets.${plan.stack_group_count ? ` After resolution, create ${plan.stack_group_count} stacks; incomplete stacks can resume without resolving the group again.` : ''}${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
+    message={`Process ${plan.group_count} reviewed Immich duplicate groups: ${plan.resolve_group_count} keeper resolutions, ${plan.keep_all_group_count} keep-all groups, ${plan.delete_all_group_count} delete-all groups, and ${plan.mixed_group_count} mixed groups. This retains ${plan.retained_asset_count} assets and trashes ${plan.trash_asset_count}.${plan.stack_group_count ? ` After resolution, create ${plan.stack_group_count} stacks; incomplete stacks can resume without resolving the group again.` : ''}${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
     confirmLabel="Process batch"
     icon={plan.destructive ? 'trash' : 'stack'}
     destructive={plan.destructive}
