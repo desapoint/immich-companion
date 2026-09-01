@@ -27,6 +27,7 @@ from companion.asset_service import AssetSyncService
 from companion.config import Settings
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.models import ActionPlanRecord
+from companion.stack_service import StackPreparation, StackSelectionError, StackService
 from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import PermanentTaskError, RetryableTaskError, TaskContext
 from companion.task_schema import TaskResult
@@ -77,6 +78,7 @@ class AssetActionService:
             if runtime_sync_settings is not None
             else DefaultSyncRuntimeSettingsRepository(settings)
         )
+        self._stacks = StackService(immich, assets, sync)
 
     async def _pace_large_action_batch(self, started: float, *, enabled: bool) -> None:
         """Rest between large-action batches without delaying small actions."""
@@ -101,34 +103,6 @@ class AssetActionService:
             await repair(asset_ids, relations=relations, include_stacks=include_stacks)
         else:
             await self._sync.synchronize()
-
-    async def _stack_repair_ids(self, asset_ids: list[UUID]) -> list[UUID]:
-        """Snapshot every member whose stack metadata can change after an action."""
-
-        repair_ids: list[UUID] = []
-        for asset_id in asset_ids:
-            members = await self._assets.stack_asset_ids(asset_id)
-            for member_id in members or [asset_id]:
-                if member_id not in repair_ids:
-                    repair_ids.append(member_id)
-        return repair_ids
-
-    async def _stack_creation_visible(self, primary_asset_id: UUID) -> bool:
-        """Verify a stack by its primary asset rather than filtered members.
-
-        Immich can omit stack metadata from asset details and hide archived or
-        trashed stack children in stack-list responses.  Stack creation is one
-        atomic API request, so seeing its requested primary asset is sufficient
-        confirmation that the complete submitted set was accepted.
-        """
-
-        for attempt in range(3):
-            stacks = await self._immich.list_stacks()
-            if any(stack.primary_asset_id == primary_asset_id for stack in stacks):
-                return True
-            if attempt < 2:
-                await asyncio.sleep(0.2)
-        return False
 
     async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
@@ -195,22 +169,6 @@ class AssetActionService:
             ],
         )
 
-    async def _stack_conflicts(self, asset_ids: list[UUID]) -> list[StackConflict]:
-        selected = set(asset_ids)
-        conflicts: list[StackConflict] = []
-        for stack in await self._immich.list_stacks():
-            selected_count = sum(member.id in selected for member in stack.assets)
-            if selected_count:
-                conflicts.append(
-                    StackConflict(
-                        stack_id=stack.id,
-                        selected_count=selected_count,
-                        member_count=len(stack.assets),
-                        includes_unselected=selected_count < len(stack.assets),
-                    )
-                )
-        return conflicts
-
     async def plan(self, request: AssetActionPlanRequest) -> AssetActionPlan:
         """Resolve current state and persist an immutable action preview."""
 
@@ -221,7 +179,7 @@ class AssetActionService:
         operation = self._operation_for_request(request, resolution)
         stack_conflicts: list[StackConflict] = []
         if operation == "stack":
-            stack_conflicts = await self._stack_conflicts(resolution.ids)
+            stack_conflicts = await self._stacks.conflicts(resolution.ids)
             if stack_conflicts and request.stack_resolution is None:
                 relation_work = {
                     "__stack_conflicts": [item.model_dump(mode="json") for item in stack_conflicts]
@@ -238,22 +196,11 @@ class AssetActionService:
                 )
                 return self._public_plan(record)
             if request.stack_resolution == "keep_existing":
-                stacked_ids = {
-                    member.id
-                    for stack in await self._immich.list_stacks()
-                    for member in stack.assets
-                }
-                resolution = resolution.model_copy(
-                    update={
-                        "ids": [
-                            identifier
-                            for identifier in resolution.ids
-                            if identifier not in stacked_ids
-                        ]
-                    }
-                )
-                if len(resolution.ids) < 2:
-                    raise EmptySelectionError("Fewer than two unstacked assets remain")
+                try:
+                    ids = await self._stacks.without_existing_members(resolution.ids)
+                except StackSelectionError as error:
+                    raise EmptySelectionError("Fewer than two unstacked assets remain") from error
+                resolution = resolution.model_copy(update={"ids": ids})
             relation_work = {
                 "__stack_conflicts": [] if request.stack_resolution else [
                     item.model_dump(mode="json") for item in stack_conflicts
@@ -378,46 +325,6 @@ class AssetActionService:
             await self._immich.trash_assets(ids)
         else:
             await self._immich.restore_assets(ids)
-
-    async def _prepare_stack(
-        self, asset_ids: list[UUID], resolution: str | None
-    ) -> tuple[list[UUID], list[UUID]]:
-        """Resolve existing stack membership before creating the requested stack."""
-
-        resolution = resolution or "move_selected"
-        selected = set(asset_ids)
-        final_ids = list(asset_ids)
-        affected_ids = list(asset_ids)
-        for stack in await self._immich.list_stacks():
-            member_ids = [member.id for member in stack.assets]
-            selected_members = [identifier for identifier in member_ids if identifier in selected]
-            if not selected_members:
-                continue
-            for identifier in member_ids:
-                if identifier not in affected_ids:
-                    affected_ids.append(identifier)
-            if resolution == "keep_existing":
-                final_ids = [identifier for identifier in final_ids if identifier not in member_ids]
-                continue
-            if resolution == "include_existing":
-                for identifier in member_ids:
-                    if identifier not in final_ids:
-                        final_ids.append(identifier)
-                await self._immich.delete_stack(stack.id)
-                continue
-            if len(selected_members) == len(member_ids):
-                await self._immich.delete_stack(stack.id)
-            else:
-                if stack.primary_asset_id in selected:
-                    replacement_primary = next(
-                        identifier for identifier in member_ids if identifier not in selected
-                    )
-                    await self._immich.update_stack_primary(stack.id, replacement_primary)
-                for identifier in selected_members:
-                    await self._immich.remove_asset_from_stack(stack.id, identifier)
-        if len(final_ids) < 2:
-            raise EmptySelectionError("Fewer than two assets remain for a stack")
-        return final_ids, affected_ids
 
     async def _execute_relations(
         self,
@@ -607,12 +514,21 @@ class AssetActionService:
         pacing = await self._runtime_sync_settings.get()
         batch_size = pacing.full_batch_size
         throttle = len(target_ids) > batch_size
+        stack_preparation: StackPreparation | None = None
         if operation == "stack":
             try:
-                target_ids, stack_repair_ids = await self._prepare_stack(
+                stack_preparation = await self._stacks.prepare(
                     target_ids,
                     claimed.relation_work.get("__stack_resolution"),
                 )
+                target_ids = stack_preparation.asset_ids
+            except StackSelectionError as error:
+                await self._actions.finish_plan(
+                    claimed.id,
+                    "failed",
+                    {"operation": operation, "error": type(error).__name__},
+                )
+                raise EmptySelectionError(str(error)) from error
             except Exception as error:
                 await self._actions.finish_plan(
                     claimed.id,
@@ -653,12 +569,16 @@ class AssetActionService:
             if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
                 # Capture the complete old stack before the first member is
                 # removed, so remaining and detached members are both repaired.
-                repair_ids = await self._stack_repair_ids(target_ids)
+                repair_ids = await self._stacks.repair_ids(target_ids)
             updated = 0
             action_batches = self._batches(applicable_ids, operation, batch_size)
             for index, batch in enumerate(action_batches):
                 batch_started = perf_counter()
-                await self._apply(operation, batch, relation_id)
+                if operation == "stack":
+                    assert stack_preparation is not None
+                    created = await self._stacks.execute(stack_preparation)
+                else:
+                    await self._apply(operation, batch, relation_id)
                 if operation == "trash":
                     # Immich's successful response is authoritative. Trashed
                     # assets belong to the live Restore API, not the local index.
@@ -672,9 +592,7 @@ class AssetActionService:
                     )
                 if index + 1 < len(action_batches):
                     await self._pace_large_action_batch(batch_started, enabled=throttle)
-            if applicable_ids and operation != "trash":
-                if operation == "stack":
-                    repair_ids = stack_repair_ids
+            if applicable_ids and operation not in {"trash", "stack"}:
                 await self._repair_targets(
                     repair_ids,
                     include_stacks=operation in {
@@ -690,7 +608,6 @@ class AssetActionService:
                 # it cannot also be used as its post-action verifier. Immich
                 # filters stack members by visibility, so verify the atomic
                 # create request through the requested primary asset instead.
-                created = await self._stack_creation_visible(applicable_ids[0])
                 remaining = set() if created else set(applicable_ids)
             elif operation == "set_stack_primary":
                 current_stacks = await self._immich.list_stacks()

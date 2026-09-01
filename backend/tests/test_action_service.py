@@ -179,15 +179,15 @@ async def test_stack_verification_retries_until_immich_indexes_the_primary(monke
             return [SimpleNamespace(primary_asset_id=ASSET_ONE)]
 
     instance, _, _, _ = service(resolution(), [])
-    instance._immich = DelayedStackImmich()  # type: ignore[assignment]
+    instance._stacks._immich = DelayedStackImmich()  # type: ignore[assignment]
     sleeps: list[float] = []
 
     async def sleep(delay: float) -> None:
         sleeps.append(delay)
 
-    monkeypatch.setattr("companion.action_service.asyncio.sleep", sleep)
+    monkeypatch.setattr("companion.stack_service.asyncio.sleep", sleep)
 
-    assert await instance._stack_creation_visible(ASSET_ONE) is True
+    assert await instance._stacks._creation_visible(ASSET_ONE) is True
     assert sleeps == [0.2, 0.2]
 
 
@@ -210,7 +210,9 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
         resolution(),
         [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}],
     )
-    instance._immich = StackImmich()  # type: ignore[assignment]
+    stack_immich = StackImmich()
+    instance._immich = stack_immich  # type: ignore[assignment]
+    instance._stacks._immich = stack_immich  # type: ignore[assignment]
     plan = await instance.plan(
         AssetActionPlanRequest(
             selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
