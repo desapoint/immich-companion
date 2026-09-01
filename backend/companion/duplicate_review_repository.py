@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
@@ -104,6 +104,39 @@ class DuplicateReviewRepository:
             )
         records = await self.get_many(discovery_source, [provider_group_id])
         return records[provider_group_id]
+
+    async def clear_decisions(
+        self,
+        discovery_source: str,
+        provider_group_ids: list[str],
+    ) -> None:
+        """Clear review choices while retaining the provider identity record."""
+
+        if not provider_group_ids:
+            return
+        now = datetime.now(UTC)
+        statement = (
+            update(DuplicateGroupReviewRecord)
+            .where(
+                DuplicateGroupReviewRecord.discovery_source == discovery_source,
+                DuplicateGroupReviewRecord.provider_group_id.in_(
+                    list(dict.fromkeys(provider_group_ids))
+                ),
+            )
+            .values(
+                manual_action=None,
+                manual_primary_asset_id=None,
+                member_decisions=[],
+                stack_primary_asset_id=None,
+                metadata_keeper_asset_id=None,
+                draft_status="pending",
+                review_status="pending",
+                last_reviewed_at=now,
+                updated_at=now,
+            )
+        )
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(statement)
 
     async def get_workspace(self) -> DuplicateReviewWorkspaceRecord | None:
         async with self._database.sessions() as session:

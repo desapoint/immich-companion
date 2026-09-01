@@ -25,6 +25,7 @@
     loadLatestSimilarityScan,
     loadSimilarityScanTasks,
     planDuplicateResolution,
+    resetDuplicateWorkspaceDecisions,
     saveDuplicateGroupDraft,
     saveDuplicateWorkspaceSelection,
     startDuplicateSimilarityScan,
@@ -303,6 +304,19 @@
       : null;
   }
 
+  function rawDraftFor(group: ExactDuplicateGroup): DuplicateGroupDraft | null {
+    return groupDrafts[group.group_id] ?? null;
+  }
+
+  function restoreWorkspaceState(restored: DuplicateWorkspaceState): void {
+    workspace = restored;
+    groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
+    selected.clear();
+    for (const groupId of restored.selected_group_ids) selected.add(groupId);
+    activeGroupId = restored.active_group_id;
+    selectionInitialized = true;
+  }
+
   function dispositionFor(group: ExactDuplicateGroup, assetId: string): DuplicateDisposition | null {
     return draftFor(group)?.decisions.find((decision) => decision.asset_id === assetId)?.disposition ?? null;
   }
@@ -465,6 +479,45 @@
     }
   }
 
+  async function clearDecisions(groupIds: string[]): Promise<void> {
+    if (!groupIds.length) return;
+    busy = true;
+    error = null;
+    message = null;
+    try {
+      await Promise.all(
+        groupIds
+          .map((groupId) => draftSaveQueues.get(groupId))
+          .filter((pending): pending is Promise<void> => pending !== undefined),
+      );
+      const restored = await resetDuplicateWorkspaceDecisions({
+        options: appliedOptions,
+        group_ids: groupIds,
+      });
+      restoreWorkspaceState(restored);
+      message = groupIds.length === 1
+        ? 'Saved decisions were cleared for this group.'
+        : `Saved decisions were cleared for ${groupIds.length} groups.`;
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not clear saved decisions.';
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function dismissStaleSelection(): Promise<void> {
+    try {
+      const restored = await saveDuplicateWorkspaceSelection({
+        options: appliedOptions,
+        selected_group_ids: [...selected],
+        active_group_id: activeGroupId,
+      });
+      restoreWorkspaceState(restored);
+    } catch (reason) {
+      error = reason instanceof Error ? reason.message : 'Could not clear stale selection entries.';
+    }
+  }
+
   function progressPercent(status: DuplicateTaskStatus): number | undefined {
     if (typeof status.progress.percent !== 'number') return undefined;
     return Math.min(100, Math.max(0, status.progress.percent));
@@ -574,12 +627,7 @@
       ...appliedOptions,
       analyze_automatically: false,
     });
-    workspace = restored;
-    groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
-    selected.clear();
-    for (const groupId of restored.selected_group_ids) selected.add(groupId);
-    activeGroupId = restored.active_group_id;
-    selectionInitialized = true;
+    restoreWorkspaceState(restored);
   }
 
   async function applyRules(): Promise<void> {
@@ -763,11 +811,19 @@
 
     <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading} onchange={(filter) => activeFilter = filter} />
 
+    {#if workspace?.stale_selected_groups.length}
+      <div class="notice stale-workspace" role="status">
+        <span>{workspace.stale_selected_groups.length} previously selected {workspace.stale_selected_groups.length === 1 ? 'group has' : 'groups have'} changed or disappeared and will not be executed.</span>
+        <button type="button" disabled={busy} onclick={() => void dismissStaleSelection()}>Dismiss stale selection</button>
+      </div>
+    {/if}
+
     <div class="batch-bar">
       <Checkbox checked={allAutoReadySelected} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
       <span>{selectedCount} selected</span>
       <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!selectedCount || busy} onchange={(value) => bulkAction = value as DuplicatePlanAction} />
       <button type="button" disabled={!selectedCount || busy} onclick={() => void applyBulkAction()}>Apply action</button>
+      <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions([...selected])}>Clear selected decisions</button>
       <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review batch</button>
     </div>
 
@@ -785,7 +841,7 @@
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{savingGroups.has(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
               </div>
               <div class="group-controls">
                 <p>{group.reason}</p>
@@ -793,6 +849,7 @@
                   <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
                   <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
                   <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
+                  <button type="button" disabled={busy || savingGroups.has(group.group_id) || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
                 </div>
               </div>
             </header>
@@ -913,6 +970,9 @@
   .status.unverified { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .status.mismatch, .status.ineligible { color: var(--color-negative-ink); background: var(--color-negative-surface); }
   .workflow-status { color: var(--color-ink-muted); font-size: .6rem; font-weight: 760; }
+  .decision-status { color: var(--color-positive-ink); font-size: .6rem; font-weight: 760; }
+  .decision-status.stale { color: var(--color-warning-ink); }
+  .stale-workspace { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
   .member { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }

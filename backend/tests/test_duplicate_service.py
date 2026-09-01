@@ -21,6 +21,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspaceResetRequest,
     DuplicateWorkspaceSelectionUpdate,
 )
 from companion.duplicate_service import (
@@ -501,6 +502,17 @@ class FakeReviews:
             **values,
         )
         return self.record
+
+    async def clear_decisions(self, _source, provider_group_ids):
+        if self.record is None or self.record.provider_group_id not in provider_group_ids:
+            return
+        self.record.manual_action = None
+        self.record.manual_primary_asset_id = None
+        self.record.member_decisions = []
+        self.record.stack_primary_asset_id = None
+        self.record.metadata_keeper_asset_id = None
+        self.record.draft_status = "pending"
+        self.record.review_status = "pending"
 
     async def get_workspace(self):
         return self.workspace_record
@@ -1283,6 +1295,52 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
         "stack",
         "keep",
     ]
+
+
+@pytest.mark.asyncio
+async def test_reset_clears_saved_decisions_and_deselects_the_group() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+    current = (await service.result()).groups[0]
+    await service.save_workspace_selection(
+        DuplicateWorkspaceSelectionUpdate(
+            selected_group_ids=[PUBLIC_GROUP_ID],
+            active_group_id=PUBLIC_GROUP_ID,
+        )
+    )
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="delete"),
+            ],
+        )
+    )
+
+    restored = await service.reset_workspace_decisions(
+        DuplicateWorkspaceResetRequest(group_ids=[PUBLIC_GROUP_ID])
+    )
+
+    assert restored.selected_group_ids == []
+    assert restored.active_group_id is None
+    assert restored.drafts == []
+    assert reviews.record.member_decisions == []
 
 
 @pytest.mark.asyncio

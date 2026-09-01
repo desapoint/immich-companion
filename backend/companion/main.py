@@ -85,6 +85,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspaceResetRequest,
     DuplicateWorkspaceSelectionUpdate,
     DuplicateWorkspaceState,
     ExactDuplicateGroup,
@@ -1390,6 +1391,20 @@ def create_app(
     ) -> DuplicateWorkspaceState:
         try:
             return await require_duplicate_service().apply_rules(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/workspace/reset",
+        response_model=DuplicateWorkspaceState,
+    )
+    async def reset_duplicate_workspace_decisions(
+        request: DuplicateWorkspaceResetRequest,
+    ) -> DuplicateWorkspaceState:
+        try:
+            return await require_duplicate_service().reset_workspace_decisions(request)
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         except RuntimeError as error:

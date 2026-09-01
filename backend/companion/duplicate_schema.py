@@ -350,6 +350,16 @@ class DuplicateWorkspaceSelectionUpdate(BaseModel):
         return self
 
 
+class DuplicateWorkspaceResetRequest(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    group_ids: list[str] = Field(min_length=1, max_length=10_000)
+
+    @model_validator(mode="after")
+    def unique_groups(self) -> DuplicateWorkspaceResetRequest:
+        self.group_ids = list(dict.fromkeys(self.group_ids))
+        return self
+
+
 class DuplicateGroupDraft(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource

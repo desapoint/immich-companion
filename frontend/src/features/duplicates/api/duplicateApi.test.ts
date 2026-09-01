@@ -11,6 +11,7 @@ import {
   loadDuplicateWorkspace,
   loadSimilarityScanTasks,
   planDuplicateResolution,
+  resetDuplicateWorkspaceDecisions,
   saveDuplicateReview,
   saveDuplicateGroupDraft,
   saveDuplicateWorkspaceSelection,
@@ -171,6 +172,30 @@ describe('duplicate API', () => {
       expect.objectContaining({
         method: 'POST',
         body: JSON.stringify({ ...options, analyze_automatically: false }),
+      }),
+    );
+  });
+
+  it('clears saved decisions through the durable workspace API', async () => {
+    const restored = {
+      initialized: true,
+      selected_group_ids: [],
+      active_group_id: null,
+      stale_selected_groups: [],
+      drafts: [],
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(JSON.stringify(restored), { status: 200 }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await resetDuplicateWorkspaceDecisions({ options, group_ids: ['group-1'] });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/assets/duplicates/workspace/reset',
+      expect.objectContaining({
+        method: 'POST',
+        body: JSON.stringify({ options, group_ids: ['group-1'] }),
       }),
     );
   });

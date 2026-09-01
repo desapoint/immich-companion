@@ -43,6 +43,7 @@ from companion.duplicate_schema import (
     DuplicateSimilarityEvidence,
     DuplicateSimilarityReferenceRequest,
     DuplicateWorkspaceGroupReference,
+    DuplicateWorkspaceResetRequest,
     DuplicateWorkspaceSelectionUpdate,
     DuplicateWorkspaceState,
     ExactDuplicateGroup,
@@ -1197,6 +1198,48 @@ class CrossSourceDuplicateService:
                 options=safe_options,
                 selected_group_ids=selected_group_ids,
                 active_group_id=current_workspace.active_group_id,
+            )
+        )
+
+    async def reset_workspace_decisions(
+        self,
+        request: DuplicateWorkspaceResetRequest,
+    ) -> DuplicateWorkspaceState:
+        """Clear saved choices and remove those groups from the durable selection."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        result = await self.result(request.options)
+        groups_by_id = {group.group_id: group for group in result.groups}
+        missing = [group_id for group_id in request.group_ids if group_id not in groups_by_id]
+        if missing:
+            raise ActionPlanConflictError("A duplicate group is no longer available")
+        for discovery_source in {
+            groups_by_id[group_id].discovery_source for group_id in request.group_ids
+        }:
+            await self._reviews.clear_decisions(
+                discovery_source,
+                [
+                    group_id
+                    for group_id in request.group_ids
+                    if groups_by_id[group_id].discovery_source == discovery_source
+                ],
+            )
+        workspace = await self.workspace(request.options)
+        cleared = set(request.group_ids)
+        return await self.save_workspace_selection(
+            DuplicateWorkspaceSelectionUpdate(
+                options=request.options,
+                selected_group_ids=[
+                    group_id
+                    for group_id in workspace.selected_group_ids
+                    if group_id not in cleared
+                ],
+                active_group_id=(
+                    workspace.active_group_id
+                    if workspace.active_group_id not in cleared
+                    else None
+                ),
             )
         )
 

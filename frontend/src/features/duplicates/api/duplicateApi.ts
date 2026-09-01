@@ -75,6 +75,13 @@ export function applyDuplicateRules(
   return requestJson('/api/assets/duplicates/workspace/apply-rules', jsonBody(options));
 }
 
+export function resetDuplicateWorkspaceDecisions(request: {
+  options: DuplicateAnalysisOptions;
+  group_ids: string[];
+}): Promise<DuplicateWorkspaceState> {
+  return requestJson('/api/assets/duplicates/workspace/reset', jsonBody(request));
+}
+
 export function switchDuplicateSimilarityReference(
   duplicateId: string,
   referenceAssetId: string,
