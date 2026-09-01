@@ -1558,7 +1558,7 @@ class CrossSourceDuplicateService:
             record = await self._actions.reopen_duplicate_follow_up(record.id)
             if record is None:
                 raise ActionPlanConflictError(
-                    "Only an incomplete stack follow-up can resume this failed plan"
+                    "This failed plan has no compatible incomplete work to resume"
                 )
         if record.status != "planned":
             raise ActionPlanConflictError("Duplicate resolution plan has already been used")
@@ -1942,6 +1942,12 @@ class CrossSourceDuplicateService:
                     ),
                     review_status=review_statuses[planned["action"]],
                 )
+                await self._reviews.complete_draft(
+                    planned["discovery_source"],
+                    planned["group_id"],
+                    planned["member_fingerprint"],
+                )
+            await self._reviews.consume_workspace_groups(list(successful_ids))
 
         status = "completed" if not failed_ids else "failed"
         follow_up_pending_ids = [

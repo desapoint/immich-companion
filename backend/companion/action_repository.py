@@ -107,7 +107,7 @@ class ActionRepository:
         return record
 
     async def reopen_duplicate_follow_up(self, plan_id: UUID) -> ActionPlanRecord | None:
-        """Reopen a failed plan only when durable stack follow-up work remains."""
+        """Reopen a failed plan when durable native or stack work remains."""
 
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
@@ -119,12 +119,23 @@ class ActionRepository:
                 or record.action != "resolve_duplicates"
                 or record.status != "failed"
                 or not any(
-                    item.get("state") == "follow_up_pending"
+                    item.get("state") in {"failed", "follow_up_pending"}
                     for item in states.values()
                     if isinstance(item, dict)
                 )
             ):
                 return None
+            record.result = {
+                **(record.result or {}),
+                "group_execution": {
+                    group_id: (
+                        {**item, "state": "pending", "error": None}
+                        if isinstance(item, dict) and item.get("state") == "failed"
+                        else item
+                    )
+                    for group_id, item in states.items()
+                },
+            }
             record.status = "planned"
             record.executed_at = None
         return record

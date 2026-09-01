@@ -138,6 +138,56 @@ class DuplicateReviewRepository:
         async with self._database.sessions() as session, session.begin():
             await session.execute(statement)
 
+    async def complete_draft(
+        self,
+        discovery_source: str,
+        provider_group_id: str,
+        member_fingerprint: str,
+    ) -> None:
+        """Consume only a successfully executed fingerprint-bound draft."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(DuplicateGroupReviewRecord)
+                .where(
+                    DuplicateGroupReviewRecord.discovery_source == discovery_source,
+                    DuplicateGroupReviewRecord.provider_group_id == provider_group_id,
+                    DuplicateGroupReviewRecord.member_fingerprint == member_fingerprint,
+                )
+                .with_for_update()
+            )
+            if record is None:
+                return
+            record.member_decisions = [
+                {**decision, "status": "completed"}
+                for decision in list(record.member_decisions or [])
+            ]
+            record.draft_status = "completed"
+            record.updated_at = datetime.now(UTC)
+
+    async def consume_workspace_groups(self, group_ids: list[str]) -> None:
+        """Remove successful groups without discarding unrelated workspace state."""
+
+        consumed = set(group_ids)
+        if not consumed:
+            return
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(DuplicateReviewWorkspaceRecord)
+                .where(DuplicateReviewWorkspaceRecord.workspace_key == WORKSPACE_KEY)
+                .with_for_update()
+            )
+            if record is None:
+                return
+            record.selected_groups = [
+                item
+                for item in list(record.selected_groups or [])
+                if item.get("group_id") not in consumed
+            ]
+            if (record.active_group or {}).get("group_id") in consumed:
+                record.active_group = None
+            record.updated_at = datetime.now(UTC)
+
     async def get_workspace(self) -> DuplicateReviewWorkspaceRecord | None:
         async with self._database.sessions() as session:
             return await session.get(DuplicateReviewWorkspaceRecord, WORKSPACE_KEY)

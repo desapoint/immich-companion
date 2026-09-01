@@ -380,6 +380,7 @@ class FakeImmich:
         self.events: list[str] = []
         self.group_active = True
         self.fail_stack_attempts = 0
+        self.fail_resolution_attempts = 0
         self.album_additions: list[tuple[UUID, list[UUID]]] = []
         self.tag_additions: list[tuple[UUID, list[UUID]]] = []
 
@@ -389,6 +390,9 @@ class FakeImmich:
     async def resolve_duplicate_groups(self, resolutions):
         self.events.append("resolve")
         self.resolutions.extend(resolutions)
+        if self.fail_resolution_attempts:
+            self.fail_resolution_attempts -= 1
+            return [{"success": False} for _ in resolutions]
         for resolution in resolutions:
             for item in self.candidate_group.assets:
                 if item.id in resolution.trash_asset_ids:
@@ -490,7 +494,8 @@ class FakeReviews:
 
     async def save(self, **values):
         self.saved = values
-        self.record = SimpleNamespace(**values)
+        existing = vars(self.record) if self.record is not None else {}
+        self.record = SimpleNamespace(**{**existing, **values})
         return self.record
 
     async def save_draft(self, **values):
@@ -513,6 +518,34 @@ class FakeReviews:
         self.record.metadata_keeper_asset_id = None
         self.record.draft_status = "pending"
         self.record.review_status = "pending"
+
+    async def complete_draft(self, _source, provider_group_id, member_fingerprint):
+        if (
+            self.record is None
+            or self.record.provider_group_id != provider_group_id
+            or self.record.member_fingerprint != member_fingerprint
+        ):
+            return
+        self.record.member_decisions = [
+            {**decision, "status": "completed"}
+            for decision in getattr(self.record, "member_decisions", [])
+        ]
+        self.record.draft_status = "completed"
+
+    async def consume_workspace_groups(self, group_ids):
+        if self.workspace_record is None:
+            return
+        consumed = set(group_ids)
+        self.workspace_record.selected_groups = [
+            item
+            for item in self.workspace_record.selected_groups
+            if item["group_id"] not in consumed
+        ]
+        if (
+            self.workspace_record.active_group
+            and self.workspace_record.active_group["group_id"] in consumed
+        ):
+            self.workspace_record.active_group = None
 
     async def get_workspace(self):
         return self.workspace_record
@@ -549,9 +582,18 @@ class FakeActions:
     async def reopen_duplicate_follow_up(self, _plan_id):
         states = (getattr(self.record, "result", None) or {}).get("group_execution", {})
         if self.record.status != "failed" or not any(
-            item.get("state") == "follow_up_pending" for item in states.values()
+            item.get("state") in {"failed", "follow_up_pending"}
+            for item in states.values()
         ):
             return None
+        self.record.result["group_execution"] = {
+            group_id: (
+                {**item, "state": "pending", "error": None}
+                if item.get("state") == "failed"
+                else item
+            )
+            for group_id, item in states.items()
+        }
         self.record.status = "planned"
         return self.record
 
@@ -1860,6 +1902,56 @@ async def test_failed_stack_follow_up_resumes_without_replaying_resolution() -> 
     assert second.status == "completed"
     assert immich.events == ["resolve", "stack", "stack"]
     assert len(immich.resolutions) == 1
+    assert record.result["group_execution"][PUBLIC_GROUP_ID]["state"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_failed_native_resolution_can_resume_without_replaying_completed_groups() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    immich.fail_resolution_attempts = 1
+    record = SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=True,
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        result=None,
+        relation_work={
+            "options": DuplicateAnalysisOptions().model_dump(mode="json"),
+            "groups": [{
+                "duplicate_id": str(GROUP_ID),
+                "action": "resolve",
+                "keeper_asset_id": str(UPLOAD_1),
+                "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                "trash_asset_ids": [str(EXTERNAL_1)],
+            }],
+        },
+    )
+    actions = FakeActions(record)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(allow_destructive_actions=True),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+    )
+
+    first = await service.execute_plan(TaskContext(), GROUP_ID)
+    assert first.status == "failed"
+    assert record.result["group_execution"][PUBLIC_GROUP_ID]["state"] == "failed"
+
+    await service.start_resolution(DuplicateResolutionExecuteRequest(plan_id=GROUP_ID))
+    second = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert second.status == "completed"
+    assert len(immich.resolutions) == 2
     assert record.result["group_execution"][PUBLIC_GROUP_ID]["state"] == "completed"
 
 

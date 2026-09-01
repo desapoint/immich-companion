@@ -149,10 +149,14 @@
   const visibleReviewEntries = $derived(
     reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
   );
-  const resumableFollowUp = $derived(
+  const resumableIncompleteWork = $derived(
     task?.status === 'failed'
-      && Array.isArray(task.result?.summary?.follow_up_pending_group_ids)
-      && task.result.summary.follow_up_pending_group_ids.length > 0,
+      && (
+        (Array.isArray(task.result?.summary?.follow_up_pending_group_ids)
+          && task.result.summary.follow_up_pending_group_ids.length > 0)
+        || (Array.isArray(task.result?.summary?.failed_group_ids)
+          && task.result.summary.failed_group_ids.length > 0)
+      ),
   );
 
   function configuredOptions(): DuplicateAnalysisOptions {
@@ -229,7 +233,7 @@
           : kind === 'similarity'
             ? 'The visual similarity scan completed and its matches are ready to review.'
             : 'The reviewed duplicate batch completed.';
-        if (kind !== 'similarity') {
+        if (kind === 'analysis') {
           selected.clear();
           selectionInitialized = false;
           groupDrafts = {};
@@ -254,6 +258,7 @@
           localStorage.removeItem(pendingRuleApplicationTaskKey);
         }
         error = task.error?.message ?? `${kind === 'analysis' ? 'Analysis' : kind === 'similarity' ? 'Similarity scan' : 'Resolution'} failed.`;
+        if (kind === 'resolution') await load();
       }
     } catch (reason) {
       busy = false;
@@ -792,8 +797,8 @@
   {#if error}
     <div class="notice error" role="alert">
       <span>{error}</span>
-      {#if resumableFollowUp && plan}
-        <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete stack</button>
+      {#if resumableIncompleteWork && plan}
+        <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
       {/if}
     </div>
   {/if}
