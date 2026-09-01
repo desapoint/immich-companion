@@ -8,6 +8,8 @@ import type {
   SimilarityScanSummary,
 } from '../types/duplicates';
 
+let suppressNextAutomaticDuplicateAnalysis = false;
+
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
     ...init,
@@ -51,12 +53,18 @@ export function switchDuplicateSimilarityReference(
 }
 
 export function loadDuplicateGroups(options: DuplicateAnalysisOptions): Promise<DuplicateResult> {
-  return requestJson('/api/assets/duplicates/cross-source/search', jsonBody(options));
+  const suppressAutomaticAnalysis = suppressNextAutomaticDuplicateAnalysis;
+  suppressNextAutomaticDuplicateAnalysis = false;
+  const requestOptions = suppressAutomaticAnalysis
+    ? { ...options, analyze_automatically: false }
+    : options;
+  return requestJson('/api/assets/duplicates/cross-source/search', jsonBody(requestOptions));
 }
 
 export function analyzeDuplicateGroups(
   options: DuplicateAnalysisOptions,
 ): Promise<{ task_id: string }> {
+  suppressNextAutomaticDuplicateAnalysis = false;
   return requestJson('/api/assets/duplicates/cross-source/analyze', jsonBody(options));
 }
 
@@ -85,8 +93,12 @@ export function cancelDuplicateTask(taskId: string): Promise<DuplicateTaskStatus
   return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
 }
 
-export function loadDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
-  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}`);
+export async function loadDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
+  const loaded = await requestJson<DuplicateTaskStatus>(`/api/tasks/${encodeURIComponent(taskId)}`);
+  if (loaded.task_type === 'cross_source_duplicates' && loaded.status === 'completed') {
+    suppressNextAutomaticDuplicateAnalysis = true;
+  }
+  return loaded;
 }
 
 export function planDuplicateResolution(request: {

@@ -5,6 +5,7 @@ import {
   cancelDuplicateTask,
   executeDuplicateResolution,
   loadDuplicateGroups,
+  loadDuplicateTask,
   loadLatestSimilarityScan,
   loadSimilarityScanTasks,
   planDuplicateResolution,
@@ -42,6 +43,35 @@ describe('duplicate API', () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/assets/duplicates/cross-source/analyze', expect.objectContaining({
       method: 'POST',
       body: JSON.stringify({ ...options, verify_upload_streams: true }),
+    }));
+  });
+
+  it('does not auto-requeue duplicate analysis on its completion refresh', async () => {
+    const completedTask = {
+      id: 'analysis-1',
+      task_type: 'cross_source_duplicates',
+      status: 'completed',
+      progress: {},
+      error: null,
+      result: null,
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify(completedTask), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ groups: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ groups: [] }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await loadDuplicateTask('analysis-1');
+    await loadDuplicateGroups(options);
+    await loadDuplicateGroups(options);
+
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/assets/duplicates/cross-source/search', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ ...options, analyze_automatically: false }),
+    }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/assets/duplicates/cross-source/search', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify(options),
     }));
   });
 
