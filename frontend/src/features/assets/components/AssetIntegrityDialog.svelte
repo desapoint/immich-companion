@@ -28,6 +28,20 @@
     hash_only: 'Hashes calculated',
   } as const)[report?.classification ?? 'hash_only']);
 
+  const trailerLabels: Record<string, string> = {
+    jpeg_trailing_motion_photo: 'Motion Photo auxiliary data',
+    jpeg_trailing_samsung_sef: 'Samsung SEF auxiliary metadata',
+    jpeg_trailing_iso_bmff: 'ISO-BMFF / MP4 auxiliary media',
+    jpeg_trailing_padding: 'Padding after JPEG end marker',
+    jpeg_trailing_bytes_unknown: 'Unrecognized data after JPEG end marker',
+  };
+  const trailerIssue = $derived(
+    report?.issues.find((issue) => trailerLabels[issue] !== undefined) ?? null,
+  );
+  const integrityIssues = $derived(
+    report?.issues.filter((issue) => trailerLabels[issue] === undefined) ?? [],
+  );
+
   const issueLabels: Record<string, string> = {
     jpeg_missing_soi: 'The JPEG start marker is missing.',
     jpeg_missing_eoi: 'The JPEG end marker is missing.',
@@ -131,6 +145,9 @@
         <div><dt>JPEG end offset</dt><dd>{report.jpeg_eoi_offset.toLocaleString()} bytes</dd></div>
       {/if}
       <div><dt>Trailing bytes</dt><dd>{report.trailing_byte_count.toLocaleString()}</dd></div>
+      {#if report.trailing_byte_count > 0}
+        <div><dt>Trailing data</dt><dd>{trailerIssue ? trailerLabels[trailerIssue] : 'Present; type not identified'}</dd></div>
+      {/if}
       {#if report.immich_checksum_match !== null}
         <div><dt>Immich checksum</dt><dd>{report.immich_checksum_match ? 'Matches' : 'Mismatch'}</dd></div>
       {/if}
@@ -138,9 +155,9 @@
       <div class="hash"><dt>SHA-256</dt><dd><code>{report.sha256_hex}</code></dd></div>
       <div><dt>Analyzed</dt><dd>{formatAssetDate(report.analyzed_at)}</dd></div>
     </dl>
-    {#if report.issues.length}
+    {#if integrityIssues.length}
       <ul aria-label="Integrity findings">
-        {#each report.issues as issue (issue)}
+        {#each integrityIssues as issue (issue)}
           <li>{issueLabels[issue] ?? issue}</li>
         {/each}
       </ul>
