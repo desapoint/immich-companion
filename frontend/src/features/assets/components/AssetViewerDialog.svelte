@@ -202,6 +202,8 @@
   let helpOpen = $state(false);
   let visibleAssetId = $state('');
   let selectedAssetId = '';
+  let duplicateGroupId = '';
+  let comparisonReferenceId = $state('');
   let loadedMediaAssetId = '';
   let mediaLoadGeneration = 0;
   const mediaUrlCache = new Map<string, string[]>();
@@ -238,8 +240,24 @@
     comparisonMembers.find((asset) => asset.id === visibleAssetId)
       ?? assetAsStackMember(currentAsset),
   );
-  const hasPrevious = $derived(currentIndex > 0 || (canrequestprevious && onrequestprevious !== undefined));
-  const hasNext = $derived(currentIndex < assets.length - 1 || (canrequestnext && onrequestnext !== undefined));
+  const duplicateComparisonCandidates = $derived(
+    duplicateContext
+      ? comparisonMembers.filter((asset) => asset.id !== comparisonReferenceId)
+      : [],
+  );
+  const duplicateNavigationAvailable = $derived(
+    duplicateContext !== null && duplicateComparisonCandidates.length > 0,
+  );
+  const hasPrevious = $derived(
+    duplicateNavigationAvailable
+      || currentIndex > 0
+      || (canrequestprevious && onrequestprevious !== undefined),
+  );
+  const hasNext = $derived(
+    duplicateNavigationAvailable
+      || currentIndex < assets.length - 1
+      || (canrequestnext && onrequestnext !== undefined),
+  );
   const naturalWidth = $derived(
     imageNaturalWidth ?? (apiOnly && detail ? detail.width : visibleAsset.width) ?? 1,
   );
@@ -452,7 +470,33 @@
     onclose();
   }
 
+  function setComparisonReference(assetId: string): void {
+    if (!duplicateContext || assetId === comparisonReferenceId) return;
+    captureDuplicateComparisonView();
+    comparisonReferenceId = assetId;
+    if (visibleAssetId === assetId) {
+      visibleAssetId = comparisonMembers.find((asset) => asset.id !== assetId)?.id ?? assetId;
+    }
+  }
+
+  function cycleDuplicateComparison(direction: 'previous' | 'next'): void {
+    const candidates = duplicateComparisonCandidates;
+    if (!candidates.length) return;
+    captureDuplicateComparisonView();
+    const currentCandidateIndex = candidates.findIndex((asset) => asset.id === visibleAssetId);
+    const nextIndex = currentCandidateIndex < 0
+      ? direction === 'next' ? 0 : candidates.length - 1
+      : direction === 'next'
+        ? (currentCandidateIndex + 1) % candidates.length
+        : (currentCandidateIndex - 1 + candidates.length) % candidates.length;
+    visibleAssetId = candidates[nextIndex].id;
+  }
+
   async function navigate(direction: 'previous' | 'next'): Promise<void> {
+    if (duplicateNavigationAvailable) {
+      cycleDuplicateComparison(direction);
+      return;
+    }
     captureDuplicateComparisonView();
     const nextIndex = nextViewerIndex(currentIndex, direction, assets.length);
     const canLoadAdjacent = direction === 'next'
@@ -491,7 +535,9 @@
 
   function restoreComparison(): void {
     captureDuplicateComparisonView();
-    visibleAssetId = currentAsset.id;
+    visibleAssetId = duplicateContext
+      ? duplicateComparisonCandidates[0]?.id ?? comparisonReferenceId
+      : currentAsset.id;
   }
 
   function commitComparison(assetId: string): void {
@@ -515,6 +561,9 @@
     } else if (event.key === 'ArrowRight' || key === 'l') {
       event.preventDefault();
       void navigate('next');
+    } else if (duplicateContext && key === 'r') {
+      event.preventDefault();
+      setComparisonReference(visibleAsset.id);
     } else if (event.key === ' ') {
       event.preventDefault();
       ontoggleselection(currentAsset.id);
@@ -670,8 +719,23 @@
     const assetId = currentAsset.id;
     if (assetId === selectedAssetId) return;
     selectedAssetId = assetId;
-    visibleAssetId = assetId;
+    if (!duplicateContext) visibleAssetId = assetId;
     untrack(() => onvisiblechange(assetId));
+  });
+
+  $effect(() => {
+    const groupId = duplicateContext?.group_id ?? '';
+    if (!groupId || groupId === duplicateGroupId) return;
+    duplicateGroupId = groupId;
+    const availableIds = new Set(comparisonMembers.map((asset) => asset.id));
+    const preferredReference = duplicateContext?.selected_keeper_asset_id
+      ?? duplicateContext?.recommended_keeper_asset_id
+      ?? currentAsset.id;
+    comparisonReferenceId = availableIds.has(preferredReference)
+      ? preferredReference
+      : comparisonMembers[0]?.id ?? currentAsset.id;
+    visibleAssetId = comparisonMembers.find((asset) => asset.id !== comparisonReferenceId)?.id
+      ?? comparisonReferenceId;
   });
 
   $effect(() => {
@@ -843,8 +907,8 @@
       type="button"
       onclick={() => void navigate('previous')}
       disabled={!hasPrevious || nextLoading}
-      aria-label="Previous image"
-      title="Previous image (Left arrow or H)"
+      aria-label={duplicateContext ? 'Previous comparison image' : 'Previous image'}
+      title={duplicateContext ? 'Previous comparison image (Left arrow or H)' : 'Previous image (Left arrow or H)'}
     >
       ‹
     </button>
@@ -853,8 +917,8 @@
       type="button"
       onclick={() => void navigate('next')}
       disabled={!hasNext || nextLoading}
-      aria-label="Next image"
-      title="Next image (Right arrow or L)"
+      aria-label={duplicateContext ? 'Next comparison image' : 'Next image'}
+      title={duplicateContext ? 'Next comparison image (Right arrow or L)' : 'Next image (Right arrow or L)'}
     >
       ›
     </button>
@@ -888,13 +952,13 @@
         items={previewItems}
         source={comparisonSource}
         activation={comparisonActivation}
-        selectedId={currentAsset.id}
+        selectedId={duplicateContext ? comparisonReferenceId : currentAsset.id}
         visibleId={visibleAsset.id}
         avoidInfoPanel={infoOpen}
         onpreview={previewComparison}
         onrestore={restoreComparison}
         oncommit={commitComparison}
-        onselectviewed={selectViewedStackAsset}
+        onselectviewed={duplicateContext ? setComparisonReference : selectViewedStackAsset}
       />
     {/if}
   </section>
@@ -903,7 +967,7 @@
     asset={apiOnly && detail ? detail : visibleAsset}
     position={currentIndex + 1}
     total={assets.length}
-    selectedId={currentAsset.id}
+    selectedId={duplicateContext ? comparisonReferenceId : currentAsset.id}
     visibleId={visibleAsset.id}
   />
 </dialog>
