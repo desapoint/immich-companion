@@ -208,6 +208,7 @@
   const mediaPreferredIndex = new Map<string, number>();
   const loadedMediaUrls = new Set<string>();
   const mediaDimensions = new Map<string, { width: number; height: number }>();
+  const preloadingAssetIds = new Set<string>();
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   let nextLoading = $state(false);
   let integrityDialogOpen = $state(false);
@@ -576,6 +577,36 @@
     imageError = !viewerMediaUrl;
   }
 
+  async function preloadAssetMedia(asset: AssetStackMember): Promise<void> {
+    if (mediaDimensions.has(asset.id) || preloadingAssetIds.has(asset.id)) return;
+    preloadingAssetIds.add(asset.id);
+    try {
+      const urls = mediaUrlCache.get(asset.id)
+        ?? await resolveViewerMediaUrls(asset.id, asset.original_mime_type);
+      mediaUrlCache.set(asset.id, urls);
+      for (let index = mediaPreferredIndex.get(asset.id) ?? 0; index < urls.length; index += 1) {
+        const url = urls[index];
+        const loaded = await new Promise<HTMLImageElement | null>((resolve) => {
+          const image = new Image();
+          image.decoding = 'async';
+          image.onload = () => resolve(image);
+          image.onerror = () => resolve(null);
+          image.src = url;
+        });
+        if (!loaded) continue;
+        mediaPreferredIndex.set(asset.id, index);
+        loadedMediaUrls.add(url);
+        mediaDimensions.set(asset.id, {
+          width: loaded.naturalWidth,
+          height: loaded.naturalHeight,
+        });
+        break;
+      }
+    } finally {
+      preloadingAssetIds.delete(asset.id);
+    }
+  }
+
   function handleImageLoad(event: Event): void {
     const image = event.currentTarget as HTMLImageElement;
     loadedMediaUrls.add(image.currentSrc || viewerMediaUrl);
@@ -612,6 +643,17 @@
     selectedAssetId = assetId;
     visibleAssetId = assetId;
     untrack(() => onvisiblechange(assetId));
+  });
+
+  $effect(() => {
+    if (!duplicateContext || comparisonMembers.length < 2) return;
+    const members = [...comparisonMembers];
+    const activeId = visibleAsset.id;
+    untrack(() => {
+      for (const member of members) {
+        if (member.id !== activeId) void preloadAssetMedia(member);
+      }
+    });
   });
 
   $effect(() => {
