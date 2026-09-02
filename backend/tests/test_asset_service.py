@@ -394,7 +394,7 @@ async def test_incremental_sync_finalizes_missing_assets_inside_completed_window
     counters = await service._execute(run, OWNER_ID)
 
     assert counters["assets_removed"] == 1
-    assert assets.calls[-3:] == ["finalize", "counts"][-3:]
+    assert assets.calls[-2:] == ["finalize", "counts"]
     assert syncs.checkpoints[-1] == ("finalizing", "validated")
 
 
@@ -639,7 +639,7 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
 
 
 @pytest.mark.asyncio
-async def test_tag_relationships_skip_empty_tags_and_run_four_searches_concurrently() -> None:
+async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurrently() -> None:
     class ConcurrentTagImmich:
         def __init__(self) -> None:
             self.active = 0
@@ -688,7 +688,7 @@ async def test_tag_relationships_skip_empty_tags_and_run_four_searches_concurren
     )
 
     assert set(immich.calls) == set(tag_ids)
-    assert immich.maximum_active == 4
+    assert immich.maximum_active == 6
     assert counters["tag_memberships"] == 5
     assert counters["tag_relationships_scanned"] == 6
     assert counters["tag_empty_relationships"] == 1
