@@ -193,6 +193,8 @@
   let viewportHeight = $state(1);
   let imageLoading = $state(true);
   let imageError = $state(false);
+  let imageNaturalWidth = $state<number | null>(null);
+  let imageNaturalHeight = $state<number | null>(null);
   let viewerMediaUrl = $state('');
   let viewerMediaUrls = $state<string[]>([]);
   let viewerMediaIndex = $state(0);
@@ -202,6 +204,10 @@
   let selectedAssetId = '';
   let loadedMediaAssetId = '';
   let mediaLoadGeneration = 0;
+  const mediaUrlCache = new Map<string, string[]>();
+  const mediaPreferredIndex = new Map<string, number>();
+  const loadedMediaUrls = new Set<string>();
+  const mediaDimensions = new Map<string, { width: number; height: number }>();
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   let nextLoading = $state(false);
   let integrityDialogOpen = $state(false);
@@ -233,10 +239,10 @@
   const hasPrevious = $derived(currentIndex > 0 || (canrequestprevious && onrequestprevious !== undefined));
   const hasNext = $derived(currentIndex < assets.length - 1 || (canrequestnext && onrequestnext !== undefined));
   const naturalWidth = $derived(
-    (apiOnly && detail ? detail.width : visibleAsset.width) ?? 1,
+    imageNaturalWidth ?? (apiOnly && detail ? detail.width : visibleAsset.width) ?? 1,
   );
   const naturalHeight = $derived(
-    (apiOnly && detail ? detail.height : visibleAsset.height) ?? 1,
+    imageNaturalHeight ?? (apiOnly && detail ? detail.height : visibleAsset.height) ?? 1,
   );
   const visibleFilename = $derived(
     apiOnly && detail ? detail.original_file_name : visibleAsset.original_file_name,
@@ -561,12 +567,38 @@
     panOrigin = null;
   }
 
+  function applyViewerMedia(assetId: string, urls: string[]): void {
+    mediaUrlCache.set(assetId, urls);
+    viewerMediaUrls = urls;
+    viewerMediaIndex = Math.min(mediaPreferredIndex.get(assetId) ?? 0, Math.max(0, urls.length - 1));
+    viewerMediaUrl = urls[viewerMediaIndex] ?? '';
+    imageLoading = Boolean(viewerMediaUrl) && !loadedMediaUrls.has(viewerMediaUrl);
+    imageError = !viewerMediaUrl;
+  }
+
+  function handleImageLoad(event: Event): void {
+    const image = event.currentTarget as HTMLImageElement;
+    loadedMediaUrls.add(image.currentSrc || viewerMediaUrl);
+    mediaPreferredIndex.set(loadedMediaAssetId, viewerMediaIndex);
+    mediaDimensions.set(loadedMediaAssetId, {
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+    });
+    flushSync(() => {
+      imageNaturalWidth = image.naturalWidth;
+      imageNaturalHeight = image.naturalHeight;
+      imageLoading = false;
+      imageError = false;
+    });
+  }
+
   function handleImageError(): void {
     const nextIndex = viewerMediaIndex + 1;
     if (nextIndex < viewerMediaUrls.length) {
       viewerMediaIndex = nextIndex;
+      mediaPreferredIndex.set(loadedMediaAssetId, nextIndex);
       viewerMediaUrl = viewerMediaUrls[nextIndex];
-      imageLoading = true;
+      imageLoading = !loadedMediaUrls.has(viewerMediaUrl);
       imageError = false;
       return;
     }
@@ -590,8 +622,16 @@
     const generation = ++mediaLoadGeneration;
     untrack(() => onvisiblechange(currentAsset.id));
     zoom = 1;
-    imageLoading = true;
+    const cachedDimensions = mediaDimensions.get(assetId);
+    imageNaturalWidth = cachedDimensions?.width ?? null;
+    imageNaturalHeight = cachedDimensions?.height ?? null;
     imageError = false;
+    const cachedUrls = mediaUrlCache.get(assetId);
+    if (cachedUrls) {
+      applyViewerMedia(assetId, cachedUrls);
+      return;
+    }
+    imageLoading = true;
     viewerMediaUrl = '';
     viewerMediaUrls = [];
     viewerMediaIndex = 0;
@@ -599,13 +639,7 @@
     untrack(() => {
       void resolveViewerMediaUrls(assetId, mimeType).then((urls) => {
         if (generation !== mediaLoadGeneration || loadedMediaAssetId !== assetId) return;
-        viewerMediaUrls = urls;
-        viewerMediaIndex = 0;
-        viewerMediaUrl = urls[0] ?? '';
-        if (!viewerMediaUrl) {
-          imageLoading = false;
-          imageError = true;
-        }
+        applyViewerMedia(assetId, urls);
       });
     });
   });
@@ -725,7 +759,7 @@
             draggable="false"
             class:hidden={imageLoading || imageError}
             style={`width: ${displayWidth}px; height: ${displayHeight}px;`}
-            onload={() => (imageLoading = false)}
+            onload={handleImageLoad}
             onerror={handleImageError}
             ondblclick={toggleScale}
           />
