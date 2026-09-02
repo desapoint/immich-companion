@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { assetMediaUrl } from '../api/assetApi';
   import type { DuplicateReviewContext, DuplicateReviewMember } from '../types/assets';
 
   interface Props {
@@ -19,6 +20,11 @@
     filename: string;
     verdict: string;
   }
+
+  let overlayOpen = $state(false);
+  let overlayOpacity = $state(50);
+  const referenceMember = $derived(context.members.find((member) => member.id === referenceId) ?? null);
+  const visibleMember = $derived(context.members.find((member) => member.id === visibleId) ?? null);
 
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
@@ -115,11 +121,16 @@
   });
 </script>
 
-<details class="comparison-matrix" open>
+<details class="comparison-matrix">
   <summary>
     <span>Group differences</span>
     <strong>{rows.length} differing {rows.length === 1 ? 'property' : 'properties'}</strong>
   </summary>
+
+  <div class="visual-tools">
+    <button type="button" disabled={!referenceMember || !visibleMember || referenceId === visibleId} onclick={() => overlayOpen = true}>Overlay reference / viewing</button>
+    <small>Hold F in the viewer for rapid flicker comparison.</small>
+  </div>
 
   <div class="verdicts" aria-label="Duplicate comparison summary">
     {#each verdicts as item (item.id)}
@@ -161,6 +172,30 @@
   {/if}
 </details>
 
+{#if overlayOpen && referenceMember && visibleMember}
+  <section class="overlay-view" role="dialog" aria-modal="true" aria-label="Reference overlay comparison">
+    <header>
+      <div>
+        <strong>{referenceMember.filename}</strong>
+        <span>Reference</span>
+      </div>
+      <div>
+        <strong>{visibleMember.filename}</strong>
+        <span>Viewing · {overlayOpacity}% opacity</span>
+      </div>
+      <label>
+        <span>Viewing opacity</span>
+        <input type="range" min="0" max="100" step="1" bind:value={overlayOpacity} />
+      </label>
+      <button type="button" onclick={() => overlayOpen = false}>Close overlay</button>
+    </header>
+    <div class="overlay-stage">
+      <img src={assetMediaUrl(referenceId, 'fullsize')} alt={referenceMember.filename} draggable="false" />
+      <img class="comparison-layer" src={assetMediaUrl(visibleId, 'fullsize')} alt={visibleMember.filename} draggable="false" style={`opacity: ${overlayOpacity / 100};`} />
+    </div>
+  </section>
+{/if}
+
 <style>
   .comparison-matrix {
     position: absolute;
@@ -192,11 +227,15 @@
   summary::-webkit-details-marker { display: none; }
   summary span { color: var(--color-accent-strong); font-weight: 820; text-transform: uppercase; }
   summary strong { color: var(--color-ink-muted); font-size: .6rem; }
+  .visual-tools { display: flex; align-items: center; gap: .5rem; padding: .45rem .55rem; border-top: 1px solid var(--color-border-subtle); }
+  .visual-tools button { min-height: 2rem; padding: .35rem .55rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .6rem; font-weight: 760; }
+  .visual-tools button:disabled { cursor: default; opacity: .45; }
+  .visual-tools small { color: var(--color-ink-muted); font-size: .56rem; }
   .verdicts { display: grid; gap: .28rem; max-height: 8.5rem; padding: .45rem .55rem; overflow: auto; border-top: 1px solid var(--color-border-subtle); }
   .verdicts > div { display: grid; grid-template-columns: minmax(8rem, .42fr) minmax(0, 1fr); gap: .55rem; padding: .32rem .4rem; border-radius: var(--radius-sm); font-size: .6rem; }
   .verdicts strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .verdicts span { color: var(--color-ink-muted); }
-  .table-scroll { max-height: calc(min(48vh, 30rem) - 11.5rem); overflow: auto; border-top: 1px solid var(--color-border-subtle); }
+  .table-scroll { max-height: calc(min(48vh, 30rem) - 14rem); overflow: auto; border-top: 1px solid var(--color-border-subtle); }
   table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: .6rem; }
   th, td { min-width: 8.25rem; max-width: 12rem; padding: .42rem .5rem; border-right: 1px solid var(--color-border-subtle); border-bottom: 1px solid var(--color-border-subtle); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
   th:first-child { position: sticky; left: 0; z-index: 2; min-width: 8rem; color: var(--color-ink-muted); background: var(--color-surface-raised); }
@@ -208,7 +247,18 @@
   .viewing { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-strong) 55%, transparent); }
   p { margin: 0; padding: .65rem .7rem; border-top: 1px solid var(--color-border-subtle); color: var(--color-ink-muted); font-size: .64rem; }
 
+  .overlay-view { position: fixed; z-index: 30; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); color: white; background: rgb(0 0 0 / 94%); }
+  .overlay-view header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(12rem, .7fr) auto; gap: .8rem; align-items: center; padding: .65rem .8rem; border-bottom: 1px solid rgb(255 255 255 / 18%); background: rgb(0 0 0 / 82%); }
+  .overlay-view header > div, .overlay-view label { display: grid; gap: .15rem; min-width: 0; }
+  .overlay-view header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; }
+  .overlay-view header span { color: rgb(255 255 255 / 70%); font-size: .56rem; }
+  .overlay-view header button { min-height: 2.1rem; padding: .35rem .6rem; border: 1px solid rgb(255 255 255 / 35%); border-radius: var(--radius-sm); color: white; background: rgb(255 255 255 / 10%); cursor: pointer; }
+  .overlay-stage { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; overflow: hidden; }
+  .overlay-stage img { position: absolute; width: 100%; height: 100%; object-fit: contain; user-select: none; }
+  .comparison-layer { pointer-events: none; }
+
   @media (max-width: 64rem) {
     .comparison-matrix { width: min(34rem, calc(100% - 1.5rem)); }
+    .overlay-view header { grid-template-columns: 1fr 1fr; }
   }
 </style>
