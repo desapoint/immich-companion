@@ -168,10 +168,20 @@ class FakeAssetRepository:
         self.calls.append("tag_memberships")
         return len(asset_ids)
 
-    async def finalize_generation(self, _generation, *, remove_assets, batch_size):
+    async def finalize_generation(
+        self,
+        _generation,
+        *,
+        remove_assets,
+        batch_size,
+        window_start=None,
+        window_end=None,
+    ):
         self.calls.append("finalize")
         assert remove_assets is True
         assert batch_size == 25
+        assert window_start is None
+        assert window_end is None
         return {"assets_removed": 0}
 
     async def validate_generation(self, _generation, counters, *, full, allow_counter_repair):
@@ -210,6 +220,42 @@ class FakeAssetRepository:
         self.assets.append(asset)
 
 
+class IncrementalFakeAssetRepository(FakeAssetRepository):
+    def __init__(self, window_start: datetime, window_end: datetime) -> None:
+        super().__init__()
+        self.window_start = window_start
+        self.window_end = window_end
+
+    async def validate_generation(self, _generation, counters, *, full, allow_counter_repair):
+        self.calls.append("validate")
+        assert full is False
+        assert allow_counter_repair is False
+        assert counters["stack_members"] == 2
+        return {
+            "albums_seen": 1,
+            "tags_seen": 1,
+            "album_memberships": 1,
+            "tag_memberships": 1,
+            "stack_members": 2,
+        }
+
+    async def finalize_generation(
+        self,
+        _generation,
+        *,
+        remove_assets,
+        batch_size,
+        window_start=None,
+        window_end=None,
+    ):
+        self.calls.append("finalize")
+        assert remove_assets is False
+        assert batch_size == 25
+        assert window_start == self.window_start
+        assert window_end == self.window_end
+        return {"assets_removed": 1}
+
+
 class FakeSyncRepository:
     def __init__(self) -> None:
         self.checkpoints: list[tuple[str, str | None]] = []
@@ -239,6 +285,26 @@ def run_status() -> SyncRunStatus:
         heartbeat_at=now,
         completed_at=None,
     )
+
+
+def asset_counters() -> dict[str, int]:
+    return {
+        "assets_seen": 0,
+        "assets_created": 0,
+        "assets_updated": 0,
+        "assets_unchanged": 0,
+        "tag_cheap_path_eligible_assets": 0,
+        "tag_cheap_path_fallback_assets": 0,
+    }
+
+
+def relationship_counters() -> dict[str, int]:
+    return {
+        "album_memberships": 0,
+        "tag_memberships": 0,
+        "tag_relationships_scanned": 0,
+        "tag_empty_relationships": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -293,6 +359,43 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert all(item.total == 2 for item in media_progress)
     assert media_progress[-1].completed == 2
     assert media_progress[-1].percent == 100
+
+
+@pytest.mark.asyncio
+async def test_incremental_sync_finalizes_missing_assets_inside_completed_window() -> None:
+    members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "child.png")]
+    stack = ImmichStack(
+        id=STACK_ID,
+        primaryAssetId=ASSET_ONE,
+        assets=[
+            stack_asset(ASSET_ONE, "primary.png"),
+            stack_asset(ASSET_TWO, "child.png"),
+        ],
+    )
+    window_start = datetime(2026, 8, 24, 11, 55, tzinfo=UTC)
+    window_end = datetime(2026, 8, 24, 12, 5, tzinfo=UTC)
+    immich = FakeImmich(members, stack)
+    assets = IncrementalFakeAssetRepository(window_start, window_end)
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+    run = run_status().model_copy(
+        update={
+            "mode": "incremental",
+            "window_start": window_start,
+            "window_end": window_end,
+        }
+    )
+
+    counters = await service._execute(run, OWNER_ID)
+
+    assert counters["assets_removed"] == 1
+    assert assets.calls[-3:] == ["finalize", "counts"][-3:]
+    assert syncs.checkpoints[-1] == ("finalizing", "validated")
 
 
 @pytest.mark.asyncio
@@ -387,12 +490,7 @@ async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> N
         paced.append(1)
 
     service._pace_full_page = pace  # type: ignore[method-assign]
-    counters = {
-        "assets_seen": 0,
-        "assets_created": 0,
-        "assets_updated": 0,
-        "assets_unchanged": 0,
-    }
+    counters = asset_counters()
 
     await service._sync_assets(
         run_status().model_copy(update={"phase": "assets"}),
@@ -457,12 +555,9 @@ async def test_media_sync_resumes_inside_large_api_page() -> None:
         syncs,  # type: ignore[arg-type]
         Settings(sync_full_batch_size=2, sync_media_page_size=1000),
     )
-    counters = {
-        "assets_seen": 2,
-        "assets_created": 2,
-        "assets_updated": 0,
-        "assets_unchanged": 0,
-    }
+    counters = asset_counters()
+    counters["assets_seen"] = 2
+    counters["assets_created"] = 2
 
     await service._sync_assets(
         run_status().model_copy(update={"phase": "assets", "cursor": "assets:2:1"}),
@@ -523,7 +618,7 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
         updatedAt="2026-08-24T12:00:00Z",
     )
     tag = ImmichTag(id=TAG_ID, name="Large tag", value="Large tag", assetCount=2)
-    counters = {"album_memberships": 0, "tag_memberships": 0}
+    counters = relationship_counters()
 
     await service._sync_relationships(
         run_status().model_copy(update={"phase": "relationships"}),
@@ -536,7 +631,10 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
     assert immich.album_page_size == 1000
     assert immich.tag_page_size == 1000
     assert paced == [1, 1, 1]
-    assert counters == {"album_memberships": 4, "tag_memberships": 2}
+    assert counters["album_memberships"] == 4
+    assert counters["tag_memberships"] == 2
+    assert counters["tag_relationships_scanned"] == 1
+    assert counters["tag_empty_relationships"] == 0
     assert syncs.checkpoints[-1] == ("relationships", None)
 
 
@@ -579,7 +677,7 @@ async def test_tag_relationships_skip_empty_tags_and_run_four_searches_concurren
         FakeSyncRepository(),  # type: ignore[arg-type]
         Settings(sync_relationship_page_size=1000),
     )
-    counters = {"album_memberships": 0, "tag_memberships": 0}
+    counters = relationship_counters()
 
     await service._sync_relationships(
         run_status().model_copy(update={"phase": "relationships"}),
@@ -592,6 +690,8 @@ async def test_tag_relationships_skip_empty_tags_and_run_four_searches_concurren
     assert set(immich.calls) == set(tag_ids)
     assert immich.maximum_active == 4
     assert counters["tag_memberships"] == 5
+    assert counters["tag_relationships_scanned"] == 6
+    assert counters["tag_empty_relationships"] == 1
     assert assets.calls.count("tag_memberships") == 5
 
 
