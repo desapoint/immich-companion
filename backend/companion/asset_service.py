@@ -277,11 +277,7 @@ class AssetRepairTaskHandler:
                     "detail": f"Refreshed {processed}/{len(asset_ids)} assets",
                 },
             )
-            if (
-                throttle
-                and processed % batch_size == 0
-                and processed < len(asset_ids)
-            ):
+            if throttle and processed % batch_size == 0 and processed < len(asset_ids):
                 await self._service._pace_runtime_batch(batch_started)
                 batch_started = perf_counter()
         logger.info(
@@ -304,10 +300,7 @@ class AssetRepairTaskHandler:
             counters["tag_fallback_pages"],
             counters["tag_links_resolved"],
         )
-        return TaskResult(
-            summary={"repaired": processed},
-            counters=counters,
-        )
+        return TaskResult(summary={"repaired": processed}, counters=counters)
 
 
 class AssetSelectionSyncTaskHandler:
@@ -594,10 +587,9 @@ class AssetSyncService:
             cursor=checkpoint.get("cursor"),
             counters=task.counters,
             attempts=task.attempt,
-            error=(
-                (task.error or {}).get("message")
-                or (task.error or {}).get("type")
-            ) if task.error else None,
+            error=((task.error or {}).get("message") or (task.error or {}).get("type"))
+            if task.error
+            else None,
             created_at=task.created_at,
             started_at=task.started_at,
             heartbeat_at=task.heartbeat_at,
@@ -640,9 +632,7 @@ class AssetSyncService:
         """Give the host equal idle time after a bounded background batch."""
 
         pacing = await self._runtime_sync_settings.get()
-        await asyncio.sleep(
-            max(pacing.full_min_batch_delay_seconds, perf_counter() - started)
-        )
+        await asyncio.sleep(max(pacing.full_min_batch_delay_seconds, perf_counter() - started))
 
     def wake(self) -> None:
         """Ensure this process competes for queued or recoverable work."""
@@ -687,9 +677,7 @@ class AssetSyncService:
 
         if self._coordinator is not None:
             if mode == "incremental":
-                active_tasks = await self._coordinator.list_tasks(
-                    task_type="asset_sync", limit=100
-                )
+                active_tasks = await self._coordinator.list_tasks(task_type="asset_sync", limit=100)
                 if any(
                     task.status
                     in {"queued", "running", "retrying", "recovering", "cancel_requested"}
@@ -720,9 +708,7 @@ class AssetSyncService:
                 if existing is not None:
                     return self._status_from_task(existing)
             runtime_pacing = (
-                await self._runtime_sync_settings.get()
-                if effective_mode == "full"
-                else None
+                await self._runtime_sync_settings.get() if effective_mode == "full" else None
             )
             task = await self._coordinator.submit(
                 "asset_sync",
@@ -744,11 +730,7 @@ class AssetSyncService:
             await self._coordinator.start()
             return self._status_from_task(task)
 
-        run = await self._syncs.enqueue(
-            mode,
-            overlap=self._overlap,
-            force_follow_up=force_follow_up,
-        )
+        run = await self._syncs.enqueue(mode, overlap=self._overlap, force_follow_up=force_follow_up)
         self.wake()
         return run
 
@@ -770,21 +752,15 @@ class AssetSyncService:
                 active=self._status_from_task(active_task) if active_task else None,
                 pending=self._status_from_task(pending_task) if pending_task else None,
                 last_success=last,
-                last_failure=(
-                    self._status_from_task(last_failed_task)
-                    if last_failed_task
-                    else None
-                ),
+                last_failure=self._status_from_task(last_failed_task) if last_failed_task else None,
                 successful_watermark=last.window_end if last else None,
-                authoritative_generation=(
-                    max(
-                        (
-                            int(task.payload.get("generation", 0))
-                            for task in completed
-                            if task.payload.get("mode") == "full"
-                        ),
-                        default=0,
-                    )
+                authoritative_generation=max(
+                    (
+                        int(task.payload.get("generation", 0))
+                        for task in completed
+                        if task.payload.get("mode") == "full"
+                    ),
+                    default=0,
                 ),
             )
 
@@ -800,8 +776,6 @@ class AssetSyncService:
             task = await self._coordinator.get_status(run_id)
             if task is not None:
                 return self._status_from_task(task)
-            # Keep historical sync_runs readable while generic tasks are
-            # authoritative for migrated and newly submitted work.
             return await self._legacy_metadata.get_run(run_id)
 
         return await self._syncs.get_run(run_id)
@@ -844,10 +818,7 @@ class AssetSyncService:
     async def _drain(self) -> None:
         owner = new_sync_owner()
         while True:
-            run = await self._syncs.claim_next(
-                owner,
-                lease_duration=self._lease_duration,
-            )
+            run = await self._syncs.claim_next(owner, lease_duration=self._lease_duration)
             if run is None:
                 status = await self._syncs.status()
                 if status.active is None:
@@ -937,10 +908,7 @@ class AssetSyncService:
             return
 
         started = perf_counter()
-        counters = await self._repair_targets_now(
-            asset_ids,
-            include_stacks=include_stacks,
-        )
+        counters = await self._repair_targets_now(asset_ids, include_stacks=include_stacks)
         logger.info(
             "Sync summary: trigger=direct_asset_repair scope=%s requested=%s processed=%s include_stacks=%s duration_seconds=%.3f tag_branch_asset_payload=%s tag_branch_catalog_fallback=%s tag_fallback_catalog_tags=%s tag_fallback_pages=%s tag_links_resolved=%s",
             "single" if len(asset_ids) == 1 else "bulk",
@@ -970,9 +938,7 @@ class AssetSyncService:
         """Perform the remote reads used by an asset-repair handler."""
 
         metrics = _repair_metric_defaults()
-        assets = await asyncio.gather(
-            *(self._immich.get_asset(identifier) for identifier in asset_ids)
-        )
+        assets = await asyncio.gather(*(self._immich.get_asset(identifier) for identifier in asset_ids))
         stack_payload_by_asset: dict[UUID, dict[str, object] | None] = {}
         if include_stacks:
             for stack in await self._immich.list_stacks():
@@ -981,9 +947,7 @@ class AssetSyncService:
                     stack_payload_by_asset[member_id] = payload
         for asset in assets:
             if include_stacks:
-                asset = asset.model_copy(
-                    update={"stack": stack_payload_by_asset.get(asset.id)}
-                )
+                asset = asset.model_copy(update={"stack": stack_payload_by_asset.get(asset.id)})
             await self._assets.refresh_asset(asset)
             albums = await self._immich.list_albums_for_asset(asset.id)
             await self._assets.replace_asset_album_memberships(
@@ -1070,10 +1034,7 @@ class AssetSyncService:
         execution = asyncio.create_task(self._execute(run, owner))
         heartbeat = asyncio.create_task(self._heartbeat(run.id, owner))
         try:
-            done, _ = await asyncio.wait(
-                {execution, heartbeat},
-                return_when=asyncio.FIRST_COMPLETED,
-            )
+            done, _ = await asyncio.wait({execution, heartbeat}, return_when=asyncio.FIRST_COMPLETED)
             if heartbeat in done:
                 heartbeat.result()
                 raise RuntimeError("The staged sync heartbeat stopped unexpectedly")
@@ -1088,11 +1049,7 @@ class AssetSyncService:
         interval = max(1.0, self._settings.sync_lease_seconds / 3)
         while True:
             await asyncio.sleep(interval)
-            await self._syncs.heartbeat(
-                run_id,
-                owner,
-                lease_duration=self._lease_duration,
-            )
+            await self._syncs.heartbeat(run_id, owner, lease_duration=self._lease_duration)
 
     async def _checkpoint(
         self,
@@ -1104,9 +1061,7 @@ class AssetSyncService:
         progress: SyncProgress | None = None,
     ) -> None:
         if progress is not None and self._settings.sync_memory_diagnostics:
-            progress = progress.model_copy(
-                update={"memory": self._memory_snapshot(run, cursor)}
-            )
+            progress = progress.model_copy(update={"memory": self._memory_snapshot(run, cursor)})
         await self._syncs.checkpoint(
             run.id,
             owner,
@@ -1117,9 +1072,7 @@ class AssetSyncService:
             lease_duration=self._lease_duration,
         )
 
-    def _memory_snapshot(
-        self, run: SyncRunStatus, cursor: str | None
-    ) -> SyncMemorySnapshot:
+    def _memory_snapshot(self, run: SyncRunStatus, cursor: str | None) -> SyncMemorySnapshot:
         values: dict[str, int] = {}
         try:
             for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
@@ -1219,8 +1172,7 @@ class AssetSyncService:
             await self._sync_events(run, owner, counters)
 
         albums, tags = await asyncio.gather(
-            self._immich.list_album_catalog(),
-            self._immich.list_tag_catalog(),
+            self._immich.list_album_catalog(), self._immich.list_tag_catalog()
         )
         asset_total: int | None = None
         count_assets = getattr(self._immich, "count_assets", None)
@@ -1231,7 +1183,6 @@ class AssetSyncService:
                     updated_before=run.window_end if run.mode == "incremental" else None,
                 )
             except ImmichApiError:
-                # A count is useful for feedback but must not make a valid sync fail.
                 asset_total = None
         if start_phase <= 0:
             await self._checkpoint(
@@ -1282,6 +1233,8 @@ class AssetSyncService:
             run.generation,
             remove_assets=run.mode == "full",
             batch_size=self._settings.sync_batch_size,
+            window_start=run.window_start if run.mode == "incremental" else None,
+            window_end=run.window_end if run.mode == "incremental" else None,
         )
         counters.update(removed)
         await self._assets.refresh_relation_counts()
@@ -1302,9 +1255,7 @@ class AssetSyncService:
             run.window_end,
             max(
                 0.0,
-                (
-                    datetime.now(UTC) - (run.started_at or run.created_at)
-                ).total_seconds(),
+                (datetime.now(UTC) - (run.started_at or run.created_at)).total_seconds(),
             ),
             counters["assets_seen"],
             counters["assets_created"],
@@ -1467,8 +1418,6 @@ class AssetSyncService:
                 start_page = int(cursor_parts[1])
                 completed_page_batches = int(cursor_parts[2])
             else:
-                # Compatibility with checkpoints written before media API pages
-                # were decoupled from persistence batches.
                 completed_batches = int(cursor_parts[-1])
                 completed_assets = completed_batches * batch_size
                 start_page = completed_assets // page_size + 1
@@ -1542,14 +1491,11 @@ class AssetSyncService:
             1 for asset in batch if not asset.includes_tags
         )
         lightweight_batch = [
-            asset.model_copy(
-                update={"exif_info": None, "people": [], "tags": [], "stack": None}
-            )
+            asset.model_copy(update={"exif_info": None, "people": [], "tags": [], "stack": None})
             for asset in batch
         ]
         created, updated, unchanged = await self._assets.upsert_asset_batch(
-            lightweight_batch,
-            run.generation,
+            lightweight_batch, run.generation
         )
         counters["assets_seen"] += created + updated + unchanged
         counters["assets_created"] += created
@@ -1682,9 +1628,6 @@ class AssetSyncService:
         completed_relation = 0
         completed_page = 0
         membership_total: int | None = None
-        # Immich's metadata-search total is page-sized on supported live
-        # versions. Counting every album and tag also creates an unbounded
-        # request fan-out. Keep this phase truthful and indeterminate instead.
         association_completed = counters.get("album_memberships", 0) + counters.get(
             "tag_memberships", 0
         )
@@ -1723,9 +1666,7 @@ class AssetSyncService:
             ):
                 started = perf_counter()
                 counters["album_memberships"] += await self._assets.upsert_album_memberships(
-                    album.id,
-                    asset_ids,
-                    run.generation,
+                    album.id, asset_ids, run.generation
                 )
                 association_completed += len(asset_ids)
                 await self._checkpoint(
@@ -1764,29 +1705,16 @@ class AssetSyncService:
                         ),
                     ),
                 )
-        # Immich's compact tag catalog has no asset count. Each concurrent
-        # first-page search is therefore the authoritative empty-tag check.
         skipped_tags = 0
         tag_start = 0
         if relation_kind == "tags":
-            # New checkpoints record completed waves as page zero. Older
-            # page-level cursors safely replay their current tag.
-            tag_start = (
-                completed_relation
-                if completed_page == 0
-                else max(0, completed_relation - 1)
-            )
-        for wave_start in range(
-            tag_start,
-            len(tags),
-            TAG_ASSOCIATION_CONCURRENCY,
-        ):
+            tag_start = completed_relation if completed_page == 0 else max(0, completed_relation - 1)
+        for wave_start in range(tag_start, len(tags), TAG_ASSOCIATION_CONCURRENCY):
             wave = tags[wave_start : wave_start + TAG_ASSOCIATION_CONCURRENCY]
             tasks: list[asyncio.Task[tuple[int, int, bool]]] = []
             async with asyncio.TaskGroup() as group:
                 tasks = [
-                    group.create_task(self._sync_tag_relationship(run, tag))
-                    for tag in wave
+                    group.create_task(self._sync_tag_relationship(run, tag)) for tag in wave
                 ]
             results = [task.result() for task in tasks]
             counters["tag_memberships"] += sum(result[0] for result in results)
@@ -1848,9 +1776,7 @@ class AssetSyncService:
             started = perf_counter()
             if asset_ids:
                 persisted += await self._assets.upsert_tag_memberships(
-                    tag.id,
-                    asset_ids,
-                    run.generation,
+                    tag.id, asset_ids, run.generation
                 )
             observed += len(asset_ids)
             if not is_last_page:
