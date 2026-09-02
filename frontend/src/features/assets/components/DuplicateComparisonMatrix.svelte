@@ -1,3 +1,7 @@
+<script lang="ts" module>
+  let rememberedComparisonMatrixOpen = false;
+</script>
+
 <script lang="ts">
   import { untrack } from 'svelte';
 
@@ -23,6 +27,7 @@
     verdict: string;
   }
 
+  let matrixOpen = $state(rememberedComparisonMatrixOpen);
   let overlayOpen = $state(false);
   let overlayOpacity = $state(50);
   let differenceOpen = $state(false);
@@ -40,6 +45,12 @@
   const visibleMember = $derived(context.members.find((member) => member.id === visibleId) ?? null);
   const referenceUrl = $derived(referenceUrls[referenceUrlIndex] ?? '');
   const visibleUrl = $derived(visibleUrls[visibleUrlIndex] ?? '');
+
+  function rememberMatrixOpen(event: Event): void {
+    const details = event.currentTarget as HTMLDetailsElement;
+    matrixOpen = details.open;
+    rememberedComparisonMatrixOpen = details.open;
+  }
 
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
@@ -265,7 +276,7 @@
   });
 </script>
 
-<details class="comparison-matrix">
+<details class="comparison-matrix" bind:open={matrixOpen} ontoggle={rememberMatrixOpen}>
   <summary>
     <span>Group differences</span>
     <strong>{rows.length} differing {rows.length === 1 ? 'property' : 'properties'}</strong>
