@@ -23,6 +23,11 @@
 
   let overlayOpen = $state(false);
   let overlayOpacity = $state(50);
+  let differenceOpen = $state(false);
+  let differenceError = $state<string | null>(null);
+  let referenceDiffImage: HTMLImageElement;
+  let visibleDiffImage: HTMLImageElement;
+  let differenceCanvas: HTMLCanvasElement;
   const referenceMember = $derived(context.members.find((member) => member.id === referenceId) ?? null);
   const visibleMember = $derived(context.members.find((member) => member.id === visibleId) ?? null);
 
@@ -80,6 +85,70 @@
     return 'Same pixels · metadata equivalent';
   }
 
+  function openDifference(): void {
+    differenceError = null;
+    differenceOpen = true;
+    requestAnimationFrame(renderDifference);
+  }
+
+  function renderDifference(): void {
+    if (!differenceOpen || !referenceMember || !visibleMember || !differenceCanvas) return;
+    const referencePreservation = referenceMember.preservation;
+    const visiblePreservation = visibleMember.preservation;
+    if (!referencePreservation || !visiblePreservation) {
+      differenceError = 'Decoded dimensions are unavailable for one of these copies.';
+      return;
+    }
+    if (
+      referencePreservation.decoded_width !== visiblePreservation.decoded_width
+      || referencePreservation.decoded_height !== visiblePreservation.decoded_height
+    ) {
+      differenceError = 'Decoded dimensions differ. Use the overlay view to inspect crop or alignment differences.';
+      return;
+    }
+    if (!referenceDiffImage?.complete || !visibleDiffImage?.complete || !referenceDiffImage.naturalWidth || !visibleDiffImage.naturalWidth) return;
+
+    try {
+      const maxDimension = 512;
+      const scale = Math.min(1, maxDimension / Math.max(referenceDiffImage.naturalWidth, referenceDiffImage.naturalHeight));
+      const width = Math.max(1, Math.round(referenceDiffImage.naturalWidth * scale));
+      const height = Math.max(1, Math.round(referenceDiffImage.naturalHeight * scale));
+      const referenceCanvas = document.createElement('canvas');
+      const visibleCanvas = document.createElement('canvas');
+      referenceCanvas.width = visibleCanvas.width = width;
+      referenceCanvas.height = visibleCanvas.height = height;
+      const referenceContext = referenceCanvas.getContext('2d', { willReadFrequently: true });
+      const visibleContext = visibleCanvas.getContext('2d', { willReadFrequently: true });
+      const outputContext = differenceCanvas.getContext('2d');
+      if (!referenceContext || !visibleContext || !outputContext) {
+        differenceError = 'Pixel comparison is not available in this browser.';
+        return;
+      }
+      referenceContext.drawImage(referenceDiffImage, 0, 0, width, height);
+      visibleContext.drawImage(visibleDiffImage, 0, 0, width, height);
+      const referencePixels = referenceContext.getImageData(0, 0, width, height);
+      const visiblePixels = visibleContext.getImageData(0, 0, width, height);
+      const output = outputContext.createImageData(width, height);
+      for (let index = 0; index < output.data.length; index += 4) {
+        const red = Math.abs(referencePixels.data[index] - visiblePixels.data[index]);
+        const green = Math.abs(referencePixels.data[index + 1] - visiblePixels.data[index + 1]);
+        const blue = Math.abs(referencePixels.data[index + 2] - visiblePixels.data[index + 2]);
+        const alpha = Math.abs(referencePixels.data[index + 3] - visiblePixels.data[index + 3]);
+        const difference = Math.max(red, green, blue, alpha);
+        output.data[index] = Math.min(255, difference * 4);
+        output.data[index + 1] = Math.min(120, difference);
+        output.data[index + 2] = 0;
+        output.data[index + 3] = 255;
+      }
+      differenceCanvas.width = width;
+      differenceCanvas.height = height;
+      outputContext.putImageData(output, 0, 0);
+      differenceError = null;
+    } catch {
+      differenceError = 'The browser could not read these image pixels for comparison.';
+    }
+  }
+
   const rowDefinitions: Array<{
     label: string;
     value: (member: DuplicateReviewMember) => string;
@@ -128,8 +197,9 @@
   </summary>
 
   <div class="visual-tools">
-    <button type="button" disabled={!referenceMember || !visibleMember || referenceId === visibleId} onclick={() => overlayOpen = true}>Overlay reference / viewing</button>
-    <small>Hold F in the viewer for rapid flicker comparison.</small>
+    <button type="button" disabled={!referenceMember || !visibleMember || referenceId === visibleId} onclick={() => overlayOpen = true}>Overlay</button>
+    <button type="button" disabled={!referenceMember || !visibleMember || referenceId === visibleId} onclick={openDifference}>Pixel difference</button>
+    <small>Hold F for rapid reference flicker.</small>
   </div>
 
   <div class="verdicts" aria-label="Duplicate comparison summary">
@@ -173,20 +243,11 @@
 </details>
 
 {#if overlayOpen && referenceMember && visibleMember}
-  <section class="overlay-view" role="dialog" aria-modal="true" aria-label="Reference overlay comparison">
+  <section class="visual-view" role="dialog" aria-modal="true" aria-label="Reference overlay comparison">
     <header>
-      <div>
-        <strong>{referenceMember.filename}</strong>
-        <span>Reference</span>
-      </div>
-      <div>
-        <strong>{visibleMember.filename}</strong>
-        <span>Viewing · {overlayOpacity}% opacity</span>
-      </div>
-      <label>
-        <span>Viewing opacity</span>
-        <input type="range" min="0" max="100" step="1" bind:value={overlayOpacity} />
-      </label>
+      <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
+      <div><strong>{visibleMember.filename}</strong><span>Viewing · {overlayOpacity}% opacity</span></div>
+      <label><span>Viewing opacity</span><input type="range" min="0" max="100" step="1" bind:value={overlayOpacity} /></label>
       <button type="button" onclick={() => overlayOpen = false}>Close overlay</button>
     </header>
     <div class="overlay-stage">
@@ -196,34 +257,26 @@
   </section>
 {/if}
 
+{#if differenceOpen && referenceMember && visibleMember}
+  <section class="visual-view" role="dialog" aria-modal="true" aria-label="Pixel difference comparison">
+    <header>
+      <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
+      <div><strong>{visibleMember.filename}</strong><span>Viewing</span></div>
+      <p>Differences are amplified 4× on a max 512px working image. Black areas match closely.</p>
+      <button type="button" onclick={() => differenceOpen = false}>Close difference</button>
+    </header>
+    <div class="difference-stage">
+      {#if differenceError}<div class="difference-error" role="alert">{differenceError}</div>{/if}
+      <canvas bind:this={differenceCanvas} aria-label="Amplified pixel difference map"></canvas>
+      <img class="difference-source" bind:this={referenceDiffImage} src={assetMediaUrl(referenceId, 'fullsize')} alt="" onload={renderDifference} />
+      <img class="difference-source" bind:this={visibleDiffImage} src={assetMediaUrl(visibleId, 'fullsize')} alt="" onload={renderDifference} />
+    </div>
+  </section>
+{/if}
+
 <style>
-  .comparison-matrix {
-    position: absolute;
-    z-index: 6;
-    top: .75rem;
-    left: .75rem;
-    width: min(46rem, calc(100% - 2.25rem));
-    max-height: min(48vh, 30rem);
-    overflow: hidden;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    color: var(--color-ink-strong);
-    background: color-mix(in srgb, var(--color-surface-raised) 96%, transparent);
-    box-shadow: 0 .8rem 2.4rem rgb(0 0 0 / 30%);
-    backdrop-filter: blur(.65rem);
-  }
-
-  summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: .75rem;
-    padding: .55rem .7rem;
-    cursor: pointer;
-    list-style: none;
-    font-size: .66rem;
-  }
-
+  .comparison-matrix { position: absolute; z-index: 6; top: .75rem; left: .75rem; width: min(46rem, calc(100% - 2.25rem)); max-height: min(48vh, 30rem); overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-ink-strong); background: color-mix(in srgb, var(--color-surface-raised) 96%, transparent); box-shadow: 0 .8rem 2.4rem rgb(0 0 0 / 30%); backdrop-filter: blur(.65rem); }
+  summary { display: flex; align-items: center; justify-content: space-between; gap: .75rem; padding: .55rem .7rem; cursor: pointer; list-style: none; font-size: .66rem; }
   summary::-webkit-details-marker { display: none; }
   summary span { color: var(--color-accent-strong); font-weight: 820; text-transform: uppercase; }
   summary strong { color: var(--color-ink-muted); font-size: .6rem; }
@@ -245,20 +298,23 @@
   thead small { display: block; min-height: .8rem; margin-top: .12rem; color: var(--color-accent-strong); font-size: .52rem; text-transform: uppercase; }
   .reference { background: color-mix(in srgb, var(--color-positive-surface) 55%, var(--color-surface-raised)); }
   .viewing { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-strong) 55%, transparent); }
-  p { margin: 0; padding: .65rem .7rem; border-top: 1px solid var(--color-border-subtle); color: var(--color-ink-muted); font-size: .64rem; }
+  .comparison-matrix > p { margin: 0; padding: .65rem .7rem; border-top: 1px solid var(--color-border-subtle); color: var(--color-ink-muted); font-size: .64rem; }
 
-  .overlay-view { position: fixed; z-index: 30; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); color: white; background: rgb(0 0 0 / 94%); }
-  .overlay-view header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(12rem, .7fr) auto; gap: .8rem; align-items: center; padding: .65rem .8rem; border-bottom: 1px solid rgb(255 255 255 / 18%); background: rgb(0 0 0 / 82%); }
-  .overlay-view header > div, .overlay-view label { display: grid; gap: .15rem; min-width: 0; }
-  .overlay-view header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; }
-  .overlay-view header span { color: rgb(255 255 255 / 70%); font-size: .56rem; }
-  .overlay-view header button { min-height: 2.1rem; padding: .35rem .6rem; border: 1px solid rgb(255 255 255 / 35%); border-radius: var(--radius-sm); color: white; background: rgb(255 255 255 / 10%); cursor: pointer; }
-  .overlay-stage { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; overflow: hidden; }
+  .visual-view { position: fixed; z-index: 30; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); color: white; background: rgb(0 0 0 / 94%); }
+  .visual-view header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(12rem, .7fr) auto; gap: .8rem; align-items: center; padding: .65rem .8rem; border-bottom: 1px solid rgb(255 255 255 / 18%); background: rgb(0 0 0 / 82%); }
+  .visual-view header > div, .visual-view label { display: grid; gap: .15rem; min-width: 0; }
+  .visual-view header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; }
+  .visual-view header span, .visual-view header p { margin: 0; color: rgb(255 255 255 / 70%); font-size: .56rem; }
+  .visual-view header button { min-height: 2.1rem; padding: .35rem .6rem; border: 1px solid rgb(255 255 255 / 35%); border-radius: var(--radius-sm); color: white; background: rgb(255 255 255 / 10%); cursor: pointer; }
+  .overlay-stage, .difference-stage { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; overflow: hidden; }
   .overlay-stage img { position: absolute; width: 100%; height: 100%; object-fit: contain; user-select: none; }
   .comparison-layer { pointer-events: none; }
+  .difference-stage canvas { width: min(90vw, 90vh); height: min(90vw, 90vh); max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; }
+  .difference-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .difference-error { position: absolute; z-index: 2; max-width: 30rem; padding: .65rem .8rem; border: 1px solid rgb(255 255 255 / 25%); border-radius: var(--radius-sm); background: rgb(0 0 0 / 75%); font-size: .7rem; }
 
   @media (max-width: 64rem) {
     .comparison-matrix { width: min(34rem, calc(100% - 1.5rem)); }
-    .overlay-view header { grid-template-columns: 1fr 1fr; }
+    .visual-view header { grid-template-columns: 1fr 1fr; }
   }
 </style>
