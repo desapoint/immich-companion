@@ -484,13 +484,18 @@
   }
 
   async function setComparisonReference(assetId: string): Promise<void> {
-    if (!duplicateContext || assetId === comparisonReferenceId || comparisonReferenceChanging) return;
+    if (
+      !duplicateContext
+      || !onduplicatesimilarityreference
+      || assetId === comparisonReferenceId
+      || comparisonReferenceChanging
+    ) return;
     flickerPending = false;
     flickerReturnAssetId = null;
     captureDuplicateComparisonView();
     comparisonReferenceChanging = true;
     try {
-      const changed = await onduplicatesimilarityreference?.(assetId);
+      const changed = await onduplicatesimilarityreference(assetId);
       if (changed === false) return;
       comparisonReferenceId = assetId;
     } finally {
