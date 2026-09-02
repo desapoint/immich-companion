@@ -100,6 +100,7 @@
   let workspace = $state.raw<DuplicateWorkspaceState | null>(null);
   let activeGroupId = $state<string | null>(null);
   const savingGroupCounts = new SvelteMap<string, number>();
+  const draftSaveErrors = new SvelteMap<string, string>();
   let loading = $state(true);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -128,8 +129,11 @@
     result?.groups.filter((group) => selected.has(group.group_id)) ?? [],
   );
   const selectedCount = $derived(selectedGroups.length);
+  const blockedSelectedCount = $derived(
+    selectedGroups.filter((group) => !isActionable(group)).length,
+  );
   const selectedReady = $derived(
-    selectedGroups.length > 0 && selectedGroups.every((group) => isActionable(group)),
+    selectedGroups.length > 0 && blockedSelectedCount === 0,
   );
   const allAutoReadySelected = $derived(
     autoReadyGroups.length > 0
@@ -366,6 +370,7 @@
       ?? (action === 'resolve' || action === 'delete_all');
     const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
     return action !== 'none'
+      && (hasDraftDecisions || action !== 'mixed')
       && (!hasDraftDecisions || draftComplete)
       && (!requiresPrimary || selectedKeeper(group) !== null)
       && stackDecisions.length !== 1
@@ -400,7 +405,6 @@
   }
 
   async function persistDraft(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
-    error = null;
     try {
       const updated = await saveDuplicateGroupDraft({
         group_id: group.group_id,
@@ -411,11 +415,16 @@
         metadata_keeper_asset_id: draft.metadata_keeper_asset_id,
         status: draft.status,
       });
+      const previousSaveError = draftSaveErrors.get(group.group_id);
+      draftSaveErrors.delete(group.group_id);
+      if (previousSaveError && error === previousSaveError) error = null;
       if (sameDraftState(draftFor(group), draft)) {
         groupDrafts = { ...groupDrafts, [group.group_id]: updated };
       }
     } catch (reason) {
-      error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
+      const saveError = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
+      draftSaveErrors.set(group.group_id, saveError);
+      error = saveError;
       throw reason;
     }
   }
@@ -449,6 +458,18 @@
       .map((groupId) => flushPendingDraft(groupId))
       .filter((save): save is Promise<void> => save !== null);
     await Promise.all(pending);
+  }
+
+  async function discardPendingDrafts(groupIds: string[]): Promise<void> {
+    for (const groupId of groupIds) {
+      const timer = draftSaveTimers.get(groupId);
+      if (timer) clearTimeout(timer);
+      draftSaveTimers.delete(groupId);
+      pendingDrafts.delete(groupId);
+    }
+    await Promise.all(
+      groupIds.map((groupId) => draftSaveQueues.get(groupId)?.catch(() => undefined) ?? Promise.resolve()),
+    );
   }
 
   function flushAllDraftsBestEffort(): void {
@@ -560,11 +581,12 @@
     error = null;
     message = null;
     try {
-      await flushDraftPersistence(groupIds);
+      await discardPendingDrafts(groupIds);
       const restored = await resetDuplicateWorkspaceDecisions({
         options: appliedOptions,
         group_ids: groupIds,
       });
+      for (const groupId of groupIds) draftSaveErrors.delete(groupId);
       restoreWorkspaceState(restored);
       message = groupIds.length === 1
         ? 'Saved decisions were cleared for this group.'
@@ -647,6 +669,10 @@
 
   async function reviewBatch(): Promise<void> {
     if (!selectedGroups.length) return;
+    if (!selectedGroups.every((group) => isActionable(group))) {
+      error = 'Every selected duplicate group needs a complete, executable decision before review.';
+      return;
+    }
     busy = true;
     error = null;
     message = null;
@@ -899,6 +925,7 @@
       <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!selectedCount || busy} onchange={(value) => bulkAction = value as DuplicatePlanAction} />
       <button type="button" disabled={!selectedCount || busy} onclick={() => void applyBulkAction()}>Apply action</button>
       <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions(selectedGroups.map((group) => group.group_id))}>Clear selected decisions</button>
+      {#if selectedCount > 0 && !selectedReady}<small class="review-readiness">{blockedSelectedCount} selected {blockedSelectedCount === 1 ? 'group needs' : 'groups need'} complete executable decisions</small>{/if}
       <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review batch</button>
     </div>
 
@@ -916,7 +943,7 @@
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{isSavingGroup(group.group_id) ? 'Saving…' : pendingDrafts.has(group.group_id) ? 'Unsaved changes' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{pendingDrafts.has(group.group_id) ? 'Unsaved changes' : isSavingGroup(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
               </div>
               <div class="group-controls">
                 <p>{group.reason}</p>
@@ -1029,6 +1056,7 @@
   .summary span { color: var(--color-ink-muted); font-size: .7rem; }
   .batch-bar { position: sticky; z-index: 40; top: calc(var(--app-header-height) + .5rem); display: flex; min-height: 3.5rem; align-items: center; gap: .8rem; padding: .55rem .8rem; box-shadow: var(--shadow-card); }
   .batch-bar > span { margin-left: auto; color: var(--color-ink-muted); font-size: .74rem; }
+  .review-readiness { max-width: 13rem; color: var(--color-warning-ink); font-size: .64rem; line-height: 1.25; }
   .groups { display: grid; gap: 1rem; }
   .group-card { overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .group-card.eligible { border-color: var(--color-positive-border); }
