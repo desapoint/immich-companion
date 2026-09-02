@@ -38,7 +38,7 @@ from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
-TAG_ASSOCIATION_CONCURRENCY = 4
+TAG_ASSOCIATION_CONCURRENCY = 8
 
 
 def _dedupe_digest(parts: list[str]) -> str:
@@ -1097,7 +1097,6 @@ class AssetSyncService:
                     updated_before=run.window_end if run.mode == "incremental" else None,
                 )
             except ImmichApiError:
-                # A count is useful for feedback but must not make a valid sync fail.
                 asset_total = None
         if start_phase <= 0:
             await self._checkpoint(
@@ -1303,8 +1302,6 @@ class AssetSyncService:
                 start_page = int(cursor_parts[1])
                 completed_page_batches = int(cursor_parts[2])
             else:
-                # Compatibility with checkpoints written before media API pages
-                # were decoupled from persistence batches.
                 completed_batches = int(cursor_parts[-1])
                 completed_assets = completed_batches * batch_size
                 start_page = completed_assets // page_size + 1
@@ -1513,9 +1510,6 @@ class AssetSyncService:
         completed_relation = 0
         completed_page = 0
         membership_total: int | None = None
-        # Immich's metadata-search total is page-sized on supported live
-        # versions. Counting every album and tag also creates an unbounded
-        # request fan-out. Keep this phase truthful and indeterminate instead.
         association_completed = counters.get("album_memberships", 0) + counters.get(
             "tag_memberships", 0
         )
@@ -1595,13 +1589,9 @@ class AssetSyncService:
                         ),
                     ),
                 )
-        # Immich's compact tag catalog has no asset count. Each concurrent
-        # first-page search is therefore the authoritative empty-tag check.
         skipped_tags = 0
         tag_start = 0
         if relation_kind == "tags":
-            # New checkpoints record completed waves as page zero. Older
-            # page-level cursors safely replay their current tag.
             tag_start = (
                 completed_relation
                 if completed_page == 0
