@@ -14,6 +14,12 @@
     values: Array<{ id: string; value: string }>;
   }
 
+  interface MemberVerdict {
+    id: string;
+    filename: string;
+    verdict: string;
+  }
+
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
     if (value < 1024) return `${value} B`;
@@ -24,6 +30,48 @@
   function shortHash(value: string | null | undefined): string {
     if (!value) return 'Unavailable';
     return value.length > 14 ? `${value.slice(0, 7)}…${value.slice(-6)}` : value;
+  }
+
+  function verdictFor(member: DuplicateReviewMember, reference: DuplicateReviewMember | null): string {
+    if (!reference || member.id === reference.id) return 'Pinned comparison reference';
+    if (member.is_offline) return 'Offline · visual and file validation may be incomplete';
+
+    const current = member.preservation;
+    const baseline = reference.preservation;
+    if (!current || !baseline) {
+      if (member.similarity?.exact_pixel_match) return 'Decoded pixels reported exact · preservation details unavailable';
+      if (member.similarity?.state === 'current') return `Visual similarity ${member.similarity.similarity_percent?.toFixed(2) ?? '?'}% · needs manual validation`;
+      return 'Needs manual validation · preservation data unavailable';
+    }
+
+    const samePixels = current.pixel_sha256 === baseline.pixel_sha256;
+    const sameDimensions = current.decoded_width === baseline.decoded_width
+      && current.decoded_height === baseline.decoded_height;
+
+    if (!samePixels) {
+      if (!sameDimensions) return 'Visual differences · decoded dimensions or crop differ';
+      if (member.similarity?.exact_pixel_match === false) return 'Visual differences · normalized decoded pixels differ';
+      return 'Visual differences detected';
+    }
+
+    const metadataDelta = current.metadata_richness - baseline.metadata_richness;
+    if (metadataDelta > 0) return `Same pixels · richer metadata (+${metadataDelta})`;
+    if (metadataDelta < 0) return `Same pixels · poorer metadata (${metadataDelta})`;
+
+    const metadataSignals = [
+      current.icc_profile_present === baseline.icc_profile_present,
+      current.has_capture_time === baseline.has_capture_time,
+      current.has_camera_info === baseline.has_camera_info,
+      current.has_gps === baseline.has_gps,
+      current.orientation === baseline.orientation,
+    ];
+    if (metadataSignals.some((matches) => !matches)) return 'Same pixels · metadata contents differ';
+
+    if (member.file_size_bytes !== null && reference.file_size_bytes !== null) {
+      if (member.file_size_bytes < reference.file_size_bytes) return 'Same pixels · metadata equivalent · smaller file';
+      if (member.file_size_bytes > reference.file_size_bytes) return 'Same pixels · metadata equivalent · larger file';
+    }
+    return 'Same pixels · metadata equivalent';
   }
 
   const rowDefinitions: Array<{
@@ -56,6 +104,15 @@
       })),
     }))
     .filter((row) => new Set(row.values.map((entry) => entry.value)).size > 1));
+
+  const verdicts = $derived.by<MemberVerdict[]>(() => {
+    const reference = context.members.find((member) => member.id === referenceId) ?? null;
+    return context.members.map((member) => ({
+      id: member.id,
+      filename: member.filename,
+      verdict: verdictFor(member, reference),
+    }));
+  });
 </script>
 
 <details class="comparison-matrix" open>
@@ -63,6 +120,15 @@
     <span>Group differences</span>
     <strong>{rows.length} differing {rows.length === 1 ? 'property' : 'properties'}</strong>
   </summary>
+
+  <div class="verdicts" aria-label="Duplicate comparison summary">
+    {#each verdicts as item (item.id)}
+      <div class:reference={item.id === referenceId} class:viewing={item.id === visibleId}>
+        <strong title={item.filename}>{item.filename}</strong>
+        <span>{item.verdict}</span>
+      </div>
+    {/each}
+  </div>
 
   {#if rows.length}
     <div class="table-scroll">
@@ -102,7 +168,7 @@
     top: .75rem;
     left: .75rem;
     width: min(46rem, calc(100% - 2.25rem));
-    max-height: min(42vh, 24rem);
+    max-height: min(48vh, 30rem);
     overflow: hidden;
     border: 1px solid var(--color-border-strong);
     border-radius: var(--radius-md);
@@ -126,7 +192,11 @@
   summary::-webkit-details-marker { display: none; }
   summary span { color: var(--color-accent-strong); font-weight: 820; text-transform: uppercase; }
   summary strong { color: var(--color-ink-muted); font-size: .6rem; }
-  .table-scroll { max-height: calc(min(42vh, 24rem) - 2.4rem); overflow: auto; border-top: 1px solid var(--color-border-subtle); }
+  .verdicts { display: grid; gap: .28rem; max-height: 8.5rem; padding: .45rem .55rem; overflow: auto; border-top: 1px solid var(--color-border-subtle); }
+  .verdicts > div { display: grid; grid-template-columns: minmax(8rem, .42fr) minmax(0, 1fr); gap: .55rem; padding: .32rem .4rem; border-radius: var(--radius-sm); font-size: .6rem; }
+  .verdicts strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .verdicts span { color: var(--color-ink-muted); }
+  .table-scroll { max-height: calc(min(48vh, 30rem) - 11.5rem); overflow: auto; border-top: 1px solid var(--color-border-subtle); }
   table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: .6rem; }
   th, td { min-width: 8.25rem; max-width: 12rem; padding: .42rem .5rem; border-right: 1px solid var(--color-border-subtle); border-bottom: 1px solid var(--color-border-subtle); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
   th:first-child { position: sticky; left: 0; z-index: 2; min-width: 8rem; color: var(--color-ink-muted); background: var(--color-surface-raised); }
