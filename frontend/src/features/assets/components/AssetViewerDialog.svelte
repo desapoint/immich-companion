@@ -222,13 +222,14 @@
   let comparisonReferenceChanging = $state(false);
   let flickerReturnAssetId = $state<string | null>(null);
   let flickerPending = $state(false);
+  let flickerReferenceUrl = $state('');
   let loadedMediaAssetId = '';
   let mediaLoadGeneration = 0;
   const mediaUrlCache = new Map<string, string[]>();
   const mediaPreferredIndex = new Map<string, number>();
   const loadedMediaUrls = new Set<string>();
   const mediaDimensions = new Map<string, { width: number; height: number }>();
-  const preloadingAssetIds = new Set<string>();
+  const mediaPreloadPromises = new Map<string, Promise<void>>();
   let pendingComparisonAnchor: ImageZoomAnchor | null = null;
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   let nextLoading = $state(false);
@@ -483,6 +484,12 @@
     onclose();
   }
 
+  function cancelReferenceFlicker(): void {
+    flickerPending = false;
+    flickerReturnAssetId = null;
+    flickerReferenceUrl = '';
+  }
+
   async function setComparisonReference(assetId: string): Promise<void> {
     if (
       !duplicateContext
@@ -490,8 +497,7 @@
       || assetId === comparisonReferenceId
       || comparisonReferenceChanging
     ) return;
-    flickerPending = false;
-    flickerReturnAssetId = null;
+    cancelReferenceFlicker();
     captureDuplicateComparisonView();
     comparisonReferenceChanging = true;
     try {
@@ -506,8 +512,7 @@
   function cycleDuplicateComparison(direction: 'previous' | 'next'): void {
     const members = comparisonMembers;
     if (members.length < 2) return;
-    flickerPending = false;
-    flickerReturnAssetId = null;
+    cancelReferenceFlicker();
     captureDuplicateComparisonView();
     const currentMemberIndex = members.findIndex((asset) => asset.id === visibleAssetId);
     const nextIndex = currentMemberIndex < 0
@@ -545,8 +550,7 @@
   }
 
   function previewComparison(assetId: string): void {
-    flickerPending = false;
-    flickerReturnAssetId = null;
+    cancelReferenceFlicker();
     captureDuplicateComparisonView();
     visibleAssetId = assetId;
   }
@@ -562,15 +566,13 @@
   }
 
   function restoreComparison(): void {
-    flickerPending = false;
-    flickerReturnAssetId = null;
+    cancelReferenceFlicker();
     captureDuplicateComparisonView();
     visibleAssetId = duplicateContext ? comparisonReferenceId : currentAsset.id;
   }
 
   function commitComparison(assetId: string): void {
-    flickerPending = false;
-    flickerReturnAssetId = null;
+    cancelReferenceFlicker();
     captureDuplicateComparisonView();
     if (duplicateContext) {
       visibleAssetId = assetId;
@@ -584,54 +586,43 @@
     else oncomparisonnavigate?.(nextState.selectedId);
   }
 
-  function applyCachedDuplicateMedia(assetId: string): boolean {
+  function cachedDuplicateMediaUrl(assetId: string): string | null {
     const urls = mediaUrlCache.get(assetId);
-    const dimensions = mediaDimensions.get(assetId);
-    if (!urls?.length || !dimensions) return false;
+    if (!urls?.length) return null;
     const index = Math.min(mediaPreferredIndex.get(assetId) ?? 0, urls.length - 1);
     const url = urls[index];
-    if (!url || !loadedMediaUrls.has(url)) return false;
-    loadedMediaAssetId = assetId;
-    viewerMediaUrls = urls;
-    viewerMediaIndex = index;
-    viewerMediaUrl = url;
-    imageNaturalWidth = dimensions.width;
-    imageNaturalHeight = dimensions.height;
-    imageLoading = false;
-    imageError = false;
-    return true;
+    return url && loadedMediaUrls.has(url) ? url : null;
   }
 
   async function startReferenceFlicker(): Promise<void> {
-    if (!duplicateContext || flickerPending || flickerReturnAssetId !== null || visibleAssetId === comparisonReferenceId) return;
+    if (
+      !duplicateContext
+      || imageLoading
+      || imageError
+      || flickerPending
+      || flickerReturnAssetId !== null
+      || visibleAssetId === comparisonReferenceId
+    ) return;
     const reference = comparisonMembers.find((member) => member.id === comparisonReferenceId);
     if (!reference) return;
     flickerPending = true;
-    if (!applyCachedDuplicateMedia(reference.id)) {
+    let referenceUrl = cachedDuplicateMediaUrl(reference.id);
+    if (!referenceUrl) {
       await preloadAssetMedia(reference);
       if (!flickerPending || visibleAssetId === comparisonReferenceId) return;
-      if (!applyCachedDuplicateMedia(reference.id)) {
-        flickerPending = false;
-        return;
-      }
+      referenceUrl = cachedDuplicateMediaUrl(reference.id);
     }
-    captureDuplicateComparisonView();
+    if (!referenceUrl) {
+      flickerPending = false;
+      return;
+    }
     flickerReturnAssetId = visibleAssetId;
-    visibleAssetId = comparisonReferenceId;
+    flickerReferenceUrl = referenceUrl;
+    flickerPending = false;
   }
 
   function stopReferenceFlicker(): void {
-    flickerPending = false;
-    const returnId = flickerReturnAssetId;
-    if (!returnId) return;
-    captureDuplicateComparisonView();
-    if (applyCachedDuplicateMedia(returnId)) {
-      flickerReturnAssetId = null;
-      visibleAssetId = returnId;
-      return;
-    }
-    flickerReturnAssetId = null;
-    visibleAssetId = returnId;
+    cancelReferenceFlicker();
   }
 
   function handleKeydown(event: KeyboardEvent): void {
@@ -692,8 +683,7 @@
   function handleKeyup(event: KeyboardEvent): void {
     if (event.key.toLowerCase() !== 'f' || (!flickerPending && flickerReturnAssetId === null)) return;
     event.preventDefault();
-    flickerPending = false;
-    if (flickerReturnAssetId !== null) stopReferenceFlicker();
+    stopReferenceFlicker();
   }
 
   function handleCancel(event: Event): void {
@@ -754,9 +744,14 @@
   }
 
   async function preloadAssetMedia(asset: AssetStackMember): Promise<void> {
-    if (mediaDimensions.has(asset.id) || preloadingAssetIds.has(asset.id)) return;
-    preloadingAssetIds.add(asset.id);
-    try {
+    if (mediaDimensions.has(asset.id)) return;
+    const existing = mediaPreloadPromises.get(asset.id);
+    if (existing) {
+      await existing;
+      return;
+    }
+
+    const preload = (async () => {
       const urls = mediaUrlCache.get(asset.id)
         ?? await resolveViewerMediaUrls(asset.id, asset.original_mime_type);
       mediaUrlCache.set(asset.id, urls);
@@ -778,8 +773,13 @@
         });
         break;
       }
+    })();
+
+    mediaPreloadPromises.set(asset.id, preload);
+    try {
+      await preload;
     } finally {
-      preloadingAssetIds.delete(asset.id);
+      if (mediaPreloadPromises.get(asset.id) === preload) mediaPreloadPromises.delete(asset.id);
     }
   }
 
@@ -826,8 +826,7 @@
     const groupId = duplicateContext?.group_id ?? '';
     if (!groupId || groupId === duplicateGroupId) return;
     duplicateGroupId = groupId;
-    flickerPending = false;
-    flickerReturnAssetId = null;
+    cancelReferenceFlicker();
     const availableIds = new Set(comparisonMembers.map((asset) => asset.id));
     const similarityReference = duplicateContext?.members.find(
       (member) => member.similarity?.state === 'reference',
@@ -1015,6 +1014,15 @@
             ondblclick={toggleScale}
           />
         {/if}
+        {#if flickerReferenceUrl}
+          <img
+            class="flicker-reference"
+            src={flickerReferenceUrl}
+            alt="Comparison reference"
+            draggable="false"
+            style={`width: ${displayWidth}px; height: ${displayHeight}px;`}
+          />
+        {/if}
       </div>
     </div>
 
@@ -1176,6 +1184,15 @@
 
   .viewer-stage img.hidden {
     visibility: hidden;
+  }
+
+  .viewer-stage img.flicker-reference {
+    position: absolute;
+    z-index: 1;
+    top: 50%;
+    left: 50%;
+    pointer-events: none;
+    transform: translate(-50%, -50%);
   }
 
   .image-status,
