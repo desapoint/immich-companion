@@ -3,8 +3,9 @@ import type { DuplicateDecisionSource, DuplicateDecisionStatus, DuplicateDisposi
 
 export type { DuplicateKeeperPolicy } from '../../../lib/types/duplicatePolicy';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
-export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'mixed' | 'none';
+export type DuplicatePlanAction = 'resolve' | 'keep_all' | 'stack_all' | 'mixed' | 'none';
 export type DuplicateActionSelection = DuplicatePlanAction | 'automatic';
+export type DuplicateBulkPreset = 'keep_all' | 'mark_all_delete' | 'stack_all';
 export type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
 
 export interface DuplicateAnalysisOptions {
@@ -107,7 +108,7 @@ export interface ExactDuplicateGroup {
   manual_primary_asset_id: string | null;
   effective_action: DuplicatePlanAction;
   effective_primary_asset_id: string | null;
-  review_status: 'pending' | 'manually_configured' | 'reviewed_keep_all' | 'reviewed_resolve' | 'reviewed_delete_all' | 'reviewed_stack_all' | 'review_later' | 'drifted';
+  review_status: 'pending' | 'manually_configured' | 'reviewed_keep_all' | 'reviewed_resolve' | 'reviewed_stack_all' | 'review_later' | 'drifted';
   member_fingerprint: string;
   members: DuplicateMember[];
   eligible: boolean;
@@ -239,7 +240,6 @@ export interface DuplicateResolutionPlan {
   group_count: number;
   resolve_group_count: number;
   keep_all_group_count: number;
-  delete_all_group_count: number;
   stack_group_count: number;
   mixed_group_count: number;
   trash_asset_count: number;
