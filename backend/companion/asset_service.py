@@ -1185,6 +1185,8 @@ class AssetSyncService:
             "tag_memberships": 0,
             "tag_relationships_scanned": 0,
             "tag_empty_relationships": 0,
+            "tag_cheap_path_eligible_assets": 0,
+            "tag_cheap_path_fallback_assets": 0,
             "assets_removed": 0,
         }
         counters = {**defaults, **run.counters}
@@ -1292,7 +1294,7 @@ class AssetSyncService:
             self._progress("finalizing", 1, 1, "Synchronization complete"),
         )
         logger.info(
-            "Sync summary: trigger=staged mode=%s run_id=%s generation=%s window_start=%s window_end=%s duration_seconds=%.3f assets_seen=%s assets_created=%s assets_updated=%s assets_unchanged=%s assets_removed=%s albums_seen=%s tags_seen=%s stacks_seen=%s stack_members=%s album_memberships=%s tag_memberships=%s events_seen=%s tag_branch_relationship_scan=%s tag_empty_relationships=%s tag_branch_asset_payload=0 tag_branch_catalog_fallback=0",
+            "Sync summary: trigger=staged mode=%s run_id=%s generation=%s window_start=%s window_end=%s duration_seconds=%.3f assets_seen=%s assets_created=%s assets_updated=%s assets_unchanged=%s assets_removed=%s albums_seen=%s tags_seen=%s stacks_seen=%s stack_members=%s album_memberships=%s tag_memberships=%s events_seen=%s tag_branch_relationship_scan=%s tag_empty_relationships=%s tag_cheap_path_eligible_assets=%s tag_cheap_path_fallback_assets=%s",
             run.mode,
             run.id,
             run.generation,
@@ -1318,6 +1320,8 @@ class AssetSyncService:
             counters.get("events_seen", 0),
             counters["tag_relationships_scanned"],
             counters["tag_empty_relationships"],
+            counters["tag_cheap_path_eligible_assets"],
+            counters["tag_cheap_path_fallback_assets"],
         )
         return counters
 
@@ -1531,6 +1535,12 @@ class AssetSyncService:
         cursor: str,
         asset_total: int | None,
     ) -> None:
+        counters["tag_cheap_path_eligible_assets"] += sum(
+            1 for asset in batch if asset.includes_tags
+        )
+        counters["tag_cheap_path_fallback_assets"] += sum(
+            1 for asset in batch if not asset.includes_tags
+        )
         lightweight_batch = [
             asset.model_copy(
                 update={"exif_info": None, "people": [], "tags": [], "stack": None}
