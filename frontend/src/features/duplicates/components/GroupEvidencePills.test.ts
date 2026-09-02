@@ -78,7 +78,7 @@ describe('GroupEvidencePills', () => {
     expect(body).toContain('Byte match');
     expect(body).toContain('HEIC');
     expect(body).toContain('Decoded');
-    expect(body).toContain('98.3% similar');
+    expect(body).toContain('98.3% vs reference');
     expect(body).toContain('4032×3024');
     expect(body).toContain('ICC');
   });
