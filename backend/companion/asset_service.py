@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import tracemalloc
 from collections.abc import AsyncIterator
 from contextlib import suppress
@@ -40,11 +41,25 @@ from companion.task_schema import TaskResult, TaskStatusView
 
 TAG_ASSOCIATION_CONCURRENCY = 8
 
+logger = logging.getLogger("uvicorn.error")
+
 
 def _dedupe_digest(parts: list[str]) -> str:
     """Build a fixed-length key for arbitrarily large repair target sets."""
 
     return sha256("\n".join(sorted(parts)).encode()).hexdigest()
+
+
+def _repair_metric_defaults() -> dict[str, int]:
+    """Return counters that expose the cost of asset-oriented tag reconciliation."""
+
+    return {
+        "tag_branch_asset_payload": 0,
+        "tag_branch_catalog_fallback": 0,
+        "tag_fallback_catalog_tags": 0,
+        "tag_fallback_pages": 0,
+        "tag_links_resolved": 0,
+    }
 
 
 def batches[T](items: list[T], size: int) -> list[list[T]]:
@@ -217,9 +232,17 @@ class AssetRepairTaskHandler:
         asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
         include_stacks = bool(payload.get("include_stacks", False))
         processed = int(context.task.checkpoint.get("processed", 0))
+        counters = {
+            "requested": len(asset_ids),
+            "processed": processed,
+            **{
+                key: int(context.task.counters.get(key, 0))
+                for key in _repair_metric_defaults()
+            },
+        }
         await context.checkpoint(
             checkpoint={"phase": "repairing", "processed": processed},
-            counters={"requested": len(asset_ids), "processed": processed},
+            counters=counters,
             progress={
                 "phase": "asset_repair",
                 "completed": processed,
@@ -233,14 +256,17 @@ class AssetRepairTaskHandler:
         throttle = len(asset_ids) > batch_size
         batch_started = perf_counter()
         for index in range(processed, len(asset_ids)):
-            await self._service._repair_targets_now(
+            metrics = await self._service._repair_targets_now(
                 [asset_ids[index]],
                 include_stacks=include_stacks,
             )
+            for key, value in metrics.items():
+                counters[key] = counters.get(key, 0) + value
             processed = index + 1
+            counters["processed"] = processed
             await context.checkpoint(
                 checkpoint={"phase": "repairing", "processed": processed},
-                counters={"requested": len(asset_ids), "processed": processed},
+                counters=counters,
                 progress={
                     "phase": "asset_repair",
                     "completed": processed,
@@ -258,9 +284,29 @@ class AssetRepairTaskHandler:
             ):
                 await self._service._pace_runtime_batch(batch_started)
                 batch_started = perf_counter()
+        logger.info(
+            "Sync summary: trigger=asset_repair scope=%s task_id=%s requested=%s processed=%s include_stacks=%s duration_seconds=%.3f tag_branch_asset_payload=%s tag_branch_catalog_fallback=%s tag_fallback_catalog_tags=%s tag_fallback_pages=%s tag_links_resolved=%s",
+            "single" if len(asset_ids) == 1 else "bulk",
+            context.task.id,
+            len(asset_ids),
+            processed,
+            include_stacks,
+            max(
+                0.0,
+                (
+                    datetime.now(UTC)
+                    - (context.task.started_at or context.task.created_at)
+                ).total_seconds(),
+            ),
+            counters["tag_branch_asset_payload"],
+            counters["tag_branch_catalog_fallback"],
+            counters["tag_fallback_catalog_tags"],
+            counters["tag_fallback_pages"],
+            counters["tag_links_resolved"],
+        )
         return TaskResult(
             summary={"repaired": processed},
-            counters={"requested": len(asset_ids), "processed": processed},
+            counters=counters,
         )
 
 
@@ -283,6 +329,10 @@ class AssetSelectionSyncTaskHandler:
             "synced": int(context.task.counters.get("synced", 0)),
             "failed": int(context.task.counters.get("failed", 0)),
             "missing": int(context.task.counters.get("missing", 0)),
+            **{
+                key: int(context.task.counters.get(key, 0))
+                for key in _repair_metric_defaults()
+            },
         }
         failed: dict[str, list[str]] = {}
         missing: list[str] = []
@@ -301,9 +351,10 @@ class AssetSelectionSyncTaskHandler:
         for index in range(start, len(asset_ids)):
             identifier = asset_ids[index]
             last_error: Exception | None = None
+            repair_metrics: dict[str, int] | None = None
             for item_attempt in range(self._service._settings.sync_max_attempts):
                 try:
-                    await self._service._repair_targets_now([identifier])
+                    repair_metrics = await self._service._repair_targets_now([identifier])
                 except ImmichApiError as error:
                     last_error = error
                     if error.status_code == 404:
@@ -333,6 +384,9 @@ class AssetSelectionSyncTaskHandler:
                 counters["failed"] += 1
             else:
                 counters["synced"] += 1
+                if repair_metrics is not None:
+                    for key, value in repair_metrics.items():
+                        counters[key] = counters.get(key, 0) + value
             counters["processed"] = index + 1
             percent = round(counters["processed"] / len(asset_ids) * 100, 1) if asset_ids else 100.0
             await context.checkpoint(
@@ -356,6 +410,28 @@ class AssetSelectionSyncTaskHandler:
             )
 
         has_failures = bool(failed)
+        logger.info(
+            "Sync summary: trigger=asset_selection_sync scope=%s task_id=%s requested=%s processed=%s synced=%s failed=%s missing=%s duration_seconds=%.3f tag_branch_asset_payload=%s tag_branch_catalog_fallback=%s tag_fallback_catalog_tags=%s tag_fallback_pages=%s tag_links_resolved=%s",
+            "single" if len(asset_ids) == 1 else "bulk",
+            context.task.id,
+            len(asset_ids),
+            counters["processed"],
+            counters["synced"],
+            counters["failed"],
+            counters["missing"],
+            max(
+                0.0,
+                (
+                    datetime.now(UTC)
+                    - (context.task.started_at or context.task.created_at)
+                ).total_seconds(),
+            ),
+            counters["tag_branch_asset_payload"],
+            counters["tag_branch_catalog_fallback"],
+            counters["tag_fallback_catalog_tags"],
+            counters["tag_fallback_pages"],
+            counters["tag_links_resolved"],
+        )
         return TaskResult(
             status="failed" if has_failures else "completed",
             summary={
@@ -390,12 +466,19 @@ class AssetRelationRepairTaskHandler:
         ]
         processed = int(context.task.checkpoint.get("processed", 0))
         total = len(relations)
+        totals = {
+            "albums": int(context.task.counters.get("albums", 0)),
+            "tags": int(context.task.counters.get("tags", 0)),
+            "memberships": int(context.task.counters.get("memberships", 0)),
+        }
         for index in range(processed, total):
-            counters = await self._service._repair_relations_now([relations[index]])
+            result = await self._service._repair_relations_now([relations[index]])
+            for key, value in result.items():
+                totals[key] += value
             processed = index + 1
             await context.checkpoint(
                 checkpoint={"phase": "repairing_relations", "processed": processed},
-                counters={"requested": total, "processed": processed, **counters},
+                counters={"requested": total, "processed": processed, **totals},
                 progress={
                     "phase": "relation_repair",
                     "completed": processed,
@@ -404,9 +487,26 @@ class AssetRelationRepairTaskHandler:
                     "detail": f"Refreshed {processed}/{total} relationships",
                 },
             )
+        logger.info(
+            "Sync summary: trigger=asset_relation_repair task_id=%s requested=%s processed=%s albums=%s tags=%s memberships=%s duration_seconds=%.3f tag_branch_relation_scan=%s",
+            context.task.id,
+            total,
+            processed,
+            totals["albums"],
+            totals["tags"],
+            totals["memberships"],
+            max(
+                0.0,
+                (
+                    datetime.now(UTC)
+                    - (context.task.started_at or context.task.created_at)
+                ).total_seconds(),
+            ),
+            totals["tags"],
+        )
         return TaskResult(
             summary={"repaired": processed},
-            counters={"requested": total, "processed": processed},
+            counters={"requested": total, "processed": processed, **totals},
         )
 
 
@@ -805,7 +905,17 @@ class AssetSyncService:
                 await self._coordinator.start()
                 await self._coordinator.wait(task.id)
                 return
-            await self._repair_relations_now(unique_relations)
+            started = perf_counter()
+            counters = await self._repair_relations_now(unique_relations)
+            logger.info(
+                "Sync summary: trigger=direct_relation_repair requested=%s albums=%s tags=%s memberships=%s duration_seconds=%.3f tag_branch_relation_scan=%s",
+                len(unique_relations),
+                counters["albums"],
+                counters["tags"],
+                counters["memberships"],
+                perf_counter() - started,
+                counters["tags"],
+            )
             return
 
         if self._coordinator is not None:
@@ -826,9 +936,23 @@ class AssetSyncService:
             await self._coordinator.wait(task.id)
             return
 
-        await self._repair_targets_now(
+        started = perf_counter()
+        counters = await self._repair_targets_now(
             asset_ids,
             include_stacks=include_stacks,
+        )
+        logger.info(
+            "Sync summary: trigger=direct_asset_repair scope=%s requested=%s processed=%s include_stacks=%s duration_seconds=%.3f tag_branch_asset_payload=%s tag_branch_catalog_fallback=%s tag_fallback_catalog_tags=%s tag_fallback_pages=%s tag_links_resolved=%s",
+            "single" if len(asset_ids) == 1 else "bulk",
+            len(asset_ids),
+            len(asset_ids),
+            include_stacks,
+            perf_counter() - started,
+            counters["tag_branch_asset_payload"],
+            counters["tag_branch_catalog_fallback"],
+            counters["tag_fallback_catalog_tags"],
+            counters["tag_fallback_pages"],
+            counters["tag_links_resolved"],
         )
 
     async def restore_targets(self, asset_ids: list[UUID]) -> None:
@@ -842,9 +966,10 @@ class AssetSyncService:
         asset_ids: list[UUID],
         *,
         include_stacks: bool = False,
-    ) -> None:
+    ) -> dict[str, int]:
         """Perform the remote reads used by an asset-repair handler."""
 
+        metrics = _repair_metric_defaults()
         assets = await asyncio.gather(
             *(self._immich.get_asset(identifier) for identifier in asset_ids)
         )
@@ -865,19 +990,24 @@ class AssetSyncService:
                 asset.id, [album.id for album in albums]
             )
             if asset.includes_tags:
-                await self._assets.replace_asset_tag_memberships(
-                    asset.id,
-                    [UUID(str(tag["id"])) for tag in asset.tags if tag.get("id")],
-                )
+                tag_ids = [UUID(str(tag["id"])) for tag in asset.tags if tag.get("id")]
+                await self._assets.replace_asset_tag_memberships(asset.id, tag_ids)
+                metrics["tag_branch_asset_payload"] += 1
+                metrics["tag_links_resolved"] += len(tag_ids)
             else:
+                metrics["tag_branch_catalog_fallback"] += 1
                 tags = await self._immich.list_tag_catalog()
+                metrics["tag_fallback_catalog_tags"] += len(tags)
                 present: list[UUID] = []
                 for tag in tags:
                     async for page_ids in self._immich.iter_tag_asset_ids(tag.id):
+                        metrics["tag_fallback_pages"] += 1
                         if asset.id in page_ids:
                             present.append(tag.id)
                             break
                 await self._assets.replace_asset_tag_memberships(asset.id, present)
+                metrics["tag_links_resolved"] += len(present)
+        return metrics
 
     async def _repair_relations_now(self, relations: list[tuple[str, UUID]]) -> dict[str, int]:
         """Traverse each affected relation completely before replacing its snapshot."""
@@ -1053,6 +1183,8 @@ class AssetSyncService:
             "stack_members": 0,
             "album_memberships": 0,
             "tag_memberships": 0,
+            "tag_relationships_scanned": 0,
+            "tag_empty_relationships": 0,
             "assets_removed": 0,
         }
         counters = {**defaults, **run.counters}
@@ -1097,6 +1229,7 @@ class AssetSyncService:
                     updated_before=run.window_end if run.mode == "incremental" else None,
                 )
             except ImmichApiError:
+                # A count is useful for feedback but must not make a valid sync fail.
                 asset_total = None
         if start_phase <= 0:
             await self._checkpoint(
@@ -1157,6 +1290,34 @@ class AssetSyncService:
             "finalizing",
             "validated",
             self._progress("finalizing", 1, 1, "Synchronization complete"),
+        )
+        logger.info(
+            "Sync summary: trigger=staged mode=%s run_id=%s generation=%s window_start=%s window_end=%s duration_seconds=%.3f assets_seen=%s assets_created=%s assets_updated=%s assets_unchanged=%s assets_removed=%s albums_seen=%s tags_seen=%s stacks_seen=%s stack_members=%s album_memberships=%s tag_memberships=%s events_seen=%s tag_branch_relationship_scan=%s tag_empty_relationships=%s tag_branch_asset_payload=0 tag_branch_catalog_fallback=0",
+            run.mode,
+            run.id,
+            run.generation,
+            run.window_start,
+            run.window_end,
+            max(
+                0.0,
+                (
+                    datetime.now(UTC) - (run.started_at or run.created_at)
+                ).total_seconds(),
+            ),
+            counters["assets_seen"],
+            counters["assets_created"],
+            counters["assets_updated"],
+            counters["assets_unchanged"],
+            counters["assets_removed"],
+            counters["albums_seen"],
+            counters["tags_seen"],
+            counters["stacks_seen"],
+            counters["stack_members"],
+            counters["album_memberships"],
+            counters["tag_memberships"],
+            counters.get("events_seen", 0),
+            counters["tag_relationships_scanned"],
+            counters["tag_empty_relationships"],
         )
         return counters
 
@@ -1302,6 +1463,8 @@ class AssetSyncService:
                 start_page = int(cursor_parts[1])
                 completed_page_batches = int(cursor_parts[2])
             else:
+                # Compatibility with checkpoints written before media API pages
+                # were decoupled from persistence batches.
                 completed_batches = int(cursor_parts[-1])
                 completed_assets = completed_batches * batch_size
                 start_page = completed_assets // page_size + 1
@@ -1433,7 +1596,6 @@ class AssetSyncService:
             [member.id for member in assets],
         )
 
-
     async def _sync_stacks(
         self,
         run: SyncRunStatus,
@@ -1510,6 +1672,9 @@ class AssetSyncService:
         completed_relation = 0
         completed_page = 0
         membership_total: int | None = None
+        # Immich's metadata-search total is page-sized on supported live
+        # versions. Counting every album and tag also creates an unbounded
+        # request fan-out. Keep this phase truthful and indeterminate instead.
         association_completed = counters.get("album_memberships", 0) + counters.get(
             "tag_memberships", 0
         )
@@ -1589,9 +1754,13 @@ class AssetSyncService:
                         ),
                     ),
                 )
+        # Immich's compact tag catalog has no asset count. Each concurrent
+        # first-page search is therefore the authoritative empty-tag check.
         skipped_tags = 0
         tag_start = 0
         if relation_kind == "tags":
+            # New checkpoints record completed waves as page zero. Older
+            # page-level cursors safely replay their current tag.
             tag_start = (
                 completed_relation
                 if completed_page == 0
@@ -1612,7 +1781,10 @@ class AssetSyncService:
             results = [task.result() for task in tasks]
             counters["tag_memberships"] += sum(result[0] for result in results)
             association_completed += sum(result[1] for result in results)
-            skipped_tags += sum(result[2] for result in results)
+            empty_tags = sum(result[2] for result in results)
+            skipped_tags += empty_tags
+            counters["tag_relationships_scanned"] += len(wave)
+            counters["tag_empty_relationships"] += empty_tags
             completed_tags = wave_start + len(wave)
             await self._checkpoint(
                 run,
