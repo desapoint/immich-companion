@@ -1062,7 +1062,7 @@
         {#each visibleReviewEntries as entry (entry.group.group_id)}
           {@const group = entry.group}
           {@const blockedReason = actionabilityReason(group)}
-          <article id={`duplicate-group-${group.group_id}`} class:eligible={group.eligible} class="group-card">
+          <article id={`duplicate-group-${group.group_id}`} class="group-card">
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
@@ -1192,23 +1192,23 @@
   .review-readiness { max-width: 15rem; color: var(--color-warning-ink); font-size: .64rem; line-height: 1.25; }
   .groups { display: grid; gap: 1rem; }
   .group-card { overflow: hidden; scroll-margin-top: calc(var(--app-header-height) + 5rem); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
-  .group-card.eligible { border-color: var(--color-positive-border); }
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
   .group-card header p { flex: 1; margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
   .group-controls { display: flex; min-width: min(100%, 31rem); flex: 1; align-items: center; justify-content: flex-end; gap: .75rem; }
   .group-presets { display: inline-flex; flex: none; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
   .group-presets button { min-height: 2rem; border: 0; border-right: 1px solid var(--color-border-subtle); border-radius: 0; }
   .group-presets button:last-child { border-right: 0; }
-  .group-heading { display: flex; align-items: center; gap: .65rem; }
-  .group-heading > div { display: flex; align-items: center; gap: .55rem; white-space: nowrap; }
+  .group-heading { display: flex; min-width: 0; align-items: flex-start; gap: .65rem; }
+  .group-heading > div { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .32rem .55rem; white-space: normal; }
+  .group-heading > div > strong { margin-right: .1rem; }
   .status { padding: .2rem .45rem; border-radius: 999px; background: var(--color-surface-soft); font-size: .62rem; font-weight: 800; text-transform: uppercase; }
   .status.exact { color: var(--color-positive-ink); background: var(--color-positive-surface); }
   .status.unverified { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .status.mismatch, .status.ineligible { color: var(--color-negative-ink); background: var(--color-negative-surface); }
-  .workflow-status { color: var(--color-ink-muted); font-size: .6rem; font-weight: 760; }
-  .decision-status { color: var(--color-positive-ink); font-size: .6rem; font-weight: 760; }
+  .workflow-status { color: var(--color-ink-muted); font-size: .58rem; font-weight: 680; }
+  .decision-status { color: var(--color-ink-muted); font-size: .58rem; font-weight: 680; }
   .decision-status.stale { color: var(--color-warning-ink); }
-  .blocked-reason { color: var(--color-warning-ink); font-size: .6rem; font-weight: 760; }
+  .blocked-reason { flex-basis: 100%; margin-top: .08rem; padding: .28rem .42rem; border-radius: var(--radius-sm); color: var(--color-warning-ink); background: var(--color-warning-surface); font-size: .62rem; font-weight: 760; line-height: 1.3; }
   .stale-workspace { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
