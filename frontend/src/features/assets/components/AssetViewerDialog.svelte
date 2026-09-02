@@ -599,7 +599,6 @@
     imageNaturalHeight = dimensions.height;
     imageLoading = false;
     imageError = false;
-    untrack(() => onvisiblechange(assetId));
     return true;
   }
 
