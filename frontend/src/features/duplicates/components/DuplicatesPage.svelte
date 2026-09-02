@@ -34,6 +34,7 @@
   import type {
     DuplicateAnalysisOptions,
     DuplicateActionSelection,
+    DuplicateBulkPreset,
     DuplicateDisposition,
     DuplicateGroupDraft,
     DuplicateKeeperPolicy,
@@ -77,7 +78,7 @@
   ];
   const bulkActionOptions: SelectOption[] = [
     { value: 'keep_all', label: 'Keep all copies' },
-    { value: 'delete_all', label: 'Delete every copy' },
+    { value: 'mark_all_delete', label: 'Mark all for deletion' },
     { value: 'stack_all', label: 'Stack each group' },
   ];
   const defaultOptions: DuplicateAnalysisOptions = {
@@ -94,8 +95,9 @@
   let options = $state<DuplicateAnalysisOptions>({ ...defaultOptions });
   let appliedOptions = $state.raw<DuplicateAnalysisOptions>({ ...defaultOptions });
   let libraryOptions = $state<SelectOption[]>([]);
-  let bulkAction = $state<DuplicatePlanAction>('keep_all');
+  let bulkAction = $state<DuplicateBulkPreset>('keep_all');
   const selected = new SvelteSet<string>();
+  const manuallySelected = new SvelteSet<string>();
   let groupDrafts = $state.raw<Record<string, DuplicateGroupDraft>>({});
   let workspace = $state.raw<DuplicateWorkspaceState | null>(null);
   let activeGroupId = $state<string | null>(null);
@@ -135,10 +137,6 @@
   const selectedReady = $derived(
     selectedGroups.length > 0 && blockedSelectedCount === 0,
   );
-  const allAutoReadySelected = $derived(
-    autoReadyGroups.length > 0
-      && autoReadyGroups.every((group) => selected.has(group.group_id)),
-  );
   const rulesChanged = $derived(
     JSON.stringify(configuredOptions()) !== JSON.stringify(appliedOptions),
   );
@@ -155,6 +153,16 @@
   const reviewFilterCounts = $derived(countDuplicateReviewFilters(reviewEntries));
   const visibleReviewEntries = $derived(
     reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
+  );
+  const visibleGroupIds = $derived(new Set(visibleReviewEntries.map((entry) => entry.group.group_id)));
+  const visibleSelectedCount = $derived(
+    selectedGroups.filter((group) => visibleGroupIds.has(group.group_id)).length,
+  );
+  const hiddenManuallySelectedGroups = $derived(
+    selectedGroups.filter((group) => !visibleGroupIds.has(group.group_id) && manuallySelected.has(group.group_id)),
+  );
+  const bulkTargetGroups = $derived(
+    selectedGroups.filter((group) => visibleGroupIds.has(group.group_id) || manuallySelected.has(group.group_id)),
   );
   const resumableIncompleteWork = $derived(
     task?.status === 'failed'
@@ -190,15 +198,21 @@
       workspace = restored;
       groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
       const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
-      for (const id of selected) if (!liveIds.has(id)) selected.delete(id);
+      for (const id of selected) {
+        if (!liveIds.has(id)) {
+          selected.delete(id);
+          manuallySelected.delete(id);
+        }
+      }
       if (!selectionInitialized) {
         selected.clear();
+        manuallySelected.clear();
         if (restored.initialized) {
-          for (const groupId of restored.selected_group_ids) selected.add(groupId);
+          for (const groupId of restored.selected_group_ids) {
+            selected.add(groupId);
+            manuallySelected.add(groupId);
+          }
           activeGroupId = restored.active_group_id;
-        } else {
-          for (const group of autoReadyGroups) selected.add(group.group_id);
-          if (selected.size) void persistWorkspace();
         }
         selectionInitialized = true;
       }
@@ -247,6 +261,7 @@
             : 'The reviewed duplicate batch completed.';
         if (kind === 'analysis') {
           selected.clear();
+          manuallySelected.clear();
           selectionInitialized = false;
           groupDrafts = {};
         }
@@ -279,22 +294,21 @@
   }
 
   function toggleGroup(groupId: string, checked: boolean): void {
-    if (checked) selected.add(groupId);
-    else selected.delete(groupId);
+    if (checked) {
+      selected.add(groupId);
+      manuallySelected.add(groupId);
+    } else {
+      selected.delete(groupId);
+      manuallySelected.delete(groupId);
+    }
     invalidatePlan();
     void persistWorkspace();
   }
 
-  function toggleAllEligible(): void {
+  function selectAutoReadyGroups(): void {
+    if (!autoReadyGroups.length) return;
     invalidatePlan();
-    if (allAutoReadySelected) {
-      for (const group of autoReadyGroups) selected.delete(group.group_id);
-      void persistWorkspace();
-      return;
-    }
-    for (const group of autoReadyGroups) {
-      selected.add(group.group_id);
-    }
+    for (const group of autoReadyGroups) selected.add(group.group_id);
     void persistWorkspace();
   }
 
@@ -331,7 +345,11 @@
     workspace = restored;
     groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
     selected.clear();
-    for (const groupId of restored.selected_group_ids) selected.add(groupId);
+    manuallySelected.clear();
+    for (const groupId of restored.selected_group_ids) {
+      selected.add(groupId);
+      manuallySelected.add(groupId);
+    }
     activeGroupId = restored.active_group_id;
     selectionInitialized = true;
   }
@@ -355,7 +373,9 @@
     const values = new Set(draft.decisions.map((decision) => decision.disposition));
     if (values.size === 1) {
       const disposition = draft.decisions[0].disposition;
-      return disposition === 'keep' ? 'keep_all' : disposition === 'delete' ? 'delete_all' : 'stack_all';
+      if (disposition === 'keep') return 'keep_all';
+      if (disposition === 'stack') return 'stack_all';
+      return 'mixed';
     }
     const keepCount = draft.decisions.filter((decision) => decision.disposition === 'keep').length;
     const deleteCount = draft.decisions.filter((decision) => decision.disposition === 'delete').length;
@@ -373,8 +393,9 @@
     const hasDraftDecisions = (draft?.decisions.length ?? 0) > 0;
     const draftComplete = draft?.decisions.length === group.members.length;
     const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
-    const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete')
-      ?? (action === 'resolve' || action === 'delete_all');
+    const hasDeletions = hasDraftDecisions
+      ? draft!.decisions.some((decision) => decision.disposition === 'delete')
+      : action === 'resolve';
     const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
 
     if (action === 'none') return 'Choose an action for every image.';
@@ -382,8 +403,8 @@
     if (hasDraftDecisions && !draftComplete) return 'Choose an action for every image.';
     if (requiresPrimary && selectedKeeper(group) === null) return 'Choose the surviving primary image.';
     if (stackDecisions.length === 1) return 'A stack needs at least two surviving images.';
-    if (hasDeletions && action !== 'delete_all' && (!group.eligible || group.members.some((member) => member.is_offline))) {
-      return 'Resolve/delete requires an eligible group with every image online.';
+    if (hasDeletions && (!group.eligible || group.members.some((member) => member.is_offline))) {
+      return 'Deleting duplicate members requires an eligible Immich group with every image online.';
     }
     if (stackDecisions.length && group.members.some((member) => (
       stackDecisions.some((decision) => decision.asset_id === member.id)
@@ -533,6 +554,7 @@
     groupDrafts = { ...groupDrafts, [group.group_id]: draft };
     const wasSelected = selected.has(group.group_id);
     selected.add(group.group_id);
+    manuallySelected.add(group.group_id);
     if (!wasSelected) void persistWorkspace();
     queueDraftPersistence(group, draft);
   }
@@ -575,17 +597,15 @@
   }
 
   async function applyBulkAction(): Promise<void> {
-    if (!result || !selected.size) return;
+    if (!result || !bulkTargetGroups.length) return;
     busy = true;
     error = null;
-    const groups = result.groups.filter((group) => selected.has(group.group_id));
     try {
-      for (const group of groups) {
+      for (const group of bulkTargetGroups) {
         if (bulkAction === 'keep_all') applyGroupPreset(group, 'keep');
-        else if (bulkAction === 'delete_all') applyGroupPreset(group, 'delete');
+        else if (bulkAction === 'mark_all_delete') applyGroupPreset(group, 'delete');
         else if (bulkAction === 'stack_all') applyGroupPreset(group, 'stack');
       }
-      if (bulkAction === 'none') selected.clear();
     } finally {
       busy = false;
     }
@@ -721,14 +741,14 @@
   async function reviewBatch(): Promise<void> {
     await reviewGroups(
       [...selectedGroups],
-      'Every selected duplicate group needs a complete, executable decision before review.',
+      'Every selected duplicate group needs complete, executable decisions before review.',
     );
   }
 
   async function reviewSingleGroup(group: ExactDuplicateGroup): Promise<void> {
     await reviewGroups(
       [group],
-      'This duplicate group needs a complete, executable decision before review.',
+      'This duplicate group needs complete, executable decisions before review.',
     );
   }
 
@@ -951,13 +971,14 @@
     {/if}
 
     <div class="batch-bar">
-      <Checkbox checked={allAutoReadySelected} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
-      <span>{selectedCount} selected</span>
-      <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!selectedCount || busy} onchange={(value) => bulkAction = value as DuplicatePlanAction} />
-      <button type="button" disabled={!selectedCount || busy} onclick={() => void applyBulkAction()}>Apply action</button>
+      <button type="button" disabled={!autoReadyGroups.length || busy} onclick={selectAutoReadyGroups}>Select auto-ready</button>
+      <span>{selectedCount} selected · {visibleSelectedCount} visible</span>
+      <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!bulkTargetGroups.length || busy} onchange={(value) => bulkAction = value as DuplicateBulkPreset} />
+      <button type="button" disabled={!bulkTargetGroups.length || busy} onclick={() => void applyBulkAction()}>Apply action</button>
       <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions(selectedGroups.map((group) => group.group_id))}>Clear selected decisions</button>
+      {#if hiddenManuallySelectedGroups.length}<small class="review-readiness">{hiddenManuallySelectedGroups.length} manually selected {hiddenManuallySelectedGroups.length === 1 ? 'group is' : 'groups are'} hidden by this filter and will still be included.</small>{/if}
       {#if selectedCount > 0 && !selectedReady}<small class="review-readiness">{blockedSelectedCount} selected {blockedSelectedCount === 1 ? 'group needs' : 'groups need'} complete executable decisions</small>{/if}
-      <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review batch</button>
+      <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review actions</button>
     </div>
 
     {#if loading}
@@ -981,11 +1002,11 @@
                 <p>{group.reason}</p>
                 <div class="group-presets" aria-label="Set every image decision">
                   <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
-                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'delete')}>Mark all for deletion</button>
                   <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
                   <button type="button" disabled={busy || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
                 </div>
-                <button type="button" disabled={busy || blockedReason !== null} onclick={() => void reviewSingleGroup(group)}>Review group</button>
+                <button type="button" disabled={busy || blockedReason !== null} onclick={() => void reviewSingleGroup(group)}>Review actions</button>
               </div>
             </header>
             <div class="members">
@@ -1040,8 +1061,8 @@
 
 {#if confirmOpen && plan}
   <ConfirmDialog
-    title="Process reviewed duplicates"
-    message={`Process ${plan.group_count} reviewed Immich duplicate groups: ${plan.resolve_group_count} keeper resolutions, ${plan.keep_all_group_count} keep-all groups, ${plan.delete_all_group_count} delete-all groups, and ${plan.mixed_group_count} mixed groups. This retains ${plan.retained_asset_count} assets and trashes ${plan.trash_asset_count}.${plan.stack_group_count ? ` After resolution, create ${plan.stack_group_count} stacks; incomplete stacks can resume without resolving the group again.` : ''}${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
+    title="Process reviewed duplicate actions"
+    message={`${plan.zero_survivor_group_count ? `Warning: ${plan.zero_survivor_group_count} ${plan.zero_survivor_group_count === 1 ? 'group retains' : 'groups retain'} zero copies. ` : ''}Groups: ${plan.group_count}. Assets retained: ${plan.retained_asset_count}. Assets marked for deletion: ${plan.trash_asset_count}. Keeper resolutions: ${plan.resolve_group_count}. Keep-all groups: ${plan.keep_all_group_count}. Mixed groups: ${plan.mixed_group_count}.${plan.stack_group_count ? ` Stacks to create after resolution: ${plan.stack_group_count}. Incomplete stack follow-up can resume without resolving the group again.` : ''}`}
     confirmLabel="Process batch"
     icon={plan.destructive ? 'trash' : 'stack'}
     destructive={plan.destructive}
@@ -1089,7 +1110,7 @@
   .summary span { color: var(--color-ink-muted); font-size: .7rem; }
   .batch-bar { position: sticky; z-index: 40; top: calc(var(--app-header-height) + .5rem); display: flex; min-height: 3.5rem; align-items: center; gap: .8rem; padding: .55rem .8rem; box-shadow: var(--shadow-card); }
   .batch-bar > span { margin-left: auto; color: var(--color-ink-muted); font-size: .74rem; }
-  .review-readiness { max-width: 13rem; color: var(--color-warning-ink); font-size: .64rem; line-height: 1.25; }
+  .review-readiness { max-width: 15rem; color: var(--color-warning-ink); font-size: .64rem; line-height: 1.25; }
   .groups { display: grid; gap: 1rem; }
   .group-card { overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .group-card.eligible { border-color: var(--color-positive-border); }
@@ -1129,6 +1150,6 @@
   .rule-recommendation { width: fit-content; padding: .16rem .38rem; border-radius: 999px; color: var(--color-positive-ink); background: var(--color-positive-surface); font-weight: 780; text-transform: capitalize; }
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
-  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } }
+  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } .batch-bar { flex-wrap: wrap; } }
   @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>
