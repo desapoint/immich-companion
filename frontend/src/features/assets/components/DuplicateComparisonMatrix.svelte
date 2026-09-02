@@ -129,19 +129,6 @@
 
   function renderDifference(): void {
     if (!differenceOpen || !referenceMember || !visibleMember || !differenceCanvas) return;
-    const referencePreservation = referenceMember.preservation;
-    const visiblePreservation = visibleMember.preservation;
-    if (!referencePreservation || !visiblePreservation) {
-      differenceError = 'Decoded dimensions are unavailable for one of these copies.';
-      return;
-    }
-    if (
-      referencePreservation.decoded_width !== visiblePreservation.decoded_width
-      || referencePreservation.decoded_height !== visiblePreservation.decoded_height
-    ) {
-      differenceError = 'Decoded dimensions differ. Use the overlay view to inspect crop or alignment differences.';
-      return;
-    }
     if (
       !referenceDiffImage?.complete
       || !visibleDiffImage?.complete
@@ -151,12 +138,25 @@
 
     try {
       const maxDimension = 512;
-      const scale = Math.min(
-        1,
-        maxDimension / Math.max(referenceDiffImage.naturalWidth, referenceDiffImage.naturalHeight),
-      );
-      const width = Math.max(1, Math.round(referenceDiffImage.naturalWidth * scale));
-      const height = Math.max(1, Math.round(referenceDiffImage.naturalHeight * scale));
+      const referenceAspect = referenceDiffImage.naturalWidth / referenceDiffImage.naturalHeight;
+      const visibleAspect = visibleDiffImage.naturalWidth / visibleDiffImage.naturalHeight;
+      const widestAspect = Math.max(referenceAspect, visibleAspect);
+      const tallestAspect = Math.min(referenceAspect, visibleAspect);
+
+      let width = maxDimension;
+      let height = maxDimension;
+      if (widestAspect <= 1) {
+        width = Math.max(
+          1,
+          Math.round(maxDimension * Math.max(referenceAspect, visibleAspect)),
+        );
+      } else if (tallestAspect >= 1) {
+        height = Math.max(
+          1,
+          Math.round(maxDimension / Math.min(referenceAspect, visibleAspect)),
+        );
+      }
+
       const referenceCanvas = document.createElement('canvas');
       const visibleCanvas = document.createElement('canvas');
       referenceCanvas.width = width;
@@ -174,18 +174,37 @@
         return;
       }
 
-      referenceContext.drawImage(referenceDiffImage, 0, 0, width, height);
-      visibleContext.drawImage(visibleDiffImage, 0, 0, width, height);
+      function drawContained(
+        drawingContext: CanvasRenderingContext2D,
+        image: HTMLImageElement,
+      ): void {
+        const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
+        const drawWidth = Math.max(1, image.naturalWidth * scale);
+        const drawHeight = Math.max(1, image.naturalHeight * scale);
+        const left = (width - drawWidth) / 2;
+        const top = (height - drawHeight) / 2;
+        drawingContext.clearRect(0, 0, width, height);
+        drawingContext.drawImage(image, left, top, drawWidth, drawHeight);
+      }
+
+      drawContained(referenceContext, referenceDiffImage);
+      drawContained(visibleContext, visibleDiffImage);
+
       const referencePixels = referenceContext.getImageData(0, 0, width, height);
       const visiblePixels = visibleContext.getImageData(0, 0, width, height);
       const output = outputContext.createImageData(width, height);
 
       for (let index = 0; index < output.data.length; index += 4) {
+        const referenceAlpha = referencePixels.data[index + 3];
+        const visibleAlpha = visiblePixels.data[index + 3];
+        const onlyOneImagePresent = (referenceAlpha === 0) !== (visibleAlpha === 0);
         const red = Math.abs(referencePixels.data[index] - visiblePixels.data[index]);
         const green = Math.abs(referencePixels.data[index + 1] - visiblePixels.data[index + 1]);
         const blue = Math.abs(referencePixels.data[index + 2] - visiblePixels.data[index + 2]);
-        const alpha = Math.abs(referencePixels.data[index + 3] - visiblePixels.data[index + 3]);
-        const difference = Math.max(red, green, blue, alpha);
+        const alpha = Math.abs(referenceAlpha - visibleAlpha);
+        const difference = onlyOneImagePresent
+          ? 255
+          : Math.max(red, green, blue, alpha);
         output.data[index] = Math.min(255, difference * 4);
         output.data[index + 1] = Math.min(120, difference);
         output.data[index + 2] = 0;
@@ -318,7 +337,7 @@
     <header>
       <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
       <div><strong>{visibleMember.filename}</strong><span>Viewing</span></div>
-      <p>Differences are amplified 4× on a max 512px working image. Black areas match closely.</p>
+      <p>Images are center-aligned and scaled to contain in a shared max-512px frame. Differences are amplified 4×; black areas match closely.</p>
       <button type="button" onclick={() => differenceOpen = false}>Close difference</button>
     </header>
     <div class="difference-stage">
