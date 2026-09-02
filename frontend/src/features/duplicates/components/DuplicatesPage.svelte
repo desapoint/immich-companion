@@ -62,6 +62,7 @@
   let { onpreview }: Props = $props();
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
+  const draftSaveDelayMs = 250;
   const keeperPolicyOptions: SelectOption[] = [
     { value: 'most_recent', label: 'Most recently uploaded' },
     { value: 'prefer_upload', label: 'Prefer uploads' },
@@ -111,6 +112,8 @@
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let workspaceSaveQueue = Promise.resolve();
   const draftSaveQueues = new SvelteMap<string, Promise<void>>();
+  const draftSaveTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+  const pendingDrafts = new SvelteMap<string, { group: ExactDuplicateGroup; draft: DuplicateGroupDraft }>();
   let selectionInitialized = false;
   let applyRulesAfterAnalysis = false;
   const pendingRuleApplicationTaskKey = 'immich-companion:duplicates:pending-rule-application-task';
@@ -121,12 +124,12 @@
       (group) => group.auto_selected && group.manual_action === null && group.review_status === 'pending',
     ) ?? [],
   );
-  const selectedCount = $derived(selected.size);
+  const selectedGroups = $derived(
+    result?.groups.filter((group) => selected.has(group.group_id)) ?? [],
+  );
+  const selectedCount = $derived(selectedGroups.length);
   const selectedReady = $derived(
-    selectedCount > 0
-      && (result?.groups
-        .filter((group) => selected.has(group.group_id))
-        .every((group) => isActionable(group)) ?? false),
+    selectedGroups.length > 0 && selectedGroups.every((group) => isActionable(group)),
   );
   const allAutoReadySelected = $derived(
     autoReadyGroups.length > 0
@@ -356,11 +359,15 @@
   function isActionable(group: ExactDuplicateGroup): boolean {
     const action = effectiveActionFor(group);
     const draft = draftFor(group);
+    const hasDraftDecisions = (draft?.decisions.length ?? 0) > 0;
+    const draftComplete = draft?.decisions.length === group.members.length;
     const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
-    const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete') ?? action === 'resolve';
-    const requiresPrimary = action === 'resolve' || stackDecisions.length > 0;
+    const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete')
+      ?? action === 'resolve'
+      || action === 'delete_all';
+    const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
     return action !== 'none'
-      && draft?.decisions.length === group.members.length
+      && (!hasDraftDecisions || draftComplete)
       && (!requiresPrimary || selectedKeeper(group) !== null)
       && stackDecisions.length !== 1
       && (!hasDeletions || action === 'delete_all' || (group.eligible && !group.members.some((member) => member.is_offline)))
@@ -368,6 +375,15 @@
         stackDecisions.some((decision) => decision.asset_id === member.id)
         && (member.is_offline || member.is_stacked)
       )));
+  }
+
+  function sameDraftState(left: DuplicateGroupDraft | null, right: DuplicateGroupDraft): boolean {
+    return left !== null
+      && left.member_fingerprint === right.member_fingerprint
+      && left.stack_primary_asset_id === right.stack_primary_asset_id
+      && left.metadata_keeper_asset_id === right.metadata_keeper_asset_id
+      && left.status === right.status
+      && JSON.stringify(left.decisions) === JSON.stringify(right.decisions);
   }
 
   async function persistDraft(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
@@ -383,7 +399,9 @@
         metadata_keeper_asset_id: draft.metadata_keeper_asset_id,
         status: draft.status,
       });
-      groupDrafts = { ...groupDrafts, [group.group_id]: updated };
+      if (sameDraftState(draftFor(group), draft)) {
+        groupDrafts = { ...groupDrafts, [group.group_id]: updated };
+      }
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
     } finally {
@@ -391,13 +409,44 @@
     }
   }
 
-  function queueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): void {
+  function enqueueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
     const previous = draftSaveQueues.get(group.group_id) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => persistDraft(group, draft));
     draftSaveQueues.set(group.group_id, next);
     void next.finally(() => {
       if (draftSaveQueues.get(group.group_id) === next) draftSaveQueues.delete(group.group_id);
     });
+    return next;
+  }
+
+  function flushPendingDraft(groupId: string): Promise<void> | null {
+    const timer = draftSaveTimers.get(groupId);
+    if (timer) {
+      clearTimeout(timer);
+      draftSaveTimers.delete(groupId);
+    }
+    const pending = pendingDrafts.get(groupId);
+    if (!pending) return draftSaveQueues.get(groupId) ?? null;
+    pendingDrafts.delete(groupId);
+    return enqueueDraftPersistence(pending.group, pending.draft);
+  }
+
+  async function flushDraftPersistence(groupIds: string[]): Promise<void> {
+    const pending = groupIds
+      .map((groupId) => flushPendingDraft(groupId))
+      .filter((save): save is Promise<void> => save !== null);
+    await Promise.all(pending);
+  }
+
+  function queueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): void {
+    pendingDrafts.set(group.group_id, { group, draft });
+    const existingTimer = draftSaveTimers.get(group.group_id);
+    if (existingTimer) clearTimeout(existingTimer);
+    const timer = setTimeout(() => {
+      draftSaveTimers.delete(group.group_id);
+      void flushPendingDraft(group.group_id);
+    }, draftSaveDelayMs);
+    draftSaveTimers.set(group.group_id, timer);
   }
 
   function updateDraft(
@@ -425,8 +474,9 @@
       stale: false,
     };
     groupDrafts = { ...groupDrafts, [group.group_id]: draft };
+    const wasSelected = selected.has(group.group_id);
     selected.add(group.group_id);
-    void persistWorkspace();
+    if (!wasSelected) void persistWorkspace();
     queueDraftPersistence(group, draft);
   }
 
@@ -490,11 +540,7 @@
     error = null;
     message = null;
     try {
-      await Promise.all(
-        groupIds
-          .map((groupId) => draftSaveQueues.get(groupId))
-          .filter((pending): pending is Promise<void> => pending !== undefined),
-      );
+      await flushDraftPersistence(groupIds);
       const restored = await resetDuplicateWorkspaceDecisions({
         options: appliedOptions,
         group_ids: groupIds,
@@ -580,24 +626,25 @@
   }
 
   async function reviewBatch(): Promise<void> {
-    if (!selected.size) return;
+    if (!selectedGroups.length) return;
     busy = true;
     error = null;
     message = null;
+    const groupIds = selectedGroups.map((group) => group.group_id);
     try {
+      await flushDraftPersistence(groupIds);
+      await workspaceSaveQueue.catch(() => undefined);
       plan = await planDuplicateResolution({
         options: appliedOptions,
-        group_ids: [...selected],
+        group_ids: groupIds,
         all_eligible: false,
         keeper_overrides: Object.fromEntries(
-          result?.groups
-            .filter((group) => selected.has(group.group_id) && selectedKeeper(group) !== null)
-            .map((group) => [group.group_id, selectedKeeper(group)!]) ?? [],
+          selectedGroups
+            .filter((group) => selectedKeeper(group) !== null)
+            .map((group) => [group.group_id, selectedKeeper(group)!]),
         ),
         action_overrides: Object.fromEntries(
-          result?.groups
-            .filter((group) => selected.has(group.group_id))
-            .map((group) => [group.group_id, effectiveActionFor(group)]) ?? [],
+          selectedGroups.map((group) => [group.group_id, effectiveActionFor(group)]),
         ) as Record<string, Exclude<DuplicatePlanAction, 'none'>>,
       });
       confirmOpen = true;
@@ -738,7 +785,10 @@
       }
       await load();
     })();
-    return () => { if (pollTimer) clearTimeout(pollTimer); };
+    return () => {
+      if (pollTimer) clearTimeout(pollTimer);
+      for (const timer of draftSaveTimers.values()) clearTimeout(timer);
+    };
   });
 </script>
 
@@ -828,7 +878,7 @@
       <span>{selectedCount} selected</span>
       <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!selectedCount || busy} onchange={(value) => bulkAction = value as DuplicatePlanAction} />
       <button type="button" disabled={!selectedCount || busy} onclick={() => void applyBulkAction()}>Apply action</button>
-      <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions([...selected])}>Clear selected decisions</button>
+      <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions(selectedGroups.map((group) => group.group_id))}>Clear selected decisions</button>
       <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review batch</button>
     </div>
 
@@ -846,15 +896,15 @@
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{savingGroups.has(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{savingGroups.has(group.group_id) ? 'Saving…' : pendingDrafts.has(group.group_id) ? 'Unsaved changes' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
               </div>
               <div class="group-controls">
                 <p>{group.reason}</p>
                 <div class="group-presets" aria-label="Set every image decision">
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id) || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
+                  <button type="button" disabled={busy || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
                 </div>
               </div>
             </header>
@@ -884,14 +934,14 @@
                     <small>{formatSize(member.file_size_bytes)}</small>
                     <DuplicateDispositionControls
                       value={dispositionFor(group, member.id)}
-                      disabled={busy || savingGroups.has(group.group_id)}
+                      disabled={busy}
                       compact
                       onchange={(disposition) => setMemberDisposition(group, member.id, disposition)}
                     />
                     <StackPrimaryControl
                       eligible={dispositionFor(group, member.id) === 'stack'}
                       selected={draftFor(group)?.stack_primary_asset_id === member.id}
-                      disabled={busy || savingGroups.has(group.group_id)}
+                      disabled={busy}
                       compact
                       onchange={() => setStackPrimary(group, member.id)}
                     />
