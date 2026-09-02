@@ -134,13 +134,11 @@ def _member_dispositions(
 
 
 def _action_for_dispositions(dispositions: list[str]) -> str:
-    """Describe a complete member partition without losing mixed choices."""
+    """Describe a complete member partition without inventing a delete-all action."""
 
     values = set(dispositions)
     if values == {"keep"}:
         return "keep_all"
-    if values == {"delete"}:
-        return "delete_all"
     if values == {"stack"}:
         return "stack_all"
     if dispositions.count("keep") == 1 and dispositions.count("delete") == len(
@@ -1385,11 +1383,11 @@ class CrossSourceDuplicateService:
             if action == "none":
                 raise ActionPlanConflictError("Every selected group needs an action")
             has_deletions = "delete" in dispositions
-            if has_deletions and action != "delete_all" and (
+            if has_deletions and (
                 not group.eligible or any(member.is_offline for member in group.members)
             ):
                 raise ActionPlanConflictError(
-                    "Only available, verified exact groups can be resolved"
+                    "Deleting duplicate members requires an available Immich group with every image online"
                 )
             stack_ids = [
                 member.id
@@ -1611,11 +1609,18 @@ class CrossSourceDuplicateService:
         for planned in pending_resolution:
             live_group = reviewed.get(planned["group_id"])
             planned_members = {UUID(value) for value in planned["member_asset_ids"]}
+            has_deletions = bool(planned.get("trash_asset_ids"))
             if (
                 live_group is None
                 or {asset.id for asset in live_group.members} != planned_members
                 or live_group.member_fingerprint != planned["member_fingerprint"]
-                or (planned["action"] == "resolve" and not live_group.eligible)
+                or (
+                    has_deletions
+                    and (
+                        not live_group.eligible
+                        or any(member.is_offline for member in live_group.members)
+                    )
+                )
                 or (
                     planned.get("follow_up") is not None
                     and any(
@@ -1726,16 +1731,10 @@ class CrossSourceDuplicateService:
                 metadata_ready.append(planned)
         pending_resolution = metadata_ready
 
-        regular_groups = [
-            item for item in pending_resolution if item["action"] != "delete_all"
-        ]
-        delete_groups = [
-            item for item in pending_resolution if item["action"] == "delete_all"
-        ]
         resolution_batches = [
-            regular_groups[offset : offset + batch_size]
-            for offset in range(0, len(regular_groups), batch_size)
-        ] + [[item] for item in delete_groups]
+            pending_resolution[offset : offset + batch_size]
+            for offset in range(0, len(pending_resolution), batch_size)
+        ]
         for batch_index, batch in enumerate(resolution_batches):
             await context.ensure_active()
             resolutions = [
@@ -1910,7 +1909,7 @@ class CrossSourceDuplicateService:
         deleted_ids = {
             planned["group_id"]
             for planned in raw_groups
-            if planned["action"] == "delete_all" and planned["group_id"] in successful_ids
+            if not planned.get("keep_asset_ids") and planned["group_id"] in successful_ids
         }
         stacked_ids = {
             planned["group_id"]
