@@ -363,8 +363,7 @@
     const draftComplete = draft?.decisions.length === group.members.length;
     const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
     const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete')
-      ?? action === 'resolve'
-      || action === 'delete_all';
+      ?? (action === 'resolve' || action === 'delete_all');
     const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
     return action !== 'none'
       && (!hasDraftDecisions || draftComplete)
