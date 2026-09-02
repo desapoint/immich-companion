@@ -209,6 +209,7 @@
   const loadedMediaUrls = new Set<string>();
   const mediaDimensions = new Map<string, { width: number; height: number }>();
   const preloadingAssetIds = new Set<string>();
+  let pendingComparisonAnchor: ImageZoomAnchor | null = null;
   let panOrigin = $state<ViewerPanOrigin | null>(null);
   let nextLoading = $state(false);
   let integrityDialogOpen = $state(false);
@@ -398,6 +399,28 @@
     );
   }
 
+  function captureDuplicateComparisonView(): void {
+    if (!duplicateContext) return;
+    pendingComparisonAnchor = currentVisibleCenterAnchor();
+  }
+
+  function restoreDuplicateComparisonView(): void {
+    const anchor = pendingComparisonAnchor;
+    if (!anchor || !viewerImage || imageLoading || imageError) return;
+    pendingComparisonAnchor = null;
+    requestAnimationFrame(() => {
+      if (!viewerImage) return;
+      const offset = anchoredScrollOffset(
+        anchor,
+        viewerImage.getBoundingClientRect(),
+        viewerScroll.scrollLeft,
+        viewerScroll.scrollTop,
+      );
+      viewerScroll.scrollLeft = offset.left;
+      viewerScroll.scrollTop = offset.top;
+    });
+  }
+
   function changeZoom(value: number, anchor: ImageZoomAnchor | null): void {
     const nextZoom = normalizedZoom(value);
     if (nextZoom === zoom) return;
@@ -430,6 +453,7 @@
   }
 
   async function navigate(direction: 'previous' | 'next'): Promise<void> {
+    captureDuplicateComparisonView();
     const nextIndex = nextViewerIndex(currentIndex, direction, assets.length);
     const canLoadAdjacent = direction === 'next'
       ? canrequestnext && onrequestnext !== undefined
@@ -451,10 +475,12 @@
   }
 
   function previewComparison(assetId: string): void {
+    captureDuplicateComparisonView();
     visibleAssetId = assetId;
   }
 
   function selectViewedStackAsset(assetId: string): void {
+    captureDuplicateComparisonView();
     const resultIndex = assets.findIndex((asset) => asset.id === assetId);
     if (resultIndex >= 0) {
       onnavigate(resultIndex);
@@ -464,10 +490,12 @@
   }
 
   function restoreComparison(): void {
+    captureDuplicateComparisonView();
     visibleAssetId = currentAsset.id;
   }
 
   function commitComparison(assetId: string): void {
+    captureDuplicateComparisonView();
     const nextState = comparisonPreviewState(comparisonSource, currentAsset.id, assetId);
     visibleAssetId = nextState.visibleId;
     if (nextState.selectedId === currentAsset.id) return;
@@ -621,6 +649,7 @@
       imageLoading = false;
       imageError = false;
     });
+    restoreDuplicateComparisonView();
   }
 
   function handleImageError(): void {
@@ -663,7 +692,7 @@
     loadedMediaAssetId = assetId;
     const generation = ++mediaLoadGeneration;
     untrack(() => onvisiblechange(currentAsset.id));
-    zoom = 1;
+    if (!duplicateContext) zoom = 1;
     const cachedDimensions = mediaDimensions.get(assetId);
     imageNaturalWidth = cachedDimensions?.width ?? null;
     imageNaturalHeight = cachedDimensions?.height ?? null;
