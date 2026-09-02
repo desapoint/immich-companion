@@ -99,7 +99,7 @@
   let groupDrafts = $state.raw<Record<string, DuplicateGroupDraft>>({});
   let workspace = $state.raw<DuplicateWorkspaceState | null>(null);
   let activeGroupId = $state<string | null>(null);
-  const savingGroups = new SvelteSet<string>();
+  const savingGroupCounts = new SvelteMap<string, number>();
   let loading = $state(true);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -353,7 +353,7 @@
 
   function effectiveActionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
     const selection = actionFor(group);
-    return selection === 'automatic' ? group.recommended_action : selection;
+    return selection === 'automatic' ? group.effective_action : selection;
   }
 
   function isActionable(group: ExactDuplicateGroup): boolean {
@@ -385,8 +385,21 @@
       && JSON.stringify(left.decisions) === JSON.stringify(right.decisions);
   }
 
+  function isSavingGroup(groupId: string): boolean {
+    return (savingGroupCounts.get(groupId) ?? 0) > 0;
+  }
+
+  function markSaveQueued(groupId: string): void {
+    savingGroupCounts.set(groupId, (savingGroupCounts.get(groupId) ?? 0) + 1);
+  }
+
+  function markSaveFinished(groupId: string): void {
+    const remaining = (savingGroupCounts.get(groupId) ?? 1) - 1;
+    if (remaining > 0) savingGroupCounts.set(groupId, remaining);
+    else savingGroupCounts.delete(groupId);
+  }
+
   async function persistDraft(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
-    savingGroups.add(group.group_id);
     error = null;
     try {
       const updated = await saveDuplicateGroupDraft({
@@ -403,18 +416,19 @@
       }
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
-    } finally {
-      savingGroups.delete(group.group_id);
+      throw reason;
     }
   }
 
   function enqueueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
+    markSaveQueued(group.group_id);
     const previous = draftSaveQueues.get(group.group_id) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => persistDraft(group, draft));
     draftSaveQueues.set(group.group_id, next);
     void next.finally(() => {
+      markSaveFinished(group.group_id);
       if (draftSaveQueues.get(group.group_id) === next) draftSaveQueues.delete(group.group_id);
-    });
+    }).catch(() => undefined);
     return next;
   }
 
@@ -437,13 +451,20 @@
     await Promise.all(pending);
   }
 
+  function flushAllDraftsBestEffort(): void {
+    const groupIds = [...new Set([...pendingDrafts.keys(), ...draftSaveQueues.keys()])];
+    if (!groupIds.length) return;
+    void flushDraftPersistence(groupIds).catch(() => undefined);
+  }
+
   function queueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): void {
     pendingDrafts.set(group.group_id, { group, draft });
     const existingTimer = draftSaveTimers.get(group.group_id);
     if (existingTimer) clearTimeout(existingTimer);
     const timer = setTimeout(() => {
       draftSaveTimers.delete(group.group_id);
-      void flushPendingDraft(group.group_id);
+      const save = flushPendingDraft(group.group_id);
+      if (save) void save.catch(() => undefined);
     }, draftSaveDelayMs);
     draftSaveTimers.set(group.group_id, timer);
   }
@@ -786,7 +807,7 @@
     })();
     return () => {
       if (pollTimer) clearTimeout(pollTimer);
-      for (const timer of draftSaveTimers.values()) clearTimeout(timer);
+      flushAllDraftsBestEffort();
     };
   });
 </script>
@@ -895,7 +916,7 @@
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{savingGroups.has(group.group_id) ? 'Saving…' : pendingDrafts.has(group.group_id) ? 'Unsaved changes' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{isSavingGroup(group.group_id) ? 'Saving…' : pendingDrafts.has(group.group_id) ? 'Unsaved changes' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
               </div>
               <div class="group-controls">
                 <p>{group.reason}</p>
