@@ -116,7 +116,7 @@ def _member_dispositions(
             "keep"
             if action == "resolve" and asset_id == primary_id
             else "delete"
-            if action in {"resolve", "delete_all"}
+            if action == "resolve"
             else "stack"
             if action == "stack_all"
             else "keep"
@@ -134,7 +134,7 @@ def _member_dispositions(
 
 
 def _action_for_dispositions(dispositions: list[str]) -> str:
-    """Describe a complete member partition without inventing a delete-all action."""
+    """Describe a complete member partition from member-level decisions."""
 
     values = set(dispositions)
     if values == {"keep"}:
@@ -149,7 +149,7 @@ def _action_for_dispositions(dispositions: list[str]) -> str:
 
 
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
-    """Read legacy Immich plans without invalidating them."""
+    """Normalize persisted plans to the current member-partition contract."""
 
     normalized = dict(group)
     legacy_id = normalized.get("duplicate_id")
@@ -161,7 +161,10 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("action", "resolve")
     normalized.setdefault(
         "member_asset_ids",
-        [normalized["keeper_asset_id"], *normalized.get("trash_asset_ids", [])],
+        [
+            *([normalized["keeper_asset_id"]] if normalized.get("keeper_asset_id") else []),
+            *normalized.get("trash_asset_ids", []),
+        ],
     )
     member_ids = [UUID(value) for value in normalized["member_asset_ids"]]
     primary_id = (
@@ -170,6 +173,9 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     action = normalized["action"]
+    if action not in {"resolve", "keep_all", "stack_all", "mixed"}:
+        action = "mixed"
+        normalized["action"] = action
     normalized.setdefault(
         "keep_asset_ids",
         (
@@ -193,10 +199,29 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("execution_state", "pending")
     normalized.setdefault("metadata_work", None)
     normalized.setdefault("member_fingerprint", _member_fingerprint(member_ids))
-    normalized.setdefault(
-        "members",
-        _member_dispositions(normalized["action"], member_ids, primary_id),
-    )
+    if "members" not in normalized:
+        keep_ids = {UUID(value) for value in normalized.get("keep_asset_ids", [])}
+        trash_ids = {UUID(value) for value in normalized.get("trash_asset_ids", [])}
+        stack_ids = {
+            UUID(value)
+            for value in (normalized.get("follow_up") or {}).get("member_asset_ids", [])
+        }
+        normalized["members"] = [
+            {
+                "asset_id": str(asset_id),
+                "disposition": (
+                    "delete"
+                    if asset_id in trash_ids
+                    else "stack"
+                    if asset_id in stack_ids
+                    else "keep"
+                    if asset_id in keep_ids
+                    else "no_change"
+                ),
+                "primary": asset_id == primary_id,
+            }
+            for asset_id in member_ids
+        ]
     return normalized
 
 
@@ -212,7 +237,6 @@ def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         group_count=len(groups),
         resolve_group_count=sum(group.action == "resolve" for group in groups),
         keep_all_group_count=sum(group.action == "keep_all" for group in groups),
-        delete_all_group_count=sum(group.action == "delete_all" for group in groups),
         stack_group_count=sum(group.follow_up is not None for group in groups),
         mixed_group_count=sum(group.action == "mixed" for group in groups),
         trash_asset_count=sum(len(group.trash_asset_ids) for group in groups),
@@ -1922,7 +1946,6 @@ class CrossSourceDuplicateService:
             review_statuses = {
                 "resolve": "reviewed_resolve",
                 "keep_all": "reviewed_keep_all",
-                "delete_all": "reviewed_delete_all",
                 "stack_all": "reviewed_stack_all",
                 "mixed": "manually_configured",
             }
