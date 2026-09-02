@@ -684,11 +684,10 @@
     onpreview(previewRequest(group, index));
   }
 
-  async function reviewBatch(): Promise<void> {
-    const groups = [...selectedGroups];
+  async function reviewGroups(groups: ExactDuplicateGroup[], invalidMessage: string): Promise<void> {
     if (!groups.length) return;
     if (!groups.every((group) => isActionable(group))) {
-      error = 'Every selected duplicate group needs a complete, executable decision before review.';
+      error = invalidMessage;
       return;
     }
     busy = true;
@@ -717,6 +716,20 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function reviewBatch(): Promise<void> {
+    await reviewGroups(
+      [...selectedGroups],
+      'Every selected duplicate group needs a complete, executable decision before review.',
+    );
+  }
+
+  async function reviewSingleGroup(group: ExactDuplicateGroup): Promise<void> {
+    await reviewGroups(
+      [group],
+      'This duplicate group needs a complete, executable decision before review.',
+    );
   }
 
   async function executePlan(): Promise<void> {
@@ -972,6 +985,7 @@
                   <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
                   <button type="button" disabled={busy || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
                 </div>
+                <button type="button" disabled={busy || blockedReason !== null} onclick={() => void reviewSingleGroup(group)}>Review group</button>
               </div>
             </header>
             <div class="members">
