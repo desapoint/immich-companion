@@ -1930,7 +1930,7 @@ class CrossSourceDuplicateService:
             for planned in raw_groups
             if planned["action"] == "keep_all" and planned["group_id"] in successful_ids
         }
-        deleted_ids = {
+        zero_survivor_ids = {
             planned["group_id"]
             for planned in raw_groups
             if not planned.get("keep_asset_ids") and planned["group_id"] in successful_ids
@@ -1982,7 +1982,7 @@ class CrossSourceDuplicateService:
             "processed_group_count": len(successful_ids),
             "resolved_group_count": len(resolved_ids),
             "kept_all_group_count": len(kept_ids),
-            "deleted_all_group_count": len(deleted_ids),
+            "zero_survivor_group_count": len(zero_survivor_ids),
             "stacked_group_count": len(stacked_ids),
             "failed_group_ids": failed_ids,
             "follow_up_pending_group_ids": follow_up_pending_ids,
@@ -1997,7 +1997,7 @@ class CrossSourceDuplicateService:
                 "groups_processed": len(successful_ids),
                 "groups_resolved": len(resolved_ids),
                 "groups_kept_all": len(kept_ids),
-                "groups_deleted_all": len(deleted_ids),
+                "groups_zero_survivor": len(zero_survivor_ids),
                 "groups_stacked": len(stacked_ids),
                 "groups_failed": len(failed_ids),
                 "assets_trashed": len(trashed_ids),
