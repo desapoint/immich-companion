@@ -60,6 +60,13 @@
     onpreview: (request: DuplicatePreviewRequest) => void;
   }
 
+  interface DuplicateExecutionEntry {
+    groupId: string;
+    state: string;
+    error: string | null;
+    updatedAt: string | null;
+  }
+
   let { onpreview }: Props = $props();
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
@@ -173,6 +180,23 @@
           && task.result.summary.failed_group_ids.length > 0)
       ),
   );
+  const unfinishedExecutionEntries = $derived.by<DuplicateExecutionEntry[]>(() => {
+    if (task?.task_type !== 'duplicate_resolution' || task.status !== 'failed') return [];
+    const raw = task.result?.summary?.group_execution;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    return Object.entries(raw as Record<string, unknown>).flatMap(([groupId, value]) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const item = value as Record<string, unknown>;
+      const state = typeof item.state === 'string' ? item.state : 'unknown';
+      if (state === 'completed') return [];
+      return [{
+        groupId,
+        state,
+        error: typeof item.error === 'string' ? item.error : null,
+        updatedAt: typeof item.updated_at === 'string' ? item.updated_at : null,
+      }];
+    });
+  });
 
   function configuredOptions(): DuplicateAnalysisOptions {
     return { ...options };
@@ -181,6 +205,27 @@
   function invalidatePlan(): void {
     plan = null;
     confirmOpen = false;
+  }
+
+  function executionStateLabel(state: string): string {
+    if (state === 'follow_up_pending') return 'Stack follow-up pending';
+    if (state === 'duplicate_resolved') return 'Duplicate resolved; follow-up incomplete';
+    if (state === 'failed') return 'Failed';
+    if (state === 'pending') return 'Pending';
+    return state.replaceAll('_', ' ');
+  }
+
+  function jumpToGroup(groupId: string): void {
+    if (!result?.groups.some((group) => group.group_id === groupId)) return;
+    activeFilter = 'all';
+    activeGroupId = groupId;
+    void persistWorkspace();
+    requestAnimationFrame(() => {
+      document.getElementById(`duplicate-group-${groupId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
   }
 
   async function load(): Promise<void> {
@@ -942,12 +987,37 @@
     </section>
   {/if}
   {#if error}
-    <div class="notice error" role="alert">
-      <span>{error}</span>
-      {#if resumableIncompleteWork && plan}
-        <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
-      {/if}
-    </div>
+    {#if task?.task_type === 'duplicate_resolution' && task.status === 'failed' && unfinishedExecutionEntries.length}
+      <details class="notice error resolution-failure" open>
+        <summary>
+          <span>{error}</span>
+          <strong>{unfinishedExecutionEntries.length} unfinished {unfinishedExecutionEntries.length === 1 ? 'group' : 'groups'}</strong>
+        </summary>
+        <div class="resolution-failure-body">
+          {#each unfinishedExecutionEntries as entry (entry.groupId)}
+            {@const groupAvailable = result?.groups.some((group) => group.group_id === entry.groupId) ?? false}
+            <div class="resolution-failure-group">
+              <div>
+                <strong>{executionStateLabel(entry.state)}</strong>
+                <code>{entry.groupId}</code>
+                <small>{entry.error ?? 'No additional error was recorded.'}{entry.updatedAt ? ` · ${new Date(entry.updatedAt).toLocaleString()}` : ''}</small>
+              </div>
+              <button type="button" disabled={!groupAvailable} onclick={() => jumpToGroup(entry.groupId)}>{groupAvailable ? 'Go to group' : 'Group unavailable'}</button>
+            </div>
+          {/each}
+          {#if resumableIncompleteWork && plan}
+            <button class="resume-resolution" type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
+          {/if}
+        </div>
+      </details>
+    {:else}
+      <div class="notice error" role="alert">
+        <span>{error}</span>
+        {#if resumableIncompleteWork && plan}
+          <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
+        {/if}
+      </div>
+    {/if}
   {/if}
   {#if message}<p class="notice success" role="status">{message}</p>{/if}
 
@@ -992,7 +1062,7 @@
         {#each visibleReviewEntries as entry (entry.group.group_id)}
           {@const group = entry.group}
           {@const blockedReason = actionabilityReason(group)}
-          <article class:eligible={group.eligible} class="group-card">
+          <article id={`duplicate-group-${group.group_id}`} class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
@@ -1102,6 +1172,15 @@
   .notice, .empty { margin: 0; padding: .8rem 1rem; color: var(--color-ink-muted); }
   .notice.error { color: var(--color-negative-ink); border-color: var(--color-negative-border); background: var(--color-negative-surface); }
   .notice.error { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+  .resolution-failure { display: block !important; }
+  .resolution-failure > summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; cursor: pointer; }
+  .resolution-failure > summary strong { flex: none; font-size: .72rem; }
+  .resolution-failure-body { display: grid; gap: .55rem; margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--color-negative-border); }
+  .resolution-failure-group { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .55rem .65rem; border: 1px solid var(--color-negative-border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-negative-surface) 72%, var(--color-canvas)); }
+  .resolution-failure-group > div { display: grid; min-width: 0; gap: .16rem; }
+  .resolution-failure-group code { overflow: hidden; color: var(--color-ink-muted); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
+  .resolution-failure-group small { color: var(--color-negative-ink); }
+  .resume-resolution { justify-self: end; }
   .notice.success { color: var(--color-positive-ink); border-color: var(--color-positive-border); background: var(--color-positive-surface); }
   .summary { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; }
   .summary div { display: grid; gap: .15rem; padding: .8rem 1rem; border-right: 1px solid var(--color-border-subtle); }
@@ -1112,7 +1191,7 @@
   .batch-bar > span { margin-left: auto; color: var(--color-ink-muted); font-size: .74rem; }
   .review-readiness { max-width: 15rem; color: var(--color-warning-ink); font-size: .64rem; line-height: 1.25; }
   .groups { display: grid; gap: 1rem; }
-  .group-card { overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
+  .group-card { overflow: hidden; scroll-margin-top: calc(var(--app-header-height) + 5rem); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .group-card.eligible { border-color: var(--color-positive-border); }
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
   .group-card header p { flex: 1; margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
@@ -1151,5 +1230,5 @@
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
   @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } .batch-bar { flex-wrap: wrap; } }
-  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
+  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls, .resolution-failure-group { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>
