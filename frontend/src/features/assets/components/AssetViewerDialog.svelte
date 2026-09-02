@@ -18,6 +18,20 @@
     );
   }
 
+  export function shouldHandleDuplicateComparisonShortcut(
+    target: object | null,
+    viewerDialog: object,
+  ): boolean {
+    const element = target as (EventTarget & {
+      closest?: (selector: string) => object | null;
+    }) | null;
+    const closestDialog = element?.closest?.('dialog, [role="dialog"]');
+    if (closestDialog && closestDialog !== viewerDialog) return false;
+    return !element?.closest?.(
+      'input, textarea, select, [contenteditable="true"]',
+    );
+  }
+
   export function duplicateViewerShortcut(
     key: string,
   ): 'keep' | 'delete' | 'stack' | 'primary' | null {
@@ -242,13 +256,8 @@
     comparisonMembers.find((asset) => asset.id === visibleAssetId)
       ?? assetAsStackMember(currentAsset),
   );
-  const duplicateComparisonCandidates = $derived(
-    duplicateContext
-      ? comparisonMembers.filter((asset) => asset.id !== comparisonReferenceId)
-      : [],
-  );
   const duplicateNavigationAvailable = $derived(
-    duplicateContext !== null && duplicateComparisonCandidates.length > 0,
+    duplicateContext !== null && comparisonMembers.length > 1,
   );
   const hasPrevious = $derived(
     duplicateNavigationAvailable
@@ -477,23 +486,20 @@
     flickerReturnAssetId = null;
     captureDuplicateComparisonView();
     comparisonReferenceId = assetId;
-    if (visibleAssetId === assetId) {
-      visibleAssetId = comparisonMembers.find((asset) => asset.id !== assetId)?.id ?? assetId;
-    }
   }
 
   function cycleDuplicateComparison(direction: 'previous' | 'next'): void {
-    const candidates = duplicateComparisonCandidates;
-    if (!candidates.length) return;
+    const members = comparisonMembers;
+    if (members.length < 2) return;
     flickerReturnAssetId = null;
     captureDuplicateComparisonView();
-    const currentCandidateIndex = candidates.findIndex((asset) => asset.id === visibleAssetId);
-    const nextIndex = currentCandidateIndex < 0
-      ? direction === 'next' ? 0 : candidates.length - 1
+    const currentMemberIndex = members.findIndex((asset) => asset.id === visibleAssetId);
+    const nextIndex = currentMemberIndex < 0
+      ? direction === 'next' ? 0 : members.length - 1
       : direction === 'next'
-        ? (currentCandidateIndex + 1) % candidates.length
-        : (currentCandidateIndex - 1 + candidates.length) % candidates.length;
-    visibleAssetId = candidates[nextIndex].id;
+        ? (currentMemberIndex + 1) % members.length
+        : (currentMemberIndex - 1 + members.length) % members.length;
+    visibleAssetId = members[nextIndex].id;
   }
 
   async function navigate(direction: 'previous' | 'next'): Promise<void> {
@@ -541,14 +547,16 @@
   function restoreComparison(): void {
     flickerReturnAssetId = null;
     captureDuplicateComparisonView();
-    visibleAssetId = duplicateContext
-      ? duplicateComparisonCandidates[0]?.id ?? comparisonReferenceId
-      : currentAsset.id;
+    visibleAssetId = duplicateContext ? comparisonReferenceId : currentAsset.id;
   }
 
   function commitComparison(assetId: string): void {
     flickerReturnAssetId = null;
     captureDuplicateComparisonView();
+    if (duplicateContext) {
+      visibleAssetId = assetId;
+      return;
+    }
     const nextState = comparisonPreviewState(comparisonSource, currentAsset.id, assetId);
     visibleAssetId = nextState.visibleId;
     if (nextState.selectedId === currentAsset.id) return;
@@ -573,8 +581,19 @@
   }
 
   function handleKeydown(event: KeyboardEvent): void {
-    if (!shouldHandleViewerShortcut(event.target, dialogElement)) return;
     const key = event.key.toLowerCase();
+    const comparisonShortcut = duplicateContext
+      && (event.key === 'ArrowLeft' || event.key === 'ArrowRight' || ['h', 'l', 'f', 'r'].includes(key));
+    if (comparisonShortcut) {
+      if (!shouldHandleDuplicateComparisonShortcut(event.target, dialogElement)) return;
+      event.preventDefault();
+      if (event.key === 'ArrowLeft' || key === 'h') void navigate('previous');
+      else if (event.key === 'ArrowRight' || key === 'l') void navigate('next');
+      else if (key === 'f' && !event.repeat) startReferenceFlicker();
+      else if (key === 'r') setComparisonReference(visibleAsset.id);
+      return;
+    }
+    if (!shouldHandleViewerShortcut(event.target, dialogElement)) return;
     const duplicateShortcut = duplicateContext ? duplicateViewerShortcut(key) : null;
 
     if (event.key === 'ArrowLeft' || key === 'h') {
@@ -583,21 +602,15 @@
     } else if (event.key === 'ArrowRight' || key === 'l') {
       event.preventDefault();
       void navigate('next');
-    } else if (duplicateContext && key === 'f') {
-      event.preventDefault();
-      if (!event.repeat) startReferenceFlicker();
-    } else if (duplicateContext && key === 'r') {
-      event.preventDefault();
-      setComparisonReference(visibleAsset.id);
     } else if (event.key === ' ') {
       event.preventDefault();
       ontoggleselection(currentAsset.id);
     } else if (duplicateShortcut === 'primary' && onduplicatestackprimary) {
       event.preventDefault();
-      onduplicatestackprimary(currentAsset.id);
+      onduplicatestackprimary(visibleAsset.id);
     } else if (duplicateShortcut && duplicateShortcut !== 'primary' && onduplicatedisposition) {
       event.preventDefault();
-      onduplicatedisposition(currentAsset.id, duplicateShortcut);
+      onduplicatedisposition(visibleAsset.id, duplicateShortcut);
     } else if (key === 'i') {
       event.preventDefault();
       infoOpen = !infoOpen;
@@ -766,8 +779,7 @@
     comparisonReferenceId = availableIds.has(preferredReference)
       ? preferredReference
       : comparisonMembers[0]?.id ?? currentAsset.id;
-    visibleAssetId = comparisonMembers.find((asset) => asset.id !== comparisonReferenceId)?.id
-      ?? comparisonReferenceId;
+    visibleAssetId = currentAsset.id;
   });
 
   $effect(() => {
@@ -787,7 +799,7 @@
     if (assetId === loadedMediaAssetId) return;
     loadedMediaAssetId = assetId;
     const generation = ++mediaLoadGeneration;
-    untrack(() => onvisiblechange(currentAsset.id));
+    untrack(() => onvisiblechange(assetId));
     if (!duplicateContext) zoom = 1;
     const cachedDimensions = mediaDimensions.get(assetId);
     imageNaturalWidth = cachedDimensions?.width ?? null;
@@ -941,8 +953,8 @@
       type="button"
       onclick={() => void navigate('previous')}
       disabled={!hasPrevious || nextLoading}
-      aria-label={duplicateContext ? 'Previous comparison image' : 'Previous image'}
-      title={duplicateContext ? 'Previous comparison image (Left arrow or H)' : 'Previous image (Left arrow or H)'}
+      aria-label={duplicateContext ? 'Previous group image' : 'Previous image'}
+      title={duplicateContext ? 'Previous group image (Left arrow or H)' : 'Previous image (Left arrow or H)'}
     >
       ‹
     </button>
@@ -951,8 +963,8 @@
       type="button"
       onclick={() => void navigate('next')}
       disabled={!hasNext || nextLoading}
-      aria-label={duplicateContext ? 'Next comparison image' : 'Next image'}
-      title={duplicateContext ? 'Next comparison image (Right arrow or L)' : 'Next image (Right arrow or L)'}
+      aria-label={duplicateContext ? 'Next group image' : 'Next image'}
+      title={duplicateContext ? 'Next group image (Right arrow or L)' : 'Next image (Right arrow or L)'}
     >
       ›
     </button>
