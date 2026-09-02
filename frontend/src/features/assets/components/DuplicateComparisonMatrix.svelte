@@ -36,9 +36,9 @@
   let visibleUrls = $state<string[]>([]);
   let referenceUrlIndex = $state(0);
   let visibleUrlIndex = $state(0);
-  let referenceDiffImage: HTMLImageElement;
-  let visibleDiffImage: HTMLImageElement;
-  let differenceCanvas: HTMLCanvasElement;
+  let referenceDiffImage = $state<HTMLImageElement>();
+  let visibleDiffImage = $state<HTMLImageElement>();
+  let differenceCanvas = $state<HTMLCanvasElement>();
   let mediaGeneration = 0;
 
   const referenceMember = $derived(context.members.find((member) => member.id === referenceId) ?? null);
@@ -73,7 +73,7 @@
     if (!current || !baseline) {
       if (member.similarity?.exact_pixel_match) return 'Decoded pixels reported exact · preservation details unavailable';
       if (member.similarity?.state === 'current') {
-        return `Visual similarity ${member.similarity.similarity_percent?.toFixed(2) ?? '?'}% · needs manual validation`;
+        return `Visual similarity ${member.similarity.similarity_percent?.toFixed(2) ?? '?'}% vs reference · needs manual validation`;
       }
       return 'Needs manual validation · preservation data unavailable';
     }
@@ -282,6 +282,13 @@
     <strong>{rows.length} differing {rows.length === 1 ? 'property' : 'properties'}</strong>
   </summary>
 
+  {#if referenceMember}
+    <div class="reference-summary" title={referenceMember.filename}>
+      <span>Reference</span>
+      <strong>{referenceMember.filename}</strong>
+    </div>
+  {/if}
+
   <div class="visual-tools">
     <button type="button" disabled={!referenceUrl || !visibleUrl || referenceId === visibleId} onclick={() => overlayOpen = true}>Overlay</button>
     <button type="button" disabled={!referenceUrl || !visibleUrl || referenceId === visibleId} onclick={openDifference}>Pixel difference</button>
@@ -329,7 +336,7 @@
 </details>
 
 {#if overlayOpen && referenceMember && visibleMember && referenceUrl && visibleUrl}
-  <section class="visual-view" role="dialog" aria-modal="true" aria-label="Reference overlay comparison">
+  <div class="visual-view" role="dialog" aria-modal="true" aria-label="Reference overlay comparison">
     <header>
       <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
       <div><strong>{visibleMember.filename}</strong><span>Viewing · {overlayOpacity}% opacity</span></div>
@@ -340,11 +347,11 @@
       <img src={referenceUrl} alt={referenceMember.filename} draggable="false" onerror={advanceReferenceUrl} />
       <img class="comparison-layer" src={visibleUrl} alt={visibleMember.filename} draggable="false" style={`opacity: ${overlayOpacity / 100};`} onerror={advanceVisibleUrl} />
     </div>
-  </section>
+  </div>
 {/if}
 
 {#if differenceOpen && referenceMember && visibleMember && referenceUrl && visibleUrl}
-  <section class="visual-view" role="dialog" aria-modal="true" aria-label="Pixel difference comparison">
+  <div class="visual-view" role="dialog" aria-modal="true" aria-label="Pixel difference comparison">
     <header>
       <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
       <div><strong>{visibleMember.filename}</strong><span>Viewing</span></div>
@@ -357,7 +364,7 @@
       <img class="difference-source" bind:this={referenceDiffImage} src={referenceUrl} alt="" onload={renderDifference} onerror={advanceReferenceUrl} />
       <img class="difference-source" bind:this={visibleDiffImage} src={visibleUrl} alt="" onload={renderDifference} onerror={advanceVisibleUrl} />
     </div>
-  </section>
+  </div>
 {/if}
 
 <style>
@@ -366,6 +373,9 @@
   summary::-webkit-details-marker { display: none; }
   summary span { color: var(--color-accent-strong); font-weight: 820; text-transform: uppercase; }
   summary strong { color: var(--color-ink-muted); font-size: .6rem; }
+  .reference-summary { display: flex; min-width: 0; align-items: center; gap: .45rem; padding: .38rem .55rem; overflow: hidden; border-top: 1px solid var(--color-border-subtle); background: var(--color-surface-soft); }
+  .reference-summary span { flex: none; color: var(--color-ink-muted); font-size: .54rem; font-weight: 780; text-transform: uppercase; }
+  .reference-summary strong { min-width: 0; overflow: hidden; font-size: .61rem; text-overflow: ellipsis; white-space: nowrap; }
   .visual-tools { display: flex; align-items: center; gap: .5rem; padding: .45rem .55rem; border-top: 1px solid var(--color-border-subtle); }
   .visual-tools button { min-height: 2rem; padding: .35rem .55rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .6rem; font-weight: 760; }
   .visual-tools button:disabled { cursor: default; opacity: .45; }
@@ -374,7 +384,7 @@
   .verdicts > div { display: grid; grid-template-columns: minmax(8rem, .42fr) minmax(0, 1fr); gap: .55rem; padding: .32rem .4rem; border-radius: var(--radius-sm); font-size: .6rem; }
   .verdicts strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .verdicts span { color: var(--color-ink-muted); }
-  .table-scroll { max-height: calc(min(48vh, 30rem) - 14rem); overflow: auto; border-top: 1px solid var(--color-border-subtle); }
+  .table-scroll { max-height: calc(min(48vh, 30rem) - 16rem); overflow: auto; border-top: 1px solid var(--color-border-subtle); }
   table { width: max-content; min-width: 100%; border-collapse: collapse; font-size: .6rem; }
   th, td { min-width: 8.25rem; max-width: 12rem; padding: .42rem .5rem; border-right: 1px solid var(--color-border-subtle); border-bottom: 1px solid var(--color-border-subtle); text-align: left; vertical-align: top; overflow-wrap: anywhere; }
   th:first-child { position: sticky; left: 0; z-index: 2; min-width: 8rem; color: var(--color-ink-muted); background: var(--color-surface-raised); }

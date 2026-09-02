@@ -52,7 +52,7 @@
     <span class:negative={evidence.decode_valid === false} class:positive={evidence.decode_valid === true} class="pill">{decodeLabel}</span>
   {/if}
   {#if !isSimilarityReference && member.similarity?.state === 'current'}
-    <span class="pill positive">{member.similarity.similarity_percent?.toFixed(1)}% similar</span>
+    <span class="pill positive">{member.similarity.similarity_percent?.toFixed(1)}% vs reference</span>
   {:else if !isSimilarityReference && member.similarity?.state === 'pending'}
     <span class="pill pending">Similarity pending</span>
   {/if}

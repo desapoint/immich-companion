@@ -115,7 +115,7 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatedisposition?: (assetId: string, disposition: 'keep' | 'delete' | 'stack') => void;
     onduplicatestackprimary?: (assetId: string) => void;
-    onduplicatesimilarityreference?: (assetId: string) => void;
+    onduplicatesimilarityreference?: (assetId: string) => boolean | void | Promise<boolean | void>;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
     comparisonSource?: AssetComparisonSource;
@@ -219,6 +219,7 @@
   let selectedAssetId = '';
   let duplicateGroupId = '';
   let comparisonReferenceId = $state('');
+  let comparisonReferenceChanging = $state(false);
   let flickerReturnAssetId = $state<string | null>(null);
   let flickerPending = $state(false);
   let loadedMediaAssetId = '';
@@ -482,12 +483,19 @@
     onclose();
   }
 
-  function setComparisonReference(assetId: string): void {
-    if (!duplicateContext || assetId === comparisonReferenceId) return;
+  async function setComparisonReference(assetId: string): Promise<void> {
+    if (!duplicateContext || assetId === comparisonReferenceId || comparisonReferenceChanging) return;
     flickerPending = false;
     flickerReturnAssetId = null;
     captureDuplicateComparisonView();
-    comparisonReferenceId = assetId;
+    comparisonReferenceChanging = true;
+    try {
+      const changed = await onduplicatesimilarityreference?.(assetId);
+      if (changed === false) return;
+      comparisonReferenceId = assetId;
+    } finally {
+      comparisonReferenceChanging = false;
+    }
   }
 
   function cycleDuplicateComparison(direction: 'previous' | 'next'): void {
@@ -632,7 +640,7 @@
       if (event.key === 'ArrowLeft' || key === 'h') void navigate('previous');
       else if (event.key === 'ArrowRight' || key === 'l') void navigate('next');
       else if (key === 'f' && !event.repeat) void startReferenceFlicker();
-      else if (key === 'r') setComparisonReference(visibleAsset.id);
+      else if (key === 'r') void setComparisonReference(visibleAsset.id);
       return;
     }
     if (!shouldHandleViewerShortcut(event.target, dialogElement)) return;
@@ -817,13 +825,27 @@
     flickerPending = false;
     flickerReturnAssetId = null;
     const availableIds = new Set(comparisonMembers.map((asset) => asset.id));
-    const preferredReference = duplicateContext?.selected_keeper_asset_id
+    const similarityReference = duplicateContext?.members.find(
+      (member) => member.similarity?.state === 'reference',
+    )?.id ?? null;
+    const preferredReference = similarityReference
+      ?? duplicateContext?.selected_keeper_asset_id
       ?? duplicateContext?.recommended_keeper_asset_id
       ?? currentAsset.id;
     comparisonReferenceId = availableIds.has(preferredReference)
       ? preferredReference
       : comparisonMembers[0]?.id ?? currentAsset.id;
     visibleAssetId = currentAsset.id;
+  });
+
+  $effect(() => {
+    if (!duplicateContext || comparisonReferenceChanging) return;
+    const similarityReference = duplicateContext.members.find(
+      (member) => member.similarity?.state === 'reference',
+    )?.id;
+    if (similarityReference && similarityReference !== comparisonReferenceId) {
+      comparisonReferenceId = similarityReference;
+    }
   });
 
   $effect(() => {
@@ -1013,7 +1035,9 @@
       ›
     </button>
 
-    {#if duplicateContext && flickerReturnAssetId !== null}
+    {#if duplicateContext && comparisonReferenceChanging}
+      <div class="flicker-status" role="status">Updating comparison reference…</div>
+    {:else if duplicateContext && flickerReturnAssetId !== null}
       <div class="flicker-status" role="status">Reference · release F to return</div>
     {/if}
 
@@ -1060,7 +1084,7 @@
         onpreview={previewComparison}
         onrestore={restoreComparison}
         oncommit={commitComparison}
-        onselectviewed={duplicateContext ? setComparisonReference : selectViewedStackAsset}
+        onselectviewed={duplicateContext ? (assetId) => void setComparisonReference(assetId) : selectViewedStackAsset}
       />
     {/if}
   </section>

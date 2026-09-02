@@ -24,7 +24,7 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatedisposition?: (assetId: string, disposition: DuplicateDisposition) => void;
     onduplicatestackprimary?: (assetId: string) => void;
-    onduplicatesimilarityreference?: (assetId: string) => void;
+    onduplicatesimilarityreference?: (assetId: string) => unknown;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
   }
@@ -161,13 +161,13 @@
           class:active-reference={currentSimilarity?.state === 'reference'}
           type="button"
           disabled={duplicateContext.similarity_loading || currentSimilarity?.state === 'reference'}
-          onclick={() => onduplicatesimilarityreference?.(asset.id)}
+          onclick={() => { void onduplicatesimilarityreference?.(asset.id); }}
         >
           {duplicateContext.similarity_loading
-            ? 'Changing similarity reference…'
+            ? 'Updating comparison reference…'
             : currentSimilarity?.state === 'reference'
-              ? 'Viewed copy is similarity reference'
-              : 'Use viewed as similarity reference'}
+              ? 'Comparison reference'
+              : 'Set viewed as reference'}
         </button>
         {#if duplicateContext.similarity_error}
           <p class="error" role="alert">{duplicateContext.similarity_error}</p>
@@ -182,7 +182,7 @@
         <div><dt>Existing stack</dt><dd>{currentDuplicateMember?.is_stacked ? 'Already stacked' : 'None'}</dd></div>
         <div><dt>Integrity cache</dt><dd>{duplicateContext.current_integrity?.freshness ?? 'missing'}</dd></div>
         <div><dt>Structure</dt><dd>{duplicateContext.current_integrity?.report?.classification ?? 'Not analyzed'}</dd></div>
-        <div><dt>Visual similarity</dt><dd>{currentSimilarity?.state === 'reference' ? 'Reference (100%)' : currentSimilarity?.state === 'current' ? `${currentSimilarity.similarity_percent?.toFixed(2)}%` : currentSimilarity?.state ?? 'Not analyzed'}</dd></div>
+        <div><dt>Visual similarity</dt><dd>{currentSimilarity?.state === 'reference' ? 'Reference' : currentSimilarity?.state === 'current' ? `${currentSimilarity.similarity_percent?.toFixed(2)}% vs reference` : currentSimilarity?.state ?? 'Not analyzed'}</dd></div>
         {#if currentSimilarity?.state === 'current'}
           <div><dt>Structure</dt><dd>{currentSimilarity.structural_percent?.toFixed(2)}%</dd></div>
           <div><dt>Perceptual hash</dt><dd>{currentSimilarity.perceptual_percent?.toFixed(2)}%</dd></div>
@@ -213,7 +213,7 @@
           {#each duplicateContext.members as member (member.id)}
             <li class:current={member.id === asset.id}>
               <strong>{member.filename}</strong>
-              <span>{member.source_kind === 'upload' ? 'Upload' : `External · ${member.library_id ?? 'unknown library'}`} · {member.verification} · {member.disposition ?? 'undecided'}{member.id === duplicateContext.stack_primary_asset_id ? ' · stack main' : ''}</span>
+              <span>{member.source_kind === 'upload' ? 'Upload' : `External · ${member.library_id ?? 'unknown library'}`} · {member.verification} · {member.disposition ?? 'undecided'}{member.similarity?.state === 'reference' ? ' · reference' : ''}{member.id === duplicateContext.stack_primary_asset_id ? ' · stack main' : ''}</span>
             </li>
           {/each}
         </ul>
