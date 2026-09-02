@@ -169,6 +169,19 @@ class ExactDuplicateGroup(BaseModel):
     members: list[DuplicateMember]
     eligible: bool
 
+    @model_validator(mode="after")
+    def manual_resolution_eligibility(self) -> ExactDuplicateGroup:
+        """Allow explicit review of available Immich groups without relaxing automation."""
+
+        self.eligible = (
+            self.discovery_source == "immich_duplicate"
+            and self.provider_group_id is not None
+            and self.status != "ineligible"
+            and len(self.members) >= 2
+            and all(not member.is_offline for member in self.members)
+        )
+        return self
+
 
 class CrossSourceDuplicateResult(BaseModel):
     generated_at: datetime
