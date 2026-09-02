@@ -26,16 +26,13 @@ DuplicateClassification = Literal[
     "unavailable",
     "ineligible",
 ]
-DuplicateGroupAction = Literal[
-    "resolve", "keep_all", "delete_all", "stack_all", "mixed", "none"
-]
+DuplicateGroupAction = Literal["resolve", "keep_all", "stack_all", "mixed", "none"]
 DuplicateDecisionSource = Literal["automatic", "manual", "none"]
 DuplicateReviewStatus = Literal[
     "pending",
     "manually_configured",
     "reviewed_keep_all",
     "reviewed_resolve",
-    "reviewed_delete_all",
     "reviewed_stack_all",
     "review_later",
     "drifted",
@@ -234,7 +231,7 @@ class DuplicateResolutionPlanRequest(BaseModel):
     keeper_overrides: dict[str, UUID] = Field(default_factory=dict)
     action_overrides: dict[
         str,
-        Literal["resolve", "keep_all", "delete_all", "stack_all", "mixed"],
+        Literal["resolve", "keep_all", "stack_all", "mixed"],
     ] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -267,7 +264,7 @@ class DuplicateResolutionPlanGroup(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
-    action: Literal["resolve", "keep_all", "delete_all", "stack_all", "mixed"] = "resolve"
+    action: Literal["resolve", "keep_all", "stack_all", "mixed"] = "resolve"
     keeper_asset_id: UUID | None = None
     member_asset_ids: list[UUID] = Field(default_factory=list)
     keep_asset_ids: list[UUID] = Field(default_factory=list)
@@ -301,7 +298,6 @@ class DuplicateResolutionPlan(BaseModel):
     group_count: int
     resolve_group_count: int = 0
     keep_all_group_count: int = 0
-    delete_all_group_count: int = 0
     stack_group_count: int = 0
     mixed_group_count: int = 0
     trash_asset_count: int
