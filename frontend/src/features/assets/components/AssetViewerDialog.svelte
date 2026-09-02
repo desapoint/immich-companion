@@ -71,6 +71,7 @@
   import AssetIntegrityDialog from './AssetIntegrityDialog.svelte';
   import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
   import AssetViewerComparisonTray from './AssetViewerComparisonTray.svelte';
+  import DuplicateComparisonMatrix from './DuplicateComparisonMatrix.svelte';
   import AssetViewerFooter from './AssetViewerFooter.svelte';
   import AssetViewerHeader from './AssetViewerHeader.svelte';
 
@@ -958,6 +959,14 @@
 
     {#if duplicateContext && flickerReturnAssetId !== null}
       <div class="flicker-status" role="status">Reference · release F to return</div>
+    {/if}
+
+    {#if duplicateContext && comparisonReferenceId}
+      <DuplicateComparisonMatrix
+        context={duplicateContext}
+        referenceId={comparisonReferenceId}
+        visibleId={visibleAsset.id}
+      />
     {/if}
 
     {#if infoOpen}
