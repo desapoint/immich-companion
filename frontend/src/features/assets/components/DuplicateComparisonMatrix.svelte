@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { assetMediaUrl } from '../api/assetApi';
+  import { untrack } from 'svelte';
+
+  import { resolveViewerMediaUrls } from '../state/viewerMedia';
   import type { DuplicateReviewContext, DuplicateReviewMember } from '../types/assets';
 
   interface Props {
@@ -25,11 +27,19 @@
   let overlayOpacity = $state(50);
   let differenceOpen = $state(false);
   let differenceError = $state<string | null>(null);
+  let referenceUrls = $state<string[]>([]);
+  let visibleUrls = $state<string[]>([]);
+  let referenceUrlIndex = $state(0);
+  let visibleUrlIndex = $state(0);
   let referenceDiffImage: HTMLImageElement;
   let visibleDiffImage: HTMLImageElement;
   let differenceCanvas: HTMLCanvasElement;
+  let mediaGeneration = 0;
+
   const referenceMember = $derived(context.members.find((member) => member.id === referenceId) ?? null);
   const visibleMember = $derived(context.members.find((member) => member.id === visibleId) ?? null);
+  const referenceUrl = $derived(referenceUrls[referenceUrlIndex] ?? '');
+  const visibleUrl = $derived(visibleUrls[visibleUrlIndex] ?? '');
 
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
@@ -51,7 +61,9 @@
     const baseline = reference.preservation;
     if (!current || !baseline) {
       if (member.similarity?.exact_pixel_match) return 'Decoded pixels reported exact · preservation details unavailable';
-      if (member.similarity?.state === 'current') return `Visual similarity ${member.similarity.similarity_percent?.toFixed(2) ?? '?'}% · needs manual validation`;
+      if (member.similarity?.state === 'current') {
+        return `Visual similarity ${member.similarity.similarity_percent?.toFixed(2) ?? '?'}% · needs manual validation`;
+      }
       return 'Needs manual validation · preservation data unavailable';
     }
 
@@ -85,6 +97,30 @@
     return 'Same pixels · metadata equivalent';
   }
 
+  async function resolveComparisonMedia(
+    reference: DuplicateReviewMember,
+    visible: DuplicateReviewMember,
+    generation: number,
+  ): Promise<void> {
+    const [nextReferenceUrls, nextVisibleUrls] = await Promise.all([
+      resolveViewerMediaUrls(reference.id, null),
+      resolveViewerMediaUrls(visible.id, null),
+    ]);
+    if (generation !== mediaGeneration) return;
+    referenceUrls = nextReferenceUrls;
+    visibleUrls = nextVisibleUrls;
+    referenceUrlIndex = 0;
+    visibleUrlIndex = 0;
+  }
+
+  function advanceReferenceUrl(): void {
+    if (referenceUrlIndex + 1 < referenceUrls.length) referenceUrlIndex += 1;
+  }
+
+  function advanceVisibleUrl(): void {
+    if (visibleUrlIndex + 1 < visibleUrls.length) visibleUrlIndex += 1;
+  }
+
   function openDifference(): void {
     differenceError = null;
     differenceOpen = true;
@@ -106,17 +142,30 @@
       differenceError = 'Decoded dimensions differ. Use the overlay view to inspect crop or alignment differences.';
       return;
     }
-    if (!referenceDiffImage?.complete || !visibleDiffImage?.complete || !referenceDiffImage.naturalWidth || !visibleDiffImage.naturalWidth) return;
+    if (
+      !referenceDiffImage?.complete
+      || !visibleDiffImage?.complete
+      || !referenceDiffImage.naturalWidth
+      || !visibleDiffImage.naturalWidth
+    ) return;
 
     try {
       const maxDimension = 512;
-      const scale = Math.min(1, maxDimension / Math.max(referenceDiffImage.naturalWidth, referenceDiffImage.naturalHeight));
+      const scale = Math.min(
+        1,
+        maxDimension / Math.max(referenceDiffImage.naturalWidth, referenceDiffImage.naturalHeight),
+      );
       const width = Math.max(1, Math.round(referenceDiffImage.naturalWidth * scale));
       const height = Math.max(1, Math.round(referenceDiffImage.naturalHeight * scale));
       const referenceCanvas = document.createElement('canvas');
       const visibleCanvas = document.createElement('canvas');
-      referenceCanvas.width = visibleCanvas.width = width;
-      referenceCanvas.height = visibleCanvas.height = height;
+      referenceCanvas.width = width;
+      referenceCanvas.height = height;
+      visibleCanvas.width = width;
+      visibleCanvas.height = height;
+      differenceCanvas.width = width;
+      differenceCanvas.height = height;
+
       const referenceContext = referenceCanvas.getContext('2d', { willReadFrequently: true });
       const visibleContext = visibleCanvas.getContext('2d', { willReadFrequently: true });
       const outputContext = differenceCanvas.getContext('2d');
@@ -124,11 +173,13 @@
         differenceError = 'Pixel comparison is not available in this browser.';
         return;
       }
+
       referenceContext.drawImage(referenceDiffImage, 0, 0, width, height);
       visibleContext.drawImage(visibleDiffImage, 0, 0, width, height);
       const referencePixels = referenceContext.getImageData(0, 0, width, height);
       const visiblePixels = visibleContext.getImageData(0, 0, width, height);
       const output = outputContext.createImageData(width, height);
+
       for (let index = 0; index < output.data.length; index += 4) {
         const red = Math.abs(referencePixels.data[index] - visiblePixels.data[index]);
         const green = Math.abs(referencePixels.data[index + 1] - visiblePixels.data[index + 1]);
@@ -140,8 +191,6 @@
         output.data[index + 2] = 0;
         output.data[index + 3] = 255;
       }
-      differenceCanvas.width = width;
-      differenceCanvas.height = height;
       outputContext.putImageData(output, 0, 0);
       differenceError = null;
     } catch {
@@ -173,10 +222,7 @@
   const rows = $derived.by<ComparisonRow[]>(() => rowDefinitions
     .map((definition) => ({
       label: definition.label,
-      values: context.members.map((member) => ({
-        id: member.id,
-        value: definition.value(member),
-      })),
+      values: context.members.map((member) => ({ id: member.id, value: definition.value(member) })),
     }))
     .filter((row) => new Set(row.values.map((entry) => entry.value)).size > 1));
 
@@ -188,6 +234,16 @@
       verdict: verdictFor(member, reference),
     }));
   });
+
+  $effect(() => {
+    const reference = referenceMember;
+    const visible = visibleMember;
+    if (!reference || !visible) return;
+    const generation = ++mediaGeneration;
+    untrack(() => {
+      void resolveComparisonMedia(reference, visible, generation);
+    });
+  });
 </script>
 
 <details class="comparison-matrix">
@@ -197,8 +253,8 @@
   </summary>
 
   <div class="visual-tools">
-    <button type="button" disabled={!referenceMember || !visibleMember || referenceId === visibleId} onclick={() => overlayOpen = true}>Overlay</button>
-    <button type="button" disabled={!referenceMember || !visibleMember || referenceId === visibleId} onclick={openDifference}>Pixel difference</button>
+    <button type="button" disabled={!referenceUrl || !visibleUrl || referenceId === visibleId} onclick={() => overlayOpen = true}>Overlay</button>
+    <button type="button" disabled={!referenceUrl || !visibleUrl || referenceId === visibleId} onclick={openDifference}>Pixel difference</button>
     <small>Hold F for rapid reference flicker.</small>
   </div>
 
@@ -242,7 +298,7 @@
   {/if}
 </details>
 
-{#if overlayOpen && referenceMember && visibleMember}
+{#if overlayOpen && referenceMember && visibleMember && referenceUrl && visibleUrl}
   <section class="visual-view" role="dialog" aria-modal="true" aria-label="Reference overlay comparison">
     <header>
       <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
@@ -251,13 +307,13 @@
       <button type="button" onclick={() => overlayOpen = false}>Close overlay</button>
     </header>
     <div class="overlay-stage">
-      <img src={assetMediaUrl(referenceId, 'fullsize')} alt={referenceMember.filename} draggable="false" />
-      <img class="comparison-layer" src={assetMediaUrl(visibleId, 'fullsize')} alt={visibleMember.filename} draggable="false" style={`opacity: ${overlayOpacity / 100};`} />
+      <img src={referenceUrl} alt={referenceMember.filename} draggable="false" onerror={advanceReferenceUrl} />
+      <img class="comparison-layer" src={visibleUrl} alt={visibleMember.filename} draggable="false" style={`opacity: ${overlayOpacity / 100};`} onerror={advanceVisibleUrl} />
     </div>
   </section>
 {/if}
 
-{#if differenceOpen && referenceMember && visibleMember}
+{#if differenceOpen && referenceMember && visibleMember && referenceUrl && visibleUrl}
   <section class="visual-view" role="dialog" aria-modal="true" aria-label="Pixel difference comparison">
     <header>
       <div><strong>{referenceMember.filename}</strong><span>Reference</span></div>
@@ -268,8 +324,8 @@
     <div class="difference-stage">
       {#if differenceError}<div class="difference-error" role="alert">{differenceError}</div>{/if}
       <canvas bind:this={differenceCanvas} aria-label="Amplified pixel difference map"></canvas>
-      <img class="difference-source" bind:this={referenceDiffImage} src={assetMediaUrl(referenceId, 'fullsize')} alt="" onload={renderDifference} />
-      <img class="difference-source" bind:this={visibleDiffImage} src={assetMediaUrl(visibleId, 'fullsize')} alt="" onload={renderDifference} />
+      <img class="difference-source" bind:this={referenceDiffImage} src={referenceUrl} alt="" onload={renderDifference} onerror={advanceReferenceUrl} />
+      <img class="difference-source" bind:this={visibleDiffImage} src={visibleUrl} alt="" onload={renderDifference} onerror={advanceVisibleUrl} />
     </div>
   </section>
 {/if}
@@ -300,8 +356,8 @@
   .viewing { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent-strong) 55%, transparent); }
   .comparison-matrix > p { margin: 0; padding: .65rem .7rem; border-top: 1px solid var(--color-border-subtle); color: var(--color-ink-muted); font-size: .64rem; }
 
-  .visual-view { position: fixed; z-index: 30; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); color: white; background: rgb(0 0 0 / 94%); }
-  .visual-view header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(12rem, .7fr) auto; gap: .8rem; align-items: center; padding: .65rem .8rem; border-bottom: 1px solid rgb(255 255 255 / 18%); background: rgb(0 0 0 / 82%); }
+  .visual-view { position: fixed; z-index: 1000; inset: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); color: white; background: rgb(0 0 0 / 96%); }
+  .visual-view header { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(12rem, .7fr) auto; gap: .8rem; align-items: center; padding: .65rem .8rem; border-bottom: 1px solid rgb(255 255 255 / 18%); background: rgb(0 0 0 / 88%); }
   .visual-view header > div, .visual-view label { display: grid; gap: .15rem; min-width: 0; }
   .visual-view header strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .7rem; }
   .visual-view header span, .visual-view header p { margin: 0; color: rgb(255 255 255 / 70%); font-size: .56rem; }
@@ -309,7 +365,7 @@
   .overlay-stage, .difference-stage { position: relative; display: grid; min-width: 0; min-height: 0; place-items: center; overflow: hidden; }
   .overlay-stage img { position: absolute; width: 100%; height: 100%; object-fit: contain; user-select: none; }
   .comparison-layer { pointer-events: none; }
-  .difference-stage canvas { width: min(90vw, 90vh); height: min(90vw, 90vh); max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; }
+  .difference-stage canvas { max-width: 94%; max-height: 94%; object-fit: contain; image-rendering: pixelated; }
   .difference-source { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .difference-error { position: absolute; z-index: 2; max-width: 30rem; padding: .65rem .8rem; border: 1px solid rgb(255 255 255 / 25%); border-radius: var(--radius-sm); background: rgb(0 0 0 / 75%); font-size: .7rem; }
 
