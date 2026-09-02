@@ -170,6 +170,11 @@
     return { ...options };
   }
 
+  function invalidatePlan(): void {
+    plan = null;
+    confirmOpen = false;
+  }
+
   async function load(): Promise<void> {
     loading = true;
     error = null;
@@ -276,10 +281,12 @@
   function toggleGroup(groupId: string, checked: boolean): void {
     if (checked) selected.add(groupId);
     else selected.delete(groupId);
+    invalidatePlan();
     void persistWorkspace();
   }
 
   function toggleAllEligible(): void {
+    invalidatePlan();
     if (allAutoReadySelected) {
       for (const group of autoReadyGroups) selected.delete(group.group_id);
       void persistWorkspace();
@@ -360,7 +367,7 @@
     return selection === 'automatic' ? group.effective_action : selection;
   }
 
-  function isActionable(group: ExactDuplicateGroup): boolean {
+  function actionabilityReason(group: ExactDuplicateGroup): string | null {
     const action = effectiveActionFor(group);
     const draft = draftFor(group);
     const hasDraftDecisions = (draft?.decisions.length ?? 0) > 0;
@@ -369,16 +376,24 @@
     const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete')
       ?? (action === 'resolve' || action === 'delete_all');
     const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
-    return action !== 'none'
-      && (hasDraftDecisions || action !== 'mixed')
-      && (!hasDraftDecisions || draftComplete)
-      && (!requiresPrimary || selectedKeeper(group) !== null)
-      && stackDecisions.length !== 1
-      && (!hasDeletions || action === 'delete_all' || (group.eligible && !group.members.some((member) => member.is_offline)))
-      && (!stackDecisions.length || !group.members.some((member) => (
-        stackDecisions.some((decision) => decision.asset_id === member.id)
-        && (member.is_offline || member.is_stacked)
-      )));
+
+    if (action === 'none') return 'Choose an action for every image.';
+    if (!hasDraftDecisions && action === 'mixed') return 'Mixed choices need a complete saved member draft.';
+    if (hasDraftDecisions && !draftComplete) return 'Choose an action for every image.';
+    if (requiresPrimary && selectedKeeper(group) === null) return 'Choose the surviving primary image.';
+    if (stackDecisions.length === 1) return 'A stack needs at least two surviving images.';
+    if (hasDeletions && action !== 'delete_all' && (!group.eligible || group.members.some((member) => member.is_offline))) {
+      return 'Resolve/delete requires an eligible group with every image online.';
+    }
+    if (stackDecisions.length && group.members.some((member) => (
+      stackDecisions.some((decision) => decision.asset_id === member.id)
+      && (member.is_offline || member.is_stacked)
+    ))) return 'Stack members must be online and not already stacked.';
+    return null;
+  }
+
+  function isActionable(group: ExactDuplicateGroup): boolean {
+    return actionabilityReason(group) === null;
   }
 
   function sameDraftState(left: DuplicateGroupDraft | null, right: DuplicateGroupDraft): boolean {
@@ -495,6 +510,7 @@
     decisions: DuplicateGroupDraft['decisions'],
     stackPrimaryAssetId: string | null,
   ): void {
+    invalidatePlan();
     const existing = draftFor(group);
     const stackIds = decisions
       .filter((decision) => decision.disposition === 'stack')
@@ -577,6 +593,7 @@
 
   async function clearDecisions(groupIds: string[]): Promise<void> {
     if (!groupIds.length) return;
+    invalidatePlan();
     busy = true;
     error = null;
     message = null;
@@ -668,15 +685,16 @@
   }
 
   async function reviewBatch(): Promise<void> {
-    if (!selectedGroups.length) return;
-    if (!selectedGroups.every((group) => isActionable(group))) {
+    const groups = [...selectedGroups];
+    if (!groups.length) return;
+    if (!groups.every((group) => isActionable(group))) {
       error = 'Every selected duplicate group needs a complete, executable decision before review.';
       return;
     }
     busy = true;
     error = null;
     message = null;
-    const groupIds = selectedGroups.map((group) => group.group_id);
+    const groupIds = groups.map((group) => group.group_id);
     try {
       await flushDraftPersistence(groupIds);
       await workspaceSaveQueue.catch(() => undefined);
@@ -685,12 +703,12 @@
         group_ids: groupIds,
         all_eligible: false,
         keeper_overrides: Object.fromEntries(
-          selectedGroups
+          groups
             .filter((group) => selectedKeeper(group) !== null)
             .map((group) => [group.group_id, selectedKeeper(group)!]),
         ),
         action_overrides: Object.fromEntries(
-          selectedGroups.map((group) => [group.group_id, effectiveActionFor(group)]),
+          groups.map((group) => [group.group_id, effectiveActionFor(group)]),
         ) as Record<string, Exclude<DuplicatePlanAction, 'none'>>,
       });
       confirmOpen = true;
@@ -939,11 +957,12 @@
       <div class="groups">
         {#each visibleReviewEntries as entry (entry.group.group_id)}
           {@const group = entry.group}
+          {@const blockedReason = actionabilityReason(group)}
           <article class:eligible={group.eligible} class="group-card">
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{pendingDrafts.has(group.group_id) ? 'Unsaved changes' : isSavingGroup(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{pendingDrafts.has(group.group_id) ? 'Unsaved changes' : isSavingGroup(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span>{#if blockedReason}<span class="blocked-reason">{blockedReason}</span>{/if}</div>
               </div>
               <div class="group-controls">
                 <p>{group.reason}</p>
@@ -1075,6 +1094,7 @@
   .workflow-status { color: var(--color-ink-muted); font-size: .6rem; font-weight: 760; }
   .decision-status { color: var(--color-positive-ink); font-size: .6rem; font-weight: 760; }
   .decision-status.stale { color: var(--color-warning-ink); }
+  .blocked-reason { color: var(--color-warning-ink); font-size: .6rem; font-weight: 760; }
   .stale-workspace { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
