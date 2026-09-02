@@ -95,12 +95,12 @@ export function countDuplicateReviewFilters(
 }
 
 export function duplicateWorkflowLabel(entry: DuplicateReviewProjection): string {
-  if (duplicateGroupIsAnalyzing(entry)) return 'Analyzing';
-  if (entry.group.review_status === 'drifted') return 'Drifted';
-  if (duplicateGroupHasIntegrityWarning(entry)) return 'Integrity warning';
-  if (duplicateGroupMatchesFilter(entry, 'auto_ready')) return 'Auto ready';
-  if (duplicateGroupMatchesFilter(entry, 'resolve_ready')) return 'Resolve ready';
-  if (duplicateGroupMatchesFilter(entry, 'stack_ready')) return 'Stack ready';
-  if (duplicateGroupMatchesFilter(entry, 'needs_review')) return 'Needs review';
+  if (duplicateGroupIsAnalyzing(entry)) return 'Analyzing evidence';
+  if (entry.group.review_status === 'drifted') return 'Group changed · review again';
+  if (duplicateGroupHasIntegrityWarning(entry)) return 'Integrity warning · review required';
+  if (duplicateGroupMatchesFilter(entry, 'auto_ready')) return 'Ready to review · recommended';
+  if (duplicateGroupMatchesFilter(entry, 'resolve_ready')) return 'Ready to review · resolve';
+  if (duplicateGroupMatchesFilter(entry, 'stack_ready')) return 'Ready to review · stack';
+  if (duplicateGroupMatchesFilter(entry, 'needs_review')) return 'Needs decisions or attention';
   return entry.group.review_status.replaceAll('_', ' ');
 }
