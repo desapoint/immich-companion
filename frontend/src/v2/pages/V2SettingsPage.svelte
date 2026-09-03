@@ -21,6 +21,10 @@
   let density = $state<V2Density>('standard');
   let incrementalCron = $state('*/15 * * * *');
   let globalCron = $state('0 0 * * 0');
+  let incrementalEnabled = $state(true);
+  let globalEnabled = $state(false);
+  let incrementalCronValid = $state(true);
+  let globalCronValid = $state(true);
 
   function setDensity(next: V2Density): void {
     density = next;
@@ -53,8 +57,8 @@
     {:else}
       <div class="v2-setting-grid">
         <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Demo values"/>{/snippet}<V2Stack gap="sm"><span class="v2-small v2-muted">Global sync and large asset work rest after each batch. Tag association concurrency also influences the adaptive tag matching strategy.</span><V2Field label="Assets per batch · 1–500" type="number" value="50"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="0.2"/><V2Field label="Tag association concurrency · 1–32" type="number" value="4"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
-        <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone="ok" text="Enabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={true}/><V2CronField id="settings-incremental-cron" label="Incremental schedule" bind:value={incrementalCron}/><span class="v2-small v2-muted">Next run: 13:15</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
-        <V2Card title="Global sync">{#snippet actions()}<V2Badge text="Disabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled"/><V2CronField id="settings-global-cron" label="Global schedule" bind:value={globalCron}/><span class="v2-small v2-muted">Next run: disabled</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
+        <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone={incrementalEnabled ? 'ok' : 'default'} text={incrementalEnabled ? 'Enabled' : 'Disabled'}/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={incrementalEnabled} onchange={(checked) => incrementalEnabled = checked}/><V2CronField id="settings-incremental-cron" label="Incremental schedule" enabled={incrementalEnabled} bind:value={incrementalCron} onvaliditychange={(valid) => incrementalCronValid = valid}/><V2Button variant="primary" disabled={!incrementalCronValid}>Save schedule</V2Button></V2Stack></V2Card>
+        <V2Card title="Global sync">{#snippet actions()}<V2Badge tone={globalEnabled ? 'ok' : 'default'} text={globalEnabled ? 'Enabled' : 'Disabled'}/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={globalEnabled} onchange={(checked) => globalEnabled = checked}/><V2CronField id="settings-global-cron" label="Global schedule" enabled={globalEnabled} bind:value={globalCron} onvaliditychange={(valid) => globalCronValid = valid}/><V2Button variant="primary" disabled={!globalCronValid}>Save schedule</V2Button></V2Stack></V2Card>
       </div>
     {/if}
   </V2Zone>
@@ -66,7 +70,7 @@
       {:else if tab === 'Duplicates'}
         <V2Section title="Policy status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Live option coverage complete"/><span class="v2-small v2-muted">Duplicate controls are visual demo state only. No live policy is loaded or saved here yet.</span></V2Stack></V2Card></V2Section>
       {:else}
-        <V2Section title="Sync status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><V2Badge tone="ok" text="Tag concurrency valid"/><V2Badge tone="ok" text="Incremental enabled"/><V2Badge text="Global disabled"/><span class="v2-small v2-muted">Runtime and schedule controls mirror the live settings surface but remain demo-only until integration.</span></V2Stack></V2Card></V2Section>
+        <V2Section title="Sync status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><V2Badge tone="ok" text="Tag concurrency valid"/><V2Badge tone={incrementalCronValid ? 'ok' : 'bad'} text={incrementalCronValid ? 'Incremental cron valid' : 'Incremental cron invalid'}/><V2Badge tone={globalCronValid ? 'ok' : 'bad'} text={globalCronValid ? 'Global cron valid' : 'Global cron invalid'}/><span class="v2-small v2-muted">Runtime and schedule controls mirror the live settings surface but remain demo-only until integration.</span></V2Stack></V2Card></V2Section>
       {/if}
     </V2Zone>
   {/snippet}
