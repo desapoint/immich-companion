@@ -7,6 +7,7 @@
   import V2Notice from '../components/V2Notice.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
+  import V2Zone from '../components/V2Zone.svelte';
   import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
   import { companionState, dependencyState, immichVersion } from './statusPresentation';
 
@@ -19,7 +20,7 @@
   } = $props();
 </script>
 
-<V2Stack gap="md">
+<V2Zone>
   {#if state.kind === 'loading'}
     <V2Notice>Loading live Companion status…</V2Notice>
     <div class="v2-metric-grid">
@@ -95,4 +96,4 @@
       </V2Card>
     </V2Section>
   {/if}
-</V2Stack>
+</V2Zone>
