@@ -1,6 +1,10 @@
 <script lang="ts">
+  import V2Card from '../components/V2Card.svelte';
+  import V2Notice from '../components/V2Notice.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2Ui from '../components/V2Ui.svelte';
+  import V2Section from '../components/V2Section.svelte';
+  import V2Stack from '../components/V2Stack.svelte';
+  import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
 
   let {
     title,
@@ -19,19 +23,33 @@
 
 <V2PageLayout {title} {description}>
   {#snippet context()}
-    <span class="v2-zone">Context rail</span>
-    <V2Ui kind="section" title="Demo context"><V2Ui kind="card"><div class="v2-small v2-muted">{contextText}</div></V2Ui></V2Ui>
+    <V2Stack gap="md">
+      <V2ZoneLabel text="Context rail" />
+      <V2Section title="Demo context">
+        <V2Card><div class="v2-small v2-muted">{contextText}</div></V2Card>
+      </V2Section>
+    </V2Stack>
   {/snippet}
 
   {#snippet content()}
-    <V2Ui kind="notice">{contentText}</V2Ui>
-    <div class="v2-demo-page">
-      <V2Ui kind="card"><b>{title} V2</b><p class="v2-muted v2-small">This page remains intentionally static until its integration phase.</p></V2Ui>
-    </div>
+    <V2Stack gap="md">
+      <V2ZoneLabel text="Primary content" />
+      <V2Notice>{contentText}</V2Notice>
+      <V2Card>
+        <V2Stack gap="sm">
+          <b>{title} V2</b>
+          <p class="v2-muted v2-small v2-text-block">This page remains intentionally static until its integration phase.</p>
+        </V2Stack>
+      </V2Card>
+    </V2Stack>
   {/snippet}
 
   {#snippet inspector()}
-    <span class="v2-zone">Inspector</span>
-    <V2Ui kind="section" title="Demo inspector"><V2Ui kind="card"><div class="v2-small v2-muted">{inspectorText}</div></V2Ui></V2Ui>
+    <V2Stack gap="md">
+      <V2ZoneLabel text="Inspector" />
+      <V2Section title="Demo inspector">
+        <V2Card><div class="v2-small v2-muted">{inspectorText}</div></V2Card>
+      </V2Section>
+    </V2Stack>
   {/snippet}
 </V2PageLayout>
