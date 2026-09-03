@@ -11,7 +11,7 @@
   let { state }: { state: StatusLoadState } = $props();
 </script>
 
-<V2Zone label="Context rail">
+<V2Zone>
   {#if state.kind === 'loaded'}
     {@const snapshot = state.snapshot}
     {@const companion = companionState(snapshot)}
