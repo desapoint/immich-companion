@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     sync_full_interval_seconds: int = Field(default=604800, ge=300, le=604800)
     sync_full_batch_size: int = Field(default=50, ge=1, le=500)
     sync_full_min_batch_delay_seconds: float = Field(default=0.2, ge=0, le=60)
+    sync_tag_association_concurrency: int = Field(default=4, ge=1, le=32)
     sync_media_page_size: int = Field(default=1000, ge=25, le=1000)
     sync_relationship_page_size: int = Field(default=1000, ge=25, le=1000)
     sync_max_attempts: int = Field(default=5, ge=1, le=10)
