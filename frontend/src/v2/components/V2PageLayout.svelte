@@ -6,6 +6,7 @@
     headerActions,
     context,
     children,
+    content,
     inspector,
   }: {
     title: string;
@@ -13,7 +14,8 @@
     eyebrow?: string;
     headerActions?: import('svelte').Snippet;
     context?: import('svelte').Snippet;
-    children: import('svelte').Snippet;
+    children?: import('svelte').Snippet;
+    content?: import('svelte').Snippet;
     inspector?: import('svelte').Snippet;
   } = $props();
 
@@ -42,7 +44,9 @@
 
   <section class={workspaceClass}>
     {#if context}<aside class="v2-context">{@render context()}</aside>{/if}
-    <main class="v2-content">{@render children()}</main>
+    <main class="v2-content">
+      {#if children}{@render children()}{:else if content}{@render content()}{/if}
+    </main>
     {#if inspector}<aside class="v2-inspector">{@render inspector()}</aside>{/if}
   </section>
 </div>
