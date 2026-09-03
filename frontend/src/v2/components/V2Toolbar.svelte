@@ -16,10 +16,10 @@
   } = $props();
 </script>
 
-<div class={`v2-toolbar${sticky ? ' v2-toolbar-sticky' : ''} ${className}`.trim()}>
+<div class={`v2-toolbar ${className}`.trim()} data-sticky={sticky || undefined}>
   <div class="v2-toolbar-group">
     {#if label}<V2ZoneLabel text={label} />{/if}
     {#if children}{@render children()}{/if}
   </div>
-  {#if actions}<div class="v2-toolbar-group v2-toolbar-actions">{@render actions()}</div>{/if}
+  {#if actions}<div class="v2-toolbar-group" data-align="end">{@render actions()}</div>{/if}
 </div>
