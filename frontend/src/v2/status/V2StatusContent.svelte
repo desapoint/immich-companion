@@ -45,7 +45,7 @@
     {@const immich = dependencyState(immichDep, 'Connected')}
     {@const database = dependencyState(databaseDep, 'Ready')}
 
-    <V2Toolbar label="Primary content">
+    <V2Toolbar>
       <b>System overview</b>
       {#snippet actions()}<V2Button onclick={onrefresh}>Refresh view</V2Button>{/snippet}
     </V2Toolbar>
