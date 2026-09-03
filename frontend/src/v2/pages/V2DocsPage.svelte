@@ -19,15 +19,15 @@
 <V2PageLayout title="API Docs" description="Developer-facing API documentation. This is not an operational Companion workflow.">
   {#snippet headerActions()}<V2Button variant="primary">Open schema</V2Button>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Endpoints','Schemas']} active={tab} onselect={(value) => tab = value}/>{/snippet}
-  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Resources"><V2Menu items={['Status','Assets','Relations','Duplicates','Settings','Tasks']} active="Status" ariaLabel="API resources" /></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Resources"><V2Menu items={['Status','Assets','Relations','Duplicates','Settings','Tasks']} active="Status" ariaLabel="API resources" /></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
-    <V2Toolbar label="Primary content" sticky={false}><b>API reference</b></V2Toolbar>
+    <V2Toolbar sticky={false}><b>API reference</b></V2Toolbar>
     <div class="v2-docs">
       <V2Card title="Companion API"><span class="v2-muted">Developer documentation surface presented inside the same global shell for navigation consistency.</span></V2Card>
       {#each endpoints as endpoint}<V2Card><V2Stack gap="sm"><V2Inline gap="sm"><V2Badge tone={endpoint[0]==='GET'?'ok':'warn'} text={endpoint[0]}/><code>{endpoint[1]}</code></V2Inline><span class="v2-muted">{endpoint[2]}</span><V2Button onclick={() => selected = `${endpoint[0]} ${endpoint[1]}`}>Expand endpoint</V2Button></V2Stack></V2Card>{/each}
     </div>
   </V2Zone>
 
-  {#snippet inspector()}<V2Zone label="Inspector"><V2Section title="Selected endpoint"><V2Card><V2Stack gap="sm"><b>{selected}</b><span class="v2-small v2-muted">Response schema, parameters and example payload would appear here.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet inspector()}<V2Zone><V2Section title="Selected endpoint"><V2Card><V2Stack gap="sm"><b>{selected}</b><span class="v2-small v2-muted">Response schema, parameters and example payload would appear here.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
 </V2PageLayout>
