@@ -53,6 +53,9 @@
   let optionsPopup = $state<HTMLDivElement>();
   let list = $state<HTMLDivElement>();
   let searchInput = $state<HTMLInputElement>();
+  let widthProbe = $state<HTMLDivElement>();
+  let contentTriggerWidth = $state(0);
+  let intrinsicPopupWidth = $state(0);
   let popupTop = $state(0);
   let popupLeft = $state(0);
   let popupWidth = $state(0);
@@ -115,13 +118,16 @@
     }
   }
 
-  function measurePopupWidth(triggerWidth: number, maximumWidth: number): number {
-    if (!optionsPopup) return Math.min(triggerWidth, maximumWidth);
-    const optionWidths = Array.from(optionsPopup.querySelectorAll<HTMLElement>('.v2-select-option-copy')).map((copy) => copy.scrollWidth);
-    const widestCopy = Math.max(0, ...optionWidths);
-    const optionChrome = 58;
-    const searchWidth = searchable ? Math.max(searchInput?.scrollWidth ?? 0, 180) + 24 : 0;
-    return Math.min(maximumWidth, Math.max(triggerWidth, widestCopy + optionChrome, searchWidth));
+  function measureIntrinsicWidths(): void {
+    if (!widthProbe) return;
+    const copies = Array.from(widthProbe.querySelectorAll<HTMLElement>('[data-select-width-copy]'));
+    const widestCopy = Math.max(0, ...copies.map((copy) => copy.scrollWidth));
+    const placeholderWidth = widthProbe.querySelector<HTMLElement>('[data-select-width-placeholder]')?.scrollWidth ?? 0;
+    const widestTriggerCopy = Math.max(widestCopy, placeholderWidth);
+    const triggerChrome = 46;
+    const popupChrome = 58;
+    contentTriggerWidth = Math.min(320, Math.max(96, widestTriggerCopy + triggerChrome));
+    intrinsicPopupWidth = Math.max(contentTriggerWidth, widestCopy + popupChrome, searchable ? 240 : 0);
   }
 
   function positionPopup(): void {
@@ -139,7 +145,7 @@
     const available = popupPlacement === 'down' ? spaceBelow : spaceAbove;
     popupMaxHeight = Math.max(96, Math.min(desiredMaxHeight, available));
 
-    popupWidth = measurePopupWidth(rect.width, maximumPopupWidth);
+    popupWidth = Math.min(maximumPopupWidth, Math.max(rect.width, intrinsicPopupWidth));
     const leftAligned = rect.left;
     const rightAligned = rect.right - popupWidth;
     if (leftAligned + popupWidth <= window.innerWidth - margin) {
@@ -165,6 +171,7 @@
     if (activeIndex < 0) activeIndex = firstEnabled();
     open = true;
     void tick().then(() => {
+      measureIntrinsicWidths();
       positionPopup();
       requestAnimationFrame(positionPopup);
       if (searchable) searchInput?.focus();
@@ -242,6 +249,19 @@
   }
 
   $effect(() => {
+    const optionSignature = normalized.map((option) => `${option.label}\u0000${option.subtitle}\u0000${option.direction ?? ''}`).join('\u0001');
+    const currentPlaceholder = placeholder;
+    const currentSearchable = searchable;
+    void tick().then(() => {
+      void optionSignature;
+      void currentPlaceholder;
+      void currentSearchable;
+      measureIntrinsicWidths();
+      if (open) positionPopup();
+    });
+  });
+
+  $effect(() => {
     if (!open) return;
     const reposition = () => positionPopup();
     window.addEventListener('resize', reposition);
@@ -253,7 +273,12 @@
   });
 </script>
 
-<div class="v2-select-field" data-width={width} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }}>
+<div
+  class="v2-select-field"
+  data-width={width}
+  style={width === 'content' && contentTriggerWidth ? `width:${contentTriggerWidth}px` : undefined}
+  use:clickOutside={{ enabled: open, onoutside: () => (open = false) }}
+>
   {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
   <div class="v2-select-control">
     <button
@@ -266,6 +291,7 @@
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-controls={`${id}-options`}
+      style={width === 'content' && contentTriggerWidth ? `width:${contentTriggerWidth}px` : undefined}
       onclick={() => (open ? open = false : show())}
       onkeydown={handleTriggerKey}
     >
@@ -279,6 +305,24 @@
     {#if allowEmpty && !isEmpty}
       <button class="v2-select-clear" type="button" disabled={disabled} aria-label={`Clear ${label || 'selection'}`} onclick={clear}>×</button>
     {/if}
+  </div>
+
+  <div
+    bind:this={widthProbe}
+    aria-hidden="true"
+    style="position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none;width:max-content;max-width:none;white-space:nowrap"
+  >
+    <span data-select-width-placeholder style="display:block;width:max-content;white-space:nowrap">{placeholder}</span>
+    {#each normalized as option (`probe-${option.value}`)}
+      <span data-select-width-copy style="display:flex;width:max-content;max-width:none;flex-direction:column;white-space:nowrap">
+        <span style="display:flex;width:max-content;align-items:center;gap:6px;white-space:nowrap">
+          <span>{option.label}</span>
+          {#if option.direction === 'asc'}<ArrowUp size={14} aria-hidden="true" />{/if}
+          {#if option.direction === 'desc'}<ArrowDown size={14} aria-hidden="true" />{/if}
+        </span>
+        {#if option.subtitle}<span style="display:block;width:max-content;white-space:nowrap">{option.subtitle}</span>{/if}
+      </span>
+    {/each}
   </div>
 
   {#if open}
