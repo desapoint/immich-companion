@@ -5,7 +5,7 @@
 .v2-nav-label{color:#6e7e92;font-size:10px;text-transform:uppercase;letter-spacing:.1em;font-weight:900;padding:15px 10px 6px}
 .v2-nav{display:grid;gap:3px}
 .v2-nav-button{width:100%;height:39px;display:flex;align-items:center;gap:10px;background:transparent;border:1px solid transparent;border-radius:8px;color:#adbac9;text-align:left;padding:8px 11px;cursor:pointer}
-.v2-nav-button:hover{background:#141d28}.v2-nav-button.active{background:var(--v2-accent-2);color:#e8efff}
+.v2-nav-button:hover{background:#141d28}.v2-nav-button[aria-current="page"]{background:var(--v2-accent-2);color:#e8efff}
 .v2-nav-icon{width:17px;height:17px;border:1px solid #65758a;border-radius:5px;flex:0 0 auto}.v2-grow{flex:1}
 .v2-connection{border:1px solid var(--v2-line);border-radius:10px;background:var(--v2-surface);padding:10px}
 .v2-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--v2-green);margin-right:6px}
@@ -21,9 +21,9 @@
 .v2-page-title{font-size:24px;line-height:1.2;margin:0}.v2-page-description{margin:0;color:var(--v2-muted);max-width:780px}
 .v2-page-tabs{margin-top:14px}
 .v2-workspace{position:relative;display:grid;grid-template-columns:var(--v2-context-width) minmax(0,1fr) var(--v2-inspector-width);min-height:0;height:100%;overflow:hidden}
-.v2-workspace-context-only{grid-template-columns:var(--v2-context-width) minmax(0,1fr)}
-.v2-workspace-inspector-only{grid-template-columns:minmax(0,1fr) var(--v2-inspector-width)}
-.v2-workspace-content-only{grid-template-columns:minmax(0,1fr)}
+.v2-workspace[data-layout="context-only"]{grid-template-columns:var(--v2-context-width) minmax(0,1fr)}
+.v2-workspace[data-layout="inspector-only"]{grid-template-columns:minmax(0,1fr) var(--v2-inspector-width)}
+.v2-workspace[data-layout="content-only"]{grid-template-columns:minmax(0,1fr)}
 .v2-context,.v2-inspector{background:#0f151d;padding:15px;overflow:auto;min-height:0;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#475970 #111821}
 .v2-content{padding:16px 18px 90px;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#475970 #111821}
 .v2-context{border-right:1px solid var(--v2-line)}.v2-inspector{border-left:1px solid var(--v2-line)}
