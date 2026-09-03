@@ -16,7 +16,7 @@
   {#if title || actions}
     <div class="v2-card-header">
       {#if title}<h3 class="v2-card-heading">{title}</h3>{/if}
-      {#if actions}{@render actions()}</if>
+      {#if actions}{@render actions()}{/if}
     </div>
   {/if}
   {#if children}{@render children()}{/if}
