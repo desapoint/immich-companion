@@ -26,9 +26,10 @@
     event.preventDefault();
     const item = items[next];
     if (!item) return;
+    const tablist = (event.currentTarget as HTMLButtonElement).parentElement;
     onselect?.(item);
     requestAnimationFrame(() => {
-      (event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next])?.focus();
+      tablist?.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
     });
   }
 </script>
