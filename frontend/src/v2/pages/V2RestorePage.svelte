@@ -23,7 +23,7 @@
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button>Restore selected</V2Button><V2Button variant="primary">Restore all</V2Button></V2Inline>{/snippet}
 
   {#snippet context()}
-    <V2Zone label="Context rail">
+    <V2Zone>
       <V2Section title="Trash summary"><V2Card><V2Stack gap="sm"><b>{total} items</b><span class="v2-small v2-muted">Loaded directly from current Immich trash.</span></V2Stack></V2Card></V2Section>
       <V2Section title="Selection"><V2Stack gap="sm"><V2Button>Select all on page</V2Button><V2Button>Clear selection</V2Button></V2Stack></V2Section>
       <V2Card><span class="v2-small v2-muted">Display density is controlled globally from the header.</span></V2Card>
@@ -31,7 +31,7 @@
   {/snippet}
 
   <V2Zone>
-    <V2Toolbar label="Primary content">
+    <V2Toolbar>
       <V2Badge text={`Page ${page} · ${Math.min(pageSize, total - (page - 1) * pageSize)} items`} />
       {#snippet actions()}<V2Button disabled={page === 1} onclick={() => page--}>Previous</V2Button><V2Button disabled={page === maxPage} onclick={() => page++}>Next</V2Button>{/snippet}
     </V2Toolbar>
@@ -39,7 +39,7 @@
   </V2Zone>
 
   {#snippet inspector()}
-    <V2Zone label="Inspector"><V2Section title="Selected trash"><V2Card><V2Stack gap="sm"><b>4 selected</b><span class="v2-small v2-muted">Restore is the only mutation available in this workspace/viewer.</span><V2Button variant="primary">Restore selected</V2Button></V2Stack></V2Card></V2Section></V2Zone>
+    <V2Zone><V2Section title="Selected trash"><V2Card><V2Stack gap="sm"><b>4 selected</b><span class="v2-small v2-muted">Restore is the only mutation available in this workspace/viewer.</span><V2Button variant="primary">Restore selected</V2Button></V2Stack></V2Card></V2Section></V2Zone>
   {/snippet}
 </V2PageLayout>
 
