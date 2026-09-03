@@ -39,7 +39,7 @@
   const normalizedQuery=$derived(query.trim().toLocaleLowerCase());
   const filteredTags=$derived(tags.filter((tag)=>{if(!normalizedQuery)return true;const direct=tag.name.toLocaleLowerCase().includes(normalizedQuery);return includeHierarchy?direct||tag.path.toLocaleLowerCase().includes(normalizedQuery):direct}));
   const paginationTotal=$derived(normalizedQuery ? Math.max(filteredTags.length,1) : total);
-  const parentOptions=$derived(tags.filter((tag)=>tag.children>0&&tag.id!==editorTag?.id).map((tag)=>({value:tag.name,label:tag.path})));
+  const parentOptions=$derived(tags.filter((tag)=>tag.children>0&&tag.id!==editorTag?.id).map((tag)=>({value:tag.name,label:tag.name,subtitle:tag.path})));
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function openCreate(){editorTag=null;editorMode='create'}
   function openEdit(tag:Tag){editorTag=tag;editorMode='edit'}
