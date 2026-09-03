@@ -27,7 +27,7 @@
       {#each options as option}<option>{option}</option>{/each}
     </select>
   {:else if multiline}
-    <textarea {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}>{value}</textarea>
+    <textarea value={String(value)} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}></textarea>
   {:else}
     <input {type} value={value} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}>
   {/if}
