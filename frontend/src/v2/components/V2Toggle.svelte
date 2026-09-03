@@ -10,10 +10,25 @@
     disabled?: boolean;
     onchange?: (checked: boolean) => void;
   } = $props();
+
+  function toggle(): void {
+    if (disabled) return;
+    onchange?.(!checked);
+  }
 </script>
 
-<label class="v2-toggle">
-  <input type="checkbox" {checked} {disabled} onchange={(event) => onchange?.(event.currentTarget.checked)}>
-  <span class="v2-toggle-track" aria-hidden="true"><span class="v2-toggle-thumb"></span></span>
+<button
+  class="v2-toggle"
+  type="button"
+  role="switch"
+  aria-checked={checked}
+  aria-label={label}
+  {disabled}
+  data-disabled={disabled || undefined}
+  onclick={toggle}
+>
+  <span class="v2-toggle-track" data-checked={checked || undefined} aria-hidden="true">
+    <span class="v2-toggle-thumb" data-checked={checked || undefined}></span>
+  </span>
   <span class="v2-toggle-label">{label}</span>
-</label>
+</button>
