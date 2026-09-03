@@ -1,7 +1,6 @@
 <script lang="ts">
   import { X } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
-  import V2Button from './V2Button.svelte';
 
   type ModalRuntime = { nextId: number; stack: number[] };
   type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -14,7 +13,6 @@
     draggable = true,
     dismissOnBackdrop = false,
     onclose,
-    headerActions,
     children,
     footer,
   }: {
@@ -25,7 +23,6 @@
     draggable?: boolean;
     dismissOnBackdrop?: boolean;
     onclose?: () => void;
-    headerActions?: import('svelte').Snippet;
     children: import('svelte').Snippet;
     footer?: import('svelte').Snippet;
   } = $props();
@@ -186,10 +183,9 @@
         <h2 id={titleId}>{title}</h2>
         {#if description}<p id={descriptionId}>{description}</p>{/if}
       </div>
-      <div class="v2-modal-header-actions">
-        {#if headerActions}{@render headerActions()}{/if}
-        <V2Button ariaLabel={`Close ${title}`} title="Close" onclick={onclose}><X size={18} /></V2Button>
-      </div>
+      <button class="v2-modal-close" type="button" aria-label={`Close ${title}`} title="Close" onclick={onclose}>
+        <X size={18} aria-hidden="true" />
+      </button>
     </header>
 
     <div class="v2-modal-content">{@render children()}</div>
