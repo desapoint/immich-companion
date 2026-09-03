@@ -16,7 +16,7 @@
   } = $props();
 </script>
 
-<header class="v2-page-head">
+<header class="v2-page-head" data-has-tabs={tabs ? 'true' : 'false'}>
   <div class="v2-head-row">
     <div class="v2-page-heading">
       {#if eyebrow}<V2ZoneLabel text={eyebrow} />{/if}
