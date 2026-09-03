@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
@@ -27,5 +28,5 @@
     <V2Card><V2Table><thead><tr><th></th><th>Tag</th><th>Path</th><th>Assets</th><th>Actions</th></tr></thead><tbody>{#each tags as tag}<tr><td><input type="checkbox"></td><td><span class="v2-swatch"></span><b>{tag[0]}</b></td><td class="v2-muted">{tag[1]}</td><td>{tag[2]}</td><td><V2Inline gap="sm" wrap={true}><V2Button>Filter assets</V2Button><V2Button onclick={() => selected = tag[0]}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{/each}</tbody></V2Table></V2Card>
   </V2Zone>
 
-  {#snippet inspector()}<V2Zone><V2Section title="Tag editor"><V2Card><V2Stack gap="sm"><V2Field label="Name" value={selected}/><V2Field label="Color" value="#9A78FF"/><V2Field label="Parent" options={['People','Places','Projects','Workflow']}/><V2Inline gap="sm"><V2Button>Cancel</V2Button><V2Button variant="primary">Save changes</V2Button></V2Inline></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet inspector()}<V2Zone><V2Section title="Tag editor"><V2Card><V2Stack gap="sm"><V2Field label="Name" value={selected}/><V2Field label="Color" value="#9A78FF"/><SelectField id="tag-parent" label="Parent" options={['People','Places','Projects','Workflow']}/><V2Inline gap="sm"><V2Button>Cancel</V2Button><V2Button variant="primary">Save changes</V2Button></V2Inline></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
 </V2PageLayout>
