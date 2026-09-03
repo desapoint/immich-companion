@@ -4,7 +4,7 @@
 
   let {
     label,
-    gap = 'md',
+    gap = 'lg',
     children,
     class: className = '',
   }: {
