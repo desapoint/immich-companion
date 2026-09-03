@@ -34,8 +34,14 @@
   let activeIndex = $state(-1);
   let searchQuery = $state('');
   let trigger = $state<HTMLButtonElement>();
+  let optionsPopup = $state<HTMLDivElement>();
   let list = $state<HTMLDivElement>();
   let searchInput = $state<HTMLInputElement>();
+  let popupTop = $state(0);
+  let popupLeft = $state(0);
+  let popupWidth = $state(0);
+  let popupMaxHeight = $state(304);
+  let popupPlacement = $state<'down' | 'up'>('down');
 
   const normalized = $derived(options.map((option) => typeof option === 'string'
     ? { value: option, label: option, subtitle: '', disabled: false }
@@ -67,6 +73,30 @@
     }
   }
 
+  function positionPopup(): void {
+    if (!open || !trigger) return;
+    const margin = 10;
+    const gap = 5;
+    const desiredMaxHeight = 304;
+    const minimumUsefulHeight = 144;
+    const rect = trigger.getBoundingClientRect();
+    const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap - margin);
+    const spaceAbove = Math.max(0, rect.top - gap - margin);
+    const preferDown = spaceBelow >= Math.min(desiredMaxHeight, minimumUsefulHeight) || spaceBelow >= spaceAbove;
+    popupPlacement = preferDown ? 'down' : 'up';
+    const available = popupPlacement === 'down' ? spaceBelow : spaceAbove;
+    popupMaxHeight = Math.max(96, Math.min(desiredMaxHeight, available));
+
+    const desiredWidth = width === 'content'
+      ? Math.max(rect.width, Math.min(optionsPopup?.scrollWidth ?? rect.width, Math.min(352, window.innerWidth - margin * 2)))
+      : rect.width;
+    popupWidth = Math.min(desiredWidth, window.innerWidth - margin * 2);
+    popupLeft = Math.min(Math.max(rect.left, margin), window.innerWidth - popupWidth - margin);
+    popupTop = popupPlacement === 'down'
+      ? rect.bottom + gap
+      : Math.max(margin, rect.top - gap - Math.min(optionsPopup?.scrollHeight ?? popupMaxHeight, popupMaxHeight));
+  }
+
   function show(): void {
     if (disabled || !normalized.length) return;
     searchQuery = '';
@@ -74,6 +104,8 @@
     if (activeIndex < 0) activeIndex = firstEnabled();
     open = true;
     void tick().then(() => {
+      positionPopup();
+      requestAnimationFrame(positionPopup);
       if (searchable) searchInput?.focus();
       else list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus();
     });
@@ -147,6 +179,17 @@
       }
     }
   }
+
+  $effect(() => {
+    if (!open) return;
+    const reposition = () => positionPopup();
+    window.addEventListener('resize', reposition);
+    window.addEventListener('scroll', reposition, true);
+    return () => {
+      window.removeEventListener('resize', reposition);
+      window.removeEventListener('scroll', reposition, true);
+    };
+  });
 </script>
 
 <div class="v2-select-field" data-width={width} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }}>
@@ -174,7 +217,14 @@
   </div>
 
   {#if open}
-    <div id={`${id}-options`} class="v2-select-options" data-searchable={searchable || undefined}>
+    <div
+      bind:this={optionsPopup}
+      id={`${id}-options`}
+      class="v2-select-options"
+      data-searchable={searchable || undefined}
+      data-placement={popupPlacement}
+      style={`top:${popupTop}px;left:${popupLeft}px;width:${popupWidth}px;max-height:${popupMaxHeight}px`}
+    >
       {#if searchable}
         <div class="v2-select-search">
           <input
@@ -182,7 +232,7 @@
             value={searchQuery}
             placeholder={searchPlaceholder}
             aria-label={`Search ${label || 'options'}`}
-            oninput={(event) => { searchQuery = event.currentTarget.value; activeIndex = -1; }}
+            oninput={(event) => { searchQuery = event.currentTarget.value; activeIndex = -1; void tick().then(positionPopup); }}
             onkeydown={handleSearchKey}
           >
         </div>
