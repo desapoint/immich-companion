@@ -1,36 +1,5 @@
 <script lang="ts">
-  import V2PageHeader from './V2PageHeader.svelte';
-  import V2Workspace from './V2Workspace.svelte';
-
-  let {
-    title,
-    description = '',
-    eyebrow = 'Page identity',
-    headerActions,
-    context,
-    children,
-    content,
-    inspector,
-  }: {
-    title: string;
-    description?: string;
-    eyebrow?: string;
-    headerActions?: import('svelte').Snippet;
-    context?: import('svelte').Snippet;
-    children?: import('svelte').Snippet;
-    content?: import('svelte').Snippet;
-    inspector?: import('svelte').Snippet;
-  } = $props();
+  import V2PageHeader from './V2PageHeader.svelte'; import V2Workspace from './V2Workspace.svelte';
+  let { title, description='', eyebrow='Page identity', headerActions, tabs, context, children, content, inspector }: { title:string; description?:string; eyebrow?:string; headerActions?:import('svelte').Snippet; tabs?:import('svelte').Snippet; context?:import('svelte').Snippet; children?:import('svelte').Snippet; content?:import('svelte').Snippet; inspector?:import('svelte').Snippet } = $props();
 </script>
-
-<div class="v2-page-host">
-  <V2PageHeader {title} {description} {eyebrow} actions={headerActions} />
-
-  <V2Workspace {context} {inspector}>
-    {#if children}
-      {@render children()}
-    {:else if content}
-      {@render content()}
-    {/if}
-  </V2Workspace>
-</div>
+<div class="v2-page-host"><V2PageHeader {title} {description} {eyebrow} actions={headerActions} {tabs}/><V2Workspace {context} {inspector}>{#if children}{@render children()}{:else if content}{@render content()}{/if}</V2Workspace></div>
