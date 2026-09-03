@@ -9,7 +9,7 @@
   let { state }: { state: StatusLoadState } = $props();
 </script>
 
-<V2Zone label="Inspector">
+<V2Zone>
   <V2Section title="Capabilities">
     <V2Card>
       <V2Stack gap="sm">
