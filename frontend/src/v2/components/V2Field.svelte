@@ -3,7 +3,6 @@
     label,
     value = '',
     type = 'text',
-    options = [],
     placeholder = '',
     multiline = false,
     disabled = false,
@@ -12,7 +11,6 @@
     label: string;
     value?: string | number;
     type?: string;
-    options?: string[];
     placeholder?: string;
     multiline?: boolean;
     disabled?: boolean;
@@ -21,12 +19,8 @@
 </script>
 
 <label class="v2-field">
-  <span>{label}</span>
-  {#if options.length}
-    <select value={String(value)} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}>
-      {#each options as option}<option>{option}</option>{/each}
-    </select>
-  {:else if multiline}
+  <span class="v2-field-label">{label}</span>
+  {#if multiline}
     <textarea value={String(value)} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}></textarea>
   {:else}
     <input {type} value={value} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}>
