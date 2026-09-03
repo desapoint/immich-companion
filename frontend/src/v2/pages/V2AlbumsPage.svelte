@@ -27,5 +27,5 @@
     <V2Card><V2Table><thead><tr><th></th><th>Name</th><th>Assets</th><th>Description</th><th>Actions</th></tr></thead><tbody>{#each albums as album}<tr><td><input type="checkbox"></td><td><b>{album[0]}</b></td><td>{album[1]}</td><td class="v2-muted">Album description</td><td><V2Inline gap="sm" wrap={true}><V2Button>Filter assets</V2Button><V2Button onclick={() => selected = album[0]}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{/each}</tbody></V2Table></V2Card>
   </V2Zone>
 
-  {#snippet inspector()}<V2Zone label="Inspector"><V2Section title="Album editor"><V2Card><V2Stack gap="sm"><V2Field label="Name" value={selected}/><V2Field label="Description" value="Family photos"/><V2Inline gap="sm"><V2Button>Cancel</V2Button><V2Button variant="primary">Save changes</V2Button></V2Inline></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet inspector()}<V2Zone label="Inspector"><V2Section title="Album editor"><V2Card><V2Stack gap="sm"><V2Field label="Name" value={selected}/><V2Field label="Description" value="Family photos" multiline={true}/><V2Inline gap="sm"><V2Button>Cancel</V2Button><V2Button variant="primary">Save changes</V2Button></V2Inline></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
 </V2PageLayout>
