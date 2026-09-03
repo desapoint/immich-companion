@@ -1,5 +1,4 @@
 <script lang="ts">
-  import V2Stack from './V2Stack.svelte';
   import V2ZoneLabel from './V2ZoneLabel.svelte';
 
   let {
@@ -14,8 +13,8 @@
 </script>
 
 <div class={`v2-zone-container ${className}`.trim()}>
-  <V2Stack gap="lg">
-    {#if label}<V2ZoneLabel text={label} />{/if}
-    {@render children()}
-  </V2Stack>
+  {#if label}
+    <div class="v2-zone-label-slot"><V2ZoneLabel text={label} /></div>
+  {/if}
+  <div class="v2-zone-body">{@render children()}</div>
 </div>
