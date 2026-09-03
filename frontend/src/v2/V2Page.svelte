@@ -1,10 +1,11 @@
 <script lang="ts">
-  import V2Shell, { type NavItem } from './components/V2Shell.svelte';
+  import V2Shell from './components/V2Shell.svelte';
   import V2PlaceholderPage from './pages/V2PlaceholderPage.svelte';
   import V2StatusPage from './pages/V2StatusPage.svelte';
   import './styles/v2.css';
 
   type PageKey = 'status' | 'assets' | 'restore' | 'duplicates' | 'albums' | 'tags' | 'settings' | 'docs';
+  type NavItem = { key: PageKey; label: string; group?: string; position?: 'top' | 'bottom' };
   type PageConfig = {
     title: string;
     description: string;
