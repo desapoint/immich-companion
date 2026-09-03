@@ -5,7 +5,7 @@
   let {
     title,
     description = '',
-    eyebrow = 'Page identity',
+    eyebrow = '',
     headerActions,
     tabs,
     context,
