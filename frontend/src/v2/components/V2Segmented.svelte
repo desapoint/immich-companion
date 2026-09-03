@@ -14,6 +14,6 @@
 
 <div class="v2-segmented" role="group" aria-label={ariaLabel}>
   {#each items as item}
-    <button type="button" class:active={item === active} onclick={() => onselect?.(item)}>{item}</button>
+    <button type="button" aria-pressed={item === active} onclick={() => onselect?.(item)}>{item}</button>
   {/each}
 </div>
