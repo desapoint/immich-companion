@@ -7,8 +7,8 @@
   import V2Notice from '../components/V2Notice.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
+  import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
-  import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
   import { companionState, dependencyState, immichVersion } from './statusPresentation';
 
   let {
@@ -44,13 +44,10 @@
     {@const immich = dependencyState(immichDep, 'Connected')}
     {@const database = dependencyState(databaseDep, 'Ready')}
 
-    <V2Inline justify="between" align="start" wrap={true} gap="md">
-      <V2Inline gap="sm" wrap={true}>
-        <V2ZoneLabel text="Primary content" />
-        <b>System overview</b>
-      </V2Inline>
-      <button class="v2-button" onclick={onrefresh}>Refresh view</button>
-    </V2Inline>
+    <V2Toolbar label="Primary content">
+      <b>System overview</b>
+      {#snippet actions()}<button class="v2-button" onclick={onrefresh}>Refresh view</button>{/snippet}
+    </V2Toolbar>
 
     <div class="v2-metric-grid">
       <V2Metric value={companion.label} label="Companion backend" />
@@ -63,33 +60,11 @@
       <V2Card>
         <div class="v2-table-wrap">
           <table class="v2-table">
-            <thead>
-              <tr>
-                <th class="v2-table-heading">Service</th>
-                <th class="v2-table-heading">Status</th>
-                <th class="v2-table-heading">Version</th>
-                <th class="v2-table-heading">Details</th>
-              </tr>
-            </thead>
+            <thead><tr><th class="v2-table-heading">Service</th><th class="v2-table-heading">Status</th><th class="v2-table-heading">Version</th><th class="v2-table-heading">Details</th></tr></thead>
             <tbody>
-              <tr>
-                <td class="v2-table-cell">Immich API</td>
-                <td class="v2-table-cell"><V2Badge tone={immich.tone} text={immich.label} /></td>
-                <td class="v2-table-cell">{immichVersion(snapshot)}</td>
-                <td class="v2-table-cell">{immichDep.detail ?? (immichDep.configured ? 'Configured' : 'Not configured')}</td>
-              </tr>
-              <tr>
-                <td class="v2-table-cell">Companion API</td>
-                <td class="v2-table-cell"><V2Badge tone={companion.tone} text={companion.label} /></td>
-                <td class="v2-table-cell">{snapshot.version.version}</td>
-                <td class="v2-table-cell">{snapshot.health.status}</td>
-              </tr>
-              <tr>
-                <td class="v2-table-cell">Database</td>
-                <td class="v2-table-cell"><V2Badge tone={database.tone} text={database.label} /></td>
-                <td class="v2-table-cell">—</td>
-                <td class="v2-table-cell">{databaseDep.detail ?? (databaseDep.configured ? 'Configured' : 'Not configured')}</td>
-              </tr>
+              <tr><td class="v2-table-cell">Immich API</td><td class="v2-table-cell"><V2Badge tone={immich.tone} text={immich.label} /></td><td class="v2-table-cell">{immichVersion(snapshot)}</td><td class="v2-table-cell">{immichDep.detail ?? (immichDep.configured ? 'Configured' : 'Not configured')}</td></tr>
+              <tr><td class="v2-table-cell">Companion API</td><td class="v2-table-cell"><V2Badge tone={companion.tone} text={companion.label} /></td><td class="v2-table-cell">{snapshot.version.version}</td><td class="v2-table-cell">{snapshot.health.status}</td></tr>
+              <tr><td class="v2-table-cell">Database</td><td class="v2-table-cell"><V2Badge tone={database.tone} text={database.label} /></td><td class="v2-table-cell">—</td><td class="v2-table-cell">{databaseDep.detail ?? (databaseDep.configured ? 'Configured' : 'Not configured')}</td></tr>
             </tbody>
           </table>
         </div>
