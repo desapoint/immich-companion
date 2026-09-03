@@ -11,6 +11,7 @@
     options,
     width = 'full',
     disabled = false,
+    allowEmpty = false,
     placeholder = 'Choose an option',
     onchange,
   }: {
@@ -20,6 +21,7 @@
     options: SelectOption[];
     width?: 'full' | 'content';
     disabled?: boolean;
+    allowEmpty?: boolean;
     placeholder?: string;
     onchange?: (value: string) => void;
   } = $props();
@@ -32,9 +34,11 @@
   const normalized = $derived(options.map((option) => typeof option === 'string'
     ? { value: option, label: option, disabled: false }
     : { disabled: false, ...option }));
-  const selected = $derived(String(value) === ''
-    ? undefined
-    : normalized.find((option) => option.value === String(value)));
+  const selected = $derived(
+    normalized.find((option) => option.value === String(value))
+      ?? (!allowEmpty ? normalized.find((option) => !option.disabled) : undefined),
+  );
+  const isEmpty = $derived(allowEmpty && String(value) === '');
 
   function firstEnabled(): number {
     return normalized.findIndex((option) => !option.disabled);
@@ -55,9 +59,9 @@
 
   function show(): void {
     if (disabled || !normalized.length) return;
-    activeIndex = String(value) === ''
+    activeIndex = isEmpty
       ? firstEnabled()
-      : normalized.findIndex((option) => option.value === String(value) && !option.disabled);
+      : normalized.findIndex((option) => option.value === selected?.value && !option.disabled);
     if (activeIndex < 0) activeIndex = firstEnabled();
     open = true;
     void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus());
@@ -68,6 +72,14 @@
     if (!option || option.disabled) return;
     value = option.value;
     onchange?.(option.value);
+    open = false;
+    void tick().then(() => trigger?.focus());
+  }
+
+  function clear(): void {
+    if (!allowEmpty || disabled || isEmpty) return;
+    value = '';
+    onchange?.('');
     open = false;
     void tick().then(() => trigger?.focus());
   }
@@ -99,22 +111,27 @@
 
 <div class="v2-select-field" data-width={width} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }}>
   {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
-  <button
-    bind:this={trigger}
-    {id}
-    class="v2-select-trigger"
-    data-placeholder={!selected || undefined}
-    type="button"
-    {disabled}
-    aria-haspopup="listbox"
-    aria-expanded={open}
-    aria-controls={`${id}-options`}
-    onclick={() => (open ? open = false : show())}
-    onkeydown={handleTriggerKey}
-  >
-    <span>{selected?.label ?? placeholder}</span>
-    <span class="v2-select-chevron" aria-hidden="true"></span>
-  </button>
+  <div class="v2-select-control">
+    <button
+      bind:this={trigger}
+      {id}
+      class="v2-select-trigger"
+      data-placeholder={isEmpty || undefined}
+      type="button"
+      {disabled}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      aria-controls={`${id}-options`}
+      onclick={() => (open ? open = false : show())}
+      onkeydown={handleTriggerKey}
+    >
+      <span>{isEmpty ? placeholder : selected?.label ?? placeholder}</span>
+      <span class="v2-select-chevron" aria-hidden="true"></span>
+    </button>
+    {#if allowEmpty && !isEmpty}
+      <button class="v2-select-clear" type="button" disabled={disabled} aria-label={`Clear ${label || 'selection'}`} onclick={clear}>×</button>
+    {/if}
+  </div>
 
   {#if open}
     <div bind:this={list} id={`${id}-options`} class="v2-select-options" role="listbox" aria-label={label || undefined}>
@@ -122,17 +139,17 @@
         <button
           type="button"
           role="option"
-          aria-selected={String(value) !== '' && option.value === String(value)}
+          aria-selected={!isEmpty && option.value === selected?.value}
           disabled={option.disabled}
           data-index={index}
           data-active={index === activeIndex || undefined}
-          data-selected={String(value) !== '' && option.value === String(value) || undefined}
+          data-selected={!isEmpty && option.value === selected?.value || undefined}
           onclick={() => choose(index)}
           onfocus={() => (activeIndex = index)}
           onkeydown={(event) => handleOptionKey(event, index)}
         >
           <span>{option.label}</span>
-          {#if String(value) !== '' && option.value === String(value)}<span aria-hidden="true">✓</span>{/if}
+          {#if !isEmpty && option.value === selected?.value}<span aria-hidden="true">✓</span>{/if}
         </button>
       {/each}
     </div>
