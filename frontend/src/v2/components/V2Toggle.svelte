@@ -22,9 +22,8 @@
   type="button"
   role="switch"
   aria-checked={checked}
-  aria-label={label}
   {disabled}
-  data-disabled={disabled || undefined}
+  data-checked={checked || undefined}
   onclick={toggle}
 >
   <span class="v2-toggle-track" data-checked={checked || undefined} aria-hidden="true">
@@ -32,3 +31,25 @@
   </span>
   <span class="v2-toggle-label">{label}</span>
 </button>
+
+<style>
+  .v2-toggle[data-checked="true"] .v2-toggle-track {
+    background: var(--v2-accent-2);
+    border-color: #4e6e9b;
+  }
+
+  .v2-toggle[data-checked="true"] .v2-toggle-thumb {
+    transform: translateX(14px);
+    background: #cfe0ff;
+  }
+
+  .v2-toggle:focus-visible .v2-toggle-track {
+    outline: 2px solid #4169a8;
+    outline-offset: 2px;
+  }
+
+  .v2-toggle:disabled {
+    cursor: default;
+    opacity: .5;
+  }
+</style>
