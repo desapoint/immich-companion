@@ -5,8 +5,8 @@
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
   import V2Checkbox from '../components/V2Checkbox.svelte';
+  import V2CronField from '../components/V2CronField.svelte';
   import V2Field from '../components/V2Field.svelte';
-  import V2Inline from '../components/V2Inline.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Segmented from '../components/V2Segmented.svelte';
@@ -17,9 +17,10 @@
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
-  const schedulePresets = ['Every 15 minutes','Every hour','Every day at midnight','Every Sunday at midnight'];
   let tab = $state<SettingsTab>('General');
   let density = $state<V2Density>('standard');
+  let incrementalCron = $state('*/15 * * * *');
+  let globalCron = $state('0 0 * * 0');
 
   function setDensity(next: V2Density): void {
     density = next;
@@ -52,8 +53,8 @@
     {:else}
       <div class="v2-setting-grid">
         <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Demo values"/>{/snippet}<V2Stack gap="sm"><span class="v2-small v2-muted">Global sync and large asset work rest after each batch. Tag association concurrency also influences the adaptive tag matching strategy.</span><V2Field label="Assets per batch · 1–500" type="number" value="50"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="0.2"/><V2Field label="Tag association concurrency · 1–32" type="number" value="4"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
-        <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone="ok" text="Enabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={true}/><V2Field label="Cron expression" value="*/15 * * * *"/><V2Inline gap="sm" wrap={true}>{#each schedulePresets as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: 13:15</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
-        <V2Card title="Global sync">{#snippet actions()}<V2Badge text="Disabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled"/><V2Field label="Cron expression" value="0 0 * * 0"/><V2Inline gap="sm" wrap={true}>{#each schedulePresets as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: disabled</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
+        <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone="ok" text="Enabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={true}/><V2CronField id="settings-incremental-cron" label="Incremental schedule" bind:value={incrementalCron}/><span class="v2-small v2-muted">Next run: 13:15</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
+        <V2Card title="Global sync">{#snippet actions()}<V2Badge text="Disabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled"/><V2CronField id="settings-global-cron" label="Global schedule" bind:value={globalCron}/><span class="v2-small v2-muted">Next run: disabled</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
       </div>
     {/if}
   </V2Zone>
