@@ -21,5 +21,5 @@
   aria-valuemax={indeterminate ? undefined : 100}
   aria-valuenow={indeterminate ? undefined : percent}
 >
-  <i style:width={indeterminate ? undefined : `${percent}%`}><span></span></i>
+  <i style:width={indeterminate ? undefined : `${percent}%`}></i>
 </div>
