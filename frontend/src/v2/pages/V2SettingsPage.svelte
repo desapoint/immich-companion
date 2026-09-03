@@ -17,6 +17,7 @@
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
+  const schedulePresets = ['Every 15 minutes','Every hour','Every day at midnight','Every Sunday at midnight'];
   let tab = $state<SettingsTab>('General');
   let density = $state<V2Density>('standard');
 
@@ -45,14 +46,14 @@
       </div>
     {:else if tab === 'Duplicates'}
       <div class="v2-setting-grid">
-        <V2Card title="Duplicate automatic handling"><V2Stack gap="sm"><SelectField id="settings-exact-action" label="Exact-file action" options={['Resolve exact files','Keep all exact copies','Stack exact copies','Always review']}/><SelectField id="settings-primary-rule" label="Primary rule" options={['Prefer Immich uploads','Prefer external files','Most recently uploaded','First Immich result']}/><V2Checkbox label="Enable automatic recommendations" checked={true}/><V2Checkbox label="Analyze candidate files automatically" checked={true}/><V2Button variant="primary">Save duplicate policy</V2Button></V2Stack></V2Card>
-        <V2Card title="Review safeguards"><V2Stack gap="sm"><V2Checkbox label="Require review before deletion" checked={true}/><V2Checkbox label="Keep similarity as evidence only" checked={true}/><span class="v2-small v2-muted">Demo-only settings until duplicate policy integration is connected.</span></V2Stack></V2Card>
+        <V2Card title="Automatic handling policy"><V2Stack gap="sm"><SelectField id="settings-exact-action" label="Exact-file action" options={['Resolve exact files','Keep all exact copies','Stack exact copies','Always review']}/><SelectField id="settings-primary-rule" label="Primary rule" options={['Prefer Immich uploads','Prefer external files','Most recently uploaded','First Immich result']}/><V2Field label="Similarity threshold (%)" type="number" value="82"/><V2Checkbox label="Enable automatic recommendations" checked={true}/><V2Checkbox label="Preselect safe groups" checked={true}/><V2Checkbox label="Analyze candidate files automatically" checked={true}/><V2Checkbox label="Verify upload streams too" checked={true}/><V2Button variant="primary">Save duplicate policy</V2Button></V2Stack></V2Card>
+        <V2Card title="External libraries"><V2Stack gap="sm"><span class="v2-small v2-muted">No selected library means all external libraries. Demo options stand in for the live Immich library list.</span><V2Checkbox label="Family Archive · 1,842 assets"/><V2Checkbox label="Imported Photos · 621 assets"/><V2Checkbox label="Scanned Media · 204 assets"/></V2Stack></V2Card>
       </div>
     {:else}
       <div class="v2-setting-grid">
-        <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Saved"/>{/snippet}<V2Stack gap="sm"><V2Field label="Assets per batch · 1–500" type="number" value="100"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="1"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
-        <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone="ok" text="Enabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={true}/><V2Field label="Cron" value="*/15 * * * *"/><V2Inline gap="sm" wrap={true}>{#each ['15 min','Hourly','Daily','Weekly'] as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: 13:15</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
-        <V2Card title="Global sync">{#snippet actions()}<V2Badge text="Disabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled"/><V2Field label="Cron" value="0 0 * * 0"/><V2Inline gap="sm" wrap={true}>{#each ['15 min','Hourly','Daily','Weekly'] as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: disabled</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
+        <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Demo values"/>{/snippet}<V2Stack gap="sm"><span class="v2-small v2-muted">Global sync and large asset work rest after each batch. Tag association concurrency also influences the adaptive tag matching strategy.</span><V2Field label="Assets per batch · 1–500" type="number" value="50"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="0.2"/><V2Field label="Tag association concurrency · 1–32" type="number" value="4"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
+        <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone="ok" text="Enabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={true}/><V2Field label="Cron expression" value="*/15 * * * *"/><V2Inline gap="sm" wrap={true}>{#each schedulePresets as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: 13:15</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
+        <V2Card title="Global sync">{#snippet actions()}<V2Badge text="Disabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled"/><V2Field label="Cron expression" value="0 0 * * 0"/><V2Inline gap="sm" wrap={true}>{#each schedulePresets as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: disabled</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
       </div>
     {/if}
   </V2Zone>
@@ -62,9 +63,9 @@
       {#if tab === 'General'}
         <V2Section title="Preference status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Density preference active"/><span class="v2-small v2-muted">Interface preferences are stored locally.</span></V2Stack></V2Card></V2Section>
       {:else if tab === 'Duplicates'}
-        <V2Section title="Policy status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Review safeguards enabled"/><span class="v2-small v2-muted">Current controls are demo state only.</span></V2Stack></V2Card></V2Section>
+        <V2Section title="Policy status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Live option coverage complete"/><span class="v2-small v2-muted">Duplicate controls are visual demo state only. No live policy is loaded or saved here yet.</span></V2Stack></V2Card></V2Section>
       {:else}
-        <V2Section title="Sync status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><V2Badge tone="ok" text="Incremental enabled"/><V2Badge text="Global disabled"/><span class="v2-small v2-muted">Batch load and schedules are displayed as local demo state until integration.</span></V2Stack></V2Card></V2Section>
+        <V2Section title="Sync status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><V2Badge tone="ok" text="Tag concurrency valid"/><V2Badge tone="ok" text="Incremental enabled"/><V2Badge text="Global disabled"/><span class="v2-small v2-muted">Runtime and schedule controls mirror the live settings surface but remain demo-only until integration.</span></V2Stack></V2Card></V2Section>
       {/if}
     </V2Zone>
   {/snippet}
