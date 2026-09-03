@@ -50,9 +50,25 @@
   let popupMaxHeight = $state(304);
   let popupPlacement = $state<'down' | 'up'>('down');
 
-  const normalized = $derived(options.map((option) => typeof option === 'string'
-    ? { value: option, label: option, subtitle: '', disabled: false, direction: undefined as 'asc' | 'desc' | undefined }
-    : { subtitle: '', disabled: false, direction: undefined, ...option }));
+  function normalizeStringOption(option: string) {
+    const directional = option.match(/^(.*)\s([↑↓])$/);
+    if (!directional) return [{ value: option, label: option, subtitle: '', disabled: false, direction: undefined as 'asc' | 'desc' | undefined }];
+    const [, label, arrow] = directional;
+    const currentDirection = arrow === '↑' ? 'asc' : 'desc';
+    const alternateDirection = currentDirection === 'asc' ? 'desc' : 'asc';
+    const valueFor = (direction: 'asc' | 'desc') => `${label} ${direction === 'asc' ? '↑' : '↓'}`;
+    return [currentDirection, alternateDirection].map((direction) => ({
+      value: valueFor(direction),
+      label,
+      subtitle: '',
+      disabled: false,
+      direction,
+    }));
+  }
+
+  const normalized = $derived(options.flatMap((option) => typeof option === 'string'
+    ? normalizeStringOption(option)
+    : [{ subtitle: '', disabled: false, direction: undefined, ...option }]));
   const selected = $derived(
     normalized.find((option) => option.value === String(value))
       ?? (!allowEmpty ? normalized.find((option) => !option.disabled) : undefined),
