@@ -14,6 +14,6 @@
 
 <nav class="v2-menu" aria-label={ariaLabel}>
   {#each items as item}
-    <button type="button" class:active={item === active} aria-current={item === active ? 'page' : undefined} onclick={() => onselect?.(item)}>{item}</button>
+    <button type="button" aria-current={item === active ? 'page' : undefined} onclick={() => onselect?.(item)}>{item}</button>
   {/each}
 </nav>
