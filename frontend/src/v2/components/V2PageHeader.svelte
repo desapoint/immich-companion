@@ -1,4 +1,6 @@
 <script lang="ts">
+  import V2ZoneLabel from './V2ZoneLabel.svelte';
+
   let {
     title,
     description = '',
@@ -15,7 +17,7 @@
 <header class="v2-page-head">
   <div class="v2-head-row">
     <div class="v2-page-heading">
-      {#if eyebrow}<span class="v2-zone">{eyebrow}</span>{/if}
+      {#if eyebrow}<V2ZoneLabel text={eyebrow} />{/if}
       <h1 class="v2-page-title">{title}</h1>
       {#if description}<p class="v2-page-description">{description}</p>{/if}
     </div>
