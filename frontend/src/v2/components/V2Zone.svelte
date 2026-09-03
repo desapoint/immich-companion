@@ -4,19 +4,17 @@
 
   let {
     label,
-    gap = 'lg',
     children,
     class: className = '',
   }: {
     label?: string;
-    gap?: 'xs' | 'sm' | 'md' | 'lg';
     children: import('svelte').Snippet;
     class?: string;
   } = $props();
 </script>
 
 <div class={`v2-zone-container ${className}`.trim()}>
-  <V2Stack {gap}>
+  <V2Stack gap="lg">
     {#if label}<V2ZoneLabel text={label} />{/if}
     {@render children()}
   </V2Stack>
