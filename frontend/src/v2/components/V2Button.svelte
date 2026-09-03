@@ -24,10 +24,9 @@
 
 <button
   class="v2-button"
-  class:v2-button-primary={variant === 'primary'}
-  class:v2-button-danger={variant === 'danger'}
-  class:v2-button-active={active}
-  class:v2-button-block={block}
+  data-variant={variant}
+  data-active={active || undefined}
+  data-block={block || undefined}
   {disabled}
   {type}
   {title}
