@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
+  import V2Progress from './V2Progress.svelte';
   import V2Segmented from './V2Segmented.svelte';
 
   type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
@@ -75,7 +76,7 @@
   {#if taskVisible}
     <div class="v2-tasktray">
       <div class="v2-task-summary"><b>Background tasks</b><small class="v2-muted">Scanning asset changes · 62%</small></div>
-      <div class="v2-task-actions"><div class="v2-progress" role="progressbar" aria-label="Background task progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="62"><i></i></div><V2Button onclick={()=>taskVisible=false}>Hide</V2Button></div>
+      <div class="v2-task-actions"><V2Progress value={62} label="Background task progress"/><V2Button onclick={()=>taskVisible=false}>Hide</V2Button></div>
     </div>
   {/if}
 
