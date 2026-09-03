@@ -1,19 +1,23 @@
 <script lang="ts">
+  import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
+  import V2Field from '../components/V2Field.svelte';
   import V2Inline from '../components/V2Inline.svelte';
+  import V2Modal from '../components/V2Modal.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Pagination from '../components/V2Pagination.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Table from '../components/V2Table.svelte';
-  import V2TagEditor from '../components/V2TagEditor.svelte';
   import V2Toggle from '../components/V2Toggle.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
 
   type Tag = { id:string; name:string; path:string; parent:string; assets:number; children:number; color:string };
+  type TagModal = { id:number; mode:'create'|'edit'; tagId:string; name:string; color:string; parent:string };
+
   const tags: Tag[] = [
     { id:'people',name:'People',path:'People',parent:'',assets:4892,children:2104,color:'#66c6a3' },
     { id:'family',name:'Family',path:'People / Family',parent:'People',assets:430,children:28,color:'#9a78ff' },
@@ -34,16 +38,18 @@
   ];
 
   let query=$state(''), includeHierarchy=$state(false), selectedIds=$state<string[]>([]), page=$state(1);
-  let editorMode=$state<'create'|'edit'|null>(null), editorTag=$state<Tag|null>(null);
+  let modalSequence=0, modals=$state<TagModal[]>([]);
   const pageSize=100, total=60184;
   const normalizedQuery=$derived(query.trim().toLocaleLowerCase());
   const filteredTags=$derived(tags.filter((tag)=>{if(!normalizedQuery)return true;const direct=tag.name.toLocaleLowerCase().includes(normalizedQuery);return includeHierarchy?direct||tag.path.toLocaleLowerCase().includes(normalizedQuery):direct}));
   const paginationTotal=$derived(normalizedQuery ? Math.max(filteredTags.length,1) : total);
-  const parentOptions=$derived(tags.filter((tag)=>tag.children>0&&tag.id!==editorTag?.id).map((tag)=>({value:tag.name,label:tag.name,subtitle:tag.path})));
+
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
-  function openCreate(){editorTag=null;editorMode='create'}
-  function openEdit(tag:Tag){editorTag=tag;editorMode='edit'}
-  function closeEditor(){editorMode=null;editorTag=null}
+  function openCreate(){modals=[...modals,{id:++modalSequence,mode:'create',tagId:'',name:'',color:'#9A78FF',parent:''}]}
+  function openEdit(tag:Tag){modals=[...modals,{id:++modalSequence,mode:'edit',tagId:tag.id,name:tag.name,color:tag.color,parent:tag.parent}]}
+  function closeModal(id:number){modals=modals.filter((modal)=>modal.id!==id)}
+  function updateModal(id:number,patch:Partial<TagModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
+  function parentOptionsFor(modal:TagModal){return tags.filter((tag)=>tag.children>0&&tag.id!==modal.tagId).map((tag)=>({value:tag.name,label:tag.name,subtitle:tag.path}))}
 </script>
 
 <V2PageLayout title="Tags" description="Search and manage large hierarchical tag libraries with optional parent-path matching.">
@@ -55,6 +61,35 @@
     <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><span class="v2-visually-hidden">Select</span></th><th>Tag</th><th class="v2-tag-path-column">Path</th><th class="v2-collection-count-column">Assets</th><th class="v2-tag-children-column">Children</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each filteredTags as tag (tag.id)}<tr><td class="v2-tag-check-column"><input type="checkbox" aria-label={`Select ${tag.name}`} checked={selectedIds.includes(tag.id)} onchange={(event)=>toggleSelection(tag.id,event.currentTarget.checked)}></td><td><span class="v2-tag-name"><span class="v2-tag-swatch" style:background={tag.color}></span><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">No demo tags match this search mode.</td></tr>{/each}</tbody></V2Table></V2Card>
     <V2Pagination {page} {pageSize} total={paginationTotal} onpage={(next)=>(page=next)}/>
   </V2Zone>
-
-  {#snippet inspector()}<V2Zone><V2Section title={editorMode==='create'?'Create tag':editorMode==='edit'?'Edit tag':'Tag editor'}>{#if editorMode}<V2TagEditor mode={editorMode} name={editorTag?.name??''} color={editorTag?.color??'#9A78FF'} parent={editorTag?.parent??''} {parentOptions} oncancel={closeEditor} onsave={closeEditor}/>{:else}<V2Card><V2Stack gap="sm"><b>Edit or create a tag</b><p class="v2-text-block v2-small v2-muted">Choose Edit on a row or Create tag above. The parent field supports root tags and nested parent relationships.</p><V2Button variant="primary" onclick={openCreate}>Create tag</V2Button></V2Stack></V2Card>{/if}</V2Section></V2Zone>{/snippet}
 </V2PageLayout>
+
+{#each modals as modal (modal.id)}
+  <V2Modal
+    id={`tag-modal-${modal.id}`}
+    title={modal.mode==='create'?'Create tag':`Edit ${modal.name}`}
+    description={modal.mode==='create'?'Create a demo tag with an optional parent.':'Update this demo tag and its parent relationship.'}
+    size="md"
+    onclose={()=>closeModal(modal.id)}
+  >
+    {#snippet headerActions()}<V2Button title="Open another modal to test stacking" onclick={openCreate}>Open another</V2Button>{/snippet}
+    <V2Stack gap="md">
+      <V2Field label="Name" value={modal.name} onchange={(value)=>updateModal(modal.id,{name:value})}/>
+      <V2Field label="Color" value={modal.color} onchange={(value)=>updateModal(modal.id,{color:value})}/>
+      <SelectField
+        id={`tag-parent-modal-${modal.id}`}
+        label="Parent"
+        value={modal.parent}
+        options={parentOptionsFor(modal)}
+        allowEmpty={true}
+        searchable={true}
+        searchPlaceholder="Search parent tags or paths…"
+        placeholder="No parent — root tag"
+        onchange={(value)=>updateModal(modal.id,{parent:value})}
+      />
+      <V2Section title="Modal behavior demo">
+        <V2Card><V2Stack gap="sm"><span class="v2-small v2-muted">Only the middle content region scrolls when the dialog is tall. The header and footer remain visible while dragging is constrained to the viewport.</span><V2Field label="Long-form notes" value="Use this field to make the modal taller at smaller viewport sizes and validate content-only scrolling." multiline={true}/></V2Stack></V2Card>
+      </V2Section>
+    </V2Stack>
+    {#snippet footer()}<V2Button onclick={()=>closeModal(modal.id)}>Cancel</V2Button><V2Button variant="primary" onclick={()=>closeModal(modal.id)}>{modal.mode==='create'?'Create tag':'Save changes'}</V2Button>{/snippet}
+  </V2Modal>
+{/each}
