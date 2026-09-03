@@ -3,12 +3,21 @@
   import { tick } from 'svelte';
   import { clickOutside } from '../../lib/actions/clickOutside';
 
+  type SortDirection = 'asc' | 'desc';
+  type NormalizedSelectOption = {
+    value: string;
+    label: string;
+    subtitle: string;
+    disabled: boolean;
+    direction?: SortDirection;
+  };
+
   export type SelectOption = string | {
     value: string;
     label: string;
     subtitle?: string;
     disabled?: boolean;
-    direction?: 'asc' | 'desc';
+    direction?: SortDirection;
   };
 
   let {
@@ -51,14 +60,14 @@
   let popupPlacement = $state<'down' | 'up'>('down');
   let popupAlignment = $state<'left' | 'right' | 'viewport'>('left');
 
-  function normalizeStringOption(option: string) {
+  function normalizeStringOption(option: string): NormalizedSelectOption[] {
     const directional = option.match(/^(.*)\s([↑↓])$/);
-    if (!directional) return [{ value: option, label: option, subtitle: '', disabled: false, direction: undefined as 'asc' | 'desc' | undefined }];
+    if (!directional) return [{ value: option, label: option, subtitle: '', disabled: false }];
     const [, label, arrow] = directional;
-    const currentDirection = arrow === '↑' ? 'asc' : 'desc';
-    const alternateDirection = currentDirection === 'asc' ? 'desc' : 'asc';
-    const valueFor = (direction: 'asc' | 'desc') => `${label} ${direction === 'asc' ? '↑' : '↓'}`;
-    return [currentDirection, alternateDirection].map((direction) => ({
+    const currentDirection: SortDirection = arrow === '↑' ? 'asc' : 'desc';
+    const alternateDirection: SortDirection = currentDirection === 'asc' ? 'desc' : 'asc';
+    const valueFor = (direction: SortDirection) => `${label} ${direction === 'asc' ? '↑' : '↓'}`;
+    return ([currentDirection, alternateDirection] as SortDirection[]).map((direction): NormalizedSelectOption => ({
       value: valueFor(direction),
       label,
       subtitle: '',
@@ -67,16 +76,25 @@
     }));
   }
 
-  const normalized = $derived(options.flatMap((option) => typeof option === 'string'
-    ? normalizeStringOption(option)
-    : [{ subtitle: '', disabled: false, direction: undefined, ...option }]));
+  function normalizeOption(option: SelectOption): NormalizedSelectOption[] {
+    if (typeof option === 'string') return normalizeStringOption(option);
+    return [{
+      value: option.value,
+      label: option.label,
+      subtitle: option.subtitle ?? '',
+      disabled: option.disabled ?? false,
+      direction: option.direction,
+    }];
+  }
+
+  const normalized: NormalizedSelectOption[] = $derived(options.flatMap(normalizeOption));
   const selected = $derived(
     normalized.find((option) => option.value === String(value))
       ?? (!allowEmpty ? normalized.find((option) => !option.disabled) : undefined),
   );
   const isEmpty = $derived(allowEmpty && String(value) === '');
   const normalizedSearch = $derived(searchQuery.trim().toLocaleLowerCase());
-  const visibleOptions = $derived(!searchable || !normalizedSearch
+  const visibleOptions: NormalizedSelectOption[] = $derived(!searchable || !normalizedSearch
     ? normalized
     : normalized.filter((option) => `${option.label}\n${option.subtitle}`.toLocaleLowerCase().includes(normalizedSearch)));
 
@@ -101,7 +119,7 @@
     if (!optionsPopup) return Math.min(triggerWidth, maximumWidth);
     const optionWidths = Array.from(optionsPopup.querySelectorAll<HTMLElement>('.v2-select-option-copy')).map((copy) => copy.scrollWidth);
     const widestCopy = Math.max(0, ...optionWidths);
-    const optionChrome = 58; // option padding + gap + selected checkmark allowance
+    const optionChrome = 58;
     const searchWidth = searchable ? Math.max(searchInput?.scrollWidth ?? 0, 180) + 24 : 0;
     return Math.min(maximumWidth, Math.max(triggerWidth, widestCopy + optionChrome, searchWidth));
   }
@@ -154,7 +172,7 @@
     });
   }
 
-  function choose(option: (typeof visibleOptions)[number]): void {
+  function choose(option: NormalizedSelectOption | undefined): void {
     if (!option || option.disabled) return;
     value = option.value;
     onchange?.(option.value);
