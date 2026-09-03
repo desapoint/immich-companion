@@ -1,5 +1,5 @@
 <script lang="ts">
-  export type NavItem = { key: string; label: string; group?: string };
+  export type NavItem = { key: string; label: string; group?: string; position?: 'top' | 'bottom' };
 
   let {
     activeKey,
@@ -15,9 +15,9 @@
     children: import('svelte').Snippet;
   } = $props();
 
-  const grouped = $derived.by(() => {
+  function groupItems(items: NavItem[]) {
     const groups: { label: string; items: NavItem[] }[] = [];
-    for (const item of navItems) {
+    for (const item of items) {
       const label = item.group ?? '';
       let group = groups.find((entry) => entry.label === label);
       if (!group) {
@@ -27,26 +27,33 @@
       group.items.push(item);
     }
     return groups;
-  });
+  }
+
+  const topGroups = $derived(groupItems(navItems.filter((item) => item.position !== 'bottom')));
+  const bottomGroups = $derived(groupItems(navItems.filter((item) => item.position === 'bottom')));
 </script>
 
 <div class="v2-root">
   <div class="v2-app">
     <aside class="v2-sidebar">
       <div class="v2-brand"><div class="v2-logo"></div><span>Immich Companion</span></div>
-      {#each grouped as group}
+      {#each topGroups as group}
         {#if group.label}<div class="v2-nav-label">{group.label}</div>{/if}
         <nav class="v2-nav">
           {#each group.items as item}
-            <button
-              class:active={item.key === activeKey}
-              class="v2-nav-button"
-              onclick={() => onnavigate(item.key)}
-            ><i class="v2-nav-icon"></i><span>{item.label}</span></button>
+            <button class:active={item.key === activeKey} class="v2-nav-button" onclick={() => onnavigate(item.key)}><i class="v2-nav-icon"></i><span>{item.label}</span></button>
           {/each}
         </nav>
       {/each}
       <div class="v2-grow"></div>
+      {#each bottomGroups as group}
+        {#if group.label}<div class="v2-nav-label">{group.label}</div>{/if}
+        <nav class="v2-nav">
+          {#each group.items as item}
+            <button class:active={item.key === activeKey} class="v2-nav-button" onclick={() => onnavigate(item.key)}><i class="v2-nav-icon"></i><span>{item.label}</span></button>
+          {/each}
+        </nav>
+      {/each}
       <div class="v2-connection"><span class="v2-dot"></span>V2 workspace</div>
     </aside>
 
