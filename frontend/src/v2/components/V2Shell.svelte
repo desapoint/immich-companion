@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Ellipsis } from '@lucide/svelte';
+  import { BookOpen, CircleGauge, Ellipsis, Images, RotateCcw, Search, Settings, Tags, UsersRound } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
@@ -48,16 +48,40 @@
   });
 </script>
 
+{#snippet navIcon(key:string)}
+  <span class="v2-nav-icon" aria-hidden="true">
+    {#if key==='status'}
+      <CircleGauge size={17}/>
+    {:else if key==='assets'}
+      <Images size={17}/>
+    {:else if key==='restore'}
+      <RotateCcw size={17}/>
+    {:else if key==='duplicates'}
+      <Search size={17}/>
+    {:else if key==='albums'}
+      <UsersRound size={17}/>
+    {:else if key==='tags'}
+      <Tags size={17}/>
+    {:else if key==='settings'}
+      <Settings size={17}/>
+    {:else if key==='api-docs'}
+      <BookOpen size={17}/>
+    {:else}
+      <CircleGauge size={17}/>
+    {/if}
+  </span>
+{/snippet}
+
 <div class="v2-root" data-density={density} bind:this={root}>
   <div class="v2-app">
     <aside class="v2-sidebar">
       <div class="v2-brand"><div class="v2-logo"></div><span class="v2-brand-text">{brand}</span></div>
       {#each topGroups as group}
         {#if group.label}<div class="v2-nav-label">{group.label}</div>{/if}
-        <nav class="v2-nav" aria-label={group.label||'Navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}><i class="v2-nav-icon" aria-hidden="true"></i><span class="v2-nav-text">{item.label}</span></button>{/each}</nav>
+        <nav class="v2-nav" aria-label={group.label||'Navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></button>{/each}</nav>
       {/each}
       <div class="v2-grow"></div>
-      {#each bottomGroups as group}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}><i class="v2-nav-icon" aria-hidden="true"></i><span class="v2-nav-text">{item.label}</span></button>{/each}</nav>{/each}
+      {#each bottomGroups as group}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></button>{/each}</nav>{/each}
       <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel} <small class="v2-muted">v2.x</small></div>
     </aside>
 
