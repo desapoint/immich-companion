@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - main
-      - feat/v2-shell
     tags:
       - "v*"
   pull_request:
