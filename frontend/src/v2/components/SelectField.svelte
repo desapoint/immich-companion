@@ -7,7 +7,7 @@
   let {
     id,
     label = '',
-    value = '',
+    value = $bindable<string | number>(''),
     options,
     width = 'full',
     disabled = false,
@@ -32,7 +32,7 @@
   const normalized = $derived(options.map((option) => typeof option === 'string'
     ? { value: option, label: option, disabled: false }
     : { disabled: false, ...option }));
-  const selected = $derived(normalized.find((option) => option.value === String(value)));
+  const selected = $derived(normalized.find((option) => option.value === String(value)) ?? normalized[0]);
 
   function firstEnabled(): number {
     return normalized.findIndex((option) => !option.disabled);
@@ -53,8 +53,8 @@
 
   function show(): void {
     if (disabled || !normalized.length) return;
-    activeIndex = Math.max(0, normalized.findIndex((option) => option.value === String(value) && !option.disabled));
-    if (normalized[activeIndex]?.disabled) activeIndex = firstEnabled();
+    activeIndex = normalized.findIndex((option) => option.value === String(value) && !option.disabled);
+    if (activeIndex < 0) activeIndex = firstEnabled();
     open = true;
     void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus());
   }
@@ -62,6 +62,7 @@
   function choose(index: number): void {
     const option = normalized[index];
     if (!option || option.disabled) return;
+    value = option.value;
     onchange?.(option.value);
     open = false;
     void tick().then(() => trigger?.focus());
@@ -83,7 +84,11 @@
     else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const query = event.key.toLocaleLowerCase();
       const match = normalized.findIndex((option) => !option.disabled && option.label.toLocaleLowerCase().startsWith(query));
-      if (match >= 0) { event.preventDefault(); activeIndex = match; void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${match}"]`)?.focus()); }
+      if (match >= 0) {
+        event.preventDefault();
+        activeIndex = match;
+        void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${match}"]`)?.focus());
+      }
     }
   }
 </script>
