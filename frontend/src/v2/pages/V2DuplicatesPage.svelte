@@ -1,4 +1,5 @@
 <script lang="ts">
+  import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
@@ -8,7 +9,6 @@
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Segmented from '../components/V2Segmented.svelte';
-  import V2Select from '../components/V2Select.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Tabs from '../components/V2Tabs.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
@@ -44,7 +44,7 @@
 <V2PageLayout title="Duplicates" description="Review exact and similarity duplicate groups, save member decisions, and process only actionable groups.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button>Scan similar</V2Button><V2Button variant="primary">Review actions</V2Button></V2Inline>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} onselect={(value)=>tab=value}/>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Review filter"><V2Stack gap="sm"><V2Select options={['All groups','Needs review','Auto-ready','Blocked']} ariaLabel="Review filter"/><V2Button>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value="82"/><V2Inline gap="sm"><V2Button>Scan again</V2Button><V2Button>Cancel scan</V2Button></V2Inline><span class="v2-small v2-muted">Similarity is review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm"><V2Button>Keep all copies</V2Button><V2Button>Mark all for deletion</V2Button><V2Button>Stack each group</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Review filter"><V2Stack gap="sm"><SelectField id="duplicate-review-filter" label="Group state" options={['All groups','Needs review','Auto-ready','Blocked']}/><V2Button>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value="82"/><V2Inline gap="sm"><V2Button>Scan again</V2Button><V2Button>Cancel scan</V2Button></V2Inline><span class="v2-small v2-muted">Similarity is review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm"><V2Button>Keep all copies</V2Button><V2Button>Mark all for deletion</V2Button><V2Button>Stack each group</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
     <V2Toolbar>
