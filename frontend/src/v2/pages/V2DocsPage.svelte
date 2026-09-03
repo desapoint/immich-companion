@@ -24,7 +24,7 @@
   <V2Zone>
     <V2Toolbar label="Primary content" sticky={false}><b>API reference</b></V2Toolbar>
     <div class="v2-docs">
-      <V2Card><V2Stack gap="sm"><h2 class="v2-card-title">Companion API</h2><span class="v2-muted">Developer documentation surface presented inside the same global shell for navigation consistency.</span></V2Stack></V2Card>
+      <V2Card title="Companion API"><span class="v2-muted">Developer documentation surface presented inside the same global shell for navigation consistency.</span></V2Card>
       {#each endpoints as endpoint}<V2Card><V2Stack gap="sm"><V2Inline gap="sm"><V2Badge tone={endpoint[0]==='GET'?'ok':'warn'} text={endpoint[0]}/><code>{endpoint[1]}</code></V2Inline><span class="v2-muted">{endpoint[2]}</span><V2Button onclick={() => selected = `${endpoint[0]} ${endpoint[1]}`}>Expand endpoint</V2Button></V2Stack></V2Card>{/each}
     </div>
   </V2Zone>
