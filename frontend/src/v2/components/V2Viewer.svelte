@@ -1,6 +1,9 @@
 <script lang="ts">
   let { open=false, title='Asset Viewer', mode='assets', onclose }: { open?:boolean; title?:string; mode?:'assets'|'restore'|'duplicates'; onclose:()=>void } = $props();
 </script>
+
+<svelte:body class:v2-overlay-open={open}/>
+
 {#if open}
 <div class="v2-viewer" role="dialog" aria-modal="true" aria-label={title}>
   <div class="v2-viewer-top"><div class="v2-inline v2-inline-sm v2-inline-align-center"><button class="v2-button" onclick={onclose}>✕</button><b>{title}</b><span class="v2-badge">3 / 48</span></div><div class="v2-inline v2-inline-sm"><button class="v2-button">−</button><button class="v2-button">Fit</button><button class="v2-button">+</button><button class="v2-button">ⓘ</button><button class="v2-button">?</button></div></div>
