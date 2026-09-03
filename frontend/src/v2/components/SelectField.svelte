@@ -49,6 +49,7 @@
   let popupWidth = $state(0);
   let popupMaxHeight = $state(304);
   let popupPlacement = $state<'down' | 'up'>('down');
+  let popupAlignment = $state<'left' | 'right' | 'viewport'>('left');
 
   function normalizeStringOption(option: string) {
     const directional = option.match(/^(.*)\s([↑↓])$/);
@@ -96,12 +97,22 @@
     }
   }
 
+  function measurePopupWidth(triggerWidth: number, maximumWidth: number): number {
+    if (!optionsPopup) return Math.min(triggerWidth, maximumWidth);
+    const optionWidths = Array.from(optionsPopup.querySelectorAll<HTMLElement>('.v2-select-option-copy')).map((copy) => copy.scrollWidth);
+    const widestCopy = Math.max(0, ...optionWidths);
+    const optionChrome = 58; // option padding + gap + selected checkmark allowance
+    const searchWidth = searchable ? Math.max(searchInput?.scrollWidth ?? 0, 180) + 24 : 0;
+    return Math.min(maximumWidth, Math.max(triggerWidth, widestCopy + optionChrome, searchWidth));
+  }
+
   function positionPopup(): void {
     if (!open || !trigger) return;
     const margin = 10;
     const gap = 5;
     const desiredMaxHeight = 304;
     const minimumUsefulHeight = 144;
+    const maximumPopupWidth = Math.min(544, window.innerWidth - margin * 2);
     const rect = trigger.getBoundingClientRect();
     const spaceBelow = Math.max(0, window.innerHeight - rect.bottom - gap - margin);
     const spaceAbove = Math.max(0, rect.top - gap - margin);
@@ -110,11 +121,20 @@
     const available = popupPlacement === 'down' ? spaceBelow : spaceAbove;
     popupMaxHeight = Math.max(96, Math.min(desiredMaxHeight, available));
 
-    const desiredWidth = width === 'content'
-      ? Math.max(rect.width, Math.min(optionsPopup?.scrollWidth ?? rect.width, Math.min(352, window.innerWidth - margin * 2)))
-      : rect.width;
-    popupWidth = Math.min(desiredWidth, window.innerWidth - margin * 2);
-    popupLeft = Math.min(Math.max(rect.left, margin), window.innerWidth - popupWidth - margin);
+    popupWidth = measurePopupWidth(rect.width, maximumPopupWidth);
+    const leftAligned = rect.left;
+    const rightAligned = rect.right - popupWidth;
+    if (leftAligned + popupWidth <= window.innerWidth - margin) {
+      popupLeft = Math.max(margin, leftAligned);
+      popupAlignment = 'left';
+    } else if (rightAligned >= margin) {
+      popupLeft = rightAligned;
+      popupAlignment = 'right';
+    } else {
+      popupLeft = Math.min(Math.max(leftAligned, margin), window.innerWidth - popupWidth - margin);
+      popupAlignment = 'viewport';
+    }
+
     popupTop = popupPlacement === 'down'
       ? rect.bottom + gap
       : Math.max(margin, rect.top - gap - Math.min(optionsPopup?.scrollHeight ?? popupMaxHeight, popupMaxHeight));
@@ -250,6 +270,7 @@
       class="v2-select-options"
       data-searchable={searchable || undefined}
       data-placement={popupPlacement}
+      data-alignment={popupAlignment}
       style={`top:${popupTop}px;left:${popupLeft}px;width:${popupWidth}px;max-height:${popupMaxHeight}px`}
     >
       {#if searchable}
@@ -286,7 +307,7 @@
               </span>
               {#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}
             </span>
-            {#if !isEmpty && option.value === selected?.value}<span aria-hidden="true">✓</span>{/if}
+            {#if !isEmpty && option.value === selected?.value}<span class="v2-select-option-check" aria-hidden="true">✓</span>{/if}
           </button>
         {:else}
           <div class="v2-select-empty">No matching options</div>
