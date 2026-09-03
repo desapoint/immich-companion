@@ -11,7 +11,7 @@
 
   const layoutClass = $derived(
     context && inspector
-      ? 'v2-workspace'
+      ? 'v2-workspace v2-workspace-three-column'
       : context
         ? 'v2-workspace v2-workspace-context-only'
         : inspector
