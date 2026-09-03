@@ -4,12 +4,14 @@
     justify = 'start',
     align = 'center',
     wrap = false,
+    class: className = '',
     children,
   }: {
     gap?: 'xs' | 'sm' | 'md' | 'lg';
     justify?: 'start' | 'between' | 'end';
     align?: 'start' | 'center' | 'end';
     wrap?: boolean;
+    class?: string;
     children: import('svelte').Snippet;
   } = $props();
 
@@ -23,6 +25,6 @@
   const alignments = { start: 'flex-start', center: 'center', end: 'flex-end' } as const;
 </script>
 
-<div class="v2-inline" style={`gap:${gaps[gap]};justify-content:${justifications[justify]};align-items:${alignments[align]};flex-wrap:${wrap ? 'wrap' : 'nowrap'}`}>
+<div class={`v2-inline ${className}`.trim()} style={`gap:${gaps[gap]};justify-content:${justifications[justify]};align-items:${alignments[align]};flex-wrap:${wrap ? 'wrap' : 'nowrap'}`}>
   {@render children()}
 </div>
