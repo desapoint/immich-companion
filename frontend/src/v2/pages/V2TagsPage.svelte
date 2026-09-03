@@ -3,7 +3,9 @@
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
+  import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
   import V2Field from '../components/V2Field.svelte';
+  import V2InfiniteFooter from '../components/V2InfiniteFooter.svelte';
   import V2Inline from '../components/V2Inline.svelte';
   import V2Modal from '../components/V2Modal.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
@@ -38,12 +40,23 @@
   ];
 
   let query=$state(''), includeHierarchy=$state(false), selectedIds=$state<string[]>([]), page=$state(1);
+  let pageSize=$state(24), resultMode=$state<ResultMode>('Pagination'), loaded=$state(24), sort=$state('name:asc');
   let modalSequence=0, modals=$state<TagModal[]>([]);
-  const pageSize=100, total=60184;
+  const total=60184;
   const normalizedQuery=$derived(query.trim().toLocaleLowerCase());
   const filteredTags=$derived(tags.filter((tag)=>{if(!normalizedQuery)return true;const direct=tag.name.toLocaleLowerCase().includes(normalizedQuery);return includeHierarchy?direct||tag.path.toLocaleLowerCase().includes(normalizedQuery):direct}));
-  const paginationTotal=$derived(normalizedQuery ? Math.max(filteredTags.length,1) : total);
+  const sortedTags=$derived([...filteredTags].sort((a,b)=>{
+    const [field,direction]=sort.split(':');
+    const multiplier=direction==='desc'?-1:1;
+    if(field==='assets') return (a.assets-b.assets)*multiplier;
+    if(field==='children') return (a.children-b.children)*multiplier;
+    if(field==='path') return a.path.localeCompare(b.path)*multiplier;
+    return a.name.localeCompare(b.name)*multiplier;
+  }));
+  const resultTotal=$derived(normalizedQuery ? Math.max(filteredTags.length,1) : total);
 
+  function setPageSize(next:number){pageSize=next;page=1;loaded=Math.max(next,Math.min(loaded,resultTotal))}
+  function setMode(mode:ResultMode){resultMode=mode;if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded)}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function openCreate(){modals=[...modals,{id:++modalSequence,mode:'create',tagId:'',name:'',color:'#9A78FF',parent:''}]}
   function openEdit(tag:Tag){modals=[...modals,{id:++modalSequence,mode:'edit',tagId:tag.id,name:tag.name,color:tag.color,parent:tag.parent}]}
@@ -54,12 +67,12 @@
 
 <V2PageLayout title="Tags" description="Search and manage large hierarchical tag libraries with optional parent-path matching.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={selectedIds.length===0}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" onclick={openCreate}>Create tag</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search 60,000 tags…" oninput={(event)=>{query=event.currentTarget.value;page=1}}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>{includeHierarchy=checked;page=1}}/><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and full parent paths. “Family” also finds descendants under People / Family.':'Matches tag names only. “Family” only returns tags whose own name matches.'}</p></V2Stack></V2Section><V2Section title="Scale"><V2Card><V2Stack gap="xs"><b>60,184 tags</b><span class="v2-small v2-muted">Demo rows represent a server-paged large library.</span><span class="v2-small v2-muted">Parent relationships may be multiple levels deep.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search 60,000 tags…" oninput={(event)=>{query=event.currentTarget.value;page=1;loaded=pageSize}}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>{includeHierarchy=checked;page=1;loaded=pageSize}}/><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and full parent paths. “Family” also finds descendants under People / Family.':'Matches tag names only. “Family” only returns tags whose own name matches.'}</p></V2Stack></V2Section><V2Section title="Scale"><V2Card><V2Stack gap="xs"><b>60,184 tags</b><span class="v2-small v2-muted">Demo rows represent a server-paged large library.</span><span class="v2-small v2-muted">Parent relationships may be multiple levels deep.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
-    <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${filteredTags.length} demo matches`}/><V2Badge text={includeHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text="60,184 total"/></V2Inline>{#snippet actions()}<V2Button>Name ↑</V2Button><V2Button>Assets</V2Button>{/snippet}</V2Toolbar>
-    <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><span class="v2-visually-hidden">Select</span></th><th>Tag</th><th class="v2-tag-path-column">Path</th><th class="v2-collection-count-column">Assets</th><th class="v2-tag-children-column">Children</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each filteredTags as tag (tag.id)}<tr><td class="v2-tag-check-column"><input type="checkbox" aria-label={`Select ${tag.name}`} checked={selectedIds.includes(tag.id)} onchange={(event)=>toggleSelection(tag.id,event.currentTarget.checked)}></td><td><span class="v2-tag-name"><span class="v2-tag-swatch" style:background={tag.color}></span><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">No demo tags match this search mode.</td></tr>{/each}</tbody></V2Table></V2Card>
-    <V2Pagination {page} {pageSize} total={paginationTotal} onpage={(next)=>(page=next)}/>
+    <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${filteredTags.length} demo matches`}/><V2Badge text={includeHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text="60,184 total"/></V2Inline>{#snippet actions()}<V2CollectionControls id="tag-results" {sort} sortFields={[{value:'name',label:'Tag'},{value:'path',label:'Path'},{value:'assets',label:'Assets'},{value:'children',label:'Children'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={(value)=>sort=value} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
+    <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><span class="v2-visually-hidden">Select</span></th><th>Tag</th><th class="v2-tag-path-column">Path</th><th class="v2-collection-count-column">Assets</th><th class="v2-tag-children-column">Children</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each sortedTags as tag (tag.id)}<tr><td class="v2-tag-check-column"><input type="checkbox" aria-label={`Select ${tag.name}`} checked={selectedIds.includes(tag.id)} onchange={(event)=>toggleSelection(tag.id,event.currentTarget.checked)}></td><td><span class="v2-tag-name"><span class="v2-tag-swatch" style:background={tag.color}></span><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">No demo tags match this search mode.</td></tr>{/each}</tbody></V2Table></V2Card>
+    {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} total={resultTotal} onpage={(next)=>(page=next)}/>{:else}<V2InfiniteFooter loaded={Math.min(loaded,resultTotal)} total={resultTotal} batchSize={pageSize} noun="tags" onloadmore={()=>loaded=Math.min(resultTotal,loaded+pageSize)}/>{/if}
   </V2Zone>
 </V2PageLayout>
 
