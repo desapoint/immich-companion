@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { BookOpen, CircleGauge, Ellipsis, Images, RotateCcw, Search, Settings, Tags, UsersRound } from '@lucide/svelte';
+  import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
@@ -57,9 +57,9 @@
     {:else if key==='restore'}
       <RotateCcw size={17}/>
     {:else if key==='duplicates'}
-      <Search size={17}/>
+      <Copy size={17}/>
     {:else if key==='albums'}
-      <UsersRound size={17}/>
+      <Album size={17}/>
     {:else if key==='tags'}
       <Tags size={17}/>
     {:else if key==='settings'}
