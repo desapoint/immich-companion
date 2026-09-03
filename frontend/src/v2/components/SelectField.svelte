@@ -174,7 +174,7 @@
   </div>
 
   {#if open}
-    <div bind:this={list} id={`${id}-options`} class="v2-select-options" role="listbox" aria-label={label || undefined} data-searchable={searchable || undefined}>
+    <div id={`${id}-options`} class="v2-select-options" data-searchable={searchable || undefined}>
       {#if searchable}
         <div class="v2-select-search">
           <input
@@ -187,7 +187,7 @@
           >
         </div>
       {/if}
-      <div class="v2-select-option-list">
+      <div bind:this={list} class="v2-select-option-list" role="listbox" aria-label={label || undefined}>
         {#each visibleOptions as option, index (option.value)}
           <button
             type="button"
