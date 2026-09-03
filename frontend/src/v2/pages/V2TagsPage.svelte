@@ -17,7 +17,7 @@
 
 <V2PageLayout title="Tags" description="Manage searchable hierarchical tags, parent relationships, colors and asset filters.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button>Delete selected</V2Button><V2Button variant="primary">Create tag</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Tag tree"><V2Stack gap="xs"><button class="v2-tree-line active"><span class="v2-swatch"></span>People</button><button class="v2-tree-line">   ▾ Family</button><button class="v2-tree-line">   ▸ Friends</button><button class="v2-tree-line"><span class="v2-swatch alt"></span>Places</button><button class="v2-tree-line">   ▸ Canada</button><button class="v2-tree-line">   ▸ Europe</button></V2Stack></V2Section><V2Section title="Search"><V2Stack gap="sm"><input placeholder="Search tags…"><V2Button variant="primary">Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Tag tree"><V2Stack gap="xs"><button class="v2-tree-line" aria-current="true"><span class="v2-swatch"></span>People</button><button class="v2-tree-line">   ▾ Family</button><button class="v2-tree-line">   ▸ Friends</button><button class="v2-tree-line"><span class="v2-swatch" data-variant="alt"></span>Places</button><button class="v2-tree-line">   ▸ Canada</button><button class="v2-tree-line">   ▸ Europe</button></V2Stack></V2Section><V2Section title="Search"><V2Stack gap="sm"><input placeholder="Search tags…"><V2Button variant="primary">Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
     <V2Toolbar label="Primary content">
