@@ -9,7 +9,7 @@
 </script>
 
 <div class="v2-table-wrap">
-  <table class:v2-table-compact={compact} class="v2-table">
+  <table class="v2-table" data-compact={compact || undefined}>
     {@render children()}
   </table>
 </div>
