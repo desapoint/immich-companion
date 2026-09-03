@@ -42,7 +42,6 @@
     {#if tab === 'General'}
       <div class="v2-setting-grid">
         <V2Card title="Interface density">{#snippet actions()}<V2Badge tone="ok" text="Local preference"/>{/snippet}<V2Stack gap="sm"><span class="v2-small v2-muted">Controls spacing, table row height, card padding and grid thumbnail density across collection interfaces.</span><V2Segmented items={['Standard','Condensed']} active={density === 'standard' ? 'Standard' : 'Condensed'} onselect={(value) => setDensity(value === 'Standard' ? 'standard' : 'condensed')} ariaLabel="Interface density" /></V2Stack></V2Card>
-        <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Saved"/>{/snippet}<V2Stack gap="sm"><V2Field label="Assets per batch · 1–500" type="number" value="100"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="1"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
       </div>
     {:else if tab === 'Duplicates'}
       <div class="v2-setting-grid">
@@ -51,6 +50,7 @@
       </div>
     {:else}
       <div class="v2-setting-grid">
+        <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Saved"/>{/snippet}<V2Stack gap="sm"><V2Field label="Assets per batch · 1–500" type="number" value="100"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="1"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
         <V2Card title="Incremental sync">{#snippet actions()}<V2Badge tone="ok" text="Enabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled" checked={true}/><V2Field label="Cron" value="*/15 * * * *"/><V2Inline gap="sm" wrap={true}>{#each ['15 min','Hourly','Daily','Weekly'] as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: 13:15</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
         <V2Card title="Global sync">{#snippet actions()}<V2Badge text="Disabled"/>{/snippet}<V2Stack gap="sm"><V2Checkbox label="Enabled"/><V2Field label="Cron" value="0 0 * * 0"/><V2Inline gap="sm" wrap={true}>{#each ['15 min','Hourly','Daily','Weekly'] as preset}<V2Button>{preset}</V2Button>{/each}</V2Inline><span class="v2-small v2-muted">Next run: disabled</span><V2Button variant="primary">Save schedule</V2Button></V2Stack></V2Card>
       </div>
@@ -60,11 +60,11 @@
   {#snippet inspector()}
     <V2Zone>
       {#if tab === 'General'}
-        <V2Section title="Validation"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><span class="v2-small v2-muted">Invalid values disable the relevant save action.</span></V2Stack></V2Card></V2Section>
+        <V2Section title="Preference status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Density preference active"/><span class="v2-small v2-muted">Interface preferences are stored locally.</span></V2Stack></V2Card></V2Section>
       {:else if tab === 'Duplicates'}
         <V2Section title="Policy status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Review safeguards enabled"/><span class="v2-small v2-muted">Current controls are demo state only.</span></V2Stack></V2Card></V2Section>
       {:else}
-        <V2Section title="Schedule status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Incremental enabled"/><V2Badge text="Global disabled"/><span class="v2-small v2-muted">Schedules are displayed as local demo state until integration.</span></V2Stack></V2Card></V2Section>
+        <V2Section title="Sync status"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><V2Badge tone="ok" text="Incremental enabled"/><V2Badge text="Global disabled"/><span class="v2-small v2-muted">Batch load and schedules are displayed as local demo state until integration.</span></V2Stack></V2Card></V2Section>
       {/if}
     </V2Zone>
   {/snippet}
