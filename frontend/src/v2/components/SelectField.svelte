@@ -2,7 +2,7 @@
   import { tick } from 'svelte';
   import { clickOutside } from '../../lib/actions/clickOutside';
 
-  export type SelectOption = string | { value: string; label: string; disabled?: boolean };
+  export type SelectOption = string | { value: string; label: string; subtitle?: string; disabled?: boolean };
 
   let {
     id,
@@ -13,6 +13,8 @@
     disabled = false,
     allowEmpty = false,
     placeholder = 'Choose an option',
+    searchable = false,
+    searchPlaceholder = 'Search options…',
     onchange,
   }: {
     id: string;
@@ -23,33 +25,41 @@
     disabled?: boolean;
     allowEmpty?: boolean;
     placeholder?: string;
+    searchable?: boolean;
+    searchPlaceholder?: string;
     onchange?: (value: string) => void;
   } = $props();
 
   let open = $state(false);
   let activeIndex = $state(-1);
+  let searchQuery = $state('');
   let trigger = $state<HTMLButtonElement>();
   let list = $state<HTMLDivElement>();
+  let searchInput = $state<HTMLInputElement>();
 
   const normalized = $derived(options.map((option) => typeof option === 'string'
-    ? { value: option, label: option, disabled: false }
-    : { disabled: false, ...option }));
+    ? { value: option, label: option, subtitle: '', disabled: false }
+    : { subtitle: '', disabled: false, ...option }));
   const selected = $derived(
     normalized.find((option) => option.value === String(value))
       ?? (!allowEmpty ? normalized.find((option) => !option.disabled) : undefined),
   );
   const isEmpty = $derived(allowEmpty && String(value) === '');
+  const normalizedSearch = $derived(searchQuery.trim().toLocaleLowerCase());
+  const visibleOptions = $derived(!searchable || !normalizedSearch
+    ? normalized
+    : normalized.filter((option) => `${option.label}\n${option.subtitle}`.toLocaleLowerCase().includes(normalizedSearch)));
 
   function firstEnabled(): number {
-    return normalized.findIndex((option) => !option.disabled);
+    return visibleOptions.findIndex((option) => !option.disabled);
   }
 
   function move(direction: 1 | -1): void {
-    if (!normalized.length) return;
+    if (!visibleOptions.length) return;
     let index = activeIndex < 0 ? firstEnabled() : activeIndex;
-    for (let attempt = 0; attempt < normalized.length; attempt += 1) {
-      index = (index + direction + normalized.length) % normalized.length;
-      if (!normalized[index]?.disabled) {
+    for (let attempt = 0; attempt < visibleOptions.length; attempt += 1) {
+      index = (index + direction + visibleOptions.length) % visibleOptions.length;
+      if (!visibleOptions[index]?.disabled) {
         activeIndex = index;
         void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${index}"]`)?.focus());
         return;
@@ -59,20 +69,22 @@
 
   function show(): void {
     if (disabled || !normalized.length) return;
-    activeIndex = isEmpty
-      ? firstEnabled()
-      : normalized.findIndex((option) => option.value === selected?.value && !option.disabled);
+    searchQuery = '';
+    activeIndex = normalized.findIndex((option) => option.value === selected?.value && !option.disabled);
     if (activeIndex < 0) activeIndex = firstEnabled();
     open = true;
-    void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus());
+    void tick().then(() => {
+      if (searchable) searchInput?.focus();
+      else list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus();
+    });
   }
 
-  function choose(index: number): void {
-    const option = normalized[index];
+  function choose(option: (typeof visibleOptions)[number]): void {
     if (!option || option.disabled) return;
     value = option.value;
     onchange?.(option.value);
     open = false;
+    searchQuery = '';
     void tick().then(() => trigger?.focus());
   }
 
@@ -81,6 +93,7 @@
     value = '';
     onchange?.('');
     open = false;
+    searchQuery = '';
     void tick().then(() => trigger?.focus());
   }
 
@@ -91,15 +104,42 @@
     }
   }
 
+  function handleSearchKey(event: KeyboardEvent): void {
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      activeIndex = firstEnabled();
+      void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus());
+    } else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      activeIndex = visibleOptions.length;
+      move(-1);
+    } else if (event.key === 'Enter') {
+      const first = visibleOptions[firstEnabled()];
+      if (first) {
+        event.preventDefault();
+        choose(first);
+      }
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      open = false;
+      searchQuery = '';
+      void tick().then(() => trigger?.focus());
+    }
+  }
+
   function handleOptionKey(event: KeyboardEvent, index: number): void {
     if (event.key === 'ArrowDown') { event.preventDefault(); move(1); }
-    else if (event.key === 'ArrowUp') { event.preventDefault(); move(-1); }
-    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(index); }
-    else if (event.key === 'Escape') { event.preventDefault(); open = false; void tick().then(() => trigger?.focus()); }
+    else if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (searchable && index === firstEnabled()) searchInput?.focus();
+      else move(-1);
+    }
+    else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); choose(visibleOptions[index]); }
+    else if (event.key === 'Escape') { event.preventDefault(); open = false; searchQuery = ''; void tick().then(() => trigger?.focus()); }
     else if (event.key === 'Tab') open = false;
-    else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    else if (!searchable && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
       const query = event.key.toLocaleLowerCase();
-      const match = normalized.findIndex((option) => !option.disabled && option.label.toLocaleLowerCase().startsWith(query));
+      const match = visibleOptions.findIndex((option) => !option.disabled && option.label.toLocaleLowerCase().startsWith(query));
       if (match >= 0) {
         event.preventDefault();
         activeIndex = match;
@@ -134,24 +174,43 @@
   </div>
 
   {#if open}
-    <div bind:this={list} id={`${id}-options`} class="v2-select-options" role="listbox" aria-label={label || undefined}>
-      {#each normalized as option, index (option.value)}
-        <button
-          type="button"
-          role="option"
-          aria-selected={!isEmpty && option.value === selected?.value}
-          disabled={option.disabled}
-          data-index={index}
-          data-active={index === activeIndex || undefined}
-          data-selected={!isEmpty && option.value === selected?.value || undefined}
-          onclick={() => choose(index)}
-          onfocus={() => (activeIndex = index)}
-          onkeydown={(event) => handleOptionKey(event, index)}
-        >
-          <span>{option.label}</span>
-          {#if !isEmpty && option.value === selected?.value}<span aria-hidden="true">✓</span>{/if}
-        </button>
-      {/each}
+    <div bind:this={list} id={`${id}-options`} class="v2-select-options" role="listbox" aria-label={label || undefined} data-searchable={searchable || undefined}>
+      {#if searchable}
+        <div class="v2-select-search">
+          <input
+            bind:this={searchInput}
+            value={searchQuery}
+            placeholder={searchPlaceholder}
+            aria-label={`Search ${label || 'options'}`}
+            oninput={(event) => { searchQuery = event.currentTarget.value; activeIndex = -1; }}
+            onkeydown={handleSearchKey}
+          >
+        </div>
+      {/if}
+      <div class="v2-select-option-list">
+        {#each visibleOptions as option, index (option.value)}
+          <button
+            type="button"
+            role="option"
+            aria-selected={!isEmpty && option.value === selected?.value}
+            disabled={option.disabled}
+            data-index={index}
+            data-active={index === activeIndex || undefined}
+            data-selected={!isEmpty && option.value === selected?.value || undefined}
+            onclick={() => choose(option)}
+            onfocus={() => (activeIndex = index)}
+            onkeydown={(event) => handleOptionKey(event, index)}
+          >
+            <span class="v2-select-option-copy">
+              <span class="v2-select-option-label">{option.label}</span>
+              {#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}
+            </span>
+            {#if !isEmpty && option.value === selected?.value}<span aria-hidden="true">✓</span>{/if}
+          </button>
+        {:else}
+          <div class="v2-select-empty">No matching options</div>
+        {/each}
+      </div>
     </div>
   {/if}
 </div>
