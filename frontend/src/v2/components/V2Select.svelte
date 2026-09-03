@@ -1,5 +1,5 @@
 <script lang="ts">
-  export type SelectOption = string | { value: string; label: string };
+  type SelectOption = string | { value: string; label: string };
 
   let {
     value = '',
