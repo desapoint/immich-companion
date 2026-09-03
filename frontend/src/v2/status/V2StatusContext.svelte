@@ -5,15 +5,13 @@
   import V2Inline from '../components/V2Inline.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
-  import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
+  import V2Zone from '../components/V2Zone.svelte';
   import { companionState, dependencyState } from './statusPresentation';
 
   let { state }: { state: StatusLoadState } = $props();
 </script>
 
-<V2Stack gap="md">
-  <V2ZoneLabel text="Context rail" />
-
+<V2Zone label="Context rail">
   {#if state.kind === 'loaded'}
     {@const snapshot = state.snapshot}
     {@const companion = companionState(snapshot)}
@@ -38,4 +36,4 @@
       <div class="v2-small v2-muted">{state.kind === 'loading' ? 'Loading environment status…' : 'Live status unavailable.'}</div>
     </V2Card>
   {/if}
-</V2Stack>
+</V2Zone>
