@@ -1,14 +1,16 @@
 <script lang="ts">
+  import { Ellipsis } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
   import V2Progress from './V2Progress.svelte';
   import V2Segmented from './V2Segmented.svelte';
+  import V2TaskBubble from './V2TaskBubble.svelte';
 
   type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
 
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', connectionLabel='Immich connected', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; connectionLabel?:string; children:import('svelte').Snippet } = $props();
-  let density=$state<V2Density>('standard'), taskVisible=$state(true), root=$state<HTMLDivElement>();
+  let density=$state<V2Density>('standard'), taskExpanded=$state(true), root=$state<HTMLDivElement>();
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
@@ -65,18 +67,33 @@
         <div class="v2-top-actions">
           <input class="v2-top-search" placeholder="Search current interface…" aria-label="Search current interface">
           <V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" />
-          <V2Button onclick={()=>taskVisible=!taskVisible}>Tasks</V2Button>
-          <V2Button ariaLabel="More actions">⋯</V2Button>
+          <V2Button onclick={()=>taskExpanded=true}>Tasks</V2Button>
+          <V2Button ariaLabel="More actions"><Ellipsis size={18} strokeWidth={2.1}/></V2Button>
         </div>
       </header>
       {@render children()}
     </div>
   </div>
 
-  {#if taskVisible}
+  {#if taskExpanded}
     <div class="v2-tasktray">
-      <div class="v2-task-summary"><b>Background tasks</b><small class="v2-muted">Scanning asset changes · 62%</small></div>
-      <div class="v2-task-actions"><V2Progress value={62} label="Background task progress"/><V2Button onclick={()=>taskVisible=false}>Hide</V2Button></div>
+      <div class="v2-task-summary"><b>Background tasks</b><small class="v2-muted">2 tasks running</small></div>
+      <div class="v2-task-list">
+        <div class="v2-task-row">
+          <div class="v2-task-copy"><span>Scanning asset changes</span><small class="v2-muted">Known progress · 62%</small></div>
+          <V2Progress value={62} label="Scanning asset changes progress"/>
+        </div>
+        <div class="v2-task-row">
+          <div class="v2-task-copy"><span>Analyzing duplicate candidates</span><small class="v2-muted">Estimating remaining work</small></div>
+          <V2Progress indeterminate label="Analyzing duplicate candidates progress"/>
+        </div>
+      </div>
+      <V2Button onclick={()=>taskExpanded=false}>Collapse</V2Button>
+    </div>
+  {:else}
+    <div class="v2-task-bubbles" aria-label="Collapsed background tasks">
+      <V2TaskBubble value={62} label="Scanning asset changes" detail="Known progress" onclick={()=>taskExpanded=true}/>
+      <V2TaskBubble indeterminate label="Analyzing duplicate candidates" detail="Estimating remaining work" onclick={()=>taskExpanded=true}/>
     </div>
   {/if}
 
