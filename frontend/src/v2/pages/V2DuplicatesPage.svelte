@@ -44,10 +44,10 @@
 <V2PageLayout title="Duplicates" description="Review exact and similarity duplicate groups, save member decisions, and process only actionable groups.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button>Scan similar</V2Button><V2Button variant="primary">Review actions</V2Button></V2Inline>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} onselect={(value)=>tab=value}/>{/snippet}
-  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Review filter"><V2Stack gap="sm"><V2Select options={['All groups','Needs review','Auto-ready','Blocked']} ariaLabel="Review filter"/><V2Button>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value="82"/><V2Inline gap="sm"><V2Button>Scan again</V2Button><V2Button>Cancel scan</V2Button></V2Inline><span class="v2-small v2-muted">Similarity is review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm"><V2Button>Keep all copies</V2Button><V2Button>Mark all for deletion</V2Button><V2Button>Stack each group</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Review filter"><V2Stack gap="sm"><V2Select options={['All groups','Needs review','Auto-ready','Blocked']} ariaLabel="Review filter"/><V2Button>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value="82"/><V2Inline gap="sm"><V2Button>Scan again</V2Button><V2Button>Cancel scan</V2Button></V2Inline><span class="v2-small v2-muted">Similarity is review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm"><V2Button>Keep all copies</V2Button><V2Button>Mark all for deletion</V2Button><V2Button>Stack each group</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
-    <V2Toolbar label="Primary content">
+    <V2Toolbar>
       <V2Badge text="18 groups"/><V2Badge tone="ok" text="7 ready"/><V2Badge tone="warn" text="3 blocked"/>
       {#snippet actions()}<V2Button onclick={()=>decisions={}}>Clear decisions</V2Button>{/snippet}
     </V2Toolbar>
@@ -61,7 +61,7 @@
     {/each}
   </V2Zone>
 
-  {#snippet inspector()}<V2Zone label="Inspector"><V2Section title="Batch readiness"><V2Card><V2Stack gap="sm"><b>2 selected groups</b><span class="v2-small v2-muted">All selected groups must pass actionability guards before execution.</span><V2Inline gap="sm"><V2Badge tone="ok" text="2 ready"/><V2Badge text="0 blocked"/></V2Inline></V2Stack></V2Card></V2Section><V2Section title="Current group"><V2Card><span class="v2-small">Keeper: Member 1<br>Delete: 1<br>Stack: 0<br>Online: all</span></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet inspector()}<V2Zone><V2Section title="Batch readiness"><V2Card><V2Stack gap="sm"><b>2 selected groups</b><span class="v2-small v2-muted">All selected groups must pass actionability guards before execution.</span><V2Inline gap="sm"><V2Badge tone="ok" text="2 ready"/><V2Badge text="0 blocked"/></V2Inline></V2Stack></V2Card></V2Section><V2Section title="Current group"><V2Card><span class="v2-small">Keeper: Member 1<br>Delete: 1<br>Stack: 0<br>Online: all</span></V2Card></V2Section></V2Zone>{/snippet}
 </V2PageLayout>
 
 {#if compare}
