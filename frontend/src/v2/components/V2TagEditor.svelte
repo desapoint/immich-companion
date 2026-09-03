@@ -1,12 +1,10 @@
 <script lang="ts">
-  import SelectField from './SelectField.svelte';
+  import SelectField, { type SelectOption } from './SelectField.svelte';
   import V2Button from './V2Button.svelte';
   import V2Card from './V2Card.svelte';
   import V2Field from './V2Field.svelte';
   import V2Inline from './V2Inline.svelte';
   import V2Stack from './V2Stack.svelte';
-
-  type SelectOption = string | { value: string; label: string; disabled?: boolean };
 
   let {
     mode,
@@ -48,6 +46,8 @@
       bind:value={draftParent}
       options={parentOptions}
       allowEmpty={true}
+      searchable={true}
+      searchPlaceholder="Search parent tags or paths…"
       placeholder="No parent — root tag"
     />
     <V2Inline gap="sm">
