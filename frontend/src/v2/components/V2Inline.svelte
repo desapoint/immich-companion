@@ -12,8 +12,17 @@
     wrap?: boolean;
     children: import('svelte').Snippet;
   } = $props();
+
+  const gaps = {
+    xs: 'var(--v2-space-1)',
+    sm: 'var(--v2-space-2)',
+    md: 'var(--v2-space-3)',
+    lg: 'var(--v2-space-4)',
+  } as const;
+  const justifications = { start: 'flex-start', between: 'space-between', end: 'flex-end' } as const;
+  const alignments = { start: 'flex-start', center: 'center', end: 'flex-end' } as const;
 </script>
 
-<div class={`v2-inline v2-inline-${gap} v2-inline-${justify} v2-inline-align-${align}${wrap ? ' v2-inline-wrap' : ''}`}>
+<div class="v2-inline" style={`gap:${gaps[gap]};justify-content:${justifications[justify]};align-items:${alignments[align]};flex-wrap:${wrap ? 'wrap' : 'nowrap'}`}>
   {@render children()}
 </div>
