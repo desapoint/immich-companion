@@ -1,14 +1,18 @@
 <script lang="ts">
-  import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2Tabs from '../components/V2Tabs.svelte';
-  import V2Zone from '../components/V2Zone.svelte';
-  import V2Section from '../components/V2Section.svelte';
-  import V2Card from '../components/V2Card.svelte';
-  import V2Stack from '../components/V2Stack.svelte';
-  import V2Inline from '../components/V2Inline.svelte';
   import V2Badge from '../components/V2Badge.svelte';
+  import V2Button from '../components/V2Button.svelte';
+  import V2Card from '../components/V2Card.svelte';
+  import V2Checkbox from '../components/V2Checkbox.svelte';
   import V2Field from '../components/V2Field.svelte';
+  import V2Inline from '../components/V2Inline.svelte';
+  import V2PageLayout from '../components/V2PageLayout.svelte';
+  import V2Section from '../components/V2Section.svelte';
+  import V2Segmented from '../components/V2Segmented.svelte';
+  import V2Select from '../components/V2Select.svelte';
+  import V2Stack from '../components/V2Stack.svelte';
+  import V2Tabs from '../components/V2Tabs.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
+  import V2Zone from '../components/V2Zone.svelte';
   import { comparisonMemberData, demoCompareImage, demoDifferenceMask } from '../demo/duplicateVisuals';
 
   type Mode='Side by side'|'Swipe'|'Transparency'|'Difference';
@@ -38,20 +42,20 @@
 <svelte:window onkeydown={(e)=>{if(e.key==='Escape'&&compare)compare=false}} onpointerup={()=>dragging=false}/>
 
 <V2PageLayout title="Duplicates" description="Review exact and similarity duplicate groups, save member decisions, and process only actionable groups.">
-  {#snippet headerActions()}<V2Inline gap="sm"><button class="v2-button">Scan similar</button><button class="v2-button v2-button-primary">Review actions</button></V2Inline>{/snippet}
-  {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} onselect={(v)=>tab=v}/>{/snippet}
-  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Review filter"><V2Stack gap="sm"><select><option>All groups</option><option>Needs review</option><option>Auto-ready</option><option>Blocked</option></select><button class="v2-button">Select auto-ready</button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value="82"/><V2Inline gap="sm"><button class="v2-button">Scan again</button><button class="v2-button">Cancel scan</button></V2Inline><span class="v2-small v2-muted">Similarity is review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm"><button class="v2-button">Keep all copies</button><button class="v2-button">Mark all for deletion</button><button class="v2-button">Stack each group</button></V2Stack></V2Section></V2Zone>{/snippet}
+  {#snippet headerActions()}<V2Inline gap="sm"><V2Button>Scan similar</V2Button><V2Button variant="primary">Review actions</V2Button></V2Inline>{/snippet}
+  {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} onselect={(value)=>tab=value}/>{/snippet}
+  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Review filter"><V2Stack gap="sm"><V2Select options={['All groups','Needs review','Auto-ready','Blocked']} ariaLabel="Review filter"/><V2Button>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value="82"/><V2Inline gap="sm"><V2Button>Scan again</V2Button><V2Button>Cancel scan</V2Button></V2Inline><span class="v2-small v2-muted">Similarity is review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm"><V2Button>Keep all copies</V2Button><V2Button>Mark all for deletion</V2Button><V2Button>Stack each group</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
     <V2Toolbar label="Primary content">
       <V2Badge text="18 groups"/><V2Badge tone="ok" text="7 ready"/><V2Badge tone="warn" text="3 blocked"/>
-      {#snippet actions()}<button class="v2-button" onclick={()=>decisions={}}>Clear decisions</button>{/snippet}
+      {#snippet actions()}<V2Button onclick={()=>decisions={}}>Clear decisions</V2Button>{/snippet}
     </V2Toolbar>
     {#each groups as g}
       <V2Card class="v2-duplicate-group">
         <V2Stack gap="md">
-          <V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><input type="checkbox"><b>Group {g.id}</b><V2Badge text={`${g.count} images`}/><V2Badge text={g.kind}/><V2Badge tone={g.tone} text={g.state}/></V2Inline><V2Inline gap="sm" wrap={true}><button class="v2-button">Apply preset</button><button class="v2-button" onclick={()=>openCompare(g.id,0)}>Compare</button></V2Inline></V2Inline>
-          <div class="v2-duplicate-members">{#each Array.from({length:g.count},(_,i)=>i) as i}<div class="v2-duplicate-member"><button class="v2-duplicate-image" onclick={()=>openCompare(g.id,i)}><img src={demoCompareImage(g.id,i)} alt={`Duplicate member ${i+1}`}><span class="v2-duplicate-image-meta"><b>Member {i+1}</b><small>{i===0?'Suggested keeper':i%3===0?'External':'Immich'}</small></span></button><div class="v2-duplicate-actions"><button class={`v2-button ${i===0?'v2-button-primary':''}`}>Keep</button><button class="v2-button">Delete</button><button class="v2-button">Stack</button></div></div>{/each}</div>
+          <V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><input type="checkbox"><b>Group {g.id}</b><V2Badge text={`${g.count} images`}/><V2Badge text={g.kind}/><V2Badge tone={g.tone} text={g.state}/></V2Inline><V2Inline gap="sm" wrap={true}><V2Button>Apply preset</V2Button><V2Button onclick={()=>openCompare(g.id,0)}>Compare</V2Button></V2Inline></V2Inline>
+          <div class="v2-duplicate-members">{#each Array.from({length:g.count},(_,i)=>i) as i}<div class="v2-duplicate-member"><button class="v2-duplicate-image" onclick={()=>openCompare(g.id,i)}><img src={demoCompareImage(g.id,i)} alt={`Duplicate member ${i+1}`}><span class="v2-duplicate-image-meta"><b>Member {i+1}</b><small>{i===0?'Suggested keeper':i%3===0?'External':'Immich'}</small></span></button><div class="v2-duplicate-actions"><V2Button variant={i===0?'primary':'default'}>Keep</V2Button><V2Button>Delete</V2Button><V2Button>Stack</V2Button></div></div>{/each}</div>
         </V2Stack>
       </V2Card>
     {/each}
@@ -63,8 +67,8 @@
 {#if compare}
   <div class="v2-compare-viewer" role="dialog" aria-modal="true">
     <div class="v2-compare-top">
-      <V2Inline gap="sm" wrap={true}><button class="v2-button" onclick={()=>compare=false}>✕</button><b>Duplicate comparison</b><V2Badge text={`Group ${group}`}/><V2Badge text={`${activeCount} images`}/></V2Inline>
-      <V2Inline gap="sm" wrap={true}><div class="v2-segmented">{#each ['Side by side','Swipe','Transparency','Difference'] as item}<button class:active={mode===item} onclick={()=>setMode(item as Mode)}>{item}</button>{/each}</div><button class="v2-button" onclick={()=>zoom=Math.max(10,zoom/1.12)}>−</button><span class="v2-zoom-readout">{Math.round(zoom)}%</span><button class="v2-button" onclick={()=>zoom=Math.min(800,zoom*1.12)}>+</button><button class="v2-button" onclick={fit}>Fit</button><button class="v2-button" onclick={actual}>1:1</button><button class="v2-button" onclick={prev}>← Previous</button><button class="v2-button" onclick={next}>Next →</button><button class="v2-button" onclick={()=>reference=member}>Set as reference</button><button class="v2-button" onclick={()=>window.alert('Mock integrity analysis: current asset is healthy.')}>Analyze integrity</button></V2Inline>
+      <V2Inline gap="sm" wrap={true}><V2Button onclick={()=>compare=false}>✕</V2Button><b>Duplicate comparison</b><V2Badge text={`Group ${group}`}/><V2Badge text={`${activeCount} images`}/></V2Inline>
+      <V2Inline gap="sm" wrap={true}><V2Segmented items={['Side by side','Swipe','Transparency','Difference']} active={mode} onselect={(value)=>setMode(value as Mode)} ariaLabel="Comparison mode"/><V2Button onclick={()=>zoom=Math.max(10,zoom/1.25)}>−</V2Button><span class="v2-zoom-readout">{Math.round(zoom)}%</span><V2Button onclick={()=>zoom=Math.min(800,zoom*1.25)}>+</V2Button><V2Button onclick={fit}>Fit</V2Button><V2Button onclick={actual}>1:1</V2Button><V2Button onclick={prev}>← Previous</V2Button><V2Button onclick={next}>Next →</V2Button><V2Button onclick={()=>reference=member}>Set as reference</V2Button><V2Button onclick={()=>window.alert('Mock integrity analysis: current asset is healthy.')}>Analyze integrity</V2Button></V2Inline>
     </div>
 
     <div class="v2-compare-main">
@@ -72,12 +76,12 @@
         <div class="v2-compare-stage" class:single={mode!=='Side by side'} onpointerdown={pointerDown} onpointermove={pointerMove} onwheel={wheel}>
           {#if mode==='Side by side'}
             <div class="v2-compare-pane" bind:this={compareViewport}><span class="v2-compare-label">Selected image</span><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedImage} alt={`Member ${member+1}`}></div></div>
-            <div class="v2-compare-pane"><span class="v2-compare-label">Reference / keeper candidate</span><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceImage} alt={`Reference member ${reference+1}`}></div></div>
+            <div class="v2-compare-pane reference"><span class="v2-compare-label">Reference / keeper candidate</span><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceImage} alt={`Reference member ${reference+1}`}></div></div>
           {:else}
             <div class={`v2-compare-overlay mode-${mode.toLowerCase().replaceAll(' ','-')}`} bind:this={compareViewport}>
               {#if mode==='Difference'}
                 <div class="v2-compare-transform" style={`transform:${transform}`}><img src={differenceImage} alt="Generated difference preview"></div>
-                <div class="v2-difference-controls"><label><span>Color</span><input type="range" min="0" max="360" bind:value={diffHue}><b>{diffHue}°</b></label><label class="v2-check-row"><input type="checkbox" bind:checked={diffBinary}>Two colors only</label>{#if !diffBinary}<label><span>Contrast</span><input type="range" min="50" max="300" bind:value={diffContrast}><b>{diffContrast}%</b></label>{/if}</div>
+                <div class="v2-difference-controls"><label><span>Color</span><input type="range" min="0" max="360" bind:value={diffHue}><b>{diffHue}°</b></label><V2Checkbox label="Two colors only" checked={diffBinary} onchange={(checked)=>diffBinary=checked}/>{#if !diffBinary}<label><span>Contrast</span><input type="range" min="50" max="300" bind:value={diffContrast}><b>{diffContrast}%</b></label>{/if}</div>
               {:else}
                 <div class="v2-compare-layer"><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceImage} alt={`Reference member ${reference+1}`}></div></div>
                 <div class="v2-compare-layer top" style={mode==='Transparency'?`opacity:${opacity/100}`:`clip-path:inset(0 ${100-split}% 0 0)`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedImage} alt={`Selected member ${member+1}`}></div></div>
@@ -93,12 +97,12 @@
       </section>
 
       <aside class="v2-compare-data">
-        <V2Section title="Quick comparison"><V2Card><V2Stack gap="sm"><V2Inline justify="between"><span>Visual similarity</span><b>{selectedData.similarity}%</b></V2Inline><V2Inline justify="between"><span>File size difference</span><b>{selectedData.sizeNum-referenceData.sizeNum>=0?'+':''}{(selectedData.sizeNum-referenceData.sizeNum).toFixed(1)} MB</b></V2Inline><V2Inline justify="between"><span>Resolution</span><b>{selectedData.dims===referenceData.dims?'Same':'Different'}</b></V2Inline><V2Inline justify="between"><span>Integrity</span><V2Badge tone="ok" text="Healthy"/></V2Inline></V2Stack></V2Card></V2Section>
-        <V2Section title="Metadata side by side"><div class="v2-compare-grid"><b>Selected</b><b>Reference</b><span>{selectedData.name}</span><span>{referenceData.name}</span><span>{selectedData.source}</span><span>{referenceData.source}</span><span class:changed={selectedData.size!==referenceData.size}>{selectedData.size}</span><span class:changed={selectedData.size!==referenceData.size}>{referenceData.size}</span><span class:changed={selectedData.dims!==referenceData.dims}>{selectedData.dims}</span><span class:changed={selectedData.dims!==referenceData.dims}>{referenceData.dims}</span><span>{selectedData.taken}</span><span>{referenceData.taken}</span><span>{selectedData.codec}</span><span>{referenceData.codec}</span><span>{selectedData.library}</span><span>{referenceData.library}</span><span>{selectedData.uploaded}</span><span>{referenceData.uploaded}</span></div></V2Section>
+        <V2Section title="Quick comparison" actions={undefined}><V2Card><V2Stack gap="sm"><V2Inline justify="between"><span>Visual similarity</span><b>{selectedData.similarity}%</b></V2Inline><V2Inline justify="between"><span>File size difference</span><b>{selectedData.sizeNum-referenceData.sizeNum>=0?'+':''}{(selectedData.sizeNum-referenceData.sizeNum).toFixed(1)} MB</b></V2Inline><V2Inline justify="between"><span>Resolution</span><b>{selectedData.dims===referenceData.dims?'Same':'Different'}</b></V2Inline><V2Inline justify="between"><span>Integrity</span><V2Badge tone="ok" text="Healthy"/></V2Inline></V2Stack></V2Card></V2Section>
+        <V2Section title="Metadata side by side"><div class="v2-compare-grid"><b>Selected</b><b>Reference</b><span>{selectedData.name}</span><span>{referenceData.name}</span><span>{selectedData.source}</span><span>{referenceData.source}</span><span class:changed={selectedData.size!==referenceData.size}>{selectedData.size}</span><span class:changed={selectedData.size!==referenceData.size}>{referenceData.size}</span><span class:changed={selectedData.dims!==referenceData.dims}>{selectedData.dims}</span><span class:changed={selectedData.dims!==referenceData.dims}>{referenceData.dims}</span><span class:changed={selectedData.taken!==referenceData.taken}>{selectedData.taken}</span><span class:changed={selectedData.taken!==referenceData.taken}>{referenceData.taken}</span><span>{selectedData.codec}</span><span>{referenceData.codec}</span><span>{selectedData.library}</span><span>{referenceData.library}</span><span class:changed={selectedData.uploaded!==referenceData.uploaded}>{selectedData.uploaded}</span><span class:changed={selectedData.uploaded!==referenceData.uploaded}>{referenceData.uploaded}</span></div></V2Section>
         <V2Section title="Decision context"><V2Card><V2Stack gap="sm"><b>Highlighted cells differ.</b><span class="v2-small v2-muted">Use image evidence and metadata together. Similarity alone does not authorize deletion.</span></V2Stack></V2Card></V2Section>
       </aside>
     </div>
 
-    <div class="v2-compare-actions"><span><b>Member {member+1}</b> <span class="v2-small v2-muted">Choose disposition for this member</span></span><V2Inline gap="sm" wrap={true}>{#each ['keep','delete','stack'] as decision}<button class={`v2-button ${decisions[decisionKey]===decision?'v2-button-primary':''}`} onclick={()=>setDecision(decision)}>{decision[0].toUpperCase()+decision.slice(1)}</button>{/each}<button class="v2-button" disabled={decisions[decisionKey]!=='stack'} onclick={()=>window.alert(`Member ${member+1} set as stack primary in this mockup.`)}>Set stack primary</button></V2Inline></div>
+    <div class="v2-compare-actions"><span><b>Member {member+1}</b> <span class="v2-small v2-muted">Choose disposition for this member</span></span><V2Inline gap="sm" wrap={true}>{#each ['keep','delete','stack'] as decision}<V2Button active={decisions[decisionKey]===decision} onclick={()=>setDecision(decision)}>{decision[0].toUpperCase()+decision.slice(1)}</V2Button>{/each}<V2Button disabled={decisions[decisionKey]!=='stack'} onclick={()=>window.alert(`Member ${member+1} set as stack primary in this mockup.`)}>Set stack primary</V2Button></V2Inline></div>
   </div>
 {/if}
