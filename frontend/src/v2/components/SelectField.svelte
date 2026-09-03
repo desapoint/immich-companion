@@ -32,7 +32,9 @@
   const normalized = $derived(options.map((option) => typeof option === 'string'
     ? { value: option, label: option, disabled: false }
     : { disabled: false, ...option }));
-  const selected = $derived(normalized.find((option) => option.value === String(value)) ?? normalized[0]);
+  const selected = $derived(String(value) === ''
+    ? undefined
+    : normalized.find((option) => option.value === String(value)));
 
   function firstEnabled(): number {
     return normalized.findIndex((option) => !option.disabled);
@@ -53,7 +55,9 @@
 
   function show(): void {
     if (disabled || !normalized.length) return;
-    activeIndex = normalized.findIndex((option) => option.value === String(value) && !option.disabled);
+    activeIndex = String(value) === ''
+      ? firstEnabled()
+      : normalized.findIndex((option) => option.value === String(value) && !option.disabled);
     if (activeIndex < 0) activeIndex = firstEnabled();
     open = true;
     void tick().then(() => list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus());
@@ -99,6 +103,7 @@
     bind:this={trigger}
     {id}
     class="v2-select-trigger"
+    data-placeholder={!selected || undefined}
     type="button"
     {disabled}
     aria-haspopup="listbox"
@@ -117,17 +122,17 @@
         <button
           type="button"
           role="option"
-          aria-selected={option.value === String(value)}
+          aria-selected={String(value) !== '' && option.value === String(value)}
           disabled={option.disabled}
           data-index={index}
           data-active={index === activeIndex || undefined}
-          data-selected={option.value === String(value) || undefined}
+          data-selected={String(value) !== '' && option.value === String(value) || undefined}
           onclick={() => choose(index)}
           onfocus={() => (activeIndex = index)}
           onkeydown={(event) => handleOptionKey(event, index)}
         >
           <span>{option.label}</span>
-          {#if option.value === String(value)}<span aria-hidden="true">✓</span>{/if}
+          {#if String(value) !== '' && option.value === String(value)}<span aria-hidden="true">✓</span>{/if}
         </button>
       {/each}
     </div>
