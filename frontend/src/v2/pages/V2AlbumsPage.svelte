@@ -66,7 +66,6 @@
     size="md"
     onclose={() => closeModal(modal.id)}
   >
-    {#snippet headerActions()}<V2Button title="Open another modal to test stacking" onclick={openCreate}>Open another</V2Button>{/snippet}
     <V2Stack gap="md">
       <V2Field label="Name" value={modal.name} onchange={(value) => updateModal(modal.id, { name:value })}/>
       <V2Field label="Description" value={modal.description} multiline={true} onchange={(value) => updateModal(modal.id, { description:value })}/>
