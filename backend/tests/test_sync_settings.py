@@ -31,7 +31,11 @@ def full_run() -> SyncRunStatus:
 
 class RuntimeSettings:
     async def get(self) -> SyncRuntimeSettings:
-        return SyncRuntimeSettings(full_batch_size=50, full_min_batch_delay_seconds=0.2)
+        return SyncRuntimeSettings(
+            full_batch_size=50,
+            full_min_batch_delay_seconds=0.2,
+            tag_association_concurrency=4,
+        )
 
 
 @pytest.mark.asyncio
@@ -85,12 +89,18 @@ async def test_environment_values_seed_runtime_settings_and_incremental_batch_si
         sync_batch_size=250,
         sync_full_batch_size=50,
         sync_full_min_batch_delay_seconds=0.2,
+        sync_tag_association_concurrency=4,
     )
     runtime = await DefaultSyncRuntimeSettingsRepository(settings).get()
 
-    assert runtime == SyncRuntimeSettings(full_batch_size=50, full_min_batch_delay_seconds=0.2)
+    assert runtime == SyncRuntimeSettings(
+        full_batch_size=50,
+        full_min_batch_delay_seconds=0.2,
+        tag_association_concurrency=4,
+    )
     assert AssetSyncService._full_batch_size(full_run(), settings) == 50
     incremental = full_run().model_copy(update={"mode": "incremental"})
     assert AssetSyncService._full_batch_size(incremental, settings) == 250
     assert settings.sync_media_page_size == 1000
     assert settings.sync_relationship_page_size == 1000
+    assert settings.sync_tag_association_concurrency == 4

@@ -180,11 +180,14 @@ class ActionRepository:
                 return
             record.status = status
             previous = record.result or {}
+            group_execution = previous.get(
+                "group_execution",
+                result.get("group_execution", {}),
+            )
+            if group_execution:
+                result["group_execution"] = group_execution
             record.result = {
                 **result,
-                "group_execution": previous.get(
-                    "group_execution",
-                    result.get("group_execution", {}),
-                ),
+                "group_execution": group_execution,
             }
             record.executed_at = datetime.now(UTC)

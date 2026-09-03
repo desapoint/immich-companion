@@ -34,6 +34,7 @@
   import type {
     DuplicateAnalysisOptions,
     DuplicateActionSelection,
+    DuplicateBulkPreset,
     DuplicateDisposition,
     DuplicateGroupDraft,
     DuplicateKeeperPolicy,
@@ -59,9 +60,17 @@
     onpreview: (request: DuplicatePreviewRequest) => void;
   }
 
+  interface DuplicateExecutionEntry {
+    groupId: string;
+    state: string;
+    error: string | null;
+    updatedAt: string | null;
+  }
+
   let { onpreview }: Props = $props();
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
+  const draftSaveDelayMs = 250;
   const keeperPolicyOptions: SelectOption[] = [
     { value: 'most_recent', label: 'Most recently uploaded' },
     { value: 'prefer_upload', label: 'Prefer uploads' },
@@ -76,7 +85,7 @@
   ];
   const bulkActionOptions: SelectOption[] = [
     { value: 'keep_all', label: 'Keep all copies' },
-    { value: 'delete_all', label: 'Delete every copy' },
+    { value: 'mark_all_delete', label: 'Mark all for deletion' },
     { value: 'stack_all', label: 'Stack each group' },
   ];
   const defaultOptions: DuplicateAnalysisOptions = {
@@ -93,12 +102,14 @@
   let options = $state<DuplicateAnalysisOptions>({ ...defaultOptions });
   let appliedOptions = $state.raw<DuplicateAnalysisOptions>({ ...defaultOptions });
   let libraryOptions = $state<SelectOption[]>([]);
-  let bulkAction = $state<DuplicatePlanAction>('keep_all');
+  let bulkAction = $state<DuplicateBulkPreset>('keep_all');
   const selected = new SvelteSet<string>();
+  const manuallySelected = new SvelteSet<string>();
   let groupDrafts = $state.raw<Record<string, DuplicateGroupDraft>>({});
   let workspace = $state.raw<DuplicateWorkspaceState | null>(null);
   let activeGroupId = $state<string | null>(null);
-  const savingGroups = new SvelteSet<string>();
+  const savingGroupCounts = new SvelteMap<string, number>();
+  const draftSaveErrors = new SvelteMap<string, string>();
   let loading = $state(true);
   let busy = $state(false);
   let error = $state<string | null>(null);
@@ -111,6 +122,8 @@
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let workspaceSaveQueue = Promise.resolve();
   const draftSaveQueues = new SvelteMap<string, Promise<void>>();
+  const draftSaveTimers = new SvelteMap<string, ReturnType<typeof setTimeout>>();
+  const pendingDrafts = new SvelteMap<string, { group: ExactDuplicateGroup; draft: DuplicateGroupDraft }>();
   let selectionInitialized = false;
   let applyRulesAfterAnalysis = false;
   const pendingRuleApplicationTaskKey = 'immich-companion:duplicates:pending-rule-application-task';
@@ -121,16 +134,15 @@
       (group) => group.auto_selected && group.manual_action === null && group.review_status === 'pending',
     ) ?? [],
   );
-  const selectedCount = $derived(selected.size);
-  const selectedReady = $derived(
-    selectedCount > 0
-      && (result?.groups
-        .filter((group) => selected.has(group.group_id))
-        .every((group) => isActionable(group)) ?? false),
+  const selectedGroups = $derived(
+    result?.groups.filter((group) => selected.has(group.group_id)) ?? [],
   );
-  const allAutoReadySelected = $derived(
-    autoReadyGroups.length > 0
-      && autoReadyGroups.every((group) => selected.has(group.group_id)),
+  const selectedCount = $derived(selectedGroups.length);
+  const blockedSelectedCount = $derived(
+    selectedGroups.filter((group) => !isActionable(group)).length,
+  );
+  const selectedReady = $derived(
+    selectedGroups.length > 0 && blockedSelectedCount === 0,
   );
   const rulesChanged = $derived(
     JSON.stringify(configuredOptions()) !== JSON.stringify(appliedOptions),
@@ -149,6 +161,16 @@
   const visibleReviewEntries = $derived(
     reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
   );
+  const visibleGroupIds = $derived(new Set(visibleReviewEntries.map((entry) => entry.group.group_id)));
+  const visibleSelectedCount = $derived(
+    selectedGroups.filter((group) => visibleGroupIds.has(group.group_id)).length,
+  );
+  const hiddenManuallySelectedGroups = $derived(
+    selectedGroups.filter((group) => !visibleGroupIds.has(group.group_id) && manuallySelected.has(group.group_id)),
+  );
+  const bulkTargetGroups = $derived(
+    selectedGroups.filter((group) => visibleGroupIds.has(group.group_id) || manuallySelected.has(group.group_id)),
+  );
   const resumableIncompleteWork = $derived(
     task?.status === 'failed'
       && (
@@ -158,9 +180,52 @@
           && task.result.summary.failed_group_ids.length > 0)
       ),
   );
+  const unfinishedExecutionEntries = $derived.by<DuplicateExecutionEntry[]>(() => {
+    if (task?.task_type !== 'duplicate_resolution' || task.status !== 'failed') return [];
+    const raw = task.result?.summary?.group_execution;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+    return Object.entries(raw as Record<string, unknown>).flatMap(([groupId, value]) => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const item = value as Record<string, unknown>;
+      const state = typeof item.state === 'string' ? item.state : 'unknown';
+      if (state === 'completed') return [];
+      return [{
+        groupId,
+        state,
+        error: typeof item.error === 'string' ? item.error : null,
+        updatedAt: typeof item.updated_at === 'string' ? item.updated_at : null,
+      }];
+    });
+  });
 
   function configuredOptions(): DuplicateAnalysisOptions {
     return { ...options };
+  }
+
+  function invalidatePlan(): void {
+    plan = null;
+    confirmOpen = false;
+  }
+
+  function executionStateLabel(state: string): string {
+    if (state === 'follow_up_pending') return 'Stack follow-up pending';
+    if (state === 'duplicate_resolved') return 'Duplicate resolved; follow-up incomplete';
+    if (state === 'failed') return 'Failed';
+    if (state === 'pending') return 'Pending';
+    return state.replaceAll('_', ' ');
+  }
+
+  function jumpToGroup(groupId: string): void {
+    if (!result?.groups.some((group) => group.group_id === groupId)) return;
+    activeFilter = 'all';
+    activeGroupId = groupId;
+    void persistWorkspace();
+    requestAnimationFrame(() => {
+      document.getElementById(`duplicate-group-${groupId}`)?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
   }
 
   async function load(): Promise<void> {
@@ -178,15 +243,21 @@
       workspace = restored;
       groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
       const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
-      for (const id of selected) if (!liveIds.has(id)) selected.delete(id);
+      for (const id of selected) {
+        if (!liveIds.has(id)) {
+          selected.delete(id);
+          manuallySelected.delete(id);
+        }
+      }
       if (!selectionInitialized) {
         selected.clear();
+        manuallySelected.clear();
         if (restored.initialized) {
-          for (const groupId of restored.selected_group_ids) selected.add(groupId);
+          for (const groupId of restored.selected_group_ids) {
+            selected.add(groupId);
+            manuallySelected.add(groupId);
+          }
           activeGroupId = restored.active_group_id;
-        } else {
-          for (const group of autoReadyGroups) selected.add(group.group_id);
-          if (selected.size) void persistWorkspace();
         }
         selectionInitialized = true;
       }
@@ -235,6 +306,7 @@
             : 'The reviewed duplicate batch completed.';
         if (kind === 'analysis') {
           selected.clear();
+          manuallySelected.clear();
           selectionInitialized = false;
           groupDrafts = {};
         }
@@ -267,20 +339,21 @@
   }
 
   function toggleGroup(groupId: string, checked: boolean): void {
-    if (checked) selected.add(groupId);
-    else selected.delete(groupId);
+    if (checked) {
+      selected.add(groupId);
+      manuallySelected.add(groupId);
+    } else {
+      selected.delete(groupId);
+      manuallySelected.delete(groupId);
+    }
+    invalidatePlan();
     void persistWorkspace();
   }
 
-  function toggleAllEligible(): void {
-    if (allAutoReadySelected) {
-      for (const group of autoReadyGroups) selected.delete(group.group_id);
-      void persistWorkspace();
-      return;
-    }
-    for (const group of autoReadyGroups) {
-      selected.add(group.group_id);
-    }
+  function selectAutoReadyGroups(): void {
+    if (!autoReadyGroups.length) return;
+    invalidatePlan();
+    for (const group of autoReadyGroups) selected.add(group.group_id);
     void persistWorkspace();
   }
 
@@ -317,7 +390,11 @@
     workspace = restored;
     groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
     selected.clear();
-    for (const groupId of restored.selected_group_ids) selected.add(groupId);
+    manuallySelected.clear();
+    for (const groupId of restored.selected_group_ids) {
+      selected.add(groupId);
+      manuallySelected.add(groupId);
+    }
     activeGroupId = restored.active_group_id;
     selectionInitialized = true;
   }
@@ -341,7 +418,9 @@
     const values = new Set(draft.decisions.map((decision) => decision.disposition));
     if (values.size === 1) {
       const disposition = draft.decisions[0].disposition;
-      return disposition === 'keep' ? 'keep_all' : disposition === 'delete' ? 'delete_all' : 'stack_all';
+      if (disposition === 'keep') return 'keep_all';
+      if (disposition === 'stack') return 'stack_all';
+      return 'mixed';
     }
     const keepCount = draft.decisions.filter((decision) => decision.disposition === 'keep').length;
     const deleteCount = draft.decisions.filter((decision) => decision.disposition === 'delete').length;
@@ -350,29 +429,63 @@
 
   function effectiveActionFor(group: ExactDuplicateGroup): DuplicatePlanAction {
     const selection = actionFor(group);
-    return selection === 'automatic' ? group.recommended_action : selection;
+    return selection === 'automatic' ? group.effective_action : selection;
+  }
+
+  function actionabilityReason(group: ExactDuplicateGroup): string | null {
+    const action = effectiveActionFor(group);
+    const draft = draftFor(group);
+    const hasDraftDecisions = (draft?.decisions.length ?? 0) > 0;
+    const draftComplete = draft?.decisions.length === group.members.length;
+    const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
+    const hasDeletions = hasDraftDecisions
+      ? draft!.decisions.some((decision) => decision.disposition === 'delete')
+      : action === 'resolve';
+    const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
+
+    if (action === 'none') return 'Choose an action for every image.';
+    if (!hasDraftDecisions && action === 'mixed') return 'Mixed choices need a complete saved member draft.';
+    if (hasDraftDecisions && !draftComplete) return 'Choose an action for every image.';
+    if (requiresPrimary && selectedKeeper(group) === null) return 'Choose the surviving primary image.';
+    if (stackDecisions.length === 1) return 'A stack needs at least two surviving images.';
+    if (hasDeletions && (!group.eligible || group.members.some((member) => member.is_offline))) {
+      return 'Deleting duplicate members requires an eligible Immich group with every image online.';
+    }
+    if (stackDecisions.length && group.members.some((member) => (
+      stackDecisions.some((decision) => decision.asset_id === member.id)
+      && (member.is_offline || member.is_stacked)
+    ))) return 'Stack members must be online and not already stacked.';
+    return null;
   }
 
   function isActionable(group: ExactDuplicateGroup): boolean {
-    const action = effectiveActionFor(group);
-    const draft = draftFor(group);
-    const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
-    const hasDeletions = draft?.decisions.some((decision) => decision.disposition === 'delete') ?? action === 'resolve';
-    const requiresPrimary = action === 'resolve' || stackDecisions.length > 0;
-    return action !== 'none'
-      && draft?.decisions.length === group.members.length
-      && (!requiresPrimary || selectedKeeper(group) !== null)
-      && stackDecisions.length !== 1
-      && (!hasDeletions || action === 'delete_all' || (group.eligible && !group.members.some((member) => member.is_offline)))
-      && (!stackDecisions.length || !group.members.some((member) => (
-        stackDecisions.some((decision) => decision.asset_id === member.id)
-        && (member.is_offline || member.is_stacked)
-      )));
+    return actionabilityReason(group) === null;
+  }
+
+  function sameDraftState(left: DuplicateGroupDraft | null, right: DuplicateGroupDraft): boolean {
+    return left !== null
+      && left.member_fingerprint === right.member_fingerprint
+      && left.stack_primary_asset_id === right.stack_primary_asset_id
+      && left.metadata_keeper_asset_id === right.metadata_keeper_asset_id
+      && left.status === right.status
+      && JSON.stringify(left.decisions) === JSON.stringify(right.decisions);
+  }
+
+  function isSavingGroup(groupId: string): boolean {
+    return (savingGroupCounts.get(groupId) ?? 0) > 0;
+  }
+
+  function markSaveQueued(groupId: string): void {
+    savingGroupCounts.set(groupId, (savingGroupCounts.get(groupId) ?? 0) + 1);
+  }
+
+  function markSaveFinished(groupId: string): void {
+    const remaining = (savingGroupCounts.get(groupId) ?? 1) - 1;
+    if (remaining > 0) savingGroupCounts.set(groupId, remaining);
+    else savingGroupCounts.delete(groupId);
   }
 
   async function persistDraft(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
-    savingGroups.add(group.group_id);
-    error = null;
     try {
       const updated = await saveDuplicateGroupDraft({
         group_id: group.group_id,
@@ -383,21 +496,79 @@
         metadata_keeper_asset_id: draft.metadata_keeper_asset_id,
         status: draft.status,
       });
-      groupDrafts = { ...groupDrafts, [group.group_id]: updated };
+      const previousSaveError = draftSaveErrors.get(group.group_id);
+      draftSaveErrors.delete(group.group_id);
+      if (previousSaveError && error === previousSaveError) error = null;
+      if (sameDraftState(draftFor(group), draft)) {
+        groupDrafts = { ...groupDrafts, [group.group_id]: updated };
+      }
     } catch (reason) {
-      error = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
-    } finally {
-      savingGroups.delete(group.group_id);
+      const saveError = reason instanceof Error ? reason.message : 'Could not save the duplicate decision.';
+      draftSaveErrors.set(group.group_id, saveError);
+      error = saveError;
+      throw reason;
     }
   }
 
-  function queueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): void {
+  function enqueueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): Promise<void> {
+    markSaveQueued(group.group_id);
     const previous = draftSaveQueues.get(group.group_id) ?? Promise.resolve();
     const next = previous.catch(() => undefined).then(() => persistDraft(group, draft));
     draftSaveQueues.set(group.group_id, next);
     void next.finally(() => {
+      markSaveFinished(group.group_id);
       if (draftSaveQueues.get(group.group_id) === next) draftSaveQueues.delete(group.group_id);
-    });
+    }).catch(() => undefined);
+    return next;
+  }
+
+  function flushPendingDraft(groupId: string): Promise<void> | null {
+    const timer = draftSaveTimers.get(groupId);
+    if (timer) {
+      clearTimeout(timer);
+      draftSaveTimers.delete(groupId);
+    }
+    const pending = pendingDrafts.get(groupId);
+    if (!pending) return draftSaveQueues.get(groupId) ?? null;
+    pendingDrafts.delete(groupId);
+    return enqueueDraftPersistence(pending.group, pending.draft);
+  }
+
+  async function flushDraftPersistence(groupIds: string[]): Promise<void> {
+    const pending = groupIds
+      .map((groupId) => flushPendingDraft(groupId))
+      .filter((save): save is Promise<void> => save !== null);
+    await Promise.all(pending);
+  }
+
+  async function discardPendingDrafts(groupIds: string[]): Promise<void> {
+    for (const groupId of groupIds) {
+      const timer = draftSaveTimers.get(groupId);
+      if (timer) clearTimeout(timer);
+      draftSaveTimers.delete(groupId);
+      pendingDrafts.delete(groupId);
+    }
+    await Promise.all(
+      groupIds.map((groupId) => draftSaveQueues.get(groupId)?.catch(() => undefined) ?? Promise.resolve()),
+    );
+  }
+
+  function flushAllDraftsBestEffort(): void {
+    const groupIds = [...new Set([...pendingDrafts.keys(), ...draftSaveQueues.keys()])];
+    if (!groupIds.length) return;
+    void flushDraftPersistence(groupIds).catch(() => undefined);
+  }
+
+  function queueDraftPersistence(group: ExactDuplicateGroup, draft: DuplicateGroupDraft): void {
+    pendingDrafts.set(group.group_id, { group, draft });
+    const existingTimer = draftSaveTimers.get(group.group_id);
+    if (existingTimer) clearTimeout(existingTimer);
+    const timer = setTimeout(() => {
+      draftSaveTimers.delete(group.group_id);
+      const save = flushPendingDraft(group.group_id);
+      if (save) void save.catch(() => undefined);
+    }, draftSaveDelayMs);
+    draftSaveTimers.set(group.group_id, timer);
   }
 
   function updateDraft(
@@ -405,6 +576,7 @@
     decisions: DuplicateGroupDraft['decisions'],
     stackPrimaryAssetId: string | null,
   ): void {
+    invalidatePlan();
     const existing = draftFor(group);
     const stackIds = decisions
       .filter((decision) => decision.disposition === 'stack')
@@ -425,8 +597,10 @@
       stale: false,
     };
     groupDrafts = { ...groupDrafts, [group.group_id]: draft };
+    const wasSelected = selected.has(group.group_id);
     selected.add(group.group_id);
-    void persistWorkspace();
+    manuallySelected.add(group.group_id);
+    if (!wasSelected) void persistWorkspace();
     queueDraftPersistence(group, draft);
   }
 
@@ -468,17 +642,15 @@
   }
 
   async function applyBulkAction(): Promise<void> {
-    if (!result || !selected.size) return;
+    if (!result || !bulkTargetGroups.length) return;
     busy = true;
     error = null;
-    const groups = result.groups.filter((group) => selected.has(group.group_id));
     try {
-      for (const group of groups) {
+      for (const group of bulkTargetGroups) {
         if (bulkAction === 'keep_all') applyGroupPreset(group, 'keep');
-        else if (bulkAction === 'delete_all') applyGroupPreset(group, 'delete');
+        else if (bulkAction === 'mark_all_delete') applyGroupPreset(group, 'delete');
         else if (bulkAction === 'stack_all') applyGroupPreset(group, 'stack');
       }
-      if (bulkAction === 'none') selected.clear();
     } finally {
       busy = false;
     }
@@ -486,19 +658,17 @@
 
   async function clearDecisions(groupIds: string[]): Promise<void> {
     if (!groupIds.length) return;
+    invalidatePlan();
     busy = true;
     error = null;
     message = null;
     try {
-      await Promise.all(
-        groupIds
-          .map((groupId) => draftSaveQueues.get(groupId))
-          .filter((pending): pending is Promise<void> => pending !== undefined),
-      );
+      await discardPendingDrafts(groupIds);
       const restored = await resetDuplicateWorkspaceDecisions({
         options: appliedOptions,
         group_ids: groupIds,
       });
+      for (const groupId of groupIds) draftSaveErrors.delete(groupId);
       restoreWorkspaceState(restored);
       message = groupIds.length === 1
         ? 'Saved decisions were cleared for this group.'
@@ -579,25 +749,30 @@
     onpreview(previewRequest(group, index));
   }
 
-  async function reviewBatch(): Promise<void> {
-    if (!selected.size) return;
+  async function reviewGroups(groups: ExactDuplicateGroup[], invalidMessage: string): Promise<void> {
+    if (!groups.length) return;
+    if (!groups.every((group) => isActionable(group))) {
+      error = invalidMessage;
+      return;
+    }
     busy = true;
     error = null;
     message = null;
+    const groupIds = groups.map((group) => group.group_id);
     try {
+      await flushDraftPersistence(groupIds);
+      await workspaceSaveQueue.catch(() => undefined);
       plan = await planDuplicateResolution({
         options: appliedOptions,
-        group_ids: [...selected],
+        group_ids: groupIds,
         all_eligible: false,
         keeper_overrides: Object.fromEntries(
-          result?.groups
-            .filter((group) => selected.has(group.group_id) && selectedKeeper(group) !== null)
-            .map((group) => [group.group_id, selectedKeeper(group)!]) ?? [],
+          groups
+            .filter((group) => selectedKeeper(group) !== null)
+            .map((group) => [group.group_id, selectedKeeper(group)!]),
         ),
         action_overrides: Object.fromEntries(
-          result?.groups
-            .filter((group) => selected.has(group.group_id))
-            .map((group) => [group.group_id, effectiveActionFor(group)]) ?? [],
+          groups.map((group) => [group.group_id, effectiveActionFor(group)]),
         ) as Record<string, Exclude<DuplicatePlanAction, 'none'>>,
       });
       confirmOpen = true;
@@ -606,6 +781,20 @@
     } finally {
       busy = false;
     }
+  }
+
+  async function reviewBatch(): Promise<void> {
+    await reviewGroups(
+      [...selectedGroups],
+      'Every selected duplicate group needs complete, executable decisions before review.',
+    );
+  }
+
+  async function reviewSingleGroup(group: ExactDuplicateGroup): Promise<void> {
+    await reviewGroups(
+      [group],
+      'This duplicate group needs complete, executable decisions before review.',
+    );
   }
 
   async function executePlan(): Promise<void> {
@@ -738,7 +927,10 @@
       }
       await load();
     })();
-    return () => { if (pollTimer) clearTimeout(pollTimer); };
+    return () => {
+      if (pollTimer) clearTimeout(pollTimer);
+      flushAllDraftsBestEffort();
+    };
   });
 </script>
 
@@ -795,12 +987,37 @@
     </section>
   {/if}
   {#if error}
-    <div class="notice error" role="alert">
-      <span>{error}</span>
-      {#if resumableIncompleteWork && plan}
-        <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
-      {/if}
-    </div>
+    {#if task?.task_type === 'duplicate_resolution' && task.status === 'failed' && unfinishedExecutionEntries.length}
+      <details class="notice error resolution-failure" open>
+        <summary>
+          <span>{error}</span>
+          <strong>{unfinishedExecutionEntries.length} unfinished {unfinishedExecutionEntries.length === 1 ? 'group' : 'groups'}</strong>
+        </summary>
+        <div class="resolution-failure-body">
+          {#each unfinishedExecutionEntries as entry (entry.groupId)}
+            {@const groupAvailable = result?.groups.some((group) => group.group_id === entry.groupId) ?? false}
+            <div class="resolution-failure-group">
+              <div>
+                <strong>{executionStateLabel(entry.state)}</strong>
+                <code>{entry.groupId}</code>
+                <small>{entry.error ?? 'No additional error was recorded.'}{entry.updatedAt ? ` · ${new Date(entry.updatedAt).toLocaleString()}` : ''}</small>
+              </div>
+              <button type="button" disabled={!groupAvailable} onclick={() => jumpToGroup(entry.groupId)}>{groupAvailable ? 'Go to group' : 'Group unavailable'}</button>
+            </div>
+          {/each}
+          {#if resumableIncompleteWork && plan}
+            <button class="resume-resolution" type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
+          {/if}
+        </div>
+      </details>
+    {:else}
+      <div class="notice error" role="alert">
+        <span>{error}</span>
+        {#if resumableIncompleteWork && plan}
+          <button type="button" disabled={busy} onclick={() => void executePlan()}>Resume incomplete work</button>
+        {/if}
+      </div>
+    {/if}
   {/if}
   {#if message}<p class="notice success" role="status">{message}</p>{/if}
 
@@ -824,12 +1041,14 @@
     {/if}
 
     <div class="batch-bar">
-      <Checkbox checked={allAutoReadySelected} label="Select all auto-ready groups" shape="circle" disabled={!autoReadyGroups.length || busy} onchange={toggleAllEligible} />
-      <span>{selectedCount} selected</span>
-      <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!selectedCount || busy} onchange={(value) => bulkAction = value as DuplicatePlanAction} />
-      <button type="button" disabled={!selectedCount || busy} onclick={() => void applyBulkAction()}>Apply action</button>
-      <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions([...selected])}>Clear selected decisions</button>
-      <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review batch</button>
+      <button type="button" disabled={!autoReadyGroups.length || busy} onclick={selectAutoReadyGroups}>Select auto-ready</button>
+      <span>{selectedCount} selected · {visibleSelectedCount} visible</span>
+      <SelectField id="duplicate-bulk-action" label="Apply to selected" value={bulkAction} options={bulkActionOptions} compact disabled={!bulkTargetGroups.length || busy} onchange={(value) => bulkAction = value as DuplicateBulkPreset} />
+      <button type="button" disabled={!bulkTargetGroups.length || busy} onclick={() => void applyBulkAction()}>Apply action</button>
+      <button type="button" disabled={!selectedCount || busy} onclick={() => void clearDecisions(selectedGroups.map((group) => group.group_id))}>Clear selected decisions</button>
+      {#if hiddenManuallySelectedGroups.length}<small class="review-readiness">{hiddenManuallySelectedGroups.length} manually selected {hiddenManuallySelectedGroups.length === 1 ? 'group is' : 'groups are'} hidden by this filter and will still be included.</small>{/if}
+      {#if selectedCount > 0 && !selectedReady}<small class="review-readiness">{blockedSelectedCount} selected {blockedSelectedCount === 1 ? 'group needs' : 'groups need'} complete executable decisions</small>{/if}
+      <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review actions</button>
     </div>
 
     {#if loading}
@@ -842,20 +1061,22 @@
       <div class="groups">
         {#each visibleReviewEntries as entry (entry.group.group_id)}
           {@const group = entry.group}
-          <article class:eligible={group.eligible} class="group-card">
+          {@const blockedReason = actionabilityReason(group)}
+          <article id={`duplicate-group-${group.group_id}`} class="group-card">
             <header>
               <div class="group-heading">
                 <Checkbox checked={selected.has(group.group_id)} label={`Select duplicate group ${group.group_id}`} hiddenLabel shape="circle" disabled={busy} onchange={(checked) => toggleGroup(group.group_id, checked)} />
-                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{savingGroups.has(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span></div>
+                <div><strong>{group.members.length} copies</strong><span class={`status ${group.status}`}>{group.status}</span><span class="discovery-source">{discoveryLabel(group)}</span><span class="workflow-status">{duplicateWorkflowLabel(entry)}</span><span class:stale={rawDraftFor(group)?.stale} class="decision-status">{pendingDrafts.has(group.group_id) ? 'Unsaved changes' : isSavingGroup(group.group_id) ? 'Saving…' : rawDraftFor(group)?.stale ? 'Decisions stale' : rawDraftFor(group)?.decisions.length ? rawDraftFor(group)?.status === 'completed' ? 'Completed' : 'Saved decisions' : 'No decisions'}</span>{#if blockedReason}<span class="blocked-reason">{blockedReason}</span>{/if}</div>
               </div>
               <div class="group-controls">
                 <p>{group.reason}</p>
                 <div class="group-presets" aria-label="Set every image decision">
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'delete')}>Delete all</button>
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id)} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
-                  <button type="button" disabled={busy || savingGroups.has(group.group_id) || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'keep')}>Keep all</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'delete')}>Mark all for deletion</button>
+                  <button type="button" disabled={busy} onclick={() => applyGroupPreset(group, 'stack')}>Stack all</button>
+                  <button type="button" disabled={busy || !rawDraftFor(group)?.decisions.length} onclick={() => void clearDecisions([group.group_id])}>Clear</button>
                 </div>
+                <button type="button" disabled={busy || blockedReason !== null} onclick={() => void reviewSingleGroup(group)}>Review actions</button>
               </div>
             </header>
             <div class="members">
@@ -884,14 +1105,14 @@
                     <small>{formatSize(member.file_size_bytes)}</small>
                     <DuplicateDispositionControls
                       value={dispositionFor(group, member.id)}
-                      disabled={busy || savingGroups.has(group.group_id)}
+                      disabled={busy}
                       compact
                       onchange={(disposition) => setMemberDisposition(group, member.id, disposition)}
                     />
                     <StackPrimaryControl
                       eligible={dispositionFor(group, member.id) === 'stack'}
                       selected={draftFor(group)?.stack_primary_asset_id === member.id}
-                      disabled={busy || savingGroups.has(group.group_id)}
+                      disabled={busy}
                       compact
                       onchange={() => setStackPrimary(group, member.id)}
                     />
@@ -910,8 +1131,8 @@
 
 {#if confirmOpen && plan}
   <ConfirmDialog
-    title="Process reviewed duplicates"
-    message={`Process ${plan.group_count} reviewed Immich duplicate groups: ${plan.resolve_group_count} keeper resolutions, ${plan.keep_all_group_count} keep-all groups, ${plan.delete_all_group_count} delete-all groups, and ${plan.mixed_group_count} mixed groups. This retains ${plan.retained_asset_count} assets and trashes ${plan.trash_asset_count}.${plan.stack_group_count ? ` After resolution, create ${plan.stack_group_count} stacks; incomplete stacks can resume without resolving the group again.` : ''}${plan.zero_survivor_group_count ? ` ${plan.zero_survivor_group_count} groups will retain zero copies.` : ''}`}
+    title="Process reviewed duplicate actions"
+    message={`${plan.zero_survivor_group_count ? `Warning: ${plan.zero_survivor_group_count} ${plan.zero_survivor_group_count === 1 ? 'group retains' : 'groups retain'} zero copies. ` : ''}Groups: ${plan.group_count}. Assets retained: ${plan.retained_asset_count}. Assets marked for deletion: ${plan.trash_asset_count}. Keeper resolutions: ${plan.resolve_group_count}. Keep-all groups: ${plan.keep_all_group_count}. Mixed groups: ${plan.mixed_group_count}.${plan.stack_group_count ? ` Stacks to create after resolution: ${plan.stack_group_count}. Incomplete stack follow-up can resume without resolving the group again.` : ''}`}
     confirmLabel="Process batch"
     icon={plan.destructive ? 'trash' : 'stack'}
     destructive={plan.destructive}
@@ -951,6 +1172,15 @@
   .notice, .empty { margin: 0; padding: .8rem 1rem; color: var(--color-ink-muted); }
   .notice.error { color: var(--color-negative-ink); border-color: var(--color-negative-border); background: var(--color-negative-surface); }
   .notice.error { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+  .resolution-failure { display: block !important; }
+  .resolution-failure > summary { display: flex; align-items: center; justify-content: space-between; gap: 1rem; cursor: pointer; }
+  .resolution-failure > summary strong { flex: none; font-size: .72rem; }
+  .resolution-failure-body { display: grid; gap: .55rem; margin-top: .75rem; padding-top: .75rem; border-top: 1px solid var(--color-negative-border); }
+  .resolution-failure-group { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .55rem .65rem; border: 1px solid var(--color-negative-border); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--color-negative-surface) 72%, var(--color-canvas)); }
+  .resolution-failure-group > div { display: grid; min-width: 0; gap: .16rem; }
+  .resolution-failure-group code { overflow: hidden; color: var(--color-ink-muted); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
+  .resolution-failure-group small { color: var(--color-negative-ink); }
+  .resume-resolution { justify-self: end; }
   .notice.success { color: var(--color-positive-ink); border-color: var(--color-positive-border); background: var(--color-positive-surface); }
   .summary { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; }
   .summary div { display: grid; gap: .15rem; padding: .8rem 1rem; border-right: 1px solid var(--color-border-subtle); }
@@ -959,24 +1189,26 @@
   .summary span { color: var(--color-ink-muted); font-size: .7rem; }
   .batch-bar { position: sticky; z-index: 40; top: calc(var(--app-header-height) + .5rem); display: flex; min-height: 3.5rem; align-items: center; gap: .8rem; padding: .55rem .8rem; box-shadow: var(--shadow-card); }
   .batch-bar > span { margin-left: auto; color: var(--color-ink-muted); font-size: .74rem; }
+  .review-readiness { max-width: 15rem; color: var(--color-warning-ink); font-size: .64rem; line-height: 1.25; }
   .groups { display: grid; gap: 1rem; }
-  .group-card { overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
-  .group-card.eligible { border-color: var(--color-positive-border); }
+  .group-card { overflow: hidden; scroll-margin-top: calc(var(--app-header-height) + 5rem); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
   .group-card header p { flex: 1; margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
   .group-controls { display: flex; min-width: min(100%, 31rem); flex: 1; align-items: center; justify-content: flex-end; gap: .75rem; }
   .group-presets { display: inline-flex; flex: none; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
   .group-presets button { min-height: 2rem; border: 0; border-right: 1px solid var(--color-border-subtle); border-radius: 0; }
   .group-presets button:last-child { border-right: 0; }
-  .group-heading { display: flex; align-items: center; gap: .65rem; }
-  .group-heading > div { display: flex; align-items: center; gap: .55rem; white-space: nowrap; }
+  .group-heading { display: flex; min-width: 0; align-items: flex-start; gap: .65rem; }
+  .group-heading > div { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: .32rem .55rem; white-space: normal; }
+  .group-heading > div > strong { margin-right: .1rem; }
   .status { padding: .2rem .45rem; border-radius: 999px; background: var(--color-surface-soft); font-size: .62rem; font-weight: 800; text-transform: uppercase; }
   .status.exact { color: var(--color-positive-ink); background: var(--color-positive-surface); }
   .status.unverified { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .status.mismatch, .status.ineligible { color: var(--color-negative-ink); background: var(--color-negative-surface); }
-  .workflow-status { color: var(--color-ink-muted); font-size: .6rem; font-weight: 760; }
-  .decision-status { color: var(--color-positive-ink); font-size: .6rem; font-weight: 760; }
+  .workflow-status { color: var(--color-ink-muted); font-size: .58rem; font-weight: 680; }
+  .decision-status { color: var(--color-ink-muted); font-size: .58rem; font-weight: 680; }
   .decision-status.stale { color: var(--color-warning-ink); }
+  .blocked-reason { flex-basis: 100%; margin-top: .08rem; padding: .28rem .42rem; border-radius: var(--radius-sm); color: var(--color-warning-ink); background: var(--color-warning-surface); font-size: .62rem; font-weight: 760; line-height: 1.3; }
   .stale-workspace { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
   .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
@@ -997,6 +1229,6 @@
   .rule-recommendation { width: fit-content; padding: .16rem .38rem; border-radius: 999px; color: var(--color-positive-ink); background: var(--color-positive-surface); font-weight: 780; text-transform: capitalize; }
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
-  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } }
-  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
+  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } .batch-bar { flex-wrap: wrap; } }
+  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls, .resolution-failure-group { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>

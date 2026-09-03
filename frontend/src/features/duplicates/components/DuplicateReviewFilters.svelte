@@ -82,4 +82,19 @@
     font-size: 0.59rem;
     text-align: center;
   }
+
+  :global(.duplicates-page .group-heading .workflow-status) {
+    flex-basis: 100%;
+    width: fit-content;
+    margin-top: 0.1rem;
+    color: var(--color-ink-strong);
+    font-size: 0.74rem;
+    font-weight: 820;
+    line-height: 1.25;
+  }
+
+  :global(.duplicates-page .group-heading .decision-status),
+  :global(.duplicates-page .group-heading .discovery-source) {
+    opacity: 0.78;
+  }
 </style>

@@ -30,7 +30,7 @@
   let message = $state<string | null>(null);
   let error = $state<string | null>(null);
   let runtime = $state<SyncRuntimeSettings | null>(null);
-  let runtimeDraft = $state<SyncRuntimeSettings>({ full_batch_size: 50, full_min_batch_delay_seconds: 0.2 });
+  let runtimeDraft = $state<SyncRuntimeSettings>({ full_batch_size: 50, full_min_batch_delay_seconds: 0.2, tag_association_concurrency: 4 });
   let runtimeSaving = $state(false);
   let duplicatePolicy = $state<DuplicatePolicy | null>(null);
   let duplicateDraft = $state<DuplicatePolicy | null>(null);
@@ -148,13 +148,14 @@
       <div>
         <p class="eyebrow">Host responsiveness</p>
         <h2 id="runtime-settings-title">Background batch load</h2>
-        <p class="hint">Global sync and large asset actions rest after each batch for at least this delay and otherwise as long as the batch took, limiting sustained work to about half of available capacity. A batch-size change applies to the next job; delay changes apply at the next batch.</p>
+        <p class="hint">Global sync and large asset actions rest after each batch for at least this delay and otherwise as long as the batch took, limiting sustained work to about half of available capacity. Tag association concurrency controls parallel tag scans and the adaptive tag strategy: asset-oriented matching is selected when the assets in the sync are no more than the tag count divided by this value.</p>
       </div>
       <div class="runtime-fields">
         <label class="field" for="full-batch-size"><span>Assets per batch</span><input id="full-batch-size" type="number" min="1" max="500" value={runtimeDraft.full_batch_size} oninput={(event) => runtimeDraft = { ...runtimeDraft, full_batch_size: Number(event.currentTarget.value) }} /></label>
         <label class="field" for="full-batch-delay"><span>Minimum delay (seconds)</span><input id="full-batch-delay" type="number" min="0" max="60" step="0.1" value={runtimeDraft.full_min_batch_delay_seconds} oninput={(event) => runtimeDraft = { ...runtimeDraft, full_min_batch_delay_seconds: Number(event.currentTarget.value) }} /></label>
+        <label class="field" for="tag-association-concurrency"><span>Tag association concurrency</span><input id="tag-association-concurrency" type="number" min="1" max="32" step="1" value={runtimeDraft.tag_association_concurrency} oninput={(event) => runtimeDraft = { ...runtimeDraft, tag_association_concurrency: Number(event.currentTarget.value) }} /></label>
       </div>
-      <button class="save" type="button" disabled={runtimeSaving || !Number.isInteger(runtimeDraft.full_batch_size) || runtimeDraft.full_batch_size < 1 || runtimeDraft.full_batch_size > 500 || runtimeDraft.full_min_batch_delay_seconds < 0 || runtimeDraft.full_min_batch_delay_seconds > 60} onclick={() => void saveRuntime()}>{runtimeSaving ? 'Saving…' : 'Save load settings'}</button>
+      <button class="save" type="button" disabled={runtimeSaving || !Number.isInteger(runtimeDraft.full_batch_size) || runtimeDraft.full_batch_size < 1 || runtimeDraft.full_batch_size > 500 || runtimeDraft.full_min_batch_delay_seconds < 0 || runtimeDraft.full_min_batch_delay_seconds > 60 || !Number.isInteger(runtimeDraft.tag_association_concurrency) || runtimeDraft.tag_association_concurrency < 1 || runtimeDraft.tag_association_concurrency > 32} onclick={() => void saveRuntime()}>{runtimeSaving ? 'Saving…' : 'Save load settings'}</button>
     </article>
     {#if duplicateDraft}
       <article class="duplicate-policy-card" aria-labelledby="duplicate-policy-title">
@@ -219,7 +220,7 @@
   .schedule-card, .runtime-card, .duplicate-policy-card { display: grid; gap: 1.1rem; padding: 1.25rem; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); }
   .runtime-card { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .runtime-card .hint { max-width: 48rem; line-height: 1.5; }
-  .runtime-fields { display: grid; grid-template-columns: repeat(2, minmax(10rem, 1fr)); gap: .75rem; grid-column: 1 / -1; }
+  .runtime-fields { display: grid; grid-template-columns: repeat(3, minmax(10rem, 1fr)); gap: .75rem; grid-column: 1 / -1; }
   .policy-fields { display: grid; grid-template-columns: repeat(2, minmax(12rem, 1fr)); gap: .75rem; }
   .policy-toggles { display: grid; grid-template-columns: repeat(2, minmax(12rem, 1fr)); gap: .75rem; }
   .card-heading { display: flex; justify-content: space-between; gap: 1rem; }

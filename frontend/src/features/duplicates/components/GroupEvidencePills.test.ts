@@ -69,18 +69,55 @@ const member: DuplicateMember = {
 };
 
 describe('GroupEvidencePills', () => {
-  it('renders cached safety, match, format, and decode evidence', () => {
+  it('renders cached safety, file verification, format, and decode evidence', () => {
     const { body } = render(GroupEvidencePills, {
       props: { member, analysisPending: false },
     });
 
     expect(body).toContain('Healthy');
-    expect(body).toContain('Byte match');
+    expect(body).toContain('Same file bytes');
     expect(body).toContain('HEIC');
     expect(body).toContain('Decoded');
-    expect(body).toContain('98.3% similar');
+    expect(body).toContain('98.3% vs reference');
     expect(body).toContain('4032×3024');
     expect(body).toContain('ICC');
+  });
+
+  it('hides comparison-derived evidence on the similarity reference', () => {
+    const { body } = render(GroupEvidencePills, {
+      props: {
+        member: {
+          ...member,
+          similarity: {
+            ...member.similarity!,
+            state: 'reference',
+            reference_asset_id: member.id,
+            similarity_percent: 100,
+            exact_pixel_match: true,
+          },
+        },
+        analysisPending: false,
+      },
+    });
+
+    expect(body).not.toContain('Same file bytes');
+    expect(body).not.toContain('Different file bytes');
+    expect(body).not.toContain('File bytes unverified');
+    expect(body).not.toContain('vs reference');
+    expect(body).not.toContain('Pixel match');
+    expect(body).toContain('Healthy');
+    expect(body).toContain('Decoded');
+  });
+
+  it('uses explicit wording when file bytes differ', () => {
+    const { body } = render(GroupEvidencePills, {
+      props: {
+        member: { ...member, verification: 'mismatch' },
+        analysisPending: false,
+      },
+    });
+
+    expect(body).toContain('Different file bytes');
   });
 
   it('surfaces normalized pixel equality separately from visual similarity', () => {

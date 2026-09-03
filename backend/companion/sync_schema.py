@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 SyncMode = Literal["incremental", "full"]
 SyncStatus = Literal["queued", "running", "completed", "failed", "recovering", "retrying"]
@@ -67,6 +67,20 @@ class SyncProgress(BaseModel):
     percent: float | None = None
     detail: str | None = None
     memory: SyncMemorySnapshot | None = None
+
+    @model_validator(mode="after")
+    def hide_unstarted_tag_catalog_work(self) -> SyncProgress:
+        """Do not present tag-catalog totals before tag-oriented traversal begins."""
+
+        if self.phase != "relationships" or self.detail is None:
+            return self
+        if self.detail.startswith("Preparing ") and " album and " in self.detail:
+            album_prefix, _, remainder = self.detail.partition(" album and ")
+            if remainder.endswith(" tag associations"):
+                self.detail = f"{album_prefix} album associations"
+        elif self.detail.startswith("Album associations ") and " · tag associations 0/" in self.detail:
+            self.detail = self.detail.split(" · tag associations 0/", 1)[0]
+        return self
 
 
 class SyncRunStatus(BaseModel):

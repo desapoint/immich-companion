@@ -41,6 +41,9 @@
   const sourceLabel = $derived(
     source === 'stack' ? 'Stack images' : source === 'duplicate' ? 'Duplicate copies' : 'Similar images',
   );
+  const selectViewedLabel = $derived(
+    source === 'duplicate' ? 'Set viewed as reference' : 'Use viewed as selected',
+  );
 </script>
 
 <section
@@ -61,7 +64,7 @@
         disabled={visibleId === selectedId}
         aria-hidden={visibleId === selectedId}
         onclick={() => { if (visibleId !== selectedId) onselectviewed(visibleId); }}
-      >Use viewed as selected</button>
+      >{selectViewedLabel}</button>
       <strong>{items.length} images</strong>
     </div>
   </header>

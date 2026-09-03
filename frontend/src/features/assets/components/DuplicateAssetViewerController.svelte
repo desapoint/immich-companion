@@ -35,7 +35,7 @@
     keeper_policy: 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
     recommended_keeper_asset_id: string | null;
     selected_keeper_asset_id: string | null;
-    selected_action: 'automatic' | 'resolve' | 'keep_all' | 'delete_all' | 'stack_all' | 'mixed' | 'none';
+    selected_action: DuplicateReviewContext['selected_action'];
     member_decisions: Record<string, DuplicateDisposition>;
     stack_primary_asset_id: string | null;
     recommendation_reason_codes: string[];
@@ -186,16 +186,18 @@
     review.onstackprimarychange?.(assetId);
   }
 
-  async function chooseSimilarityReference(assetId: string): Promise<void> {
-    if (!review.onsimilarityreferencechange || similarityLoading) return;
+  async function chooseSimilarityReference(assetId: string): Promise<boolean> {
+    if (!review.onsimilarityreferencechange || similarityLoading) return false;
     similarityLoading = true;
     similarityError = null;
     try {
       similarityMembers = await review.onsimilarityreferencechange(assetId);
+      return true;
     } catch (reason) {
       similarityError = reason instanceof Error
         ? reason.message
         : 'Could not change the similarity reference.';
+      return false;
     } finally {
       similarityLoading = false;
     }
@@ -229,7 +231,7 @@
     {duplicateContext}
     onduplicatedisposition={chooseDisposition}
     onduplicatestackprimary={chooseStackPrimary}
-    onduplicatesimilarityreference={(assetId) => void chooseSimilarityReference(assetId)}
+    onduplicatesimilarityreference={chooseSimilarityReference}
     onduplicatepreviousgroup={review.onpreviousgroup}
     onduplicatenextgroup={review.onnextgroup}
     comparisonSource="duplicate"

@@ -177,9 +177,7 @@ class AssetRepository:
         """Upsert a complete traversal and remove rows absent from that traversal."""
 
         synced_at = datetime.now(UTC)
-        unique_assets = {
-            asset.id: asset for asset in assets if not asset.is_trashed
-        }
+        unique_assets = {asset.id: asset for asset in assets if not asset.is_trashed}
         asset_ids = list(unique_assets)
         rows = [self._values(asset, synced_at) for asset in unique_assets.values()]
 
@@ -262,9 +260,7 @@ class AssetRepository:
                 tag_rows = []
                 tag_memberships = []
                 for tag in tags:
-                    member_ids = [
-                        asset_id for asset_id in tag.asset_ids if asset_id in unique_assets
-                    ]
+                    member_ids = [asset_id for asset_id in tag.asset_ids if asset_id in unique_assets]
                     tag_rows.append(
                         {
                             "id": tag.id,
@@ -950,6 +946,8 @@ class AssetRepository:
         *,
         remove_assets: bool,
         batch_size: int,
+        window_start: datetime | None = None,
+        window_end: datetime | None = None,
     ) -> dict[str, int]:
         """Delete only absence proven by a fully successful staged traversal."""
 
@@ -1007,7 +1005,50 @@ class AssetRepository:
                 generation,
                 batch_size,
             )
+        elif window_start is not None and window_end is not None:
+            removed["assets_removed"] = await self._delete_missing_assets_in_window(
+                generation,
+                window_start,
+                window_end,
+                batch_size,
+            )
         return removed
+
+    async def _delete_missing_assets_in_window(
+        self,
+        generation: int,
+        window_start: datetime,
+        window_end: datetime,
+        batch_size: int,
+    ) -> int:
+        """Remove active rows absent from a completed bounded incremental traversal."""
+
+        if window_start >= window_end:
+            return 0
+        removed = 0
+        while True:
+            async with self._database.sessions() as session, session.begin():
+                identifiers = list(
+                    (
+                        await session.scalars(
+                            select(AssetRecord.id)
+                            .where(
+                                AssetRecord.is_trashed.is_(False),
+                                AssetRecord.sync_generation != generation,
+                                AssetRecord.immich_updated_at.is_not(None),
+                                AssetRecord.immich_updated_at > window_start,
+                                AssetRecord.immich_updated_at < window_end,
+                            )
+                            .limit(batch_size)
+                        )
+                    ).all()
+                )
+                if not identifiers:
+                    return removed
+                result = await session.execute(
+                    delete(AssetRecord).where(AssetRecord.id.in_(identifiers))
+                )
+                removed += int(result.rowcount or 0)
 
     async def _delete_stale_memberships(
         self,

@@ -8,6 +8,14 @@
 
   let { member, analysisPending }: Props = $props();
   const evidence = $derived(member.evidence);
+  const isSimilarityReference = $derived(member.similarity?.state === 'reference');
+  const verificationLabel = $derived(
+    member.verification === 'matching'
+      ? 'Same file bytes'
+      : member.verification === 'mismatch'
+        ? 'Different file bytes'
+        : 'File bytes unverified',
+  );
   const integrityLabel = $derived.by(() => {
     if (evidence.analysis_freshness !== 'current') {
       return analysisPending ? 'Analyzing' : evidence.analysis_freshness === 'stale' ? 'Stale' : 'Not analyzed';
@@ -43,21 +51,21 @@
 
 <div class="evidence-pills" aria-label={`Evidence for ${member.original_file_name}`}>
   <span class={`pill ${integrityTone}`} title={evidence.issue_codes.join('\n') || integrityLabel}>{integrityLabel}</span>
-  <span class={`pill match ${member.verification}`}>{member.verification === 'matching' ? 'Byte match' : member.verification === 'mismatch' ? 'Different bytes' : 'Unverified'}</span>
+  {#if !isSimilarityReference}
+    <span class={`pill match ${member.verification}`} title="Compared with the group's verified file hash">{verificationLabel}</span>
+  {/if}
   {#if evidence.detected_format}
     <span class="pill neutral">{evidence.detected_format.toUpperCase()}</span>
   {/if}
   {#if decodeLabel}
     <span class:negative={evidence.decode_valid === false} class:positive={evidence.decode_valid === true} class="pill">{decodeLabel}</span>
   {/if}
-  {#if member.similarity?.state === 'reference'}
-    <span class="pill reference">Similarity reference</span>
-  {:else if member.similarity?.state === 'current'}
-    <span class="pill positive">{member.similarity.similarity_percent?.toFixed(1)}% similar</span>
-  {:else if member.similarity?.state === 'pending'}
+  {#if !isSimilarityReference && member.similarity?.state === 'current'}
+    <span class="pill positive">{member.similarity.similarity_percent?.toFixed(1)}% vs reference</span>
+  {:else if !isSimilarityReference && member.similarity?.state === 'pending'}
     <span class="pill pending">Similarity pending</span>
   {/if}
-  {#if member.similarity?.exact_pixel_match}
+  {#if !isSimilarityReference && member.similarity?.exact_pixel_match}
     <span class="pill positive">Pixel match</span>
   {/if}
   {#if member.preservation}
@@ -73,5 +81,4 @@
   .positive, .match.matching { color: var(--color-positive-ink); background: var(--color-positive-surface); }
   .warning, .pending { color: var(--color-warning-ink); background: var(--color-warning-surface); }
   .negative, .match.mismatch { color: var(--color-negative-ink); background: var(--color-negative-surface); }
-  .reference { color: var(--color-accent-strong); background: var(--color-surface-soft); }
 </style>

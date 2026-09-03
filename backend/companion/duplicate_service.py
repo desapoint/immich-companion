@@ -116,7 +116,7 @@ def _member_dispositions(
             "keep"
             if action == "resolve" and asset_id == primary_id
             else "delete"
-            if action in {"resolve", "delete_all"}
+            if action == "resolve"
             else "stack"
             if action == "stack_all"
             else "keep"
@@ -134,13 +134,11 @@ def _member_dispositions(
 
 
 def _action_for_dispositions(dispositions: list[str]) -> str:
-    """Describe a complete member partition without losing mixed choices."""
+    """Describe a complete member partition from member-level decisions."""
 
     values = set(dispositions)
     if values == {"keep"}:
         return "keep_all"
-    if values == {"delete"}:
-        return "delete_all"
     if values == {"stack"}:
         return "stack_all"
     if dispositions.count("keep") == 1 and dispositions.count("delete") == len(
@@ -151,7 +149,7 @@ def _action_for_dispositions(dispositions: list[str]) -> str:
 
 
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
-    """Read legacy Immich plans without invalidating them."""
+    """Normalize persisted plans to the current member-partition contract."""
 
     normalized = dict(group)
     legacy_id = normalized.get("duplicate_id")
@@ -163,7 +161,10 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("action", "resolve")
     normalized.setdefault(
         "member_asset_ids",
-        [normalized["keeper_asset_id"], *normalized.get("trash_asset_ids", [])],
+        [
+            *([normalized["keeper_asset_id"]] if normalized.get("keeper_asset_id") else []),
+            *normalized.get("trash_asset_ids", []),
+        ],
     )
     member_ids = [UUID(value) for value in normalized["member_asset_ids"]]
     primary_id = (
@@ -172,6 +173,9 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         else None
     )
     action = normalized["action"]
+    if action not in {"resolve", "keep_all", "stack_all", "mixed"}:
+        action = "mixed"
+        normalized["action"] = action
     normalized.setdefault(
         "keep_asset_ids",
         (
@@ -195,10 +199,29 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     normalized.setdefault("execution_state", "pending")
     normalized.setdefault("metadata_work", None)
     normalized.setdefault("member_fingerprint", _member_fingerprint(member_ids))
-    normalized.setdefault(
-        "members",
-        _member_dispositions(normalized["action"], member_ids, primary_id),
-    )
+    if "members" not in normalized:
+        keep_ids = {UUID(value) for value in normalized.get("keep_asset_ids", [])}
+        trash_ids = {UUID(value) for value in normalized.get("trash_asset_ids", [])}
+        stack_ids = {
+            UUID(value)
+            for value in (normalized.get("follow_up") or {}).get("member_asset_ids", [])
+        }
+        normalized["members"] = [
+            {
+                "asset_id": str(asset_id),
+                "disposition": (
+                    "delete"
+                    if asset_id in trash_ids
+                    else "stack"
+                    if asset_id in stack_ids
+                    else "keep"
+                    if asset_id in keep_ids
+                    else "no_change"
+                ),
+                "primary": asset_id == primary_id,
+            }
+            for asset_id in member_ids
+        ]
     return normalized
 
 
@@ -214,7 +237,6 @@ def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         group_count=len(groups),
         resolve_group_count=sum(group.action == "resolve" for group in groups),
         keep_all_group_count=sum(group.action == "keep_all" for group in groups),
-        delete_all_group_count=sum(group.action == "delete_all" for group in groups),
         stack_group_count=sum(group.follow_up is not None for group in groups),
         mixed_group_count=sum(group.action == "mixed" for group in groups),
         trash_asset_count=sum(len(group.trash_asset_ids) for group in groups),
@@ -1385,11 +1407,11 @@ class CrossSourceDuplicateService:
             if action == "none":
                 raise ActionPlanConflictError("Every selected group needs an action")
             has_deletions = "delete" in dispositions
-            if has_deletions and action != "delete_all" and (
+            if has_deletions and (
                 not group.eligible or any(member.is_offline for member in group.members)
             ):
                 raise ActionPlanConflictError(
-                    "Only available, verified exact groups can be resolved"
+                    "Deleting duplicate members requires an available Immich group with every image online"
                 )
             stack_ids = [
                 member.id
@@ -1611,11 +1633,18 @@ class CrossSourceDuplicateService:
         for planned in pending_resolution:
             live_group = reviewed.get(planned["group_id"])
             planned_members = {UUID(value) for value in planned["member_asset_ids"]}
+            has_deletions = bool(planned.get("trash_asset_ids"))
             if (
                 live_group is None
                 or {asset.id for asset in live_group.members} != planned_members
                 or live_group.member_fingerprint != planned["member_fingerprint"]
-                or (planned["action"] == "resolve" and not live_group.eligible)
+                or (
+                    has_deletions
+                    and (
+                        not live_group.eligible
+                        or any(member.is_offline for member in live_group.members)
+                    )
+                )
                 or (
                     planned.get("follow_up") is not None
                     and any(
@@ -1726,16 +1755,10 @@ class CrossSourceDuplicateService:
                 metadata_ready.append(planned)
         pending_resolution = metadata_ready
 
-        regular_groups = [
-            item for item in pending_resolution if item["action"] != "delete_all"
-        ]
-        delete_groups = [
-            item for item in pending_resolution if item["action"] == "delete_all"
-        ]
         resolution_batches = [
-            regular_groups[offset : offset + batch_size]
-            for offset in range(0, len(regular_groups), batch_size)
-        ] + [[item] for item in delete_groups]
+            pending_resolution[offset : offset + batch_size]
+            for offset in range(0, len(pending_resolution), batch_size)
+        ]
         for batch_index, batch in enumerate(resolution_batches):
             await context.ensure_active()
             resolutions = [
@@ -1907,10 +1930,10 @@ class CrossSourceDuplicateService:
             for planned in raw_groups
             if planned["action"] == "keep_all" and planned["group_id"] in successful_ids
         }
-        deleted_ids = {
+        zero_survivor_ids = {
             planned["group_id"]
             for planned in raw_groups
-            if planned["action"] == "delete_all" and planned["group_id"] in successful_ids
+            if not planned.get("keep_asset_ids") and planned["group_id"] in successful_ids
         }
         stacked_ids = {
             planned["group_id"]
@@ -1923,7 +1946,6 @@ class CrossSourceDuplicateService:
             review_statuses = {
                 "resolve": "reviewed_resolve",
                 "keep_all": "reviewed_keep_all",
-                "delete_all": "reviewed_delete_all",
                 "stack_all": "reviewed_stack_all",
                 "mixed": "manually_configured",
             }
@@ -1960,7 +1982,7 @@ class CrossSourceDuplicateService:
             "processed_group_count": len(successful_ids),
             "resolved_group_count": len(resolved_ids),
             "kept_all_group_count": len(kept_ids),
-            "deleted_all_group_count": len(deleted_ids),
+            "zero_survivor_group_count": len(zero_survivor_ids),
             "stacked_group_count": len(stacked_ids),
             "failed_group_ids": failed_ids,
             "follow_up_pending_group_ids": follow_up_pending_ids,
@@ -1975,7 +1997,7 @@ class CrossSourceDuplicateService:
                 "groups_processed": len(successful_ids),
                 "groups_resolved": len(resolved_ids),
                 "groups_kept_all": len(kept_ids),
-                "groups_deleted_all": len(deleted_ids),
+                "groups_zero_survivor": len(zero_survivor_ids),
                 "groups_stacked": len(stacked_ids),
                 "groups_failed": len(failed_ids),
                 "assets_trashed": len(trashed_ids),

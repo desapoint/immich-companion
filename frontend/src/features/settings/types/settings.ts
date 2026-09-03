@@ -14,6 +14,7 @@ export interface SyncSchedule {
 export interface SyncRuntimeSettings {
   full_batch_size: number;
   full_min_batch_delay_seconds: number;
+  tag_association_concurrency: number;
 }
 
 export type { DuplicatePolicy, ExactFilePolicyAction, ImmichLibraryOption } from '../../../lib/types/duplicatePolicy';
