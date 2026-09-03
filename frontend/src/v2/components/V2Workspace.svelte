@@ -9,18 +9,18 @@
     inspector?: import('svelte').Snippet;
   } = $props();
 
-  const layoutClass = $derived(
+  const layout = $derived(
     context && inspector
-      ? 'v2-workspace v2-workspace-three-column'
+      ? 'three-column'
       : context
-        ? 'v2-workspace v2-workspace-context-only'
+        ? 'context-only'
         : inspector
-          ? 'v2-workspace v2-workspace-inspector-only'
-          : 'v2-workspace v2-workspace-content-only',
+          ? 'inspector-only'
+          : 'content-only',
   );
 </script>
 
-<section class={layoutClass}>
+<section class="v2-workspace" data-layout={layout}>
   {#if context}<aside class="v2-context">{@render context()}</aside>{/if}
   <main class="v2-content">{@render children()}</main>
   {#if inspector}<aside class="v2-inspector">{@render inspector()}</aside>{/if}
