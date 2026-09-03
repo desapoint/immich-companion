@@ -6,7 +6,7 @@
   import V2Segmented from './V2Segmented.svelte';
   import V2ZoneLabel from './V2ZoneLabel.svelte';
 
-  export type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
+  type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
 
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', connectionLabel='Immich connected', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; connectionLabel?:string; children:import('svelte').Snippet } = $props();
   let density=$state<V2Density>('standard'), taskVisible=$state(true);
@@ -19,17 +19,17 @@
   onMount(()=>{density=readV2Density();const onDensity=(event:Event)=>density=(event as CustomEvent<V2Density>).detail;window.addEventListener(V2_DENSITY_EVENT,onDensity);return()=>window.removeEventListener(V2_DENSITY_EVENT,onDensity)});
 </script>
 
-<div class="v2-root" class:v2-condensed={density==='condensed'}>
+<div class="v2-root" data-density={density}>
   <div class="v2-app">
     <aside class="v2-sidebar">
       <div class="v2-brand"><div class="v2-logo"></div><span class="v2-brand-text">{brand}</span></div>
       {#each topGroups as group}
         {#if group.label}<div class="v2-nav-label">{group.label}</div>{/if}
-        <nav class="v2-nav" aria-label={group.label||'Navigation'}>{#each group.items as item}<button class="v2-nav-button" class:active={item.key===activeKey} aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}><i class="v2-nav-icon" aria-hidden="true"></i><span class="v2-nav-text">{item.label}</span></button>{/each}</nav>
+        <nav class="v2-nav" aria-label={group.label||'Navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}><i class="v2-nav-icon" aria-hidden="true"></i><span class="v2-nav-text">{item.label}</span></button>{/each}</nav>
       {/each}
       <div class="v2-grow"></div>
-      {#each bottomGroups as group}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item}<button class="v2-nav-button" class:active={item.key===activeKey} aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}><i class="v2-nav-icon" aria-hidden="true"></i><span class="v2-nav-text">{item.label}</span></button>{/each}</nav>{/each}
-      <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel} <span class="v2-muted v2-small">v2.x</span></div>
+      {#each bottomGroups as group}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}><i class="v2-nav-icon" aria-hidden="true"></i><span class="v2-nav-text">{item.label}</span></button>{/each}</nav>{/each}
+      <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel} <small class="v2-muted">v2.x</small></div>
     </aside>
 
     <div class="v2-shell">
@@ -48,10 +48,10 @@
 
   {#if taskVisible}
     <div class="v2-tasktray">
-      <V2Inline gap="sm"><V2ZoneLabel text="Task tray"/><div><b>Background tasks</b><div class="v2-small v2-muted">No blocking task · global task feedback lives here</div></div></V2Inline>
+      <V2Inline gap="sm"><V2ZoneLabel text="Task tray"/><div><b>Background tasks</b><div><small class="v2-muted">No blocking task · global task feedback lives here</small></div></div></V2Inline>
       <V2Inline gap="sm"><div class="v2-progress"><i></i></div><V2Button onclick={()=>taskVisible=false}>Hide</V2Button></V2Inline>
     </div>
   {/if}
 
-  <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item}<button onclick={()=>onnavigate(item.key)}>{item.label}</button>{/each}</nav>
+  <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item}<button aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{item.label}</button>{/each}</nav>
 </div>
