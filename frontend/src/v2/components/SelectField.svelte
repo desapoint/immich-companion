@@ -1,8 +1,15 @@
 <script lang="ts">
+  import { ArrowDown, ArrowUp } from '@lucide/svelte';
   import { tick } from 'svelte';
   import { clickOutside } from '../../lib/actions/clickOutside';
 
-  export type SelectOption = string | { value: string; label: string; subtitle?: string; disabled?: boolean };
+  export type SelectOption = string | {
+    value: string;
+    label: string;
+    subtitle?: string;
+    disabled?: boolean;
+    direction?: 'asc' | 'desc';
+  };
 
   let {
     id,
@@ -44,8 +51,8 @@
   let popupPlacement = $state<'down' | 'up'>('down');
 
   const normalized = $derived(options.map((option) => typeof option === 'string'
-    ? { value: option, label: option, subtitle: '', disabled: false }
-    : { subtitle: '', disabled: false, ...option }));
+    ? { value: option, label: option, subtitle: '', disabled: false, direction: undefined as 'asc' | 'desc' | undefined }
+    : { subtitle: '', disabled: false, direction: undefined, ...option }));
   const selected = $derived(
     normalized.find((option) => option.value === String(value))
       ?? (!allowEmpty ? normalized.find((option) => !option.disabled) : undefined),
@@ -208,7 +215,11 @@
       onclick={() => (open ? open = false : show())}
       onkeydown={handleTriggerKey}
     >
-      <span>{isEmpty ? placeholder : selected?.label ?? placeholder}</span>
+      <span class="v2-select-trigger-copy">
+        <span>{isEmpty ? placeholder : selected?.label ?? placeholder}</span>
+        {#if !isEmpty && selected?.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+        {#if !isEmpty && selected?.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+      </span>
       <span class="v2-select-chevron" aria-hidden="true"></span>
     </button>
     {#if allowEmpty && !isEmpty}
@@ -252,7 +263,11 @@
             onkeydown={(event) => handleOptionKey(event, index)}
           >
             <span class="v2-select-option-copy">
-              <span class="v2-select-option-label">{option.label}</span>
+              <span class="v2-select-option-heading">
+                <span class="v2-select-option-label">{option.label}</span>
+                {#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+                {#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+              </span>
               {#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}
             </span>
             {#if !isEmpty && option.value === selected?.value}<span aria-hidden="true">✓</span>{/if}
