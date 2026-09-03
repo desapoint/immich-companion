@@ -142,7 +142,7 @@
           <tr>
             <th class="v2-tag-check-column"><span class="v2-visually-hidden">Select</span></th>
             <th>Tag</th>
-            <th>Path</th>
+            <th class="v2-tag-path-column">Path</th>
             <th>Assets</th>
             <th>Children</th>
             <th class="v2-table-actions">Actions</th>
@@ -161,12 +161,13 @@
               </td>
               <td>
                 <span class="v2-tag-name"><span class="v2-tag-swatch" style:background={tag.color}></span><b>{tag.name}</b></span>
+                <span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent ? tag.path : 'Root'}</span>
               </td>
-              <td><span class="v2-tag-path" title={tag.path}>{tag.parent ? tag.path : 'Root'}</span></td>
+              <td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.parent ? tag.path : 'Root'}</span></td>
               <td>{tag.assets.toLocaleString()}</td>
               <td>{tag.children.toLocaleString()}</td>
               <td class="v2-table-actions">
-                <V2Inline gap="sm" wrap={false}>
+                <V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}>
                   <V2Button>Filter assets</V2Button>
                   <V2Button onclick={() => openEdit(tag)}>Edit</V2Button>
                   <V2Button variant="danger">Delete</V2Button>
