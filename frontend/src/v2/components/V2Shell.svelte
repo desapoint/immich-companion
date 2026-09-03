@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
+  import V2Button from './V2Button.svelte';
+  import V2Inline from './V2Inline.svelte';
+  import V2Segmented from './V2Segmented.svelte';
+  import V2ZoneLabel from './V2ZoneLabel.svelte';
 
   export type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
 
@@ -29,12 +33,25 @@
     </aside>
 
     <div class="v2-shell">
-      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div><div class="v2-top-actions"><input class="v2-top-search" placeholder="Search current interface…" aria-label="Search current interface"><div class="v2-segmented" title="Interface density"><button class:active={density==='standard'} onclick={()=>setDensity('standard')}>Standard</button><button class:active={density==='condensed'} onclick={()=>setDensity('condensed')}>Condensed</button></div><button class="v2-button" onclick={()=>taskVisible=!taskVisible}>Tasks</button><button class="v2-button" aria-label="More actions">⋯</button></div></header>
+      <header class="v2-topbar">
+        <div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div>
+        <div class="v2-top-actions">
+          <input class="v2-top-search" placeholder="Search current interface…" aria-label="Search current interface">
+          <V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" />
+          <V2Button onclick={()=>taskVisible=!taskVisible}>Tasks</V2Button>
+          <V2Button ariaLabel="More actions">⋯</V2Button>
+        </div>
+      </header>
       {@render children()}
     </div>
   </div>
 
-  {#if taskVisible}<div class="v2-tasktray"><div class="v2-inline v2-inline-sm v2-inline-align-center"><span class="v2-zone">Task tray</span><div><b>Background tasks</b><div class="v2-small v2-muted">No blocking task · global task feedback lives here</div></div></div><div class="v2-inline v2-inline-sm v2-inline-align-center"><div class="v2-progress"><i></i></div><button class="v2-button" onclick={()=>taskVisible=false}>Hide</button></div></div>{/if}
+  {#if taskVisible}
+    <div class="v2-tasktray">
+      <V2Inline gap="sm"><V2ZoneLabel text="Task tray"/><div><b>Background tasks</b><div class="v2-small v2-muted">No blocking task · global task feedback lives here</div></div></V2Inline>
+      <V2Inline gap="sm"><div class="v2-progress"><i></i></div><V2Button onclick={()=>taskVisible=false}>Hide</V2Button></V2Inline>
+    </div>
+  {/if}
 
   <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item}<button onclick={()=>onnavigate(item.key)}>{item.label}</button>{/each}</nav>
 </div>
