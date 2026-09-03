@@ -5,15 +5,13 @@
   import V2Inline from '../components/V2Inline.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
-  import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
+  import V2Zone from '../components/V2Zone.svelte';
   import { capabilityLabel } from './statusPresentation';
 
   let { state }: { state: StatusLoadState } = $props();
 </script>
 
-<V2Stack gap="md">
-  <V2ZoneLabel text="Inspector" />
-
+<V2Zone label="Inspector">
   {#if state.kind === 'loaded'}
     <V2Section title="Capabilities">
       <V2Card>
@@ -41,4 +39,4 @@
       <div class="v2-small v2-muted">{state.kind === 'loading' ? 'Loading capabilities…' : 'No live capability data available.'}</div>
     </V2Card>
   {/if}
-</V2Stack>
+</V2Zone>
