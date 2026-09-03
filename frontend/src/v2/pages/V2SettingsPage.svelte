@@ -34,10 +34,10 @@
 
 <V2PageLayout title="Settings" description="Configure background load limits, duplicate defaults and incremental/global synchronization schedules.">
   {#snippet tabs()}<V2Tabs items={['General','Duplicates','Schedules']} active={tab} onselect={(value) => tab = value}/>{/snippet}
-  {#snippet context()}<V2Zone label="Context rail"><V2Section title="Settings sections"><V2Menu items={['Background load','Duplicate handling','Sync schedules']} active="Background load" ariaLabel="Settings sections" /></V2Section><V2Card><span class="v2-small v2-muted">Each settings block saves independently. Editing a draft does not persist until its Save action is used.</span></V2Card></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Settings sections"><V2Menu items={['Background load','Duplicate handling','Sync schedules']} active="Background load" ariaLabel="Settings sections" /></V2Section><V2Card><span class="v2-small v2-muted">Each settings block saves independently. Editing a draft does not persist until its Save action is used.</span></V2Card></V2Zone>{/snippet}
 
   <V2Zone>
-    <V2Toolbar label="Primary content" sticky={false}><b>Configuration</b></V2Toolbar>
+    <V2Toolbar sticky={false}><b>Configuration</b></V2Toolbar>
     <div class="v2-setting-grid">
       <V2Card title="Interface density">{#snippet actions()}<V2Badge tone="ok" text="Local preference"/>{/snippet}<V2Stack gap="sm"><span class="v2-small v2-muted">Controls spacing, table row height, card padding and grid thumbnail density across collection interfaces.</span><V2Segmented items={['Standard','Condensed']} active={density === 'standard' ? 'Standard' : 'Condensed'} onselect={(value) => setDensity(value === 'Standard' ? 'standard' : 'condensed')} ariaLabel="Interface density" /></V2Stack></V2Card>
       <V2Card title="Background batch load">{#snippet actions()}<V2Badge tone="ok" text="Saved"/>{/snippet}<V2Stack gap="sm"><V2Field label="Assets per batch · 1–500" type="number" value="100"/><V2Field label="Minimum delay (seconds) · 0–60" type="number" value="1"/><V2Button variant="primary">Save load settings</V2Button></V2Stack></V2Card>
@@ -47,5 +47,5 @@
     </div>
   </V2Zone>
 
-  {#snippet inspector()}<V2Zone label="Inspector"><V2Section title="Validation"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><span class="v2-small v2-muted">Invalid values disable the relevant save action.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet inspector()}<V2Zone><V2Section title="Validation"><V2Card><V2Stack gap="sm"><V2Badge tone="ok" text="Batch size valid"/><V2Badge tone="ok" text="Delay valid"/><span class="v2-small v2-muted">Invalid values disable the relevant save action.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
 </V2PageLayout>
