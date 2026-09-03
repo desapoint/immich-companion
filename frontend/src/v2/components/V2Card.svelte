@@ -1,5 +1,23 @@
 <script lang="ts">
-  let { children, class: className = '' }: { children?: import('svelte').Snippet; class?: string } = $props();
+  let {
+    title,
+    actions,
+    children,
+    class: className = '',
+  }: {
+    title?: string;
+    actions?: import('svelte').Snippet;
+    children?: import('svelte').Snippet;
+    class?: string;
+  } = $props();
 </script>
 
-<div class={`v2-card ${className}`.trim()}>{#if children}{@render children()}{/if}</div>
+<div class={`v2-card ${className}`.trim()}>
+  {#if title || actions}
+    <div class="v2-card-header">
+      {#if title}<h3 class="v2-card-heading">{title}</h3>{/if}
+      {#if actions}{@render actions()}</if>
+    </div>
+  {/if}
+  {#if children}{@render children()}{/if}
+</div>
