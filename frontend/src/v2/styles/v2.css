@@ -55,6 +55,8 @@
 .v2-page-host { min-height: 0; height: 100%; display: grid; grid-template-rows: auto minmax(0,1fr); }
 .v2-page-head { background: var(--v2-surface); border-bottom: 1px solid var(--v2-line); padding: 18px 22px 14px; }
 .v2-head-row { display: flex; justify-content: space-between; gap: 20px; align-items: flex-start; }
+.v2-page-heading { min-width: 0; }
+.v2-page-actions { flex: 0 0 auto; }
 .v2-page-title { font-size: 24px; margin: 2px 0 4px; }
 .v2-page-description { margin: 0; color: var(--v2-muted); max-width: 780px; }
 .v2-workspace { display: grid; grid-template-columns: var(--v2-context-width) minmax(0,1fr) var(--v2-inspector-width); min-height: 0; height: 100%; overflow: hidden; }
@@ -72,10 +74,23 @@
 .v2-card { border: 1px solid var(--v2-line); border-radius: var(--v2-radius); background: var(--v2-surface); padding: 13px; }
 .v2-muted { color: var(--v2-muted); }
 .v2-small { font-size: 12px; }
-.v2-row { display: flex; gap: 8px; align-items: center; }
-.v2-between { justify-content: space-between; }
-.v2-stack { display: grid; gap: 8px; }
-.v2-stack-md { display: grid; gap: 12px; }
+.v2-stack { display: grid; }
+.v2-stack-xs { gap: var(--v2-space-1); }
+.v2-stack-sm { gap: var(--v2-space-2); }
+.v2-stack-md { gap: var(--v2-space-3); }
+.v2-stack-lg { gap: var(--v2-space-4); }
+.v2-inline { display: flex; min-width: 0; }
+.v2-inline-xs { gap: var(--v2-space-1); }
+.v2-inline-sm { gap: var(--v2-space-2); }
+.v2-inline-md { gap: var(--v2-space-3); }
+.v2-inline-lg { gap: var(--v2-space-4); }
+.v2-inline-start { justify-content: flex-start; }
+.v2-inline-between { justify-content: space-between; }
+.v2-inline-end { justify-content: flex-end; }
+.v2-inline-align-start { align-items: flex-start; }
+.v2-inline-align-center { align-items: center; }
+.v2-inline-align-end { align-items: flex-end; }
+.v2-inline-wrap { flex-wrap: wrap; }
 .v2-badge { border: 1px solid var(--v2-line); border-radius: 999px; padding: 3px 7px; font-size: 11px; color: #bac6d3; display: inline-block; }
 .v2-badge-ok { color: #9be5b8; border-color: #315c43; }
 .v2-badge-warn { color: #f5d485; border-color: #66552e; }
@@ -119,5 +134,6 @@
   .v2-topbar { padding: 0 12px; }
   .v2-page-head { padding: 14px 12px; }
   .v2-head-row { display: block; }
+  .v2-page-actions { margin-top: var(--v2-space-3); }
   .v2-metric-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
 }
