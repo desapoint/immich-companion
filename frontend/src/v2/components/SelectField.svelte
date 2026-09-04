@@ -120,14 +120,14 @@
 
   function measureIntrinsicWidths(): void {
     if (!widthProbe) return;
-    const copies = Array.from(widthProbe.querySelectorAll<HTMLElement>('[data-select-width-copy]'));
-    const widestCopy = Math.max(0, ...copies.map((copy) => copy.scrollWidth));
-    const placeholderWidth = widthProbe.querySelector<HTMLElement>('[data-select-width-placeholder]')?.scrollWidth ?? 0;
-    const widestTriggerCopy = Math.max(widestCopy, placeholderWidth);
-    const triggerChrome = 46;
-    const popupChrome = 58;
-    contentTriggerWidth = Math.min(320, Math.max(96, widestTriggerCopy + triggerChrome));
-    intrinsicPopupWidth = Math.max(contentTriggerWidth, widestCopy + popupChrome, searchable ? 240 : 0);
+    const triggerWidths = Array.from(widthProbe.querySelectorAll<HTMLElement>('[data-select-width-trigger]'))
+      .map((element) => element.getBoundingClientRect().width);
+    const popupProbe = widthProbe.querySelector<HTMLElement>('[data-select-width-popup]');
+    const widestTrigger = Math.max(0, ...triggerWidths);
+    const measuredPopup = popupProbe?.getBoundingClientRect().width ?? 0;
+
+    contentTriggerWidth = Math.min(320, Math.ceil(widestTrigger));
+    intrinsicPopupWidth = Math.max(contentTriggerWidth, Math.ceil(measuredPopup), searchable ? 240 : 0);
   }
 
   function positionPopup(): void {
@@ -252,10 +252,12 @@
     const optionSignature = normalized.map((option) => `${option.label}\u0000${option.subtitle}\u0000${option.direction ?? ''}`).join('\u0001');
     const currentPlaceholder = placeholder;
     const currentSearchable = searchable;
+    const currentAllowEmpty = allowEmpty;
     void tick().then(() => {
       void optionSignature;
       void currentPlaceholder;
       void currentSearchable;
+      void currentAllowEmpty;
       measureIntrinsicWidths();
       if (open) positionPopup();
     });
@@ -310,19 +312,52 @@
   <div
     bind:this={widthProbe}
     aria-hidden="true"
-    style="position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none;width:max-content;max-width:none;white-space:nowrap"
+    style="position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none;width:max-content;max-width:none"
   >
-    <span data-select-width-placeholder style="display:block;width:max-content;white-space:nowrap">{placeholder}</span>
-    {#each normalized as option (`probe-${option.value}`)}
-      <span data-select-width-copy style="display:flex;width:max-content;max-width:none;flex-direction:column;white-space:nowrap">
-        <span style="display:flex;width:max-content;align-items:center;gap:6px;white-space:nowrap">
+    {#if allowEmpty}
+      <button data-select-width-trigger class="v2-select-trigger" type="button" style="width:max-content;max-width:none">
+        <span class="v2-select-trigger-copy"><span>{placeholder}</span></span>
+        <span class="v2-select-chevron" aria-hidden="true"></span>
+      </button>
+    {/if}
+    {#each normalized as option (`trigger-probe-${option.value}`)}
+      <button data-select-width-trigger class="v2-select-trigger" type="button" style="width:max-content;max-width:none">
+        <span class="v2-select-trigger-copy">
           <span>{option.label}</span>
-          {#if option.direction === 'asc'}<ArrowUp size={14} aria-hidden="true" />{/if}
-          {#if option.direction === 'desc'}<ArrowDown size={14} aria-hidden="true" />{/if}
+          {#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+          {#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
         </span>
-        {#if option.subtitle}<span style="display:block;width:max-content;white-space:nowrap">{option.subtitle}</span>{/if}
-      </span>
+        <span class="v2-select-chevron" aria-hidden="true"></span>
+      </button>
     {/each}
+
+    <div
+      data-select-width-popup
+      class="v2-select-options"
+      data-searchable={searchable || undefined}
+      style="position:static;left:auto;top:auto;width:max-content;min-width:0;max-width:none;max-height:none;overflow:visible;visibility:hidden"
+    >
+      {#if searchable}
+        <div class="v2-select-search" style="width:240px">
+          <input tabindex="-1" value="" placeholder={searchPlaceholder} aria-hidden="true">
+        </div>
+      {/if}
+      <div class="v2-select-option-list" style="width:max-content;max-width:none;overflow:visible">
+        {#each normalized as option (`popup-probe-${option.value}`)}
+          <button type="button" tabindex="-1" style="width:max-content;max-width:none">
+            <span class="v2-select-option-copy">
+              <span class="v2-select-option-heading">
+                <span class="v2-select-option-label">{option.label}</span>
+                {#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+                {#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+              </span>
+              {#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}
+            </span>
+            <span class="v2-select-option-check" aria-hidden="true">✓</span>
+          </button>
+        {/each}
+      </div>
+    </div>
   </div>
 
   {#if open}
