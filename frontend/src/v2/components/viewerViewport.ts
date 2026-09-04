@@ -31,8 +31,8 @@ export function renderedSize(
 
 export function clampPan(panX: number, panY: number, size: ViewportSize | null): Pan {
   if (!size) return { x: panX, y: panY };
-  const maxX = Math.max(0, (size.imageW - size.viewportW) / 2);
-  const maxY = Math.max(0, (size.imageH - size.viewportH) / 2);
+  const maxX = Math.abs(size.imageW - size.viewportW) / 2;
+  const maxY = Math.abs(size.imageH - size.viewportH) / 2;
   return {
     x: maxX === 0 ? 0 : Math.max(-maxX, Math.min(maxX, panX)),
     y: maxY === 0 ? 0 : Math.max(-maxY, Math.min(maxY, panY)),
