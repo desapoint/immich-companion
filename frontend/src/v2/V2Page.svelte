@@ -8,9 +8,10 @@
   import V2TagsPage from './pages/V2TagsPage.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
   import V2DocsPage from './pages/V2DocsPage.svelte';
+  import V2PlaygroundPage from './pages/V2PlaygroundPage.svelte';
   import './styles/index.css';
 
-  type PageKey = 'status' | 'assets' | 'restore' | 'duplicates' | 'albums' | 'tags' | 'settings' | 'docs';
+  type PageKey = 'status' | 'assets' | 'restore' | 'duplicates' | 'albums' | 'tags' | 'settings' | 'docs' | 'playground';
   type NavItem = { key: PageKey; label: string; group?: string; position?: 'top' | 'bottom' };
 
   const navItems: NavItem[] = [
@@ -22,6 +23,7 @@
     { key: 'tags', label: 'Tags', group: 'Organize' },
     { key: 'settings', label: 'Settings', position: 'bottom' },
     { key: 'docs', label: 'API Docs', position: 'bottom' },
+    { key: 'playground', label: 'Playground', position: 'bottom' },
   ];
 
   const titles: Record<PageKey, string> = {
@@ -33,6 +35,7 @@
     tags: 'Tags',
     settings: 'Settings',
     docs: 'API Docs',
+    playground: 'Playground',
   };
 
   function keyFromHash(): PageKey {
@@ -66,7 +69,9 @@
     <V2TagsPage />
   {:else if activeKey === 'settings'}
     <V2SettingsPage />
-  {:else}
+  {:else if activeKey === 'docs'}
     <V2DocsPage />
+  {:else}
+    <V2PlaygroundPage />
   {/if}
 </V2Shell>
