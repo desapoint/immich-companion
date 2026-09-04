@@ -9,10 +9,12 @@
   import V2Modal from '../components/V2Modal.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Progress from '../components/V2Progress.svelte';
+  import V2RangeSlider from '../components/V2RangeSlider.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Segmented from '../components/V2Segmented.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Tabs from '../components/V2Tabs.svelte';
+  import V2TaskBubble from '../components/V2TaskBubble.svelte';
   import V2Toggle from '../components/V2Toggle.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
@@ -45,9 +47,17 @@
   let emptyValue = $state('');
   let modalSelectValue = $state('family');
   let segment = $state('Second');
+  let modalSegment = $state('Two');
   let tab = $state('One');
   let checked = $state(true);
   let toggled = $state(false);
+  let fillSlider = $state(62);
+  let hueSlider = $state(190);
+  let plainSlider = $state(5);
+  let decimalSlider = $state(0.25);
+  let wideSlider = $state(75);
+  let swatchSlider = $state(42);
+  let modalSlider = $state(50);
   let edgeValues = $state<Record<string, string>>({
     tl: 'family', tr: 'montreal', bl: 'project', br: 'family', lm: 'short', rm: 'option-20',
   });
@@ -173,7 +183,38 @@
         </V2Stack>
       </V2Card>
 
-      <V2Card title="Tabs / badges / progress">
+      <V2Card title="Progress / collapsed loading">
+        <V2Stack gap="md">
+          <span class="v2-small v2-muted">Expanded progress bars</span>
+          <V2Progress value={62} label="Determinate playground progress" />
+          <V2Progress indeterminate={true} label="Indeterminate playground progress" />
+          <span class="v2-small v2-muted">Collapsed task bubbles</span>
+          <div class="v2-playground-bubble-pair">
+            <V2TaskBubble value={62} label="Determinate collapsed progress" detail="Known progress" />
+            <V2TaskBubble indeterminate={true} label="Indeterminate collapsed progress" detail="Progress amount unknown" />
+          </div>
+        </V2Stack>
+      </V2Card>
+
+      <V2Card title="Range sliders · common configs">
+        <div class="v2-playground-slider-stack">
+          <V2RangeSlider label="Fill" bind:value={fillSlider} min={0} max={100} suffix="%" track="fill" ariaLabel="Filled percentage slider" />
+          <V2RangeSlider label="Hue" bind:value={hueSlider} min={0} max={360} suffix="°" track="spectrum" ariaLabel="Spectrum hue slider" />
+          <V2RangeSlider label="Plain" bind:value={plainSlider} min={0} max={10} track="plain" ariaLabel="Plain range slider" />
+          <V2RangeSlider label="Fraction" bind:value={decimalSlider} min={0} max={1} step={0.05} track="fill" valueLabel={decimalSlider.toFixed(2)} ariaLabel="Fractional range slider" />
+        </div>
+      </V2Card>
+
+      <V2Card title="Range sliders · sizing / swatch">
+        <div class="v2-playground-slider-stack">
+          <V2RangeSlider label="Narrow" bind:value={fillSlider} min={0} max={100} width={90} suffix="%" />
+          <div class="v2-playground-slider-wide"><V2RangeSlider label="Wide" bind:value={wideSlider} min={0} max={100} width={320} suffix="%" /></div>
+          <V2RangeSlider label="Swatch" bind:value={swatchSlider} min={0} max={100} swatch={`hsl(${swatchSlider * 3.6} 75% 55%)`} suffix="%" ariaLabel="Slider with swatch" />
+          <V2RangeSlider label="Custom label" value={75} min={0} max={100} valueLabel="High" track="plain" ariaLabel="Slider with custom value label" />
+        </div>
+      </V2Card>
+
+      <V2Card title="Tabs / badges">
         <V2Stack gap="md">
           <V2Tabs items={['One', 'Two', 'A longer tab label']} active={tab} onselect={(value) => tab = value} ariaLabel="Playground tabs" />
           <V2Inline gap="sm" wrap={true}>
@@ -182,8 +223,6 @@
             <V2Badge text="Warning" tone="warn" />
             <V2Badge text="Problem" tone="bad" />
           </V2Inline>
-          <V2Progress value={62} label="Determinate playground progress" />
-          <V2Progress indeterminate={true} label="Indeterminate playground progress" />
         </V2Stack>
       </V2Card>
     </div>
@@ -230,7 +269,9 @@
         <V2Stack gap="sm">
           <V2Field label="Text input in popup" value="Focus and tab-order test" />
           <V2Checkbox label="Checkbox in popup" checked={true}/>
-          <V2Segmented items={['One', 'Two', 'Three']} active="Two" ariaLabel="Popup segmented control" />
+          <V2Segmented items={['One', 'Two', 'Three']} active={modalSegment} onselect={(value) => modalSegment = value} ariaLabel="Popup segmented control" />
+          <span class="v2-small v2-muted">Selected popup segment: {modalSegment}</span>
+          <V2RangeSlider label="Popup slider" bind:value={modalSlider} min={0} max={100} suffix="%" />
         </V2Stack>
       </V2Card>
     </V2Stack>
