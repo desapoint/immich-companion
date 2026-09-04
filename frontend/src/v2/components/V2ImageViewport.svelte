@@ -47,6 +47,19 @@
     controller.wheel(event);
   }
 
+  function keyboardZoom(event: KeyboardEvent): void {
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input,textarea,select'))) return;
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      controller.zoomFromCenter(1.25);
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      controller.zoomFromCenter(1 / 1.25);
+    }
+  }
+
   function imageLoaded(event: Event): void {
     const image = event.currentTarget as HTMLImageElement;
     controller.setNaturalSize(image.naturalWidth, image.naturalHeight);
@@ -58,6 +71,8 @@
     return () => controller.setViewport(null);
   });
 </script>
+
+<svelte:window onkeydown={keyboardZoom} />
 
 <div
   bind:this={viewport}
