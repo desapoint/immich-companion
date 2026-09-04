@@ -6,6 +6,7 @@
     step = 1,
     value = $bindable<number | string>(0),
     numericValue = $bindable<number>(min),
+    normalizedValue = $bindable<number>(0),
     suffix = '',
     track = 'fill',
     width = 160,
@@ -14,6 +15,7 @@
     valueLabel,
     onchange,
     onnumericchange,
+    onnormalizedchange,
   }: {
     label?: string;
     min?: number;
@@ -21,6 +23,7 @@
     step?: number;
     value?: number | string;
     numericValue?: number;
+    normalizedValue?: number;
     suffix?: string;
     track?: 'fill' | 'spectrum' | 'plain';
     width?: number;
@@ -29,6 +32,7 @@
     valueLabel?: string;
     onchange?: (value: number | string) => void;
     onnumericchange?: (value: number) => void;
+    onnormalizedchange?: (value: number) => void;
   } = $props();
 
   const trackHeight = 8;
@@ -86,11 +90,15 @@
 
   function handleInput(event: Event): void {
     const next = clampNumber(Number((event.currentTarget as HTMLInputElement).value));
+    const nextNormalized = fractionFor(next);
+
     numericValue = next;
+    normalizedValue = nextNormalized;
     onnumericchange?.(next);
+    onnormalizedchange?.(nextNormalized);
 
     if (track === 'spectrum') {
-      const color = spectrumColorAt(fractionFor(next));
+      const color = spectrumColorAt(nextNormalized);
       value = color;
       onchange?.(color);
       return;
@@ -101,9 +109,16 @@
   }
 
   $effect(() => {
-    if (track !== 'spectrum') return;
-    const color = spectrumColorAt(fractionFor(numericValue));
-    if (value !== color) value = color;
+    const nextNumeric = sliderNumber;
+    const nextNormalized = fractionFor(nextNumeric);
+
+    if (numericValue !== nextNumeric) numericValue = nextNumeric;
+    if (normalizedValue !== nextNormalized) normalizedValue = nextNormalized;
+
+    if (track === 'spectrum') {
+      const color = spectrumColorAt(nextNormalized);
+      if (value !== color) value = color;
+    }
   });
 </script>
 
