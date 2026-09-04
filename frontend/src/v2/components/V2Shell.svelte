@@ -101,18 +101,25 @@
 
   {#if taskExpanded}
     <div class="v2-tasktray">
-      <div class="v2-task-summary"><b>Background tasks</b><small class="v2-muted">2 tasks running</small></div>
+      <div class="v2-tasktray-head">
+        <div class="v2-task-summary"><span class="v2-task-status-dot" aria-hidden="true"></span><div><b>Background tasks</b><small class="v2-muted">2 tasks running</small></div></div>
+        <small class="v2-task-overview v2-muted">1 determinate · 1 estimating</small>
+        <V2Button onclick={()=>taskExpanded=false}>Collapse</V2Button>
+      </div>
       <div class="v2-task-list">
         <div class="v2-task-row">
-          <div class="v2-task-copy"><span>Scanning asset changes</span><small class="v2-muted">Known progress · 62%</small></div>
-          <V2Progress value={62} label="Scanning asset changes progress"/>
+          <span class="v2-task-runner" aria-hidden="true"></span>
+          <div class="v2-task-copy"><span>Scanning asset changes</span><small class="v2-muted">Known progress · processing local differences</small></div>
+          <div class="v2-task-progress"><div class="v2-task-progress-meta"><small>Progress</small><small>62%</small></div><V2Progress value={62} label="Scanning asset changes progress"/></div>
+          <span class="v2-task-stat">62%</span>
         </div>
         <div class="v2-task-row">
+          <span class="v2-task-runner" aria-hidden="true"></span>
           <div class="v2-task-copy"><span>Analyzing duplicate candidates</span><small class="v2-muted">Estimating remaining work</small></div>
-          <V2Progress indeterminate label="Analyzing duplicate candidates progress"/>
+          <div class="v2-task-progress"><div class="v2-task-progress-meta"><small>Working</small><small>Unknown</small></div><V2Progress indeterminate label="Analyzing duplicate candidates progress"/></div>
+          <span class="v2-task-stat">—</span>
         </div>
       </div>
-      <V2Button onclick={()=>taskExpanded=false}>Collapse</V2Button>
     </div>
   {:else}
     <div class="v2-task-bubbles" aria-label="Collapsed background tasks">
