@@ -90,19 +90,6 @@
     camera.wheel(event);
   }
 
-  function keyboardZoom(event: KeyboardEvent): void {
-    const target = event.target;
-    if (target instanceof HTMLElement && (target.isContentEditable || !!target.closest('input,textarea,select'))) return;
-    if (event.ctrlKey || event.metaKey || event.altKey) return;
-    if (event.key === '+' || event.key === '=') {
-      event.preventDefault();
-      camera.zoomFromCenter(1.25);
-    } else if (event.key === '-' || event.key === '_') {
-      event.preventDefault();
-      camera.zoomFromCenter(1 / 1.25);
-    }
-  }
-
   $effect(() => {
     const currentMode = mode;
     void currentMode;
@@ -110,17 +97,17 @@
   });
 </script>
 
-<svelte:window onresize={() => requestAnimationFrame(() => camera.fit())} onkeydown={keyboardZoom} />
+<svelte:window onresize={() => requestAnimationFrame(() => camera.fit())} />
 
 <div class="v2-compare-component">
   <div class="v2-compare-component-tools">
     <V2Segmented items={['Side by side','Swipe','Transparency','Difference']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
     <div class="v2-compare-zoom-tools">
-      <V2Button onclick={() => camera.zoomFromCenter(1 / 1.25)} title="Zoom out from image center">−</V2Button>
+      <V2Button onclick={() => camera.setZoom(camera.zoom / 1.25)} title="Zoom out">−</V2Button>
       <span class="v2-zoom-readout">{Math.round(camera.zoom * 100)}%</span>
-      <V2Button onclick={() => camera.zoomFromCenter(1.25)} title="Zoom in from image center">+</V2Button>
-      <V2Button onclick={() => camera.fit()} title="Fit image to comparison zone and center it">Fit</V2Button>
-      <V2Button onclick={() => camera.actual()} title="Show image at actual pixel size and center it">1:1</V2Button>
+      <V2Button onclick={() => camera.setZoom(camera.zoom * 1.25)} title="Zoom in">+</V2Button>
+      <V2Button onclick={() => camera.fit()} title="Fit image to comparison zone">Fit</V2Button>
+      <V2Button onclick={() => camera.actual()} title="Show image at actual pixel size">1:1</V2Button>
     </div>
   </div>
 
