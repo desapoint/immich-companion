@@ -1,7 +1,6 @@
 <script lang="ts">
   import V2Checkbox from './V2Checkbox.svelte';
   import V2RangeSlider from './V2RangeSlider.svelte';
-  import { differenceHighlightCss } from '../demo/duplicateVisuals';
 
   let {
     differenceSrc,
@@ -24,12 +23,7 @@
   let viewport = $state<HTMLElement | null>(null);
   let controlsOpen = $state(false);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
-
-  function hueLabel(value: number): string {
-    if (value <= 360) return `${value}°`;
-    const white = Math.round(((value - 360) / 40) * 100);
-    return white >= 100 ? 'White' : `${white}% white`;
-  }
+  let diffColor = $state('#00FFFF');
 
   function showControls(): void {
     if (hoverTimer) clearTimeout(hoverTimer);
@@ -62,7 +56,17 @@
     <img src={differenceSrc} alt="Generated difference preview" onload={onimageload}>
   </div>
   <div class="v2-compare-floating-controls v2-difference-controls">
-    <V2RangeSlider label="Color" min={0} max={400} bind:value={diffHue} track="spectrum" width={160} swatch={differenceHighlightCss(diffHue)} valueLabel={hueLabel(diffHue)} ariaLabel="Difference highlight color" />
+    <V2RangeSlider
+      label="Color"
+      min={0}
+      max={400}
+      bind:value={diffColor}
+      bind:numericValue={diffHue}
+      track="spectrum"
+      width={160}
+      swatch={diffColor}
+      ariaLabel="Difference highlight color"
+    />
     <V2Checkbox label="Two colors only" checked={diffBinary} onchange={(checked) => (diffBinary = checked)} />
     {#if !diffBinary}
       <V2RangeSlider label="Contrast" min={50} max={300} bind:value={diffContrast} suffix="%" track="fill" width={112} ariaLabel="Difference contrast" />
