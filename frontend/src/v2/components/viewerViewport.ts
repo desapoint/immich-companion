@@ -34,8 +34,8 @@ export function clampPan(panX: number, panY: number, size: ViewportSize | null):
   const maxX = Math.max(0, (size.imageW - size.viewportW) / 2);
   const maxY = Math.max(0, (size.imageH - size.viewportH) / 2);
   return {
-    x: Math.max(-maxX, Math.min(maxX, panX)),
-    y: Math.max(-maxY, Math.min(maxY, panY)),
+    x: maxX === 0 ? 0 : Math.max(-maxX, Math.min(maxX, panX)),
+    y: maxY === 0 ? 0 : Math.max(-maxY, Math.min(maxY, panY)),
   };
 }
 
