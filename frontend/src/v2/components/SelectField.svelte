@@ -61,6 +61,7 @@
   let popupMaxHeight = $state(304);
   let popupPlacement = $state<'down' | 'up'>('down');
   let popupAlignment = $state<'left' | 'right' | 'viewport'>('left');
+  let nativeScrollbarWidth: number | undefined;
 
   function normalizeStringOption(option: string): NormalizedSelectOption[] {
     const directional = option.match(/^(.*)\s([↑↓])$/);
@@ -117,11 +118,31 @@
     }
   }
 
+  function getNativeScrollbarWidth(): number {
+    if (nativeScrollbarWidth !== undefined) return nativeScrollbarWidth;
+    const probe = document.createElement('div');
+    probe.style.position = 'fixed';
+    probe.style.left = '-10000px';
+    probe.style.top = '-10000px';
+    probe.style.width = '100px';
+    probe.style.height = '100px';
+    probe.style.overflow = 'scroll';
+    probe.style.pointerEvents = 'none';
+    document.body.appendChild(probe);
+    nativeScrollbarWidth = probe.offsetWidth - probe.clientWidth;
+    probe.remove();
+    return nativeScrollbarWidth;
+  }
+
   function measureIntrinsicPopupWidth(): void {
     if (!widthProbe) return;
     const popupProbe = widthProbe.querySelector<HTMLElement>('[data-select-width-popup]');
     const measuredPopup = popupProbe?.getBoundingClientRect().width ?? 0;
-    intrinsicPopupWidth = Math.max(Math.ceil(measuredPopup), searchable ? 240 : 0);
+    const scrollbarAllowance = getNativeScrollbarWidth();
+    intrinsicPopupWidth = Math.max(
+      Math.ceil(measuredPopup + scrollbarAllowance),
+      searchable ? 240 + scrollbarAllowance : 0,
+    );
   }
 
   function positionPopup(): void {
@@ -165,8 +186,9 @@
     if (activeIndex < 0) activeIndex = firstEnabled();
 
     // The measurement probe is always rendered, so determine the popup width
-    // before the real popup exists. This keeps the very first opening identical
-    // to subsequent openings instead of correcting its width after paint.
+    // before the real popup exists. The native scrollbar allowance breaks the
+    // width -> wrapping -> scrollbar -> narrower content feedback loop on the
+    // first opening, while overlay-scrollbar platforms naturally report 0px.
     measureIntrinsicPopupWidth();
     open = true;
     void tick().then(() => {
