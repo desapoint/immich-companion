@@ -6,6 +6,7 @@ export class ViewerViewportController {
   panY = $state(0);
   naturalWidth = $state(800);
   naturalHeight = $state(600);
+  viewport = $state<HTMLElement | null>(null);
 
   readonly minZoom: number;
   readonly maxZoom: number;
@@ -19,6 +20,10 @@ export class ViewerViewportController {
     return `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`;
   }
 
+  setViewport(viewport: HTMLElement | null): void {
+    this.viewport = viewport;
+  }
+
   setNaturalSize(width: number, height: number): void {
     if (width > 0) this.naturalWidth = width;
     if (height > 0) this.naturalHeight = height;
@@ -30,12 +35,12 @@ export class ViewerViewportController {
     this.panY = 0;
   }
 
-  actual(viewport: HTMLElement | null): void {
-    if (!viewport) {
+  actual(): void {
+    if (!this.viewport) {
       this.fit();
       return;
     }
-    const rect = viewport.getBoundingClientRect();
+    const rect = this.viewport.getBoundingClientRect();
     this.zoom = actualSizeZoom(
       rect.width,
       rect.height,
@@ -48,9 +53,9 @@ export class ViewerViewportController {
     this.panY = 0;
   }
 
-  clamp(viewport: HTMLElement | null): void {
-    if (!viewport) return;
-    const rect = viewport.getBoundingClientRect();
+  clamp(): void {
+    if (!this.viewport) return;
+    const rect = this.viewport.getBoundingClientRect();
     const size = renderedSize(
       rect.width,
       rect.height,
@@ -63,7 +68,7 @@ export class ViewerViewportController {
     this.panY = next.y;
   }
 
-  setZoom(next: number, viewport: HTMLElement | null, anchorX: number | null = null, anchorY: number | null = null): void {
+  setZoom(next: number, anchorX: number | null = null, anchorY: number | null = null): void {
     const previous = this.zoom;
     const nextZoom = Math.max(this.minZoom, Math.min(this.maxZoom, next));
     if (anchorX !== null && anchorY !== null) {
@@ -76,20 +81,20 @@ export class ViewerViewportController {
       this.panX = 0;
       this.panY = 0;
     }
-    this.clamp(viewport);
+    this.clamp();
   }
 
-  panBy(deltaX: number, deltaY: number, viewport: HTMLElement | null): void {
+  panBy(deltaX: number, deltaY: number): void {
     this.panX += deltaX;
     this.panY += deltaY;
-    this.clamp(viewport);
+    this.clamp();
   }
 
-  wheel(event: WheelEvent, viewport: HTMLElement | null): void {
-    if (!viewport) return;
-    const rect = viewport.getBoundingClientRect();
+  wheel(event: WheelEvent): void {
+    if (!this.viewport) return;
+    const rect = this.viewport.getBoundingClientRect();
     const anchorX = event.clientX - rect.left - rect.width / 2;
     const anchorY = event.clientY - rect.top - rect.height / 2;
-    this.setZoom(this.zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12), viewport, anchorX, anchorY);
+    this.setZoom(this.zoom * (event.deltaY < 0 ? 1.12 : 1 / 1.12), anchorX, anchorY);
   }
 }
