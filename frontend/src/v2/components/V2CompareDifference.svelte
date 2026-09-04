@@ -68,9 +68,17 @@
       ariaLabel="Difference highlight color"
     />
     <V2Toggle label="Two colors only" checked={diffBinary} onchange={(checked) => (diffBinary = checked)} />
-    {#if !diffBinary}
-      <V2RangeSlider label="Contrast" min={50} max={300} bind:value={diffContrast} suffix="%" track="fill" width={112} ariaLabel="Difference contrast" />
-    {/if}
+    <V2RangeSlider
+      label="Contrast"
+      min={50}
+      max={300}
+      bind:value={diffContrast}
+      suffix="%"
+      track="fill"
+      width={112}
+      disabled={diffBinary}
+      ariaLabel="Difference contrast"
+    />
   </div>
   <div class="v2-difference-note">Black = same · color intensity = difference amount</div>
 </div>
