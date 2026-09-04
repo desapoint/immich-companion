@@ -117,7 +117,6 @@
     class:panning={dragging}
     role="region"
     aria-label="Image comparison viewport"
-    tabindex="0"
     onpointerdown={panStart}
     onpointermove={panMove}
     onpointerup={panEnd}
