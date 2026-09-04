@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import V2AssetTile from '../components/V2AssetTile.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
@@ -8,11 +9,13 @@
   import V2Inline from '../components/V2Inline.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Pagination from '../components/V2Pagination.svelte';
+  import V2RangeSlider from '../components/V2RangeSlider.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Viewer from '../components/V2Viewer.svelte';
   import V2Zone from '../components/V2Zone.svelte';
+  import { createGridViewportAnchor } from '../components/gridViewportAnchor';
 
   let page = $state(1);
   let pageSize = $state(24);
@@ -20,6 +23,9 @@
   let loaded = $state(24);
   let sort = $state('deletedAt:desc');
   let viewer = $state(false);
+  let assetGrid = $state<HTMLElement | null>(null);
+  let assetColumns = $state(4);
+  const gridViewportAnchor = createGridViewportAnchor(() => assetGrid);
   const total = 126;
   const visibleCount = $derived(resultMode === 'Pagination'
     ? Math.min(pageSize, Math.max(0, total - (page - 1) * pageSize))
@@ -38,6 +44,13 @@
     if (mode === 'Pagination') page = 1;
     else loaded = Math.max(pageSize, loaded);
   }
+
+  function setAssetColumns(next: number | string): void {
+    assetColumns = Number(next);
+    gridViewportAnchor.adjust();
+  }
+
+  onMount(() => () => gridViewportAnchor.destroy());
 </script>
 
 <V2PageLayout title="Restore" description="Review current Immich trash and restore individual, selected, or all trashed assets.">
@@ -55,6 +68,20 @@
     <V2Toolbar>
       <V2Badge text={`${total.toLocaleString()} trashed assets`} />
       {#snippet actions()}
+        <V2RangeSlider
+          label="Per row"
+          min={2}
+          max={10}
+          step={1}
+          bind:value={assetColumns}
+          valueLabel={`${assetColumns}`}
+          width={92}
+          thumbSize={18}
+          ariaLabel="Images per row"
+          oninteractionstart={() => gridViewportAnchor.begin(assetColumns)}
+          onchange={setAssetColumns}
+          oninteractionend={gridViewportAnchor.end}
+        />
         <V2CollectionControls
           id="restore-results"
           {sort}
@@ -68,7 +95,7 @@
         />
       {/snippet}
     </V2Toolbar>
-    <div class="v2-asset-grid">{#each items as i}<V2AssetTile index={i} label={`Trash item ${i + 1}`} sublabel="Deleted recently" onclick={() => viewer = true} />{/each}</div>
+    <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>{#each items as i}<V2AssetTile index={i} label={`Trash item ${i + 1}`} sublabel="Deleted recently" onclick={() => viewer = true} />{/each}</div>
     {#if resultMode === 'Pagination'}
       <V2Pagination {page} {pageSize} {total} onpage={(next)=>page=next}/>
     {:else}
