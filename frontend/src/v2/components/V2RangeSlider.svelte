@@ -27,6 +27,8 @@
     onchange,
     onnumericchange,
     onnormalizedchange,
+    oninteractionstart,
+    oninteractionend,
   }: {
     label?: string;
     min?: number;
@@ -55,7 +57,11 @@
     onchange?: (value: number | string) => void;
     onnumericchange?: (value: number) => void;
     onnormalizedchange?: (value: number) => void;
+    oninteractionstart?: () => void;
+    oninteractionend?: () => void;
   } = $props();
+
+  let interacting = false;
 
   const spectrumStops = [
     { at: 0, rgb: [255, 0, 0] },
@@ -126,6 +132,18 @@
     `--v2-range-spectrum-color:${spectrumColor}`,
   ].join(';'));
 
+  function beginInteraction(): void {
+    if (disabled || interacting) return;
+    interacting = true;
+    oninteractionstart?.();
+  }
+
+  function endInteraction(): void {
+    if (!interacting) return;
+    interacting = false;
+    oninteractionend?.();
+  }
+
   function handleInput(event: Event): void {
     const next = clampNumber(Number((event.currentTarget as HTMLInputElement).value));
     const nextNormalized = fractionFor(next);
@@ -175,6 +193,13 @@
       {disabled}
       value={sliderNumber}
       oninput={handleInput}
+      onpointerdown={beginInteraction}
+      onpointerup={endInteraction}
+      onpointercancel={endInteraction}
+      onkeydown={beginInteraction}
+      onkeyup={endInteraction}
+      onchange={endInteraction}
+      onblur={endInteraction}
       aria-label={ariaLabel ?? label}
     >
     <span class="v2-range-thumb-rail" aria-hidden="true">
