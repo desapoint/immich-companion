@@ -27,9 +27,10 @@
 
   const trackHeight = 8;
   const thumbSize = 20;
-  const thumbRadius = thumbSize / 2;
+  const trackRadius = trackHeight / 2;
+  const thumbOverhang = Math.max(0, (thumbSize - trackHeight) / 2);
   const fraction = $derived(max === min ? 0 : Math.max(0, Math.min(1, (value - min) / (max - min))));
-  const positionPx = $derived(thumbRadius + fraction * Math.max(0, width - thumbSize));
+  const positionPx = $derived(thumbOverhang + trackRadius + fraction * Math.max(0, width - trackHeight));
 
   const spectrumStops = [
     { at: 0, rgb: [255, 0, 0] },
@@ -68,7 +69,7 @@
   <span
     class="v2-range-control"
     data-track={track}
-    style={`--v2-range-width:${width}px;--v2-range-track-height:${trackHeight}px;--v2-range-thumb-size:${thumbSize}px;--v2-range-thumb-radius:${thumbRadius}px;--v2-range-position:${positionPx}px;--v2-range-spectrum-color:${spectrumColor}`}
+    style={`--v2-range-width:${width}px;--v2-range-track-height:${trackHeight}px;--v2-range-track-radius:${trackRadius}px;--v2-range-thumb-size:${thumbSize}px;--v2-range-thumb-overhang:${thumbOverhang}px;--v2-range-position:${positionPx}px;--v2-range-spectrum-color:${spectrumColor}`}
   >
     <span class="v2-range-track" aria-hidden="true"></span>
     <input
@@ -86,16 +87,16 @@
 
 <style>
   .v2-range-slider{display:flex;align-items:center;gap:7px;font-size:11px;white-space:nowrap}
-  .v2-range-control{position:relative;display:inline-flex;align-items:center;width:var(--v2-range-width);height:var(--v2-range-thumb-size);flex:0 0 var(--v2-range-width)}
-  .v2-range-track{position:absolute;left:0;right:0;top:50%;height:var(--v2-range-track-height);transform:translateY(-50%);border-radius:999px;background:#263342;overflow:hidden;pointer-events:none}
-  .v2-range-control[data-track="fill"] .v2-range-track{background:linear-gradient(90deg,#7ea6ff 0 var(--v2-range-position),#263342 var(--v2-range-position) 100%)}
+  .v2-range-control{position:relative;display:inline-flex;align-items:center;width:calc(var(--v2-range-width) + 2 * var(--v2-range-thumb-overhang));height:var(--v2-range-thumb-size);flex:0 0 calc(var(--v2-range-width) + 2 * var(--v2-range-thumb-overhang))}
+  .v2-range-track{position:absolute;left:var(--v2-range-thumb-overhang);width:var(--v2-range-width);top:50%;height:var(--v2-range-track-height);transform:translateY(-50%);border-radius:999px;background:#263342;overflow:hidden;pointer-events:none}
+  .v2-range-control[data-track="fill"] .v2-range-track{background:linear-gradient(90deg,#7ea6ff 0 calc(var(--v2-range-position) - var(--v2-range-thumb-overhang)),#263342 calc(var(--v2-range-position) - var(--v2-range-thumb-overhang)) 100%)}
 
   .v2-range-control[data-track="spectrum"] .v2-range-track{background:#ff0000}
   .v2-range-control[data-track="spectrum"] .v2-range-track::before{
     content:"";
     position:absolute;
-    left:var(--v2-range-thumb-radius);
-    right:var(--v2-range-thumb-radius);
+    left:var(--v2-range-track-radius);
+    right:var(--v2-range-track-radius);
     top:0;
     bottom:0;
     background:linear-gradient(90deg,#ff0000 0%,#ffff00 15%,#00ff00 30%,#00ffff 45%,#0000ff 60%,#ff00ff 75%,#ff0000 90%,#ffffff 100%);
@@ -106,15 +107,15 @@
     right:0;
     top:0;
     bottom:0;
-    width:var(--v2-range-thumb-radius);
+    width:var(--v2-range-track-radius);
     background:#fff;
   }
 
-  .v2-range-control input{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;appearance:none;border:0;outline:none;background:transparent;cursor:pointer;z-index:2}
+  .v2-range-control input{position:absolute;left:var(--v2-range-thumb-overhang);top:50%;width:var(--v2-range-width);height:var(--v2-range-thumb-size);margin:0;padding:0;transform:translateY(-50%);appearance:none;border:0;outline:none;background:transparent;cursor:pointer;z-index:2}
   .v2-range-control input::-webkit-slider-runnable-track{height:var(--v2-range-track-height);background:transparent;border:0}
   .v2-range-control input::-moz-range-track{height:var(--v2-range-track-height);background:transparent;border:0}
-  .v2-range-control input::-webkit-slider-thumb{appearance:none;box-sizing:border-box;width:var(--v2-range-thumb-size);height:var(--v2-range-thumb-size);margin-top:calc((var(--v2-range-track-height) - var(--v2-range-thumb-size)) / 2);border:0;border-radius:50%;background:transparent;box-shadow:none}
-  .v2-range-control input::-moz-range-thumb{box-sizing:border-box;width:var(--v2-range-thumb-size);height:var(--v2-range-thumb-size);border:0;border-radius:50%;background:transparent;box-shadow:none}
+  .v2-range-control input::-webkit-slider-thumb{appearance:none;box-sizing:border-box;width:var(--v2-range-track-height);height:var(--v2-range-track-height);margin-top:0;border:0;border-radius:50%;background:transparent;box-shadow:none}
+  .v2-range-control input::-moz-range-thumb{box-sizing:border-box;width:var(--v2-range-track-height);height:var(--v2-range-track-height);border:0;border-radius:50%;background:transparent;box-shadow:none}
 
   .v2-range-thumb{position:absolute;z-index:1;left:var(--v2-range-position);top:50%;width:var(--v2-range-thumb-size);height:var(--v2-range-thumb-size);box-sizing:border-box;border-radius:50%;background:#fff;border:3px solid #7ea6ff;box-shadow:0 2px 8px rgba(0,0,0,.45);pointer-events:none;transform:translate(-50%,-50%) scale(1);transform-origin:center;transition:transform 110ms ease,background 110ms ease}
   .v2-range-control[data-track="spectrum"] .v2-range-thumb{background:var(--v2-range-spectrum-color)}
