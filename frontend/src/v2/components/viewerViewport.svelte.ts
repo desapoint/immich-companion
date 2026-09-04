@@ -31,8 +31,7 @@ export class ViewerViewportController {
 
   fit(): void {
     this.zoom = 1;
-    this.panX = 0;
-    this.panY = 0;
+    this.center();
   }
 
   actual(): void {
@@ -49,6 +48,10 @@ export class ViewerViewportController {
       this.minZoom,
       this.maxZoom,
     );
+    this.center();
+  }
+
+  center(): void {
     this.panX = 0;
     this.panY = 0;
   }
@@ -77,11 +80,11 @@ export class ViewerViewportController {
       this.panY = nextPan.y;
     }
     this.zoom = nextZoom;
-    if (Math.abs(this.zoom - 1) < 0.0001) {
-      this.panX = 0;
-      this.panY = 0;
-    }
     this.clamp();
+  }
+
+  zoomFromCenter(factor: number): void {
+    this.setZoom(this.zoom * factor);
   }
 
   panBy(deltaX: number, deltaY: number): void {
