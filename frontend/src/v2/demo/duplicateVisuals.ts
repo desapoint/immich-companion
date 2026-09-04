@@ -44,10 +44,27 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   if (h < 60) [r, g] = [c, x];
   else if (h < 120) [r, g] = [x, c];
   else if (h < 180) [g, b] = [c, x];
-  else if (h < 240) [g, b] = [x, c];
+  else if (h < 240) [r, b] = [x, c];
   else if (h < 300) [r, b] = [x, c];
   else [r, b] = [c, x];
   return [r + m, g + m, b + m];
+}
+
+export function differenceHighlightRgb(value: number): [number, number, number] {
+  const clamped = Math.max(0, Math.min(400, value));
+  if (clamped <= 360) return hslToRgb(clamped, 90, 58);
+  const whiteMix = (clamped - 360) / 40;
+  const [r, g, b] = hslToRgb(0, 90, 58);
+  return [
+    r + (1 - r) * whiteMix,
+    g + (1 - g) * whiteMix,
+    b + (1 - b) * whiteMix,
+  ];
+}
+
+export function differenceHighlightCss(value: number): string {
+  const [r, g, b] = differenceHighlightRgb(value);
+  return `rgb(${Math.round(r * 255)} ${Math.round(g * 255)} ${Math.round(b * 255)})`;
 }
 
 export function demoDifferenceMask(
@@ -60,7 +77,7 @@ export function demoDifferenceMask(
 ): string {
   const reference = demoCompareImage(group, referenceIndex);
   const selected = demoCompareImage(group, selectedIndex);
-  const [r, g, b] = hslToRgb(hue, 90, 58);
+  const [r, g, b] = differenceHighlightRgb(hue);
 
   const filter = binary
     ? `<feImage href="${reference}" result="ref"/><feImage href="${selected}" result="sel"/><feBlend in="ref" in2="sel" mode="difference" result="d"/><feColorMatrix in="d" type="matrix" values="1.9 0 0 0 0 0 1.9 0 0 0 0 0 1.9 0 0 0 0 0 1 0" result="boost"/><feComponentTransfer in="boost" result="threshold"><feFuncR type="gamma" amplitude="3.4" exponent=".6" offset="0"/><feFuncG type="gamma" amplitude="3.4" exponent=".6" offset="0"/><feFuncB type="gamma" amplitude="3.4" exponent=".6" offset="0"/></feComponentTransfer><feColorMatrix in="threshold" type="matrix" values="0 0 0 0 ${r} 0 0 0 0 ${g} 0 0 0 0 ${b} .333 .333 .333 0 0" result="selectedColor"/><feComposite in="selectedColor" in2="threshold" operator="in"/>`
