@@ -3,5 +3,6 @@
 @import './primitives.css';
 @import './collections.css';
 @import './overlays.css';
+@import './viewer.css';
 @import './duplicates.css';
 @import './density.css';
