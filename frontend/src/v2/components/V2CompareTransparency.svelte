@@ -45,7 +45,8 @@
   class="v2-compare-overlay mode-transparency"
   class:controls-open={controlsOpen}
   bind:this={viewport}
-  tabindex="0"
+  role="group"
+  aria-label="Transparency comparison"
   onmouseenter={showControls}
   onmouseleave={hideControlsSoon}
   onfocusin={showControls}
@@ -53,7 +54,7 @@
 >
   <div class="v2-compare-layer"><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceSrc} alt={referenceLabel}></div></div>
   <div class="v2-compare-layer top" style={`opacity:${opacity / 100}`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedSrc} alt={selectedLabel} onload={onselectedload}></div></div>
-  <div class="v2-compare-floating-controls v2-compare-hover" onmouseenter={showControls} onmouseleave={hideControlsSoon}>
+  <div class="v2-compare-floating-controls v2-compare-hover">
     <V2RangeSlider label="Transparency" min={0} max={100} bind:value={opacity} suffix="%" track="fill" width={160} ariaLabel="Overlay transparency" />
   </div>
   <div class="v2-compare-legend"><span>Reference</span><span>Selected</span></div>
