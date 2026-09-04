@@ -51,7 +51,8 @@
   class="v2-compare-overlay mode-difference"
   class:controls-open={controlsOpen}
   bind:this={viewport}
-  tabindex="0"
+  role="group"
+  aria-label="Difference comparison"
   onmouseenter={showControls}
   onmouseleave={hideControlsSoon}
   onfocusin={showControls}
@@ -60,7 +61,7 @@
   <div class="v2-compare-transform" style={`transform:${transform}`}>
     <img src={differenceSrc} alt="Generated difference preview" onload={onimageload}>
   </div>
-  <div class="v2-compare-floating-controls v2-difference-controls" onmouseenter={showControls} onmouseleave={hideControlsSoon}>
+  <div class="v2-compare-floating-controls v2-difference-controls">
     <V2RangeSlider label="Color" min={0} max={400} bind:value={diffHue} track="spectrum" width={160} swatch={differenceHighlightCss(diffHue)} valueLabel={hueLabel(diffHue)} ariaLabel="Difference highlight color" />
     <V2Checkbox label="Two colors only" checked={diffBinary} onchange={(checked) => (diffBinary = checked)} />
     {#if !diffBinary}
