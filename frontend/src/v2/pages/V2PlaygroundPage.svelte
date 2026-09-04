@@ -52,7 +52,8 @@
   let checked = $state(true);
   let toggled = $state(false);
   let fillSlider = $state(62);
-  let hueSlider = $state(190);
+  let colorSlider = $state('#00FFFF');
+  let colorSliderPosition = $state(190);
   let plainSlider = $state(5);
   let decimalSlider = $state(0.25);
   let wideSlider = $state(75);
@@ -199,7 +200,8 @@
       <V2Card title="Range sliders · common configs">
         <div class="v2-playground-slider-stack">
           <V2RangeSlider label="Fill" bind:value={fillSlider} min={0} max={100} suffix="%" track="fill" ariaLabel="Filled percentage slider" />
-          <V2RangeSlider label="Hue" bind:value={hueSlider} min={0} max={360} suffix="°" track="spectrum" ariaLabel="Spectrum hue slider" />
+          <V2RangeSlider label="Color" bind:value={colorSlider} bind:numericValue={colorSliderPosition} min={0} max={360} track="spectrum" ariaLabel="Spectrum color slider" />
+          <span class="v2-small v2-muted">Spectrum exposes value <b>{colorSlider}</b> by default and numericValue <b>{colorSliderPosition}</b> for its position.</span>
           <V2RangeSlider label="Plain" bind:value={plainSlider} min={0} max={10} track="plain" ariaLabel="Plain range slider" />
           <V2RangeSlider label="Fraction" bind:value={decimalSlider} min={0} max={1} step={0.05} track="fill" valueLabel={decimalSlider.toFixed(2)} ariaLabel="Fractional range slider" />
         </div>
@@ -239,6 +241,8 @@
             <span class="v2-small">searchable: <b>{searchableValue}</b></span>
             <span class="v2-small">many: <b>{manyValue}</b></span>
             <span class="v2-small">empty: <b>{emptyValue || '∅'}</b></span>
+            <span class="v2-small">color: <b>{colorSlider}</b></span>
+            <span class="v2-small">color position: <b>{colorSliderPosition}</b></span>
           </V2Stack>
         </V2Card>
       </V2Section>
