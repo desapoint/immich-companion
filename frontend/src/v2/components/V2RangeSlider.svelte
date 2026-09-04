@@ -162,7 +162,9 @@
   {#if label}<span>{label}</span>{/if}
   {#if swatch}<i class="v2-range-swatch" style={`background:${swatch}`} aria-hidden="true"></i>{/if}
   <span class="v2-range-control" data-track={track}>
-    <span class="v2-range-track" aria-hidden="true"></span>
+    <span class="v2-range-track" aria-hidden="true">
+      <span class="v2-range-fill-rail"><span class="v2-range-fill"></span></span>
+    </span>
     <input
       type="range"
       {min}
@@ -185,13 +187,16 @@
     --v2-range-thumb-overhang:max(0px,calc((var(--v2-range-thumb-width) - var(--v2-range-slider-height)) / 2));
     --v2-range-control-width:calc(var(--v2-range-slider-width) + 2 * var(--v2-range-thumb-overhang));
     --v2-range-control-height:max(var(--v2-range-hit-height),var(--v2-range-thumb-height));
-    --v2-range-thumb-travel:calc(var(--v2-range-slider-width) - var(--v2-range-slider-height));
+    --v2-range-thumb-travel:max(0px,calc(var(--v2-range-slider-width) - var(--v2-range-slider-height)));
     display:flex;align-items:center;gap:7px;font-size:11px;white-space:nowrap;max-width:100%;
   }
   .v2-range-control{position:relative;display:inline-flex;align-items:center;width:var(--v2-range-control-width);height:var(--v2-range-control-height);flex:0 0 var(--v2-range-control-width)}
   .v2-range-track{position:absolute;left:var(--v2-range-thumb-overhang);width:var(--v2-range-slider-width);top:50%;height:var(--v2-range-slider-height);transform:translateY(-50%);border-radius:999px;background:#263342;overflow:hidden;pointer-events:none}
-  .v2-range-control[data-track="fill"] .v2-range-track{background:linear-gradient(90deg,#7ea6ff 0 calc(var(--v2-range-slider-radius) + var(--v2-range-position) * 0),#263342 0)}
-  .v2-range-control[data-track="fill"] .v2-range-track::before{content:"";position:absolute;left:0;top:0;bottom:0;width:calc(var(--v2-range-slider-radius) + var(--v2-range-position) * (var(--v2-range-thumb-travel) / 100%));background:#7ea6ff;pointer-events:none}
+
+  .v2-range-fill-rail{position:absolute;left:var(--v2-range-slider-radius);top:0;width:var(--v2-range-thumb-travel);height:100%;pointer-events:none}
+  .v2-range-fill{display:block;width:var(--v2-range-position);height:100%;background:#7ea6ff}
+  .v2-range-control[data-track="fill"] .v2-range-track::after{content:"";position:absolute;left:0;top:0;bottom:0;width:var(--v2-range-slider-radius);background:#7ea6ff}
+  .v2-range-control:not([data-track="fill"]) .v2-range-fill-rail{display:none}
 
   .v2-range-control[data-track="spectrum"] .v2-range-track{background:#ff0000}
   .v2-range-control[data-track="spectrum"] .v2-range-track::before{
