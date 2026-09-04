@@ -1,6 +1,7 @@
 <script lang="ts">
   import V2Button from './V2Button.svelte';
   import V2Checkbox from './V2Checkbox.svelte';
+  import V2RangeSlider from './V2RangeSlider.svelte';
   import V2Segmented from './V2Segmented.svelte';
 
   export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference';
@@ -253,9 +254,9 @@
         {#if mode === 'Difference'}
           <div class="v2-compare-transform" style={`transform:${transform}`}><img bind:this={selectedImage} src={differenceSrc} alt="Generated difference preview"></div>
           <div class="v2-compare-floating-controls v2-difference-controls" onmouseenter={showControls} onmouseleave={hideControlsSoon}>
-            <label class="v2-diff-control"><span>Color</span><i class="v2-diff-chip" style={`--diff-hue:${diffHue}`}></i><input type="range" min="0" max="360" bind:value={diffHue}><b>{diffHue}°</b></label>
+            <V2RangeSlider label="Color" min={0} max={360} bind:value={diffHue} suffix="°" track="spectrum" width={112} swatch={`hsl(${diffHue} 90% 58%)`} ariaLabel="Difference highlight hue" />
             <V2Checkbox label="Two colors only" checked={diffBinary} onchange={(checked) => (diffBinary = checked)} />
-            {#if !diffBinary}<label class="v2-diff-control"><span>Contrast</span><input type="range" min="50" max="300" bind:value={diffContrast}><b>{diffContrast}%</b></label>{/if}
+            {#if !diffBinary}<V2RangeSlider label="Contrast" min={50} max={300} bind:value={diffContrast} suffix="%" track="fill" width={112} ariaLabel="Difference contrast" />{/if}
           </div>
           <div class="v2-difference-note">Black = same · color intensity = difference amount</div>
         {:else}
@@ -267,7 +268,7 @@
             <div class="v2-compare-swipe-hit" style={`left:${split}%`} onpointerdown={swipeStart} onpointermove={swipeMove} onpointerup={swipeEnd} onpointercancel={swipeEnd}></div>
           {:else if mode === 'Transparency'}
             <div class="v2-compare-floating-controls v2-compare-hover" onmouseenter={showControls} onmouseleave={hideControlsSoon}>
-              <span>Transparency</span><input class="v2-opacity-slider" style={`--pct:${opacity}%`} type="range" min="0" max="100" bind:value={opacity}><b>{opacity}%</b>
+              <V2RangeSlider label="Transparency" min={0} max={100} bind:value={opacity} suffix="%" track="fill" width={160} ariaLabel="Overlay transparency" />
             </div>
           {/if}
         {/if}
