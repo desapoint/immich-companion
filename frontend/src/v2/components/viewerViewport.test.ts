@@ -7,12 +7,17 @@ describe('viewer viewport geometry', () => {
     expect(actualSizeZoom(400, 300, 800, 600)).toBe(2);
   });
 
-  it('prevents panning when the rendered image fits the viewport', () => {
+  it('keeps a fully occupied axis centered', () => {
     const size = renderedSize(400, 300, 800, 600, 1);
     expect(clampPan(120, -80, size)).toEqual({ x: 0, y: 0 });
   });
 
-  it('clamps pan to the visible image bounds when zoomed', () => {
+  it('allows a smaller image to move until its edge reaches the viewport boundary', () => {
+    const size = renderedSize(400, 300, 800, 600, 0.5);
+    expect(clampPan(500, -500, size)).toEqual({ x: 100, y: -75 });
+  });
+
+  it('clamps pan to the visible image bounds when zoomed beyond the viewport', () => {
     const size = renderedSize(400, 300, 800, 600, 2);
     expect(clampPan(500, -500, size)).toEqual({ x: 200, y: -150 });
   });
