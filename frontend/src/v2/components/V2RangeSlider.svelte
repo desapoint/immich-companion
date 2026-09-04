@@ -20,6 +20,7 @@
     thumbDraggingRadius,
     thumbBorderWidth = 3,
     hitHeight = 24,
+    disabled = false,
     swatch,
     ariaLabel,
     valueLabel,
@@ -47,6 +48,7 @@
     thumbDraggingRadius?: string;
     thumbBorderWidth?: number;
     hitHeight?: number;
+    disabled?: boolean;
     swatch?: string;
     ariaLabel?: string;
     valueLabel?: string;
@@ -158,7 +160,7 @@
   });
 </script>
 
-<label class="v2-range-slider" style={rootStyle}>
+<label class="v2-range-slider" style={rootStyle} data-disabled={disabled || undefined}>
   {#if label}<span>{label}</span>{/if}
   {#if swatch}<i class="v2-range-swatch" style={`background:${swatch}`} aria-hidden="true"></i>{/if}
   <span class="v2-range-control" data-track={track}>
@@ -170,6 +172,7 @@
       {min}
       {max}
       {step}
+      {disabled}
       value={sliderNumber}
       oninput={handleInput}
       aria-label={ariaLabel ?? label}
@@ -206,16 +209,24 @@
   .v2-range-control[data-track="spectrum"] .v2-range-track::after{content:"";position:absolute;right:0;top:0;bottom:0;width:var(--v2-range-slider-radius);background:#fff}
 
   .v2-range-control input{position:absolute;left:var(--v2-range-thumb-overhang);top:50%;width:var(--v2-range-slider-width);height:var(--v2-range-hit-height);margin:0;padding:0;transform:translateY(-50%);appearance:none;border:0;outline:none;background:transparent;cursor:pointer;z-index:3}
+  .v2-range-control input:disabled{cursor:not-allowed}
   .v2-range-control input::-webkit-slider-runnable-track{height:var(--v2-range-slider-height);background:transparent;border:0}
   .v2-range-control input::-moz-range-track{height:var(--v2-range-slider-height);background:transparent;border:0}
   .v2-range-control input::-webkit-slider-thumb{appearance:none;box-sizing:border-box;width:var(--v2-range-slider-height);height:var(--v2-range-slider-height);margin-top:0;border:0;border-radius:50%;background:transparent;box-shadow:none}
   .v2-range-control input::-moz-range-thumb{box-sizing:border-box;width:var(--v2-range-slider-height);height:var(--v2-range-slider-height);border:0;border-radius:50%;background:transparent;box-shadow:none}
 
   .v2-range-thumb-rail{position:absolute;z-index:2;left:calc(var(--v2-range-thumb-overhang) + var(--v2-range-slider-radius));top:50%;width:var(--v2-range-thumb-travel);height:0;pointer-events:none}
-  .v2-range-thumb{position:absolute;left:calc(var(--v2-range-position) * 100%);top:0;width:var(--v2-range-thumb-width);height:var(--v2-range-thumb-height);box-sizing:border-box;border-radius:var(--v2-range-thumb-radius);background:#fff;border:var(--v2-range-thumb-border-width) solid #7ea6ff;box-shadow:0 2px 8px rgba(0,0,0,.45);transform:translate(-50%,-50%);transform-origin:center;transition:width 110ms ease,height 110ms ease,border-radius 110ms ease,background 110ms ease}
+  .v2-range-thumb{position:absolute;left:calc(var(--v2-range-position) * 100%);top:0;width:var(--v2-range-thumb-width);height:var(--v2-range-thumb-height);box-sizing:border-box;border-radius:var(--v2-range-thumb-radius);background:#fff;border:var(--v2-range-thumb-border-width) solid #7ea6ff;box-shadow:0 2px 8px rgba(0,0,0,.45);transform:translate(-50%,-50%);transform-origin:center;transition:width 110ms ease,height 110ms ease,border-radius 110ms ease,background 110ms ease,opacity 110ms ease,filter 110ms ease}
   .v2-range-control[data-track="spectrum"] .v2-range-thumb{background:var(--v2-range-spectrum-color)}
-  .v2-range-control input:active ~ .v2-range-thumb-rail .v2-range-thumb{width:var(--v2-range-thumb-dragging-width);height:var(--v2-range-thumb-dragging-height);border-radius:var(--v2-range-thumb-dragging-radius)}
+  .v2-range-control input:not(:disabled):active ~ .v2-range-thumb-rail .v2-range-thumb{width:var(--v2-range-thumb-dragging-width);height:var(--v2-range-thumb-dragging-height);border-radius:var(--v2-range-thumb-dragging-radius)}
   .v2-range-control input:focus-visible ~ .v2-range-thumb-rail .v2-range-thumb{outline:2px solid #4169a8;outline-offset:2px}
+
+  .v2-range-slider[data-disabled="true"]{color:rgba(232,238,246,.55)}
+  .v2-range-slider[data-disabled="true"] .v2-range-track,
+  .v2-range-slider[data-disabled="true"] .v2-range-thumb,
+  .v2-range-slider[data-disabled="true"] .v2-range-swatch{opacity:.5;filter:saturate(.45)}
+  .v2-range-slider[data-disabled="true"] .v2-range-thumb{box-shadow:none}
+  .v2-range-slider[data-disabled="true"] .v2-range-value{opacity:.6}
 
   .v2-range-swatch{width:18px;height:18px;flex:0 0 18px;border-radius:50%;border:2px solid rgba(255,255,255,.8)}
   .v2-range-value{min-width:64px;text-align:center;background:#151f2a;border:1px solid #354557;border-radius:999px;padding:3px 7px;font-size:11px}
