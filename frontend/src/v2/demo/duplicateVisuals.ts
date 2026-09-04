@@ -44,7 +44,7 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   if (h < 60) [r, g] = [c, x];
   else if (h < 120) [r, g] = [x, c];
   else if (h < 180) [g, b] = [c, x];
-  else if (h < 240) [r, b] = [x, c];
+  else if (h < 240) [g, b] = [x, c];
   else if (h < 300) [r, b] = [x, c];
   else [r, b] = [c, x];
   return [r + m, g + m, b + m];
