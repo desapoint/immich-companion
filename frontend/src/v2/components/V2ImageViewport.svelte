@@ -65,7 +65,6 @@
   class:panning={dragging}
   role="region"
   aria-label="Image viewport"
-  tabindex="0"
   onpointerdown={pointerDown}
   onpointermove={pointerMove}
   onpointerup={pointerEnd}
