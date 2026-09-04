@@ -48,6 +48,19 @@
 
   const transform = $derived(`translate(${panX}px, ${panY}px) scale(${zoom})`);
 
+  function differenceColor(value: number): string {
+    const clamped = Math.max(0, Math.min(400, value));
+    if (clamped <= 360) return `hsl(${clamped} 90% 58%)`;
+    const white = ((clamped - 360) / 40) * 100;
+    return `color-mix(in srgb, hsl(0 90% 58%) ${100 - white}%, white ${white}%)`;
+  }
+
+  function differenceValueLabel(value: number): string {
+    if (value <= 360) return `${value}°`;
+    const white = Math.round(((value - 360) / 40) * 100);
+    return white >= 100 ? 'White' : `${white}% white`;
+  }
+
   function naturalSize() {
     return {
       width: selectedImage?.naturalWidth || 800,
@@ -254,7 +267,7 @@
         {#if mode === 'Difference'}
           <div class="v2-compare-transform" style={`transform:${transform}`}><img bind:this={selectedImage} src={differenceSrc} alt="Generated difference preview"></div>
           <div class="v2-compare-floating-controls v2-difference-controls" onmouseenter={showControls} onmouseleave={hideControlsSoon}>
-            <V2RangeSlider label="Color" min={0} max={360} bind:value={diffHue} suffix="°" track="spectrum" width={112} swatch={`hsl(${diffHue} 90% 58%)`} ariaLabel="Difference highlight hue" />
+            <V2RangeSlider label="Color" min={0} max={400} bind:value={diffHue} track="spectrum" width={160} swatch={differenceColor(diffHue)} valueLabel={differenceValueLabel(diffHue)} ariaLabel="Difference highlight color" />
             <V2Checkbox label="Two colors only" checked={diffBinary} onchange={(checked) => (diffBinary = checked)} />
             {#if !diffBinary}<V2RangeSlider label="Contrast" min={50} max={300} bind:value={diffContrast} suffix="%" track="fill" width={112} ariaLabel="Difference contrast" />{/if}
           </div>
