@@ -10,6 +10,8 @@
     suffix = '',
     track = 'fill',
     width = 160,
+    trackHeight = 8,
+    thumbSize = 20,
     swatch,
     ariaLabel,
     valueLabel,
@@ -27,6 +29,8 @@
     suffix?: string;
     track?: 'fill' | 'spectrum' | 'plain';
     width?: number;
+    trackHeight?: number;
+    thumbSize?: number;
     swatch?: string;
     ariaLabel?: string;
     valueLabel?: string;
@@ -35,10 +39,11 @@
     onnormalizedchange?: (value: number) => void;
   } = $props();
 
-  const trackHeight = 8;
-  const thumbSize = 20;
-  const trackRadius = trackHeight / 2;
-  const thumbOverhang = Math.max(0, (thumbSize - trackHeight) / 2);
+  const safeWidth = $derived(Math.max(1, width));
+  const safeTrackHeight = $derived(Math.max(2, trackHeight));
+  const safeThumbSize = $derived(Math.max(2, thumbSize));
+  const trackRadius = $derived(safeTrackHeight / 2);
+  const thumbOverhang = $derived(Math.max(0, (safeThumbSize - safeTrackHeight) / 2));
 
   const spectrumStops = [
     { at: 0, rgb: [255, 0, 0] },
@@ -84,7 +89,9 @@
     ? clampNumber(numericValue)
     : clampNumber(typeof value === 'number' ? value : Number(value)));
   const fraction = $derived(fractionFor(sliderNumber));
-  const positionPx = $derived(thumbOverhang + trackRadius + fraction * Math.max(0, width - trackHeight));
+  const centerTravel = $derived(Math.max(0, safeWidth - safeTrackHeight));
+  const positionPx = $derived(thumbOverhang + trackRadius + fraction * centerTravel);
+  const trackPositionPx = $derived(trackRadius + fraction * centerTravel);
   const spectrumColor = $derived(spectrumColorAt(fraction));
   const displayedValue = $derived(valueLabel ?? (track === 'spectrum' ? spectrumColor : `${sliderNumber}${suffix}`));
 
@@ -128,7 +135,7 @@
   <span
     class="v2-range-control"
     data-track={track}
-    style={`--v2-range-width:${width}px;--v2-range-track-height:${trackHeight}px;--v2-range-track-radius:${trackRadius}px;--v2-range-thumb-size:${thumbSize}px;--v2-range-thumb-overhang:${thumbOverhang}px;--v2-range-position:${positionPx}px;--v2-range-spectrum-color:${spectrumColor}`}
+    style={`--v2-range-width:${safeWidth}px;--v2-range-track-height:${safeTrackHeight}px;--v2-range-track-radius:${trackRadius}px;--v2-range-thumb-size:${safeThumbSize}px;--v2-range-thumb-overhang:${thumbOverhang}px;--v2-range-position:${positionPx}px;--v2-range-track-position:${trackPositionPx}px;--v2-range-spectrum-color:${spectrumColor}`}
   >
     <span class="v2-range-track" aria-hidden="true"></span>
     <input
@@ -146,10 +153,10 @@
 </label>
 
 <style>
-  .v2-range-slider{display:flex;align-items:center;gap:7px;font-size:11px;white-space:nowrap}
-  .v2-range-control{position:relative;display:inline-flex;align-items:center;width:calc(var(--v2-range-width) + 2 * var(--v2-range-thumb-overhang));height:var(--v2-range-thumb-size);flex:0 0 calc(var(--v2-range-width) + 2 * var(--v2-range-thumb-overhang))}
+  .v2-range-slider{display:flex;align-items:center;gap:7px;font-size:11px;white-space:nowrap;max-width:100%}
+  .v2-range-control{position:relative;display:inline-flex;align-items:center;width:calc(var(--v2-range-width) + 2 * var(--v2-range-thumb-overhang));height:max(var(--v2-range-thumb-size),var(--v2-range-track-height));flex:0 0 calc(var(--v2-range-width) + 2 * var(--v2-range-thumb-overhang))}
   .v2-range-track{position:absolute;left:var(--v2-range-thumb-overhang);width:var(--v2-range-width);top:50%;height:var(--v2-range-track-height);transform:translateY(-50%);border-radius:999px;background:#263342;overflow:hidden;pointer-events:none}
-  .v2-range-control[data-track="fill"] .v2-range-track{background:linear-gradient(90deg,#7ea6ff 0 calc(var(--v2-range-position) - var(--v2-range-thumb-overhang)),#263342 calc(var(--v2-range-position) - var(--v2-range-thumb-overhang)) 100%)}
+  .v2-range-control[data-track="fill"] .v2-range-track{background:linear-gradient(90deg,#7ea6ff 0 var(--v2-range-track-position),#263342 var(--v2-range-track-position) 100%)}
 
   .v2-range-control[data-track="spectrum"] .v2-range-track{background:#ff0000}
   .v2-range-control[data-track="spectrum"] .v2-range-track::before{
@@ -171,7 +178,7 @@
     background:#fff;
   }
 
-  .v2-range-control input{position:absolute;left:var(--v2-range-thumb-overhang);top:50%;width:var(--v2-range-width);height:var(--v2-range-thumb-size);margin:0;padding:0;transform:translateY(-50%);appearance:none;border:0;outline:none;background:transparent;cursor:pointer;z-index:2}
+  .v2-range-control input{position:absolute;left:var(--v2-range-thumb-overhang);top:50%;width:var(--v2-range-width);height:max(var(--v2-range-thumb-size),var(--v2-range-track-height));margin:0;padding:0;transform:translateY(-50%);appearance:none;border:0;outline:none;background:transparent;cursor:pointer;z-index:2}
   .v2-range-control input::-webkit-slider-runnable-track{height:var(--v2-range-track-height);background:transparent;border:0}
   .v2-range-control input::-moz-range-track{height:var(--v2-range-track-height);background:transparent;border:0}
   .v2-range-control input::-webkit-slider-thumb{appearance:none;box-sizing:border-box;width:var(--v2-range-track-height);height:var(--v2-range-track-height);margin-top:0;border:0;border-radius:50%;background:transparent;box-shadow:none}
