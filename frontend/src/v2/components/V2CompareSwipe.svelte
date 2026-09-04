@@ -61,21 +61,16 @@
   });
 </script>
 
-<div class="v2-compare-overlay mode-swipe" bind:this={viewport} tabindex="0">
+<div class="v2-compare-overlay mode-swipe" bind:this={viewport}>
   <div class="v2-compare-layer"><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceSrc} alt={referenceLabel}></div></div>
   <div class="v2-compare-layer top" style={`clip-path:inset(0 ${100 - split}% 0 0)`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedSrc} alt={selectedLabel} onload={onselectedload}></div></div>
   <div class="v2-compare-split-line" style={`left:${split}%`}></div>
   <div class="v2-compare-split-handle" style={`left:${split}%`}>↔</div>
-  <div
+  <button
+    type="button"
     class="v2-compare-swipe-hit"
     style={`left:${split}%`}
-    role="separator"
-    aria-orientation="vertical"
-    aria-label="Comparison split"
-    aria-valuemin="0"
-    aria-valuemax="100"
-    aria-valuenow={Math.round(split)}
-    tabindex="0"
+    aria-label={`Move comparison split, ${Math.round(split)} percent`}
     onpointerdown={swipeStart}
     onpointermove={swipeMove}
     onpointerup={swipeEnd}
@@ -84,8 +79,14 @@
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
         split = Math.max(0, Math.min(100, split + (event.key === 'ArrowRight' ? 2 : -2)));
+      } else if (event.key === 'Home') {
+        event.preventDefault();
+        split = 0;
+      } else if (event.key === 'End') {
+        event.preventDefault();
+        split = 100;
       }
     }}
-  ></div>
+  ></button>
   <div class="v2-compare-legend"><span>Reference</span><span>Selected</span></div>
 </div>
