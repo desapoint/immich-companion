@@ -56,12 +56,18 @@
   let colorSliderPosition = $state(190);
   let plainSlider = $state(5);
   let decimalSlider = $state(0.25);
+  let narrowSlider = $state(18);
   let wideSlider = $state(75);
+  let thickSlider = $state(34);
+  let oversizedThumbSlider = $state(58);
   let swatchSlider = $state(42);
+  let customLabelSlider = $state(75);
   let modalSlider = $state(50);
   let edgeValues = $state<Record<string, string>>({
     tl: 'family', tr: 'montreal', bl: 'project', br: 'family', lm: 'short', rm: 'option-20',
   });
+
+  const customSliderLabel = $derived(customLabelSlider < 34 ? 'Low' : customLabelSlider < 67 ? 'Medium' : 'High');
 
   function setEdgeValue(key: string, value: string): void {
     edgeValues = { ...edgeValues, [key]: value };
@@ -201,18 +207,21 @@
         <div class="v2-playground-slider-stack">
           <V2RangeSlider label="Fill" bind:value={fillSlider} min={0} max={100} suffix="%" track="fill" ariaLabel="Filled percentage slider" />
           <V2RangeSlider label="Color" bind:value={colorSlider} bind:numericValue={colorSliderPosition} min={0} max={360} track="spectrum" ariaLabel="Spectrum color slider" />
-          <span class="v2-small v2-muted">Spectrum exposes value <b>{colorSlider}</b> by default and numericValue <b>{colorSliderPosition}</b> for its position.</span>
+          <span class="v2-small v2-muted">Spectrum exposes value <b>{colorSlider}</b> and numericValue <b>{colorSliderPosition}</b>.</span>
           <V2RangeSlider label="Plain" bind:value={plainSlider} min={0} max={10} track="plain" ariaLabel="Plain range slider" />
           <V2RangeSlider label="Fraction" bind:value={decimalSlider} min={0} max={1} step={0.05} track="fill" valueLabel={decimalSlider.toFixed(2)} ariaLabel="Fractional range slider" />
         </div>
       </V2Card>
 
-      <V2Card title="Range sliders · sizing / swatch">
+      <V2Card title="Range sliders · independent sizing / swatch">
         <div class="v2-playground-slider-stack">
-          <V2RangeSlider label="Narrow" bind:value={fillSlider} min={0} max={100} width={90} suffix="%" />
-          <div class="v2-playground-slider-wide"><V2RangeSlider label="Wide" bind:value={wideSlider} min={0} max={100} width={320} suffix="%" /></div>
+          <V2RangeSlider label="Narrow" bind:value={narrowSlider} min={0} max={100} width={90} suffix="%" ariaLabel="Independent narrow slider" />
+          <div class="v2-playground-slider-wide"><V2RangeSlider label="Wide" bind:value={wideSlider} min={0} max={100} width={320} suffix="%" ariaLabel="Independent wide slider" /></div>
+          <V2RangeSlider label="Thick track" bind:value={thickSlider} min={0} max={100} trackHeight={14} thumbSize={22} suffix="%" ariaLabel="Thick track slider" />
+          <V2RangeSlider label="Large thumb" bind:value={oversizedThumbSlider} min={0} max={100} trackHeight={8} thumbSize={30} suffix="%" ariaLabel="Large thumb slider" />
           <V2RangeSlider label="Swatch" bind:value={swatchSlider} min={0} max={100} swatch={`hsl(${swatchSlider * 3.6} 75% 55%)`} suffix="%" ariaLabel="Slider with swatch" />
-          <V2RangeSlider label="Custom label" value={75} min={0} max={100} valueLabel="High" track="plain" ariaLabel="Slider with custom value label" />
+          <V2RangeSlider label="Custom label" bind:value={customLabelSlider} min={0} max={100} valueLabel={customSliderLabel} track="plain" ariaLabel="Slider with dynamic custom value label" />
+          <span class="v2-small v2-muted">Each example has its own state. Moving one slider does not change any other slider.</span>
         </div>
       </V2Card>
 
