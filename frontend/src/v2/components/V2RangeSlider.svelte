@@ -1,36 +1,40 @@
 <script lang="ts">
   let {
     label,
-    value = $bindable(0),
     min = 0,
     max = 100,
     step = 1,
+    value = $bindable<number | string>(0),
+    numericValue = $bindable<number>(min),
     suffix = '',
     track = 'fill',
     width = 160,
     swatch,
     ariaLabel,
     valueLabel,
+    onchange,
+    onnumericchange,
   }: {
     label?: string;
-    value?: number;
     min?: number;
     max?: number;
     step?: number;
+    value?: number | string;
+    numericValue?: number;
     suffix?: string;
     track?: 'fill' | 'spectrum' | 'plain';
     width?: number;
     swatch?: string;
     ariaLabel?: string;
     valueLabel?: string;
+    onchange?: (value: number | string) => void;
+    onnumericchange?: (value: number) => void;
   } = $props();
 
   const trackHeight = 8;
   const thumbSize = 20;
   const trackRadius = trackHeight / 2;
   const thumbOverhang = Math.max(0, (thumbSize - trackHeight) / 2);
-  const fraction = $derived(max === min ? 0 : Math.max(0, Math.min(1, (value - min) / (max - min))));
-  const positionPx = $derived(thumbOverhang + trackRadius + fraction * Math.max(0, width - trackHeight));
 
   const spectrumStops = [
     { at: 0, rgb: [255, 0, 0] },
@@ -43,6 +47,19 @@
     { at: 1, rgb: [255, 255, 255] },
   ] as const;
 
+  function clampNumber(next: number): number {
+    if (!Number.isFinite(next)) return min;
+    return Math.max(min, Math.min(max, next));
+  }
+
+  function fractionFor(next: number): number {
+    return max === min ? 0 : Math.max(0, Math.min(1, (clampNumber(next) - min) / (max - min)));
+  }
+
+  function rgbToHex(rgb: readonly number[]): string {
+    return `#${rgb.map((channel) => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0')).join('').toUpperCase()}`;
+  }
+
   function spectrumColorAt(nextFraction: number): string {
     const clamped = Math.max(0, Math.min(1, nextFraction));
     for (let index = 1; index < spectrumStops.length; index += 1) {
@@ -51,16 +68,43 @@
         const left = spectrumStops[index - 1];
         const span = right.at - left.at;
         const local = span === 0 ? 0 : (clamped - left.at) / span;
-        const rgb = left.rgb.map((channel, channelIndex) =>
-          Math.round(channel + (right.rgb[channelIndex] - channel) * local),
-        );
-        return `rgb(${rgb[0]} ${rgb[1]} ${rgb[2]})`;
+        return rgbToHex(left.rgb.map((channel, channelIndex) =>
+          channel + (right.rgb[channelIndex] - channel) * local,
+        ));
       }
     }
-    return 'rgb(255 255 255)';
+    return '#FFFFFF';
   }
 
+  const sliderNumber = $derived(track === 'spectrum'
+    ? clampNumber(numericValue)
+    : clampNumber(typeof value === 'number' ? value : Number(value)));
+  const fraction = $derived(fractionFor(sliderNumber));
+  const positionPx = $derived(thumbOverhang + trackRadius + fraction * Math.max(0, width - trackHeight));
   const spectrumColor = $derived(spectrumColorAt(fraction));
+  const displayedValue = $derived(valueLabel ?? (track === 'spectrum' ? spectrumColor : `${sliderNumber}${suffix}`));
+
+  function handleInput(event: Event): void {
+    const next = clampNumber(Number((event.currentTarget as HTMLInputElement).value));
+    numericValue = next;
+    onnumericchange?.(next);
+
+    if (track === 'spectrum') {
+      const color = spectrumColorAt(fractionFor(next));
+      value = color;
+      onchange?.(color);
+      return;
+    }
+
+    value = next;
+    onchange?.(next);
+  }
+
+  $effect(() => {
+    if (track !== 'spectrum') return;
+    const color = spectrumColorAt(fractionFor(numericValue));
+    if (value !== color) value = color;
+  });
 </script>
 
 <label class="v2-range-slider">
@@ -77,12 +121,13 @@
       {min}
       {max}
       {step}
-      bind:value
+      value={sliderNumber}
+      oninput={handleInput}
       aria-label={ariaLabel ?? label}
     >
     <span class="v2-range-thumb" aria-hidden="true"></span>
   </span>
-  <span class="v2-range-value">{valueLabel ?? `${value}${suffix}`}</span>
+  <span class="v2-range-value">{displayedValue}</span>
 </label>
 
 <style>
@@ -123,7 +168,7 @@
   .v2-range-control input:focus-visible ~ .v2-range-thumb{outline:2px solid #4169a8;outline-offset:2px}
 
   .v2-range-swatch{width:18px;height:18px;flex:0 0 18px;border-radius:50%;border:2px solid rgba(255,255,255,.8)}
-  .v2-range-value{min-width:44px;text-align:center;background:#151f2a;border:1px solid #354557;border-radius:999px;padding:3px 7px;font-size:11px}
+  .v2-range-value{min-width:64px;text-align:center;background:#151f2a;border:1px solid #354557;border-radius:999px;padding:3px 7px;font-size:11px}
 
   @media (prefers-reduced-motion:reduce){.v2-range-thumb{transition:none}}
 </style>
