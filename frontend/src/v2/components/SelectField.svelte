@@ -54,7 +54,6 @@
   let list = $state<HTMLDivElement>();
   let searchInput = $state<HTMLInputElement>();
   let widthProbe = $state<HTMLDivElement>();
-  let contentTriggerWidth = $state(0);
   let intrinsicPopupWidth = $state(0);
   let popupTop = $state(0);
   let popupLeft = $state(0);
@@ -118,16 +117,11 @@
     }
   }
 
-  function measureIntrinsicWidths(): void {
+  function measureIntrinsicPopupWidth(): void {
     if (!widthProbe) return;
-    const triggerWidths = Array.from(widthProbe.querySelectorAll<HTMLElement>('[data-select-width-trigger]'))
-      .map((element) => element.getBoundingClientRect().width);
     const popupProbe = widthProbe.querySelector<HTMLElement>('[data-select-width-popup]');
-    const widestTrigger = Math.max(0, ...triggerWidths);
     const measuredPopup = popupProbe?.getBoundingClientRect().width ?? 0;
-
-    contentTriggerWidth = Math.min(320, Math.ceil(widestTrigger));
-    intrinsicPopupWidth = Math.max(contentTriggerWidth, Math.ceil(measuredPopup), searchable ? 240 : 0);
+    intrinsicPopupWidth = Math.max(Math.ceil(measuredPopup), searchable ? 240 : 0);
   }
 
   function positionPopup(): void {
@@ -169,9 +163,13 @@
     searchQuery = '';
     activeIndex = normalized.findIndex((option) => option.value === selected?.value && !option.disabled);
     if (activeIndex < 0) activeIndex = firstEnabled();
+
+    // The measurement probe is always rendered, so determine the popup width
+    // before the real popup exists. This keeps the very first opening identical
+    // to subsequent openings instead of correcting its width after paint.
+    measureIntrinsicPopupWidth();
     open = true;
     void tick().then(() => {
-      measureIntrinsicWidths();
       positionPopup();
       requestAnimationFrame(positionPopup);
       if (searchable) searchInput?.focus();
@@ -250,15 +248,11 @@
 
   $effect(() => {
     const optionSignature = normalized.map((option) => `${option.label}\u0000${option.subtitle}\u0000${option.direction ?? ''}`).join('\u0001');
-    const currentPlaceholder = placeholder;
     const currentSearchable = searchable;
-    const currentAllowEmpty = allowEmpty;
     void tick().then(() => {
       void optionSignature;
-      void currentPlaceholder;
       void currentSearchable;
-      void currentAllowEmpty;
-      measureIntrinsicWidths();
+      measureIntrinsicPopupWidth();
       if (open) positionPopup();
     });
   });
@@ -278,7 +272,6 @@
 <div
   class="v2-select-field"
   data-width={width}
-  style={width === 'content' && contentTriggerWidth ? `width:${contentTriggerWidth}px` : undefined}
   use:clickOutside={{ enabled: open, onoutside: () => (open = false) }}
 >
   {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
@@ -293,15 +286,37 @@
       aria-haspopup="listbox"
       aria-expanded={open}
       aria-controls={`${id}-options`}
-      style={width === 'content' && contentTriggerWidth ? `width:${contentTriggerWidth}px` : undefined}
       onclick={() => (open ? open = false : show())}
       onkeydown={handleTriggerKey}
     >
-      <span class="v2-select-trigger-copy">
-        <span>{isEmpty ? placeholder : selected?.label ?? placeholder}</span>
-        {#if !isEmpty && selected?.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
-        {#if !isEmpty && selected?.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
-      </span>
+      {#if width === 'content'}
+        <span class="v2-select-trigger-copy" style="display:grid;overflow:visible">
+          <span style="grid-area:1 / 1;display:inline-flex;align-items:center;gap:6px;min-width:0;overflow:hidden">
+            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{isEmpty ? placeholder : selected?.label ?? placeholder}</span>
+            {#if !isEmpty && selected?.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+            {#if !isEmpty && selected?.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+          </span>
+
+          {#if allowEmpty}
+            <span aria-hidden="true" style="grid-area:1 / 1;visibility:hidden;display:inline-flex;align-items:center;gap:6px;width:max-content;white-space:nowrap">
+              <span>{placeholder}</span>
+            </span>
+          {/if}
+          {#each normalized as option (`trigger-sizer-${option.value}`)}
+            <span aria-hidden="true" style="grid-area:1 / 1;visibility:hidden;display:inline-flex;align-items:center;gap:6px;width:max-content;white-space:nowrap">
+              <span>{option.label}</span>
+              {#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+              {#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+            </span>
+          {/each}
+        </span>
+      {:else}
+        <span class="v2-select-trigger-copy">
+          <span>{isEmpty ? placeholder : selected?.label ?? placeholder}</span>
+          {#if !isEmpty && selected?.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+          {#if !isEmpty && selected?.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
+        </span>
+      {/if}
       <span class="v2-select-chevron" aria-hidden="true"></span>
     </button>
     {#if allowEmpty && !isEmpty}
@@ -314,23 +329,6 @@
     aria-hidden="true"
     style="position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none;width:max-content;max-width:none"
   >
-    {#if allowEmpty}
-      <button data-select-width-trigger class="v2-select-trigger" type="button" style="width:max-content;max-width:none">
-        <span class="v2-select-trigger-copy"><span>{placeholder}</span></span>
-        <span class="v2-select-chevron" aria-hidden="true"></span>
-      </button>
-    {/if}
-    {#each normalized as option (`trigger-probe-${option.value}`)}
-      <button data-select-width-trigger class="v2-select-trigger" type="button" style="width:max-content;max-width:none">
-        <span class="v2-select-trigger-copy">
-          <span>{option.label}</span>
-          {#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
-          {#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}
-        </span>
-        <span class="v2-select-chevron" aria-hidden="true"></span>
-      </button>
-    {/each}
-
     <div
       data-select-width-popup
       class="v2-select-options"
