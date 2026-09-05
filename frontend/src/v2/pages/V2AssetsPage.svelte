@@ -44,6 +44,7 @@
   type AssetTab='Browse'|'Saved searches';
   type Rule = { id:number; field:string; op:string; value:string };
   type Group = { id:number; logic:'AND'|'OR'; negated:boolean; rules:Rule[] };
+  type DragMode = 'add'|'remove';
 
   const fieldOptions = [['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
   const operatorOptions = [['is','is'],['isNot','is not'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
@@ -55,7 +56,11 @@
   let mediaType=$state(''), favorite=$state(''), archived=$state('');
   let assetGrid=$state<HTMLElement|null>(null), assetColumns=$state(4);
   let selectedIds=$state<Set<number>>(new Set()), excludedIds=$state<Set<number>>(new Set()), allMatchingSelected=$state(false);
-  let moreOpen=$state(false);
+  let moreOpen=$state(false), selectionAnchor=$state<number|null>(null);
+  let pointerCandidate=$state(false), draggingSelection=$state(false), suppressNextTileClick=$state(false);
+  let dragStartId=$state<number|null>(null), dragMode=$state<DragMode>('add'), dragStartX=$state(0), dragStartY=$state(0), pointerX=$state(0), pointerY=$state(0);
+  let dragBaseAllMatching=false, dragBaseSelected=new Set<number>(), dragBaseExcluded=new Set<number>();
+  let autoScrollFrame:number|null=null;
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const total=2418;
 
@@ -96,23 +101,177 @@
   function removeRule(id:number,group?:Group){if(group)group.rules=group.rules.filter(r=>r.id!==id);else draftRules=draftRules.filter(r=>r.id!==id)}
   function addGroup(){draftGroups=[...draftGroups,{id:++groupSeq,logic:'AND',negated:false,rules:[{id:++seq,field:'tag',op:'is',value:''}]}]}
   function loadSaved(value:string){selectedSaved=value;if(value.includes('Favorite')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'favorite',op:'is',value:'true'},{id:++seq,field:'archived',op:'is',value:'false'}];groups=[]}else if(value.includes('Family')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'}];groups=[{id:++groupSeq,logic:'OR',negated:false,rules:[{id:++seq,field:'album',op:'is',value:'Family'},{id:++seq,field:'tag',op:'is',value:'Vacation'}]}]}else if(value.includes('Large')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'width',op:'gte',value:'3000'},{id:++seq,field:'aspectRatio',op:'gt',value:'1'}];groups=[]}summary='Expert draft · '+expressionText(rules,groups,logic,negated)}
+
   function isSelected(id:number){return allMatchingSelected?!excludedIds.has(id):selectedIds.has(id)}
-  function clearSelection(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=false;moreOpen=false}
-  function selectVisible(){selectedIds=new Set(ids);excludedIds=new Set();allMatchingSelected=false}
-  function selectAllMatching(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=true}
+  function clearSelection(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=false;selectionAnchor=null;moreOpen=false}
+  function selectVisible(){selectedIds=new Set(ids);excludedIds=new Set();allMatchingSelected=false;selectionAnchor=ids[0]??null}
+  function selectAllMatching(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=true;selectionAnchor=ids[0]??null}
   function invertSelection(){if(allMatchingSelected){selectedIds=new Set(excludedIds);excludedIds=new Set();allMatchingSelected=false}else{excludedIds=new Set(selectedIds);selectedIds=new Set();allMatchingSelected=true}}
-  function toggleSelection(id:number){if(allMatchingSelected){const next=new Set(excludedIds);if(next.has(id))next.delete(id);else next.add(id);excludedIds=next}else{const next=new Set(selectedIds);if(next.has(id))next.delete(id);else next.add(id);selectedIds=next}}
+
+  function setSelected(id:number, selected:boolean){
+    if(allMatchingSelected){
+      const next=new Set(excludedIds);
+      if(selected)next.delete(id);else next.add(id);
+      excludedIds=next;
+    }else{
+      const next=new Set(selectedIds);
+      if(selected)next.add(id);else next.delete(id);
+      selectedIds=next;
+    }
+  }
+
+  function rangeIds(fromId:number,toId:number){
+    const from=ids.indexOf(fromId),to=ids.indexOf(toId);
+    if(from<0||to<0)return [toId];
+    const min=Math.min(from,to),max=Math.max(from,to);
+    return ids.slice(min,max+1);
+  }
+
+  function selectRange(fromId:number,toId:number,selected=true){
+    const range=rangeIds(fromId,toId);
+    if(allMatchingSelected){
+      const next=new Set(excludedIds);
+      for(const id of range){if(selected)next.delete(id);else next.add(id)}
+      excludedIds=next;
+    }else{
+      const next=new Set(selectedIds);
+      for(const id of range){if(selected)next.add(id);else next.delete(id)}
+      selectedIds=next;
+    }
+  }
+
+  function handleSelectionClick(id:number,event:MouseEvent){
+    if(event.shiftKey && selectionAnchor!==null){
+      selectRange(selectionAnchor,id,true);
+      return;
+    }
+    setSelected(id,!isSelected(id));
+    selectionAnchor=id;
+  }
+
+  function handleTileActivate(id:number,event:MouseEvent){
+    if(suppressNextTileClick){suppressNextTileClick=false;return}
+    if(selectionActive || event.metaKey || event.ctrlKey || event.shiftKey){
+      handleSelectionClick(id,event);
+      return;
+    }
+    viewer=true;
+  }
+
+  function startSelectionPointer(id:number,event:PointerEvent){
+    if(event.button!==0 || event.pointerType==='touch')return;
+    pointerCandidate=true;
+    draggingSelection=false;
+    suppressNextTileClick=false;
+    dragStartId=id;
+    dragStartX=event.clientX;
+    dragStartY=event.clientY;
+    pointerX=event.clientX;
+    pointerY=event.clientY;
+    dragMode=isSelected(id)?'remove':'add';
+    dragBaseAllMatching=allMatchingSelected;
+    dragBaseSelected=new Set(selectedIds);
+    dragBaseExcluded=new Set(excludedIds);
+  }
+
+  function restoreDragBase(){
+    allMatchingSelected=dragBaseAllMatching;
+    selectedIds=new Set(dragBaseSelected);
+    excludedIds=new Set(dragBaseExcluded);
+  }
+
+  function applyDragRange(toId:number){
+    if(dragStartId===null)return;
+    restoreDragBase();
+    const range=rangeIds(dragStartId,toId);
+    if(allMatchingSelected){
+      const next=new Set(excludedIds);
+      for(const id of range){if(dragMode==='add')next.delete(id);else next.add(id)}
+      excludedIds=next;
+    }else{
+      const next=new Set(selectedIds);
+      for(const id of range){if(dragMode==='add')next.add(id);else next.delete(id)}
+      selectedIds=next;
+    }
+  }
+
+  function assetIdUnderPointer(x:number,y:number){
+    const element=document.elementFromPoint(x,y)?.closest<HTMLElement>('[data-asset-id]');
+    if(!element)return null;
+    const id=Number(element.dataset.assetId);
+    return Number.isFinite(id)?id:null;
+  }
+
+  function updateDragFromPointer(){
+    const id=assetIdUnderPointer(pointerX,pointerY);
+    if(id!==null)applyDragRange(id);
+  }
+
+  function autoScrollStep(){
+    if(!draggingSelection){autoScrollFrame=null;return}
+    const scroller=document.querySelector<HTMLElement>('.v2-content');
+    if(scroller){
+      const rect=scroller.getBoundingClientRect();
+      const edge=72;
+      let delta=0;
+      if(pointerY<rect.top+edge)delta=-Math.ceil(((rect.top+edge-pointerY)/edge)*18);
+      else if(pointerY>rect.bottom-edge)delta=Math.ceil(((pointerY-(rect.bottom-edge))/edge)*18);
+      if(delta!==0){
+        scroller.scrollTop+=delta;
+        updateDragFromPointer();
+      }
+    }
+    autoScrollFrame=requestAnimationFrame(autoScrollStep);
+  }
+
+  function startAutoScroll(){if(autoScrollFrame===null)autoScrollFrame=requestAnimationFrame(autoScrollStep)}
+  function stopAutoScroll(){if(autoScrollFrame!==null){cancelAnimationFrame(autoScrollFrame);autoScrollFrame=null}}
+
+  function handlePointerMove(event:PointerEvent){
+    if(!pointerCandidate || dragStartId===null)return;
+    pointerX=event.clientX;
+    pointerY=event.clientY;
+    if(!draggingSelection){
+      const distance=Math.hypot(pointerX-dragStartX,pointerY-dragStartY);
+      if(distance<6)return;
+      draggingSelection=true;
+      suppressNextTileClick=true;
+      selectionAnchor=dragStartId;
+      document.body.classList.add('v2-range-selecting');
+      startAutoScroll();
+    }
+    event.preventDefault();
+    updateDragFromPointer();
+  }
+
+  function finishPointerGesture(){
+    if(draggingSelection){
+      const endId=assetIdUnderPointer(pointerX,pointerY);
+      if(endId!==null)applyDragRange(endId);
+      selectionAnchor=dragStartId;
+    }
+    pointerCandidate=false;
+    draggingSelection=false;
+    dragStartId=null;
+    stopAutoScroll();
+    document.body.classList.remove('v2-range-selecting');
+  }
+
   function demoAction(_label:string){moreOpen=false}
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen && target instanceof Element && !target.closest('.v2-selection-more')) moreOpen=false}
 
-  onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return ()=>gridViewportAnchor.destroy()});
+  onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return ()=>{gridViewportAnchor.destroy();stopAutoScroll();document.body.classList.remove('v2-range-selecting')}});
 </script>
 
 <svelte:window
   onclick={handleWindowClick}
+  onpointermove={handlePointerMove}
+  onpointerup={finishPointerGesture}
+  onpointercancel={finishPointerGesture}
   onkeydown={(e)=>{
     if(e.key==='Escape'){
-      if(moreOpen)moreOpen=false;
+      if(draggingSelection)finishPointerGesture();
+      else if(moreOpen)moreOpen=false;
       else if(drawer)drawer=false;
       else if(viewer)viewer=false;
       else if(selectionActive)clearSelection();
@@ -159,7 +318,21 @@
       {:else}
         <V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/><V2Button title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} bind:value={assetColumns} valueLabel={`${assetColumns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(assetColumns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><SelectField id="asset-sort" width="content" options={['Taken date ↓']}/><SelectField id="asset-page-size" width="content" value={pageSize} options={[{value:'24',label:'24 / batch'},{value:'48',label:'48 / batch'},{value:'96',label:'96 / batch'}]} onchange={(value)=>setPageSize(Number(value))}/><V2Segmented items={['Pagination','Infinite']} active={resultMode} onselect={(value)=>setMode(value as 'Pagination'|'Infinite')} ariaLabel="Result loading mode" />{/snippet}</V2Toolbar>
       {/if}
-      <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>{#each ids as id}<V2AssetTile index={id} label={`IMG_${String(id+1).padStart(4,'0')}.jpg`} sublabel={`Aug ${21-(id%8)}, 2026`} selected={isSelected(id)} onclick={()=>selectionActive?toggleSelection(id):viewer=true}/>{/each}</div>
+      <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>
+        {#each ids as id}
+          <V2AssetTile
+            index={id}
+            label={`IMG_${String(id+1).padStart(4,'0')}.jpg`}
+            sublabel={`Aug ${21-(id%8)}, 2026`}
+            selected={isSelected(id)}
+            selectionMode={selectionActive}
+            onactivate={(event)=>handleTileActivate(id,event)}
+            onselect={(event)=>handleSelectionClick(id,event)}
+            onpreview={()=>viewer=true}
+            onpointerdown={(event)=>startSelectionPointer(id,event)}
+          />
+        {/each}
+      </div>
       {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<div class="v2-infinite-sentinel" data-loading={loaded<total || undefined}><div>{loaded>=total?`All ${total.toLocaleString()} matching assets loaded`:`${loaded.toLocaleString()} of ${total.toLocaleString()} loaded`}</div>{#if loaded<total}<V2Button onclick={()=>loaded=Math.min(total,loaded+pageSize)}>Load next {pageSize}</V2Button>{/if}</div>{/if}
     {:else}
       <V2Toolbar sticky={false}><V2Badge text={`${savedSearches.length} saved searches`}/>{#snippet actions()}<V2Button variant="primary">Create saved search</V2Button>{/snippet}</V2Toolbar>
@@ -174,6 +347,8 @@
 
 <style>
   :global(.v2-selection-toolbar .v2-toolbar-group){flex-wrap:wrap}
+  :global(body.v2-range-selecting){user-select:none;cursor:crosshair}
+  :global(body.v2-range-selecting img){-webkit-user-drag:none}
   .v2-selection-more{position:relative}
   .v2-selection-menu{position:absolute;z-index:30;top:calc(100% + .4rem);right:0;min-width:14.5rem;display:grid;gap:.18rem;padding:.4rem;border:1px solid var(--v2-border,rgba(127,127,127,.32));border-radius:.65rem;background:var(--v2-surface,Canvas);box-shadow:0 .65rem 1.8rem rgba(0,0,0,.18)}
   .v2-selection-menu button{border:0;border-radius:.45rem;background:transparent;color:inherit;padding:.55rem .65rem;text-align:left;font:inherit;cursor:pointer;display:flex;align-items:center;gap:.6rem}
