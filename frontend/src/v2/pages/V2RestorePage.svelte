@@ -292,6 +292,10 @@
     clearSelection();
   }
 
+  function restoreAll(): void {
+    clearSelection();
+  }
+
   onMount(() => () => {
     gridViewportAnchor.destroy();
     stopAutoScroll();
@@ -312,6 +316,10 @@
 />
 
 <V2PageLayout title="Restore" description="Review current Immich trash and restore individual, selected, or all trashed assets.">
+  {#snippet headerActions()}
+    <V2Button variant="primary" onclick={restoreAll}>Restore all</V2Button>
+  {/snippet}
+
   <V2Zone>
     {#if selectionActive}
       <V2Toolbar class="v2-selection-toolbar">
