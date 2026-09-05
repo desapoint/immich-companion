@@ -9,6 +9,7 @@ import {
   selectAllMatchingAssets,
   selectVisibleAssets,
   toggleAssetSelected,
+  type AssetSelectionState,
 } from './assetSelection';
 
 const ids = [10, 11, 12, 13, 14, 15];
@@ -22,7 +23,7 @@ describe('assetSelection', () => {
   });
 
   it('represents select-all with exclusions', () => {
-    let state = selectAllMatchingAssets(10);
+    let state: AssetSelectionState<number> = selectAllMatchingAssets<number>(10);
     state = toggleAssetSelected(state, 12);
     expect(state.allMatchingSelected).toBe(true);
     expect(isAssetSelected(state, 12)).toBe(false);
@@ -30,7 +31,7 @@ describe('assetSelection', () => {
   });
 
   it('inverts explicit selection into all-matching exclusions', () => {
-    let state = emptyAssetSelection();
+    let state = emptyAssetSelection<number>();
     state = toggleAssetSelected(state, 10);
     state = toggleAssetSelected(state, 12);
     state = invertAssetSelection(state);
@@ -41,7 +42,7 @@ describe('assetSelection', () => {
   });
 
   it('shift-adds toward an unselected destination', () => {
-    let state = toggleAssetSelected(emptyAssetSelection(), 10);
+    let state = toggleAssetSelected(emptyAssetSelection<number>(), 10);
     state = applyShiftAssetRange(state, ids, 13);
     expect(ids.filter((id) => isAssetSelected(state, id))).toEqual([10, 11, 12, 13]);
     expect(state.anchor).toBe(10);
@@ -56,7 +57,7 @@ describe('assetSelection', () => {
   });
 
   it('recomputes drag ranges from the gesture snapshot so moving backward shrinks the range', () => {
-    const snapshot = toggleAssetSelected(emptyAssetSelection(), 15);
+    const snapshot = toggleAssetSelected(emptyAssetSelection<number>(), 15);
     const overshot = applyAssetRangeFromSnapshot(snapshot, ids, 10, 14, 'add');
     expect(ids.filter((id) => isAssetSelected(overshot, id))).toEqual(ids);
 
