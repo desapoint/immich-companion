@@ -5,6 +5,33 @@ built to provide advanced search, safe bulk actions, duplicate review, tagging,
 integrity analysis, and people/album workflows without modifying Immich's
 database or media files directly.
 
+## Preferred stack & tooling
+
+Use these choices by default when adding or extending the project so the stack
+stays consistent and the preferred tools are easy to identify at a glance:
+
+- **Frontend:** Svelte 5 + TypeScript, built with Vite.
+- **V2 UI:** reusable V2-owned Svelte primitives and responsibility-based CSS;
+  prefer component props/state and shared layout primitives over page-specific
+  styling or duplicated markup.
+- **Icons:** `@lucide/svelte` (Lucide) is the preferred complete icon set. Use
+  Lucide icons for new icon placements instead of text glyphs, emoji, or ad-hoc
+  SVGs unless a product-specific graphic genuinely requires something custom.
+- **Frontend testing:** `svelte-check`, Vitest, and Playwright.
+- **Package management:** npm with the committed `package-lock.json`; use
+  `npm ci` for reproducible installs.
+- **Backend:** Python 3.12+ with FastAPI and Uvicorn.
+- **Backend testing/linting:** pytest and Ruff.
+- **Persistence:** PostgreSQL for companion-owned relational state. Qdrant is
+  reserved for vector storage when needed.
+- **Immich integration:** use the supported Immich API. Do not write directly to
+  Immich's database or mutate Immich-managed media files.
+- **Local/runtime environment:** Docker Compose for the reproducible integration
+  environment and production-style service orchestration.
+- **Development workflow:** Vite HMR for frontend iteration and Uvicorn reload
+  for backend iteration; keep locked dependencies and CI checks aligned with the
+  same toolchain.
+
 The current vertical slice includes a FastAPI service, a componentized Svelte
 status dashboard and asset workspace, typed Immich asset/album synchronization,
 nested PostgreSQL search with stable configurable ordering, image cards, and a

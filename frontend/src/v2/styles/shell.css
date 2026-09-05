@@ -1,0 +1,32 @@
+.v2-app{min-height:100vh;display:grid;grid-template-columns:var(--v2-sidebar-width) minmax(0,1fr)}
+.v2-sidebar{height:100vh;position:sticky;top:0;display:flex;flex-direction:column;padding:12px 10px;border-right:1px solid var(--v2-line);background:#0e141c;z-index:30}
+.v2-brand{height:45px;display:flex;align-items:center;gap:10px;padding:0 9px;font-weight:850;font-size:16px}
+.v2-logo{width:28px;height:28px;border-radius:9px;background:linear-gradient(135deg,#94b4ff,#746efa)}
+.v2-nav-label{color:#6e7e92;font-size:10px;text-transform:uppercase;letter-spacing:.1em;font-weight:900;padding:15px 10px 6px}
+.v2-nav{display:grid;gap:3px}
+.v2-nav-button{width:100%;height:39px;display:flex;align-items:center;gap:10px;background:transparent;border:1px solid transparent;border-radius:8px;color:#adbac9;text-align:left;padding:8px 11px;cursor:pointer}
+.v2-nav-button:hover{background:#141d28}.v2-nav-button[aria-current="page"]{background:var(--v2-accent-2);color:#e8efff}
+.v2-nav-icon{width:17px;height:17px;display:grid;place-items:center;flex:0 0 17px;color:#8494a8}.v2-nav-icon svg{display:block;stroke:currentColor}.v2-nav-button:hover .v2-nav-icon,.v2-nav-button[aria-current="page"] .v2-nav-icon{color:currentColor}.v2-grow{flex:1}
+.v2-connection{border:1px solid var(--v2-line);border-radius:10px;background:var(--v2-surface);padding:10px}
+.v2-dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--v2-green);margin-right:6px}
+.v2-shell{min-width:0;height:100vh;display:grid;grid-template-rows:var(--v2-topbar-height) minmax(0,1fr);overflow:hidden}
+.v2-topbar{height:var(--v2-topbar-height);position:relative;z-index:25;background:rgba(11,16,22,.94);backdrop-filter:blur(12px);border-bottom:1px solid var(--v2-line);display:flex;align-items:center;justify-content:space-between;padding:0 20px}
+.v2-crumb{color:var(--v2-muted)}.v2-crumb-current{color:var(--v2-text);font-weight:700}.v2-top-actions{display:flex;gap:8px;align-items:center}
+.v2-top-search{width:300px;border:1px solid var(--v2-line);background:#0f151d;color:var(--v2-text);border-radius:8px;padding:8px 10px}
+.v2-page-host{min-height:0;height:100%;overflow:hidden;display:grid;grid-template-rows:auto minmax(0,1fr)}
+.v2-page-head{position:relative;z-index:12;background:var(--v2-surface);border-bottom:1px solid var(--v2-line);padding:18px 22px 0}.v2-page-head[data-has-tabs="false"]{padding-bottom:14px}
+.v2-head-row{display:flex;justify-content:space-between;gap:var(--v2-space-5);align-items:flex-start}
+.v2-page-heading{min-width:0;display:flex;flex-direction:column;align-items:flex-start;gap:var(--v2-space-2)}
+.v2-page-actions{flex:0 0 auto;display:flex;gap:var(--v2-space-2);flex-wrap:wrap;justify-content:flex-end}
+.v2-page-title{font-size:24px;line-height:1.2;margin:0}.v2-page-description{margin:0;color:var(--v2-muted);max-width:780px}
+.v2-page-tabs{margin-top:14px}
+.v2-workspace{position:relative;display:grid;grid-template-columns:var(--v2-context-width) minmax(0,1fr) var(--v2-inspector-width);min-height:0;height:100%;overflow:hidden}
+.v2-workspace[data-layout="context-only"]{grid-template-columns:var(--v2-context-width) minmax(0,1fr)}
+.v2-workspace[data-layout="inspector-only"]{grid-template-columns:minmax(0,1fr) var(--v2-inspector-width)}
+.v2-workspace[data-layout="content-only"]{grid-template-columns:minmax(0,1fr)}
+.v2-context,.v2-inspector{background:#0f151d;padding:15px;overflow:auto;min-height:0;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:#475970 #111821}
+.v2-content{--v2-content-top-inset:16px;padding:16px 12px 90px;min-width:0;min-height:0;overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable both-edges;scrollbar-width:thin;scrollbar-color:#475970 #111821}
+.v2-context{border-right:1px solid var(--v2-line)}.v2-inspector{border-left:1px solid var(--v2-line)}
+.v2-context::-webkit-scrollbar,.v2-content::-webkit-scrollbar,.v2-inspector::-webkit-scrollbar{width:10px;height:10px}
+.v2-context::-webkit-scrollbar-thumb,.v2-content::-webkit-scrollbar-thumb,.v2-inspector::-webkit-scrollbar-thumb{background:#475970;border-radius:10px;border:2px solid #111821}
+.v2-context::-webkit-scrollbar-track,.v2-content::-webkit-scrollbar-track,.v2-inspector::-webkit-scrollbar-track{background:#111821}

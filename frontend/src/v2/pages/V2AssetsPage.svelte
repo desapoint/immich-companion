@@ -1,0 +1,359 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import {
+    FolderMinus,
+    FolderPlus,
+    Archive,
+    ArchiveRestore,
+    CheckCheck,
+    Heart,
+    HeartOff,
+    Layers3,
+    ListChecks,
+    MoreHorizontal,
+    RefreshCw,
+    Shuffle,
+    Star,
+    Tag,
+    Tags,
+    Trash2,
+    Unlink,
+    X,
+  } from '@lucide/svelte';
+  import SelectField from '../components/SelectField.svelte';
+  import V2AssetTile from '../components/V2AssetTile.svelte';
+  import V2Badge from '../components/V2Badge.svelte';
+  import V2Button from '../components/V2Button.svelte';
+  import V2Card from '../components/V2Card.svelte';
+  import V2Checkbox from '../components/V2Checkbox.svelte';
+  import V2Field from '../components/V2Field.svelte';
+  import V2Inline from '../components/V2Inline.svelte';
+  import V2PageLayout from '../components/V2PageLayout.svelte';
+  import V2Pagination from '../components/V2Pagination.svelte';
+  import V2RangeSlider from '../components/V2RangeSlider.svelte';
+  import V2Section from '../components/V2Section.svelte';
+  import V2Segmented from '../components/V2Segmented.svelte';
+  import V2Stack from '../components/V2Stack.svelte';
+  import V2Tabs from '../components/V2Tabs.svelte';
+  import V2Toolbar from '../components/V2Toolbar.svelte';
+  import V2Viewer from '../components/V2Viewer.svelte';
+  import V2Zone from '../components/V2Zone.svelte';
+  import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
+  import { createGridViewportAnchor } from '../components/gridViewportAnchor';
+
+  type AssetTab='Browse'|'Saved searches';
+  type Rule = { id:number; field:string; op:string; value:string };
+  type Group = { id:number; logic:'AND'|'OR'; negated:boolean; rules:Rule[] };
+  type DragMode = 'add'|'remove';
+
+  const fieldOptions = [['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
+  const operatorOptions = [['is','is'],['isNot','is not'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
+  const fieldSelectOptions = fieldOptions.map(([value,label]) => ({ value, label }));
+  const operatorSelectOptions = operatorOptions.map(([value,label]) => ({ value, label }));
+  const savedSearches=['Favorite images not archived','Family album or Vacation tag','Large landscape images'];
+
+  let tab=$state<AssetTab>('Browse'), searchMode=$state<'Simple'|'Expert'>('Simple'), page=$state(1), pageSize=$state(24), resultMode=$state<'Pagination'|'Infinite'>('Pagination'), loaded=$state(24), viewer=$state(false), drawer=$state(false), summary=$state('Simple search · current filters'), selectedSaved=$state(savedSearches[0]);
+  let mediaType=$state(''), favorite=$state(''), archived=$state('');
+  let assetGrid=$state<HTMLElement|null>(null), assetColumns=$state(4);
+  let selectedIds=$state<Set<number>>(new Set()), excludedIds=$state<Set<number>>(new Set()), allMatchingSelected=$state(false);
+  let moreOpen=$state(false), selectionAnchor=$state<number|null>(null);
+  let pointerCandidate=$state(false), draggingSelection=$state(false), suppressNextTileClick=$state(false);
+  let dragStartId=$state<number|null>(null), dragMode=$state<DragMode>('add'), dragStartX=$state(0), dragStartY=$state(0), pointerX=$state(0), pointerY=$state(0);
+  let dragBaseAllMatching=false, dragBaseSelected=new Set<number>(), dragBaseExcluded=new Set<number>();
+  let autoScrollFrame:number|null=null;
+  const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
+  const total=2418;
+
+  let seq=$state(4), groupSeq=$state(2), logic=$state<'AND'|'OR'>('AND'), negated=$state(false), rules=$state<Rule[]>([{id:1,field:'mediaType',op:'is',value:'Image'},{id:2,field:'favorite',op:'is',value:'true'}]), groups=$state<Group[]>([{id:2,logic:'OR',negated:false,rules:[{id:3,field:'album',op:'is',value:'Family'},{id:4,field:'tag',op:'is',value:'Vacation'}]}]);
+  let draftRules=$state<Rule[]>([]), draftGroups=$state<Group[]>([]), draftLogic=$state<'AND'|'OR'>('AND'), draftNegated=$state(false);
+
+  const start=$derived((page-1)*pageSize);
+  const count=$derived(resultMode==='Pagination'?Math.min(pageSize,total-start):Math.min(loaded,total));
+  const ids=$derived(Array.from({length:count},(_,i)=>resultMode==='Pagination'?start+i:i));
+  const expression=$derived(expressionText(rules,groups,logic,negated));
+  const draftExpression=$derived(expressionText(draftRules,draftGroups,draftLogic,draftNegated));
+  const selectedCount=$derived(allMatchingSelected?Math.max(0,total-excludedIds.size):selectedIds.size);
+  const selectionActive=$derived(selectedCount>0);
+  const selectedVisibleCount=$derived(ids.filter((id)=>isSelected(id)).length);
+  const explicitSelected=$derived([...selectedIds]);
+  const favoriteActionLabel=$derived(!allMatchingSelected && explicitSelected.length>0 && explicitSelected.every((id)=>id%3===0)?'Unfavorite':'Favorite');
+  const archiveActionLabel=$derived(!allMatchingSelected && explicitSelected.length>0 && explicitSelected.every((id)=>id%5===0)?'Unarchive':'Archive');
+  const hasRemovableTags=$derived(allMatchingSelected || explicitSelected.some((id)=>id%2===0));
+  const hasRemovableAlbums=$derived(allMatchingSelected || explicitSelected.some((id)=>id%4===0));
+  const hasStackMembers=$derived(allMatchingSelected || explicitSelected.some((id)=>id%6===0));
+  const singleSelectedId=$derived(!allMatchingSelected && explicitSelected.length===1?explicitSelected[0]:null);
+  const canSetStackPrimary=$derived(singleSelectedId!==null && singleSelectedId%6===0 && singleSelectedId%12!==0);
+  const canRemoveCompleteStack=$derived(singleSelectedId!==null && singleSelectedId%6===0);
+
+  const fieldLabel=(value:string)=>fieldOptions.find(([key])=>key===value)?.[1]??value;
+  const operatorLabel=(value:string)=>operatorOptions.find(([key])=>key===value)?.[1]??value;
+  function ruleText(r:Rule){return `${fieldLabel(r.field)} ${operatorLabel(r.op)} ${r.value||'…'}`}
+  function expressionText(rs:Rule[],gs:Group[],root:'AND'|'OR',not:boolean){const base=`(${rs.map(ruleText).join(` ${root} `)||'empty'})`;const nested=gs.map(g=>`${g.negated?'NOT ':''}(${g.rules.map(ruleText).join(` ${g.logic} `)||'empty'})`);const text=[base,...nested].join(` ${root} `);return not?`NOT (${text})`:text}
+  function scrollResultsTop(){document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'smooth'})}
+  function setPage(next:number){page=next;scrollResultsTop()}
+  function setMode(mode:'Pagination'|'Infinite'){resultMode=mode;localStorage.setItem('immichCompanionResultMode',mode==='Pagination'?'paged':'infinite');if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded)}
+  function setPageSize(next:number){pageSize=next;page=1;loaded=next}
+  function setAssetColumns(next:number|string){assetColumns=Number(next);gridViewportAnchor.adjust()}
+  function openDrawer(){draftRules=rules.map(r=>({...r}));draftGroups=groups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));draftLogic=logic;draftNegated=negated;drawer=true}
+  function applyDrawer(){rules=draftRules.map(r=>({...r}));groups=draftGroups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));logic=draftLogic;negated=draftNegated;drawer=false;summary=`Expert search · ${expressionText(rules,groups,logic,negated)}`}
+  function resetDraft(){draftRules=[];draftGroups=[];draftLogic='AND';draftNegated=false}
+  function addRule(group?:Group){const rule={id:++seq,field:'filename',op:'contains',value:''};if(group)group.rules=[...group.rules,rule];else draftRules=[...draftRules,rule]}
+  function removeRule(id:number,group?:Group){if(group)group.rules=group.rules.filter(r=>r.id!==id);else draftRules=draftRules.filter(r=>r.id!==id)}
+  function addGroup(){draftGroups=[...draftGroups,{id:++groupSeq,logic:'AND',negated:false,rules:[{id:++seq,field:'tag',op:'is',value:''}]}]}
+  function loadSaved(value:string){selectedSaved=value;if(value.includes('Favorite')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'favorite',op:'is',value:'true'},{id:++seq,field:'archived',op:'is',value:'false'}];groups=[]}else if(value.includes('Family')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'}];groups=[{id:++groupSeq,logic:'OR',negated:false,rules:[{id:++seq,field:'album',op:'is',value:'Family'},{id:++seq,field:'tag',op:'is',value:'Vacation'}]}]}else if(value.includes('Large')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'width',op:'gte',value:'3000'},{id:++seq,field:'aspectRatio',op:'gt',value:'1'}];groups=[]}summary='Expert draft · '+expressionText(rules,groups,logic,negated)}
+
+  function isSelected(id:number){return allMatchingSelected?!excludedIds.has(id):selectedIds.has(id)}
+  function clearSelection(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=false;selectionAnchor=null;moreOpen=false}
+  function selectVisible(){selectedIds=new Set(ids);excludedIds=new Set();allMatchingSelected=false;selectionAnchor=ids[0]??null}
+  function selectAllMatching(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=true;selectionAnchor=ids[0]??null}
+  function invertSelection(){if(allMatchingSelected){selectedIds=new Set(excludedIds);excludedIds=new Set();allMatchingSelected=false}else{excludedIds=new Set(selectedIds);selectedIds=new Set();allMatchingSelected=true}}
+
+  function setSelected(id:number, selected:boolean){
+    if(allMatchingSelected){
+      const next=new Set(excludedIds);
+      if(selected)next.delete(id);else next.add(id);
+      excludedIds=next;
+    }else{
+      const next=new Set(selectedIds);
+      if(selected)next.add(id);else next.delete(id);
+      selectedIds=next;
+    }
+  }
+
+  function rangeIds(fromId:number,toId:number){
+    const from=ids.indexOf(fromId),to=ids.indexOf(toId);
+    if(from<0||to<0)return [toId];
+    const min=Math.min(from,to),max=Math.max(from,to);
+    return ids.slice(min,max+1);
+  }
+
+  function selectRange(fromId:number,toId:number,selected=true){
+    const range=rangeIds(fromId,toId);
+    if(allMatchingSelected){
+      const next=new Set(excludedIds);
+      for(const id of range){if(selected)next.delete(id);else next.add(id)}
+      excludedIds=next;
+    }else{
+      const next=new Set(selectedIds);
+      for(const id of range){if(selected)next.add(id);else next.delete(id)}
+      selectedIds=next;
+    }
+  }
+
+  function handleSelectionClick(id:number,event:MouseEvent){
+    if(event.shiftKey && selectionAnchor!==null){
+      selectRange(selectionAnchor,id,true);
+      return;
+    }
+    setSelected(id,!isSelected(id));
+    selectionAnchor=id;
+  }
+
+  function handleTileActivate(id:number,event:MouseEvent){
+    if(suppressNextTileClick){suppressNextTileClick=false;return}
+    if(selectionActive || event.metaKey || event.ctrlKey || event.shiftKey){
+      handleSelectionClick(id,event);
+      return;
+    }
+    viewer=true;
+  }
+
+  function startSelectionPointer(id:number,event:PointerEvent){
+    if(event.button!==0 || event.pointerType==='touch')return;
+    pointerCandidate=true;
+    draggingSelection=false;
+    suppressNextTileClick=false;
+    dragStartId=id;
+    dragStartX=event.clientX;
+    dragStartY=event.clientY;
+    pointerX=event.clientX;
+    pointerY=event.clientY;
+    dragMode=isSelected(id)?'remove':'add';
+    dragBaseAllMatching=allMatchingSelected;
+    dragBaseSelected=new Set(selectedIds);
+    dragBaseExcluded=new Set(excludedIds);
+  }
+
+  function restoreDragBase(){
+    allMatchingSelected=dragBaseAllMatching;
+    selectedIds=new Set(dragBaseSelected);
+    excludedIds=new Set(dragBaseExcluded);
+  }
+
+  function applyDragRange(toId:number){
+    if(dragStartId===null)return;
+    restoreDragBase();
+    const range=rangeIds(dragStartId,toId);
+    if(allMatchingSelected){
+      const next=new Set(excludedIds);
+      for(const id of range){if(dragMode==='add')next.delete(id);else next.add(id)}
+      excludedIds=next;
+    }else{
+      const next=new Set(selectedIds);
+      for(const id of range){if(dragMode==='add')next.add(id);else next.delete(id)}
+      selectedIds=next;
+    }
+  }
+
+  function assetIdUnderPointer(x:number,y:number){
+    const element=document.elementFromPoint(x,y)?.closest<HTMLElement>('[data-asset-id]');
+    if(!element)return null;
+    const id=Number(element.dataset.assetId);
+    return Number.isFinite(id)?id:null;
+  }
+
+  function updateDragFromPointer(){
+    const id=assetIdUnderPointer(pointerX,pointerY);
+    if(id!==null)applyDragRange(id);
+  }
+
+  function autoScrollStep(){
+    if(!draggingSelection){autoScrollFrame=null;return}
+    const scroller=document.querySelector<HTMLElement>('.v2-content');
+    if(scroller){
+      const rect=scroller.getBoundingClientRect();
+      const edge=72;
+      let delta=0;
+      if(pointerY<rect.top+edge)delta=-Math.ceil(((rect.top+edge-pointerY)/edge)*18);
+      else if(pointerY>rect.bottom-edge)delta=Math.ceil(((pointerY-(rect.bottom-edge))/edge)*18);
+      if(delta!==0){
+        scroller.scrollTop+=delta;
+        updateDragFromPointer();
+      }
+    }
+    autoScrollFrame=requestAnimationFrame(autoScrollStep);
+  }
+
+  function startAutoScroll(){if(autoScrollFrame===null)autoScrollFrame=requestAnimationFrame(autoScrollStep)}
+  function stopAutoScroll(){if(autoScrollFrame!==null){cancelAnimationFrame(autoScrollFrame);autoScrollFrame=null}}
+
+  function handlePointerMove(event:PointerEvent){
+    if(!pointerCandidate || dragStartId===null)return;
+    pointerX=event.clientX;
+    pointerY=event.clientY;
+    if(!draggingSelection){
+      const distance=Math.hypot(pointerX-dragStartX,pointerY-dragStartY);
+      if(distance<6)return;
+      draggingSelection=true;
+      suppressNextTileClick=true;
+      selectionAnchor=dragStartId;
+      document.body.classList.add('v2-range-selecting');
+      startAutoScroll();
+    }
+    event.preventDefault();
+    updateDragFromPointer();
+  }
+
+  function finishPointerGesture(){
+    if(draggingSelection){
+      const endId=assetIdUnderPointer(pointerX,pointerY);
+      if(endId!==null)applyDragRange(endId);
+      selectionAnchor=dragStartId;
+    }
+    pointerCandidate=false;
+    draggingSelection=false;
+    dragStartId=null;
+    stopAutoScroll();
+    document.body.classList.remove('v2-range-selecting');
+  }
+
+  function demoAction(_label:string){moreOpen=false}
+  function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen && target instanceof Element && !target.closest('.v2-selection-more')) moreOpen=false}
+
+  onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return ()=>{gridViewportAnchor.destroy();stopAutoScroll();document.body.classList.remove('v2-range-selecting')}});
+</script>
+
+<svelte:window
+  onclick={handleWindowClick}
+  onpointermove={handlePointerMove}
+  onpointerup={finishPointerGesture}
+  onpointercancel={finishPointerGesture}
+  onkeydown={(e)=>{
+    if(e.key==='Escape'){
+      if(draggingSelection)finishPointerGesture();
+      else if(moreOpen)moreOpen=false;
+      else if(drawer)drawer=false;
+      else if(viewer)viewer=false;
+      else if(selectionActive)clearSelection();
+    }
+  }}
+/>
+
+<V2PageLayout title="Assets" description="Search, browse, select, synchronize and perform guarded actions on assets.">
+  {#snippet tabs()}<V2Tabs items={['Browse','Saved searches']} active={tab} ariaLabel="Asset sections" onselect={(value)=>tab=value as AssetTab}/>{/snippet}
+  {#snippet context()}<V2Zone>{#if tab==='Browse'}<V2Section title="Search mode"><V2Segmented items={['Simple','Expert']} active={searchMode} onselect={(value)=>searchMode=value as 'Simple'|'Expert'} ariaLabel="Search mode" /></V2Section>{#if searchMode==='Simple'}<V2Section title="Filters"><V2Stack gap="sm"><V2Field label="Filename" placeholder="Filename contains…"/><SelectField id="asset-media-type" label="Media type" allowEmpty={true} placeholder="Any" bind:value={mediaType} options={['Image','Video']}/><SelectField id="asset-favorite" label="Favorite" allowEmpty={true} placeholder="Any" bind:value={favorite} options={['Favorite','Not favorite']}/><SelectField id="asset-archived" label="Archived" allowEmpty={true} placeholder="Any" bind:value={archived} options={['Archived','Not archived']}/><V2Button>Advanced filters</V2Button></V2Stack></V2Section>{:else}<V2Section title="Expert search">{#snippet actions()}<V2Badge text="Boolean"/>{/snippet}<V2Stack gap="sm"><SelectField id="asset-saved-search" label="Saved expert search" allowEmpty={true} placeholder="Choose saved search…" options={savedSearches} onchange={loadSaved}/><V2Card><V2Stack gap="sm"><V2Inline justify="between"><b>Current expression</b><V2Badge text={`${rules.length+groups.reduce((n,g)=>n+g.rules.length,0)} rules · ${groups.length} groups`}/></V2Inline><span class="v2-small v2-muted">{expression}</span><V2Button block={true} onclick={openDrawer}>Edit expression</V2Button></V2Stack></V2Card></V2Stack></V2Section>{/if}<V2Inline gap="sm"><V2Button variant="primary" onclick={()=>summary=searchMode==='Expert'?`Expert search · ${expression}`:'Simple search · submitted filters'}>Search assets</V2Button><V2Button onclick={()=>{summary=`${searchMode} search · cleared and reloaded`;mediaType='';favorite='';archived='';if(searchMode==='Expert'){rules=[];groups=[]}}}>Clear</V2Button></V2Inline>{:else}<V2Section title="Saved search library"><V2Stack gap="sm"><SelectField id="asset-saved-library" label="Selected search" value={selectedSaved} options={savedSearches} onchange={(value)=>selectedSaved=value}/><V2Button variant="primary" onclick={()=>{loadSaved(selectedSaved);tab='Browse';searchMode='Expert'}}>Open in Browse</V2Button></V2Stack></V2Section>{/if}</V2Zone>{/snippet}
+
+  <V2Zone>
+    {#if tab==='Browse'}
+      {#if selectionActive}
+        <V2Toolbar class="v2-selection-toolbar">
+          <V2Badge text={allMatchingSelected?`All ${selectedCount.toLocaleString()} selected`:`${selectedCount.toLocaleString()} selected`}/>
+          <V2Button title="Select visible" ariaLabel="Select visible" active={selectedVisibleCount===ids.length && ids.length>0} onclick={selectVisible}><ListChecks size={18}/></V2Button>
+          <V2Button title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} active={allMatchingSelected} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>
+          <V2Button title="Invert selection" ariaLabel="Invert selection" onclick={invertSelection}><Shuffle size={18}/></V2Button>
+          <V2Button title="Clear selection" ariaLabel="Clear selection" onclick={clearSelection}><X size={18}/></V2Button>
+          {#snippet actions()}
+            <V2Button title="Add to album" ariaLabel="Add to album" onclick={()=>demoAction('Add to album')}><FolderPlus size={18}/></V2Button>
+            <V2Button title={favoriteActionLabel} ariaLabel={favoriteActionLabel} onclick={()=>demoAction(favoriteActionLabel)}>{#if favoriteActionLabel==='Unfavorite'}<HeartOff size={18}/>{:else}<Heart size={18}/>{/if}</V2Button>
+            <V2Button variant="danger" title="Move to trash" ariaLabel="Move to trash" onclick={()=>demoAction('Move to trash')}><Trash2 size={18}/></V2Button>
+            <div class="v2-selection-more">
+              <V2Button title="More actions" ariaLabel="More actions" active={moreOpen} onclick={()=>moreOpen=!moreOpen}><MoreHorizontal size={18}/></V2Button>
+              {#if moreOpen}<div class="v2-selection-menu" role="menu">
+                <button type="button" onclick={()=>demoAction('Bulk Sync')}><RefreshCw size={17}/><span>Bulk Sync</span></button>
+                <div class="v2-selection-menu-separator"></div>
+                <button type="button" onclick={()=>demoAction('Add tags')}><Tags size={17}/><span>Add tags</span></button>
+                <button type="button" disabled={!hasRemovableTags} onclick={()=>demoAction('Remove tags')}><Tag size={17}/><span>Remove tags</span></button>
+                <button type="button" disabled={!hasRemovableAlbums} onclick={()=>demoAction('Remove from album')}><FolderMinus size={17}/><span>Remove from album</span></button>
+                <div class="v2-selection-menu-separator"></div><span class="v2-selection-menu-label">Stack actions</span>
+                <button type="button" disabled={selectedCount<2} onclick={()=>demoAction('Stack selected')}><Layers3 size={17}/><span>Stack selected</span></button>
+                {#if canSetStackPrimary}<button type="button" onclick={()=>demoAction('Set as stack primary')}><Star size={17}/><span>Set as stack primary</span></button>{/if}
+                <button type="button" disabled={!hasStackMembers} onclick={()=>demoAction('Remove from stack')}><Unlink size={17}/><span>Remove from stack</span></button>
+                {#if canRemoveCompleteStack}<button type="button" onclick={()=>demoAction('Remove complete stack')}><Layers3 size={17}/><span>Remove complete stack</span></button>{/if}
+                <div class="v2-selection-menu-separator"></div>
+                <button type="button" onclick={()=>demoAction(archiveActionLabel)}>{#if archiveActionLabel==='Unarchive'}<ArchiveRestore size={17}/>{:else}<Archive size={17}/>{/if}<span>{archiveActionLabel}</span></button>
+              </div>{/if}
+            </div>
+          {/snippet}
+        </V2Toolbar>
+      {:else}
+        <V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/><V2Button title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} bind:value={assetColumns} valueLabel={`${assetColumns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(assetColumns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><SelectField id="asset-sort" width="content" options={['Taken date ↓']}/><SelectField id="asset-page-size" width="content" value={pageSize} options={[{value:'24',label:'24 / batch'},{value:'48',label:'48 / batch'},{value:'96',label:'96 / batch'}]} onchange={(value)=>setPageSize(Number(value))}/><V2Segmented items={['Pagination','Infinite']} active={resultMode} onselect={(value)=>setMode(value as 'Pagination'|'Infinite')} ariaLabel="Result loading mode" />{/snippet}</V2Toolbar>
+      {/if}
+      <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>
+        {#each ids as id}
+          <V2AssetTile
+            index={id}
+            label={`IMG_${String(id+1).padStart(4,'0')}.jpg`}
+            sublabel={`Aug ${21-(id%8)}, 2026`}
+            selected={isSelected(id)}
+            selectionMode={selectionActive}
+            onactivate={(event)=>handleTileActivate(id,event)}
+            onselect={(event)=>handleSelectionClick(id,event)}
+            onpreview={()=>viewer=true}
+            onpointerdown={(event)=>startSelectionPointer(id,event)}
+          />
+        {/each}
+      </div>
+      {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<div class="v2-infinite-sentinel" data-loading={loaded<total || undefined}><div>{loaded>=total?`All ${total.toLocaleString()} matching assets loaded`:`${loaded.toLocaleString()} of ${total.toLocaleString()} loaded`}</div>{#if loaded<total}<V2Button onclick={()=>loaded=Math.min(total,loaded+pageSize)}>Load next {pageSize}</V2Button>{/if}</div>{/if}
+    {:else}
+      <V2Toolbar sticky={false}><V2Badge text={`${savedSearches.length} saved searches`}/>{#snippet actions()}<V2Button variant="primary">Create saved search</V2Button>{/snippet}</V2Toolbar>
+      <V2Stack gap="sm">{#each savedSearches as saved}<V2Card><V2Inline justify="between" wrap={true}><V2Stack gap="xs"><b>{saved}</b><span class="v2-small v2-muted">Reusable expert-search definition</span></V2Stack><V2Inline gap="sm"><V2Button onclick={()=>selectedSaved=saved}>Select</V2Button><V2Button onclick={()=>{selectedSaved=saved;loadSaved(saved);tab='Browse';searchMode='Expert'}}>Open</V2Button></V2Inline></V2Inline></V2Card>{/each}</V2Stack>
+    {/if}
+  </V2Zone>
+</V2PageLayout>
+
+<V2Viewer open={viewer} title="Assets Viewer" mode="assets" onclose={()=>viewer=false}/>
+
+{#if drawer}<button type="button" class="v2-drawer-backdrop" aria-label="Close expert search editor" onclick={()=>drawer=false}></button><aside class="v2-drawer"><div class="v2-drawer-head"><div><V2ZoneLabel text="Expert search editor"/><h2>Build asset search expression</h2><p class="v2-muted">Edit the draft here. Results change only when you apply/search.</p></div><V2Button onclick={()=>drawer=false}>✕</V2Button></div><div class="v2-drawer-body"><V2Section title="Expression structure"><V2Stack gap="md"><V2Card><V2Stack gap="sm"><V2Inline justify="between" wrap={true}><V2Inline gap="sm"><V2Badge text="Root group"/><V2Segmented items={['AND','OR']} active={draftLogic} onselect={(value)=>draftLogic=value as 'AND'|'OR'} ariaLabel="Root group logic"/><V2Checkbox label="NOT group" checked={draftNegated} onchange={(checked)=>draftNegated=checked}/></V2Inline></V2Inline>{#each draftRules as rule}<div class="v2-expert-rule"><SelectField id={`expert-root-field-${rule.id}`} value={rule.field} options={fieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-root-op-${rule.id}`} value={rule.op} options={operatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value} placeholder="Value…"><V2Button onclick={()=>removeRule(rule.id)}>✕</V2Button></div>{/each}<V2Inline gap="sm"><V2Button onclick={()=>addRule()}>+ Rule</V2Button><V2Button onclick={addGroup}>+ Nested group</V2Button></V2Inline></V2Stack></V2Card>{#each draftGroups as group}<V2Card><V2Stack gap="sm"><V2Inline justify="between"><V2Inline gap="sm"><V2Badge text="Nested group"/><V2Segmented items={['AND','OR']} active={group.logic} onselect={(value)=>group.logic=value as 'AND'|'OR'} ariaLabel="Nested group logic"/><V2Checkbox label="NOT group" checked={group.negated} onchange={(checked)=>group.negated=checked}/></V2Inline><V2Button onclick={()=>draftGroups=draftGroups.filter(g=>g.id!==group.id)}>Remove group</V2Button></V2Inline>{#each group.rules as rule}<div class="v2-expert-rule"><SelectField id={`expert-group-${group.id}-field-${rule.id}`} value={rule.field} options={fieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-group-${group.id}-op-${rule.id}`} value={rule.op} options={operatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value}><V2Button onclick={()=>removeRule(rule.id,group)}>✕</V2Button></div>{/each}<V2Button onclick={()=>addRule(group)}>+ Rule</V2Button></V2Stack></V2Card>{/each}</V2Stack></V2Section><V2Section title="Expression preview"><div class="v2-expression">{draftExpression}</div></V2Section></div><div class="v2-drawer-foot"><V2Badge text={`${draftRules.length+draftGroups.reduce((n,g)=>n+g.rules.length,0)} rules · ${draftGroups.length} groups`}/><V2Inline gap="sm"><V2Button onclick={resetDraft}>Reset</V2Button><V2Button onclick={()=>drawer=false}>Cancel</V2Button><V2Button variant="primary" onclick={applyDrawer}>Apply & Search</V2Button></V2Inline></div></aside>{/if}
+
+<style>
+  :global(.v2-selection-toolbar .v2-toolbar-group){flex-wrap:wrap}
+  :global(body.v2-range-selecting){user-select:none;cursor:crosshair}
+  :global(body.v2-range-selecting img){-webkit-user-drag:none}
+  .v2-selection-more{position:relative}
+  .v2-selection-menu{position:absolute;z-index:30;top:calc(100% + .4rem);right:0;min-width:14.5rem;display:grid;gap:.18rem;padding:.4rem;border:1px solid var(--v2-border,rgba(127,127,127,.32));border-radius:.65rem;background:var(--v2-surface,Canvas);box-shadow:0 .65rem 1.8rem rgba(0,0,0,.18)}
+  .v2-selection-menu button{border:0;border-radius:.45rem;background:transparent;color:inherit;padding:.55rem .65rem;text-align:left;font:inherit;cursor:pointer;display:flex;align-items:center;gap:.6rem}
+  .v2-selection-menu button:hover:not(:disabled){background:color-mix(in srgb,currentColor 8%,transparent)}
+  .v2-selection-menu button:disabled{opacity:.42;cursor:not-allowed}
+  .v2-selection-menu-separator{height:1px;background:var(--v2-border,rgba(127,127,127,.28));margin:.25rem 0}
+  .v2-selection-menu-label{padding:.35rem .65rem .15rem;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.62}
+</style>
