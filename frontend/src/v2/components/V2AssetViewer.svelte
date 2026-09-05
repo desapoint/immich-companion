@@ -6,6 +6,7 @@
   import V2Inline from './V2Inline.svelte';
   import V2Section from './V2Section.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
+  import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
   import { demoCompareImage } from '../demo/duplicateVisuals';
 
@@ -22,11 +23,13 @@
   {#snippet header()}
     <V2Inline gap="sm"><V2Button onclick={onclose}>✕</V2Button><b>Assets Viewer</b><V2Badge text="3 / 48" /></V2Inline>
     <V2Inline gap="sm">
-      <V2Button onclick={() => camera.setZoom(camera.zoom / 1.25)} title="Zoom out">−</V2Button>
-      <span class="v2-zoom-readout">{Math.round(camera.zoom * 100)}%</span>
+      <V2ZoomControl
+        value={camera.zoom}
+        onzoomout={() => camera.setZoom(camera.zoom / 1.25)}
+        onzoomin={() => camera.setZoom(camera.zoom * 1.25)}
+      />
       <V2Button onclick={() => camera.fit()} title="Fit image">Fit</V2Button>
       <V2Button onclick={() => camera.actual()} title="Actual pixel size">1:1</V2Button>
-      <V2Button onclick={() => camera.setZoom(camera.zoom * 1.25)} title="Zoom in">+</V2Button>
       <V2Button title="Asset information">ⓘ</V2Button>
       <V2Button title="Viewer help">?</V2Button>
     </V2Inline>
