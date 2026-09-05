@@ -27,12 +27,12 @@
 <div class="v2-compare-pane" bind:this={viewport}>
   <span class="v2-compare-label">{selectedLabel}</span>
   <div class="v2-compare-transform" style={`transform:${transform}`}>
-    <img src={selectedSrc} alt={selectedLabel} onload={onselectedload}>
+    <img src={referenceSrc} alt={selectedLabel}>
   </div>
 </div>
 <div class="v2-compare-pane reference">
   <span class="v2-compare-label">{referenceLabel}</span>
   <div class="v2-compare-transform" style={`transform:${transform}`}>
-    <img src={referenceSrc} alt={referenceLabel}>
+    <img src={selectedSrc} alt={referenceLabel} onload={onselectedload}>
   </div>
 </div>
