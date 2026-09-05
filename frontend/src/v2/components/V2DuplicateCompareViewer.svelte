@@ -77,7 +77,7 @@
         referenceSrc={referenceImage}
         differenceSrc={differenceImage}
         selectedLabel="Selected image"
-        referenceLabel="Reference / keeper candidate"
+        referenceLabel="Reference"
         bind:mode
         bind:opacity
         bind:split
