@@ -1,5 +1,25 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import {
+    AlbumMinus,
+    AlbumPlus,
+    Archive,
+    ArchiveRestore,
+    CheckCheck,
+    Heart,
+    HeartOff,
+    Layers3,
+    ListChecks,
+    MoreHorizontal,
+    RefreshCw,
+    Shuffle,
+    Star,
+    TagMinus,
+    Tags,
+    Trash2,
+    Unlink,
+    X,
+  } from '@lucide/svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2AssetTile from '../components/V2AssetTile.svelte';
   import V2Badge from '../components/V2Badge.svelte';
@@ -24,6 +44,7 @@
   type AssetTab='Browse'|'Saved searches';
   type Rule = { id:number; field:string; op:string; value:string };
   type Group = { id:number; logic:'AND'|'OR'; negated:boolean; rules:Rule[] };
+
   const fieldOptions = [['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
   const operatorOptions = [['is','is'],['isNot','is not'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
   const fieldSelectOptions = fieldOptions.map(([value,label]) => ({ value, label }));
@@ -34,12 +55,16 @@
   let mediaType=$state(''), favorite=$state(''), archived=$state('');
   let assetGrid=$state<HTMLElement|null>(null), assetColumns=$state(4);
   let selectedIds=$state<Set<number>>(new Set()), excludedIds=$state<Set<number>>(new Set()), allMatchingSelected=$state(false);
-  let actionFeedback=$state('');
+  let moreOpen=$state(false);
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const total=2418;
+
   let seq=$state(4), groupSeq=$state(2), logic=$state<'AND'|'OR'>('AND'), negated=$state(false), rules=$state<Rule[]>([{id:1,field:'mediaType',op:'is',value:'Image'},{id:2,field:'favorite',op:'is',value:'true'}]), groups=$state<Group[]>([{id:2,logic:'OR',negated:false,rules:[{id:3,field:'album',op:'is',value:'Family'},{id:4,field:'tag',op:'is',value:'Vacation'}]}]);
   let draftRules=$state<Rule[]>([]), draftGroups=$state<Group[]>([]), draftLogic=$state<'AND'|'OR'>('AND'), draftNegated=$state(false);
-  const start=$derived((page-1)*pageSize), count=$derived(resultMode==='Pagination'?Math.min(pageSize,total-start):Math.min(loaded,total)), ids=$derived(Array.from({length:count},(_,i)=>resultMode==='Pagination'?start+i:i));
+
+  const start=$derived((page-1)*pageSize);
+  const count=$derived(resultMode==='Pagination'?Math.min(pageSize,total-start):Math.min(loaded,total));
+  const ids=$derived(Array.from({length:count},(_,i)=>resultMode==='Pagination'?start+i:i));
   const expression=$derived(expressionText(rules,groups,logic,negated));
   const draftExpression=$derived(expressionText(draftRules,draftGroups,draftLogic,draftNegated));
   const selectedCount=$derived(allMatchingSelected?Math.max(0,total-excludedIds.size):selectedIds.size);
@@ -72,105 +97,232 @@
   function addGroup(){draftGroups=[...draftGroups,{id:++groupSeq,logic:'AND',negated:false,rules:[{id:++seq,field:'tag',op:'is',value:''}]}]}
   function loadSaved(value:string){selectedSaved=value;if(value.includes('Favorite')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'favorite',op:'is',value:'true'},{id:++seq,field:'archived',op:'is',value:'false'}];groups=[]}else if(value.includes('Family')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'}];groups=[{id:++groupSeq,logic:'OR',negated:false,rules:[{id:++seq,field:'album',op:'is',value:'Family'},{id:++seq,field:'tag',op:'is',value:'Vacation'}]}]}else if(value.includes('Large')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'width',op:'gte',value:'3000'},{id:++seq,field:'aspectRatio',op:'gt',value:'1'}];groups=[]}summary='Expert draft · '+expressionText(rules,groups,logic,negated)}
   function isSelected(id:number){return allMatchingSelected?!excludedIds.has(id):selectedIds.has(id)}
-  function clearSelection(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=false;actionFeedback=''}
-  function selectVisible(){selectedIds=new Set(ids);excludedIds=new Set();allMatchingSelected=false;actionFeedback=''}
-  function selectAllMatching(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=true;actionFeedback=''}
-  function invertSelection(){if(allMatchingSelected){selectedIds=new Set(excludedIds);excludedIds=new Set();allMatchingSelected=false}else{excludedIds=new Set(selectedIds);selectedIds=new Set();allMatchingSelected=true}actionFeedback=''}
-  function toggleSelection(id:number){if(allMatchingSelected){const next=new Set(excludedIds);if(next.has(id))next.delete(id);else next.add(id);excludedIds=next}else{const next=new Set(selectedIds);if(next.has(id))next.delete(id);else next.add(id);selectedIds=next}actionFeedback=''}
-  function demoAction(label:string){actionFeedback=`${label} · ${selectedCount.toLocaleString()} selected`}
+  function clearSelection(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=false;moreOpen=false}
+  function selectVisible(){selectedIds=new Set(ids);excludedIds=new Set();allMatchingSelected=false}
+  function selectAllMatching(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=true}
+  function invertSelection(){if(allMatchingSelected){selectedIds=new Set(excludedIds);excludedIds=new Set();allMatchingSelected=false}else{excludedIds=new Set(selectedIds);selectedIds=new Set();allMatchingSelected=true}}
+  function toggleSelection(id:number){if(allMatchingSelected){const next=new Set(excludedIds);if(next.has(id))next.delete(id);else next.add(id);excludedIds=next}else{const next=new Set(selectedIds);if(next.has(id))next.delete(id);else next.add(id);selectedIds=next}}
+  function demoAction(_label:string){moreOpen=false}
 
   onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return ()=>gridViewportAnchor.destroy()});
 </script>
 
-<svelte:window onkeydown={(e)=>{if(e.key==='Escape'){if(drawer)drawer=false;else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
+<svelte:window
+  onclick={()=>moreOpen=false}
+  onkeydown={(e)=>{
+    if(e.key==='Escape'){
+      if(moreOpen)moreOpen=false;
+      else if(drawer)drawer=false;
+      else if(viewer)viewer=false;
+      else if(selectionActive)clearSelection();
+    }
+  }}
+/>
 
 <V2PageLayout title="Assets" description="Search, browse, select, synchronize and perform guarded actions on assets.">
   {#snippet tabs()}<V2Tabs items={['Browse','Saved searches']} active={tab} ariaLabel="Asset sections" onselect={(value)=>tab=value as AssetTab}/>{/snippet}
-  {#snippet context()}<V2Zone>{#if tab==='Browse'}<V2Section title="Search mode"><V2Segmented items={['Simple','Expert']} active={searchMode} onselect={(value)=>searchMode=value as 'Simple'|'Expert'} ariaLabel="Search mode" /></V2Section>{#if searchMode==='Simple'}<V2Section title="Filters"><V2Stack gap="sm"><V2Field label="Filename" placeholder="Filename contains…"/><SelectField id="asset-media-type" label="Media type" allowEmpty={true} placeholder="Any" bind:value={mediaType} options={['Image','Video']}/><SelectField id="asset-favorite" label="Favorite" allowEmpty={true} placeholder="Any" bind:value={favorite} options={['Favorite','Not favorite']}/><SelectField id="asset-archived" label="Archived" allowEmpty={true} placeholder="Any" bind:value={archived} options={['Archived','Not archived']}/><V2Button>Advanced filters</V2Button></V2Stack></V2Section>{:else}<V2Section title="Expert search">{#snippet actions()}<V2Badge text="Boolean"/>{/snippet}<V2Stack gap="sm"><SelectField id="asset-saved-search" label="Saved expert search" allowEmpty={true} placeholder="Choose saved search…" options={savedSearches} onchange={loadSaved}/><V2Card><V2Stack gap="sm"><V2Inline justify="between"><b>Current expression</b><V2Badge text={`${rules.length+groups.reduce((n,g)=>n+g.rules.length,0)} rules · ${groups.length} groups`}/></V2Inline><span class="v2-small v2-muted">{expression}</span><V2Button block={true} onclick={openDrawer}>Edit expression</V2Button></V2Stack></V2Card></V2Stack></V2Section>{/if}<V2Inline gap="sm"><V2Button variant="primary" onclick={()=>summary=searchMode==='Expert'?`Expert search · ${expression}`:'Simple search · submitted filters'}>Search assets</V2Button><V2Button onclick={()=>{summary=`${searchMode} search · cleared and reloaded`;mediaType='';favorite='';archived='';if(searchMode==='Expert'){rules=[];groups=[]}}}>Clear</V2Button></V2Inline>{:else}<V2Section title="Saved search library"><V2Stack gap="sm"><SelectField id="asset-saved-library" label="Selected search" value={selectedSaved} options={savedSearches} onchange={(value)=>selectedSaved=value}/><V2Button variant="primary" onclick={()=>{loadSaved(selectedSaved);tab='Browse';searchMode='Expert'}}>Open in Browse</V2Button></V2Stack></V2Section>{/if}</V2Zone>{/snippet}
+
+  {#snippet context()}
+    <V2Zone>
+      {#if tab==='Browse'}
+        <V2Section title="Search mode"><V2Segmented items={['Simple','Expert']} active={searchMode} onselect={(value)=>searchMode=value as 'Simple'|'Expert'} ariaLabel="Search mode" /></V2Section>
+        {#if searchMode==='Simple'}
+          <V2Section title="Filters">
+            <V2Stack gap="sm">
+              <V2Field label="Filename" placeholder="Filename contains…"/>
+              <SelectField id="asset-media-type" label="Media type" allowEmpty={true} placeholder="Any" bind:value={mediaType} options={['Image','Video']}/>
+              <SelectField id="asset-favorite" label="Favorite" allowEmpty={true} placeholder="Any" bind:value={favorite} options={['Favorite','Not favorite']}/>
+              <SelectField id="asset-archived" label="Archived" allowEmpty={true} placeholder="Any" bind:value={archived} options={['Archived','Not archived']}/>
+              <V2Button>Advanced filters</V2Button>
+            </V2Stack>
+          </V2Section>
+        {:else}
+          <V2Section title="Expert search">
+            {#snippet actions()}<V2Badge text="Boolean"/>{/snippet}
+            <V2Stack gap="sm">
+              <SelectField id="asset-saved-search" label="Saved expert search" allowEmpty={true} placeholder="Choose saved search…" options={savedSearches} onchange={loadSaved}/>
+              <V2Card>
+                <V2Stack gap="sm">
+                  <V2Inline justify="between"><b>Current expression</b><V2Badge text={`${rules.length+groups.reduce((n,g)=>n+g.rules.length,0)} rules · ${groups.length} groups`}/></V2Inline>
+                  <span class="v2-small v2-muted">{expression}</span>
+                  <V2Button block={true} onclick={openDrawer}>Edit expression</V2Button>
+                </V2Stack>
+              </V2Card>
+            </V2Stack>
+          </V2Section>
+        {/if}
+        <V2Inline gap="sm">
+          <V2Button variant="primary" onclick={()=>summary=searchMode==='Expert'?`Expert search · ${expression}`:'Simple search · submitted filters'}>Search assets</V2Button>
+          <V2Button onclick={()=>{summary=`${searchMode} search · cleared and reloaded`;mediaType='';favorite='';archived='';if(searchMode==='Expert'){rules=[];groups=[]}}}>Clear</V2Button>
+        </V2Inline>
+      {:else}
+        <V2Section title="Saved search library">
+          <V2Stack gap="sm">
+            <SelectField id="asset-saved-library" label="Selected search" value={selectedSaved} options={savedSearches} onchange={(value)=>selectedSaved=value}/>
+            <V2Button variant="primary" onclick={()=>{loadSaved(selectedSaved);tab='Browse';searchMode='Expert'}}>Open in Browse</V2Button>
+          </V2Stack>
+        </V2Section>
+      {/if}
+    </V2Zone>
+  {/snippet}
 
   <V2Zone>
     {#if tab==='Browse'}
       {#if selectionActive}
         <V2Toolbar class="v2-selection-toolbar">
           <V2Badge text={allMatchingSelected?`All ${selectedCount.toLocaleString()} selected`:`${selectedCount.toLocaleString()} selected`}/>
-          <V2Button active={selectedVisibleCount===ids.length && ids.length>0} onclick={selectVisible}>Select visible</V2Button>
-          <V2Button active={allMatchingSelected} onclick={selectAllMatching}>Select all {total.toLocaleString()}</V2Button>
-          <V2Button onclick={invertSelection}>Invert</V2Button>
-          <V2Button onclick={clearSelection}>Clear</V2Button>
-          <span class="v2-selection-divider" aria-hidden="true"></span>
-          <V2Button variant="primary" onclick={()=>demoAction('Bulk Sync')}>Bulk Sync</V2Button>
-          <span class="v2-selection-divider" aria-hidden="true"></span>
-          <V2Button onclick={()=>demoAction('Add to album')}>Add to album</V2Button>
-          <V2Button onclick={()=>demoAction(favoriteActionLabel)}>{favoriteActionLabel}</V2Button>
-          <V2Button variant="danger" onclick={()=>demoAction('Move to trash')}>Trash</V2Button>
-          <details class="v2-selection-more">
-            <summary>More</summary>
-            <div class="v2-selection-menu" role="menu">
-              <button type="button" onclick={()=>demoAction('Add tags')}>Add tags</button>
-              <button type="button" disabled={!hasRemovableTags} onclick={()=>demoAction('Remove tags')}>Remove tags</button>
-              <button type="button" disabled={!hasRemovableAlbums} onclick={()=>demoAction('Remove from album')}>Remove from album</button>
-              <div class="v2-selection-menu-separator"></div>
-              <span class="v2-selection-menu-label">Stack actions</span>
-              <button type="button" disabled={selectedCount<2} onclick={()=>demoAction('Stack selected')}>Stack selected</button>
-              {#if canSetStackPrimary}<button type="button" onclick={()=>demoAction('Set as stack primary')}>Set as stack primary</button>{/if}
-              <button type="button" disabled={!hasStackMembers} onclick={()=>demoAction('Remove from stack')}>Remove from stack</button>
-              {#if canRemoveCompleteStack}<button type="button" onclick={()=>demoAction('Remove complete stack')}>Remove complete stack</button>{/if}
-              <div class="v2-selection-menu-separator"></div>
-              <button type="button" onclick={()=>demoAction(archiveActionLabel)}>{archiveActionLabel}</button>
+          <V2Button title="Select visible" ariaLabel="Select visible" active={selectedVisibleCount===ids.length && ids.length>0} onclick={selectVisible}><ListChecks size={18}/></V2Button>
+          <V2Button title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} active={allMatchingSelected} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>
+          <V2Button title="Invert selection" ariaLabel="Invert selection" onclick={invertSelection}><Shuffle size={18}/></V2Button>
+          <V2Button title="Clear selection" ariaLabel="Clear selection" onclick={clearSelection}><X size={18}/></V2Button>
+
+          {#snippet actions()}
+            <V2Button title="Add to album" ariaLabel="Add to album" onclick={()=>demoAction('Add to album')}><AlbumPlus size={18}/></V2Button>
+            <V2Button title={favoriteActionLabel} ariaLabel={favoriteActionLabel} onclick={()=>demoAction(favoriteActionLabel)}>
+              {#if favoriteActionLabel==='Unfavorite'}<HeartOff size={18}/>{:else}<Heart size={18}/>{/if}
+            </V2Button>
+            <V2Button variant="danger" title="Move to trash" ariaLabel="Move to trash" onclick={()=>demoAction('Move to trash')}><Trash2 size={18}/></V2Button>
+            <div class="v2-selection-more" onclick={(event)=>event.stopPropagation()}>
+              <V2Button title="More actions" ariaLabel="More actions" active={moreOpen} onclick={()=>moreOpen=!moreOpen}><MoreHorizontal size={18}/></V2Button>
+              {#if moreOpen}
+                <div class="v2-selection-menu" role="menu">
+                  <button type="button" onclick={()=>demoAction('Bulk Sync')}><RefreshCw size={17}/><span>Bulk Sync</span></button>
+                  <div class="v2-selection-menu-separator"></div>
+                  <button type="button" onclick={()=>demoAction('Add tags')}><Tags size={17}/><span>Add tags</span></button>
+                  <button type="button" disabled={!hasRemovableTags} onclick={()=>demoAction('Remove tags')}><TagMinus size={17}/><span>Remove tags</span></button>
+                  <button type="button" disabled={!hasRemovableAlbums} onclick={()=>demoAction('Remove from album')}><AlbumMinus size={17}/><span>Remove from album</span></button>
+                  <div class="v2-selection-menu-separator"></div>
+                  <span class="v2-selection-menu-label">Stack actions</span>
+                  <button type="button" disabled={selectedCount<2} onclick={()=>demoAction('Stack selected')}><Layers3 size={17}/><span>Stack selected</span></button>
+                  {#if canSetStackPrimary}<button type="button" onclick={()=>demoAction('Set as stack primary')}><Star size={17}/><span>Set as stack primary</span></button>{/if}
+                  <button type="button" disabled={!hasStackMembers} onclick={()=>demoAction('Remove from stack')}><Unlink size={17}/><span>Remove from stack</span></button>
+                  {#if canRemoveCompleteStack}<button type="button" onclick={()=>demoAction('Remove complete stack')}><Layers3 size={17}/><span>Remove complete stack</span></button>{/if}
+                  <div class="v2-selection-menu-separator"></div>
+                  <button type="button" onclick={()=>demoAction(archiveActionLabel)}>
+                    {#if archiveActionLabel==='Unarchive'}<ArchiveRestore size={17}/>{:else}<Archive size={17}/>{/if}
+                    <span>{archiveActionLabel}</span>
+                  </button>
+                </div>
+              {/if}
             </div>
-          </details>
+          {/snippet}
         </V2Toolbar>
       {:else}
         <V2Toolbar>
           <V2Badge text={`${total.toLocaleString()} matches`}/>
-          <V2Button onclick={selectVisible}>Select visible</V2Button>
-          <V2Button onclick={selectAllMatching}>Select all {total.toLocaleString()}</V2Button>
-          {#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} bind:value={assetColumns} valueLabel={`${assetColumns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(assetColumns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><SelectField id="asset-sort" width="content" options={['Taken date ↓']}/><SelectField id="asset-page-size" width="content" value={pageSize} options={[{value:'24',label:'24 / batch'},{value:'48',label:'48 / batch'},{value:'96',label:'96 / batch'}]} onchange={(value)=>setPageSize(Number(value))}/><V2Segmented items={['Pagination','Infinite']} active={resultMode} onselect={(value)=>setMode(value as 'Pagination'|'Infinite')} ariaLabel="Result loading mode" />{/snippet}
+          <V2Button title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button>
+          <V2Button title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>
+          {#snippet actions()}
+            <V2RangeSlider label="Per row" min={2} max={10} step={1} bind:value={assetColumns} valueLabel={`${assetColumns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(assetColumns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/>
+            <SelectField id="asset-sort" width="content" options={['Taken date ↓']}/>
+            <SelectField id="asset-page-size" width="content" value={pageSize} options={[{value:'24',label:'24 / batch'},{value:'48',label:'48 / batch'},{value:'96',label:'96 / batch'}]} onchange={(value)=>setPageSize(Number(value))}/>
+            <V2Segmented items={['Pagination','Infinite']} active={resultMode} onselect={(value)=>setMode(value as 'Pagination'|'Infinite')} ariaLabel="Result loading mode" />
+          {/snippet}
         </V2Toolbar>
       {/if}
-      <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>{#each ids as id}<V2AssetTile index={id} label={`IMG_${String(id+1).padStart(4,'0')}.jpg`} sublabel={`Aug ${21-(id%8)}, 2026`} selected={isSelected(id)} onclick={()=>selectionActive?toggleSelection(id):viewer=true}/>{/each}</div>
-      {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<div class="v2-infinite-sentinel" data-loading={loaded<total || undefined}><div>{loaded>=total?`All ${total.toLocaleString()} matching assets loaded`:`${loaded.toLocaleString()} of ${total.toLocaleString()} loaded`}</div>{#if loaded<total}<V2Button onclick={()=>loaded=Math.min(total,loaded+pageSize)}>Load next {pageSize}</V2Button>{/if}</div>{/if}
+
+      <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>
+        {#each ids as id}
+          <V2AssetTile index={id} label={`IMG_${String(id+1).padStart(4,'0')}.jpg`} sublabel={`Aug ${21-(id%8)}, 2026`} selected={isSelected(id)} onclick={()=>selectionActive?toggleSelection(id):viewer=true}/>
+        {/each}
+      </div>
+
+      {#if resultMode==='Pagination'}
+        <V2Pagination {page} {pageSize} {total} onpage={setPage}/>
+      {:else}
+        <div class="v2-infinite-sentinel" data-loading={loaded<total || undefined}>
+          <div>{loaded>=total?`All ${total.toLocaleString()} matching assets loaded`:`${loaded.toLocaleString()} of ${total.toLocaleString()} loaded`}</div>
+          {#if loaded<total}<V2Button onclick={()=>loaded=Math.min(total,loaded+pageSize)}>Load next {pageSize}</V2Button>{/if}
+        </div>
+      {/if}
     {:else}
-      <V2Toolbar sticky={false}><V2Badge text={`${savedSearches.length} saved searches`}/>{#snippet actions()}<V2Button variant="primary">Create saved search</V2Button>{/snippet}</V2Toolbar><V2Stack gap="sm">{#each savedSearches as saved}<V2Card><V2Inline justify="between" wrap={true}><V2Stack gap="xs"><b>{saved}</b><span class="v2-small v2-muted">Reusable expert-search definition</span></V2Stack><V2Inline gap="sm"><V2Button onclick={()=>selectedSaved=saved}>Select</V2Button><V2Button onclick={()=>{selectedSaved=saved;loadSaved(saved);tab='Browse';searchMode='Expert'}}>Open</V2Button></V2Inline></V2Inline></V2Card>{/each}</V2Stack>
+      <V2Toolbar sticky={false}>
+        <V2Badge text={`${savedSearches.length} saved searches`}/>
+        {#snippet actions()}<V2Button variant="primary">Create saved search</V2Button>{/snippet}
+      </V2Toolbar>
+      <V2Stack gap="sm">
+        {#each savedSearches as saved}
+          <V2Card>
+            <V2Inline justify="between" wrap={true}>
+              <V2Stack gap="xs"><b>{saved}</b><span class="v2-small v2-muted">Reusable expert-search definition</span></V2Stack>
+              <V2Inline gap="sm">
+                <V2Button onclick={()=>selectedSaved=saved}>Select</V2Button>
+                <V2Button onclick={()=>{selectedSaved=saved;loadSaved(saved);tab='Browse';searchMode='Expert'}}>Open</V2Button>
+              </V2Inline>
+            </V2Inline>
+          </V2Card>
+        {/each}
+      </V2Stack>
     {/if}
   </V2Zone>
-
-  {#snippet inspector()}<V2Zone>{#if tab==='Browse'}{#if selectionActive}<V2Section title="Selection"><V2Card><V2Stack gap="sm"><b>{allMatchingSelected?`All ${selectedCount.toLocaleString()} matching assets selected`:`${selectedCount.toLocaleString()} assets selected`}</b><span class="v2-small v2-muted">{selectedVisibleCount.toLocaleString()} selected in the current view.</span>{#if actionFeedback}<V2Badge text={actionFeedback}/>{/if}</V2Stack></V2Card></V2Section>{:else}<V2Section title="Assets"><V2Card><V2Stack gap="sm"><b>{total.toLocaleString()} matching assets</b><span class="v2-small v2-muted">Select assets to reveal bulk selection controls and actions above the grid.</span></V2Stack></V2Card></V2Section>{/if}{:else}<V2Section title="Selected saved search"><V2Card><V2Stack gap="sm"><b>{selectedSaved}</b><span class="v2-small v2-muted">Saved-search editing and persistence are demo-only for now.</span><V2Button onclick={()=>{loadSaved(selectedSaved);tab='Browse';searchMode='Expert'}}>Open search</V2Button></V2Stack></V2Card></V2Section>{/if}</V2Zone>{/snippet}
 </V2PageLayout>
 
 <V2Viewer open={viewer} title="Assets Viewer" mode="assets" onclose={()=>viewer=false}/>
 
-{#if drawer}<button type="button" class="v2-drawer-backdrop" aria-label="Close expert search editor" onclick={()=>drawer=false}></button><aside class="v2-drawer"><div class="v2-drawer-head"><div><V2ZoneLabel text="Expert search editor"/><h2>Build asset search expression</h2><p class="v2-muted">Edit the draft here. Results change only when you apply/search.</p></div><V2Button onclick={()=>drawer=false}>✕</V2Button></div><div class="v2-drawer-body"><V2Section title="Expression structure"><V2Stack gap="md"><V2Card><V2Stack gap="sm"><V2Inline justify="between" wrap={true}><V2Inline gap="sm"><V2Badge text="Root group"/><V2Segmented items={['AND','OR']} active={draftLogic} onselect={(value)=>draftLogic=value as 'AND'|'OR'} ariaLabel="Root group logic"/><V2Checkbox label="NOT group" checked={draftNegated} onchange={(checked)=>draftNegated=checked}/></V2Inline></V2Inline>{#each draftRules as rule}<div class="v2-expert-rule"><SelectField id={`expert-root-field-${rule.id}`} value={rule.field} options={fieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-root-op-${rule.id}`} value={rule.op} options={operatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value} placeholder="Value…"><V2Button onclick={()=>removeRule(rule.id)}>✕</V2Button></div>{/each}<V2Inline gap="sm"><V2Button onclick={()=>addRule()}>+ Rule</V2Button><V2Button onclick={addGroup}>+ Nested group</V2Button></V2Inline></V2Stack></V2Card>{#each draftGroups as group}<V2Card><V2Stack gap="sm"><V2Inline justify="between"><V2Inline gap="sm"><V2Badge text="Nested group"/><V2Segmented items={['AND','OR']} active={group.logic} onselect={(value)=>group.logic=value as 'AND'|'OR'} ariaLabel="Nested group logic"/><V2Checkbox label="NOT group" checked={group.negated} onchange={(checked)=>group.negated=checked}/></V2Inline><V2Button onclick={()=>draftGroups=draftGroups.filter(g=>g.id!==group.id)}>Remove group</V2Button></V2Inline>{#each group.rules as rule}<div class="v2-expert-rule"><SelectField id={`expert-group-${group.id}-field-${rule.id}`} value={rule.field} options={fieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-group-${group.id}-op-${rule.id}`} value={rule.op} options={operatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value}><V2Button onclick={()=>removeRule(rule.id,group)}>✕</V2Button></div>{/each}<V2Button onclick={()=>addRule(group)}>+ Rule</V2Button></V2Stack></V2Card>{/each}</V2Stack></V2Section><V2Section title="Expression preview"><div class="v2-expression">{draftExpression}</div></V2Section></div><div class="v2-drawer-foot"><V2Badge text={`${draftRules.length+draftGroups.reduce((n,g)=>n+g.rules.length,0)} rules · ${draftGroups.length} groups`}/><V2Inline gap="sm"><V2Button onclick={resetDraft}>Reset</V2Button><V2Button onclick={()=>drawer=false}>Cancel</V2Button><V2Button variant="primary" onclick={applyDrawer}>Apply & Search</V2Button></V2Inline></div></aside>{/if}
+{#if drawer}
+  <button type="button" class="v2-drawer-backdrop" aria-label="Close expert search editor" onclick={()=>drawer=false}></button>
+  <aside class="v2-drawer">
+    <div class="v2-drawer-head">
+      <div><V2ZoneLabel text="Expert search editor"/><h2>Build asset search expression</h2><p class="v2-muted">Edit the draft here. Results change only when you apply/search.</p></div>
+      <V2Button onclick={()=>drawer=false}>✕</V2Button>
+    </div>
+    <div class="v2-drawer-body">
+      <V2Section title="Expression structure">
+        <V2Stack gap="md">
+          <V2Card>
+            <V2Stack gap="sm">
+              <V2Inline justify="between" wrap={true}>
+                <V2Inline gap="sm"><V2Badge text="Root group"/><V2Segmented items={['AND','OR']} active={draftLogic} onselect={(value)=>draftLogic=value as 'AND'|'OR'} ariaLabel="Root group logic"/><V2Checkbox label="NOT group" checked={draftNegated} onchange={(checked)=>draftNegated=checked}/></V2Inline>
+              </V2Inline>
+              {#each draftRules as rule}
+                <div class="v2-expert-rule">
+                  <SelectField id={`expert-root-field-${rule.id}`} value={rule.field} options={fieldSelectOptions} onchange={(value)=>rule.field=value}/>
+                  <SelectField id={`expert-root-op-${rule.id}`} value={rule.op} options={operatorSelectOptions} onchange={(value)=>rule.op=value}/>
+                  <input bind:value={rule.value} placeholder="Value…">
+                  <V2Button onclick={()=>removeRule(rule.id)}>✕</V2Button>
+                </div>
+              {/each}
+              <V2Inline gap="sm"><V2Button onclick={()=>addRule()}>+ Rule</V2Button><V2Button onclick={addGroup}>+ Nested group</V2Button></V2Inline>
+            </V2Stack>
+          </V2Card>
+
+          {#each draftGroups as group}
+            <V2Card>
+              <V2Stack gap="sm">
+                <V2Inline justify="between">
+                  <V2Inline gap="sm"><V2Badge text="Nested group"/><V2Segmented items={['AND','OR']} active={group.logic} onselect={(value)=>group.logic=value as 'AND'|'OR'} ariaLabel="Nested group logic"/><V2Checkbox label="NOT group" checked={group.negated} onchange={(checked)=>group.negated=checked}/></V2Inline>
+                  <V2Button onclick={()=>draftGroups=draftGroups.filter(g=>g.id!==group.id)}>Remove group</V2Button>
+                </V2Inline>
+                {#each group.rules as rule}
+                  <div class="v2-expert-rule">
+                    <SelectField id={`expert-group-${group.id}-field-${rule.id}`} value={rule.field} options={fieldSelectOptions} onchange={(value)=>rule.field=value}/>
+                    <SelectField id={`expert-group-${group.id}-op-${rule.id}`} value={rule.op} options={operatorSelectOptions} onchange={(value)=>rule.op=value}/>
+                    <input bind:value={rule.value}>
+                    <V2Button onclick={()=>removeRule(rule.id,group)}>✕</V2Button>
+                  </div>
+                {/each}
+                <V2Button onclick={()=>addRule(group)}>+ Rule</V2Button>
+              </V2Stack>
+            </V2Card>
+          {/each}
+        </V2Stack>
+      </V2Section>
+      <V2Section title="Expression preview"><div class="v2-expression">{draftExpression}</div></V2Section>
+    </div>
+    <div class="v2-drawer-foot">
+      <V2Badge text={`${draftRules.length+draftGroups.reduce((n,g)=>n+g.rules.length,0)} rules · ${draftGroups.length} groups`}/>
+      <V2Inline gap="sm"><V2Button onclick={resetDraft}>Reset</V2Button><V2Button onclick={()=>drawer=false}>Cancel</V2Button><V2Button variant="primary" onclick={applyDrawer}>Apply & Search</V2Button></V2Inline>
+    </div>
+  </aside>
+{/if}
 
 <style>
   :global(.v2-selection-toolbar .v2-toolbar-group) {
     flex-wrap: wrap;
   }
 
-  .v2-selection-divider {
-    width: 1px;
-    height: 1.8rem;
-    background: var(--v2-border, rgba(127, 127, 127, 0.32));
-    margin: 0 0.15rem;
-  }
-
   .v2-selection-more {
     position: relative;
-  }
-
-  .v2-selection-more > summary {
-    list-style: none;
-    cursor: pointer;
-    border: 1px solid var(--v2-border, rgba(127, 127, 127, 0.32));
-    border-radius: 0.55rem;
-    padding: 0.48rem 0.72rem;
-    font: inherit;
-    font-weight: 600;
-    user-select: none;
-  }
-
-  .v2-selection-more > summary::-webkit-details-marker {
-    display: none;
   }
 
   .v2-selection-menu {
@@ -178,7 +330,7 @@
     z-index: 30;
     top: calc(100% + 0.4rem);
     right: 0;
-    min-width: 13rem;
+    min-width: 14.5rem;
     display: grid;
     gap: 0.18rem;
     padding: 0.4rem;
@@ -197,6 +349,9 @@
     text-align: left;
     font: inherit;
     cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
   }
 
   .v2-selection-menu button:hover:not(:disabled) {
