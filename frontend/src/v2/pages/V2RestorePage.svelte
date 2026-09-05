@@ -95,7 +95,7 @@
         />
       {/snippet}
     </V2Toolbar>
-    <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>{#each items as i}<V2AssetTile index={i} label={`Trash item ${i + 1}`} sublabel="Deleted recently" onclick={() => viewer = true} />{/each}</div>
+    <div class="v2-asset-grid" data-fixed-columns="true" style={`--v2-asset-columns:${assetColumns}`} bind:this={assetGrid}>{#each items as i}<V2AssetTile index={i} label={`Trash item ${i + 1}`} sublabel="Deleted recently" onactivate={() => viewer = true} />{/each}</div>
     {#if resultMode === 'Pagination'}
       <V2Pagination {page} {pageSize} {total} onpage={(next)=>page=next}/>
     {:else}
