@@ -16,5 +16,5 @@
   <V2Button iconOnly title={`Select all ${total.toLocaleString()} ${noun}`} ariaLabel={`Select all ${total.toLocaleString()} ${noun}`} active={allMatchingSelected} onclick={onselectall}><CheckCheck size={18}/></V2Button>
   <V2Button iconOnly title="Invert selection" ariaLabel="Invert selection" onclick={oninvert}><Shuffle size={18}/></V2Button>
   <V2Button iconOnly title="Clear selection" ariaLabel="Clear selection" onclick={onclear}><X size={18}/></V2Button>
-  {#if actionContent}{#snippet actions()}{@render actionContent()}{/snippet}{/if}
+  {#snippet actions()}{#if actionContent}{@render actionContent()}{/if}{/snippet}
 </V2Toolbar>
