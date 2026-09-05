@@ -40,11 +40,24 @@
   import V2Zone from '../components/V2Zone.svelte';
   import V2ZoneLabel from '../components/V2ZoneLabel.svelte';
   import { createGridViewportAnchor } from '../components/gridViewportAnchor';
+  import {
+    applyAssetRangeFromSnapshot,
+    applyShiftAssetRange,
+    cloneAssetSelection,
+    emptyAssetSelection,
+    getAssetSelectionCount,
+    invertAssetSelection,
+    isAssetSelected,
+    selectAllMatchingAssets,
+    selectVisibleAssets,
+    toggleAssetSelected,
+    type AssetSelectionMode,
+    type AssetSelectionState,
+  } from '../components/assetSelection';
 
   type AssetTab='Browse'|'Saved searches';
   type Rule = { id:number; field:string; op:string; value:string };
   type Group = { id:number; logic:'AND'|'OR'; negated:boolean; rules:Rule[] };
-  type DragMode = 'add'|'remove';
 
   const fieldOptions = [['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
   const operatorOptions = [['is','is'],['isNot','is not'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
@@ -55,12 +68,12 @@
   let tab=$state<AssetTab>('Browse'), searchMode=$state<'Simple'|'Expert'>('Simple'), page=$state(1), pageSize=$state(24), resultMode=$state<'Pagination'|'Infinite'>('Pagination'), loaded=$state(24), viewer=$state(false), drawer=$state(false), summary=$state('Simple search · current filters'), selectedSaved=$state(savedSearches[0]);
   let mediaType=$state(''), favorite=$state(''), archived=$state('');
   let assetGrid=$state<HTMLElement|null>(null), assetColumns=$state(4);
-  let selectedIds=$state<Set<number>>(new Set()), excludedIds=$state<Set<number>>(new Set()), allMatchingSelected=$state(false);
-  let moreOpen=$state(false), selectionAnchor=$state<number|null>(null);
-  let pointerCandidate=$state(false), draggingSelection=$state(false), suppressNextTileClick=$state(false);
-  let dragStartId=$state<number|null>(null), dragMode=$state<DragMode>('add'), dragStartX=$state(0), dragStartY=$state(0), pointerX=$state(0), pointerY=$state(0);
-  let dragBaseAllMatching=false, dragBaseSelected=new Set<number>(), dragBaseExcluded=new Set<number>();
-  let autoScrollFrame:number|null=null;
+  let selection=$state<AssetSelectionState>(emptyAssetSelection());
+  let moreOpen=$state(false);
+  let pointerCandidate=$state(false), draggingSelection=$state(false), suppressClickId=$state<number|null>(null);
+  let dragStartId=$state<number|null>(null), dragMode=$state<AssetSelectionMode>('add'), dragStartX=$state(0), dragStartY=$state(0), pointerX=$state(0), pointerY=$state(0);
+  let dragSnapshot:AssetSelectionState|null=null;
+  let autoScrollFrame:number|null=null, suppressClickFrame:number|null=null;
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const total=2418;
 
@@ -72,10 +85,11 @@
   const ids=$derived(Array.from({length:count},(_,i)=>resultMode==='Pagination'?start+i:i));
   const expression=$derived(expressionText(rules,groups,logic,negated));
   const draftExpression=$derived(expressionText(draftRules,draftGroups,draftLogic,draftNegated));
-  const selectedCount=$derived(allMatchingSelected?Math.max(0,total-excludedIds.size):selectedIds.size);
+  const selectedCount=$derived(getAssetSelectionCount(selection,total));
   const selectionActive=$derived(selectedCount>0);
   const selectedVisibleCount=$derived(ids.filter((id)=>isSelected(id)).length);
-  const explicitSelected=$derived([...selectedIds]);
+  const allMatchingSelected=$derived(selection.allMatchingSelected);
+  const explicitSelected=$derived([...selection.selectedIds]);
   const favoriteActionLabel=$derived(!allMatchingSelected && explicitSelected.length>0 && explicitSelected.every((id)=>id%3===0)?'Unfavorite':'Favorite');
   const archiveActionLabel=$derived(!allMatchingSelected && explicitSelected.length>0 && explicitSelected.every((id)=>id%5===0)?'Unarchive':'Archive');
   const hasRemovableTags=$derived(allMatchingSelected || explicitSelected.some((id)=>id%2===0));
@@ -102,59 +116,19 @@
   function addGroup(){draftGroups=[...draftGroups,{id:++groupSeq,logic:'AND',negated:false,rules:[{id:++seq,field:'tag',op:'is',value:''}]}]}
   function loadSaved(value:string){selectedSaved=value;if(value.includes('Favorite')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'favorite',op:'is',value:'true'},{id:++seq,field:'archived',op:'is',value:'false'}];groups=[]}else if(value.includes('Family')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'}];groups=[{id:++groupSeq,logic:'OR',negated:false,rules:[{id:++seq,field:'album',op:'is',value:'Family'},{id:++seq,field:'tag',op:'is',value:'Vacation'}]}]}else if(value.includes('Large')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'width',op:'gte',value:'3000'},{id:++seq,field:'aspectRatio',op:'gt',value:'1'}];groups=[]}summary='Expert draft · '+expressionText(rules,groups,logic,negated)}
 
-  function isSelected(id:number){return allMatchingSelected?!excludedIds.has(id):selectedIds.has(id)}
-  function clearSelection(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=false;selectionAnchor=null;moreOpen=false}
-  function selectVisible(){selectedIds=new Set(ids);excludedIds=new Set();allMatchingSelected=false;selectionAnchor=ids[0]??null}
-  function selectAllMatching(){selectedIds=new Set();excludedIds=new Set();allMatchingSelected=true;selectionAnchor=ids[0]??null}
-  function invertSelection(){if(allMatchingSelected){selectedIds=new Set(excludedIds);excludedIds=new Set();allMatchingSelected=false}else{excludedIds=new Set(selectedIds);selectedIds=new Set();allMatchingSelected=true}}
-
-  function setSelected(id:number, selected:boolean){
-    if(allMatchingSelected){
-      const next=new Set(excludedIds);
-      if(selected)next.delete(id);else next.add(id);
-      excludedIds=next;
-    }else{
-      const next=new Set(selectedIds);
-      if(selected)next.add(id);else next.delete(id);
-      selectedIds=next;
-    }
-  }
-
-  function rangeIds(fromId:number,toId:number){
-    const from=ids.indexOf(fromId),to=ids.indexOf(toId);
-    if(from<0||to<0)return [toId];
-    const min=Math.min(from,to),max=Math.max(from,to);
-    return ids.slice(min,max+1);
-  }
-
-  function selectRange(fromId:number,toId:number,selected=true){
-    const range=rangeIds(fromId,toId);
-    if(allMatchingSelected){
-      const next=new Set(excludedIds);
-      for(const id of range){if(selected)next.delete(id);else next.add(id)}
-      excludedIds=next;
-    }else{
-      const next=new Set(selectedIds);
-      for(const id of range){if(selected)next.add(id);else next.delete(id)}
-      selectedIds=next;
-    }
-  }
+  function isSelected(id:number){return isAssetSelected(selection,id)}
+  function clearSelection(){selection=emptyAssetSelection();moreOpen=false}
+  function selectVisible(){selection=selectVisibleAssets(ids)}
+  function selectAllMatching(){selection=selectAllMatchingAssets(ids[0]??null)}
+  function invertSelection(){selection=invertAssetSelection(selection)}
 
   function handleSelectionClick(id:number,event:MouseEvent){
-    if(event.shiftKey && selectionAnchor!==null){
-      selectRange(selectionAnchor,id,true);
-      return;
-    }
-    setSelected(id,!isSelected(id));
-    selectionAnchor=id;
+    selection=event.shiftKey?applyShiftAssetRange(selection,ids,id):toggleAssetSelected(selection,id);
   }
 
   function handleTileActivate(id:number,event:MouseEvent){
-    if(suppressNextTileClick){suppressNextTileClick=false;return}
-    if(selectionActive || event.metaKey || event.ctrlKey || event.shiftKey){
-      handleSelectionClick(id,event);
-      return;
-    }
+    if(suppressClickId===id){suppressClickId=null;return}
+    if(selectionActive || event.metaKey || event.ctrlKey || event.shiftKey){handleSelectionClick(id,event);return}
     viewer=true;
   }
 
@@ -162,37 +136,19 @@
     if(event.button!==0 || event.pointerType==='touch')return;
     pointerCandidate=true;
     draggingSelection=false;
-    suppressNextTileClick=false;
+    suppressClickId=null;
     dragStartId=id;
     dragStartX=event.clientX;
     dragStartY=event.clientY;
     pointerX=event.clientX;
     pointerY=event.clientY;
     dragMode=isSelected(id)?'remove':'add';
-    dragBaseAllMatching=allMatchingSelected;
-    dragBaseSelected=new Set(selectedIds);
-    dragBaseExcluded=new Set(excludedIds);
-  }
-
-  function restoreDragBase(){
-    allMatchingSelected=dragBaseAllMatching;
-    selectedIds=new Set(dragBaseSelected);
-    excludedIds=new Set(dragBaseExcluded);
+    dragSnapshot=cloneAssetSelection(selection);
   }
 
   function applyDragRange(toId:number){
-    if(dragStartId===null)return;
-    restoreDragBase();
-    const range=rangeIds(dragStartId,toId);
-    if(allMatchingSelected){
-      const next=new Set(excludedIds);
-      for(const id of range){if(dragMode==='add')next.delete(id);else next.add(id)}
-      excludedIds=next;
-    }else{
-      const next=new Set(selectedIds);
-      for(const id of range){if(dragMode==='add')next.add(id);else next.delete(id)}
-      selectedIds=next;
-    }
+    if(dragStartId===null || dragSnapshot===null)return;
+    selection=applyAssetRangeFromSnapshot(dragSnapshot,ids,dragStartId,toId,dragMode);
   }
 
   function assetIdUnderPointer(x:number,y:number){
@@ -202,10 +158,7 @@
     return Number.isFinite(id)?id:null;
   }
 
-  function updateDragFromPointer(){
-    const id=assetIdUnderPointer(pointerX,pointerY);
-    if(id!==null)applyDragRange(id);
-  }
+  function updateDragFromPointer(){const id=assetIdUnderPointer(pointerX,pointerY);if(id!==null)applyDragRange(id)}
 
   function autoScrollStep(){
     if(!draggingSelection){autoScrollFrame=null;return}
@@ -216,27 +169,26 @@
       let delta=0;
       if(pointerY<rect.top+edge)delta=-Math.ceil(((rect.top+edge-pointerY)/edge)*18);
       else if(pointerY>rect.bottom-edge)delta=Math.ceil(((pointerY-(rect.bottom-edge))/edge)*18);
-      if(delta!==0){
-        scroller.scrollTop+=delta;
-        updateDragFromPointer();
-      }
+      if(delta!==0){scroller.scrollTop+=delta;updateDragFromPointer()}
     }
     autoScrollFrame=requestAnimationFrame(autoScrollStep);
   }
 
   function startAutoScroll(){if(autoScrollFrame===null)autoScrollFrame=requestAnimationFrame(autoScrollStep)}
   function stopAutoScroll(){if(autoScrollFrame!==null){cancelAnimationFrame(autoScrollFrame);autoScrollFrame=null}}
+  function clearSuppressedClickSoon(){
+    if(suppressClickFrame!==null)cancelAnimationFrame(suppressClickFrame);
+    suppressClickFrame=requestAnimationFrame(()=>{suppressClickId=null;suppressClickFrame=null});
+  }
 
   function handlePointerMove(event:PointerEvent){
     if(!pointerCandidate || dragStartId===null)return;
     pointerX=event.clientX;
     pointerY=event.clientY;
     if(!draggingSelection){
-      const distance=Math.hypot(pointerX-dragStartX,pointerY-dragStartY);
-      if(distance<6)return;
+      if(Math.hypot(pointerX-dragStartX,pointerY-dragStartY)<6)return;
       draggingSelection=true;
-      suppressNextTileClick=true;
-      selectionAnchor=dragStartId;
+      selection={...selection,anchor:dragStartId};
       document.body.classList.add('v2-range-selecting');
       startAutoScroll();
     }
@@ -245,14 +197,30 @@
   }
 
   function finishPointerGesture(){
-    if(draggingSelection){
+    const completedDrag=draggingSelection;
+    const startId=dragStartId;
+    if(completedDrag){
       const endId=assetIdUnderPointer(pointerX,pointerY);
       if(endId!==null)applyDragRange(endId);
-      selectionAnchor=dragStartId;
+      selection={...selection,anchor:startId};
+      suppressClickId=startId;
+      clearSuppressedClickSoon();
     }
     pointerCandidate=false;
     draggingSelection=false;
     dragStartId=null;
+    dragSnapshot=null;
+    stopAutoScroll();
+    document.body.classList.remove('v2-range-selecting');
+  }
+
+  function cancelPointerGesture(){
+    if(draggingSelection && dragSnapshot!==null)selection=cloneAssetSelection(dragSnapshot);
+    pointerCandidate=false;
+    draggingSelection=false;
+    dragStartId=null;
+    dragSnapshot=null;
+    suppressClickId=null;
     stopAutoScroll();
     document.body.classList.remove('v2-range-selecting');
   }
@@ -260,17 +228,17 @@
   function demoAction(_label:string){moreOpen=false}
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen && target instanceof Element && !target.closest('.v2-selection-more')) moreOpen=false}
 
-  onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return ()=>{gridViewportAnchor.destroy();stopAutoScroll();document.body.classList.remove('v2-range-selecting')}});
+  onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return ()=>{gridViewportAnchor.destroy();stopAutoScroll();if(suppressClickFrame!==null)cancelAnimationFrame(suppressClickFrame);document.body.classList.remove('v2-range-selecting')}});
 </script>
 
 <svelte:window
   onclick={handleWindowClick}
   onpointermove={handlePointerMove}
   onpointerup={finishPointerGesture}
-  onpointercancel={finishPointerGesture}
+  onpointercancel={cancelPointerGesture}
   onkeydown={(e)=>{
     if(e.key==='Escape'){
-      if(draggingSelection)finishPointerGesture();
+      if(draggingSelection)cancelPointerGesture();
       else if(moreOpen)moreOpen=false;
       else if(drawer)drawer=false;
       else if(viewer)viewer=false;
@@ -347,8 +315,6 @@
 
 <style>
   :global(.v2-selection-toolbar .v2-toolbar-group){flex-wrap:wrap}
-  :global(body.v2-range-selecting){user-select:none;cursor:crosshair}
-  :global(body.v2-range-selecting img){-webkit-user-drag:none}
   .v2-selection-more{position:relative}
   .v2-selection-menu{position:absolute;z-index:30;top:calc(100% + .4rem);right:0;min-width:14.5rem;display:grid;gap:.18rem;padding:.4rem;border:1px solid var(--v2-border,rgba(127,127,127,.32));border-radius:.65rem;background:var(--v2-surface,Canvas);box-shadow:0 .65rem 1.8rem rgba(0,0,0,.18)}
   .v2-selection-menu button{border:0;border-radius:.45rem;background:transparent;color:inherit;padding:.55rem .65rem;text-align:left;font:inherit;cursor:pointer;display:flex;align-items:center;gap:.6rem}
