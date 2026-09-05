@@ -5,6 +5,7 @@
   import V2CompareSwipe from './V2CompareSwipe.svelte';
   import V2CompareTransparency from './V2CompareTransparency.svelte';
   import V2Segmented from './V2Segmented.svelte';
+  import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
 
   export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference';
@@ -103,9 +104,11 @@
   <div class="v2-compare-component-tools">
     <V2Segmented items={['Side by side','Swipe','Transparency','Difference']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
     <div class="v2-compare-zoom-tools">
-      <V2Button onclick={() => camera.setZoom(camera.zoom / 1.25)} title="Zoom out">−</V2Button>
-      <span class="v2-zoom-readout">{Math.round(camera.zoom * 100)}%</span>
-      <V2Button onclick={() => camera.setZoom(camera.zoom * 1.25)} title="Zoom in">+</V2Button>
+      <V2ZoomControl
+        value={camera.zoom}
+        onzoomout={() => camera.setZoom(camera.zoom / 1.25)}
+        onzoomin={() => camera.setZoom(camera.zoom * 1.25)}
+      />
       <V2Button onclick={() => camera.fit()} title="Fit image to comparison zone">Fit</V2Button>
       <V2Button onclick={() => camera.actual()} title="Show image at actual pixel size">1:1</V2Button>
     </div>
