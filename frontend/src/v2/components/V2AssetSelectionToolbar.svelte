@@ -4,7 +4,7 @@
   import V2Button from './V2Button.svelte';
   import V2Toolbar from './V2Toolbar.svelte';
 
-  let { selectedCount, total, noun = 'matching assets', allMatchingSelected = false, allVisibleSelected = false, onselectvisible, onselectall, oninvert, onclear, actions }: {
+  let { selectedCount, total, noun = 'matching assets', allMatchingSelected = false, allVisibleSelected = false, onselectvisible, onselectall, oninvert, onclear, actions: actionContent }: {
     selectedCount: number; total: number; noun?: string; allMatchingSelected?: boolean; allVisibleSelected?: boolean;
     onselectvisible: () => void; onselectall: () => void; oninvert: () => void; onclear: () => void; actions?: import('svelte').Snippet;
   } = $props();
@@ -16,6 +16,5 @@
   <V2Button iconOnly title={`Select all ${total.toLocaleString()} ${noun}`} ariaLabel={`Select all ${total.toLocaleString()} ${noun}`} active={allMatchingSelected} onclick={onselectall}><CheckCheck size={18}/></V2Button>
   <V2Button iconOnly title="Invert selection" ariaLabel="Invert selection" onclick={oninvert}><Shuffle size={18}/></V2Button>
   <V2Button iconOnly title="Clear selection" ariaLabel="Clear selection" onclick={onclear}><X size={18}/></V2Button>
-  {#if actions}{#snippet actionsSlot()}{@render actions()}{/snippet}{@const _actions = actionsSlot}{/if}
-  {#if actions}{#snippet actions()}{@render _actions()}{/snippet}{/if}
+  {#if actionContent}{#snippet actions()}{@render actionContent()}{/snippet}{/if}
 </V2Toolbar>
