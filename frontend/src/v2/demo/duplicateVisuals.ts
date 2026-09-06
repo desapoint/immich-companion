@@ -1,3 +1,5 @@
+import { demoAssetState } from './demoAssetState.svelte';
+
 export function demoCompareImage(group: number, index: number): string {
   const palettes = [
     ['#365f8c', '#d48a56', '#f0d7b5'],
@@ -42,7 +44,7 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   let g = 0;
   let b = 0;
   if (h < 60) [r, g] = [c, x];
-  else if (h < 120) [r, g] = [x, c];
+  else if (h < 120) [r, g] = [c, x];
   else if (h < 180) [g, b] = [c, x];
   else if (h < 240) [g, b] = [x, c];
   else if (h < 300) [r, b] = [x, c];
@@ -100,22 +102,26 @@ export type ComparisonMemberData = {
   similarity: string;
 };
 
-export function comparisonMemberData(group: number, index: number): ComparisonMemberData {
-  const sizes = [4.8, 5.4, 4.9, 6.1, 4.3, 5.0, 5.8, 4.7, 6.5, 5.2];
-  const dims = ['4032 × 3024', '4032 × 3024', '4000 × 3000', '4032 × 3024'];
-  const sources = ['Immich upload', 'External library', 'Immich upload', 'External library'];
-  const dates = ['Aug 21, 2026 · 17:45', 'Aug 21, 2026 · 17:45', 'Aug 21, 2026 · 17:46', 'Aug 20, 2026 · 21:11'];
-  const uploads = ['Aug 21 · 17:47', 'Aug 22 · 08:20', 'Aug 21 · 17:48', 'Aug 23 · 10:05'];
+function formatDate(value: string | null | undefined): string {
+  if (!value) return '—';
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
+}
+
+export function comparisonMemberData(assetId: string, group: number, index: number): ComparisonMemberData {
+  const asset = demoAssetState.assets.find((candidate) => candidate.id === assetId);
+  const sizeNum = (asset?.file_size_bytes ?? 0) / 1_048_576;
+  const mime = asset?.original_mime_type ?? 'Unknown type';
   return {
-    name: `IMG_G${group}_${String(index + 1).padStart(2, '0')}.jpg`,
-    source: sources[index % sources.length],
-    size: `${sizes[index % sizes.length].toFixed(1)} MB`,
-    sizeNum: sizes[index % sizes.length],
-    dims: dims[index % dims.length],
-    taken: dates[index % dates.length],
-    codec: index % 4 === 3 ? 'JPEG · quality 92' : 'JPEG · quality 95',
-    library: index % 2 === 0 ? 'Camera Uploads' : 'Family NAS',
-    uploaded: uploads[index % uploads.length],
-    similarity: (99.4 - (index * 0.65) % 8).toFixed(1),
+    name: asset?.original_file_name ?? 'Unknown asset',
+    source: asset?.library_id ? 'External library' : 'Default library',
+    size: asset?.file_size_bytes ? `${sizeNum.toFixed(1)} MB` : '—',
+    sizeNum,
+    dims: asset?.width && asset?.height ? `${asset.width} × ${asset.height}` : '—',
+    taken: formatDate(asset?.file_created_at),
+    codec: mime,
+    library: asset?.library_id ? 'External library' : 'Default library',
+    uploaded: formatDate(asset?.immich_created_at),
+    similarity: (99.4 - ((group * 0.37 + index * 0.65) % 8)).toFixed(1),
   };
 }
