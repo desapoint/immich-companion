@@ -5,10 +5,12 @@
     src,
     alt,
     controller = new ViewerViewportController(),
+    onerror,
   }: {
     src: string;
     alt: string;
     controller?: ViewerViewportController;
+    onerror?: () => void;
   } = $props();
 
   let viewport = $state<HTMLElement | null>(null);
@@ -72,6 +74,6 @@
   onwheel={wheel}
 >
   <div class="v2-image-viewport-transform" style={`transform:${controller.transform}`}>
-    <img {src} {alt} draggable="false" onload={imageLoaded}>
+    <img {src} {alt} draggable="false" onload={imageLoaded} onerror={onerror}>
   </div>
 </div>
