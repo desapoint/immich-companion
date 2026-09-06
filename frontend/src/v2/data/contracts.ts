@@ -68,9 +68,9 @@ export type TagRecord = {
 
 export type AlbumAssetRecord = { album_id: string; asset_id: string };
 export type TagAssetRecord = { tag_id: string; asset_id: string };
-
 export type MutationFailure = { id: string; reason: string };
 export type MutationResult = { affectedIds: string[]; failed: MutationFailure[] };
+export type DifferenceOptions = { hue?: number; contrast?: number; binary?: boolean };
 
 export type LibraryDataSnapshot = {
   readonly revision: number;
@@ -118,6 +118,7 @@ export interface TagRepository {
 export interface MediaRepository {
   thumbnail(asset: Pick<AssetRecord, 'id' | 'original_file_name' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord): string;
   fullSize(asset: Pick<AssetRecord, 'id' | 'original_file_name' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord): string;
+  difference(selected: AssetRecord, reference: AssetRecord, options?: DifferenceOptions): string;
 }
 
 export interface LibraryDataSource {
