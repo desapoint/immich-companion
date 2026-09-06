@@ -8,7 +8,6 @@
   import V2Section from './V2Section.svelte';
   import V2Stack from './V2Stack.svelte';
   import type { SelectOption } from './SelectField.svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
 
   export type SimpleAdvancedFilters = {
     albumIds: string;
@@ -49,16 +48,8 @@
 
   const splitIds = (value: string) => value.split(',').map((part) => part.trim()).filter(Boolean);
   const joinIds = (values: string[]) => values.join(',');
-  const resolvedAlbumOptions = $derived((libraryData.state.revision,albumOptions.length > 0 ? albumOptions : libraryData.state.albums.map((album) => ({
-    value: album.id,
-    label: album.album_name,
-    subtitle: `${album.asset_count.toLocaleString()} asset${album.asset_count === 1 ? '' : 's'}`,
-  }))));
-  const resolvedTagOptions = $derived((libraryData.state.revision,tagOptions.length > 0 ? tagOptions : libraryData.state.tags.map((tag) => ({
-    value: tag.id,
-    label: tag.tag_name,
-    subtitle: `${tag.asset_count.toLocaleString()} asset${tag.asset_count === 1 ? '' : 's'}`,
-  }))));
+  const resolvedAlbumOptions = $derived(albumOptions);
+  const resolvedTagOptions = $derived(tagOptions);
 
   function countActive(value: SimpleAdvancedFilters): number {
     return splitIds(value.albumIds).length + splitIds(value.tagIds).length + Number(value.noAlbum) + Number(value.noTag)
