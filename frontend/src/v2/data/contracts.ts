@@ -66,11 +66,23 @@ export type TagRecord = {
   synced_at: string;
 };
 
-export type AlbumAssetRecord = { album_id: string; asset_id: string };
-export type TagAssetRecord = { tag_id: string; asset_id: string };
+export type TagHierarchyRow = {
+  id: string;
+  name: string;
+  path: string;
+  parent: string;
+  assets: number;
+  children: number;
+  color: string | null;
+  synthetic: boolean;
+  realTagIds: string[];
+};
+
 export type MutationFailure = { id: string; reason: string };
 export type MutationResult = { affectedIds: string[]; failed: MutationFailure[] };
 export type DifferenceOptions = { hue?: number; contrast?: number; binary?: boolean };
+export type PageRequest = { page: number; pageSize: number };
+export type PageResult<T> = { items: T[]; total: number; page: number; pageSize: number };
 
 export type AssetSearchRule = { field: string; op: string; value: string };
 export type AssetSearchGroup = { logic: 'AND' | 'OR'; negated: boolean; rules: AssetSearchRule[] };
@@ -93,26 +105,23 @@ export type AssetSimpleSearch = {
   minAspectRatio?: string;
   maxAspectRatio?: string;
 };
-export type AssetSearchQuery =
+export type AssetSearchCriteria =
   | { mode: 'simple'; filters: AssetSimpleSearch; sort: AssetSort }
   | { mode: 'expert'; rules: AssetSearchRule[]; groups: AssetSearchGroup[]; logic: 'AND' | 'OR'; negated: boolean; sort: AssetSort };
-export type AssetSearchResult = { items: AssetRecord[]; total: number };
-
-export type LibraryDataSnapshot = {
-  readonly revision: number;
-  readonly assets: AssetRecord[];
-  readonly trash: TrashAssetRecord[];
-  readonly albums: AlbumRecord[];
-  readonly albumAssets: AlbumAssetRecord[];
-  readonly tags: TagRecord[];
-  readonly tagAssets: TagAssetRecord[];
-};
+export type AssetSearchQuery = AssetSearchCriteria & PageRequest;
+export type TrashSearchQuery = PageRequest & { sort: { field: 'deletedAt' | 'takenAt' | 'name'; direction: 'asc' | 'desc' } };
+export type AlbumSearchQuery = PageRequest & { query?: string; sort: { field: 'name' | 'assets' | 'description'; direction: 'asc' | 'desc' } };
+export type TagSearchQuery = PageRequest & { query?: string; includeHierarchy?: boolean; sort: { field: 'name' | 'path' | 'assets' | 'children'; direction: 'asc' | 'desc' } };
+export type RelationshipPresence = { assetId: string; hasTags: boolean; hasAlbums: boolean };
 
 export interface AssetRepository {
-  list(): AssetRecord[];
-  getById(id: string): AssetRecord | undefined;
-  listTrash(): TrashAssetRecord[];
-  search(query: AssetSearchQuery): Promise<AssetSearchResult>;
+  getById(id: string): Promise<AssetRecord | undefined>;
+  getMany(ids: readonly string[]): Promise<AssetRecord[]>;
+  search(query: AssetSearchQuery): Promise<PageResult<AssetRecord>>;
+  searchIds(criteria: AssetSearchCriteria): Promise<string[]>;
+  searchTrash(query: TrashSearchQuery): Promise<PageResult<TrashAssetRecord>>;
+  searchTrashIds(): Promise<string[]>;
+  relationshipPresence(ids: readonly string[]): Promise<RelationshipPresence[]>;
   setFavorite(ids: readonly string[], favorite: boolean): Promise<MutationResult>;
   setArchived(ids: readonly string[], archived: boolean): Promise<MutationResult>;
   sync(ids: readonly string[]): Promise<MutationResult>;
@@ -129,14 +138,17 @@ export interface AssetRepository {
 }
 
 export interface AlbumRepository {
-  list(): AlbumRecord[];
+  search(query: AlbumSearchQuery): Promise<PageResult<AlbumRecord>>;
+  getById(id: string): Promise<AlbumRecord | undefined>;
   create(name: string, description?: string): Promise<AlbumRecord | undefined>;
   update(id: string, patch: { name?: string; description?: string }): Promise<MutationResult>;
   delete(ids: readonly string[]): Promise<MutationResult>;
 }
 
 export interface TagRepository {
-  list(): TagRecord[];
+  search(query: TagSearchQuery): Promise<PageResult<TagHierarchyRow>>;
+  getById(id: string): Promise<TagRecord | undefined>;
+  parentOptions(excludeTagId?: string): Promise<Array<{ value: string; label: string; subtitle: string }>>;
   create(name: string, color?: string | null, parentPath?: string): Promise<TagRecord | undefined>;
   update(id: string, patch: { name?: string; color?: string | null; parentPath?: string }): Promise<MutationResult>;
   delete(ids: readonly string[]): Promise<MutationResult>;
@@ -150,7 +162,6 @@ export interface MediaRepository {
 
 export interface LibraryDataSource {
   readonly kind: 'demo' | 'api';
-  readonly state: LibraryDataSnapshot;
   readonly assets: AssetRepository;
   readonly albums: AlbumRepository;
   readonly tags: TagRepository;
