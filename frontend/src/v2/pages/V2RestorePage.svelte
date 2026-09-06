@@ -17,12 +17,12 @@
   import { createGridViewportAnchor } from '../components/gridViewportAnchor';
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
   import { applyShiftAssetRange, emptyAssetSelection, getAssetSelectionCount, invertAssetSelection, isAllVisibleSelected, isAssetSelected, selectAllMatchingAssets, selectVisibleAssets, toggleAssetSelected, type AssetSelectionState } from '../components/assetSelection';
-  import { demoAssetState, initializeDemoAssetState, restoreDemoAssets, selectedDemoAssetIds, trashedDemoAssets } from '../demo/demoAssetState.svelte';
+  import { demoAssetState, initializeDemoAssetState, restoreDemoTrashAssets, selectedDemoAssetIds, trashApiDemoAssets } from '../demo/demoAssetState.svelte';
 
   let page=$state(1), pageSize=$state(24), resultMode=$state<ResultMode>('Pagination'), loaded=$state(24), sort=$state('deletedAt:desc'), viewer=$state(false), assetGrid=$state<HTMLElement|null>(null), assetColumns=$state(4);
   let selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>());
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
-  const matchingAssets=$derived((demoAssetState.revision, trashedDemoAssets()));
+  const matchingAssets=$derived((demoAssetState.revision, trashApiDemoAssets()));
   const total=$derived(matchingAssets.length);
   const visibleCount=$derived(resultMode==='Pagination'?Math.min(pageSize,Math.max(0,total-(page-1)*pageSize)):Math.min(loaded,total));
   const firstIndex=$derived(resultMode==='Pagination'?(page-1)*pageSize:0);
@@ -46,36 +46,36 @@
   function invertSelection(){selection=invertAssetSelection(selection)}
   function handleSelectionClick(id:string,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,itemIds,id):toggleAssetSelected(selection,id)}
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}viewer=true}
-  function restoreSelected(){restoreDemoAssets(selectedDemoAssetIds(selection,matchingIds));clearSelection();if(page>1&&(page-1)*pageSize>=total)page=Math.max(1,page-1)}
-  function restoreAll(){restoreDemoAssets(matchingIds);clearSelection();page=1}
+  function restoreSelected(){restoreDemoTrashAssets(selectedDemoAssetIds(selection,matchingIds));clearSelection();if(page>1&&(page-1)*pageSize>=total)page=Math.max(1,page-1)}
+  function restoreAll(){restoreDemoTrashAssets(matchingIds);clearSelection();page=1}
 
   onMount(()=>{initializeDemoAssetState();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
 
-<V2PageLayout title="Restore" description="Review current Immich trash and restore individual, selected, or all trashed assets.">
+<V2PageLayout title="Restore" description="Read the current trash directly from Immich and restore individual, selected, or all trashed assets.">
   {#snippet headerActions()}<V2Button variant="primary" disabled={total===0} onclick={restoreAll}>Restore all</V2Button>{/snippet}
   <V2Zone>
     {#if selectionActive}
-      <V2AssetSelectionToolbar {selectedCount} {total} noun="trashed assets" {allMatchingSelected} {allVisibleSelected} onselectvisible={selectVisible} onselectall={selectAllMatching} oninvert={invertSelection} onclear={clearSelection}>
+      <V2AssetSelectionToolbar {selectedCount} {total} noun="Immich trash assets" {allMatchingSelected} {allVisibleSelected} onselectvisible={selectVisible} onselectall={selectAllMatching} oninvert={invertSelection} onclear={clearSelection}>
         {#snippet actions()}<V2Button iconOnly variant="primary" title="Restore selected" ariaLabel="Restore selected" onclick={restoreSelected}><RotateCcw size={18}/></V2Button>{/snippet}
       </V2AssetSelectionToolbar>
     {:else}
       <V2Toolbar>
-        <V2Badge text={`${total.toLocaleString()} trashed assets`}/>
+        <V2Badge text={`${total.toLocaleString()} in Immich trash`}/>
         <V2Button iconOnly title="Select visible" ariaLabel="Select visible" disabled={total===0} onclick={selectVisible}><ListChecks size={18}/></V2Button>
-        <V2Button iconOnly title={`Select all ${total.toLocaleString()} trashed assets`} ariaLabel={`Select all ${total.toLocaleString()} trashed assets`} disabled={total===0} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>
+        <V2Button iconOnly title={`Select all ${total.toLocaleString()} Immich trash assets`} ariaLabel={`Select all ${total.toLocaleString()} Immich trash assets`} disabled={total===0} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>
         {#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} bind:value={assetColumns} valueLabel={`${assetColumns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(assetColumns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="restore-results" {sort} sortFields={[{value:'deletedAt',label:'Deleted date'},{value:'takenAt',label:'Taken date'},{value:'name',label:'Name'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={(value)=>sort=value} onpagesize={setPageSize} onmode={setMode}/>{/snippet}
       </V2Toolbar>
     {/if}
 
     <V2AssetGrid columns={assetColumns} bind:element={assetGrid}>
-      {#each items as asset, index}<V2AssetTile index={firstIndex+index} assetId={asset.id} label={asset.original_file_name} sublabel={`Taken ${new Date(asset.file_created_at).toLocaleDateString()}`} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}
+      {#each items as asset, index}<V2AssetTile index={firstIndex+index} assetId={asset.id} label={asset.original_file_name} sublabel={asset.restore_path ?? `Taken ${new Date(asset.taken_at).toLocaleDateString()}`} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}
     </V2AssetGrid>
 
-    {#if total===0}<p class="v2-muted">Trash is empty. Assets moved to trash from the V2 demo will appear here.</p>{:else if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={(next)=>page=next}/>{:else}<V2InfiniteFooter loaded={Math.min(loaded,total)} {total} batchSize={pageSize} noun="trashed assets" onloadmore={()=>loaded=Math.min(total,loaded+pageSize)}/>{/if}
+    {#if total===0}<p class="v2-muted">Immich's trash is empty. The demo trash is intentionally separate from the Companion asset index.</p>{:else if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={(next)=>page=next}/>{:else}<V2InfiniteFooter loaded={Math.min(loaded,total)} {total} batchSize={pageSize} noun="Immich trash assets" onloadmore={()=>loaded=Math.min(total,loaded+pageSize)}/>{/if}
   </V2Zone>
 </V2PageLayout>
 
-<V2Viewer open={viewer} title="Restore Viewer" mode="restore" onclose={()=>viewer=false}/>
+<V2Viewer open={viewer} title="Restore Viewer · Immich API" mode="restore" onclose={()=>viewer=false}/>
