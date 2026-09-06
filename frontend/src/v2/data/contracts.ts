@@ -117,6 +117,7 @@ export type RelationshipPresence = { assetId: string; hasTags: boolean; hasAlbum
 export interface AssetRepository {
   getById(id: string): Promise<AssetRecord | undefined>;
   getMany(ids: readonly string[]): Promise<AssetRecord[]>;
+  getTrashById(id: string): Promise<TrashAssetRecord | undefined>;
   search(query: AssetSearchQuery): Promise<PageResult<AssetRecord>>;
   searchIds(criteria: AssetSearchCriteria): Promise<string[]>;
   searchTrash(query: TrashSearchQuery): Promise<PageResult<TrashAssetRecord>>;
