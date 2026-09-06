@@ -16,33 +16,109 @@
   import V2Toggle from '../components/V2Toggle.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
+  import { demoAssetState } from '../demo/demoAssetState.svelte';
 
-  type Tag = { id:string; name:string; path:string; parent:string; assets:number; children:number; color:string };
+  type Tag = { id:string; name:string; path:string; parent:string; assets:number; children:number; color:string | null; synthetic?:boolean };
   type TagModal = { id:number; mode:'create'|'edit'; tagId:string; name:string; color:string; parent:string };
 
-  const tags: Tag[] = [
-    { id:'people',name:'People',path:'People',parent:'',assets:4892,children:2104,color:'#66c6a3' },
-    { id:'family',name:'Family',path:'People / Family',parent:'People',assets:430,children:28,color:'#9a78ff' },
-    { id:'events',name:'Events',path:'People / Family / Events',parent:'Family',assets:118,children:4,color:'#9a78ff' },
-    { id:'birthday',name:'Birthday',path:'People / Family / Events / Birthday',parent:'Events',assets:42,children:0,color:'#9a78ff' },
-    { id:'friends',name:'Friends',path:'People / Friends',parent:'People',assets:126,children:0,color:'#66c6a3' },
-    { id:'places',name:'Places',path:'Places',parent:'',assets:7211,children:1802,color:'#6ca8ff' },
-    { id:'canada',name:'Canada',path:'Places / Canada',parent:'Places',assets:1204,children:184,color:'#6ca8ff' },
-    { id:'quebec',name:'Québec',path:'Places / Canada / Québec',parent:'Canada',assets:404,children:31,color:'#6ca8ff' },
-    { id:'montreal',name:'Montréal',path:'Places / Canada / Québec / Montréal',parent:'Québec',assets:84,children:2,color:'#6ca8ff' },
-    { id:'plateau',name:'Plateau Mont-Royal',path:'Places / Canada / Québec / Montréal / Plateau Mont-Royal',parent:'Montréal',assets:31,children:0,color:'#6ca8ff' },
-    { id:'projects',name:'Projects',path:'Projects',parent:'',assets:3941,children:642,color:'#efaa67' },
-    { id:'immich',name:'Immich Companion',path:'Projects / Immich Companion',parent:'Projects',assets:892,children:0,color:'#efaa67' },
-    { id:'workflow',name:'Workflow',path:'Workflow',parent:'',assets:806,children:94,color:'#dd82c7' },
-    { id:'favorite-edits',name:'Favorite edits',path:'Workflow / Favorite edits',parent:'Workflow',assets:64,children:0,color:'#dd82c7' },
-    { id:'receipts',name:'Receipts 2024',path:'Receipts 2024',parent:'',assets:52,children:0,color:'#d9c66b' },
-    { id:'screenshots',name:'Reference screenshots',path:'Reference screenshots',parent:'',assets:412,children:0,color:'#9a78ff' },
-  ];
+  const deepPaths: Record<string, string> = {
+    'People / Family': 'People / Family / Immediate family',
+    'People / Parents': 'People / Family / Parents',
+    'People / Grandparents': 'People / Family / Parents / Grandparents',
+    'People / Siblings': 'People / Family / Siblings',
+    'People / Kids': 'People / Family / Children / Kids',
+    'People / Friends': 'People / Friends / Close friends',
+    'People / Coworkers': 'People / Work / Coworkers',
+    'Places / Home': 'Places / Canada / Québec / Montréal / Home',
+    'Places / Cottage': 'Places / Canada / Québec / Laurentides / Cottage',
+    'Places / City': 'Places / Canada / Québec / Montréal / Downtown',
+    'Places / Park': 'Places / Canada / Québec / Montréal / Parks',
+    'Places / Museum': 'Places / Canada / Québec / Montréal / Museums',
+    'Places / Restaurant': 'Places / Canada / Québec / Montréal / Restaurants',
+    'Places / Airport': 'Places / Canada / Québec / Montréal / Airport',
+    'Events / Birthday': 'Events / Family / Celebrations / Birthday',
+    'Events / Wedding': 'Events / Family / Celebrations / Wedding',
+    'Events / Holiday': 'Events / Family / Holidays',
+    'Events / School': 'Events / Family / School',
+    'Events / Work': 'Events / Work / Company events',
+    'Events / Concert': 'Events / Entertainment / Music / Concert',
+    'Events / Festival': 'Events / Entertainment / Festivals',
+    'Events / Sports': 'Events / Sports / Games',
+    'Subjects / Nature': 'Subjects / Outdoors / Nature',
+    'Subjects / Flowers': 'Subjects / Outdoors / Nature / Flowers',
+    'Subjects / Sunset': 'Subjects / Outdoors / Sky / Sunset',
+    'Subjects / Architecture': 'Subjects / Places / Architecture',
+    'Subjects / Food': 'Subjects / Food / Meals',
+    'Subjects / Pet': 'Subjects / Animals / Pets',
+    'Workflow / To print': 'Workflow / Output / Print / To print',
+    'Workflow / To share': 'Workflow / Output / Share / To share',
+    'Workflow / To edit': 'Workflow / Editing / To edit',
+    'Workflow / Needs metadata': 'Workflow / Review / Metadata / Needs metadata',
+    'Workflow / Needs location': 'Workflow / Review / Metadata / Needs location',
+    'Workflow / Needs date': 'Workflow / Review / Metadata / Needs date',
+    'Quality / Best shot': 'Quality / Keep / Best shot',
+    'Quality / Duplicate candidate': 'Quality / Review / Duplicate candidate',
+    'Media / RAW': 'Media / Photo / RAW',
+    'Media / JPEG': 'Media / Photo / JPEG',
+    'Media / HEIC': 'Media / Photo / HEIC',
+    'Media / MP4': 'Media / Video / MP4',
+    'Theme / Hiking': 'Theme / Outdoors / Hiking',
+    'Theme / Camping': 'Theme / Outdoors / Camping',
+    'Theme / Cooking': 'Theme / Home / Cooking',
+    'Theme / Garden': 'Theme / Home / Garden',
+  };
+
+  function displayedPath(raw: string): string {
+    return deepPaths[raw] ?? raw;
+  }
+
+  const tags = $derived.by(() => {
+    const leaves: Tag[] = demoAssetState.tags.map((tag) => {
+      const path = displayedPath(tag.tag_name);
+      const parts = path.split(' / ');
+      return {
+        id: tag.id,
+        name: parts.at(-1) ?? tag.tag_name,
+        path,
+        parent: parts.length > 1 ? parts.slice(0, -1).join(' / ') : '',
+        assets: tag.asset_count,
+        children: 0,
+        color: tag.color,
+      };
+    });
+
+    const byPath = new Map(leaves.map((tag) => [tag.path, tag]));
+    for (const leaf of leaves) {
+      const parts = leaf.path.split(' / ');
+      for (let depth = 1; depth < parts.length; depth += 1) {
+        const path = parts.slice(0, depth).join(' / ');
+        if (byPath.has(path)) continue;
+        byPath.set(path, {
+          id: `hierarchy:${path}`,
+          name: parts[depth - 1],
+          path,
+          parent: depth > 1 ? parts.slice(0, depth - 1).join(' / ') : '',
+          assets: 0,
+          children: 0,
+          color: leaf.color,
+          synthetic: true,
+        });
+      }
+    }
+
+    const rows = [...byPath.values()];
+    for (const row of rows) {
+      row.children = rows.filter((candidate) => candidate.parent === row.path).length;
+      if (row.synthetic) {
+        row.assets = leaves.filter((leaf) => leaf.path.startsWith(`${row.path} / `)).reduce((sum, leaf) => sum + leaf.assets, 0);
+      }
+    }
+    return rows;
+  });
 
   let query=$state(''), includeHierarchy=$state(false), selectedIds=$state<string[]>([]), page=$state(1);
   let pageSize=$state(24), resultMode=$state<ResultMode>('Pagination'), loaded=$state(24), sort=$state('name:asc');
   let modalSequence=0, modals=$state<TagModal[]>([]);
-  const total=60184;
   const normalizedQuery=$derived(query.trim().toLocaleLowerCase());
   const filteredTags=$derived(tags.filter((tag)=>{if(!normalizedQuery)return true;const direct=tag.name.toLocaleLowerCase().includes(normalizedQuery);return includeHierarchy?direct||tag.path.toLocaleLowerCase().includes(normalizedQuery):direct}));
   const sortedTags=$derived([...filteredTags].sort((a,b)=>{
@@ -53,25 +129,25 @@
     if(field==='path') return a.path.localeCompare(b.path)*multiplier;
     return a.name.localeCompare(b.name)*multiplier;
   }));
-  const resultTotal=$derived(normalizedQuery ? Math.max(filteredTags.length,1) : total);
+  const resultTotal=$derived(filteredTags.length);
 
   function setPageSize(next:number){pageSize=next;page=1;loaded=Math.max(next,Math.min(loaded,resultTotal))}
   function setMode(mode:ResultMode){resultMode=mode;if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded)}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function openCreate(){modals=[...modals,{id:++modalSequence,mode:'create',tagId:'',name:'',color:'#9A78FF',parent:''}]}
-  function openEdit(tag:Tag){modals=[...modals,{id:++modalSequence,mode:'edit',tagId:tag.id,name:tag.name,color:tag.color,parent:tag.parent}]}
+  function openEdit(tag:Tag){modals=[...modals,{id:++modalSequence,mode:'edit',tagId:tag.id,name:tag.name,color:tag.color ?? '#9A78FF',parent:tag.parent}]}
   function closeModal(id:number){modals=modals.filter((modal)=>modal.id!==id)}
   function updateModal(id:number,patch:Partial<TagModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
-  function parentOptionsFor(modal:TagModal){return tags.filter((tag)=>tag.children>0&&tag.id!==modal.tagId).map((tag)=>({value:tag.name,label:tag.name,subtitle:tag.path}))}
+  function parentOptionsFor(modal:TagModal){return tags.filter((tag)=>tag.children>0&&tag.id!==modal.tagId).map((tag)=>({value:tag.path,label:tag.name,subtitle:tag.parent || 'Root'}))}
 </script>
 
-<V2PageLayout title="Tags" description="Search and manage large hierarchical tag libraries with optional parent-path matching.">
+<V2PageLayout title="Tags" description="Search and manage hierarchical tags from the same shared V2 demo state used by Assets filters.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={selectedIds.length===0}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" onclick={openCreate}>Create tag</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search 60,000 tags…" oninput={(event)=>{query=event.currentTarget.value;page=1;loaded=pageSize}}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>{includeHierarchy=checked;page=1;loaded=pageSize}}/><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and full parent paths. “Family” also finds descendants under People / Family.':'Matches tag names only. “Family” only returns tags whose own name matches.'}</p></V2Stack></V2Section><V2Section title="Scale"><V2Card><V2Stack gap="xs"><b>60,184 tags</b><span class="v2-small v2-muted">Demo rows represent a server-paged large library.</span><span class="v2-small v2-muted">Parent relationships may be multiple levels deep.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder={`Search ${tags.length} tags…`} oninput={(event)=>{query=event.currentTarget.value;page=1;loaded=pageSize}}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>{includeHierarchy=checked;page=1;loaded=pageSize}}/><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and full parent paths. Searching “Family” also finds descendants several levels below it.':'Matches tag names only.'}</p></V2Stack></V2Section><V2Section title="Hierarchy"><V2Card><V2Stack gap="xs"><b>{tags.length} visible hierarchy rows</b><span class="v2-small v2-muted">Backed by {demoAssetState.tags.length} shared tag records plus generated parent nodes.</span><span class="v2-small v2-muted">Some branches are five or six levels deep for realistic parent/child testing.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
-    <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${filteredTags.length} demo matches`}/><V2Badge text={includeHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text="60,184 total"/></V2Inline>{#snippet actions()}<V2CollectionControls id="tag-results" {sort} sortFields={[{value:'name',label:'Tag'},{value:'path',label:'Path'},{value:'assets',label:'Assets'},{value:'children',label:'Children'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={(value)=>sort=value} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
-    <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><span class="v2-visually-hidden">Select</span></th><th>Tag</th><th class="v2-tag-path-column">Path</th><th class="v2-collection-count-column">Assets</th><th class="v2-tag-children-column">Children</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each sortedTags as tag (tag.id)}<tr><td class="v2-tag-check-column"><input type="checkbox" aria-label={`Select ${tag.name}`} checked={selectedIds.includes(tag.id)} onchange={(event)=>toggleSelection(tag.id,event.currentTarget.checked)}></td><td><span class="v2-tag-name"><span class="v2-tag-swatch" style:background={tag.color}></span><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.parent?tag.path:'Root'}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">No demo tags match this search mode.</td></tr>{/each}</tbody></V2Table></V2Card>
+    <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${filteredTags.length} matches`}/><V2Badge text={includeHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text={`${demoAssetState.tags.length} shared tags`}/></V2Inline>{#snippet actions()}<V2CollectionControls id="tag-results" {sort} sortFields={[{value:'name',label:'Tag'},{value:'path',label:'Path'},{value:'assets',label:'Assets'},{value:'children',label:'Children'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={(value)=>sort=value} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
+    <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><span class="v2-visually-hidden">Select</span></th><th>Tag</th><th class="v2-tag-path-column">Path</th><th class="v2-collection-count-column">Assets</th><th class="v2-tag-children-column">Children</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each sortedTags as tag (tag.id)}<tr><td class="v2-tag-check-column"><input type="checkbox" aria-label={`Select ${tag.name}`} checked={selectedIds.includes(tag.id)} onchange={(event)=>toggleSelection(tag.id,event.currentTarget.checked)}></td><td><span class="v2-tag-name"><span class="v2-tag-swatch" style:background={tag.color ?? '#6f7d8e'}></span><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent||'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.path}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">No tags match this search mode.</td></tr>{/each}</tbody></V2Table></V2Card>
     {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} total={resultTotal} onpage={(next)=>(page=next)}/>{:else}<V2InfiniteFooter loaded={Math.min(loaded,resultTotal)} total={resultTotal} batchSize={pageSize} noun="tags" onloadmore={()=>loaded=Math.min(resultTotal,loaded+pageSize)}/>{/if}
   </V2Zone>
 </V2PageLayout>
@@ -98,8 +174,8 @@
         placeholder="No parent — root tag"
         onchange={(value)=>updateModal(modal.id,{parent:value})}
       />
-      <V2Section title="Modal behavior demo">
-        <V2Card><V2Stack gap="sm"><span class="v2-small v2-muted">Only the middle content region scrolls when the dialog is tall. The header and footer remain visible while dragging is constrained to the viewport.</span><V2Field label="Long-form notes" value="Use this field to make the modal taller at smaller viewport sizes and validate content-only scrolling." multiline={true}/></V2Stack></V2Card>
+      <V2Section title="Hierarchy preview">
+        <V2Card><V2Stack gap="sm"><span class="v2-small v2-muted">Parent choices come from the same generated hierarchy displayed in the Tags table, including deeply nested branches.</span><span class="v2-small">{modal.parent ? `${modal.parent} / ${modal.name || 'New tag'}` : modal.name || 'Root tag'}</span></V2Stack></V2Card>
       </V2Section>
     </V2Stack>
     {#snippet footer()}<V2Button onclick={()=>closeModal(modal.id)}>Cancel</V2Button><V2Button variant="primary" onclick={()=>closeModal(modal.id)}>{modal.mode==='create'?'Create tag':'Save changes'}</V2Button>{/snippet}
