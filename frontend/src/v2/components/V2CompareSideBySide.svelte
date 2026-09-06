@@ -6,6 +6,7 @@
     referenceLabel,
     transform,
     onselectedload,
+    onreferenceload,
     onviewport,
   }: {
     selectedSrc: string;
@@ -14,6 +15,7 @@
     referenceLabel: string;
     transform: string;
     onselectedload?: (event: Event) => void;
+    onreferenceload?: (event: Event) => void;
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
@@ -27,7 +29,7 @@
 <div class="v2-compare-pane" bind:this={viewport}>
   <span class="v2-compare-label">{referenceLabel}</span>
   <div class="v2-compare-transform" style={`transform:${transform}`}>
-    <img src={referenceSrc} alt={referenceLabel}>
+    <img src={referenceSrc} alt={referenceLabel} onload={onreferenceload}>
   </div>
 </div>
 <div class="v2-compare-pane reference">
