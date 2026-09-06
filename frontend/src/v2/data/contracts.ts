@@ -240,7 +240,7 @@ export interface DuplicateRepository {
   history(query: DuplicateHistoryQuery): Promise<PageResult<DuplicateHistoryRecord>>;
 }
 
-type MediaAsset = Pick<AssetRecord, 'id' | 'original_file_name' | 'original_mime_type' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord;
+export type MediaAsset = Pick<AssetRecord, 'id' | 'original_file_name' | 'original_mime_type' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord;
 
 export interface MediaRepository {
   thumbnail(asset: MediaAsset): MediaResource;
@@ -249,12 +249,20 @@ export interface MediaRepository {
   refresh(asset: MediaAsset, purpose: MediaPurpose): Promise<MediaResource>;
 }
 
+export interface LegacyMediaRepository {
+  thumbnail(asset: MediaAsset): string;
+  fullSize(asset: MediaAsset): string;
+  difference(selected: AssetRecord, reference: AssetRecord, options?: DifferenceOptions): string;
+}
+
 export interface LibraryDataSource {
   readonly kind: 'demo' | 'api';
   readonly assets: AssetRepository;
   readonly albums: AlbumRepository;
   readonly tags: TagRepository;
   readonly duplicates: DuplicateRepository;
-  readonly media: MediaRepository;
+  readonly media: MediaRepository | LegacyMediaRepository;
   initialize(): Promise<void>;
 }
+
+export type ResolvedLibraryDataSource = Omit<LibraryDataSource, 'media'> & { readonly media: MediaRepository };
