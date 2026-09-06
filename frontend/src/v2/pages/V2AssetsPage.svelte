@@ -9,11 +9,11 @@
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
   import V2Checkbox from '../components/V2Checkbox.svelte';
-  import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
+  import V2CollectionControls from '../components/V2CollectionControls.svelte';
+  import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
   import V2Field from '../components/V2Field.svelte';
   import V2Inline from '../components/V2Inline.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2Pagination from '../components/V2Pagination.svelte';
   import V2RangeSlider from '../components/V2RangeSlider.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Segmented from '../components/V2Segmented.svelte';
@@ -26,6 +26,7 @@
   import { createGridViewportAnchor } from '../components/gridViewportAnchor';
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
   import { applyShiftAssetRange,emptyAssetSelection,getAssetSelectionCount,invertAssetSelection,isAllVisibleSelected,isAssetSelected,selectAllMatchingAssets,selectVisibleAssets,toggleAssetSelected,type AssetSelectionState } from '../components/assetSelection';
+  import { createCollectionView } from '../state/collectionView.svelte';
 
   type AssetTab='Browse'|'Saved searches';
   type Rule={id:number;field:string;op:string;value:string};
@@ -35,15 +36,17 @@
   const fieldSelectOptions=fieldOptions.map(([value,label])=>({value,label}));
   const operatorSelectOptions=operatorOptions.map(([value,label])=>({value,label}));
   const savedSearches=['Favorite images not archived','Family album or Vacation tag','Large landscape images'];
+  const total=2418;
+  const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionResultMode'});
 
-  let tab=$state<AssetTab>('Browse'),searchMode=$state<'Simple'|'Expert'>('Simple'),page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),loaded=$state(24),viewer=$state(false),drawer=$state(false),summary=$state('Simple search · current filters'),selectedSaved=$state(savedSearches[0]),sort=$state('takenDate:desc');
+  let tab=$state<AssetTab>('Browse'),searchMode=$state<'Simple'|'Expert'>('Simple'),viewer=$state(false),drawer=$state(false),summary=$state('Simple search · current filters'),selectedSaved=$state(savedSearches[0]),sort=$state('takenDate:desc');
   let mediaType=$state(''),favorite=$state(''),archived=$state('');
-  let assetGrid=$state<HTMLElement|null>(null),assetColumns=$state(4),selection=$state<AssetSelectionState<number>>(emptyAssetSelection<number>()),moreOpen=$state(false);
-  const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid),total=2418;
+  let assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<number>>(emptyAssetSelection<number>()),moreOpen=$state(false);
+  const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   let seq=$state(4),groupSeq=$state(2),logic=$state<'AND'|'OR'>('AND'),negated=$state(false),rules=$state<Rule[]>([{id:1,field:'mediaType',op:'is',value:'Image'},{id:2,field:'favorite',op:'is',value:'true'}]),groups=$state<Group[]>([{id:2,logic:'OR',negated:false,rules:[{id:3,field:'album',op:'is',value:'Family'},{id:4,field:'tag',op:'is',value:'Vacation'}]}]);
   let draftRules=$state<Rule[]>([]),draftGroups=$state<Group[]>([]),draftLogic=$state<'AND'|'OR'>('AND'),draftNegated=$state(false);
 
-  const start=$derived((page-1)*pageSize),count=$derived(resultMode==='Pagination'?Math.min(pageSize,total-start):Math.min(loaded,total)),ids=$derived(Array.from({length:count},(_,i)=>resultMode==='Pagination'?start+i:i));
+  const start=$derived(collection.firstIndex()),count=$derived(collection.visibleCount(total)),ids=$derived(Array.from({length:count},(_,i)=>collection.resultMode==='Pagination'?start+i:i));
   const expression=$derived(expressionText(rules,groups,logic,negated)),draftExpression=$derived(expressionText(draftRules,draftGroups,draftLogic,draftNegated));
   const selectedCount=$derived(getAssetSelectionCount(selection,total)),selectionActive=$derived(selectedCount>0),allMatchingSelected=$derived(selection.allMatchingSelected),allVisibleSelected=$derived(isAllVisibleSelected(selection,ids)),explicitSelected=$derived([...selection.selectedIds]);
   const favoriteActionLabel=$derived(!allMatchingSelected&&explicitSelected.length>0&&explicitSelected.every(id=>id%3===0)?'Unfavorite':'Favorite'),archiveActionLabel=$derived(!allMatchingSelected&&explicitSelected.length>0&&explicitSelected.every(id=>id%5===0)?'Unarchive':'Archive');
@@ -54,11 +57,8 @@
   const fieldLabel=(value:string)=>fieldOptions.find(([key])=>key===value)?.[1]??value,operatorLabel=(value:string)=>operatorOptions.find(([key])=>key===value)?.[1]??value;
   function ruleText(r:Rule){return `${fieldLabel(r.field)} ${operatorLabel(r.op)} ${r.value||'…'}`}
   function expressionText(rs:Rule[],gs:Group[],root:'AND'|'OR',not:boolean){const base=`(${rs.map(ruleText).join(` ${root} `)||'empty'})`,nested=gs.map(g=>`${g.negated?'NOT ':''}(${g.rules.map(ruleText).join(` ${g.logic} `)||'empty'})`),text=[base,...nested].join(` ${root} `);return not?`NOT (${text})`:text}
-  function scrollResultsTop(){document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'smooth'})}
-  function setPage(next:number){page=next;scrollResultsTop()}
-  function setMode(mode:ResultMode){resultMode=mode;localStorage.setItem('immichCompanionResultMode',mode==='Pagination'?'paged':'infinite');if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded)}
-  function setPageSize(next:number){pageSize=next;page=1;loaded=next}
-  function setAssetColumns(next:number|string){assetColumns=Number(next);gridViewportAnchor.adjust()}
+  function setPage(next:number){collection.setPage(next);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'smooth'})}
+  function setAssetColumns(next:number|string){collection.setColumns(next);gridViewportAnchor.adjust()}
   function openDrawer(){draftRules=rules.map(r=>({...r}));draftGroups=groups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));draftLogic=logic;draftNegated=negated;drawer=true}
   function applyDrawer(){rules=draftRules.map(r=>({...r}));groups=draftGroups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));logic=draftLogic;negated=draftNegated;drawer=false;summary=`Expert search · ${expressionText(rules,groups,logic,negated)}`;clearSelection()}
   function resetDraft(){draftRules=[];draftGroups=[];draftLogic='AND';draftNegated=false}
@@ -75,7 +75,7 @@
   function handleTileActivate(id:number,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}viewer=true}
   function demoAction(_label:string){moreOpen=false}
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen&&target instanceof Element&&!target.closest('.v2-selection-more'))moreOpen=false}
-  onMount(()=>{const stored=localStorage.getItem('immichCompanionResultMode');if(stored==='infinite'){resultMode='Infinite';loaded=Math.max(pageSize,loaded)}return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
+  onMount(()=>{collection.hydrate();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(e)=>{if(e.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(moreOpen)moreOpen=false;else if(drawer)drawer=false;else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
@@ -96,10 +96,10 @@
           {/snippet}
         </V2AssetSelectionToolbar>
       {:else}
-        <V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} bind:value={assetColumns} valueLabel={`${assetColumns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(assetColumns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="asset-results" {sort} sortFields={[{value:'takenDate',label:'Taken date'},{value:'filename',label:'Filename'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={(value)=>sort=value} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
+        <V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="asset-results" {sort} sortFields={[{value:'takenDate',label:'Taken date'},{value:'filename',label:'Filename'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={(value)=>sort=value} onpagesize={(value)=>collection.setPageSize(value,total)} onmode={collection.setMode}/>{/snippet}</V2Toolbar>
       {/if}
-      <V2AssetGrid columns={assetColumns} bind:element={assetGrid}>{#each ids as id}<V2AssetTile index={id} assetId={id} label={`IMG_${String(id+1).padStart(4,'0')}.jpg`} sublabel={`Aug ${21-(id%8)}, 2026`} selected={isSelected(id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(id,event)} onselect={(event)=>handleSelectionClick(id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(id,event)}/>{/each}</V2AssetGrid>
-      {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<div class="v2-infinite-sentinel" data-loading={loaded<total||undefined}><div>{loaded>=total?`All ${total.toLocaleString()} matching assets loaded`:`${loaded.toLocaleString()} of ${total.toLocaleString()} loaded`}</div>{#if loaded<total}<V2Button onclick={()=>loaded=Math.min(total,loaded+pageSize)}>Load next {pageSize}</V2Button>{/if}</div>{/if}
+      <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each ids as id}<V2AssetTile index={id} assetId={id} label={`IMG_${String(id+1).padStart(4,'0')}.jpg`} sublabel={`Aug ${21-(id%8)}, 2026`} selected={isSelected(id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(id,event)} onselect={(event)=>handleSelectionClick(id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(id,event)}/>{/each}</V2AssetGrid>
+      <V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={collection.loaded} noun="assets" onpage={setPage} onloadmore={()=>collection.loadMore(total)}/>
     {:else}<V2Toolbar sticky={false}><V2Badge text={`${savedSearches.length} saved searches`}/>{#snippet actions()}<V2Button variant="primary">Create saved search</V2Button>{/snippet}</V2Toolbar><V2Stack gap="sm">{#each savedSearches as saved}<V2Card><V2Inline justify="between" wrap><V2Stack gap="xs"><b>{saved}</b><span class="v2-small v2-muted">Reusable expert-search definition</span></V2Stack><V2Inline gap="sm"><V2Button onclick={()=>selectedSaved=saved}>Select</V2Button><V2Button onclick={()=>{selectedSaved=saved;loadSaved(saved);tab='Browse';searchMode='Expert'}}>Open</V2Button></V2Inline></V2Inline></V2Card>{/each}</V2Stack>{/if}
   </V2Zone>
 </V2PageLayout>
