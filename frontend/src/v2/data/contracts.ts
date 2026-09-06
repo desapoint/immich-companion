@@ -81,8 +81,24 @@ export type TagHierarchyRow = {
 export type MutationFailure = { id: string; reason: string };
 export type MutationResult = { affectedIds: string[]; failed: MutationFailure[] };
 export type DifferenceOptions = { hue?: number; contrast?: number; binary?: boolean };
-export type PageRequest = { page: number; pageSize: number };
-export type PageResult<T> = { items: T[]; total: number; page: number; pageSize: number };
+
+export type CollectionRequest = {
+  pageSize: number;
+  page?: number;
+  cursor?: string | null;
+};
+
+export type PageResult<T> = {
+  items: T[];
+  total: number;
+  pageSize: number;
+  page?: number;
+  nextCursor: string | null;
+};
+
+export type RelationOption = { value: string; label: string; subtitle: string };
+export type OptionSearchQuery = { query?: string; pageSize: number; cursor?: string | null };
+export type OptionSearchResult = { items: RelationOption[]; nextCursor: string | null };
 
 export type AssetSearchRule = { field: string; op: string; value: string };
 export type AssetSearchGroup = { logic: 'AND' | 'OR'; negated: boolean; rules: AssetSearchRule[] };
@@ -105,41 +121,85 @@ export type AssetSimpleSearch = {
   minAspectRatio?: string;
   maxAspectRatio?: string;
 };
+
 export type AssetSearchCriteria =
   | { mode: 'simple'; filters: AssetSimpleSearch; sort: AssetSort }
   | { mode: 'expert'; rules: AssetSearchRule[]; groups: AssetSearchGroup[]; logic: 'AND' | 'OR'; negated: boolean; sort: AssetSort };
-export type AssetSearchQuery = AssetSearchCriteria & PageRequest;
-export type TrashSearchQuery = PageRequest & { sort: { field: 'deletedAt' | 'takenAt' | 'name'; direction: 'asc' | 'desc' } };
-export type AlbumSearchQuery = PageRequest & { query?: string; sort: { field: 'name' | 'assets' | 'description'; direction: 'asc' | 'desc' } };
-export type TagSearchQuery = PageRequest & { query?: string; includeHierarchy?: boolean; sort: { field: 'name' | 'path' | 'assets' | 'children'; direction: 'asc' | 'desc' } };
-export type RelationshipPresence = { assetId: string; hasTags: boolean; hasAlbums: boolean };
+
+export type AssetSearchQuery = AssetSearchCriteria & CollectionRequest;
+export type TrashSearchCriteria = { sort: { field: 'deletedAt' | 'takenAt' | 'name'; direction: 'asc' | 'desc' } };
+export type TrashSearchQuery = TrashSearchCriteria & CollectionRequest;
+export type AlbumSearchQuery = CollectionRequest & { query?: string; sort: { field: 'name' | 'assets' | 'description'; direction: 'asc' | 'desc' } };
+export type TagSearchQuery = CollectionRequest & { query?: string; includeHierarchy?: boolean; sort: { field: 'name' | 'path' | 'assets' | 'children'; direction: 'asc' | 'desc' } };
+
+export type AssetSelectionTarget =
+  | { kind: 'ids'; ids: string[] }
+  | { kind: 'query'; criteria: AssetSearchCriteria; excludedIds: string[] };
+
+export type TrashSelectionTarget =
+  | { kind: 'ids'; ids: string[] }
+  | { kind: 'all'; excludedIds: string[] };
+
+export type AssetSelectionCapabilities = {
+  count: number;
+  allFavorite: boolean;
+  allArchived: boolean;
+  hasTags: boolean;
+  hasAlbums: boolean;
+  hasStackMembers: boolean;
+  canStack: boolean;
+  singleAssetId: string | null;
+  canSetStackPrimary: boolean;
+  canRemoveCompleteStack: boolean;
+};
+
+export type DuplicateState = 'Actionable' | 'Needs review' | 'Needs decisions' | 'Blocked';
+export type DuplicateDecision = 'keep' | 'delete' | 'stack';
+export type DuplicateMemberRecord = { asset: AssetRecord; similarity: number };
+export type DuplicateGroupRecord = {
+  id: number;
+  state: DuplicateState;
+  kind: string;
+  members: DuplicateMemberRecord[];
+};
+export type DuplicateSearchQuery = CollectionRequest & { state?: DuplicateState | 'All groups' | 'Auto-ready' };
+export type DuplicateCapabilities = {
+  canRunDiscovery: boolean;
+  canApplyDecisions: boolean;
+  canViewHistory: boolean;
+  reviewFilters: Array<DuplicateState | 'All groups' | 'Auto-ready'>;
+  decisions: DuplicateDecision[];
+};
+export type DuplicateDiscoveryOptions = { similarityThreshold: number; includeSimilar: boolean; includeExact: boolean; maxCandidates: number };
+export type DuplicateDiscoveryResult = { groupCount: number; candidateCount: number };
+export type DuplicateHistoryRecord = { id: string; occurredAt: string; groupLabel: string; summary: string };
+export type DuplicateHistoryQuery = CollectionRequest & { range: 'Last 30 days' | 'Last 90 days' | 'All history' };
 
 export interface AssetRepository {
   getById(id: string): Promise<AssetRecord | undefined>;
   getMany(ids: readonly string[]): Promise<AssetRecord[]>;
   getTrashById(id: string): Promise<TrashAssetRecord | undefined>;
   search(query: AssetSearchQuery): Promise<PageResult<AssetRecord>>;
-  searchIds(criteria: AssetSearchCriteria): Promise<string[]>;
   searchTrash(query: TrashSearchQuery): Promise<PageResult<TrashAssetRecord>>;
-  searchTrashIds(): Promise<string[]>;
-  relationshipPresence(ids: readonly string[]): Promise<RelationshipPresence[]>;
-  setFavorite(ids: readonly string[], favorite: boolean): Promise<MutationResult>;
-  setArchived(ids: readonly string[], archived: boolean): Promise<MutationResult>;
-  sync(ids: readonly string[]): Promise<MutationResult>;
-  trash(ids: readonly string[]): Promise<MutationResult>;
-  restore(ids: readonly string[]): Promise<MutationResult>;
-  addToAlbum(ids: readonly string[], albumId: string): Promise<MutationResult>;
-  removeFromAlbums(ids: readonly string[], albumIds?: readonly string[]): Promise<MutationResult>;
-  addTags(ids: readonly string[], tagIds: readonly string[]): Promise<MutationResult>;
-  removeTags(ids: readonly string[], tagIds?: readonly string[]): Promise<MutationResult>;
-  stack(ids: readonly string[]): Promise<MutationResult>;
-  unstack(ids: readonly string[]): Promise<MutationResult>;
+  selectionCapabilities(target: AssetSelectionTarget): Promise<AssetSelectionCapabilities>;
+  setFavorite(target: AssetSelectionTarget, favorite: boolean): Promise<MutationResult>;
+  setArchived(target: AssetSelectionTarget, archived: boolean): Promise<MutationResult>;
+  sync(target: AssetSelectionTarget): Promise<MutationResult>;
+  trash(target: AssetSelectionTarget): Promise<MutationResult>;
+  restore(target: TrashSelectionTarget): Promise<MutationResult>;
+  addToAlbum(target: AssetSelectionTarget, albumId: string): Promise<MutationResult>;
+  removeFromAlbums(target: AssetSelectionTarget, albumIds?: readonly string[]): Promise<MutationResult>;
+  addTags(target: AssetSelectionTarget, tagIds: readonly string[]): Promise<MutationResult>;
+  removeTags(target: AssetSelectionTarget, tagIds?: readonly string[]): Promise<MutationResult>;
+  stack(target: AssetSelectionTarget): Promise<MutationResult>;
+  unstack(target: AssetSelectionTarget): Promise<MutationResult>;
   setStackPrimary(assetId: string): Promise<MutationResult>;
   removeCompleteStack(assetId: string): Promise<MutationResult>;
 }
 
 export interface AlbumRepository {
   search(query: AlbumSearchQuery): Promise<PageResult<AlbumRecord>>;
+  searchOptions(query: OptionSearchQuery): Promise<OptionSearchResult>;
   getById(id: string): Promise<AlbumRecord | undefined>;
   create(name: string, description?: string): Promise<AlbumRecord | undefined>;
   update(id: string, patch: { name?: string; description?: string }): Promise<MutationResult>;
@@ -148,11 +208,20 @@ export interface AlbumRepository {
 
 export interface TagRepository {
   search(query: TagSearchQuery): Promise<PageResult<TagHierarchyRow>>;
+  searchOptions(query: OptionSearchQuery): Promise<OptionSearchResult>;
   getById(id: string): Promise<TagRecord | undefined>;
   parentOptions(excludeTagId?: string): Promise<Array<{ value: string; label: string; subtitle: string }>>;
   create(name: string, color?: string | null, parentPath?: string): Promise<TagRecord | undefined>;
   update(id: string, patch: { name?: string; color?: string | null; parentPath?: string }): Promise<MutationResult>;
   delete(ids: readonly string[]): Promise<MutationResult>;
+}
+
+export interface DuplicateRepository {
+  capabilities(): Promise<DuplicateCapabilities>;
+  search(query: DuplicateSearchQuery): Promise<PageResult<DuplicateGroupRecord>>;
+  runDiscovery(options: DuplicateDiscoveryOptions): Promise<DuplicateDiscoveryResult>;
+  applyDecisions(decisions: Record<string, DuplicateDecision>): Promise<MutationResult>;
+  history(query: DuplicateHistoryQuery): Promise<PageResult<DuplicateHistoryRecord>>;
 }
 
 export interface MediaRepository {
@@ -166,6 +235,7 @@ export interface LibraryDataSource {
   readonly assets: AssetRepository;
   readonly albums: AlbumRepository;
   readonly tags: TagRepository;
+  readonly duplicates: DuplicateRepository;
   readonly media: MediaRepository;
   initialize(): Promise<void>;
 }
