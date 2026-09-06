@@ -44,7 +44,6 @@
     {options}
     {placeholder}
     searchPlaceholder={`Search ${label.toLocaleLowerCase()}…`}
-    disabled={emptySelected}
     onvalueschange={setValues}
   />
   <V2Button active={emptySelected} ariaLabel={emptyLabel} title={emptyLabel} onclick={toggleEmpty}>{emptyLabel}</V2Button>
