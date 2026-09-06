@@ -10,7 +10,7 @@
     total,
     loaded,
     noun = 'items',
-    onpage,
+    onpage = () => {},
     onloadmore,
   }: {
     resultMode: CollectionResultMode;
