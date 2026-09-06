@@ -28,12 +28,28 @@
     filters,
     albumOptions = [],
     tagOptions = [],
+    albumOptionsLoading = false,
+    tagOptionsLoading = false,
+    albumOptionsHasMore = false,
+    tagOptionsHasMore = false,
     onchange,
+    onalbumsearch,
+    ontagsearch,
+    onalbumloadmore,
+    ontagloadmore,
   }: {
     filters: SimpleAdvancedFilters;
     albumOptions?: SelectOption[];
     tagOptions?: SelectOption[];
+    albumOptionsLoading?: boolean;
+    tagOptionsLoading?: boolean;
+    albumOptionsHasMore?: boolean;
+    tagOptionsHasMore?: boolean;
     onchange: (filters: SimpleAdvancedFilters) => void;
+    onalbumsearch?: (query: string) => void;
+    ontagsearch?: (query: string) => void;
+    onalbumloadmore?: () => void;
+    ontagloadmore?: () => void;
   } = $props();
 
   function emptyFilters(): SimpleAdvancedFilters {
@@ -59,7 +75,7 @@
   const activeCount = $derived(countActive(filters));
   const draftActiveCount = $derived(countActive(draft));
 
-  function show(): void { draft = { ...filters }; open = true; }
+  function show(): void { draft = { ...filters }; onalbumsearch?.(''); ontagsearch?.(''); open = true; }
   function cancel(): void { draft = { ...filters }; open = false; }
   function apply(): void { onchange({ ...draft }); open = false; }
   function update<K extends keyof SimpleAdvancedFilters>(key: K, value: SimpleAdvancedFilters[K]): void { draft = { ...draft, [key]: value }; }
@@ -75,8 +91,8 @@
     <div class="v2-drawer-head"><div><h2>Advanced filters</h2><p class="v2-muted">Filter by relationships, taken date, dimensions and aspect ratio.</p></div><V2Button iconOnly title="Close advanced filters" ariaLabel="Close advanced filters" onclick={cancel}>✕</V2Button></div>
     <div class="v2-drawer-body"><V2Stack gap="md">
       <V2Section title="Relationships"><V2Stack gap="md">
-        <V2RelationFilterField id="asset-advanced-albums" label="Albums" values={splitIds(draft.albumIds)} options={resolvedAlbumOptions} emptySelected={draft.noAlbum} emptyLabel="No album" placeholder="Any album" onvalueschange={(values)=>{draft={...draft,albumIds:joinIds(values),noAlbum:values.length>0?false:draft.noAlbum}}} onemptychange={(selected)=>{draft={...draft,noAlbum:selected,albumIds:selected?'':draft.albumIds}}}/>
-        <V2RelationFilterField id="asset-advanced-tags" label="Tags" values={splitIds(draft.tagIds)} options={resolvedTagOptions} emptySelected={draft.noTag} emptyLabel="No tag" placeholder="Any tag" onvalueschange={(values)=>{draft={...draft,tagIds:joinIds(values),noTag:values.length>0?false:draft.noTag}}} onemptychange={(selected)=>{draft={...draft,noTag:selected,tagIds:selected?'':draft.tagIds}}}/>
+        <V2RelationFilterField id="asset-advanced-albums" label="Albums" values={splitIds(draft.albumIds)} options={resolvedAlbumOptions} loading={albumOptionsLoading} hasMore={albumOptionsHasMore} onsearchchange={onalbumsearch} onloadmore={onalbumloadmore} emptySelected={draft.noAlbum} emptyLabel="No album" placeholder="Any album" onvalueschange={(values)=>{draft={...draft,albumIds:joinIds(values),noAlbum:values.length>0?false:draft.noAlbum}}} onemptychange={(selected)=>{draft={...draft,noAlbum:selected,albumIds:selected?'':draft.albumIds}}}/>
+        <V2RelationFilterField id="asset-advanced-tags" label="Tags" values={splitIds(draft.tagIds)} options={resolvedTagOptions} loading={tagOptionsLoading} hasMore={tagOptionsHasMore} onsearchchange={ontagsearch} onloadmore={ontagloadmore} emptySelected={draft.noTag} emptyLabel="No tag" placeholder="Any tag" onvalueschange={(values)=>{draft={...draft,tagIds:joinIds(values),noTag:values.length>0?false:draft.noTag}}} onemptychange={(selected)=>{draft={...draft,noTag:selected,albumIds:draft.albumIds,tagIds:selected?'':draft.tagIds}}}/>
       </V2Stack></V2Section>
       <V2Section title="Taken date"><div class="v2-advanced-grid"><DateTimePickerField id="asset-taken-after" label="Taken after" showTime={false} value={draft.takenAfter} onchange={(value)=>update('takenAfter',value)}/><DateTimePickerField id="asset-taken-before" label="Taken before" showTime={false} value={draft.takenBefore} onchange={(value)=>update('takenBefore',value)}/></div></V2Section>
       <V2Section title="Dimensions"><div class="v2-advanced-grid"><V2Field label="Minimum width" type="number" value={draft.minWidth} placeholder="1280" onchange={(value)=>update('minWidth',value)}/><V2Field label="Maximum width" type="number" value={draft.maxWidth} placeholder="4096" onchange={(value)=>update('maxWidth',value)}/><V2Field label="Minimum height" type="number" value={draft.minHeight} placeholder="720" onchange={(value)=>update('minHeight',value)}/><V2Field label="Maximum height" type="number" value={draft.maxHeight} placeholder="2160" onchange={(value)=>update('maxHeight',value)}/></div></V2Section>
