@@ -18,54 +18,36 @@
   import { libraryData } from '../data/currentDataSource.svelte';
   import type { AlbumRecord } from '../data/contracts';
 
-  type AlbumModal = { id:number; mode:'create'|'edit'; albumId:string; name:string; description:string };
+  type AlbumModal={id:number;mode:'create'|'edit';albumId:string;name:string;description:string};
+  let page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),loaded=$state(24),sort=$state('name:asc'),query=$state(''),total=$state(0),albums=$state<AlbumRecord[]>([]),loading=$state(false);
+  let modalSequence=0,modals=$state<AlbumModal[]>([]),selectedIds=$state<string[]>([]);
 
-  let page=$state(1), pageSize=$state(24), resultMode=$state<ResultMode>('Pagination'), loaded=$state(24), sort=$state('name:asc'), query=$state('');
-  let modalSequence=0, modals=$state<AlbumModal[]>([]), selectedIds=$state<string[]>([]);
-
-  const normalizedQuery=$derived(query.trim().toLocaleLowerCase());
-  const albums=$derived((libraryData.state.revision,libraryData.state.albums.filter((album)=>!normalizedQuery||`${album.album_name}\n${album.description}`.toLocaleLowerCase().includes(normalizedQuery))));
-  const sortedAlbums=$derived([...albums].sort((a,b)=>{
-    const [field,direction]=sort.split(':'), multiplier=direction==='desc'?-1:1;
-    if(field==='assets') return (a.asset_count-b.asset_count)*multiplier;
-    if(field==='description') return a.description.localeCompare(b.description)*multiplier;
-    return a.album_name.localeCompare(b.album_name)*multiplier;
-  }));
-  const total=$derived(sortedAlbums.length);
-  const visibleAlbums=$derived(resultMode==='Pagination' ? sortedAlbums.slice((page-1)*pageSize,(page-1)*pageSize+pageSize) : sortedAlbums.slice(0,Math.min(loaded,total)));
-
-  function setPageSize(next:number){pageSize=next;page=1;loaded=Math.max(next,Math.min(loaded,total))}
-  function setMode(mode:ResultMode){resultMode=mode;if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded)}
+  function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(fieldRaw==='assets'||fieldRaw==='description'?fieldRaw:'name') as 'name'|'assets'|'description',direction:(directionRaw==='desc'?'desc':'asc') as 'asc'|'desc'}}
+  async function refresh(){loading=true;try{const requestPage=resultMode==='Pagination'?page:1,requestSize=resultMode==='Pagination'?pageSize:loaded;const result=await libraryData.albums.search({page:requestPage,pageSize:requestSize,query,sort:parseSort()});albums=result.items;total=result.total;if(page>Math.max(1,Math.ceil(total/pageSize))){page=Math.max(1,Math.ceil(total/pageSize));await refresh()}}finally{loading=false}}
+  function setPageSize(next:number){pageSize=next;page=1;loaded=Math.max(next,loaded);void refresh()}
+  function setMode(mode:ResultMode){resultMode=mode;if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded);void refresh()}
+  function setSort(value:string){sort=value;page=1;void refresh()}
+  function setPage(next:number){page=next;void refresh()}
+  function loadMore(){loaded=Math.min(total,loaded+pageSize);void refresh()}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
-  function selectLoaded(){selectedIds=[...new Set([...selectedIds,...visibleAlbums.map((album)=>album.id)])]}
-  async function deleteSelected(){if(!selectedIds.length)return;await libraryData.albums.delete(selectedIds);selectedIds=[];page=Math.min(page,Math.max(1,Math.ceil(total/pageSize)))}
+  function selectLoaded(){selectedIds=[...new Set([...selectedIds,...albums.map((album)=>album.id)])]}
+  async function deleteSelected(){if(!selectedIds.length)return;await libraryData.albums.delete(selectedIds);selectedIds=[];await refresh()}
   function openCreate(){modals=[...modals,{id:++modalSequence,mode:'create',albumId:'',name:'',description:''}]}
   function openEdit(album:AlbumRecord){modals=[...modals,{id:++modalSequence,mode:'edit',albumId:album.id,name:album.album_name,description:album.description}]}
   function closeModal(id:number){modals=modals.filter((modal)=>modal.id!==id)}
   function updateModal(id:number,patch:Partial<AlbumModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
-  async function saveModal(modal:AlbumModal){if(!modal.name.trim())return;if(modal.mode==='create')await libraryData.albums.create(modal.name,modal.description);else await libraryData.albums.update(modal.albumId,{name:modal.name,description:modal.description});closeModal(modal.id)}
+  async function saveModal(modal:AlbumModal){if(!modal.name.trim())return;if(modal.mode==='create')await libraryData.albums.create(modal.name,modal.description);else await libraryData.albums.update(modal.albumId,{name:modal.name,description:modal.description});closeModal(modal.id);await refresh()}
+  async function deleteRow(id:string){await libraryData.albums.delete([id]);selectedIds=selectedIds.filter((value)=>value!==id);await refresh()}
   function filterAssets(albumId:string){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[albumId],tagIds:[]}));window.location.hash='assets'}
-
-  onMount(()=>{void libraryData.initialize()});
+  onMount(()=>{void(async()=>{await libraryData.initialize();await refresh()})()});
 </script>
 
 <V2PageLayout title="Albums" description="Search, sort, create, edit, delete and use albums to filter the current asset workspace.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!selectedIds.length} onclick={deleteSelected}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" onclick={openCreate}>Create album</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>{query=event.currentTarget.value;page=1;loaded=pageSize}}><V2Button variant="primary" onclick={()=>{page=1;loaded=pageSize}}>Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button disabled={!visibleAlbums.length} onclick={selectLoaded}>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
-
-  <V2Zone>
-    <V2Toolbar><V2Badge text={`${total} album${total===1?'':'s'}`}/>{#snippet actions()}<V2CollectionControls id="album-results" {sort} sortFields={[{value:'name',label:'Name'},{value:'assets',label:'Assets'},{value:'description',label:'Description'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={(value)=>sort=value} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
-    <V2Card><V2Table layout="fixed"><thead><tr><th class="v2-collection-check-column"><span class="v2-visually-hidden">Select</span></th><th>Name</th><th class="v2-collection-count-column">Assets</th><th class="v2-collection-description-column">Description</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>
-      {#each visibleAlbums as album (album.id)}<tr><td class="v2-collection-check-column"><input type="checkbox" aria-label={`Select ${album.album_name}`} checked={selectedIds.includes(album.id)} onchange={(event)=>toggleSelection(album.id,event.currentTarget.checked)}></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description||'—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button onclick={()=>filterAssets(album.id)}>Filter assets</V2Button><V2Button onclick={()=>openEdit(album)}>Edit</V2Button><V2Button variant="danger" onclick={()=>void libraryData.albums.delete([album.id])}>Delete</V2Button></V2Inline></td></tr>
-      {:else}<tr><td colspan="5" class="v2-muted">No albums match this search.</td></tr>{/each}
-    </tbody></V2Table></V2Card>
-    {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={(next)=>(page=next)}/>{:else}<V2InfiniteFooter loaded={Math.min(loaded,total)} {total} batchSize={pageSize} noun="albums" onloadmore={()=>loaded=Math.min(total,loaded+pageSize)}/>{/if}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value}><V2Button variant="primary" disabled={loading} onclick={()=>{page=1;loaded=pageSize;void refresh()}}>Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button disabled={!albums.length} onclick={selectLoaded}>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
+  <V2Zone><V2Toolbar><V2Badge text={`${total} album${total===1?'':'s'}`}/>{#snippet actions()}<V2CollectionControls id="album-results" {sort} sortFields={[{value:'name',label:'Name'},{value:'assets',label:'Assets'},{value:'description',label:'Description'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
+    <V2Card><V2Table layout="fixed"><thead><tr><th class="v2-collection-check-column"><span class="v2-visually-hidden">Select</span></th><th>Name</th><th class="v2-collection-count-column">Assets</th><th class="v2-collection-description-column">Description</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each albums as album (album.id)}<tr><td class="v2-collection-check-column"><input type="checkbox" aria-label={`Select ${album.album_name}`} checked={selectedIds.includes(album.id)} onchange={(event)=>toggleSelection(album.id,event.currentTarget.checked)}></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description||'—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button onclick={()=>filterAssets(album.id)}>Filter assets</V2Button><V2Button onclick={()=>openEdit(album)}>Edit</V2Button><V2Button variant="danger" onclick={()=>void deleteRow(album.id)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="5" class="v2-muted">{loading?'Loading albums…':'No albums match this search.'}</td></tr>{/each}</tbody></V2Table></V2Card>
+    {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<V2InfiniteFooter loaded={albums.length} {total} batchSize={pageSize} noun="albums" onloadmore={loadMore}/>{/if}
   </V2Zone>
 </V2PageLayout>
-
-{#each modals as modal (modal.id)}
-  <V2Modal id={`album-modal-${modal.id}`} title={modal.mode==='create'?'Create album':`Edit ${modal.name}`} description={modal.mode==='create'?'Add an album to the current data source.':'Update this album.'} size="md" onclose={()=>closeModal(modal.id)}>
-    <V2Stack gap="md"><V2Field label="Name" value={modal.name} onchange={(value)=>updateModal(modal.id,{name:value})}/><V2Field label="Description" value={modal.description} multiline={true} onchange={(value)=>updateModal(modal.id,{description:value})}/><V2Section title="Shared data"><V2Card><span class="v2-small v2-muted">Changes are reflected immediately in Assets relationship filters and asset counts.</span></V2Card></V2Section></V2Stack>
-    {#snippet footer()}<V2Button onclick={()=>closeModal(modal.id)}>Cancel</V2Button><V2Button variant="primary" disabled={!modal.name.trim()} onclick={()=>void saveModal(modal)}>{modal.mode==='create'?'Create album':'Save changes'}</V2Button>{/snippet}
-  </V2Modal>
-{/each}
+{#each modals as modal (modal.id)}<V2Modal id={`album-modal-${modal.id}`} title={modal.mode==='create'?'Create album':`Edit ${modal.name}`} description={modal.mode==='create'?'Add an album to the current data source.':'Update this album.'} size="md" onclose={()=>closeModal(modal.id)}><V2Stack gap="md"><V2Field label="Name" value={modal.name} onchange={(value)=>updateModal(modal.id,{name:value})}/><V2Field label="Description" value={modal.description} multiline={true} onchange={(value)=>updateModal(modal.id,{description:value})}/><V2Section title="Shared data"><V2Card><span class="v2-small v2-muted">Changes are reflected in Assets relationship filters and counts after the repository refreshes.</span></V2Card></V2Section></V2Stack>{#snippet footer()}<V2Button onclick={()=>closeModal(modal.id)}>Cancel</V2Button><V2Button variant="primary" disabled={!modal.name.trim()} onclick={()=>void saveModal(modal)}>{modal.mode==='create'?'Create album':'Save changes'}</V2Button>{/snippet}</V2Modal>{/each}
