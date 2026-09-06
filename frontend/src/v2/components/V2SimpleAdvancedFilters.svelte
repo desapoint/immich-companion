@@ -6,7 +6,6 @@
   import V2RelationFilterField from './V2RelationFilterField.svelte';
   import V2Section from './V2Section.svelte';
   import V2Stack from './V2Stack.svelte';
-  import V2ZoneLabel from './V2ZoneLabel.svelte';
   import type { SelectOption } from './SelectField.svelte';
   import { demoAssetState } from '../demo/demoAssetState.svelte';
 
@@ -121,7 +120,6 @@
   <aside class="v2-drawer" aria-label="Advanced simple search filters">
     <div class="v2-drawer-head">
       <div>
-        <V2ZoneLabel text="Simple search"/>
         <h2>Advanced filters</h2>
         <p class="v2-muted">Filter by relationships, taken date, dimensions and aspect ratio.</p>
       </div>
