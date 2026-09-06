@@ -19,8 +19,8 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
 }
 
-export function comparisonMemberData(assetId: string, group: number, index: number): ComparisonMemberData {
-  const asset = libraryData.assets.getById(assetId);
+export async function comparisonMemberData(assetId: string, group: number, index: number): Promise<ComparisonMemberData> {
+  const asset = await libraryData.assets.getById(assetId);
   const sizeNum = (asset?.file_size_bytes ?? 0) / 1_048_576;
   const library = asset?.library_id ? 'External library' : 'Default library';
   return {
