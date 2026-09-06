@@ -29,11 +29,12 @@
   } = $props();
 
   const visualVariant = $derived(String(index % 3));
+  const videoSource = $derived(Boolean(image && /\.(mp4|webm)(?:$|\?)/i.test(image)));
 </script>
 
 <div class="v2-asset-tile" class:selected class:selection-mode={selectionMode} data-variant={visualVariant} data-asset-id={String(assetId)}>
   <button class="v2-asset-main" type="button" aria-label={selectionMode ? `${selected ? 'Deselect' : 'Select'} ${label}` : `Preview ${label}`} aria-pressed={selectionMode ? selected : undefined} onclick={onactivate} onpointerdown={onpointerdown} ondragstart={(event) => event.preventDefault()}>
-    {#if image}<img src={image} alt="" loading="lazy" decoding="async">{/if}
+    {#if image}{#if videoSource}<video src={image} muted playsinline preload="metadata" aria-hidden="true"></video>{:else}<img src={image} alt="" loading="lazy" decoding="async">{/if}{/if}
     <span class="v2-asset-meta"><b>{label}</b>{#if sublabel}<small>{sublabel}</small>{/if}</span>
   </button>
   <span class="v2-asset-checkbox-zone"><V2RoundCheckbox checked={selected} ariaLabel={`${selected ? 'Deselect' : 'Select'} ${label}`} onclick={onselect}/></span>
@@ -41,3 +42,7 @@
     <Eye size={17} aria-hidden="true" />
   </button>
 </div>
+
+<style>
+  .v2-asset-main video { width:100%; height:100%; object-fit:cover; display:block; }
+</style>
