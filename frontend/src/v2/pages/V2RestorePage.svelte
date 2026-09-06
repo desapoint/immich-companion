@@ -7,9 +7,8 @@
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2CollectionControls from '../components/V2CollectionControls.svelte';
-  import V2InfiniteFooter from '../components/V2InfiniteFooter.svelte';
+  import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2Pagination from '../components/V2Pagination.svelte';
   import V2RangeSlider from '../components/V2RangeSlider.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Viewer from '../components/V2Viewer.svelte';
@@ -74,7 +73,7 @@
       {#each items as asset, index}<V2AssetTile index={firstIndex+index} assetId={asset.id} label={asset.original_file_name} sublabel={asset.restore_path ?? `Taken ${new Date(asset.taken_at).toLocaleDateString()}`} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}
     </V2AssetGrid>
 
-    {#if total===0}<p class="v2-muted">Immich's trash is empty. The demo trash is intentionally separate from the Companion asset index.</p>{:else if collection.resultMode==='Pagination'}<V2Pagination page={collection.page} pageSize={collection.pageSize} {total} onpage={collection.setPage}/>{:else}<V2InfiniteFooter loaded={Math.min(collection.loaded,total)} {total} batchSize={collection.pageSize} noun="Immich trash assets" onloadmore={()=>collection.loadMore(total)}/>{/if}
+    {#if total===0}<p class="v2-muted">Immich's trash is empty. The demo trash is intentionally separate from the Companion asset index.</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={collection.loaded} noun="Immich trash assets" onpage={collection.setPage} onloadmore={()=>collection.loadMore(total)}/>{/if}
   </V2Zone>
 </V2PageLayout>
 
