@@ -88,7 +88,7 @@
       ? `Replace the stored criteria for “${confirmation.record.name}” with the current asset search?`
       : `Delete saved search “${confirmation.record.name}”?`}
     confirmLabel={confirmation.action === 'replace' ? 'Replace criteria' : 'Delete saved search'}
-    icon={confirmation.action === 'replace' ? 'refresh-cw' : 'trash-2'}
+    icon={confirmation.action === 'replace' ? 'sync' : 'trash'}
     destructive={confirmation.action === 'delete'}
     busy={controller.busy}
     onconfirm={()=>void confirmAction()}
