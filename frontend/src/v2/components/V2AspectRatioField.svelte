@@ -59,12 +59,11 @@
 </div>
 
 <style>
-  .v2-aspect-ratio-field { display:grid; min-width:0; gap:.35rem; }
-  .v2-aspect-ratio-input-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:.45rem; align-items:center; }
-  input { width:100%; min-width:0; min-height:2.55rem; padding:.56rem .68rem; border:1px solid var(--v2-border-strong); border-radius:var(--v2-radius-sm); color:var(--v2-text); background:var(--v2-surface); font:inherit; }
-  input:focus-visible { outline:.16rem solid color-mix(in srgb, var(--v2-accent-2) 35%, transparent); outline-offset:.08rem; }
-  input[aria-invalid='true'] { border-color:var(--v2-danger, #e05a5a); }
-  input:disabled { cursor:not-allowed; opacity:.58; }
-  .v2-aspect-ratio-hint { min-height:1rem; color:var(--v2-muted); font-size:.72rem; }
-  .v2-aspect-ratio-hint.invalid { color:var(--v2-danger, #e05a5a); }
+  .v2-aspect-ratio-field { display:grid; min-width:0; gap:5px; }
+  .v2-aspect-ratio-input-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:7px; align-items:center; }
+  input { width:100%; min-width:0; min-height:36px; font:inherit; }
+  input[aria-invalid='true'] { border-color:#713d43; }
+  input:disabled { cursor:default; opacity:.5; }
+  .v2-aspect-ratio-hint { min-height:1rem; color:var(--v2-muted); font-size:11px; line-height:1.35; }
+  .v2-aspect-ratio-hint.invalid { color:#ffb1b1; }
 </style>
