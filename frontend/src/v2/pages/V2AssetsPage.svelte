@@ -84,7 +84,7 @@
   function setPageSize(value:number){collection.setPageSize(value,total);void refreshSearch()}
   function setMode(value:ResultMode){collection.setMode(value);void refreshSearch()}
   function openDrawer(){draftRules=rules.map(r=>({...r}));draftGroups=groups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));draftLogic=logic;draftNegated=negated;drawer=true}
-  function applyDrawer(){rules=draftRules.map(r=>({...r}));groups=draftGroups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));logic=draftLogic;negated=negated;drawer=false;searchMode='Expert';void runSearch()}
+  function applyDrawer(){rules=draftRules.map(r=>({...r}));groups=draftGroups.map(g=>({...g,rules:g.rules.map(r=>({...r}))}));logic=draftLogic;negated=draftNegated;drawer=false;searchMode='Expert';void runSearch()}
   function resetDraft(){draftRules=[];draftGroups=[];draftLogic='AND';draftNegated=false}
   function addRule(group?:Group){const rule={id:++seq,field:'filename',op:'contains',value:''};if(group)group.rules=[...group.rules,rule];else draftRules=[...draftRules,rule]}
   function removeRule(id:number,group?:Group){if(group)group.rules=group.rules.filter(r=>r.id!==id);else draftRules=draftRules.filter(r=>r.id!==id)}
