@@ -8,7 +8,7 @@
   import V2ViewerShell from './V2ViewerShell.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
-  import { demoCompareImage } from '../demo/duplicateVisuals';
+  import { demoAssetFullSize } from '../demo/demoAssetVisuals';
   import { demoAssetById,demoAssetState,setDemoAssetsArchived,setDemoAssetsFavorite,trashDemoAssets } from '../demo/demoAssetState.svelte';
 
   let { open=false, assetId=null, assetIds=[], onclose }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void }=$props();
@@ -17,7 +17,7 @@
   $effect(()=>{if(assetId!==null)currentId=assetId});
   const currentIndex=$derived(currentId?assetIds.indexOf(currentId):-1);
   const asset=$derived((demoAssetState.revision,currentId?demoAssetById(currentId):undefined));
-  const imageSrc=$derived(demoCompareImage(Math.max(currentIndex,0)+1,Math.max(currentIndex,0)%4));
+  const imageSrc=$derived(asset?demoAssetFullSize(asset):'');
   const canPrevious=$derived(currentIndex>0),canNext=$derived(currentIndex>=0&&currentIndex<assetIds.length-1);
   const positionLabel=$derived(currentIndex>=0?`${currentIndex+1} / ${assetIds.length}`:'—');
   const sizeLabel=$derived(asset?.file_size_bytes?`${(asset.file_size_bytes/1_048_576).toFixed(1)} MB`:'Unknown size');
