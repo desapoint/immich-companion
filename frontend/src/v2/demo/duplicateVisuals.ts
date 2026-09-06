@@ -44,7 +44,7 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   let g = 0;
   let b = 0;
   if (h < 60) [r, g] = [c, x];
-  else if (h < 120) [r, g] = [c, x];
+  else if (h < 120) [r, g] = [x, c];
   else if (h < 180) [g, b] = [c, x];
   else if (h < 240) [g, b] = [x, c];
   else if (h < 300) [r, b] = [x, c];
@@ -83,7 +83,7 @@ export function demoDifferenceMask(
 
   const filter = binary
     ? `<feImage href="${reference}" result="ref"/><feImage href="${selected}" result="sel"/><feBlend in="ref" in2="sel" mode="difference" result="d"/><feColorMatrix in="d" type="matrix" values="1.9 0 0 0 0 0 1.9 0 0 0 0 0 1.9 0 0 0 0 0 1 0" result="boost"/><feComponentTransfer in="boost" result="threshold"><feFuncR type="gamma" amplitude="3.4" exponent=".6" offset="0"/><feFuncG type="gamma" amplitude="3.4" exponent=".6" offset="0"/><feFuncB type="gamma" amplitude="3.4" exponent=".6" offset="0"/></feComponentTransfer><feColorMatrix in="threshold" type="matrix" values="0 0 0 0 ${r} 0 0 0 0 ${g} 0 0 0 0 ${b} .333 .333 .333 0 0" result="selectedColor"/><feComposite in="selectedColor" in2="threshold" operator="in"/>`
-    : `<feImage href="${reference}" result="ref"/><feImage href="${selected}" result="sel"/><feBlend in="ref" in2="sel" mode="difference" result="raw"/><feColorMatrix in="raw" type="matrix" values=".2126 .7152 .0722 0 0 .2126 .7152 .0722 0 0 .2126 .7152 .0722 0 0 0 0 0 1 0" result="lum"/><feComponentTransfer in="lum" result="mapped"><feFuncR type="gamma" amplitude="${Math.max(0.5, Math.min(3, contrast / 100))}" exponent=".75" offset="0"/><feFuncG type="gamma" amplitude="${Math.max(0.5, Math.min(3, contrast / 100))}" exponent=".75" offset="0"/><feFuncB type="gamma" amplitude="${Math.max(0.5, Math.min(3, contrast / 100))}" exponent=".75" offset="0"/></feComponentTransfer><feColorMatrix in="mapped" type="matrix" values="${r} 0 0 0 0 0 ${g} 0 0 0 0 0 ${b} 0 0 0 0 0 1 0"/>`;
+    : `<feImage href="${reference}" result="ref"/><feImage href="${selected}" result="sel"/><feBlend in="ref" in2="sel" mode="difference" result="raw"/><feColorMatrix in="raw" type="matrix" values=".2126 .7152 .0722 0 0 .2126 .7152 .0722 0 0 .2126 .7152 .0722 0 0 .2126 .7152 .0722 0 0 0 0 0 1 0" result="lum"/><feComponentTransfer in="lum" result="mapped"><feFuncR type="gamma" amplitude="${Math.max(0.5, Math.min(3, contrast / 100))}" exponent=".75" offset="0"/><feFuncG type="gamma" amplitude="${Math.max(0.5, Math.min(3, contrast / 100))}" exponent=".75" offset="0"/><feFuncB type="gamma" amplitude="${Math.max(0.5, Math.min(3, contrast / 100))}" exponent=".75" offset="0"/></feComponentTransfer><feColorMatrix in="mapped" type="matrix" values="${r} 0 0 0 0 0 ${g} 0 0 0 0 0 ${b} 0 0 0 0 0 1 0"/>`;
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600"><defs><filter id="diff" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">${filter}</filter></defs><rect width="800" height="600" fill="#000"/><rect width="800" height="600" filter="url(#diff)"/></svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
