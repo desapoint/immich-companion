@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DateTimePickerField from './DateTimePickerField.svelte';
   import V2Badge from './V2Badge.svelte';
   import V2Button from './V2Button.svelte';
   import V2Field from './V2Field.svelte';
@@ -165,8 +166,8 @@
 
         <V2Section title="Taken date">
           <div class="v2-advanced-grid">
-            <V2Field label="Taken after" type="datetime-local" value={draft.takenAfter} onchange={(value) => update('takenAfter', value)} />
-            <V2Field label="Taken before" type="datetime-local" value={draft.takenBefore} onchange={(value) => update('takenBefore', value)} />
+            <DateTimePickerField id="asset-taken-after" label="Taken after" value={draft.takenAfter} onchange={(value) => update('takenAfter', value)} />
+            <DateTimePickerField id="asset-taken-before" label="Taken before" value={draft.takenBefore} onchange={(value) => update('takenBefore', value)} />
           </div>
         </V2Section>
 
