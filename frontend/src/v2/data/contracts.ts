@@ -88,6 +88,16 @@ export type TagHierarchyRow = {
 export type MutationFailure = { id: string; reason: string };
 export type MutationResult = { affectedIds: string[]; failed: MutationFailure[] };
 export type DifferenceOptions = { hue?: number; contrast?: number; binary?: boolean };
+export type MediaDelivery = 'original' | 'thumbnail' | 'preview' | 'decoded' | 'transcoded' | 'difference';
+export type MediaPurpose = 'thumbnail' | 'view';
+export type MediaResource = {
+  url: string;
+  mimeType: string | null;
+  posterUrl: string | null;
+  delivery: MediaDelivery;
+  originalMimeType: string | null;
+  expiresAt: string | null;
+};
 
 export type CollectionRequest = {
   pageSize: number;
@@ -230,10 +240,13 @@ export interface DuplicateRepository {
   history(query: DuplicateHistoryQuery): Promise<PageResult<DuplicateHistoryRecord>>;
 }
 
+type MediaAsset = Pick<AssetRecord, 'id' | 'original_file_name' | 'original_mime_type' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord;
+
 export interface MediaRepository {
-  thumbnail(asset: Pick<AssetRecord, 'id' | 'original_file_name' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord): string;
-  fullSize(asset: Pick<AssetRecord, 'id' | 'original_file_name' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord): string;
-  difference(selected: AssetRecord, reference: AssetRecord, options?: DifferenceOptions): string;
+  thumbnail(asset: MediaAsset): MediaResource;
+  view(asset: MediaAsset): MediaResource;
+  difference(selected: AssetRecord, reference: AssetRecord, options?: DifferenceOptions): Promise<MediaResource>;
+  refresh(asset: MediaAsset, purpose: MediaPurpose): Promise<MediaResource>;
 }
 
 export interface LibraryDataSource {
