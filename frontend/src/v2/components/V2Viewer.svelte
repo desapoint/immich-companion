@@ -5,17 +5,21 @@
   let {
     open = false,
     mode = 'assets',
+    assetId = null,
+    assetIds = [],
     onclose,
   }: {
     open?: boolean;
     title?: string;
     mode?: 'assets' | 'restore' | 'duplicates';
+    assetId?: string | null;
+    assetIds?: string[];
     onclose: () => void;
   } = $props();
 </script>
 
 {#if mode === 'restore'}
-  <V2RestoreViewer {open} {onclose} />
+  <V2RestoreViewer {open} {assetId} {assetIds} {onclose} />
 {:else}
-  <V2AssetViewer {open} {onclose} />
+  <V2AssetViewer {open} {assetId} {assetIds} {onclose} />
 {/if}
