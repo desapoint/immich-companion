@@ -66,6 +66,13 @@ export type TagRecord = {
   synced_at: string;
 };
 
+export type AlbumCreateInput = { name: string; description?: string };
+export type AlbumUpdateInput = { name?: string; description?: string };
+export type TagCreateInput = { name: string; color?: string | null; parentPath?: string };
+export type TagUpdateInput = { name?: string; color?: string | null; parentPath?: string };
+export type AlbumCreateArgs = [name: string, description?: string];
+export type TagCreateArgs = [name: string, color?: string | null, parentPath?: string];
+
 export type TagHierarchyRow = {
   id: string;
   name: string;
@@ -175,6 +182,13 @@ export type DuplicateDiscoveryResult = { groupCount: number; candidateCount: num
 export type DuplicateHistoryRecord = { id: string; occurredAt: string; groupLabel: string; summary: string };
 export type DuplicateHistoryQuery = CollectionRequest & { range: 'Last 30 days' | 'Last 90 days' | 'All history' };
 
+export interface CrudRepository<TRecord, TCreateArgs extends unknown[], TUpdateInput> {
+  getById(id: string): Promise<TRecord | undefined>;
+  create(...args: TCreateArgs): Promise<TRecord | undefined>;
+  update(id: string, patch: TUpdateInput): Promise<MutationResult>;
+  delete(ids: readonly string[]): Promise<MutationResult>;
+}
+
 export interface AssetRepository {
   getById(id: string): Promise<AssetRecord | undefined>;
   getMany(ids: readonly string[]): Promise<AssetRecord[]>;
@@ -197,23 +211,15 @@ export interface AssetRepository {
   removeCompleteStack(assetId: string): Promise<MutationResult>;
 }
 
-export interface AlbumRepository {
+export interface AlbumRepository extends CrudRepository<AlbumRecord, AlbumCreateArgs, AlbumUpdateInput> {
   search(query: AlbumSearchQuery): Promise<PageResult<AlbumRecord>>;
   searchOptions(query: OptionSearchQuery): Promise<OptionSearchResult>;
-  getById(id: string): Promise<AlbumRecord | undefined>;
-  create(name: string, description?: string): Promise<AlbumRecord | undefined>;
-  update(id: string, patch: { name?: string; description?: string }): Promise<MutationResult>;
-  delete(ids: readonly string[]): Promise<MutationResult>;
 }
 
-export interface TagRepository {
+export interface TagRepository extends CrudRepository<TagRecord, TagCreateArgs, TagUpdateInput> {
   search(query: TagSearchQuery): Promise<PageResult<TagHierarchyRow>>;
   searchOptions(query: OptionSearchQuery): Promise<OptionSearchResult>;
-  getById(id: string): Promise<TagRecord | undefined>;
   parentOptions(excludeTagId?: string): Promise<Array<{ value: string; label: string; subtitle: string }>>;
-  create(name: string, color?: string | null, parentPath?: string): Promise<TagRecord | undefined>;
-  update(id: string, patch: { name?: string; color?: string | null; parentPath?: string }): Promise<MutationResult>;
-  delete(ids: readonly string[]): Promise<MutationResult>;
 }
 
 export interface DuplicateRepository {
