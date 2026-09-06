@@ -1,10 +1,12 @@
 # Interface Behavior Standardization Proposal
 
-**Status:** Proposed target behavior; implementation has not started.
+**Status:** In progress; first shared HTTP/collection/Relations migration slice implemented.
 
 **Branch:** `feat/standardize-interface-behavior`
 
 **Baseline:** [`interface-behavior-current-state-inventory.md`](./interface-behavior-current-state-inventory.md)
+
+**Implementation progress:** [`interface-behavior-implementation-progress.md`](./interface-behavior-implementation-progress.md)
 
 ## Goal
 
@@ -289,9 +291,9 @@ frontend/src/lib/
   api/
     http.ts                  shared request/error handling
   state/
-    pagedCollection.svelte.ts generic list request state
+    collectionState.ts       generic list request state
   types/
-    pagination.ts            PageResult<T> and query/paging primitives
+    collection.ts            PageResult<T>
   components/ui/
     Pagination.svelte        existing generic pagination
     CollectionError.svelte   common blocking/non-blocking retry presentation
@@ -299,8 +301,6 @@ frontend/src/lib/
     InfiniteLoadTrigger.svelte observer + loading/retry/end presentation
     StatusNotice.svelte      success/warning/error informational feedback
 ```
-
-Names are illustrative; behavior and responsibility boundaries matter more than exact filenames.
 
 ## Recommended implementation order
 
@@ -377,15 +377,7 @@ Do not migrate duplicate drafts, selection, task polling/resume, or plan executi
 
 ## First concrete code changes recommended
 
-The first implementation commit after this proposal should be deliberately small:
-
-1. `frontend/src/lib/api/http.ts`
-2. tests for the shared API client
-3. migrate `frontend/src/features/relations/api/relationsApi.ts` to it
-
-The second implementation commit should add the generic page collection state with tests, without changing user-facing screens yet.
-
-This gives the project reusable foundations while keeping every step reviewable and reversible.
+The first implementation slice is complete. See [`interface-behavior-implementation-progress.md`](./interface-behavior-implementation-progress.md).
 
 ## Acceptance principles
 
