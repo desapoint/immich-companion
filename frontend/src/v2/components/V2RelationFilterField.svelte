@@ -61,8 +61,6 @@
   }
 
   .v2-relation-filter-field :global(.v2-button) {
-    height:2.25rem;
-    min-height:2.25rem;
     white-space:nowrap;
   }
 
