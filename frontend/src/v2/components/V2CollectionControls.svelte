@@ -37,20 +37,24 @@
 </script>
 
 <div class="v2-collection-controls">
-  <SelectField
-    id={`${id}-sort`}
-    width="content"
-    value={sort}
-    options={sortOptions}
-    onchange={onsort}
-  />
-  <SelectField
-    id={`${id}-page-size`}
-    width="content"
-    value={pageSize}
-    options={sizeOptions}
-    onchange={(value) => onpagesize?.(Number(value))}
-  />
+  {#if sortOptions.length}
+    <SelectField
+      id={`${id}-sort`}
+      width="content"
+      value={sort}
+      options={sortOptions}
+      onchange={onsort}
+    />
+  {/if}
+  {#if sizeOptions.length}
+    <SelectField
+      id={`${id}-page-size`}
+      width="content"
+      value={pageSize}
+      options={sizeOptions}
+      onchange={(value) => onpagesize?.(Number(value))}
+    />
+  {/if}
   <V2Segmented
     items={['Pagination','Infinite']}
     active={resultMode}
