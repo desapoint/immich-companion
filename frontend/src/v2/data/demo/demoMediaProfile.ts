@@ -1,6 +1,7 @@
 import { renderPixelDifference } from '../mediaDifference';
 import type {
   AssetRecord,
+  AssetSearchCriteria,
   DuplicateGroupRecord,
   LegacyMediaRepository,
   LibraryDataSource,
@@ -9,6 +10,8 @@ import type {
   PageResult,
   ResolvedLibraryDataSource,
   TrashAssetRecord,
+  TrashSearchCriteria,
+  ViewerNavigationWindow,
 } from '../contracts';
 
 const RAW_EXTENSIONS = ['dng', 'nef', 'cr3', 'arw', 'raf'] as const;
@@ -24,24 +27,25 @@ function replaceExtension(name: string, extension: string): string {
 
 function profileAsset(asset: AssetRecord): AssetRecord {
   const index = Math.max(0, ordinal(asset.id) - 1);
-  if (asset.asset_type === 'VIDEO') {
+  const profiled = index % 43 === 17 ? { ...asset, is_offline: true } : asset;
+  if (profiled.asset_type === 'VIDEO') {
     const variant = Math.floor(index / 11) % 4;
-    if (variant === 1) return { ...asset, original_file_name: replaceExtension(asset.original_file_name, 'mov'), original_mime_type: 'video/quicktime; codecs=hvc1' };
-    if (variant === 2) return { ...asset, original_file_name: replaceExtension(asset.original_file_name, 'webm'), original_mime_type: 'video/webm; codecs=vp9' };
-    if (variant === 3) return { ...asset, original_file_name: replaceExtension(asset.original_file_name, 'mkv'), original_mime_type: 'video/x-matroska; codecs=av01' };
-    return { ...asset, original_mime_type: 'video/mp4; codecs=avc1.42E01E' };
+    if (variant === 1) return { ...profiled, original_file_name: replaceExtension(profiled.original_file_name, 'mov'), original_mime_type: 'video/quicktime; codecs=hvc1' };
+    if (variant === 2) return { ...profiled, original_file_name: replaceExtension(profiled.original_file_name, 'webm'), original_mime_type: 'video/webm; codecs=vp9' };
+    if (variant === 3) return { ...profiled, original_file_name: replaceExtension(profiled.original_file_name, 'mkv'), original_mime_type: 'video/x-matroska; codecs=av01' };
+    return { ...profiled, original_mime_type: 'video/mp4; codecs=avc1.42E01E' };
   }
 
-  if (asset.asset_type === 'IMAGE') {
-    if (index % 29 === 7) return { ...asset, original_file_name: replaceExtension(asset.original_file_name, 'heic'), original_mime_type: 'image/heic' };
+  if (profiled.asset_type === 'IMAGE') {
+    if (index % 29 === 7) return { ...profiled, original_file_name: replaceExtension(profiled.original_file_name, 'heic'), original_mime_type: 'image/heic' };
     if (index % 31 === 9) {
       const ext = RAW_EXTENSIONS[Math.floor(index / 31) % RAW_EXTENSIONS.length];
       const mime = ext === 'dng' ? 'image/x-adobe-dng' : `image/x-${ext}`;
-      return { ...asset, original_file_name: replaceExtension(asset.original_file_name, ext), original_mime_type: mime };
+      return { ...profiled, original_file_name: replaceExtension(profiled.original_file_name, ext), original_mime_type: mime };
     }
-    if (index % 37 === 13) return { ...asset, original_file_name: replaceExtension(asset.original_file_name, 'avif'), original_mime_type: 'image/avif' };
+    if (index % 37 === 13) return { ...profiled, original_file_name: replaceExtension(profiled.original_file_name, 'avif'), original_mime_type: 'image/avif' };
   }
-  return asset;
+  return profiled;
 }
 
 function profileTrash(asset: TrashAssetRecord): TrashAssetRecord {
@@ -108,8 +112,40 @@ function resource(
   };
 }
 
+async function locateNavigation<T extends { id: string }>(
+  currentId: string,
+  fetchPage: (cursor: string | null) => Promise<PageResult<T>>,
+): Promise<ViewerNavigationWindow> {
+  let cursor: string | null = null;
+  let previousId: string | null = null;
+  let offset = 0;
+  while (true) {
+    const page = await fetchPage(cursor);
+    const index = page.items.findIndex((item) => item.id === currentId);
+    if (index >= 0) {
+      let nextId = page.items[index + 1]?.id ?? null;
+      if (!nextId && page.nextCursor) {
+        const following = await fetchPage(page.nextCursor);
+        nextId = following.items[0]?.id ?? null;
+      }
+      return {
+        previousId: page.items[index - 1]?.id ?? previousId,
+        nextId,
+        position: offset + index + 1,
+        total: page.total,
+      };
+    }
+    if (page.items.length) previousId = page.items.at(-1)?.id ?? previousId;
+    offset += page.items.length;
+    if (!page.nextCursor) return { previousId: null, nextId: null, position: null, total: page.total };
+    cursor = page.nextCursor;
+  }
+}
+
 export function withDemoMediaProfiles(source: LibraryDataSource): ResolvedLibraryDataSource {
   const legacyMedia = source.media as LegacyMediaRepository;
+  let lastAssetCriteria: AssetSearchCriteria = { mode: 'simple', filters: {}, sort: { field: 'takenDate', direction: 'desc' } };
+  let lastTrashCriteria: TrashSearchCriteria = { sort: { field: 'deletedAt', direction: 'desc' } };
   const thumbnail = (asset: MediaAsset): MediaResource => {
     const url = mediaType(asset) === 'VIDEO' ? '/demo-fixtures/video-poster.jpg' : legacyMedia.thumbnail(asset);
     return resource(url, asset, 'thumbnail');
@@ -122,19 +158,35 @@ export function withDemoMediaProfiles(source: LibraryDataSource): ResolvedLibrar
     return resource(url, asset, needsDecodedImage(asset) ? 'decoded' : 'preview');
   };
 
+  const assets = {
+    ...source.assets,
+    async getById(id: string) { const asset = await source.assets.getById(id); return asset ? profileAsset(asset) : undefined; },
+    async getMany(ids: readonly string[]) { return (await source.assets.getMany(ids)).map(profileAsset); },
+    async getTrashById(id: string) { const asset = await source.assets.getTrashById(id); return asset ? profileTrash(asset) : undefined; },
+    async search(query: Parameters<typeof source.assets.search>[0]) {
+      lastAssetCriteria = query;
+      return profilePage(await source.assets.search(query), profileAsset);
+    },
+    async searchTrash(query: Parameters<typeof source.assets.searchTrash>[0]) {
+      lastTrashCriteria = query;
+      return profilePage(await source.assets.searchTrash(query), profileTrash);
+    },
+  };
+
   return {
     ...source,
-    assets: {
-      ...source.assets,
-      async getById(id) { const asset = await source.assets.getById(id); return asset ? profileAsset(asset) : undefined; },
-      async getMany(ids) { return (await source.assets.getMany(ids)).map(profileAsset); },
-      async getTrashById(id) { const asset = await source.assets.getTrashById(id); return asset ? profileTrash(asset) : undefined; },
-      async search(query) { return profilePage(await source.assets.search(query), profileAsset); },
-      async searchTrash(query) { return profilePage(await source.assets.searchTrash(query), profileTrash); },
-    },
+    assets,
     duplicates: {
       ...source.duplicates,
       async search(query) { return profilePage(await source.duplicates.search(query), profileDuplicateGroup); },
+    },
+    navigation: {
+      async asset(currentId) {
+        return locateNavigation(currentId, async (cursor) => assets.search({ ...lastAssetCriteria, pageSize: 100, cursor }));
+      },
+      async trash(currentId) {
+        return locateNavigation(currentId, async (cursor) => assets.searchTrash({ ...lastTrashCriteria, pageSize: 100, cursor }));
+      },
     },
     media: {
       thumbnail,
