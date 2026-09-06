@@ -9,7 +9,7 @@
   import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
-  import type { AssetRecord } from '../data/contracts';
+  import type { AssetRecord, AssetSelectionTarget } from '../data/contracts';
 
   let { open=false, assetId=null, assetIds=[], onclose }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void }=$props();
   const camera=new ViewerViewportController();
@@ -20,10 +20,11 @@
   $effect(()=>{if(open)requestAnimationFrame(()=>camera.fit())});
   function previous(){if(canPrevious)currentId=assetIds[currentIndex-1]}
   function next(){if(canNext)currentId=assetIds[currentIndex+1]}
+  function target(id:string):AssetSelectionTarget{return{kind:'ids',ids:[id]}}
   async function reload(){asset=currentId?await libraryData.assets.getById(currentId):undefined}
-  async function favorite(){if(!asset)return;await libraryData.assets.setFavorite([asset.id],!asset.is_favorite);await reload()}
-  async function archive(){if(!asset)return;await libraryData.assets.setArchived([asset.id],!asset.is_archived);await reload()}
-  async function trash(){if(!asset)return;const fallback=assetIds[currentIndex+1]??assetIds[currentIndex-1]??null;await libraryData.assets.trash([asset.id]);if(fallback&&await libraryData.assets.getById(fallback))currentId=fallback;else onclose()}
+  async function favorite(){if(!asset)return;await libraryData.assets.setFavorite(target(asset.id),!asset.is_favorite);await reload()}
+  async function archive(){if(!asset)return;await libraryData.assets.setArchived(target(asset.id),!asset.is_archived);await reload()}
+  async function trash(){if(!asset)return;const fallback=assetIds[currentIndex+1]??assetIds[currentIndex-1]??null;await libraryData.assets.trash(target(asset.id));if(fallback&&await libraryData.assets.getById(fallback))currentId=fallback;else onclose()}
 </script>
 <V2ViewerShell {open} title="Assets Viewer" {onclose}>
   {#snippet header()}<V2Inline gap="sm"><V2Button onclick={onclose}>✕</V2Button><b>Assets Viewer</b><V2Badge text={positionLabel}/></V2Inline><V2Inline gap="sm"><V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button></V2Inline>{/snippet}
