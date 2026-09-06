@@ -20,7 +20,7 @@
   $effect(()=>{if(open)requestAnimationFrame(()=>camera.fit())});
   function previous(){if(canPrevious)currentId=assetIds[currentIndex-1]}
   function next(){if(canNext)currentId=assetIds[currentIndex+1]}
-  async function restore(){if(!asset)return;const fallback=assetIds[currentIndex+1]??assetIds[currentIndex-1]??null;await libraryData.assets.restore([asset.id]);if(fallback&&await libraryData.assets.getTrashById(fallback))currentId=fallback;else onclose()}
+  async function restore(){if(!asset)return;const fallback=assetIds[currentIndex+1]??assetIds[currentIndex-1]??null;await libraryData.assets.restore({kind:'ids',ids:[asset.id]});if(fallback&&await libraryData.assets.getTrashById(fallback))currentId=fallback;else onclose()}
 </script>
 <V2ViewerShell {open} title="Restore Viewer" {onclose}>
   {#snippet header()}<V2Inline gap="sm"><V2Button onclick={onclose}>✕</V2Button><b>Restore Viewer</b><V2Badge text={positionLabel}/></V2Inline><V2Inline gap="sm"><V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button></V2Inline>{/snippet}
