@@ -26,7 +26,7 @@ import {
 } from '../../demo/demoAssetState.svelte';
 import { demoAssetFullSize, demoAssetPreview } from '../../demo/demoAssetVisuals';
 import { demoDifferenceMask } from '../../demo/duplicateVisuals';
-import type { AlbumRecord, AssetRecord, LibraryDataSource, MutationResult, TagRecord } from '../contracts';
+import type { AlbumRecord, AssetRecord, AssetSearchGroup, AssetSearchQuery, AssetSearchRule, LibraryDataSource, MutationResult, TagRecord } from '../contracts';
 
 function result(ids: readonly string[], failed: MutationResult['failed'] = []): MutationResult {
   return { affectedIds: [...new Set(ids)], failed };
@@ -48,6 +48,115 @@ function seedFor(id: string): number {
   return Math.abs(hash);
 }
 
+function parseRatio(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  if (trimmed.includes(':')) {
+    const [a, b] = trimmed.split(':').map(Number);
+    return Number.isFinite(a) && Number.isFinite(b) && b !== 0 ? a / b : undefined;
+  }
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : undefined;
+}
+
+function albumIdsFor(assetId: string): string[] {
+  return demoAssetState.album_assets.filter((membership) => membership.asset_id === assetId).map((membership) => membership.album_id);
+}
+
+function tagIdsFor(assetId: string): string[] {
+  return demoAssetState.tag_assets.filter((membership) => membership.asset_id === assetId).map((membership) => membership.tag_id);
+}
+
+function matchesSimple(asset: AssetRecord, query: Extract<AssetSearchQuery, { mode: 'simple' }>): boolean {
+  const filters = query.filters;
+  if (filters.filename && !asset.original_file_name.toLocaleLowerCase().includes(filters.filename.toLocaleLowerCase())) return false;
+  if (filters.mediaType && asset.asset_type !== (filters.mediaType === 'Video' ? 'VIDEO' : 'IMAGE')) return false;
+  if (filters.favorite === 'Favorite' && !asset.is_favorite) return false;
+  if (filters.favorite === 'Not favorite' && asset.is_favorite) return false;
+  if (filters.archived === 'Archived' && !asset.is_archived) return false;
+  if (filters.archived === 'Not archived' && asset.is_archived) return false;
+
+  const assetAlbums = albumIdsFor(asset.id);
+  const assetTags = tagIdsFor(asset.id);
+  if (filters.albumIds?.length && !filters.albumIds.some((id) => assetAlbums.includes(id))) return false;
+  if (filters.noAlbum && assetAlbums.length) return false;
+  if (filters.tagIds?.length && !filters.tagIds.some((id) => assetTags.includes(id))) return false;
+  if (filters.noTag && assetTags.length) return false;
+
+  const date = asset.file_created_at.slice(0, 10);
+  if (filters.takenAfter && date < filters.takenAfter) return false;
+  if (filters.takenBefore && date > filters.takenBefore) return false;
+  if (filters.minWidth && Number(asset.width ?? 0) < Number(filters.minWidth)) return false;
+  if (filters.maxWidth && Number(asset.width ?? 0) > Number(filters.maxWidth)) return false;
+  if (filters.minHeight && Number(asset.height ?? 0) < Number(filters.minHeight)) return false;
+  if (filters.maxHeight && Number(asset.height ?? 0) > Number(filters.maxHeight)) return false;
+
+  const ratio = asset.width && asset.height ? asset.width / asset.height : 0;
+  const minRatio = parseRatio(filters.minAspectRatio);
+  const maxRatio = parseRatio(filters.maxAspectRatio);
+  if (minRatio !== undefined && ratio < minRatio) return false;
+  if (maxRatio !== undefined && ratio > maxRatio) return false;
+  return true;
+}
+
+function comparable(asset: AssetRecord, field: string): string | number | boolean {
+  if (field === 'filename') return asset.original_file_name;
+  if (field === 'mediaType') return asset.asset_type === 'VIDEO' ? 'Video' : 'Image';
+  if (field === 'favorite') return asset.is_favorite;
+  if (field === 'archived') return asset.is_archived;
+  if (field === 'album') return albumIdsFor(asset.id).map((id) => demoAssetState.albums.find((album) => album.id === id)?.album_name ?? '').join(' | ');
+  if (field === 'tag') return asset.tags.map((tag) => tag.name).join(' | ');
+  if (field === 'takenDate') return asset.file_created_at.slice(0, 10);
+  if (field === 'width') return asset.width ?? 0;
+  if (field === 'height') return asset.height ?? 0;
+  if (field === 'aspectRatio') return asset.width && asset.height ? asset.width / asset.height : 0;
+  return '';
+}
+
+function evaluateRule(asset: AssetRecord, rule: AssetSearchRule): boolean {
+  const actual = comparable(asset, rule.field);
+  const expected = rule.value.trim();
+  if (typeof actual === 'boolean') {
+    const truth = ['true', 'favorite', 'archived'].includes(expected.toLocaleLowerCase());
+    return rule.op === 'isNot' ? actual !== truth : actual === truth;
+  }
+  if (typeof actual === 'number') {
+    const target = parseRatio(expected) ?? Number(expected);
+    if (!Number.isFinite(target)) return false;
+    if (rule.op === 'gt') return actual > target;
+    if (rule.op === 'gte') return actual >= target;
+    if (rule.op === 'lt') return actual < target;
+    if (rule.op === 'lte') return actual <= target;
+    if (rule.op === 'isNot') return actual !== target;
+    return actual === target;
+  }
+  const left = actual.toLocaleLowerCase();
+  const right = expected.toLocaleLowerCase();
+  if (rule.op === 'contains') return left.includes(right);
+  if (rule.op === 'notContains') return !left.includes(right);
+  if (rule.op === 'isNot') return left !== right;
+  return left.includes(right);
+}
+
+function evaluateGroup(asset: AssetRecord, rules: AssetSearchRule[], logic: 'AND' | 'OR', negated = false): boolean {
+  const matched = rules.length === 0 ? true : logic === 'AND' ? rules.every((rule) => evaluateRule(asset, rule)) : rules.some((rule) => evaluateRule(asset, rule));
+  return negated ? !matched : matched;
+}
+
+function matchesExpert(asset: AssetRecord, query: Extract<AssetSearchQuery, { mode: 'expert' }>): boolean {
+  const parts = [evaluateGroup(asset, query.rules, query.logic), ...query.groups.map((group: AssetSearchGroup) => evaluateGroup(asset, group.rules, group.logic, group.negated))];
+  const matched = query.logic === 'AND' ? parts.every(Boolean) : parts.some(Boolean);
+  return query.negated ? !matched : matched;
+}
+
+function searchAssets(query: AssetSearchQuery): AssetRecord[] {
+  const source = (indexedDemoAssets() as AssetRecord[]).filter((asset) => query.mode === 'simple' ? matchesSimple(asset, query) : matchesExpert(asset, query));
+  const multiplier = query.sort.direction === 'desc' ? -1 : 1;
+  return [...source].sort((a, b) => query.sort.field === 'filename'
+    ? a.original_file_name.localeCompare(b.original_file_name) * multiplier
+    : a.file_created_at.localeCompare(b.file_created_at) * multiplier);
+}
+
 export function createDemoLibraryDataSource(): LibraryDataSource {
   return {
     kind: 'demo',
@@ -65,6 +174,7 @@ export function createDemoLibraryDataSource(): LibraryDataSource {
       list() { return indexedDemoAssets() as AssetRecord[]; },
       getById(id) { return demoAssetById(id) as AssetRecord | undefined; },
       listTrash() { return trashApiDemoAssets(); },
+      async search(query) { const items = searchAssets(query); return { items, total: items.length }; },
       async setFavorite(ids, favorite) { const affected=existingAssetIds(ids); setDemoAssetsFavorite(affected,favorite); return result(affected); },
       async setArchived(ids, archived) { const affected=existingAssetIds(ids); setDemoAssetsArchived(affected,archived); return result(affected); },
       async sync(ids) { const affected=existingAssetIds(ids); syncDemoAssets(affected); return result(affected); },
