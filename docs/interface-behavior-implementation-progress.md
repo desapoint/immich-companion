@@ -56,9 +56,9 @@ The controller deliberately does not own domain mutations, forms, selection rule
 
 ### Albums / Tags migration
 
-`RelationManagementPage.svelte` now uses the generic collection controller and shared `Pagination.svelte`.
+`RelationManagementPage.svelte` uses the generic collection controller and shared `Pagination.svelte`.
 
-User-facing changes:
+User-facing behavior includes:
 
 - text search is live with a 300 ms debounce;
 - Enter applies search immediately;
@@ -68,26 +68,100 @@ User-facing changes:
 - an initial list failure shows a blocking Retry state;
 - a refresh failure retains the existing table and shows a non-blocking Retry notice;
 - refreshing keeps existing rows visible;
-- numbered shared pagination replaces the feature-local Previous/Next controls;
+- numbered shared pagination replaces feature-local Previous/Next controls;
 - selection can survive page navigation within the same applied query;
 - “Select all visible” adds/removes only the rendered page instead of replacing the entire selection set;
-- create/update errors stay inside the editor dialog;
 - create/update/delete mutation state is separate from list-loading state;
-- single-item delete no longer overwrites unrelated existing selection;
+- single-item delete does not overwrite unrelated existing selection;
 - partial bulk-delete failures remain selected for retry.
 
 Tag tree expansion/parent behavior and the rule that deleting a relation never deletes media are preserved.
 
+## Implemented in the second slice
+
+### Restore collection migration
+
+`RestorePage.svelte` now uses the same collection controller as Relations and uses the generic `Pagination.svelte` directly.
+
+Preserved Restore-specific behavior:
+
+- fixed page size of 48;
+- selection can survive page navigation within the same trash collection;
+- Restore actions remain immediate because they are reversible recovery actions;
+- viewer detail requests retain their own independent `AbortController`;
+- opening a new viewer asset aborts the superseded detail request;
+- page changes and component disposal close/abort viewer detail work.
+
+Standardized behavior gained by Restore:
+
+- initial loading, refresh, retry, and page clamping come from `collectionState`;
+- stale list requests are automatically cancelled/ignored;
+- refresh failures retain the existing grid;
+- collection errors are separate from restore-action errors;
+- Restore success/failure is reported as a normal status notice;
+- successful restore reloads through the collection controller so final-page deletion/restoration clamps correctly.
+
+### Shared collection presentation
+
+Added `CollectionFeedback.svelte` and migrated both Relations and Restore to it.
+
+It standardizes:
+
+- initial loading presentation;
+- blocking initial-load failure with Retry;
+- non-blocking refresh failure with Retry while existing content remains usable;
+- refresh-in-progress presentation;
+- empty-state presentation;
+- optional empty-state action.
+
+Relations now distinguishes query-empty from source-empty and offers `Clear search` for query-empty results.
+
+### Shared status / notification presentation
+
+Added `StatusNotice.svelte` with `info`, `success`, `warning`, and `error` tones plus optional action and dismiss controls.
+
+Relations now uses one mutation notice channel instead of separate page-level success/error paragraphs:
+
+- successful create/update/delete -> success notice;
+- partial delete -> one warning notice, with failed IDs kept selected;
+- request/mutation failure -> error notice;
+- tag-parent-option load failure -> warning notice.
+
+Restore uses the same notice component for restore success/failure.
+
+Collection loading errors remain in `CollectionFeedback`; form errors remain inside the active form. This keeps feedback scoped to the operation that produced it.
+
+### Standard dialog-form behavior
+
+Added `DialogFormActions.svelte` and extended `Dialog.svelte` with opt-in `initialFocus="first"` behavior.
+
+The dialog continues to restore focus to the control that opened it and lock body scrolling. The focus trap now includes buttons, inputs, textareas, and selects.
+
+Relations create/edit forms now standardize these rules:
+
+- the first form control receives focus when the editor opens;
+- Enter submits the owning form;
+- Cancel, Escape, backdrop close, and the dialog close control all use the same close path;
+- Escape/backdrop close are disabled while a mutation is running;
+- Cancel/submit buttons use the shared action row and consistent busy labels;
+- submit remains disabled when the trimmed required name is empty;
+- API/form failures stay inside the dialog as an error notice;
+- successful create/update closes the dialog and emits a success notice outside it;
+- cancelling a simple relation form discards its draft immediately; no dirty-form confirmation is introduced for these simple CRUD forms.
+
 ## Tests added or updated
 
+First slice:
+
 - shared HTTP client tests;
-- collection state tests for:
-  - initial loading versus refresh;
-  - stale request cancellation;
-  - retaining data on refresh failure;
-  - append deduplication;
-  - out-of-range page clamping;
-- Relations API tests now verify normalized page results and abort-signal forwarding.
+- collection state tests for initial loading versus refresh, stale request cancellation, retained-data refresh failure, append deduplication, and out-of-range page clamping;
+- Relations API tests for normalized page results and abort-signal forwarding.
+
+Second slice:
+
+- `StatusNotice` SSR tests for alert/status semantics and actions;
+- `CollectionFeedback` SSR tests for blocking initial failure and non-blocking refresh/empty states;
+- `DialogFormActions` SSR tests for form targeting, disabled state, and busy labels.
 
 ## Validation status
 
@@ -97,7 +171,8 @@ Therefore the implementation has been statically reviewed and test coverage has 
 
 ## Next implementation slice
 
-1. Migrate Restore list loading to the generic collection controller while preserving viewer-detail cancellation and immediate restore semantics.
-2. Migrate remaining simple feature API modules to the shared HTTP client.
-3. Add reusable collection error/empty/loading presentation only after at least Relations and Restore prove the behavior is genuinely shared.
-4. Adopt shared mechanics in Assets incrementally; do not rewrite its selection, task, or infinite-scroll domain behavior.
+1. Migrate remaining straightforward feature API modules to the shared HTTP client.
+2. Standardize URL/query-state ownership for search, filters, sort, page, and view mode where appropriate.
+3. Standardize pagination details such as page-size reset and post-page-change scrolling.
+4. Adopt shared collection/status mechanics in Assets incrementally without rewriting its selection, task, viewer-navigation, or infinite-scroll guarantees.
+5. Keep Duplicates domain persistence and resolution behavior specialized; only adopt generic HTTP/presentation primitives where safe.

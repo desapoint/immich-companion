@@ -1,5 +1,16 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+
+  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
+  import CollectionFeedback from '../../../lib/components/ui/CollectionFeedback.svelte';
+  import IconButton from '../../../lib/components/ui/IconButton.svelte';
+  import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
+  import Pagination from '../../../lib/components/ui/Pagination.svelte';
+  import StatusNotice from '../../../lib/components/ui/StatusNotice.svelte';
+  import {
+    createCollectionController,
+    createCollectionState,
+  } from '../../../lib/state/collectionState';
   import {
     assetMediaUrl,
     getRestoreAssetDetail,
@@ -7,21 +18,14 @@
     restoreAsset,
     restoreAssets,
   } from '../api/assetApi';
-  import AssetPagination from './AssetPagination.svelte';
-  import AssetViewerDialog from './AssetViewerDialog.svelte';
-  import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
-  import IconButton from '../../../lib/components/ui/IconButton.svelte';
-  import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
   import type { AssetDetail, AssetSummary } from '../types/assets';
+  import AssetViewerDialog from './AssetViewerDialog.svelte';
+
+  type Notice = { tone: 'success' | 'warning' | 'error'; message: string };
 
   const pageSize = 48;
-  let items = $state.raw<AssetSummary[]>([]);
-  let page = $state(1);
-  let pages = $state(0);
-  let total = $state(0);
-  let loading = $state(true);
-  let loadError = $state<string | null>(null);
-  let actionError = $state<string | null>(null);
+  let collection = $state(createCollectionState<AssetSummary>(pageSize));
+  let notice = $state<Notice | null>(null);
   let restoring = $state<string | null>(null);
   let selectedIds = $state<Set<string>>(new Set());
   let viewerIndex = $state<number | null>(null);
@@ -29,59 +33,71 @@
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
   let layoutMode = $state<'normal' | 'condensed'>('normal');
-  let listController: AbortController | null = null;
   let detailController: AbortController | null = null;
-  const loadedSelectionCount = $derived(
-    items.reduce((count, asset) => count + Number(selectedIds.has(asset.id)), 0),
-  );
-  const allLoadedSelected = $derived(items.length > 0 && loadedSelectionCount === items.length);
 
-  async function load(nextPage = page): Promise<void> {
-    listController?.abort();
-    const controller = new AbortController();
-    listController = controller;
-    loading = true;
-    loadError = null;
-    try {
-      let payload = await getRestoreAssets(nextPage, pageSize, controller.signal);
-      if (payload.pages > 0 && nextPage > payload.pages) {
-        payload = await getRestoreAssets(payload.pages, pageSize, controller.signal);
-      }
-      if (controller.signal.aborted) return;
-      items = payload.items;
-      page = payload.pages === 0 ? 1 : payload.page;
-      pages = payload.pages;
-      total = payload.total;
-    } catch (reason) {
-      if (reason instanceof DOMException && reason.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
-        loadError = reason instanceof Error ? reason.message : 'Could not load Restore.';
-      }
-    } finally {
-      if (!controller.signal.aborted) loading = false;
-    }
-  }
+  const loadedSelectionCount = $derived(
+    collection.items.reduce((count, asset) => count + Number(selectedIds.has(asset.id)), 0),
+  );
+  const allLoadedSelected = $derived(
+    collection.items.length > 0 && loadedSelectionCount === collection.items.length,
+  );
+
+  const collectionController = createCollectionController(
+    collection,
+    async ({ page, pageSize: requestedPageSize, signal }) => {
+      const payload = await getRestoreAssets(page, requestedPageSize, signal);
+      return {
+        items: payload.items,
+        page: payload.page,
+        pageSize: payload.page_size,
+        pages: payload.pages,
+        total: payload.total,
+      };
+    },
+    { fallbackError: 'Could not load Restore.', getKey: (asset) => asset.id },
+  );
 
   onMount(() => {
-    void load();
+    void collectionController.load();
     return () => {
-      listController?.abort();
+      collectionController.dispose();
       detailController?.abort();
     };
   });
 
+  function reconcileRestoredIds(ids: string[], restoredCount = ids.length): void {
+    const restoredIds = new Set(ids);
+    collection.items = collection.items.filter((asset) => !restoredIds.has(asset.id));
+    collection.total = Math.max(0, collection.total - restoredCount);
+    collection.pages = collection.total === 0 ? 0 : Math.ceil(collection.total / collection.pageSize);
+    collection.page = collection.pages === 0 ? 1 : Math.min(collection.page, collection.pages);
+  }
+
+  function reconcileRestoredAll(): void {
+    collection.items = [];
+    collection.total = 0;
+    collection.pages = 0;
+    collection.page = 1;
+  }
+
   async function restoreOne(asset: AssetSummary): Promise<void> {
+    if (restoring !== null) return;
     restoring = asset.id;
-    actionError = null;
+    notice = null;
     try {
       await restoreAsset(asset.id);
+      reconcileRestoredIds([asset.id], 1);
       const next = new Set(selectedIds);
       next.delete(asset.id);
       selectedIds = next;
       closeViewer();
-      await load(page);
+      notice = { tone: 'success', message: `Restored ${asset.original_file_name}.` };
+      await collectionController.reload();
     } catch (reason) {
-      actionError = reason instanceof Error ? reason.message : 'Could not restore the asset.';
+      notice = {
+        tone: 'error',
+        message: reason instanceof Error ? reason.message : 'Could not restore the asset.',
+      };
     } finally {
       restoring = null;
     }
@@ -96,23 +112,34 @@
 
   async function restoreMany(all: boolean): Promise<void> {
     const ids = [...selectedIds];
-    if (!all && ids.length === 0) return;
+    if (restoring !== null || (!all && ids.length === 0)) return;
     restoring = all ? 'all' : 'selected';
-    actionError = null;
+    notice = null;
     try {
-      await restoreAssets(all ? { all: true } : { ids });
+      const result = await restoreAssets(all ? { all: true } : { ids });
+      if (all) reconcileRestoredAll();
+      else reconcileRestoredIds(ids, result.restored);
       selectedIds = new Set();
       closeViewer();
-      await load(page);
+      notice = {
+        tone: 'success',
+        message: `${result.restored} asset${result.restored === 1 ? '' : 's'} restored.`,
+      };
+      await collectionController.reload();
     } catch (reason) {
-      actionError = reason instanceof Error ? reason.message : 'Could not restore the selected assets.';
+      notice = {
+        tone: 'error',
+        message: reason instanceof Error
+          ? reason.message
+          : all ? 'Could not restore the trash.' : 'Could not restore the selected assets.',
+      };
     } finally {
       restoring = null;
     }
   }
 
   async function openViewer(index: number): Promise<void> {
-    const asset = items[index];
+    const asset = collection.items[index];
     if (!asset) return;
     viewerIndex = index;
     detail = null;
@@ -137,18 +164,20 @@
   function closeViewer(): void {
     viewerIndex = null;
     detailController?.abort();
+    detailController = null;
     detail = null;
     detailError = null;
+    detailLoading = false;
   }
 
   function changePage(nextPage: number): void {
     closeViewer();
-    void load(nextPage);
+    void collectionController.changePage(nextPage);
   }
 
   function toggleLoadedSelection(): void {
     const next = new Set(selectedIds);
-    for (const asset of items) {
+    for (const asset of collection.items) {
       if (allLoadedSelected) next.delete(asset.id);
       else next.add(asset.id);
     }
@@ -162,27 +191,45 @@
     <h1 id="restore-title">Restore</h1>
     <p>Restore reads the current trash directly from Immich. Restoring returns an item to the normal workspace and refreshes the companion index from Immich.</p>
   </header>
-  {#if loading && items.length === 0}
-    <p>Loading trashed assets…</p>
-  {:else if loadError && items.length === 0}
-    <div class="load-error" role="alert"><p class="error">{loadError}</p><button type="button" onclick={() => void load(page)}>Retry</button></div>
-  {:else if items.length === 0}
-    <p>Immich's trash is empty.</p>
-  {:else}
-    {#if loadError}<p class="error" role="alert">{loadError}</p>{/if}
-    {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
+
+  {#if notice}
+    <StatusNotice tone={notice.tone} message={notice.message} ondismiss={() => (notice = null)} />
+  {/if}
+
+  <CollectionFeedback
+    hasLoaded={collection.hasLoaded}
+    initialLoading={collection.initialLoading}
+    refreshing={collection.refreshing}
+    error={collection.error}
+    empty={collection.hasLoaded && collection.items.length === 0}
+    loadingLabel="Loading trashed assets…"
+    refreshingLabel="Refreshing trashed assets…"
+    emptyLabel="Immich's trash is empty."
+    onretry={() => void collectionController.reload()}
+  />
+
+  {#if collection.hasLoaded && collection.items.length > 0}
     <div class="bulk-actions">
       <Checkbox checked={allLoadedSelected} label="Select all on this page" onchange={toggleLoadedSelection} />
-      <button type="button" disabled={restoring !== null || selectedIds.size === 0} onclick={() => void restoreMany(false)}>{restoring === 'selected' ? 'Restoring selected…' : `Restore selected (${selectedIds.size})`}</button>
-      <button type="button" disabled={restoring !== null} onclick={() => void restoreMany(true)}>{restoring === 'all' ? 'Restoring all…' : `Restore all (${total})`}</button>
+      <button type="button" disabled={restoring !== null || selectedIds.size === 0} onclick={() => void restoreMany(false)}>
+        {restoring === 'selected' ? 'Restoring selected…' : `Restore selected (${selectedIds.size})`}
+      </button>
+      <button type="button" disabled={restoring !== null} onclick={() => void restoreMany(true)}>
+        {restoring === 'all' ? 'Restoring all…' : `Restore all (${collection.total})`}
+      </button>
       <div class="layout-toggle"><LayoutModeSwitch mode={layoutMode} onchange={(mode) => (layoutMode = mode)} /></div>
     </div>
+
     <div class:condensed={layoutMode === 'condensed'} class="grid">
-      {#each items as asset, index (asset.id)}
+      {#each collection.items as asset, index (asset.id)}
         <article class:selected={selectedIds.has(asset.id)}>
           <div class:overlay={layoutMode === 'condensed'} class="image-wrap">
-            <div class="select"><Checkbox checked={selectedIds.has(asset.id)} label={`Select ${asset.original_file_name}`} hiddenLabel shape="circle" onchange={() => toggleSelection(asset.id)} /></div>
-            <button class="preview" type="button" onclick={() => void openViewer(index)} aria-label={`Preview ${asset.original_file_name}`}><img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" /></button>
+            <div class="select">
+              <Checkbox checked={selectedIds.has(asset.id)} label={`Select ${asset.original_file_name}`} hiddenLabel shape="circle" onchange={() => toggleSelection(asset.id)} />
+            </div>
+            <button class="preview" type="button" onclick={() => void openViewer(index)} aria-label={`Preview ${asset.original_file_name}`}>
+              <img src={assetMediaUrl(asset.id, 'thumbnail')} alt="" loading="lazy" />
+            </button>
             {#if layoutMode === 'condensed'}
               <div class="overlay-actions" aria-label={`Actions for ${asset.original_file_name}`}>
                 <IconButton icon="view" label={`Preview ${asset.original_file_name}`} size="compact" onclick={() => void openViewer(index)} />
@@ -191,29 +238,35 @@
             {/if}
           </div>
           {#if layoutMode === 'normal'}
-            <div><strong>{asset.original_file_name}</strong><small>{asset.restore_path ?? 'Path unavailable'}</small></div>
-            <button type="button" disabled={restoring !== null} onclick={() => void restoreOne(asset)}>{restoring === asset.id ? 'Restoring…' : 'Restore'}</button>
+            <div>
+              <strong>{asset.original_file_name}</strong>
+              <small>{asset.restore_path ?? 'Path unavailable'}</small>
+            </div>
+            <button type="button" disabled={restoring !== null} onclick={() => void restoreOne(asset)}>
+              {restoring === asset.id ? 'Restoring…' : 'Restore'}
+            </button>
           {/if}
         </article>
       {/each}
     </div>
-    <AssetPagination
-      {page}
-      {pages}
-      {total}
-      {pageSize}
-      disabled={loading || restoring !== null}
+
+    <Pagination
+      currentPage={collection.page}
+      totalPages={collection.pages}
+      totalItems={collection.total}
+      pageSize={collection.pageSize}
       allowPageSizeChange={false}
-      showModeToggle={false}
+      hideWhenSinglePage
+      disabled={collection.refreshing || restoring !== null}
       label="Restore pages"
-      onpage={changePage}
+      onpagechange={changePage}
     />
   {/if}
 </section>
 
-{#if viewerIndex !== null && items[viewerIndex]}
+{#if viewerIndex !== null && collection.items[viewerIndex]}
   <AssetViewerDialog
-    assets={items}
+    assets={collection.items}
     initialIndex={viewerIndex}
     {selectedIds}
     {detail}
@@ -229,13 +282,16 @@
     apiOnly={true}
     onnavigate={(index) => void openViewer(index)}
     ontoggleselection={toggleSelection}
-    onvisiblechange={(assetId) => { const index = items.findIndex((asset) => asset.id === assetId); if (index >= 0) void openViewer(index); }}
+    onvisiblechange={(assetId) => {
+      const index = collection.items.findIndex((asset) => asset.id === assetId);
+      if (index >= 0) void openViewer(index);
+    }}
     onaction={() => {}}
     onrelationconfirm={() => {}}
     onconfirmaction={() => {}}
     oncancelaction={() => {}}
     onrestore={(assetId) => {
-      const asset = items.find((candidate) => candidate.id === assetId);
+      const asset = collection.items.find((candidate) => candidate.id === assetId);
       if (asset) void restoreOne(asset);
     }}
     onsync={() => {}}
@@ -271,11 +327,6 @@
     color: var(--color-ink-muted);
   }
 
-  .error {
-    color: var(--color-danger);
-  }
-
-  .load-error,
   .bulk-actions {
     display: flex;
     flex-wrap: wrap;

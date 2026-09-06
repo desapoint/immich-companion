@@ -16,6 +16,7 @@
     size?: 'small' | 'medium' | 'large';
     closeOnBackdrop?: boolean;
     closeOnEscape?: boolean;
+    initialFocus?: 'panel' | 'first';
     onclose: () => void;
   }
 
@@ -27,22 +28,30 @@
     size = 'medium',
     closeOnBackdrop = true,
     closeOnEscape = true,
+    initialFocus = 'panel',
     onclose,
   }: Props = $props();
   let panel = $state<HTMLElement>();
+  let content = $state<HTMLElement>();
   let dialog = $state<HTMLDialogElement>();
   const componentId = $props.id();
   const titleId = `${componentId}-title`;
   const descriptionId = `${componentId}-description`;
+  const focusableSelector = [
+    'button:not(:disabled)',
+    'input:not(:disabled)',
+    'textarea:not(:disabled)',
+    'select:not(:disabled)',
+    '[href]',
+    '[tabindex]:not([tabindex="-1"])',
+  ].join(', ');
 
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && closeOnEscape) {
       event.preventDefault();
       onclose();
     } else if (event.key === 'Tab' && panel) {
-      const focusable = [...panel.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input:not(:disabled), [href], [tabindex]:not([tabindex="-1"])',
-      )];
+      const focusable = [...panel.querySelectorAll<HTMLElement>(focusableSelector)];
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -61,6 +70,19 @@
     if (closeOnEscape) onclose();
   }
 
+  function focusInitialTarget(): void {
+    if (initialFocus === 'first') {
+      const autofocusTarget = content?.querySelector<HTMLElement>('[autofocus]:not(:disabled)');
+      const firstContentControl = content?.querySelector<HTMLElement>(focusableSelector);
+      const target = autofocusTarget ?? firstContentControl;
+      if (target) {
+        target.focus({ preventScroll: true });
+        return;
+      }
+    }
+    panel?.focus({ preventScroll: true });
+  }
+
   onMount(() => {
     const currentDialog = dialog;
     if (!currentDialog) return;
@@ -71,7 +93,7 @@
       : null;
     document.body.style.overflow = 'hidden';
     currentDialog.showModal();
-    void tick().then(() => panel?.focus({ preventScroll: true }));
+    void tick().then(focusInitialTarget);
     return () => {
       if (currentDialog.open) currentDialog.close();
       bodyScrollLocks = Math.max(0, bodyScrollLocks - 1);
@@ -110,7 +132,7 @@
       </div>
       <IconButton icon="close" label="Close dialog" size="compact" onclick={onclose} />
     </header>
-    <div class="dialog-content">{@render children()}</div>
+    <div bind:this={content} class="dialog-content">{@render children()}</div>
     {#if footer}<footer>{@render footer()}</footer>{/if}
   </div>
 </dialog>

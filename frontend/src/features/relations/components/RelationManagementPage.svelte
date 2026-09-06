@@ -2,12 +2,15 @@
   import { onMount } from 'svelte';
 
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
+  import CollectionFeedback from '../../../lib/components/ui/CollectionFeedback.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import Dialog from '../../../lib/components/ui/Dialog.svelte';
+  import DialogFormActions from '../../../lib/components/ui/DialogFormActions.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import IconButton from '../../../lib/components/ui/IconButton.svelte';
   import Pagination from '../../../lib/components/ui/Pagination.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import StatusNotice from '../../../lib/components/ui/StatusNotice.svelte';
   import {
     createCollectionController,
     createCollectionState,
@@ -25,6 +28,7 @@
   import ColorPicker from './ColorPicker.svelte';
 
   interface Props { kind: RelationKind; }
+  type Notice = { tone: 'success' | 'warning' | 'error'; message: string };
 
   const relationPageSize = 25;
   const searchDebounceMs = 300;
@@ -39,8 +43,7 @@
   let color = $state('#6b7cff');
   let parentId = $state('');
   let editing = $state<string | null>(null);
-  let message = $state<string | null>(null);
-  let actionError = $state<string | null>(null);
+  let notice = $state<Notice | null>(null);
   let formError = $state<string | null>(null);
   let mutationBusy = $state(false);
   let dialogOpen = $state(false);
@@ -68,6 +71,11 @@
   );
   const allVisibleSelected = $derived(
     displayRows.length > 0 && displayRows.every((row) => selected.has(row.item.id)),
+  );
+  const emptyLabel = $derived(
+    appliedSearch
+      ? `No ${title.toLowerCase()} match “${appliedSearch}”.`
+      : `No ${title.toLowerCase()} found.`,
   );
 
   const collectionController = createCollectionController(
@@ -99,9 +107,13 @@
     if (next === appliedSearch && collection.hasLoaded) return;
     appliedSearch = next;
     selected = new Set();
-    message = null;
-    actionError = null;
+    notice = null;
     void runCollection(() => collectionController.reset());
+  }
+
+  function clearSearch(): void {
+    search = '';
+    applySearch('');
   }
 
   function scheduleSearch(): void {
@@ -128,9 +140,25 @@
     formError = null;
   }
 
+  function closeForm(): void {
+    if (mutationBusy) return;
+    dialogOpen = false;
+    resetForm();
+  }
+
   function openCreate(): void {
     resetForm();
     name = search.trim();
+    dialogOpen = true;
+  }
+
+  function edit(item: ManagedRelation): void {
+    editing = item.id;
+    name = item.name;
+    description = item.description ?? '';
+    color = item.color ?? '#6b7cff';
+    parentId = item.parent_id ?? '';
+    formError = null;
     dialogOpen = true;
   }
 
@@ -141,8 +169,7 @@
       direction = 'asc';
     }
     selected = new Set();
-    message = null;
-    actionError = null;
+    notice = null;
     void runCollection(() => collectionController.reset());
   }
 
@@ -172,8 +199,7 @@
     if (!name.trim() || mutationBusy) return;
     mutationBusy = true;
     formError = null;
-    actionError = null;
-    message = null;
+    notice = null;
     try {
       const data = isAlbum
         ? { name: name.trim(), description }
@@ -181,7 +207,10 @@
       const wasEditing = editing !== null;
       if (editing) await updateRelation(kind, editing, data);
       else await createRelation(kind, data);
-      message = `${isAlbum ? 'Album' : 'Tag'} ${wasEditing ? 'updated' : 'created'}.`;
+      notice = {
+        tone: 'success',
+        message: `${isAlbum ? 'Album' : 'Tag'} ${wasEditing ? 'updated' : 'created'}.`,
+      };
       dialogOpen = false;
       resetForm();
       await runCollection(() => collectionController.reload());
@@ -192,43 +221,35 @@
     }
   }
 
-  function edit(item: ManagedRelation): void {
-    editing = item.id;
-    name = item.name;
-    description = item.description ?? '';
-    color = item.color ?? '#6b7cff';
-    parentId = item.parent_id ?? '';
-    formError = null;
-    dialogOpen = true;
-  }
-
   function removeSelected(): void {
     if (!selected.size || mutationBusy) return;
     pendingDelete = [...selected];
     pendingDeleteLabel = `Delete ${selected.size} relation${selected.size === 1 ? '' : 's'}? Media will not be deleted.`;
-    actionError = null;
+    notice = null;
     deleteConfirmOpen = true;
   }
 
   async function confirmDelete(): Promise<void> {
     if (!pendingDelete.length || mutationBusy) return;
     mutationBusy = true;
-    actionError = null;
-    message = null;
+    notice = null;
     try {
       const result = await deleteRelations(kind, pendingDelete);
       selected = new Set(result.failed);
       deleteConfirmOpen = false;
       pendingDelete = [];
-      if (result.failed.length) {
-        message = `${result.completed.length} deleted; ${result.failed.length} failed.`;
-        actionError = `${result.failed.length} relation${result.failed.length === 1 ? '' : 's'} could not be deleted and remain selected.`;
-      } else {
-        message = `${result.completed.length} deleted.`;
-      }
+      notice = result.failed.length
+        ? {
+            tone: 'warning',
+            message: `${result.completed.length} deleted; ${result.failed.length} failed and remain selected.`,
+          }
+        : { tone: 'success', message: `${result.completed.length} deleted.` };
       await runCollection(() => collectionController.reload());
     } catch (cause) {
-      actionError = cause instanceof Error ? cause.message : 'Relations could not be deleted.';
+      notice = {
+        tone: 'error',
+        message: cause instanceof Error ? cause.message : 'Relations could not be deleted.',
+      };
     } finally {
       mutationBusy = false;
     }
@@ -237,7 +258,7 @@
   function removeOne(item: ManagedRelation): void {
     pendingDelete = [item.id];
     pendingDeleteLabel = `Delete “${item.name}”? Media will not be deleted.`;
-    actionError = null;
+    notice = null;
     deleteConfirmOpen = true;
   }
 
@@ -263,7 +284,10 @@
         .then((options) => { tagOptions = options; })
         .catch((cause) => {
           if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
-            actionError = cause instanceof Error ? cause.message : 'Tag options could not be loaded.';
+            notice = {
+              tone: 'warning',
+              message: cause instanceof Error ? cause.message : 'Tag parent options could not be loaded.',
+            };
           }
         });
     }
@@ -301,104 +325,98 @@
     <IconButton icon="trash" label="Delete selected" tone="destructive" disabled={mutationBusy || selected.size === 0} onclick={removeSelected} />
   </div>
 
-  {#if message}<p class="message" role="status">{message}</p>{/if}
-  {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
+  {#if notice}
+    <StatusNotice tone={notice.tone} message={notice.message} ondismiss={() => (notice = null)} />
+  {/if}
 
-  {#if collection.initialLoading && !collection.hasLoaded}
-    <p class="collection-status">Loading {title.toLowerCase()}…</p>
-  {:else if collection.error && !collection.hasLoaded}
-    <div class="load-error" role="alert">
-      <p class="error">{collection.error}</p>
-      <button type="button" onclick={() => void runCollection(() => collectionController.reload())}>Retry</button>
-    </div>
-  {:else}
-    {#if collection.refreshing}
-      <p class="collection-status" aria-live="polite">Refreshing {title.toLowerCase()}…</p>
-    {/if}
-    {#if collection.error}
-      <div class="load-error nonblocking" role="alert">
-        <p class="error">{collection.error}</p>
-        <button type="button" onclick={() => void runCollection(() => collectionController.reload())}>Retry</button>
-      </div>
-    {/if}
+  <CollectionFeedback
+    hasLoaded={collection.hasLoaded}
+    initialLoading={collection.initialLoading}
+    refreshing={collection.refreshing}
+    error={collection.error}
+    empty={collection.hasLoaded && collection.items.length === 0}
+    loadingLabel={`Loading ${title.toLowerCase()}…`}
+    refreshingLabel={`Refreshing ${title.toLowerCase()}…`}
+    {emptyLabel}
+    emptyActionLabel={appliedSearch ? 'Clear search' : undefined}
+    onemptyaction={appliedSearch ? clearSearch : undefined}
+    onretry={() => void runCollection(() => collectionController.reload())}
+  />
 
-    {#if !collection.items.length}
-      <p class="empty">No {title.toLowerCase()} found.</p>
-    {:else}
-      <div class="table-wrap">
-        <table>
-          <colgroup>
-            <col class="selection-column" />
-            <col />
-            <col class="count-column" />
-            <col class="actions-column" />
-          </colgroup>
-          <thead>
+  {#if collection.hasLoaded && collection.items.length > 0}
+    <div class="table-wrap">
+      <table>
+        <colgroup>
+          <col class="selection-column" />
+          <col />
+          <col class="count-column" />
+          <col class="actions-column" />
+        </colgroup>
+        <thead>
+          <tr>
+            <th class="selection-cell">
+              <div class="styled-checkbox">
+                <Checkbox
+                  checked={allVisibleSelected}
+                  label={`Select all visible ${title.toLowerCase()}`}
+                  hiddenLabel
+                  onchange={togglePageSelection}
+                />
+              </div>
+            </th>
+            <th>
+              <button class="sort-heading" onclick={() => changeSort('name')} aria-label={`Sort by name${sortLabel('name')}`}>
+                Name <span>{sort === 'name' ? direction === 'asc' ? '↑' : '↓' : '↕'}</span>
+              </button>
+            </th>
+            <th>
+              <button class="sort-heading" onclick={() => changeSort('asset_count')} aria-label={`Sort by asset count${sortLabel('asset_count')}`}>
+                Assets <span>{sort === 'asset_count' ? direction === 'asc' ? '↑' : '↓' : '↕'}</span>
+              </button>
+            </th>
+            <th class="actions-heading">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each displayRows as row (row.item.id)}
+            {@const item = row.item}
             <tr>
-              <th class="selection-cell">
+              <td class="selection-cell">
                 <div class="styled-checkbox">
-                  <Checkbox
-                    checked={allVisibleSelected}
-                    label={`Select all visible ${title.toLowerCase()}`}
-                    hiddenLabel
-                    onchange={togglePageSelection}
-                  />
+                  <Checkbox checked={selected.has(item.id)} label={`Select ${item.name}`} hiddenLabel onchange={(checked) => toggleItemSelection(item.id, checked)} />
                 </div>
-              </th>
-              <th>
-                <button class="sort-heading" onclick={() => changeSort('name')} aria-label={`Sort by name${sortLabel('name')}`}>
-                  Name <span>{sort === 'name' ? direction === 'asc' ? '↑' : '↓' : '↕'}</span>
-                </button>
-              </th>
-              <th>
-                <button class="sort-heading" onclick={() => changeSort('asset_count')} aria-label={`Sort by asset count${sortLabel('asset_count')}`}>
-                  Assets <span>{sort === 'asset_count' ? direction === 'asc' ? '↑' : '↓' : '↕'}</span>
-                </button>
-              </th>
-              <th class="actions-heading">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {#each displayRows as row (row.item.id)}
-              {@const item = row.item}
-              <tr>
-                <td class="selection-cell">
-                  <div class="styled-checkbox">
-                    <Checkbox checked={selected.has(item.id)} label={`Select ${item.name}`} hiddenLabel onchange={(checked) => toggleItemSelection(item.id, checked)} />
-                  </div>
-                </td>
-                <td>
-                  <div class="tag-name" style={`--depth:${row.depth}`}>
-                    {#if !isAlbum && row.hasChildren}
-                      <button class="tag-title" type="button" aria-expanded={expanded.has(item.id)} aria-label={`${expanded.has(item.id) ? 'Collapse' : 'Expand'} ${item.name}`} onclick={() => toggleExpanded(item.id)}>
-                        <span>
-                          <strong>{item.name}</strong>
-                          {#if appliedSearch && item.parent_path?.length}<small>{[...item.parent_path, item.name].join(' / ')}</small>{/if}
-                        </span>
-                        <Icon name="chevron" size=".95rem" />
-                      </button>
-                    {:else}
-                      <span class="tag-title-static">
+              </td>
+              <td>
+                <div class="tag-name" style={`--depth:${row.depth}`}>
+                  {#if !isAlbum && row.hasChildren}
+                    <button class="tag-title" type="button" aria-expanded={expanded.has(item.id)} aria-label={`${expanded.has(item.id) ? 'Collapse' : 'Expand'} ${item.name}`} onclick={() => toggleExpanded(item.id)}>
+                      <span>
                         <strong>{item.name}</strong>
-                        {#if !isAlbum && appliedSearch && item.parent_path?.length}<small>{[...item.parent_path, item.name].join(' / ')}</small>{/if}
+                        {#if appliedSearch && item.parent_path?.length}<small>{[...item.parent_path, item.name].join(' / ')}</small>{/if}
                       </span>
-                    {/if}
-                  </div>
-                </td>
-                <td>{item.asset_count}</td>
-                <td class="actions">
-                  <div class="action-buttons">
-                    <IconButton icon="edit" label={`Edit ${item.name}`} disabled={mutationBusy} onclick={() => edit(item)} size="compact" />
-                    <IconButton icon="filter" label={`Filter assets by ${item.name}`} onclick={() => quickFilter(item.id)} size="compact" />
-                    <IconButton icon="trash" label={`Delete ${item.name}`} tone="destructive" disabled={mutationBusy} onclick={() => removeOne(item)} size="compact" />
-                  </div>
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
-      </div>
-    {/if}
+                      <Icon name="chevron" size=".95rem" />
+                    </button>
+                  {:else}
+                    <span class="tag-title-static">
+                      <strong>{item.name}</strong>
+                      {#if !isAlbum && appliedSearch && item.parent_path?.length}<small>{[...item.parent_path, item.name].join(' / ')}</small>{/if}
+                    </span>
+                  {/if}
+                </div>
+              </td>
+              <td>{item.asset_count}</td>
+              <td class="actions">
+                <div class="action-buttons">
+                  <IconButton icon="edit" label={`Edit ${item.name}`} disabled={mutationBusy} onclick={() => edit(item)} size="compact" />
+                  <IconButton icon="filter" label={`Filter assets by ${item.name}`} onclick={() => quickFilter(item.id)} size="compact" />
+                  <IconButton icon="trash" label={`Delete ${item.name}`} tone="destructive" disabled={mutationBusy} onclick={() => removeOne(item)} size="compact" />
+                </div>
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
 
     <Pagination
       currentPage={collection.page}
@@ -419,30 +437,33 @@
     title={`${editing ? 'Edit' : 'Create'} ${isAlbum ? 'album' : 'tag'}`}
     description={editing ? `Update this ${isAlbum ? 'album' : 'tag'} in Immich.` : `Set the ${isAlbum ? 'album' : 'tag'} data before creating it.`}
     size="small"
+    initialFocus="first"
     closeOnBackdrop={!mutationBusy}
     closeOnEscape={!mutationBusy}
-    onclose={() => {
-      if (!mutationBusy) {
-        dialogOpen = false;
-        resetForm();
-      }
-    }}
+    onclose={closeForm}
   >
     <form id="relation-editor" class="dialog-form" autocomplete="off" onsubmit={(event) => { event.preventDefault(); void save(); }}>
-      <label>Name<input autocomplete="off" data-1p-ignore data-bwignore="true" name="relation-name" bind:value={name} required maxlength="255" /></label>
+      <label>
+        Name
+        <input autofocus autocomplete="off" data-1p-ignore data-bwignore="true" name="relation-name" bind:value={name} required maxlength="255" />
+      </label>
       {#if isAlbum}
         <label>Description<textarea autocomplete="off" name="relation-description" bind:value={description} maxlength="2000"></textarea></label>
       {:else}
         <div class="color-field"><span>Color</span><ColorPicker value={color} onchange={(next) => (color = next)} /></div>
         <SelectField id="parent-tag" label="Parent tag" value={parentId} options={parentOptions} onchange={(next) => (parentId = next)} />
       {/if}
-      {#if formError}<p class="error dialog-error" role="alert">{formError}</p>{/if}
+      {#if formError}<StatusNotice compact tone="error" message={formError} />{/if}
     </form>
     {#snippet footer()}
-      <div class="dialog-actions">
-        <button type="button" onclick={() => { dialogOpen = false; resetForm(); }} disabled={mutationBusy}>Cancel</button>
-        <button class="confirm" type="submit" form="relation-editor" disabled={mutationBusy || !name.trim()}>{mutationBusy ? 'Applying…' : editing ? 'Save changes' : 'Create'}</button>
-      </div>
+      <DialogFormActions
+        formId="relation-editor"
+        submitLabel={editing ? 'Save changes' : 'Create'}
+        busyLabel={editing ? 'Saving…' : 'Creating…'}
+        busy={mutationBusy}
+        disabled={!name.trim()}
+        oncancel={closeForm}
+      />
     {/snippet}
   </Dialog>
 {/if}
@@ -475,11 +496,6 @@
   input, textarea { border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); padding: .65rem .75rem; font: inherit; background: var(--color-surface-raised); color: inherit; }
   .toolbar input { flex: 1; min-width: 14rem; }
   :global(.toolbar .icon-button-wrap button) { width: 2.75rem; height: 2.75rem; }
-  .collection-status { margin: 0; font-size: .78rem; }
-  .load-error { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; }
-  .load-error p { margin: 0; }
-  .load-error button { min-height: 2.2rem; padding: .4rem .7rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); background: var(--color-surface-raised); color: var(--color-ink-strong); cursor: pointer; font: inherit; font-size: .72rem; font-weight: 760; }
-  .nonblocking { padding: .65rem .75rem; border: 1px solid color-mix(in srgb, var(--color-danger, #a33d45) 35%, var(--color-border-subtle)); border-radius: var(--radius-sm); background: var(--color-surface-soft); }
   .dialog-form { display: grid; gap: 1rem; }
   label { display: grid; gap: .3rem; color: var(--color-ink-muted); font-size: .8rem; font-weight: 700; }
   textarea { min-height: 5rem; }
@@ -507,13 +523,6 @@
   .tag-name small { min-width: 0; overflow: hidden; color: var(--color-ink-muted); font-size: .68rem; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
   .flat-relations .tag-name { min-height: 0; gap: 0; padding-left: 0; }
   .flat-relations .tag-title-static { display: block; flex: none; }
-  .error { color: var(--color-danger, #a33d45); }
-  .message { color: var(--color-accent-strong); }
-  .dialog-error { margin: 0; }
-  .dialog-actions { display: flex; justify-content: flex-end; gap: .5rem; }
-  .dialog-actions button { min-height: 2.4rem; padding: .5rem .8rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .72rem; font-weight: 780; }
-  .dialog-actions .confirm { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
-  .dialog-actions button:disabled { cursor: wait; opacity: .5; }
   .color-field { display: grid; gap: .4rem; }
   .color-field > span { color: var(--color-ink-muted); font-size: .8rem; font-weight: 700; }
 
