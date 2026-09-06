@@ -1,6 +1,6 @@
 <script lang="ts">
+  import SelectField, { type SelectOption } from './SelectField.svelte';
   import V2Button from './V2Button.svelte';
-  import V2MultiSelectField, { type MultiSelectOption } from './V2MultiSelectField.svelte';
 
   let {
     id,
@@ -16,7 +16,7 @@
     id: string;
     label: string;
     values?: string[];
-    options: MultiSelectOption[];
+    options: SelectOption[];
     emptySelected?: boolean;
     emptyLabel: string;
     placeholder: string;
@@ -37,9 +37,12 @@
 </script>
 
 <div class="v2-relation-filter-field">
-  <V2MultiSelectField
+  <SelectField
     {id}
     {label}
+    multiple
+    searchable
+    allowEmpty
     {values}
     {options}
     {placeholder}
@@ -58,11 +61,13 @@
   }
 
   .v2-relation-filter-field :global(.v2-button) {
-    min-height:2.55rem;
+    height:2.25rem;
+    min-height:2.25rem;
     white-space:nowrap;
   }
 
   @media (max-width: 34rem) {
     .v2-relation-filter-field { grid-template-columns:1fr; align-items:stretch; }
+    .v2-relation-filter-field :global(.v2-button) { width:100%; }
   }
 </style>
