@@ -6,7 +6,7 @@
   import V2AssetTile from '../components/V2AssetTile.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
-  import V2CollectionControls from '../components/V2CollectionControls.svelte';
+  import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
   import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2RangeSlider from '../components/V2RangeSlider.svelte';
@@ -39,7 +39,7 @@
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
   function setSort(value:string){sort=value;collection.reset();void refresh(true)}
   function setPageSize(value:number){collection.setPageSize(value,total);void refresh()}
-  function setMode(value:'Pagination'|'Infinite scroll'){collection.setMode(value);void refresh()}
+  function setMode(value:ResultMode){collection.setMode(value);void refresh()}
   function setPage(value:number){collection.setPage(value);void refresh()}
   async function restoreSelected(){await libraryData.assets.restore(selectedAssetIds());clearSelection();await refresh(true)}
   async function restoreAll(){await libraryData.assets.restore(matchingIds);clearSelection();collection.reset();await refresh(true)}
