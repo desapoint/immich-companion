@@ -10,8 +10,12 @@
     emptySelected = false,
     emptyLabel,
     placeholder,
+    loading = false,
+    hasMore = false,
     onvalueschange,
     onemptychange,
+    onsearchchange,
+    onloadmore,
   }: {
     id: string;
     label: string;
@@ -20,8 +24,12 @@
     emptySelected?: boolean;
     emptyLabel: string;
     placeholder: string;
+    loading?: boolean;
+    hasMore?: boolean;
     onvalueschange?: (values: string[]) => void;
     onemptychange?: (selected: boolean) => void;
+    onsearchchange?: (query: string) => void;
+    onloadmore?: () => void;
   } = $props();
 
   function setValues(next: string[]): void {
@@ -46,6 +54,10 @@
     {values}
     {options}
     {placeholder}
+    {loading}
+    {hasMore}
+    {onsearchchange}
+    {onloadmore}
     searchPlaceholder={`Search ${label.toLocaleLowerCase()}…`}
     onvalueschange={setValues}
   />
