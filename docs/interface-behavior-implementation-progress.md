@@ -149,6 +149,79 @@ Relations create/edit forms now standardize these rules:
 - successful create/update closes the dialog and emits a success notice outside it;
 - cancelling a simple relation form discards its draft immediately; no dirty-form confirmation is introduced for these simple CRUD forms.
 
+## Implemented in the third slice
+
+### Pagination details
+
+Shared pagination now has explicit detail behavior rather than leaving each feature to interpret it differently:
+
+- the summary reports the visible item range and total, for example `76–83 of 83 · Page 4 of 4`;
+- current/total pages remain clamped before rendering;
+- duplicate or invalid page-size selections do not emit page-size changes;
+- page-size ownership remains with the collection using the component; the generic collection controller resets a changed page size to page 1;
+- feature-local fixed page sizes, such as Restore's 48, remain supported without exposing a selector;
+- Relations and Restore scroll the collection start into view only after a requested numbered page loads successfully;
+- a failed page request therefore keeps both the old data and the user's current scroll position;
+- the existing collection page-clamping behavior remains responsible for mutations that remove the last item from a final page.
+
+`paginationItemRange()` and `scrollToPaginationStart()` live in the shared pagination utility so list screens do not each invent those rules.
+
+### Viewer navigation across page boundaries
+
+The asset viewer's existing adjacent-page request contract is now treated as the standard viewer-pagination bridge:
+
+- left / `H` navigates to the previous loaded item;
+- right / `L` navigates to the next loaded item;
+- when navigation reaches a loaded-page edge, the viewer can call `onrequestprevious` / `onrequestnext` without closing;
+- the caller fetches the adjacent page and returns the index that should become active;
+- the viewer ignores repeated edge requests while one adjacent-page request is already running.
+
+Assets already used this contract for numbered pages and infinite scroll, so its existing page-aware navigation is preserved rather than rewritten.
+
+Restore now implements the same contract. Navigating forward from the final image on a Restore page fetches the next trash page and opens its first image. Navigating backward from the first image fetches the previous page and opens its final image.
+
+Restore keeps a transition snapshot of the currently viewed asset while an adjacent numbered page is loading. This prevents a short final page from temporarily invalidating an index inherited from a fuller previous page.
+
+### Reusable keyboard-shortcut help
+
+Added `frontend/src/lib/components/ui/ShortcutHelp.svelte` and `ShortcutHelpItem`.
+
+The component accepts data only:
+
+```ts
+interface ShortcutHelpItem {
+  shortcut: string;
+  description: string;
+}
+```
+
+The component owns:
+
+- the keyboard-icon help button;
+- hover presentation;
+- keyboard focus presentation;
+- optional pinned-open state through the button;
+- accessible expanded/controls relationships;
+- rendering the shortcut/description list.
+
+The asset viewer now uses this generic component instead of a viewer-specific shortcut-help implementation. Its existing `?` shortcut pins/unpins the help while ordinary pointer hover reveals it without requiring a click.
+
+The viewer help reflects the keyboard controls that are actually handled, including:
+
+- `←` / `H` — previous image, dynamically requesting the previous page at a page edge;
+- `→` / `L` — next image, dynamically requesting the next page at a page edge;
+- `Space` — toggle selection;
+- `I` — toggle information;
+- `M` — toggle fit / actual size;
+- `+` / `−` — zoom;
+- `0` — reset zoom;
+- `Ctrl + Wheel` — zoom at the pointer;
+- drag — pan a zoomed image;
+- `?` — pin/unpin shortcut help;
+- `Esc` / `Q` — close the viewer.
+
+Duplicate review additionally documents `K`, `D`, `S`, `P`, held `F`, and `R` for its domain-specific comparison actions.
+
 ## Tests added or updated
 
 First slice:
@@ -163,6 +236,12 @@ Second slice:
 - `CollectionFeedback` SSR tests for blocking initial failure and non-blocking refresh/empty states;
 - `DialogFormActions` SSR tests for form targeting, disabled state, and busy labels.
 
+Third slice:
+
+- pagination utility tests for visible ranges, clamping, empty totals, and standard page-start scrolling;
+- `Pagination` SSR tests for range/page summaries and opt-in page-size controls;
+- `ShortcutHelp` SSR tests for its collapsed button and data-driven open content.
+
 ## Validation status
 
 The repository workflow runs frontend checks/tests on pull requests, `main`, or manual dispatch, but not on ordinary pushes to this feature branch. The current execution environment also cannot resolve GitHub directly to clone the branch and run `npm ci` locally.
@@ -173,6 +252,6 @@ Therefore the implementation has been statically reviewed and test coverage has 
 
 1. Migrate remaining straightforward feature API modules to the shared HTTP client.
 2. Standardize URL/query-state ownership for search, filters, sort, page, and view mode where appropriate.
-3. Standardize pagination details such as page-size reset and post-page-change scrolling.
+3. Standardize search/filter control details and selection-toolbar conventions.
 4. Adopt shared collection/status mechanics in Assets incrementally without rewriting its selection, task, viewer-navigation, or infinite-scroll guarantees.
 5. Keep Duplicates domain persistence and resolution behavior specialized; only adopt generic HTTP/presentation primitives where safe.

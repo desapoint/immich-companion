@@ -5,6 +5,11 @@ export interface PaginationWindowOptions {
   boundaryCount?: number;
 }
 
+export interface PaginationItemRange {
+  start: number;
+  end: number;
+}
+
 export type PaginationItem =
   | { kind: 'page'; page: number; key: string }
   | { kind: 'ellipsis'; key: string };
@@ -16,6 +21,26 @@ function positiveInteger(value: number, minimum = 0): number {
 
 function addRange(target: Set<number>, start: number, end: number): void {
   for (let page = start; page <= end; page += 1) target.add(page);
+}
+
+export function paginationItemRange(
+  currentPage: number,
+  pageSize: number,
+  totalItems: number,
+): PaginationItemRange {
+  const total = positiveInteger(totalItems);
+  if (total === 0) return { start: 0, end: 0 };
+  const size = positiveInteger(pageSize, 1);
+  const pages = Math.max(1, Math.ceil(total / size));
+  const page = Math.min(Math.max(1, positiveInteger(currentPage, 1)), pages);
+  return {
+    start: (page - 1) * size + 1,
+    end: Math.min(total, page * size),
+  };
+}
+
+export function scrollToPaginationStart(target: Element | null): void {
+  target?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
 export function buildPaginationItems({

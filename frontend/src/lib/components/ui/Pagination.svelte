@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { buildPaginationItems } from '../../utils/pagination';
+  import { buildPaginationItems, paginationItemRange } from '../../utils/pagination';
   import SelectField from './SelectField.svelte';
 
   interface Props {
@@ -65,16 +65,26 @@
     normalizedTotalPages > 0
       && (!hideWhenSinglePage || normalizedTotalPages > 1 || showPageSize),
   );
-  const summary = $derived(
+  const itemRange = $derived(
     totalItems === undefined
+      ? null
+      : paginationItemRange(normalizedCurrentPage, pageSize, totalItems),
+  );
+  const summary = $derived(
+    totalItems === undefined || itemRange === null
       ? `Page ${normalizedCurrentPage} of ${normalizedTotalPages}`
-      : `Page ${normalizedCurrentPage} of ${normalizedTotalPages} · ${totalItems.toLocaleString()} items`,
+      : `${itemRange.start.toLocaleString()}–${itemRange.end.toLocaleString()} of ${totalItems.toLocaleString()} · Page ${normalizedCurrentPage} of ${normalizedTotalPages}`,
   );
 
   function selectPage(nextPage: number): void {
     if (disabled || normalizedTotalPages === 0) return;
     const normalized = Math.min(Math.max(1, nextPage), normalizedTotalPages);
     if (normalized !== normalizedCurrentPage) onpagechange(normalized);
+  }
+
+  function selectPageSize(nextPageSize: number): void {
+    if (disabled || !onpagesizechange || !Number.isInteger(nextPageSize) || nextPageSize <= 0) return;
+    if (nextPageSize !== pageSize) onpagesizechange(nextPageSize);
   }
 </script>
 
@@ -97,7 +107,7 @@
           }))}
           {disabled}
           compact
-          onchange={(value) => onpagesizechange?.(Number(value))}
+          onchange={(value) => selectPageSize(Number(value))}
         />
       </div>
     {/if}

@@ -16,6 +16,7 @@
     createCollectionState,
   } from '../../../lib/state/collectionState';
   import type { SelectOption } from '../../../lib/types/ui';
+  import { scrollToPaginationStart } from '../../../lib/utils/pagination';
   import {
     createRelation,
     deleteRelations,
@@ -55,6 +56,7 @@
   let expanded = $state(new Set<string>());
   let tagOptions = $state<{ id: string; name: string }[]>([]);
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  let pageStart = $state<HTMLElement>();
 
   const title = $derived(kind === 'albums' ? 'Albums' : 'Tags');
   const isAlbum = $derived(kind === 'albums');
@@ -274,7 +276,9 @@
   }
 
   function changePage(nextPage: number): void {
-    void runCollection(() => collectionController.changePage(nextPage));
+    void runCollection(() => collectionController.changePage(nextPage)).then((loaded) => {
+      if (loaded) scrollToPaginationStart(pageStart ?? null);
+    });
   }
 
   onMount(() => {
@@ -301,7 +305,7 @@
   });
 </script>
 
-<section class="relations" class:flat-relations={isAlbum}>
+<section bind:this={pageStart} class="relations" class:flat-relations={isAlbum}>
   <header class="intro">
     <div><span>Immich relations</span><h1>{title}</h1></div>
     <p>Manage metadata through the Immich API. Deleting a relation never deletes media.</p>
@@ -487,7 +491,7 @@
 {/if}
 
 <style>
-  .relations { display: grid; gap: 1.4rem; }
+  .relations { display: grid; gap: 1.4rem; scroll-margin-top: 1rem; }
   .intro { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: end; }
   .intro span { color: var(--color-accent-strong); font-size: .7rem; text-transform: uppercase; font-weight: 800; }
   h1 { margin: .3rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.05em; }

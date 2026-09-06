@@ -11,6 +11,7 @@
     createCollectionController,
     createCollectionState,
   } from '../../../lib/state/collectionState';
+  import { scrollToPaginationStart } from '../../../lib/utils/pagination';
   import {
     assetMediaUrl,
     getRestoreAssetDetail,
@@ -29,11 +30,13 @@
   let restoring = $state<string | null>(null);
   let selectedIds = $state<Set<string>>(new Set());
   let viewerIndex = $state<number | null>(null);
+  let viewerSelectedAsset = $state<AssetSummary | null>(null);
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
   let layoutMode = $state<'normal' | 'condensed'>('normal');
   let detailController: AbortController | null = null;
+  let pageStart = $state<HTMLElement>();
 
   const loadedSelectionCount = $derived(
     collection.items.reduce((count, asset) => count + Number(selectedIds.has(asset.id)), 0),
@@ -141,6 +144,7 @@
   async function openViewer(index: number): Promise<void> {
     const asset = collection.items[index];
     if (!asset) return;
+    viewerSelectedAsset = null;
     viewerIndex = index;
     detail = null;
     detailError = null;
@@ -163,6 +167,7 @@
 
   function closeViewer(): void {
     viewerIndex = null;
+    viewerSelectedAsset = null;
     detailController?.abort();
     detailController = null;
     detail = null;
@@ -170,9 +175,25 @@
     detailLoading = false;
   }
 
+  async function requestViewerPage(direction: 'previous' | 'next'): Promise<number | null> {
+    if (viewerIndex === null) return null;
+    const requestedPage = direction === 'next' ? collection.page + 1 : collection.page - 1;
+    if (requestedPage < 1 || requestedPage > collection.pages) return null;
+
+    viewerSelectedAsset = collection.items[viewerIndex] ?? null;
+    const loaded = await collectionController.changePage(requestedPage);
+    if (!loaded || collection.items.length === 0) {
+      viewerSelectedAsset = null;
+      return null;
+    }
+    return direction === 'next' ? 0 : collection.items.length - 1;
+  }
+
   function changePage(nextPage: number): void {
     closeViewer();
-    void collectionController.changePage(nextPage);
+    void collectionController.changePage(nextPage).then((loaded) => {
+      if (loaded) scrollToPaginationStart(pageStart ?? null);
+    });
   }
 
   function toggleLoadedSelection(): void {
@@ -185,7 +206,7 @@
   }
 </script>
 
-<section class="restore-page" aria-labelledby="restore-title">
+<section bind:this={pageStart} class="restore-page" aria-labelledby="restore-title">
   <header>
     <p class="eyebrow">Recovery area</p>
     <h1 id="restore-title">Restore</h1>
@@ -264,10 +285,11 @@
   {/if}
 </section>
 
-{#if viewerIndex !== null && collection.items[viewerIndex]}
+{#if viewerIndex !== null && (viewerSelectedAsset || collection.items[viewerIndex])}
   <AssetViewerDialog
     assets={collection.items}
     initialIndex={viewerIndex}
+    selectedAsset={viewerSelectedAsset}
     {selectedIds}
     {detail}
     {detailLoading}
@@ -280,6 +302,10 @@
     selectionEnabled={true}
     restoreBusy={restoring !== null}
     apiOnly={true}
+    canrequestprevious={collection.page > 1}
+    onrequestprevious={() => requestViewerPage('previous')}
+    canrequestnext={collection.page < collection.pages}
+    onrequestnext={() => requestViewerPage('next')}
     onnavigate={(index) => void openViewer(index)}
     ontoggleselection={toggleSelection}
     onvisiblechange={(assetId) => {
@@ -291,7 +317,8 @@
     onconfirmaction={() => {}}
     oncancelaction={() => {}}
     onrestore={(assetId) => {
-      const asset = collection.items.find((candidate) => candidate.id === assetId);
+      const asset = collection.items.find((candidate) => candidate.id === assetId)
+        ?? (viewerSelectedAsset?.id === assetId ? viewerSelectedAsset : null);
       if (asset) void restoreOne(asset);
     }}
     onsync={() => {}}
@@ -303,6 +330,7 @@
   .restore-page {
     display: grid;
     gap: 1.5rem;
+    scroll-margin-top: 1rem;
   }
 
   header {
