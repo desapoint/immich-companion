@@ -298,7 +298,7 @@
       {#if searchable}<div class="v2-select-search" style="width:240px"><input tabindex="-1" value="" placeholder={searchPlaceholder} aria-hidden="true"></div>{/if}
       <div class="v2-select-option-list" style="width:max-content;max-width:none;overflow:visible">
         {#each normalized as option (`popup-probe-${option.value}`)}
-          <button type="button" tabindex="-1" style="width:max-content;max-width:none"><span class="v2-select-option-copy"><span class="v2-select-option-heading"><span class="v2-select-option-label">{option.label}</span>{#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}{#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}</span>{#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}</span><span class="v2-select-option-check" aria-hidden="true">✓</span></button>
+          <button type="button" tabindex="-1" style="width:max-content;max-width:none;grid-template-columns:minmax(0,1fr)"><span class="v2-select-option-copy"><span class="v2-select-option-heading"><span class="v2-select-option-label">{option.label}</span>{#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}{#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}</span>{#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}</span></button>
         {/each}
       </div>
     </div>
@@ -312,9 +312,8 @@
       <div bind:this={list} class="v2-select-option-list" role="listbox" aria-multiselectable={multiple || undefined} aria-label={label || undefined}>
         {#each visibleOptions as option, index (option.value)}
           {@const optionSelected = multiple ? selectedSet.has(option.value) : !isEmpty && option.value === selected?.value}
-          <button type="button" role="option" aria-selected={optionSelected} disabled={option.disabled} data-index={index} data-active={index === activeIndex || undefined} data-selected={optionSelected || undefined} onclick={() => choose(option)} onfocus={() => (activeIndex = index)} onkeydown={(event) => handleOptionKey(event, index)}>
+          <button type="button" role="option" aria-selected={optionSelected} disabled={option.disabled} data-index={index} data-active={index === activeIndex || undefined} data-selected={optionSelected || undefined} style="grid-template-columns:minmax(0,1fr)" onclick={() => choose(option)} onfocus={() => (activeIndex = index)} onkeydown={(event) => handleOptionKey(event, index)}>
             <span class="v2-select-option-copy"><span class="v2-select-option-heading"><span class="v2-select-option-label">{option.label}</span>{#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}{#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}</span>{#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}</span>
-            {#if optionSelected}<span class="v2-select-option-check" aria-hidden="true">✓</span>{/if}
           </button>
         {:else}<div class="v2-select-empty">No matching options</div>{/each}
       </div>
