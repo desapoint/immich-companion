@@ -1,6 +1,7 @@
 import { errorMessage } from '../data/mutationFeedback';
 import { libraryData } from '../data/currentDataSource.svelte';
 import type { RelationOption } from '../data/contracts';
+import type { AlbumCreateDetails, TagCreateDetails } from '../components/V2RelationCreateModal.svelte';
 
 function mergeOptions(current:RelationOption[],incoming:RelationOption[],selected:string[],append:boolean){
   const selectedSet=new Set(selected);
@@ -47,9 +48,10 @@ export class AssetRelationOptionsController{
     }catch(error){this.error=errorMessage(error,'Tag options could not be loaded.')}finally{if(request===this.tagRequest)this.tagLoading=false}
   }
 
-  async createAlbum(name:string):Promise<RelationOption>{
+  async createAlbum(input:string|AlbumCreateDetails):Promise<RelationOption>{
+    const details:AlbumCreateDetails=typeof input==='string'?{name:input,description:''}:input;
     try{
-      const created=await libraryData.albums.create(name.trim());
+      const created=await libraryData.albums.create(details.name.trim(),details.description);
       if(!created)throw new Error('The album was not created.');
       const option:RelationOption={value:created.id,label:created.album_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
       this.albumOptions=[option,...this.albumOptions.filter((item)=>item.value!==option.value)];
@@ -62,9 +64,10 @@ export class AssetRelationOptionsController{
     }
   }
 
-  async createTag(name:string):Promise<RelationOption>{
+  async createTag(input:string|TagCreateDetails):Promise<RelationOption>{
+    const details:TagCreateDetails=typeof input==='string'?{name:input,color:null,parentPath:''}:input;
     try{
-      const created=await libraryData.tags.create(name.trim());
+      const created=await libraryData.tags.create(details.name.trim(),details.color,details.parentPath);
       if(!created)throw new Error('The tag was not created.');
       const option:RelationOption={value:created.id,label:created.tag_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
       this.tagOptions=[option,...this.tagOptions.filter((item)=>item.value!==option.value)];
