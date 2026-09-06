@@ -1,4 +1,15 @@
-import type { AssetRecord, DuplicateGroupRecord, LibraryDataSource, PageResult, TrashAssetRecord } from '../contracts';
+import { renderPixelDifference } from '../mediaDifference';
+import type {
+  AssetRecord,
+  DuplicateGroupRecord,
+  LegacyMediaRepository,
+  LibraryDataSource,
+  MediaAsset,
+  MediaResource,
+  PageResult,
+  ResolvedLibraryDataSource,
+  TrashAssetRecord,
+} from '../contracts';
 
 const RAW_EXTENSIONS = ['dng', 'nef', 'cr3', 'arw', 'raf'] as const;
 
@@ -55,7 +66,62 @@ function profileDuplicateGroup(group: DuplicateGroupRecord): DuplicateGroupRecor
   return { ...group, members: group.members.map((member) => ({ ...member, asset: profileAsset(member.asset) })) };
 }
 
-export function withDemoMediaProfiles(source: LibraryDataSource): LibraryDataSource {
+function mediaType(asset: MediaAsset): AssetRecord['asset_type'] {
+  return 'asset_type' in asset ? asset.asset_type : asset.type;
+}
+
+function mimeForUrl(url: string, fallback: string | null): string | null {
+  if (url.startsWith('data:image/svg+xml')) return 'image/svg+xml';
+  if (/\.jpe?g(?:$|\?)/i.test(url)) return 'image/jpeg';
+  if (/\.png(?:$|\?)/i.test(url)) return 'image/png';
+  if (/\.webp(?:$|\?)/i.test(url)) return 'image/webp';
+  if (/\.mp4(?:$|\?)/i.test(url)) return 'video/mp4';
+  return fallback;
+}
+
+function needsDecodedImage(asset: MediaAsset): boolean {
+  const mime = asset.original_mime_type?.toLowerCase() ?? '';
+  return mediaType(asset) === 'IMAGE' && (
+    mime.includes('heic') || mime.includes('heif') || mime.includes('x-adobe-dng') || mime.includes('x-nef') ||
+    mime.includes('x-cr3') || mime.includes('x-arw') || mime.includes('x-raf')
+  );
+}
+
+function needsTranscodedVideo(asset: MediaAsset): boolean {
+  const mime = asset.original_mime_type?.toLowerCase() ?? '';
+  return mediaType(asset) === 'VIDEO' && !(mime.startsWith('video/mp4') && mime.includes('avc1'));
+}
+
+function resource(
+  url: string,
+  asset: MediaAsset,
+  delivery: MediaResource['delivery'],
+  posterUrl: string | null = null,
+): MediaResource {
+  return {
+    url,
+    mimeType: mimeForUrl(url, asset.original_mime_type),
+    posterUrl,
+    delivery,
+    originalMimeType: asset.original_mime_type,
+    expiresAt: null,
+  };
+}
+
+export function withDemoMediaProfiles(source: LibraryDataSource): ResolvedLibraryDataSource {
+  const legacyMedia = source.media as LegacyMediaRepository;
+  const thumbnail = (asset: MediaAsset): MediaResource => {
+    const url = mediaType(asset) === 'VIDEO' ? '/demo-fixtures/video-poster.jpg' : legacyMedia.thumbnail(asset);
+    return resource(url, asset, 'thumbnail');
+  };
+  const view = (asset: MediaAsset): MediaResource => {
+    if (mediaType(asset) === 'VIDEO') {
+      return resource('/demo-fixtures/clip.mp4', asset, needsTranscodedVideo(asset) ? 'transcoded' : 'original', '/demo-fixtures/video-poster.jpg');
+    }
+    const url = legacyMedia.fullSize(asset);
+    return resource(url, asset, needsDecodedImage(asset) ? 'decoded' : 'preview');
+  };
+
   return {
     ...source,
     assets: {
@@ -69,6 +135,17 @@ export function withDemoMediaProfiles(source: LibraryDataSource): LibraryDataSou
     duplicates: {
       ...source.duplicates,
       async search(query) { return profilePage(await source.duplicates.search(query), profileDuplicateGroup); },
+    },
+    media: {
+      thumbnail,
+      view,
+      async difference(selected, reference, options = {}) {
+        if (selected.asset_type !== 'IMAGE' || reference.asset_type !== 'IMAGE') throw new Error('Pixel difference is only available for images.');
+        return renderPixelDifference(view(selected), view(reference), options);
+      },
+      async refresh(asset, purpose) {
+        return purpose === 'thumbnail' ? thumbnail(asset) : view(asset);
+      },
     },
   };
 }
