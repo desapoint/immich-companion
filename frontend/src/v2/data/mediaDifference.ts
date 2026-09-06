@@ -22,6 +22,34 @@ function fitDimensions(width: number, height: number): { width: number; height: 
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
+function containedRect(
+  sourceWidth: number,
+  sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  const scale = Math.min(targetWidth / sourceWidth, targetHeight / sourceHeight);
+  const width = Math.max(1, sourceWidth * scale);
+  const height = Math.max(1, sourceHeight * scale);
+  return {
+    x: (targetWidth - width) / 2,
+    y: (targetHeight - height) / 2,
+    width,
+    height,
+  };
+}
+
+function drawContained(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement,
+  width: number,
+  height: number,
+): void {
+  context.clearRect(0, 0, width, height);
+  const rect = containedRect(image.naturalWidth, image.naturalHeight, width, height);
+  context.drawImage(image, rect.x, rect.y, rect.width, rect.height);
+}
+
 function hueRgb(hue: number): [number, number, number] {
   const h = ((hue % 360) + 360) % 360;
   const c = 1;
@@ -54,8 +82,9 @@ export async function renderPixelDifference(
   const referenceContext = referenceCanvas.getContext('2d', { willReadFrequently: true });
   if (!selectedContext || !referenceContext) throw new Error('2D canvas is unavailable for difference rendering.');
 
-  selectedContext.drawImage(selectedImage, 0, 0, width, height);
-  referenceContext.drawImage(referenceImage, 0, 0, width, height);
+  drawContained(selectedContext, selectedImage, width, height);
+  drawContained(referenceContext, referenceImage, width, height);
+
   const selectedPixels = selectedContext.getImageData(0, 0, width, height);
   const referencePixels = referenceContext.getImageData(0, 0, width, height);
   const output = selectedContext.createImageData(width, height);
@@ -73,7 +102,7 @@ export async function renderPixelDifference(
     output.data[index] = Math.round(tint[0] * strength);
     output.data[index + 1] = Math.round(tint[1] * strength);
     output.data[index + 2] = Math.round(tint[2] * strength);
-    output.data[index + 3] = binary ? (strength ? 255 : 0) : Math.round(Math.max(28, delta));
+    output.data[index + 3] = 255;
   }
 
   selectedContext.putImageData(output, 0, 0);
