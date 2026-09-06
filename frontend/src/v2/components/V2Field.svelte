@@ -6,6 +6,9 @@
     placeholder = '',
     multiline = false,
     disabled = false,
+    min,
+    max,
+    step,
     onchange,
   }: {
     label: string;
@@ -14,6 +17,9 @@
     placeholder?: string;
     multiline?: boolean;
     disabled?: boolean;
+    min?: string | number;
+    max?: string | number;
+    step?: string | number;
     onchange?: (value: string) => void;
   } = $props();
 </script>
@@ -23,6 +29,6 @@
   {#if multiline}
     <textarea value={String(value)} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}></textarea>
   {:else}
-    <input {type} value={value} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}>
+    <input {type} value={value} {placeholder} {disabled} {min} {max} {step} onchange={(event) => onchange?.(event.currentTarget.value)}>
   {/if}
 </label>
