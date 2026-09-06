@@ -8,16 +8,15 @@
   import V2ViewerShell from './V2ViewerShell.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
-  import { demoAssetFullSize } from '../demo/demoAssetVisuals';
-  import { demoAssetById,demoAssetState,setDemoAssetsArchived,setDemoAssetsFavorite,trashDemoAssets } from '../demo/demoAssetState.svelte';
+  import { libraryData } from '../data/currentDataSource.svelte';
 
   let { open=false, assetId=null, assetIds=[], onclose }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void }=$props();
   const camera=new ViewerViewportController();
   let currentId=$state<string|null>(assetId);
   $effect(()=>{if(assetId!==null)currentId=assetId});
   const currentIndex=$derived(currentId?assetIds.indexOf(currentId):-1);
-  const asset=$derived((demoAssetState.revision,currentId?demoAssetById(currentId):undefined));
-  const imageSrc=$derived(asset?demoAssetFullSize(asset):'');
+  const asset=$derived((libraryData.state.revision,currentId?libraryData.assets.getById(currentId):undefined));
+  const imageSrc=$derived(asset?libraryData.media.fullSize(asset):'');
   const canPrevious=$derived(currentIndex>0),canNext=$derived(currentIndex>=0&&currentIndex<assetIds.length-1);
   const positionLabel=$derived(currentIndex>=0?`${currentIndex+1} / ${assetIds.length}`:'—');
   const sizeLabel=$derived(asset?.file_size_bytes?`${(asset.file_size_bytes/1_048_576).toFixed(1)} MB`:'Unknown size');
@@ -25,9 +24,9 @@
   $effect(()=>{if(open)requestAnimationFrame(()=>camera.fit())});
   function previous(){if(canPrevious)currentId=assetIds[currentIndex-1]}
   function next(){if(canNext)currentId=assetIds[currentIndex+1]}
-  function favorite(){if(!asset)return;setDemoAssetsFavorite([asset.id],!asset.is_favorite)}
-  function archive(){if(!asset)return;setDemoAssetsArchived([asset.id],!asset.is_archived)}
-  function trash(){if(!asset)return;const fallback=assetIds[currentIndex+1]??assetIds[currentIndex-1]??null;trashDemoAssets([asset.id]);if(fallback&&demoAssetById(fallback))currentId=fallback;else onclose()}
+  async function favorite(){if(!asset)return;await libraryData.assets.setFavorite([asset.id],!asset.is_favorite)}
+  async function archive(){if(!asset)return;await libraryData.assets.setArchived([asset.id],!asset.is_archived)}
+  async function trash(){if(!asset)return;const fallback=assetIds[currentIndex+1]??assetIds[currentIndex-1]??null;await libraryData.assets.trash([asset.id]);if(fallback&&libraryData.assets.getById(fallback))currentId=fallback;else onclose()}
 </script>
 
 <V2ViewerShell {open} title="Assets Viewer" {onclose}>
@@ -43,7 +42,7 @@
         <V2Section title="Details"><V2Card><b>{asset.original_file_name}</b><p class="v2-small v2-muted">{asset.width??'—'} × {asset.height??'—'} · {asset.original_mime_type??'Unknown type'} · {sizeLabel}</p></V2Card></V2Section>
         <V2Section title="Metadata"><V2Card><span class="v2-small">Taken {new Date(asset.file_created_at).toLocaleString()}<br>{asset.library_id?'External library':'Default library'}<br>{asset.tags.length} tag{asset.tags.length===1?'':'s'}{asset.stack?` · stack of ${asset.stack.assetCount}`:''}</span></V2Card></V2Section>
         <V2Section title="Relationships"><V2Card><span class="v2-small">{asset.tags.length?asset.tags.map((tag)=>tag.name).join(' · '):'No tags'}<br>{asset.is_favorite?'Favorite':'Not favorite'} · {asset.is_archived?'Archived':'Not archived'}</span></V2Card></V2Section>
-      {:else}<V2Section title="Asset"><V2Card><span class="v2-muted">This asset is no longer in the indexed demo state.</span></V2Card></V2Section>{/if}
+      {:else}<V2Section title="Asset"><V2Card><span class="v2-muted">This asset is no longer available in the current data source.</span></V2Card></V2Section>{/if}
     </aside>
   </div>
 
