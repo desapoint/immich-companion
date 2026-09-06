@@ -72,6 +72,32 @@ export type MutationFailure = { id: string; reason: string };
 export type MutationResult = { affectedIds: string[]; failed: MutationFailure[] };
 export type DifferenceOptions = { hue?: number; contrast?: number; binary?: boolean };
 
+export type AssetSearchRule = { field: string; op: string; value: string };
+export type AssetSearchGroup = { logic: 'AND' | 'OR'; negated: boolean; rules: AssetSearchRule[] };
+export type AssetSort = { field: 'takenDate' | 'filename'; direction: 'asc' | 'desc' };
+export type AssetSimpleSearch = {
+  filename?: string;
+  mediaType?: 'Image' | 'Video' | '';
+  favorite?: 'Favorite' | 'Not favorite' | '';
+  archived?: 'Archived' | 'Not archived' | '';
+  albumIds?: string[];
+  tagIds?: string[];
+  noAlbum?: boolean;
+  noTag?: boolean;
+  takenAfter?: string;
+  takenBefore?: string;
+  minWidth?: string;
+  maxWidth?: string;
+  minHeight?: string;
+  maxHeight?: string;
+  minAspectRatio?: string;
+  maxAspectRatio?: string;
+};
+export type AssetSearchQuery =
+  | { mode: 'simple'; filters: AssetSimpleSearch; sort: AssetSort }
+  | { mode: 'expert'; rules: AssetSearchRule[]; groups: AssetSearchGroup[]; logic: 'AND' | 'OR'; negated: boolean; sort: AssetSort };
+export type AssetSearchResult = { items: AssetRecord[]; total: number };
+
 export type LibraryDataSnapshot = {
   readonly revision: number;
   readonly assets: AssetRecord[];
@@ -86,6 +112,7 @@ export interface AssetRepository {
   list(): AssetRecord[];
   getById(id: string): AssetRecord | undefined;
   listTrash(): TrashAssetRecord[];
+  search(query: AssetSearchQuery): Promise<AssetSearchResult>;
   setFavorite(ids: readonly string[], favorite: boolean): Promise<MutationResult>;
   setArchived(ids: readonly string[], archived: boolean): Promise<MutationResult>;
   sync(ids: readonly string[]): Promise<MutationResult>;
