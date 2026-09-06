@@ -38,8 +38,8 @@
   let originY = 0;
   let dialog = $state<HTMLDivElement>();
 
-  const titleId = `${id}-title`;
-  const descriptionId = `${id}-description`;
+  const titleId = $derived(`${id}-title`);
+  const descriptionId = $derived(`${id}-description`);
 
   function getRuntime(): ModalRuntime {
     const target = window as Window & { __v2ModalRuntime?: ModalRuntime };
@@ -174,6 +174,8 @@
     <header
       class="v2-modal-header"
       data-draggable={draggable || undefined}
+      role="group"
+      aria-label={`${title} dialog header`}
       onpointerdown={handlePointerDown}
       onpointermove={handlePointerMove}
       onpointerup={handlePointerUp}
