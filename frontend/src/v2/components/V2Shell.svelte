@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
-  import { resetDemoAssetState } from '../demo/demoAssetState.svelte';
+  import { resetAllDemoData } from '../demo/resetDemoData';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
   import V2Progress from './V2Progress.svelte';
@@ -17,7 +17,7 @@
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
   const mobileItems=[{key:'status',label:'Status'},{key:'assets',label:'Assets'},{key:'duplicates',label:'Review'},{key:'albums',label:'Manage'},{key:'settings',label:'More'}];
   function setDensity(next:V2Density){density=next;writeV2Density(next)}
-  function resetDemoData(){resetDemoAssetState();resetConfirming=false}
+  function resetDemoData(){resetAllDemoData();resetConfirming=false;window.location.reload()}
 
   function syncTaskBounds(): void {
     if (!root) return;
@@ -69,7 +69,7 @@
         <div class="v2-demo-controls-head"><span>Demo data</span><small>Seeded V2 state</small></div>
         {#if resetConfirming}
           <div class="v2-demo-reset-confirm" role="alert">
-            <small>Restore assets, trash, favorites, archives, tags, albums, memberships and stacks?</small>
+            <small>Restore all seeded demo data, including assets, trash, albums, tags, memberships, stacks, duplicates, history and saved searches?</small>
             <div class="v2-demo-reset-actions"><button type="button" onclick={()=>resetConfirming=false}>Cancel</button><button type="button" data-danger="true" onclick={resetDemoData}>Reset</button></div>
           </div>
         {:else}
