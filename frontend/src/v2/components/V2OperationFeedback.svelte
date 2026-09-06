@@ -6,10 +6,11 @@
   import type { OperationFeedback } from '../data/mutationFeedback';
 
   let { feedback, retryLabel = '', onretry }: { feedback: OperationFeedback | null; retryLabel?: string; onretry?: () => void } = $props();
+  const toneClass = $derived(feedback ? `v2-operation-feedback v2-operation-feedback-${feedback.tone}` : 'v2-operation-feedback');
 </script>
 
 {#if feedback}
-  <V2Card class="v2-operation-feedback" data-tone={feedback.tone}>
+  <V2Card class={toneClass}>
     <V2Stack gap="sm">
       <V2Inline justify="between" align="start" wrap={true}>
         <div><b>{feedback.title}</b><div class="v2-small v2-muted">{feedback.detail}</div></div>
@@ -31,9 +32,9 @@
 {/if}
 
 <style>
-  :global(.v2-operation-feedback[data-tone='ok']) { border-color: color-mix(in srgb, var(--v2-ok, #4caf50) 55%, transparent); }
-  :global(.v2-operation-feedback[data-tone='warn']) { border-color: color-mix(in srgb, var(--v2-warn, #f0ad4e) 65%, transparent); }
-  :global(.v2-operation-feedback[data-tone='bad']) { border-color: color-mix(in srgb, var(--v2-danger, #e05a5a) 65%, transparent); }
+  :global(.v2-operation-feedback-ok) { border-color: color-mix(in srgb, var(--v2-ok, #4caf50) 55%, transparent); }
+  :global(.v2-operation-feedback-warn) { border-color: color-mix(in srgb, var(--v2-warn, #f0ad4e) 65%, transparent); }
+  :global(.v2-operation-feedback-bad) { border-color: color-mix(in srgb, var(--v2-danger, #e05a5a) 65%, transparent); }
   details summary { cursor: pointer; }
   ul { margin: 0; padding-left: 1.2rem; max-height: 12rem; overflow: auto; }
   code { overflow-wrap: anywhere; }
