@@ -39,6 +39,7 @@ export function createDemoLibraryDataSource():LibraryDataSource{return{
   assets:{
     async getById(id){return demoAssetById(id) as AssetRecord|undefined},
     async getMany(ids){const set=new Set(ids);return (indexedDemoAssets() as AssetRecord[]).filter((asset)=>set.has(asset.id))},
+    async getTrashById(id){return trashApiDemoAssets().find((asset)=>asset.id===id) as TrashAssetRecord|undefined},
     async search(query:AssetSearchQuery){const all=searchAssets(query);return page(slicePage(all,query),all.length,query)},
     async searchIds(criteria){return searchAssets(criteria).map((asset)=>asset.id)},
     async searchTrash(query){const all=searchTrash(query);return page(slicePage(all,query),all.length,query)},
