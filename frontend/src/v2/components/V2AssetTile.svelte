@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Eye } from '@lucide/svelte';
   import V2RoundCheckbox from './V2RoundCheckbox.svelte';
+  import type { MediaResource } from '../data/contracts';
 
   let {
     index,
@@ -25,16 +26,17 @@
     onselect?: (event: MouseEvent) => void;
     onpreview?: () => void;
     onpointerdown?: (event: PointerEvent) => void;
-    image?: string;
+    image?: string | MediaResource;
   } = $props();
 
   const visualVariant = $derived(String(index % 3));
-  const videoSource = $derived(Boolean(image && /\.(mp4|webm)(?:$|\?)/i.test(image)));
+  const imageUrl = $derived(typeof image === 'string' ? image : image?.url ?? '');
+  const videoSource = $derived(Boolean(imageUrl && /\.(mp4|webm)(?:$|\?)/i.test(imageUrl)));
 </script>
 
 <div class="v2-asset-tile" class:selected class:selection-mode={selectionMode} data-variant={visualVariant} data-asset-id={String(assetId)}>
   <button class="v2-asset-main" type="button" aria-label={selectionMode ? `${selected ? 'Deselect' : 'Select'} ${label}` : `Preview ${label}`} aria-pressed={selectionMode ? selected : undefined} onclick={onactivate} onpointerdown={onpointerdown} ondragstart={(event) => event.preventDefault()}>
-    {#if image}{#if videoSource}<video src={image} muted playsinline preload="metadata" aria-hidden="true"></video>{:else}<img src={image} alt="" loading="lazy" decoding="async">{/if}{/if}
+    {#if imageUrl}{#if videoSource}<video src={imageUrl} muted playsinline preload="metadata" aria-hidden="true"></video>{:else}<img src={imageUrl} alt="" loading="lazy" decoding="async">{/if}{/if}
     <span class="v2-asset-meta"><b>{label}</b>{#if sublabel}<small>{sublabel}</small>{/if}</span>
   </button>
   <span class="v2-asset-checkbox-zone"><V2RoundCheckbox checked={selected} ariaLabel={`${selected ? 'Deselect' : 'Select'} ${label}`} onclick={onselect}/></span>
