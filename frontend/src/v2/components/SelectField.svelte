@@ -33,8 +33,12 @@
     placeholder = 'Choose an option',
     searchable = false,
     searchPlaceholder = 'Search options…',
+    loading = false,
+    hasMore = false,
     onchange,
     onvalueschange,
+    onsearchchange,
+    onloadmore,
   }: {
     id: string;
     label?: string;
@@ -48,8 +52,12 @@
     placeholder?: string;
     searchable?: boolean;
     searchPlaceholder?: string;
+    loading?: boolean;
+    hasMore?: boolean;
     onchange?: (value: string) => void;
     onvalueschange?: (values: string[]) => void;
+    onsearchchange?: (query: string) => void;
+    onloadmore?: () => void;
   } = $props();
 
   let open = $state(false);
@@ -67,7 +75,7 @@
   let popupMaxHeight = $state(304);
   let popupPlacement = $state<'down' | 'up'>('down');
   let popupAlignment = $state<'left' | 'right' | 'viewport'>('left');
-  let multiTriggerText = $state(placeholder);
+  let multiTriggerText = $state('');
   let nativeScrollbarWidth: number | undefined;
 
   function normalizeStringOption(option: string): NormalizedSelectOption[] {
@@ -93,7 +101,7 @@
   const selected = $derived(normalized.find((option) => option.value === String(value)) ?? (!allowEmpty ? normalized.find((option) => !option.disabled) : undefined));
   const isEmpty = $derived(multiple ? values.length === 0 : allowEmpty && String(value) === '');
   const normalizedSearch = $derived(searchQuery.trim().toLocaleLowerCase());
-  const visibleOptions: NormalizedSelectOption[] = $derived(!searchable || !normalizedSearch
+  const visibleOptions: NormalizedSelectOption[] = $derived(onsearchchange || !searchable || !normalizedSearch
     ? normalized
     : normalized.filter((option) => `${option.label}\n${option.subtitle}`.toLocaleLowerCase().includes(normalizedSearch)));
 
@@ -175,8 +183,9 @@
   }
 
   function show(): void {
-    if (disabled || !normalized.length) return;
+    if (disabled || (!normalized.length && !onsearchchange)) return;
     searchQuery = '';
+    onsearchchange?.('');
     activeIndex = multiple
       ? normalized.findIndex((option) => selectedSet.has(option.value) && !option.disabled)
       : normalized.findIndex((option) => option.value === selected?.value && !option.disabled);
@@ -247,6 +256,13 @@
     }
   }
 
+  function handleSearchInput(value: string): void {
+    searchQuery = value;
+    activeIndex = -1;
+    onsearchchange?.(value);
+    void tick().then(positionPopup);
+  }
+
   $effect(() => {
     const optionSignature = normalized.map((option) => `${option.label}\u0000${option.subtitle}\u0000${option.direction ?? ''}`).join('\u0001');
     const currentSearchable = searchable;
@@ -307,7 +323,7 @@
   {#if open}
     <div bind:this={optionsPopup} id={`${id}-options`} class="v2-select-options" data-searchable={searchable || undefined} data-placement={popupPlacement} data-alignment={popupAlignment} style={`top:${popupTop}px;left:${popupLeft}px;width:${popupWidth}px;max-height:${popupMaxHeight}px`}>
       {#if searchable}
-        <div class="v2-select-search"><input bind:this={searchInput} value={searchQuery} placeholder={searchPlaceholder} aria-label={`Search ${label || 'options'}`} oninput={(event) => { searchQuery = event.currentTarget.value; activeIndex = -1; void tick().then(positionPopup); }} onkeydown={handleSearchKey}></div>
+        <div class="v2-select-search"><input bind:this={searchInput} value={searchQuery} placeholder={searchPlaceholder} aria-label={`Search ${label || 'options'}`} oninput={(event) => handleSearchInput(event.currentTarget.value)} onkeydown={handleSearchKey}></div>
       {/if}
       <div bind:this={list} class="v2-select-option-list" role="listbox" aria-multiselectable={multiple || undefined} aria-label={label || undefined}>
         {#each visibleOptions as option, index (option.value)}
@@ -315,7 +331,8 @@
           <button type="button" role="option" aria-selected={optionSelected} disabled={option.disabled} data-index={index} data-active={index === activeIndex || undefined} data-selected={optionSelected || undefined} style="grid-template-columns:minmax(0,1fr)" onclick={() => choose(option)} onfocus={() => (activeIndex = index)} onkeydown={(event) => handleOptionKey(event, index)}>
             <span class="v2-select-option-copy"><span class="v2-select-option-heading"><span class="v2-select-option-label">{option.label}</span>{#if option.direction === 'asc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}{#if option.direction === 'desc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true" />{/if}</span>{#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}</span>
           </button>
-        {:else}<div class="v2-select-empty">No matching options</div>{/each}
+        {:else}<div class="v2-select-empty">{loading?'Loading options…':'No matching options'}</div>{/each}
+        {#if hasMore}<button type="button" class="v2-select-option-load-more" disabled={loading} onclick={()=>onloadmore?.()}>{loading?'Loading…':'Load more'}</button>{/if}
       </div>
     </div>
   {/if}
