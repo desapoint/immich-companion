@@ -8,6 +8,7 @@
   import V2Stack from './V2Stack.svelte';
   import V2ZoneLabel from './V2ZoneLabel.svelte';
   import type { MultiSelectOption } from './V2MultiSelectField.svelte';
+  import { demoAssetState } from '../demo/demoAssetState.svelte';
 
   export type SimpleAdvancedFilters = {
     albumIds: string;
@@ -41,22 +42,36 @@
 
   const splitIds = (value: string) => value.split(',').map((part) => part.trim()).filter(Boolean);
   const joinIds = (values: string[]) => values.join(',');
-  const activeCount = $derived(
-    splitIds(filters.albumIds).length
-    + splitIds(filters.tagIds).length
-    + Number(filters.noAlbum)
-    + Number(filters.noTag)
-    + [
-      filters.takenAfter,
-      filters.takenBefore,
-      filters.minWidth,
-      filters.maxWidth,
-      filters.minHeight,
-      filters.maxHeight,
-      filters.minAspectRatio,
-      filters.maxAspectRatio,
-    ].filter((value) => value.trim()).length,
-  );
+  const resolvedAlbumOptions = $derived(albumOptions.length > 0 ? albumOptions : demoAssetState.albums.map((album) => ({
+    value: album.id,
+    label: album.album_name,
+    subtitle: `${album.asset_count.toLocaleString()} asset${album.asset_count === 1 ? '' : 's'}`,
+  })));
+  const resolvedTagOptions = $derived(tagOptions.length > 0 ? tagOptions : demoAssetState.tags.map((tag) => ({
+    value: tag.id,
+    label: tag.tag_name,
+    subtitle: `${tag.asset_count.toLocaleString()} asset${tag.asset_count === 1 ? '' : 's'}`,
+  })));
+
+  function countActive(value: SimpleAdvancedFilters): number {
+    return splitIds(value.albumIds).length
+      + splitIds(value.tagIds).length
+      + Number(value.noAlbum)
+      + Number(value.noTag)
+      + [
+        value.takenAfter,
+        value.takenBefore,
+        value.minWidth,
+        value.maxWidth,
+        value.minHeight,
+        value.maxHeight,
+        value.minAspectRatio,
+        value.maxAspectRatio,
+      ].filter((entry) => entry.trim()).length;
+  }
+
+  const activeCount = $derived(countActive(filters));
+  const draftActiveCount = $derived(countActive(draft));
 
   function emptyFilters(): SimpleAdvancedFilters {
     return {
@@ -121,7 +136,7 @@
               id="asset-advanced-albums"
               label="Albums"
               values={splitIds(draft.albumIds)}
-              options={albumOptions}
+              options={resolvedAlbumOptions}
               emptySelected={draft.noAlbum}
               emptyLabel="No album"
               placeholder="Any album"
@@ -136,7 +151,7 @@
               id="asset-advanced-tags"
               label="Tags"
               values={splitIds(draft.tagIds)}
-              options={tagOptions}
+              options={resolvedTagOptions}
               emptySelected={draft.noTag}
               emptyLabel="No tag"
               placeholder="Any tag"
@@ -176,7 +191,7 @@
     </div>
 
     <div class="v2-drawer-foot">
-      <V2Badge text={activeCount > 0 ? `${activeCount} active` : 'No advanced filters'}/>
+      <V2Badge text={draftActiveCount > 0 ? `${draftActiveCount} active` : 'No advanced filters'}/>
       <V2Inline gap="sm">
         <V2Button onclick={() => draft = emptyFilters()}>Reset</V2Button>
         <V2Button onclick={cancel}>Cancel</V2Button>
