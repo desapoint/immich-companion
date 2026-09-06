@@ -17,14 +17,15 @@
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
   import { applyShiftAssetRange, emptyAssetSelection, getAssetSelectionCount, invertAssetSelection, isAllVisibleSelected, isAssetSelected, selectAllMatchingAssets, selectVisibleAssets, toggleAssetSelected, type AssetSelectionState } from '../components/assetSelection';
   import { createCollectionView } from '../state/collectionView.svelte';
-  import { demoAssetState, initializeDemoAssetState, restoreDemoTrashAssets, selectedDemoAssetIds, trashApiDemoAssets } from '../demo/demoAssetState.svelte';
+  import { libraryData } from '../data/currentDataSource.svelte';
 
   const collection=createCollectionView({pageSize:24,columns:4});
   let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null);
   let selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>());
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const matchingAssets=$derived.by(()=>{
-    const source=[...trashApiDemoAssets()];
+    libraryData.state.revision;
+    const source=[...libraryData.assets.listTrash()];
     const [field,direction]=sort.split(':'),multiplier=direction==='desc'?-1:1;
     return source.sort((a,b)=>{
       if(field==='name')return a.original_file_name.localeCompare(b.original_file_name)*multiplier;
@@ -32,13 +33,14 @@
       return a.file_modified_at.localeCompare(b.file_modified_at)*multiplier;
     });
   });
-  const total=$derived((demoAssetState.revision,matchingAssets.length));
+  const total=$derived(matchingAssets.length);
   const firstIndex=$derived(collection.firstIndex()),visibleCount=$derived(collection.visibleCount(total));
   const items=$derived(collection.resultMode==='Pagination'?matchingAssets.slice(firstIndex,firstIndex+visibleCount):matchingAssets.slice(0,visibleCount));
   const itemIds=$derived(items.map((asset)=>asset.id)),matchingIds=$derived(matchingAssets.map((asset)=>asset.id));
   const selectedCount=$derived(getAssetSelectionCount(selection,total)),selectionActive=$derived(selectedCount>0),allMatchingSelected=$derived(selection.allMatchingSelected),allVisibleSelected=$derived(isAllVisibleSelected(selection,itemIds));
   const interaction=createAssetGridSelectionInteraction<string>({getItems:()=>itemIds,getSelection:()=>selection,setSelection:(next)=>selection=next,parseAssetId:(value)=>value});
 
+  function selectedAssetIds():string[]{return selection.allMatchingSelected?matchingIds.filter((id)=>!selection.excludedIds.has(id)):matchingIds.filter((id)=>selection.selectedIds.has(id))}
   function setAssetColumns(next:number|string){collection.setColumns(next);gridViewportAnchor.adjust()}
   function isSelected(id:string){return isAssetSelected(selection,id)}
   function clearSelection(){selection=emptyAssetSelection<string>()}
@@ -46,21 +48,21 @@
   function handleSelectionClick(id:string,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,itemIds,id):toggleAssetSelected(selection,id)}
   function openViewer(id:string){viewerAssetId=id;viewer=true}
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
-  function restoreSelected(){restoreDemoTrashAssets(selectedDemoAssetIds(selection,matchingIds));clearSelection();collection.clampPage(total)}
-  function restoreAll(){restoreDemoTrashAssets(matchingIds);clearSelection();collection.reset()}
-  onMount(()=>{initializeDemoAssetState();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
+  async function restoreSelected(){await libraryData.assets.restore(selectedAssetIds());clearSelection();collection.clampPage(total)}
+  async function restoreAll(){await libraryData.assets.restore(matchingIds);clearSelection();collection.reset()}
+  onMount(()=>{void libraryData.initialize();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
 
-<V2PageLayout title="Restore" description="Restore assets from the shared V2 demo trash while preserving captured relationships.">
+<V2PageLayout title="Restore" description="Restore assets from the current trash data source while preserving captured relationships.">
   {#snippet headerActions()}<V2Button variant="primary" disabled={total===0} onclick={restoreAll}>Restore all</V2Button>{/snippet}
   <V2Zone>
     {#if selectionActive}<V2AssetSelectionToolbar {selectedCount} {total} noun="trash assets" {allMatchingSelected} {allVisibleSelected} onselectvisible={selectVisible} onselectall={selectAllMatching} oninvert={invertSelection} onclear={clearSelection}>{#snippet actions()}<V2Button iconOnly variant="primary" title="Restore selected" ariaLabel="Restore selected" onclick={restoreSelected}><RotateCcw size={18}/></V2Button>{/snippet}</V2AssetSelectionToolbar>
-    {:else}<V2Toolbar><V2Badge text={`${total.toLocaleString()} in demo trash`}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" disabled={total===0} onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} trash assets`} ariaLabel={`Select all ${total.toLocaleString()} trash assets`} disabled={total===0} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="restore-results" {sort} sortFields={[{value:'deletedAt',label:'Deleted date'},{value:'takenAt',label:'Taken date'},{value:'name',label:'Name'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={(value)=>sort=value} onpagesize={(value)=>collection.setPageSize(value,total)} onmode={collection.setMode}/>{/snippet}</V2Toolbar>{/if}
+    {:else}<V2Toolbar><V2Badge text={`${total.toLocaleString()} in trash`}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" disabled={total===0} onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} trash assets`} ariaLabel={`Select all ${total.toLocaleString()} trash assets`} disabled={total===0} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="restore-results" {sort} sortFields={[{value:'deletedAt',label:'Deleted date'},{value:'takenAt',label:'Taken date'},{value:'name',label:'Name'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={(value)=>sort=value} onpagesize={(value)=>collection.setPageSize(value,total)} onmode={collection.setMode}/>{/snippet}</V2Toolbar>{/if}
 
-    <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each items as asset,index}<V2AssetTile index={collection.resultMode==='Pagination'?firstIndex+index:index} assetId={asset.id} label={asset.original_file_name} sublabel={asset.restore_path??`Taken ${new Date(asset.taken_at).toLocaleDateString()}`} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>openViewer(asset.id)} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}</V2AssetGrid>
-    {#if total===0}<p class="v2-muted">Demo trash is empty.</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={collection.loaded} noun="trash assets" onpage={collection.setPage} onloadmore={()=>collection.loadMore(total)}/>{/if}
+    <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each items as asset,index}<V2AssetTile index={collection.resultMode==='Pagination'?firstIndex+index:index} assetId={asset.id} label={asset.original_file_name} sublabel={asset.restore_path??`Taken ${new Date(asset.taken_at).toLocaleDateString()}`} image={libraryData.media.thumbnail(asset)} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>openViewer(asset.id)} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}</V2AssetGrid>
+    {#if total===0}<p class="v2-muted">Trash is empty.</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={collection.loaded} noun="trash assets" onpage={collection.setPage} onloadmore={()=>collection.loadMore(total)}/>{/if}
   </V2Zone>
 </V2PageLayout>
 
