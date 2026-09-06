@@ -7,7 +7,7 @@
   import V2Section from './V2Section.svelte';
   import V2Stack from './V2Stack.svelte';
   import V2ZoneLabel from './V2ZoneLabel.svelte';
-  import type { MultiSelectOption } from './V2MultiSelectField.svelte';
+  import type { SelectOption } from './SelectField.svelte';
   import { demoAssetState } from '../demo/demoAssetState.svelte';
 
   export type SimpleAdvancedFilters = {
@@ -32,13 +32,30 @@
     onchange,
   }: {
     filters: SimpleAdvancedFilters;
-    albumOptions?: MultiSelectOption[];
-    tagOptions?: MultiSelectOption[];
+    albumOptions?: SelectOption[];
+    tagOptions?: SelectOption[];
     onchange: (filters: SimpleAdvancedFilters) => void;
   } = $props();
 
+  function emptyFilters(): SimpleAdvancedFilters {
+    return {
+      albumIds: '',
+      tagIds: '',
+      noAlbum: false,
+      noTag: false,
+      takenAfter: '',
+      takenBefore: '',
+      minWidth: '',
+      maxWidth: '',
+      minHeight: '',
+      maxHeight: '',
+      minAspectRatio: '',
+      maxAspectRatio: '',
+    };
+  }
+
   let open = $state(false);
-  let draft = $state<SimpleAdvancedFilters>({ ...filters });
+  let draft = $state<SimpleAdvancedFilters>(emptyFilters());
 
   const splitIds = (value: string) => value.split(',').map((part) => part.trim()).filter(Boolean);
   const joinIds = (values: string[]) => values.join(',');
@@ -72,23 +89,6 @@
 
   const activeCount = $derived(countActive(filters));
   const draftActiveCount = $derived(countActive(draft));
-
-  function emptyFilters(): SimpleAdvancedFilters {
-    return {
-      albumIds: '',
-      tagIds: '',
-      noAlbum: false,
-      noTag: false,
-      takenAfter: '',
-      takenBefore: '',
-      minWidth: '',
-      maxWidth: '',
-      minHeight: '',
-      maxHeight: '',
-      minAspectRatio: '',
-      maxAspectRatio: '',
-    };
-  }
 
   function show(): void {
     draft = { ...filters };
