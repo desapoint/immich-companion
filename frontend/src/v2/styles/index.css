@@ -1,6 +1,7 @@
 @import './tokens.css';
 @import './shell.css';
 @import './primitives.css';
+@import './select.css';
 @import './collections.css';
 @import './overlays.css';
 @import './viewer.css';
