@@ -166,8 +166,8 @@
 
         <V2Section title="Taken date">
           <div class="v2-advanced-grid">
-            <DateTimePickerField id="asset-taken-after" label="Taken after" value={draft.takenAfter} onchange={(value) => update('takenAfter', value)} />
-            <DateTimePickerField id="asset-taken-before" label="Taken before" value={draft.takenBefore} onchange={(value) => update('takenBefore', value)} />
+            <DateTimePickerField id="asset-taken-after" label="Taken after" showTime={false} value={draft.takenAfter} onchange={(value) => update('takenAfter', value)} />
+            <DateTimePickerField id="asset-taken-before" label="Taken before" showTime={false} value={draft.takenBefore} onchange={(value) => update('takenBefore', value)} />
           </div>
         </V2Section>
 
