@@ -27,6 +27,7 @@
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
   import { applyShiftAssetRange,emptyAssetSelection,getAssetSelectionCount,invertAssetSelection,isAllVisibleSelected,isAssetSelected,selectAllMatchingAssets,selectVisibleAssets,toggleAssetSelected,type AssetSelectionState } from '../components/assetSelection';
   import { createCollectionView } from '../state/collectionView.svelte';
+  import { demoAssetState,indexedDemoAssets,initializeDemoAssetState,selectedDemoAssetIds,setDemoAssetsFavorite,trashDemoAssets,type DemoAssetRecord } from '../demo/demoAssetState.svelte';
 
   type AssetTab='Browse'|'Saved searches';
   type Rule={id:number;field:string;op:string;value:string};
@@ -36,23 +37,29 @@
   const fieldSelectOptions=fieldOptions.map(([value,label])=>({value,label}));
   const operatorSelectOptions=operatorOptions.map(([value,label])=>({value,label}));
   const savedSearches=['Favorite images not archived','Family album or Vacation tag','Large landscape images'];
-  const total=2418;
   const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionResultMode'});
 
   let tab=$state<AssetTab>('Browse'),searchMode=$state<'Simple'|'Expert'>('Simple'),viewer=$state(false),drawer=$state(false),summary=$state('Simple search · current filters'),selectedSaved=$state(savedSearches[0]),sort=$state('takenDate:desc');
   let mediaType=$state(''),favorite=$state(''),archived=$state('');
-  let assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<number>>(emptyAssetSelection<number>()),moreOpen=$state(false);
+  let assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),moreOpen=$state(false);
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   let seq=$state(4),groupSeq=$state(2),logic=$state<'AND'|'OR'>('AND'),negated=$state(false),rules=$state<Rule[]>([{id:1,field:'mediaType',op:'is',value:'Image'},{id:2,field:'favorite',op:'is',value:'true'}]),groups=$state<Group[]>([{id:2,logic:'OR',negated:false,rules:[{id:3,field:'album',op:'is',value:'Family'},{id:4,field:'tag',op:'is',value:'Vacation'}]}]);
   let draftRules=$state<Rule[]>([]),draftGroups=$state<Group[]>([]),draftLogic=$state<'AND'|'OR'>('AND'),draftNegated=$state(false);
 
-  const start=$derived(collection.firstIndex()),count=$derived(collection.visibleCount(total)),ids=$derived(Array.from({length:count},(_,i)=>collection.resultMode==='Pagination'?start+i:i));
+  const matchingAssets=$derived((demoAssetState.revision,indexedDemoAssets()));
+  const total=$derived(matchingAssets.length);
+  const matchingIds=$derived(matchingAssets.map((asset)=>asset.id));
+  const start=$derived(collection.firstIndex()),count=$derived(collection.visibleCount(total));
+  const items=$derived(collection.resultMode==='Pagination'?matchingAssets.slice(start,start+count):matchingAssets.slice(0,count));
+  const ids=$derived(items.map((asset)=>asset.id));
   const expression=$derived(expressionText(rules,groups,logic,negated)),draftExpression=$derived(expressionText(draftRules,draftGroups,draftLogic,draftNegated));
+  const selectedIds=$derived(selectedDemoAssetIds(selection,matchingIds));
   const selectedCount=$derived(getAssetSelectionCount(selection,total)),selectionActive=$derived(selectedCount>0),allMatchingSelected=$derived(selection.allMatchingSelected),allVisibleSelected=$derived(isAllVisibleSelected(selection,ids)),explicitSelected=$derived([...selection.selectedIds]);
-  const favoriteActionLabel=$derived(!allMatchingSelected&&explicitSelected.length>0&&explicitSelected.every(id=>id%3===0)?'Unfavorite':'Favorite'),archiveActionLabel=$derived(!allMatchingSelected&&explicitSelected.length>0&&explicitSelected.every(id=>id%5===0)?'Unarchive':'Archive');
-  const hasRemovableTags=$derived(allMatchingSelected||explicitSelected.some(id=>id%2===0)),hasRemovableAlbums=$derived(allMatchingSelected||explicitSelected.some(id=>id%4===0)),hasStackMembers=$derived(allMatchingSelected||explicitSelected.some(id=>id%6===0));
-  const singleSelectedId=$derived(!allMatchingSelected&&explicitSelected.length===1?explicitSelected[0]:null),canSetStackPrimary=$derived(singleSelectedId!==null&&singleSelectedId%6===0&&singleSelectedId%12!==0),canRemoveCompleteStack=$derived(singleSelectedId!==null&&singleSelectedId%6===0);
-  const interaction=createAssetGridSelectionInteraction<number>({getItems:()=>ids,getSelection:()=>selection,setSelection:(next)=>selection=next,parseAssetId:(value)=>{const id=Number(value);return Number.isFinite(id)?id:null}});
+  const favoriteActionLabel=$derived(selectedIds.length>0&&selectedIds.every((id)=>matchingAssets.find((asset)=>asset.id===id)?.is_favorite)?'Unfavorite':'Favorite');
+  const archiveActionLabel=$derived(selectedIds.length>0&&selectedIds.every((id)=>matchingAssets.find((asset)=>asset.id===id)?.is_archived)?'Unarchive':'Archive');
+  const hasRemovableTags=$derived(allMatchingSelected||explicitSelected.some((_id,index)=>index%2===0)),hasRemovableAlbums=$derived(allMatchingSelected||explicitSelected.some((_id,index)=>index%4===0)),hasStackMembers=$derived(allMatchingSelected||explicitSelected.some((_id,index)=>index%6===0));
+  const singleSelectedId=$derived(!allMatchingSelected&&explicitSelected.length===1?explicitSelected[0]:null),singleSelectedIndex=$derived(singleSelectedId===null?-1:matchingIds.indexOf(singleSelectedId)),canSetStackPrimary=$derived(singleSelectedIndex>=0&&singleSelectedIndex%6===0&&singleSelectedIndex%12!==0),canRemoveCompleteStack=$derived(singleSelectedIndex>=0&&singleSelectedIndex%6===0);
+  const interaction=createAssetGridSelectionInteraction<string>({getItems:()=>ids,getSelection:()=>selection,setSelection:(next)=>selection=next,parseAssetId:(value)=>value});
 
   const fieldLabel=(value:string)=>fieldOptions.find(([key])=>key===value)?.[1]??value,operatorLabel=(value:string)=>operatorOptions.find(([key])=>key===value)?.[1]??value;
   function ruleText(r:Rule){return `${fieldLabel(r.field)} ${operatorLabel(r.op)} ${r.value||'…'}`}
@@ -66,16 +73,19 @@
   function removeRule(id:number,group?:Group){if(group)group.rules=group.rules.filter(r=>r.id!==id);else draftRules=draftRules.filter(r=>r.id!==id)}
   function addGroup(){draftGroups=[...draftGroups,{id:++groupSeq,logic:'AND',negated:false,rules:[{id:++seq,field:'tag',op:'is',value:''}]}]}
   function loadSaved(value:string){selectedSaved=value;if(value.includes('Favorite')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'favorite',op:'is',value:'true'},{id:++seq,field:'archived',op:'is',value:'false'}];groups=[]}else if(value.includes('Family')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'}];groups=[{id:++groupSeq,logic:'OR',negated:false,rules:[{id:++seq,field:'album',op:'is',value:'Family'},{id:++seq,field:'tag',op:'is',value:'Vacation'}]}]}else if(value.includes('Large')){rules=[{id:++seq,field:'mediaType',op:'is',value:'Image'},{id:++seq,field:'width',op:'gte',value:'3000'},{id:++seq,field:'aspectRatio',op:'gt',value:'1'}];groups=[]}summary='Expert draft · '+expressionText(rules,groups,logic,negated);clearSelection()}
-  function isSelected(id:number){return isAssetSelected(selection,id)}
-  function clearSelection(){selection=emptyAssetSelection<number>();moreOpen=false}
+  function assetSublabel(asset:DemoAssetRecord){const state=[asset.is_favorite?'Favorite':null,asset.is_archived?'Archived':null].filter(Boolean);state.push(new Date(asset.file_created_at).toLocaleDateString());return state.join(' · ')}
+  function isSelected(id:string){return isAssetSelected(selection,id)}
+  function clearSelection(){selection=emptyAssetSelection<string>();moreOpen=false}
   function selectVisible(){selection=selectVisibleAssets(ids)}
   function selectAllMatching(){selection=selectAllMatchingAssets(ids[0]??null)}
   function invertSelection(){selection=invertAssetSelection(selection)}
-  function handleSelectionClick(id:number,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,ids,id):toggleAssetSelected(selection,id)}
-  function handleTileActivate(id:number,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}viewer=true}
+  function handleSelectionClick(id:string,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,ids,id):toggleAssetSelected(selection,id)}
+  function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}viewer=true}
+  function setSelectedFavorite(){if(selectedIds.length===0)return;const next=favoriteActionLabel==='Favorite';setDemoAssetsFavorite(selectedIds,next);summary=`Demo · ${selectedIds.length.toLocaleString()} asset${selectedIds.length===1?'':'s'} ${next?'favorited':'unfavorited'}`;moreOpen=false}
+  function trashSelected(){if(selectedIds.length===0)return;const affected=selectedIds.length,remaining=Math.max(0,total-affected);trashDemoAssets(selectedIds);clearSelection();collection.clampPage(remaining);summary=`Demo · ${affected.toLocaleString()} asset${affected===1?'':'s'} moved to trash`}
   function demoAction(_label:string){moreOpen=false}
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen&&target instanceof Element&&!target.closest('.v2-selection-more'))moreOpen=false}
-  onMount(()=>{collection.hydrate();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
+  onMount(()=>{initializeDemoAssetState();collection.hydrate();collection.clampPage(total);return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(e)=>{if(e.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(moreOpen)moreOpen=false;else if(drawer)drawer=false;else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
@@ -90,15 +100,15 @@
         <V2AssetSelectionToolbar {selectedCount} {total} noun="matching assets" {allMatchingSelected} {allVisibleSelected} onselectvisible={selectVisible} onselectall={selectAllMatching} oninvert={invertSelection} onclear={clearSelection}>
           {#snippet actions()}
             <V2Button iconOnly title="Add to album" ariaLabel="Add to album" onclick={()=>demoAction('Add to album')}><FolderPlus size={18}/></V2Button>
-            <V2Button iconOnly title={favoriteActionLabel} ariaLabel={favoriteActionLabel} onclick={()=>demoAction(favoriteActionLabel)}>{#if favoriteActionLabel==='Unfavorite'}<HeartOff size={18}/>{:else}<Heart size={18}/>{/if}</V2Button>
-            <V2Button iconOnly variant="danger" title="Move to trash" ariaLabel="Move to trash" onclick={()=>demoAction('Move to trash')}><Trash2 size={18}/></V2Button>
+            <V2Button iconOnly title={favoriteActionLabel} ariaLabel={favoriteActionLabel} onclick={setSelectedFavorite}>{#if favoriteActionLabel==='Unfavorite'}<HeartOff size={18}/>{:else}<Heart size={18}/>{/if}</V2Button>
+            <V2Button iconOnly variant="danger" title="Move to trash" ariaLabel="Move to trash" onclick={trashSelected}><Trash2 size={18}/></V2Button>
             <div class="v2-selection-more"><V2Button iconOnly title="More actions" ariaLabel="More actions" active={moreOpen} onclick={()=>moreOpen=!moreOpen}><MoreHorizontal size={18}/></V2Button>{#if moreOpen}<div class="v2-selection-menu" role="menu"><button type="button" onclick={()=>demoAction('Bulk Sync')}><RefreshCw size={17}/><span>Bulk Sync</span></button><div class="v2-selection-menu-separator"></div><button type="button" onclick={()=>demoAction('Add tags')}><Tags size={17}/><span>Add tags</span></button><button type="button" disabled={!hasRemovableTags} onclick={()=>demoAction('Remove tags')}><Tag size={17}/><span>Remove tags</span></button><button type="button" disabled={!hasRemovableAlbums} onclick={()=>demoAction('Remove from album')}><FolderMinus size={17}/><span>Remove from album</span></button><div class="v2-selection-menu-separator"></div><span class="v2-selection-menu-label">Stack actions</span><button type="button" disabled={selectedCount<2} onclick={()=>demoAction('Stack selected')}><Layers3 size={17}/><span>Stack selected</span></button>{#if canSetStackPrimary}<button type="button" onclick={()=>demoAction('Set as stack primary')}><Star size={17}/><span>Set as stack primary</span></button>{/if}<button type="button" disabled={!hasStackMembers} onclick={()=>demoAction('Remove from stack')}><Unlink size={17}/><span>Remove from stack</span></button>{#if canRemoveCompleteStack}<button type="button" onclick={()=>demoAction('Remove complete stack')}><Layers3 size={17}/><span>Remove complete stack</span></button>{/if}<div class="v2-selection-menu-separator"></div><button type="button" onclick={()=>demoAction(archiveActionLabel)}>{#if archiveActionLabel==='Unarchive'}<ArchiveRestore size={17}/>{:else}<Archive size={17}/>{/if}<span>{archiveActionLabel}</span></button></div>{/if}</div>
           {/snippet}
         </V2AssetSelectionToolbar>
       {:else}
-        <V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="asset-results" {sort} sortFields={[{value:'takenDate',label:'Taken date'},{value:'filename',label:'Filename'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={(value)=>sort=value} onpagesize={(value)=>collection.setPageSize(value,total)} onmode={collection.setMode}/>{/snippet}</V2Toolbar>
+        <V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/><V2Badge text={summary}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="asset-results" {sort} sortFields={[{value:'takenDate',label:'Taken date'},{value:'filename',label:'Filename'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={(value)=>sort=value} onpagesize={(value)=>collection.setPageSize(value,total)} onmode={collection.setMode}/>{/snippet}</V2Toolbar>
       {/if}
-      <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each ids as id}<V2AssetTile index={id} assetId={id} label={`IMG_${String(id+1).padStart(4,'0')}.jpg`} sublabel={`Aug ${21-(id%8)}, 2026`} selected={isSelected(id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(id,event)} onselect={(event)=>handleSelectionClick(id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(id,event)}/>{/each}</V2AssetGrid>
+      <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each items as asset,index}<V2AssetTile index={collection.resultMode==='Pagination'?start+index:index} assetId={asset.id} label={asset.original_file_name} sublabel={assetSublabel(asset)} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>viewer=true} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}</V2AssetGrid>
       <V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={collection.loaded} noun="assets" onpage={setPage} onloadmore={()=>collection.loadMore(total)}/>
     {:else}<V2Toolbar sticky={false}><V2Badge text={`${savedSearches.length} saved searches`}/>{#snippet actions()}<V2Button variant="primary">Create saved search</V2Button>{/snippet}</V2Toolbar><V2Stack gap="sm">{#each savedSearches as saved}<V2Card><V2Inline justify="between" wrap><V2Stack gap="xs"><b>{saved}</b><span class="v2-small v2-muted">Reusable expert-search definition</span></V2Stack><V2Inline gap="sm"><V2Button onclick={()=>selectedSaved=saved}>Select</V2Button><V2Button onclick={()=>{selectedSaved=saved;loadSaved(saved);tab='Browse';searchMode='Expert'}}>Open</V2Button></V2Inline></V2Inline></V2Card>{/each}</V2Stack>{/if}
   </V2Zone>
