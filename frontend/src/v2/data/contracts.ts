@@ -170,6 +170,13 @@ export type AssetSelectionCapabilities = {
   canRemoveCompleteStack: boolean;
 };
 
+export type ViewerNavigationWindow = {
+  previousId: string | null;
+  nextId: string | null;
+  position: number | null;
+  total: number;
+};
+
 export type DuplicateState = 'Actionable' | 'Needs review' | 'Needs decisions' | 'Blocked';
 export type DuplicateDecision = 'keep' | 'delete' | 'stack';
 export type DuplicateMemberRecord = { asset: AssetRecord; similarity: number };
@@ -240,6 +247,11 @@ export interface DuplicateRepository {
   history(query: DuplicateHistoryQuery): Promise<PageResult<DuplicateHistoryRecord>>;
 }
 
+export interface ViewerNavigationRepository {
+  asset(currentId: string): Promise<ViewerNavigationWindow>;
+  trash(currentId: string): Promise<ViewerNavigationWindow>;
+}
+
 export type MediaAsset = Pick<AssetRecord, 'id' | 'original_file_name' | 'original_mime_type' | 'width' | 'height' | 'asset_type'> | TrashAssetRecord;
 
 export interface MediaRepository {
@@ -265,4 +277,7 @@ export interface LibraryDataSource {
   initialize(): Promise<void>;
 }
 
-export type ResolvedLibraryDataSource = Omit<LibraryDataSource, 'media'> & { readonly media: MediaRepository };
+export type ResolvedLibraryDataSource = Omit<LibraryDataSource, 'media'> & {
+  readonly media: MediaRepository;
+  readonly navigation: ViewerNavigationRepository;
+};
