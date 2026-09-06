@@ -10,13 +10,17 @@ import { demoAssetFullSize, demoAssetPreview } from '../../demo/demoAssetVisuals
 import { demoDifferenceMask } from '../../demo/duplicateVisuals';
 import type {
   AlbumRecord, AlbumSearchQuery, AssetRecord, AssetSearchCriteria, AssetSearchGroup, AssetSearchQuery, AssetSearchRule,
-  AssetSelectionCapabilities, AssetSelectionTarget, CollectionRequest, DuplicateDecision, DuplicateGroupRecord,
-  DuplicateHistoryRecord, DuplicateSearchQuery, LibraryDataSource, MutationResult, OptionSearchQuery, OptionSearchResult,
-  PageResult, RelationOption, TagHierarchyRow, TagRecord, TagSearchQuery, TrashAssetRecord, TrashSearchQuery,
-  TrashSelectionTarget,
+  AssetSelectionCapabilities, AssetSelectionTarget, CollectionRequest, DuplicateDecision, DuplicateDiscoveryOptions,
+  DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateSearchQuery, LibraryDataSource, MutationResult, OptionSearchQuery,
+  OptionSearchResult, PageResult, RelationOption, TagHierarchyRow, TagRecord, TagSearchQuery, TrashAssetRecord,
+  TrashSearchQuery, TrashSelectionTarget,
 } from '../contracts';
 
+const DUPLICATE_STORAGE_KEY='immichCompanionV2DemoDuplicateState.v1';
+const DEMO_MIN_DELAY=90,DEMO_MAX_DELAY=260;
 const result=(ids:readonly string[],failed:MutationResult['failed']=[]):MutationResult=>({affectedIds:[...new Set(ids)],failed});
+const sleep=(ms:number)=>new Promise<void>((resolve)=>setTimeout(resolve,ms));
+async function delay(kind='read'){const base=kind==='sync'?320:DEMO_MIN_DELAY;const span=kind==='sync'?260:DEMO_MAX_DELAY-DEMO_MIN_DELAY;await sleep(base+Math.floor(Math.random()*(span+1)))}
 function cursorOffset(cursor:string|null|undefined):number{const value=Number(cursor);return Number.isFinite(value)&&value>=0?Math.floor(value):0}
 function collectionPage<T>(all:T[],query:CollectionRequest):PageResult<T>{const pageSize=Math.max(1,Math.floor(query.pageSize));const offset=query.page!==undefined?Math.max(0,(Math.max(1,query.page)-1)*pageSize):cursorOffset(query.cursor);const items=all.slice(offset,offset+pageSize);const next=offset+items.length<all.length?String(offset+items.length):null;return{items,total:all.length,pageSize,page:query.page,nextCursor:next}}
 function optionPage(items:RelationOption[],query:OptionSearchQuery):OptionSearchResult{const offset=cursorOffset(query.cursor),pageSize=Math.max(1,Math.floor(query.pageSize));const page=items.slice(offset,offset+pageSize);return{items:page,nextCursor:offset+page.length<items.length?String(offset+page.length):null}}
@@ -44,64 +48,59 @@ function albumOptions(query:OptionSearchQuery){const normalized=(query.query??''
 function tagOptions(query:OptionSearchQuery){const normalized=(query.query??'').trim().toLowerCase();return demoAssetState.tags.filter((tag)=>!normalized||tag.tag_name.toLowerCase().includes(normalized)).sort((a,b)=>a.tag_name.localeCompare(b.tag_name)).map((tag)=>({value:tag.id,label:tag.tag_name,subtitle:`${tag.asset_count.toLocaleString()} assets`}))}
 
 const duplicateDefinitions=[
-  {count:2,state:'Actionable',kind:'Exact pair'},{count:2,state:'Needs review',kind:'Similar pair'},{count:3,state:'Actionable',kind:'Exact group'},
-  {count:5,state:'Needs decisions',kind:'Mixed group'},{count:6,state:'Actionable',kind:'Similarity cluster'},{count:9,state:'Blocked',kind:'Large cluster'},{count:10,state:'Needs review',kind:'Large similarity cluster'},
+  {count:2,state:'Actionable',kind:'Exact pair',exact:true},{count:2,state:'Needs review',kind:'Similar pair',exact:false},{count:3,state:'Actionable',kind:'Exact group',exact:true},
+  {count:5,state:'Needs decisions',kind:'Mixed group',exact:false},{count:6,state:'Actionable',kind:'Similarity cluster',exact:false},{count:9,state:'Blocked',kind:'Large cluster',exact:false},{count:10,state:'Needs review',kind:'Large similarity cluster',exact:false},
 ] as const;
-function allDuplicateGroups():DuplicateGroupRecord[]{const source=(indexedDemoAssets() as AssetRecord[]).slice(0,37);let cursor=0;return duplicateDefinitions.map((definition,index)=>{const members=source.slice(cursor,cursor+definition.count).map((asset,memberIndex)=>({asset,similarity:Number((99.4-(((index+1)*0.37+memberIndex*0.65)%8)).toFixed(1))}));cursor+=definition.count;return{id:index+1,state:definition.state,kind:definition.kind,members}})}
-function searchDuplicateGroups(query:DuplicateSearchQuery){return allDuplicateGroups().filter((group)=>!query.state||query.state==='All groups'||(query.state==='Auto-ready'?group.state==='Actionable':group.state===query.state))}
-const duplicateHistory:DuplicateHistoryRecord[]=[
-  {id:'history-1',occurredAt:new Date().toISOString(),groupLabel:'Group 1',summary:'Kept 1 · deleted 1'},
-  {id:'history-2',occurredAt:new Date(Date.now()-86400000).toISOString(),groupLabel:'Group 3',summary:'Stacked 3 assets'},
-  {id:'history-3',occurredAt:new Date(Date.now()-7*86400000).toISOString(),groupLabel:'Group 5',summary:'Reviewed · no action'},
-];
+type StoredDuplicateGroup={id:number;state:DuplicateGroupRecord['state'];kind:string;assetIds:string[];similarities:number[]};
+type StoredDuplicateState={groups:StoredDuplicateGroup[];history:DuplicateHistoryRecord[];lastDiscovery:DuplicateDiscoveryOptions|null};
+let duplicateState:StoredDuplicateState={groups:[],history:[],lastDiscovery:null};
+function seedDuplicateGroups(options?:DuplicateDiscoveryOptions):StoredDuplicateGroup[]{const source=(indexedDemoAssets() as AssetRecord[]).slice(0,120);let cursor=0,id=1;const out:StoredDuplicateGroup[]=[];const threshold=Math.max(0,Math.min(100,options?.similarityThreshold??82));for(const definition of duplicateDefinitions){if(options&&definition.exact&&!options.includeExact)continue;if(options&&!definition.exact&&!options.includeSimilar)continue;const assets=source.slice(cursor,cursor+Math.min(definition.count,Math.max(2,options?.maxCandidates??definition.count)));cursor+=definition.count;if(assets.length<2)continue;const similarities=assets.map((asset,index)=>Number((99.4-(((id)*0.37+index*0.65)%8)).toFixed(1)));if(!definition.exact&&Math.max(...similarities)<threshold)continue;out.push({id:id++,state:definition.state,kind:definition.kind,assetIds:assets.map((asset)=>asset.id),similarities})}return out}
+function defaultDuplicateHistory():DuplicateHistoryRecord[]{const now=Date.now();return[{id:'history-1',occurredAt:new Date(now-86400000).toISOString(),groupLabel:'Group 1',summary:'Kept 1 · deleted 1'},{id:'history-2',occurredAt:new Date(now-2*86400000).toISOString(),groupLabel:'Group 3',summary:'Stacked 3 assets'},{id:'history-3',occurredAt:new Date(now-7*86400000).toISOString(),groupLabel:'Group 5',summary:'Reviewed · no action'}]}
+function persistDuplicates(){if(typeof localStorage==='undefined')return;localStorage.setItem(DUPLICATE_STORAGE_KEY,JSON.stringify(duplicateState))}
+function initializeDuplicates(){if(duplicateState.groups.length)return;if(typeof localStorage!=='undefined'){try{const raw=localStorage.getItem(DUPLICATE_STORAGE_KEY);if(raw){const parsed=JSON.parse(raw) as StoredDuplicateState;if(Array.isArray(parsed.groups)&&Array.isArray(parsed.history)){duplicateState=parsed;return}}}catch{}}duplicateState={groups:seedDuplicateGroups(),history:defaultDuplicateHistory(),lastDiscovery:null};persistDuplicates()}
+function materializeDuplicateGroups():DuplicateGroupRecord[]{const byId=new Map((indexedDemoAssets() as AssetRecord[]).map((asset)=>[asset.id,asset]));return duplicateState.groups.map((group)=>({id:group.id,state:group.state,kind:group.kind,members:group.assetIds.map((id,index)=>({asset:byId.get(id),similarity:group.similarities[index]??0})).filter((entry):entry is {asset:AssetRecord;similarity:number}=>Boolean(entry.asset))})).filter((group)=>group.members.length>=2)}
+function searchDuplicateGroups(query:DuplicateSearchQuery){return materializeDuplicateGroups().filter((group)=>!query.state||query.state==='All groups'||(query.state==='Auto-ready'?group.state==='Actionable':group.state===query.state))}
+function recordHistory(groupId:number,summary:string){duplicateState.history.unshift({id:`history-${Date.now()}-${groupId}`,occurredAt:new Date().toISOString(),groupLabel:`Group ${groupId}`,summary});persistDuplicates()}
+function fixturePath(asset:Pick<AssetRecord,'id'|'asset_type'>|TrashAssetRecord,full=false){const suffix=asset.id.slice(-12);if(suffix==='000000000001')return'/demo-fixtures/clip.mp4';if(suffix==='000000000002')return'/demo-fixtures/photo-cottage.jpg';if(suffix==='000000000003')return'/demo-fixtures/photo-waterfront.jpg';return null}
 
 export function createDemoLibraryDataSource():LibraryDataSource{return{
   kind:'demo',
-  async initialize(){initializeDemoAssetState();normalizeDemoStacks()},
+  async initialize(){initializeDemoAssetState();normalizeDemoStacks();initializeDuplicates();await delay()},
   assets:{
-    async getById(id){return demoAssetById(id) as AssetRecord|undefined},
-    async getMany(ids){const set=new Set(ids);return(indexedDemoAssets() as AssetRecord[]).filter((asset)=>set.has(asset.id))},
-    async getTrashById(id){return trashApiDemoAssets().find((asset)=>asset.id===id) as TrashAssetRecord|undefined},
-    async search(query:AssetSearchQuery){return collectionPage(searchAssets(query),query)},
-    async searchTrash(query){return collectionPage(searchTrash(query),query)},
-    async selectionCapabilities(target){return capabilities(target)},
-    async setFavorite(target,favorite){const affected=resolveAssetTarget(target).map((asset)=>asset.id);setDemoAssetsFavorite(affected,favorite);return result(affected)},
-    async setArchived(target,archived){const affected=resolveAssetTarget(target).map((asset)=>asset.id);setDemoAssetsArchived(affected,archived);return result(affected)},
-    async sync(target){const affected=resolveAssetTarget(target).map((asset)=>asset.id);syncDemoAssets(affected);return result(affected)},
-    async trash(target){const affected=resolveAssetTarget(target).map((asset)=>asset.id);trashDemoAssets(affected);normalizeDemoStacks();return result(affected)},
-    async restore(target){const affected=resolveTrashTarget(target).map((asset)=>asset.id);restoreDemoTrashAssets(affected);normalizeDemoStacks();return result(affected)},
-    async addToAlbum(target,albumId){const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(!demoAssetState.albums.some((album)=>album.id===albumId))return result([],affected.map((id)=>({id,reason:'Album not found'})));addDemoAssetsToAlbum(affected,albumId);return result(affected)},
-    async removeFromAlbums(target,albumIds){const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromAlbums(affected,albumIds);return result(affected)},
-    async addTags(target,tagIds){const affected=resolveAssetTarget(target).map((asset)=>asset.id);addDemoTagsToAssets(affected,tagIds);return result(affected)},
-    async removeTags(target,tagIds){const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoTagsFromAssets(affected,tagIds);return result(affected)},
-    async stack(target){const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(affected.length<2)return result([],affected.map((id)=>({id,reason:'At least two assets are required'})));stackDemoAssets(affected);normalizeDemoStacks();return result(affected)},
-    async unstack(target){const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromStacks(affected);normalizeDemoStacks();return result(affected)},
-    async setStackPrimary(assetId){const asset=demoAssetById(assetId);if(!asset?.stack)return result([],[{id:assetId,reason:'Asset is not stacked'}]);const affected=[...asset.stack.assets];setDemoStackPrimary(assetId);return result(affected)},
-    async removeCompleteStack(assetId){const asset=demoAssetById(assetId);if(!asset?.stack)return result([],[{id:assetId,reason:'Asset is not stacked'}]);const affected=[...asset.stack.assets];removeDemoCompleteStack(assetId);normalizeDemoStacks();return result(affected)},
+    async getById(id){await delay();return demoAssetById(id) as AssetRecord|undefined},
+    async getMany(ids){await delay();const set=new Set(ids);return(indexedDemoAssets() as AssetRecord[]).filter((asset)=>set.has(asset.id))},
+    async getTrashById(id){await delay();return trashApiDemoAssets().find((asset)=>asset.id===id) as TrashAssetRecord|undefined},
+    async search(query:AssetSearchQuery){await delay();return collectionPage(searchAssets(query),query)},
+    async searchTrash(query){await delay();return collectionPage(searchTrash(query),query)},
+    async selectionCapabilities(target){await delay();return capabilities(target)},
+    async setFavorite(target,favorite){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);setDemoAssetsFavorite(affected,favorite);return result(affected)},
+    async setArchived(target,archived){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);setDemoAssetsArchived(affected,archived);return result(affected)},
+    async sync(target){await delay('sync');const candidates=resolveAssetTarget(target);const failed=candidates.filter((asset)=>seedFor(asset.id)%23===0).map((asset)=>({id:asset.id,reason:'Simulated upstream timeout'}));const failedIds=new Set(failed.map((entry)=>entry.id));const affected=candidates.filter((asset)=>!failedIds.has(asset.id)).map((asset)=>asset.id);syncDemoAssets(affected);return result(affected,failed)},
+    async trash(target){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);trashDemoAssets(affected);normalizeDemoStacks();return result(affected)},
+    async restore(target){await delay();const affected=resolveTrashTarget(target).map((asset)=>asset.id);restoreDemoTrashAssets(affected);normalizeDemoStacks();return result(affected)},
+    async addToAlbum(target,albumId){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(!demoAssetState.albums.some((album)=>album.id===albumId))return result([],affected.map((id)=>({id,reason:'Album not found'})));addDemoAssetsToAlbum(affected,albumId);return result(affected)},
+    async removeFromAlbums(target,albumIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromAlbums(affected,albumIds);return result(affected)},
+    async addTags(target,tagIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);addDemoTagsToAssets(affected,tagIds);return result(affected)},
+    async removeTags(target,tagIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoTagsFromAssets(affected,tagIds);return result(affected)},
+    async stack(target){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(affected.length<2)return result([],affected.map((id)=>({id,reason:'At least two assets are required'})));stackDemoAssets(affected);normalizeDemoStacks();return result(affected)},
+    async unstack(target){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromStacks(affected);normalizeDemoStacks();return result(affected)},
+    async setStackPrimary(assetId){await delay();const asset=demoAssetById(assetId);if(!asset?.stack)return result([],[{id:assetId,reason:'Asset is not stacked'}]);const affected=[...asset.stack.assets];setDemoStackPrimary(assetId);return result(affected)},
+    async removeCompleteStack(assetId){await delay();const asset=demoAssetById(assetId);if(!asset?.stack)return result([],[{id:assetId,reason:'Asset is not stacked'}]);const affected=[...asset.stack.assets];removeDemoCompleteStack(assetId);normalizeDemoStacks();return result(affected)},
   },
   albums:{
-    async search(query){return collectionPage(searchAlbums(query),query)},
-    async searchOptions(query){return optionPage(albumOptions(query),query)},
-    async getById(id){return demoAssetState.albums.find((album)=>album.id===id) as AlbumRecord|undefined},
-    async create(name,description=''){return createDemoAlbum(name,description) as AlbumRecord|undefined},
-    async update(id,patch){if(!demoAssetState.albums.some((album)=>album.id===id))return result([],[{id,reason:'Album not found'}]);updateDemoAlbum(id,patch);return result([id])},
-    async delete(ids){const existing=ids.filter((id)=>demoAssetState.albums.some((album)=>album.id===id));deleteDemoAlbums(existing);return result(existing)},
+    async search(query){await delay();return collectionPage(searchAlbums(query),query)},async searchOptions(query){await delay();return optionPage(albumOptions(query),query)},async getById(id){await delay();return demoAssetState.albums.find((album)=>album.id===id) as AlbumRecord|undefined},
+    async create(name,description=''){await delay();return createDemoAlbum(name,description) as AlbumRecord|undefined},async update(id,patch){await delay();if(!demoAssetState.albums.some((album)=>album.id===id))return result([],[{id,reason:'Album not found'}]);updateDemoAlbum(id,patch);return result([id])},async delete(ids){await delay();const existing=ids.filter((id)=>demoAssetState.albums.some((album)=>album.id===id));deleteDemoAlbums(existing);return result(existing)},
   },
   tags:{
-    async search(query){return collectionPage(searchTags(query),query)},
-    async searchOptions(query){return optionPage(tagOptions(query),query)},
-    async getById(id){return demoAssetState.tags.find((tag)=>tag.id===id) as TagRecord|undefined},
-    async parentOptions(excludeTagId){const editing=excludeTagId?demoAssetState.tags.find((tag)=>tag.id===excludeTagId)?.tag_name??'':'';return hierarchyRows().filter((row)=>row.children>0&&row.path!==editing&&!row.path.startsWith(`${editing} / `)).map((row)=>({value:row.path,label:row.name,subtitle:row.parent||'Root'}))},
-    async create(name,color=null,parentPath=''){return createDemoTag(name,color,parentPath) as TagRecord|undefined},
-    async update(id,patch){if(!demoAssetState.tags.some((tag)=>tag.id===id))return result([],[{id,reason:'Tag not found'}]);updateDemoTag(id,patch);return result([id])},
-    async delete(ids){const existing=ids.filter((id)=>demoAssetState.tags.some((tag)=>tag.id===id));deleteDemoTags(existing);return result(existing)},
+    async search(query){await delay();return collectionPage(searchTags(query),query)},async searchOptions(query){await delay();return optionPage(tagOptions(query),query)},async getById(id){await delay();return demoAssetState.tags.find((tag)=>tag.id===id) as TagRecord|undefined},
+    async parentOptions(excludeTagId){await delay();const editing=excludeTagId?demoAssetState.tags.find((tag)=>tag.id===excludeTagId)?.tag_name??'':'';return hierarchyRows().filter((row)=>row.children>0&&row.path!==editing&&!row.path.startsWith(`${editing} / `)).map((row)=>({value:row.path,label:row.name,subtitle:row.parent||'Root'}))},async create(name,color=null,parentPath=''){await delay();return createDemoTag(name,color,parentPath) as TagRecord|undefined},async update(id,patch){await delay();if(!demoAssetState.tags.some((tag)=>tag.id===id))return result([],[{id,reason:'Tag not found'}]);updateDemoTag(id,patch);return result([id])},async delete(ids){await delay();const existing=ids.filter((id)=>demoAssetState.tags.some((tag)=>tag.id===id));deleteDemoTags(existing);return result(existing)},
   },
   duplicates:{
-    async capabilities(){return{canRunDiscovery:true,canApplyDecisions:true,canViewHistory:true,reviewFilters:['All groups','Needs review','Auto-ready','Blocked','Actionable','Needs decisions'],decisions:['keep','delete','stack']}},
-    async search(query){return collectionPage(searchDuplicateGroups(query),query)},
-    async runDiscovery(options){const groups=allDuplicateGroups();const threshold=Math.max(0,Math.min(100,options.similarityThreshold));const candidateCount=groups.flatMap((group)=>group.members).filter((member)=>member.similarity>=threshold).length;return{groupCount:groups.length,candidateCount}},
-    async applyDecisions(decisions){const deleteIds=Object.entries(decisions).filter(([,decision])=>decision==='delete').map(([id])=>id);const stackIds=new Set(Object.entries(decisions).filter(([,decision])=>decision==='stack').map(([id])=>id));const affected=new Set<string>();for(const group of allDuplicateGroups()){const members=group.members.map((member)=>member.asset.id).filter((id)=>stackIds.has(id));if(members.length>=2){stackDemoAssets(members);members.forEach((id)=>affected.add(id))}}if(deleteIds.length){trashDemoAssets(existingAssetIds(deleteIds));deleteIds.forEach((id)=>affected.add(id))}normalizeDemoStacks();return result([...affected])},
-    async history(query){let rows=[...duplicateHistory];if(query.range==='Last 30 days'){const cutoff=Date.now()-30*86400000;rows=rows.filter((row)=>new Date(row.occurredAt).getTime()>=cutoff)}else if(query.range==='Last 90 days'){const cutoff=Date.now()-90*86400000;rows=rows.filter((row)=>new Date(row.occurredAt).getTime()>=cutoff)}return collectionPage(rows,query)},
+    async capabilities(){await delay();return{canRunDiscovery:true,canApplyDecisions:true,canViewHistory:true,reviewFilters:['All groups','Needs review','Auto-ready','Blocked','Actionable','Needs decisions'],decisions:['keep','delete','stack']}},
+    async search(query){await delay();return collectionPage(searchDuplicateGroups(query),query)},
+    async runDiscovery(options){await delay('sync');duplicateState.groups=seedDuplicateGroups(options);duplicateState.lastDiscovery={...options};persistDuplicates();const candidateCount=duplicateState.groups.reduce((sum,group)=>sum+group.assetIds.length,0);return{groupCount:duplicateState.groups.length,candidateCount}},
+    async applyDecisions(decisions){await delay('sync');const deleteIds=Object.entries(decisions).filter(([,decision])=>decision==='delete').map(([id])=>id),stackIds=new Set(Object.entries(decisions).filter(([,decision])=>decision==='stack').map(([id])=>id));const affected=new Set<string>(),resolvedGroups:number[]=[];for(const group of materializeDuplicateGroups()){const decided=group.members.filter((member)=>decisions[member.asset.id]);if(!decided.length)continue;const stackMembers=group.members.map((member)=>member.asset.id).filter((id)=>stackIds.has(id));if(stackMembers.length>=2){stackDemoAssets(stackMembers);stackMembers.forEach((id)=>affected.add(id))}const groupDeletes=group.members.map((member)=>member.asset.id).filter((id)=>deleteIds.includes(id));if(groupDeletes.length){trashDemoAssets(existingAssetIds(groupDeletes));groupDeletes.forEach((id)=>affected.add(id))}const kept=group.members.filter((member)=>decisions[member.asset.id]==='keep').length;recordHistory(group.id,[kept?`kept ${kept}`:'',groupDeletes.length?`deleted ${groupDeletes.length}`:'',stackMembers.length>=2?`stacked ${stackMembers.length}`:''].filter(Boolean).join(' · ')||'Reviewed · no action');resolvedGroups.push(group.id)}duplicateState.groups=duplicateState.groups.filter((group)=>!resolvedGroups.includes(group.id));persistDuplicates();normalizeDemoStacks();return result([...affected])},
+    async history(query){await delay();let rows=[...duplicateState.history];if(query.range==='Last 30 days'){const cutoff=Date.now()-30*86400000;rows=rows.filter((row)=>new Date(row.occurredAt).getTime()>=cutoff)}else if(query.range==='Last 90 days'){const cutoff=Date.now()-90*86400000;rows=rows.filter((row)=>new Date(row.occurredAt).getTime()>=cutoff)}return collectionPage(rows,query)},
   },
-  media:{thumbnail(asset){return demoAssetPreview(asset)},fullSize(asset){return demoAssetFullSize(asset)},difference(selected,reference,options={}){const a=seedFor(selected.id),b=seedFor(reference.id);return demoDifferenceMask((a%7)+1,a%10,b%10,options.hue,options.contrast,options.binary)}},
+  media:{thumbnail(asset){return fixturePath(asset)??demoAssetPreview(asset)},fullSize(asset){return fixturePath(asset,true)??demoAssetFullSize(asset)},difference(selected,reference,options={}){const a=seedFor(selected.id),b=seedFor(reference.id);return demoDifferenceMask((a%7)+1,a%10,b%10,options.hue,options.contrast,options.binary)}},
 }}
