@@ -8,6 +8,7 @@
   import V2Field from '../components/V2Field.svelte';
   import V2Inline from '../components/V2Inline.svelte';
   import V2Modal from '../components/V2Modal.svelte';
+  import V2Notice from '../components/V2Notice.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Progress from '../components/V2Progress.svelte';
   import V2RangeSlider from '../components/V2RangeSlider.svelte';
@@ -67,7 +68,7 @@
             <span class="v2-small">Single, searchable and multiple selects</span>
             <span class="v2-small">Relation filter exclusivity</span>
             <span class="v2-small">Date-only and 24-hour date/time picker modes</span>
-            <span class="v2-small">Buttons, fields, toggles, sliders, tabs, progress and modal states</span>
+            <span class="v2-small">Buttons, fields, toggles, sliders, tabs, progress, notices and modal states</span>
           </V2Stack>
         </V2Card>
       </V2Section>
@@ -80,6 +81,15 @@
     </V2Toolbar>
 
     <div class="v2-playground-grid">
+      <V2Card title="Feedback / notices">
+        <V2Stack gap="sm">
+          <V2Notice tone="info" title="Information">Use for neutral context, guidance, or non-blocking system information.</V2Notice>
+          <V2Notice tone="success" title="Success">The operation completed successfully and no further action is required.</V2Notice>
+          <V2Notice tone="warning" title="Warning">The operation can continue, but the user should understand an important condition.</V2Notice>
+          <V2Notice tone="error" title="Error">The operation failed or is blocked and needs attention before continuing.</V2Notice>
+        </V2Stack>
+      </V2Card>
+
       <V2Card title="Select · single / searchable">
         <V2Stack gap="sm">
           <SelectField id="playground-single" label="Rich options" bind:value={singleValue} options={richOptions} searchable searchPlaceholder="Search labels or subtitles…"/>
