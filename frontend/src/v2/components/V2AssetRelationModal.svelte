@@ -4,6 +4,7 @@
   import V2CreateNamedItemModal from './V2CreateNamedItemModal.svelte';
   import V2Modal from './V2Modal.svelte';
   import V2Stack from './V2Stack.svelte';
+  import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { RelationOption } from '../data/contracts';
 
@@ -13,7 +14,7 @@
   }:{
     kind:'album'|'tags';selectedCount:number;albumValue?:string;tagValues?:string[];albumOptions:RelationOption[];tagOptions:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;busy?:boolean;
     onalbumchange:(value:string)=>void;ontagschange:(values:string[])=>void;onalbumsearch:(value:string)=>void;ontagsearch:(value:string)=>void;onalbumloadmore:()=>void;ontagloadmore:()=>void;
-    oncreatealbum:(name:string)=>Promise<RelationOption>;oncreatetag:(name:string)=>Promise<RelationOption>;onclose:()=>void;onapply:()=>void;
+    oncreatealbum?:(name:string)=>Promise<RelationOption>;oncreatetag?:(name:string)=>Promise<RelationOption>;onclose:()=>void;onapply:()=>void;
   }=$props();
 
   let createKind=$state<'album'|'tag'|null>(null);
@@ -27,17 +28,27 @@
 
   function openCreate(next:'album'|'tag',query:string){createKind=next;createName=query;createError=''}
   function closeCreate(){if(createBusy)return;createKind=null;createName='';createError=''}
+  async function defaultCreateAlbum(name:string):Promise<RelationOption>{
+    const created=await libraryData.albums.create(name);
+    if(!created)throw new Error('The album was not created.');
+    return{value:created.id,label:created.album_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
+  }
+  async function defaultCreateTag(name:string):Promise<RelationOption>{
+    const created=await libraryData.tags.create(name);
+    if(!created)throw new Error('The tag was not created.');
+    return{value:created.id,label:created.tag_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
+  }
   async function createNamed(name:string){
     if(!createKind||createBusy)return;
     const requestedKind=createKind;
     createBusy=true;createError='';
     try{
       if(requestedKind==='album'){
-        const option=await oncreatealbum(name);
+        const option=await (oncreatealbum??defaultCreateAlbum)(name);
         createdAlbums=[option,...createdAlbums.filter((item)=>item.value!==option.value)];
         onalbumchange(option.value);
       }else{
-        const option=await oncreatetag(name);
+        const option=await (oncreatetag??defaultCreateTag)(name);
         createdTags=[option,...createdTags.filter((item)=>item.value!==option.value)];
         ontagschange([...new Set([...tagValues,option.value])]);
       }
