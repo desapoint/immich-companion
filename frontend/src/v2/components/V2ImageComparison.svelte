@@ -41,6 +41,15 @@
   let dragPointer = $state<number | null>(null);
   let lastX = $state(0);
   let lastY = $state(0);
+  let selectedNatural = $state({ width: 0, height: 0 });
+  let referenceNatural = $state({ width: 0, height: 0 });
+
+  function syncNaturalSize(): void {
+    camera.setNaturalSize(
+      Math.max(selectedNatural.width, referenceNatural.width, 1),
+      Math.max(selectedNatural.height, referenceNatural.height, 1),
+    );
+  }
 
   function changeMode(next: string): void {
     mode = next as ComparisonMode;
@@ -51,7 +60,21 @@
     camera.setViewport(node);
   }
 
-  function imageLoaded(event: Event): void {
+  function selectedLoaded(event: Event): void {
+    const image = event.currentTarget as HTMLImageElement;
+    selectedNatural = { width: image.naturalWidth, height: image.naturalHeight };
+    syncNaturalSize();
+    requestAnimationFrame(() => camera.fit());
+  }
+
+  function referenceLoaded(event: Event): void {
+    const image = event.currentTarget as HTMLImageElement;
+    referenceNatural = { width: image.naturalWidth, height: image.naturalHeight };
+    syncNaturalSize();
+    requestAnimationFrame(() => camera.fit());
+  }
+
+  function differenceLoaded(event: Event): void {
     const image = event.currentTarget as HTMLImageElement;
     camera.setNaturalSize(image.naturalWidth, image.naturalHeight);
     requestAnimationFrame(() => camera.fit());
@@ -90,6 +113,13 @@
     event.preventDefault();
     camera.wheel(event);
   }
+
+  $effect(() => {
+    selectedSrc;
+    referenceSrc;
+    selectedNatural = { width: 0, height: 0 };
+    referenceNatural = { width: 0, height: 0 };
+  });
 
   $effect(() => {
     const currentMode = mode;
@@ -133,7 +163,8 @@
         {selectedLabel}
         {referenceLabel}
         transform={camera.transform}
-        onselectedload={imageLoaded}
+        onselectedload={selectedLoaded}
+        onreferenceload={referenceLoaded}
         onviewport={setViewport}
       />
     {:else if mode === 'Swipe'}
@@ -144,7 +175,8 @@
         {referenceLabel}
         transform={camera.transform}
         bind:split
-        onselectedload={imageLoaded}
+        onselectedload={selectedLoaded}
+        onreferenceload={referenceLoaded}
         onviewport={setViewport}
       />
     {:else if mode === 'Transparency'}
@@ -155,7 +187,8 @@
         {referenceLabel}
         transform={camera.transform}
         bind:opacity
-        onselectedload={imageLoaded}
+        onselectedload={selectedLoaded}
+        onreferenceload={referenceLoaded}
         onviewport={setViewport}
       />
     {:else}
@@ -165,7 +198,7 @@
         bind:diffHue
         bind:diffContrast
         bind:diffBinary
-        onimageload={imageLoaded}
+        onimageload={differenceLoaded}
         onviewport={setViewport}
       />
     {/if}
