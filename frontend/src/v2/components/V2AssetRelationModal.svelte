@@ -14,7 +14,7 @@
   }:{
     kind:'album'|'tags';selectedCount:number;albumValue?:string;tagValues?:string[];albumOptions:RelationOption[];tagOptions:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;busy?:boolean;
     onalbumchange:(value:string)=>void;ontagschange:(values:string[])=>void;onalbumsearch:(value:string)=>void;ontagsearch:(value:string)=>void;onalbumloadmore:()=>void;ontagloadmore:()=>void;
-    oncreatealbum?:(input:string|AlbumCreateDetails)=>Promise<RelationOption>;oncreatetag?:(input:string|TagCreateDetails)=>Promise<RelationOption>;oncreated:(kind:'album'|'tag',option:RelationOption)=>Promise<void>;onclose:()=>void;onapply:()=>void;
+    oncreatealbum?:(input:string|AlbumCreateDetails)=>Promise<RelationOption>;oncreatetag?:(input:string|TagCreateDetails)=>Promise<RelationOption>;oncreated?:(kind:'album'|'tag',option:RelationOption)=>Promise<void>;onclose:()=>void;onapply:()=>void;
   }=$props();
 
   let createKind=$state<'album'|'tag'|null>(null);
@@ -47,7 +47,7 @@
       createdTags=[option,...createdTags.filter((item)=>item.value!==option.value)];
       ontagschange([...new Set([...tagValues,option.value])]);
     }
-    await oncreated(createdKind,option);
+    if(oncreated)await oncreated(createdKind,option);else onapply();
     onclose();
   }
 
