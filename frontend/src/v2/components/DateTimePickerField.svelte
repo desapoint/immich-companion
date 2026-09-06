@@ -201,7 +201,7 @@
   });
 </script>
 
-<div class="v2-date-time-field" use:clickOutside={{ enabled: open, onoutside: () => (open = false) }} onkeydown={handleKeydown}>
+<div class="v2-date-time-field" role="group" aria-label={label || 'Date and time'} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }} onkeydown={handleKeydown}>
   {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
   <div class="v2-date-time-control">
     <button
@@ -244,14 +244,13 @@
         {#each weekdays as weekday}<span>{weekday}</span>{/each}
       </div>
 
-      <div class="v2-date-time-calendar" role="grid" aria-label={monthFormatter.format(new Date(viewYear, viewMonth, 1))}>
+      <div class="v2-date-time-calendar" aria-label={monthFormatter.format(new Date(viewYear, viewMonth, 1))}>
         {#each calendarDays as date (`${date.year}-${date.month}-${date.day}`)}
           <button
             type="button"
             data-outside-month={!date.currentMonth || undefined}
             data-selected={isSelectedDay(date.year, date.month, date.day) || undefined}
             data-today={isToday(date.year, date.month, date.day) || undefined}
-            aria-selected={isSelectedDay(date.year, date.month, date.day)}
             aria-label={new Date(date.year, date.month, date.day).toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
             onclick={() => chooseDay(date.year, date.month, date.day)}
           >{date.day}</button>
