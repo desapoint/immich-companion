@@ -19,32 +19,32 @@
   import type { AlbumRecord } from '../data/contracts';
 
   type AlbumModal={id:number;mode:'create'|'edit';albumId:string;name:string;description:string};
-  let page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),loaded=$state(24),sort=$state('name:asc'),query=$state(''),total=$state(0),albums=$state<AlbumRecord[]>([]),loading=$state(false);
+  let page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),sort=$state('name:asc'),query=$state(''),total=$state(0),albums=$state<AlbumRecord[]>([]),nextCursor=$state<string|null>(null),loading=$state(false);
   let modalSequence=0,modals=$state<AlbumModal[]>([]),selectedIds=$state<string[]>([]);
 
   function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(fieldRaw==='assets'||fieldRaw==='description'?fieldRaw:'name') as 'name'|'assets'|'description',direction:(directionRaw==='desc'?'desc':'asc') as 'asc'|'desc'}}
-  async function refresh(){loading=true;try{const requestPage=resultMode==='Pagination'?page:1,requestSize=resultMode==='Pagination'?pageSize:loaded;const result=await libraryData.albums.search({page:requestPage,pageSize:requestSize,query,sort:parseSort()});albums=result.items;total=result.total;if(page>Math.max(1,Math.ceil(total/pageSize))){page=Math.max(1,Math.ceil(total/pageSize));await refresh()}}finally{loading=false}}
-  function setPageSize(next:number){pageSize=next;page=1;loaded=Math.max(next,loaded);void refresh()}
-  function setMode(mode:ResultMode){resultMode=mode;if(mode==='Pagination')page=1;else loaded=Math.max(pageSize,loaded);void refresh()}
-  function setSort(value:string){sort=value;page=1;void refresh()}
-  function setPage(next:number){page=next;void refresh()}
-  function loadMore(){loaded=Math.min(total,loaded+pageSize);void refresh()}
+  async function refresh(reset=true){if(loading&&!reset)return;loading=true;try{if(reset)nextCursor=null;const request=resultMode==='Pagination'?{page,pageSize,query,sort:parseSort()}:{pageSize,query,sort:parseSort(),cursor:reset?null:nextCursor};const response=await libraryData.albums.search(request);albums=resultMode==='Infinite'&&!reset?[...albums,...response.items]:response.items;total=response.total;nextCursor=response.nextCursor;const lastPage=Math.max(1,Math.ceil(total/pageSize));if(resultMode==='Pagination'&&page>lastPage){page=lastPage;await refresh(true)}}finally{loading=false}}
+  function setPageSize(next:number){pageSize=next;page=1;void refresh(true)}
+  function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}
+  function setSort(value:string){sort=value;page=1;void refresh(true)}
+  function setPage(next:number){page=next;void refresh(true)}
+  async function loadMore(){if(resultMode!=='Infinite'||!nextCursor||loading)return;await refresh(false)}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function selectLoaded(){selectedIds=[...new Set([...selectedIds,...albums.map((album)=>album.id)])]}
-  async function deleteSelected(){if(!selectedIds.length)return;await libraryData.albums.delete(selectedIds);selectedIds=[];await refresh()}
+  async function deleteSelected(){if(!selectedIds.length)return;await libraryData.albums.delete(selectedIds);selectedIds=[];await refresh(true)}
   function openCreate(){modals=[...modals,{id:++modalSequence,mode:'create',albumId:'',name:'',description:''}]}
   function openEdit(album:AlbumRecord){modals=[...modals,{id:++modalSequence,mode:'edit',albumId:album.id,name:album.album_name,description:album.description}]}
   function closeModal(id:number){modals=modals.filter((modal)=>modal.id!==id)}
   function updateModal(id:number,patch:Partial<AlbumModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
-  async function saveModal(modal:AlbumModal){if(!modal.name.trim())return;if(modal.mode==='create')await libraryData.albums.create(modal.name,modal.description);else await libraryData.albums.update(modal.albumId,{name:modal.name,description:modal.description});closeModal(modal.id);await refresh()}
-  async function deleteRow(id:string){await libraryData.albums.delete([id]);selectedIds=selectedIds.filter((value)=>value!==id);await refresh()}
+  async function saveModal(modal:AlbumModal){if(!modal.name.trim())return;if(modal.mode==='create')await libraryData.albums.create(modal.name,modal.description);else await libraryData.albums.update(modal.albumId,{name:modal.name,description:modal.description});closeModal(modal.id);await refresh(true)}
+  async function deleteRow(id:string){await libraryData.albums.delete([id]);selectedIds=selectedIds.filter((value)=>value!==id);await refresh(true)}
   function filterAssets(albumId:string){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[albumId],tagIds:[]}));window.location.hash='assets'}
-  onMount(()=>{void(async()=>{await libraryData.initialize();await refresh()})()});
+  onMount(()=>{void(async()=>{await libraryData.initialize();await refresh(true)})()});
 </script>
 
 <V2PageLayout title="Albums" description="Search, sort, create, edit, delete and use albums to filter the current asset workspace.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!selectedIds.length} onclick={deleteSelected}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" onclick={openCreate}>Create album</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value}><V2Button variant="primary" disabled={loading} onclick={()=>{page=1;loaded=pageSize;void refresh()}}>Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button disabled={!albums.length} onclick={selectLoaded}>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value}><V2Button variant="primary" disabled={loading} onclick={()=>{page=1;void refresh(true)}}>Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button disabled={!albums.length} onclick={selectLoaded}>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
   <V2Zone><V2Toolbar><V2Badge text={`${total} album${total===1?'':'s'}`}/>{#snippet actions()}<V2CollectionControls id="album-results" {sort} sortFields={[{value:'name',label:'Name'},{value:'assets',label:'Assets'},{value:'description',label:'Description'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
     <V2Card><V2Table layout="fixed"><thead><tr><th class="v2-collection-check-column"><span class="v2-visually-hidden">Select</span></th><th>Name</th><th class="v2-collection-count-column">Assets</th><th class="v2-collection-description-column">Description</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each albums as album (album.id)}<tr><td class="v2-collection-check-column"><input type="checkbox" aria-label={`Select ${album.album_name}`} checked={selectedIds.includes(album.id)} onchange={(event)=>toggleSelection(album.id,event.currentTarget.checked)}></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description||'—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button onclick={()=>filterAssets(album.id)}>Filter assets</V2Button><V2Button onclick={()=>openEdit(album)}>Edit</V2Button><V2Button variant="danger" onclick={()=>void deleteRow(album.id)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="5" class="v2-muted">{loading?'Loading albums…':'No albums match this search.'}</td></tr>{/each}</tbody></V2Table></V2Card>
     {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<V2InfiniteFooter loaded={albums.length} {total} batchSize={pageSize} noun="albums" onloadmore={loadMore}/>{/if}
