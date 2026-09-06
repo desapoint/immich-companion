@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Eye } from '@lucide/svelte';
   import V2RoundCheckbox from './V2RoundCheckbox.svelte';
+  import { demoAssetPreview } from '../demo/demoAssetVisuals';
 
   let {
     index,
@@ -29,11 +30,12 @@
   } = $props();
 
   const visualVariant = $derived(String(index % 3));
+  const resolvedImage = $derived(image ?? demoAssetPreview({ id: String(assetId), original_file_name: label }));
 </script>
 
 <div class="v2-asset-tile" class:selected class:selection-mode={selectionMode} data-variant={visualVariant} data-asset-id={String(assetId)}>
   <button class="v2-asset-main" type="button" aria-label={selectionMode ? `${selected ? 'Deselect' : 'Select'} ${label}` : `Preview ${label}`} aria-pressed={selectionMode ? selected : undefined} onclick={onactivate} onpointerdown={onpointerdown} ondragstart={(event) => event.preventDefault()}>
-    {#if image}<img src={image} alt="">{/if}
+    <img src={resolvedImage} alt="" loading="lazy" decoding="async">
     <span class="v2-asset-meta"><b>{label}</b>{#if sublabel}<small>{sublabel}</small>{/if}</span>
   </button>
   <span class="v2-asset-checkbox-zone"><V2RoundCheckbox checked={selected} ariaLabel={`${selected ? 'Deselect' : 'Select'} ${label}`} onclick={onselect}/></span>
