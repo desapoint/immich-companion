@@ -4,13 +4,16 @@
   import V2CreateNamedItemModal from './V2CreateNamedItemModal.svelte';
   import V2Modal from './V2Modal.svelte';
   import V2Stack from './V2Stack.svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { RelationOption } from '../data/contracts';
 
-  let { kind,selectedCount,albumValue='',tagValues=[],albumOptions,tagOptions,albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,busy=false,onalbumchange,ontagschange,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,onclose,onapply }:{
+  let {
+    kind,selectedCount,albumValue='',tagValues=[],albumOptions,tagOptions,albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,busy=false,
+    onalbumchange,ontagschange,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,oncreatealbum,oncreatetag,onclose,onapply,
+  }:{
     kind:'album'|'tags';selectedCount:number;albumValue?:string;tagValues?:string[];albumOptions:RelationOption[];tagOptions:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;busy?:boolean;
-    onalbumchange:(value:string)=>void;ontagschange:(values:string[])=>void;onalbumsearch:(value:string)=>void;ontagsearch:(value:string)=>void;onalbumloadmore:()=>void;ontagloadmore:()=>void;onclose:()=>void;onapply:()=>void;
+    onalbumchange:(value:string)=>void;ontagschange:(values:string[])=>void;onalbumsearch:(value:string)=>void;ontagsearch:(value:string)=>void;onalbumloadmore:()=>void;ontagloadmore:()=>void;
+    oncreatealbum:(name:string)=>Promise<RelationOption>;oncreatetag:(name:string)=>Promise<RelationOption>;onclose:()=>void;onapply:()=>void;
   }=$props();
 
   let createKind=$state<'album'|'tag'|null>(null);
@@ -26,23 +29,20 @@
   function closeCreate(){if(createBusy)return;createKind=null;createName='';createError=''}
   async function createNamed(name:string){
     if(!createKind||createBusy)return;
+    const requestedKind=createKind;
     createBusy=true;createError='';
     try{
-      if(createKind==='album'){
-        const created=await libraryData.albums.create(name);
-        if(!created)throw new Error('The album was not created.');
-        const option={value:created.id,label:created.album_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
+      if(requestedKind==='album'){
+        const option=await oncreatealbum(name);
         createdAlbums=[option,...createdAlbums.filter((item)=>item.value!==option.value)];
         onalbumchange(option.value);
       }else{
-        const created=await libraryData.tags.create(name);
-        if(!created)throw new Error('The tag was not created.');
-        const option={value:created.id,label:created.tag_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
+        const option=await oncreatetag(name);
         createdTags=[option,...createdTags.filter((item)=>item.value!==option.value)];
         ontagschange([...new Set([...tagValues,option.value])]);
       }
       createKind=null;createName='';
-    }catch(error){createError=errorMessage(error,`The ${createKind} could not be created.`)}finally{createBusy=false}
+    }catch(error){createError=errorMessage(error,`The ${requestedKind} could not be created.`)}finally{createBusy=false}
   }
 </script>
 
