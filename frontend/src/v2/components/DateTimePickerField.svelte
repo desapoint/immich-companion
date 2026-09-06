@@ -15,7 +15,8 @@
     id,
     label = '',
     value = $bindable(''),
-    placeholder = 'Choose date and time',
+    placeholder = '',
+    showTime = true,
     disabled = false,
     onchange,
   }: {
@@ -23,6 +24,7 @@
     label?: string;
     value?: string;
     placeholder?: string;
+    showTime?: boolean;
     disabled?: boolean;
     onchange?: (value: string) => void;
   } = $props();
@@ -35,42 +37,48 @@
   let popupTop = $state(0);
   let popupLeft = $state(0);
   let popupPlacement = $state<'down' | 'up'>('down');
+  let timeDraft = $state('00:00');
+  let timeInvalid = $state(false);
 
   const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
   const monthFormatter = new Intl.DateTimeFormat(undefined, { month: 'long', year: 'numeric' });
-  const valueFormatter = new Intl.DateTimeFormat(undefined, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  const dateFormatter = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
+  const resolvedPlaceholder = $derived(placeholder || (showTime ? 'Choose date and time' : 'Choose date'));
 
   function parseValue(input: string): DateParts | undefined {
-    const match = input.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/);
+    const match = input.match(/^(\d{4})-(\d{2})-(\d{2})(?:T(\d{2}):(\d{2}))?$/);
     if (!match) return undefined;
-    const [, year, month, day, hour, minute] = match;
-    return {
+    const [, year, month, day, hour = '0', minute = '0'] = match;
+    const parts = {
       year: Number(year),
       month: Number(month),
       day: Number(day),
       hour: Number(hour),
       minute: Number(minute),
     };
+    if (
+      parts.month < 1 || parts.month > 12
+      || parts.day < 1 || parts.day > 31
+      || parts.hour < 0 || parts.hour > 23
+      || parts.minute < 0 || parts.minute > 59
+    ) return undefined;
+    return parts;
   }
 
-  function pad(value: number): string {
-    return String(value).padStart(2, '0');
+  function pad(input: number): string {
+    return String(input).padStart(2, '0');
   }
 
   function serialize(parts: DateParts): string {
-    return `${parts.year}-${pad(parts.month)}-${pad(parts.day)}T${pad(parts.hour)}:${pad(parts.minute)}`;
+    const date = `${parts.year}-${pad(parts.month)}-${pad(parts.day)}`;
+    return showTime ? `${date}T${pad(parts.hour)}:${pad(parts.minute)}` : date;
   }
 
   function formatValue(input: string): string {
     const parts = parseValue(input);
-    if (!parts) return placeholder;
-    return valueFormatter.format(new Date(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute));
+    if (!parts) return resolvedPlaceholder;
+    const date = dateFormatter.format(new Date(parts.year, parts.month - 1, parts.day));
+    return showTime ? `${date} · ${pad(parts.hour)}:${pad(parts.minute)}` : date;
   }
 
   const selected = $derived(parseValue(value));
@@ -106,41 +114,52 @@
 
   function chooseDay(year: number, month: number, day: number): void {
     const current = selected;
-    setValue(serialize({
+    const next = {
       year,
       month: month + 1,
       day,
       hour: current?.hour ?? 0,
       minute: current?.minute ?? 0,
-    }));
+    };
+    setValue(serialize(next));
+    timeDraft = `${pad(next.hour)}:${pad(next.minute)}`;
+    timeInvalid = false;
     viewYear = year;
     viewMonth = month;
   }
 
-  function setTime(part: 'hour' | 'minute', raw: string): void {
-    if (!selected) return;
-    const maximum = part === 'hour' ? 23 : 59;
-    const parsed = Number.parseInt(raw, 10);
-    const next = Number.isFinite(parsed) ? Math.min(maximum, Math.max(0, parsed)) : 0;
-    setValue(serialize({ ...selected, [part]: next }));
+  function commitTime(): void {
+    if (!showTime || !selected) return;
+    const match = timeDraft.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) { timeInvalid = true; return; }
+    const hour = Number(match[1]);
+    const minute = Number(match[2]);
+    if (hour > 23 || minute > 59) { timeInvalid = true; return; }
+    timeInvalid = false;
+    timeDraft = `${pad(hour)}:${pad(minute)}`;
+    setValue(serialize({ ...selected, hour, minute }));
   }
 
   function chooseToday(): void {
     const now = new Date();
     const current = selected;
-    setValue(serialize({
+    const next = {
       year: now.getFullYear(),
       month: now.getMonth() + 1,
       day: now.getDate(),
       hour: current?.hour ?? now.getHours(),
       minute: current?.minute ?? now.getMinutes(),
-    }));
+    };
+    setValue(serialize(next));
+    timeDraft = `${pad(next.hour)}:${pad(next.minute)}`;
+    timeInvalid = false;
     viewYear = now.getFullYear();
     viewMonth = now.getMonth();
   }
 
   function clear(): void {
     setValue('');
+    timeInvalid = false;
     open = false;
     void tick().then(() => trigger?.focus());
   }
@@ -157,14 +176,12 @@
     const gap = 5;
     const width = Math.min(320, window.innerWidth - margin * 2);
     const rect = trigger.getBoundingClientRect();
-    const measuredHeight = Math.min(popup?.scrollHeight ?? 390, window.innerHeight - margin * 2);
+    const measuredHeight = Math.min(popup?.scrollHeight ?? (showTime ? 390 : 340), window.innerHeight - margin * 2);
     const spaceBelow = window.innerHeight - rect.bottom - gap - margin;
     const spaceAbove = rect.top - gap - margin;
     popupPlacement = spaceBelow >= Math.min(measuredHeight, 260) || spaceBelow >= spaceAbove ? 'down' : 'up';
     popupLeft = Math.min(Math.max(rect.left, margin), window.innerWidth - width - margin);
-    popupTop = popupPlacement === 'down'
-      ? rect.bottom + gap
-      : Math.max(margin, rect.top - gap - measuredHeight);
+    popupTop = popupPlacement === 'down' ? rect.bottom + gap : Math.max(margin, rect.top - gap - measuredHeight);
   }
 
   function show(): void {
@@ -173,6 +190,8 @@
     const base = parts ? new Date(parts.year, parts.month - 1, parts.day) : new Date();
     viewYear = base.getFullYear();
     viewMonth = base.getMonth();
+    timeDraft = parts ? `${pad(parts.hour)}:${pad(parts.minute)}` : '00:00';
+    timeInvalid = false;
     open = true;
     void tick().then(() => {
       positionPopup();
@@ -180,11 +199,19 @@
     });
   }
 
+  function close(): void {
+    if (showTime && selected) commitTime();
+    if (timeInvalid) return;
+    open = false;
+    void tick().then(() => trigger?.focus());
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
     if (event.key === 'Escape' && open) {
       event.preventDefault();
       event.stopPropagation();
       open = false;
+      timeInvalid = false;
       void tick().then(() => trigger?.focus());
     }
   }
@@ -201,7 +228,7 @@
   });
 </script>
 
-<div class="v2-date-time-field" role="group" aria-label={label || 'Date and time'} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }} onkeydown={handleKeydown}>
+<div class="v2-date-time-field" role="group" aria-label={label || (showTime ? 'Date and time' : 'Date')} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }} onkeydown={handleKeydown}>
   {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
   <div class="v2-date-time-control">
     <button
@@ -220,7 +247,7 @@
       <CalendarDays size={16} aria-hidden="true" />
     </button>
     {#if selected}
-      <button class="v2-date-time-clear" type="button" {disabled} aria-label={`Clear ${label || 'date and time'}`} onclick={clear}>×</button>
+      <button class="v2-date-time-clear" type="button" {disabled} aria-label={`Clear ${label || (showTime ? 'date and time' : 'date')}`} onclick={clear}>×</button>
     {/if}
   </div>
 
@@ -231,7 +258,7 @@
       class="v2-date-time-popup"
       data-placement={popupPlacement}
       role="dialog"
-      aria-label={label ? `${label} date and time picker` : 'Date and time picker'}
+      aria-label={label ? `${label} ${showTime ? 'date and time' : 'date'} picker` : showTime ? 'Date and time picker' : 'Date picker'}
       style={`top:${popupTop}px;left:${popupLeft}px;width:min(320px,calc(100vw - 20px))`}
     >
       <div class="v2-date-time-month-head">
@@ -257,17 +284,32 @@
         {/each}
       </div>
 
-      <div class="v2-date-time-time-row">
-        <span>Time</span>
-        <label><span class="v2-visually-hidden">Hour</span><input type="number" min="0" max="23" inputmode="numeric" value={selected?.hour ?? 0} disabled={!selected} oninput={(event) => setTime('hour', event.currentTarget.value)}></label>
-        <span aria-hidden="true">:</span>
-        <label><span class="v2-visually-hidden">Minute</span><input type="number" min="0" max="59" inputmode="numeric" value={pad(selected?.minute ?? 0)} disabled={!selected} oninput={(event) => setTime('minute', event.currentTarget.value)}></label>
-      </div>
+      {#if showTime}
+        <div class="v2-date-time-time-row">
+          <label for={`${id}-time`}>Time <span>24-hour</span></label>
+          <input
+            id={`${id}-time`}
+            class="v2-date-time-time-input"
+            data-invalid={timeInvalid || undefined}
+            inputmode="numeric"
+            autocomplete="off"
+            placeholder="HH:MM"
+            maxlength="5"
+            value={timeDraft}
+            disabled={!selected}
+            aria-invalid={timeInvalid}
+            oninput={(event) => { timeDraft = event.currentTarget.value; timeInvalid = false; }}
+            onblur={commitTime}
+            onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); commitTime(); } }}
+          />
+        </div>
+        {#if timeInvalid}<div class="v2-date-time-error">Enter a 24-hour time from 00:00 to 23:59.</div>{/if}
+      {/if}
 
       <div class="v2-date-time-actions">
         <button type="button" onclick={chooseToday}>Today</button>
         <button type="button" disabled={!selected} onclick={clear}>Clear</button>
-        <button type="button" class="v2-date-time-done" onclick={() => { open = false; void tick().then(() => trigger?.focus()); }}>Done</button>
+        <button type="button" class="v2-date-time-done" onclick={close}>Done</button>
       </div>
     </div>
   {/if}
@@ -301,8 +343,12 @@
   .v2-date-time-calendar button[data-selected="true"]{background:var(--v2-accent-2);color:#eaf1ff;box-shadow:none}
   .v2-date-time-calendar button[data-selected="true"]:hover{background:color-mix(in srgb,var(--v2-accent-2) 86%,white)}
   .v2-date-time-calendar button:focus-visible,.v2-date-time-month-head button:focus-visible,.v2-date-time-actions button:focus-visible{outline:2px solid #4169a8;outline-offset:-2px}
-  .v2-date-time-time-row{display:grid;grid-template-columns:auto 58px auto 58px;align-items:center;justify-content:center;gap:6px;border-top:1px solid var(--v2-line);margin-top:8px;padding-top:8px;font-size:12px;color:var(--v2-muted)}
-  .v2-date-time-time-row input{width:58px;min-width:0;text-align:center;padding:6px 5px}
+  .v2-date-time-time-row{display:grid;grid-template-columns:minmax(0,1fr) 84px;align-items:center;gap:10px;border-top:1px solid var(--v2-line);margin-top:8px;padding-top:8px}
+  .v2-date-time-time-row label{font-size:12px;color:var(--v2-text);display:flex;align-items:baseline;gap:6px}
+  .v2-date-time-time-row label span{font-size:10px;color:var(--v2-muted)}
+  .v2-date-time-time-input{width:84px;min-width:0;text-align:center;font-variant-numeric:tabular-nums;letter-spacing:.04em;padding:7px 8px}
+  .v2-date-time-time-input[data-invalid="true"]{border-color:#7a3f46;color:#ffb1b1}
+  .v2-date-time-error{margin-top:5px;color:#ffb1b1;font-size:11px;text-align:right}
   .v2-date-time-actions{display:flex;justify-content:flex-end;gap:4px;border-top:1px solid var(--v2-line);margin-top:8px;padding-top:8px}
   .v2-date-time-actions button{padding:6px 9px;font-size:12px}
   .v2-date-time-actions button:disabled{opacity:.45;cursor:default}
