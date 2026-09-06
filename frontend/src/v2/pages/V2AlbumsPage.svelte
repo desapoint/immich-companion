@@ -14,33 +14,32 @@
   import V2Table from '../components/V2Table.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
+  import { demoAssetState, type DemoAlbumRecord } from '../demo/demoAssetState.svelte';
 
-  type AlbumModal = { id:number; mode:'create'|'edit'; name:string; description:string };
-  type AlbumRow = { name:string; assets:number; description:string };
+  type AlbumModal = { id:number; mode:'create'|'edit'; albumId:string; name:string; description:string };
 
   let page = $state(1);
   let pageSize = $state(24);
   let resultMode = $state<ResultMode>('Pagination');
   let loaded = $state(24);
   let sort = $state('name:asc');
+  let query = $state('');
   let modalSequence = 0;
   let modals = $state<AlbumModal[]>([]);
-  const total = 42;
-  const albums: AlbumRow[] = [
-    {name:'Family',assets:822,description:'Family photos'},
-    {name:'Trips',assets:416,description:'Travel albums'},
-    {name:'Screenshots',assets:201,description:'Captured screenshots'},
-    {name:'Favorites Export',assets:99,description:'Export-ready favorites'},
-    {name:'Projects',assets:64,description:'Project references'},
-    {name:'Camera Imports',assets:1204,description:'Camera import batches'},
-  ];
+
+  const normalizedQuery = $derived(query.trim().toLocaleLowerCase());
+  const albums = $derived(demoAssetState.albums.filter((album) => {
+    if (!normalizedQuery) return true;
+    return `${album.album_name}\n${album.description}`.toLocaleLowerCase().includes(normalizedQuery);
+  }));
   const sortedAlbums = $derived([...albums].sort((a,b)=>{
     const [field,direction] = sort.split(':');
     const multiplier = direction === 'desc' ? -1 : 1;
-    if (field === 'assets') return (a.assets-b.assets)*multiplier;
+    if (field === 'assets') return (a.asset_count-b.asset_count)*multiplier;
     if (field === 'description') return a.description.localeCompare(b.description)*multiplier;
-    return a.name.localeCompare(b.name)*multiplier;
+    return a.album_name.localeCompare(b.album_name)*multiplier;
   }));
+  const total = $derived(albums.length);
 
   function setPageSize(next: number): void {
     pageSize = next;
@@ -55,12 +54,11 @@
   }
 
   function openCreate(): void {
-    modals = [...modals, { id: ++modalSequence, mode:'create', name:'', description:'' }];
+    modals = [...modals, { id: ++modalSequence, mode:'create', albumId:'', name:'', description:'' }];
   }
 
-  function openEdit(name: string): void {
-    const album = albums.find((item)=>item.name===name);
-    modals = [...modals, { id: ++modalSequence, mode:'edit', name, description:album?.description ?? `${name} album description` }];
+  function openEdit(album: DemoAlbumRecord): void {
+    modals = [...modals, { id: ++modalSequence, mode:'edit', albumId:album.id, name:album.album_name, description:album.description }];
   }
 
   function closeModal(id: number): void {
@@ -74,11 +72,11 @@
 
 <V2PageLayout title="Albums" description="Search, sort, create, edit, delete and use albums to filter the Assets workspace.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button>Delete selected</V2Button><V2Button variant="primary" onclick={openCreate}>Create album</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input placeholder="Search albums…"><V2Button variant="primary">Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>{query=event.currentTarget.value;page=1;loaded=pageSize}}><V2Button variant="primary">Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
 
   <V2Zone>
     <V2Toolbar>
-      <V2Badge text={`${total} albums`} />
+      <V2Badge text={`${total} album${total === 1 ? '' : 's'}`} />
       {#snippet actions()}
         <V2CollectionControls
           id="album-results"
@@ -96,7 +94,7 @@
     <V2Card>
       <V2Table layout="fixed">
         <thead><tr><th class="v2-collection-check-column"></th><th>Name</th><th class="v2-collection-count-column">Assets</th><th class="v2-collection-description-column">Description</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead>
-        <tbody>{#each sortedAlbums as album}<tr><td class="v2-collection-check-column"><input type="checkbox" aria-label={`Select ${album.name}`}></td><td><b class="v2-collection-title">{album.name}</b></td><td class="v2-collection-count-column">{album.assets}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={() => openEdit(album.name)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{/each}</tbody>
+        <tbody>{#each sortedAlbums as album (album.id)}<tr><td class="v2-collection-check-column"><input type="checkbox" aria-label={`Select ${album.album_name}`}></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description || '—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button>Filter assets</V2Button><V2Button onclick={() => openEdit(album)}>Edit</V2Button><V2Button variant="danger">Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="5" class="v2-muted">No albums match this search.</td></tr>{/each}</tbody>
       </V2Table>
     </V2Card>
     {#if resultMode === 'Pagination'}
