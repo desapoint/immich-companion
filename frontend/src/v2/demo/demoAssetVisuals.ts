@@ -77,7 +77,6 @@ function buildSvg(asset: DemoVisualAsset, size: VisualSize): string {
   const subjectScale = 0.75 + seeded(seed, 13) * 0.8;
   const cloudX = Math.round(width * (0.12 + seeded(seed, 14) * 0.64));
   const cloudY = Math.round(height * (0.1 + seeded(seed, 15) * 0.2));
-  const isVideo = source.type === 'VIDEO';
   const label = escapeXml(asset.original_file_name ?? 'Demo asset');
   const noiseOpacity = size === 'preview' ? 0.055 : 0.038;
 
@@ -111,13 +110,14 @@ function buildSvg(asset: DemoVisualAsset, size: VisualSize): string {
     <path d="M${Math.round(width * .68)} ${Math.round(foregroundY * .94)} h${Math.round(width * .13)} v${Math.round(height * .085)} h-${Math.round(width * .13)}z" fill="hsl(${(hue + 25) % 360} 38% 46%)" opacity=".9"/>
     <path d="M${Math.round(width * .665)} ${Math.round(foregroundY * .94)} l${Math.round(width * .08)} -${Math.round(height * .065)} l${Math.round(width * .075)} ${Math.round(height * .065)}z" fill="hsl(${(hue + 8) % 360} 25% 25%)"/>
     <rect width="${width}" height="${height}" filter="url(#grain)" opacity="1"/>
-    ${isVideo ? `<g transform="translate(${width * .5} ${height * .5})"><circle r="${Math.min(width, height) * .075}" fill="#000" opacity=".42"/><path d="M-${Math.min(width, height) * .018} -${Math.min(width, height) * .033} L${Math.min(width, height) * .037} 0 L-${Math.min(width, height) * .018} ${Math.min(width, height) * .033}Z" fill="#fff" opacity=".92"/></g>` : ''}
     ${size === 'full' ? `<g opacity=".5"><rect x="${width * .025}" y="${height * .94}" width="${Math.min(width * .38, 520)}" height="${height * .036}" rx="${height * .012}" fill="#000" opacity=".28"/><text x="${width * .04}" y="${height * .965}" fill="#fff" font-family="system-ui,sans-serif" font-size="${Math.max(16, height * .018)}">${label}</text></g>` : ''}
   </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
 function visual(asset: DemoVisualAsset, size: VisualSize): string {
+  const source = inferredShape(asset);
+  if (source.type === 'VIDEO') return size === 'preview' ? '/demo-fixtures/video-poster.jpg' : '/demo-fixtures/clip.mp4';
   const key = `${size}:${asset.id}:${asset.width ?? ''}:${asset.height ?? ''}:${asset.asset_type ?? asset.type ?? ''}`;
   const cached = cache.get(key);
   if (cached) return cached;
