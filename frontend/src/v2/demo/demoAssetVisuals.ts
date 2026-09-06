@@ -34,16 +34,33 @@ function escapeXml(value: string): string {
   })[character] ?? character);
 }
 
+function inferredShape(asset: DemoVisualAsset): { width: number; height: number; type: string | null } {
+  if (asset.width && asset.height) return { width: asset.width, height: asset.height, type: asset.asset_type ?? asset.type ?? null };
+  const uuidTail = asset.id.match(/-([0-9a-f]{12})$/i)?.[1];
+  const ordinal = uuidTail ? Number.parseInt(uuidTail, 16) : Number.NaN;
+  if (Number.isFinite(ordinal) && ordinal > 0 && ordinal < 100000) {
+    const index = ordinal - 1;
+    const isVideo = index % 11 === 0;
+    return {
+      width: isVideo ? 1920 : index % 4 === 0 ? 4032 : 3024,
+      height: isVideo ? 1080 : index % 4 === 0 ? 3024 : 4032,
+      type: asset.asset_type ?? asset.type ?? (isVideo ? 'VIDEO' : 'IMAGE'),
+    };
+  }
+  const landscape = hashString(asset.id) % 3 !== 0;
+  return { width: landscape ? 4 : 3, height: landscape ? 3 : 4, type: asset.asset_type ?? asset.type ?? null };
+}
+
 function dimensions(asset: DemoVisualAsset, size: VisualSize): { width: number; height: number } {
-  const sourceWidth = Math.max(1, asset.width ?? 4);
-  const sourceHeight = Math.max(1, asset.height ?? 3);
-  const landscape = sourceWidth >= sourceHeight;
+  const source = inferredShape(asset);
+  const landscape = source.width >= source.height;
   if (size === 'preview') return landscape ? { width: 420, height: 315 } : { width: 315, height: 420 };
   return landscape ? { width: 1600, height: 1200 } : { width: 1200, height: 1600 };
 }
 
 function buildSvg(asset: DemoVisualAsset, size: VisualSize): string {
   const seed = hashString(asset.id);
+  const source = inferredShape(asset);
   const { width, height } = dimensions(asset, size);
   const horizon = Math.round(height * (0.48 + seeded(seed, 1) * 0.16));
   const hue = Math.round(seeded(seed, 2) * 360);
@@ -60,7 +77,7 @@ function buildSvg(asset: DemoVisualAsset, size: VisualSize): string {
   const subjectScale = 0.75 + seeded(seed, 13) * 0.8;
   const cloudX = Math.round(width * (0.12 + seeded(seed, 14) * 0.64));
   const cloudY = Math.round(height * (0.1 + seeded(seed, 15) * 0.2));
-  const isVideo = (asset.asset_type ?? asset.type) === 'VIDEO';
+  const isVideo = source.type === 'VIDEO';
   const label = escapeXml(asset.original_file_name ?? 'Demo asset');
   const noiseOpacity = size === 'preview' ? 0.055 : 0.038;
 
