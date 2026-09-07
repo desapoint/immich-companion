@@ -869,6 +869,17 @@ class ImmichApiClient:
         response = await self._request("GET", "/api/albums", operation="list albums")
         return [ImmichAlbum.model_validate(payload) for payload in response.json()]
 
+    async def get_album(self, album_id: UUID) -> ImmichAlbum:
+        """Fetch one album through Immich's supported API."""
+
+        response = await self._request(
+            "GET",
+            f"/api/albums/{album_id}",
+            operation="get album",
+            params={"withoutAssets": True},
+        )
+        return ImmichAlbum.model_validate(response.json())
+
     async def list_libraries(self) -> list[ImmichLibrary]:
         """Fetch libraries through Immich for user-facing policy selection."""
 

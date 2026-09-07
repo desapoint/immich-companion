@@ -234,6 +234,40 @@ def test_asset_search_requires_companion_database_configuration() -> None:
     assert response.json()["detail"] == "The companion database is not configured."
 
 
+def test_managed_album_detail_is_read_directly_from_immich() -> None:
+    album_id = "44444444-4444-4444-8444-444444444444"
+    thumbnail_id = "11111111-1111-4111-8111-111111111111"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/albums/{album_id}"
+        return httpx.Response(
+            200,
+            json={
+                "id": album_id,
+                "albumName": "Family",
+                "description": "Summer archive",
+                "albumThumbnailAssetId": thumbnail_id,
+                "assetCount": 14,
+                "createdAt": "2026-08-20T12:01:00Z",
+                "updatedAt": "2026-08-20T12:02:00Z",
+            },
+        )
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get(f"/api/albums/manage/{album_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": album_id,
+        "name": "Family",
+        "description": "Summer archive",
+        "album_thumbnail_asset_id": thumbnail_id,
+        "asset_count": 14,
+        "created_at": "2026-08-20T12:01:00Z",
+        "updated_at": "2026-08-20T12:02:00Z",
+    }
+
+
 def test_cross_source_duplicate_api_requires_companion_database() -> None:
     with TestClient(create_app(settings(), pong_transport())) as client:
         result = client.get("/api/assets/duplicates/cross-source")

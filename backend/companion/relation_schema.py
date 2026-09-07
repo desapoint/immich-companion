@@ -12,6 +12,7 @@ class AlbumManagementItem(BaseModel):
     id: UUID
     name: str
     description: str = ""
+    album_thumbnail_asset_id: UUID | None = None
     asset_count: int = 0
     created_at: datetime | None = None
     updated_at: datetime | None = None

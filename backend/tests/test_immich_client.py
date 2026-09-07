@@ -19,6 +19,7 @@ from companion.immich import (
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
+ALBUM_ONE = UUID("44444444-4444-4444-8444-444444444444")
 
 
 def settings(**overrides: object) -> Settings:
@@ -62,6 +63,35 @@ def asset_payload(asset_id: UUID, filename: str) -> dict[str, object]:
         "people": [],
         "tags": [],
     }
+
+
+def album_payload(album_id: UUID = ALBUM_ONE) -> dict[str, object]:
+    return {
+        "id": str(album_id),
+        "albumName": "Family",
+        "description": "Summer archive",
+        "albumThumbnailAssetId": str(ASSET_ONE),
+        "assetCount": 14,
+        "createdAt": "2026-08-20T12:01:00Z",
+        "updatedAt": "2026-08-20T12:02:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_album_is_typed_and_uses_the_supported_api() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "private-test-key"
+        assert request.url.path == f"/api/albums/{ALBUM_ONE}"
+        assert request.url.params["withoutAssets"] == "true"
+        return httpx.Response(200, json=album_payload())
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    album = await client.get_album(ALBUM_ONE)
+
+    assert album.id == ALBUM_ONE
+    assert album.album_name == "Family"
+    assert album.album_thumbnail_asset_id == ASSET_ONE
+    assert album.asset_count == 14
 
 
 @pytest.mark.asyncio

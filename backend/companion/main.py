@@ -98,7 +98,13 @@ from companion.duplicate_service import (
     CrossSourceDuplicateTaskHandler,
     DuplicateResolutionTaskHandler,
 )
-from companion.immich import ImmichApiClient, ImmichApiError, ImmichLibrary, ImmichTag
+from companion.immich import (
+    ImmichAlbum,
+    ImmichApiClient,
+    ImmichApiError,
+    ImmichLibrary,
+    ImmichTag,
+)
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_schema import (
     AssetIntegrityAnalyzeRequest,
@@ -864,34 +870,49 @@ def create_app(
             raise HTTPException(status_code=503, detail="Immich is not configured.")
         return immich
 
+    def album_management_item(
+        album: ImmichAlbum, *, asset_count: int | None = None
+    ) -> AlbumManagementItem:
+        return AlbumManagementItem(
+            id=album.id,
+            name=album.album_name,
+            description=album.description,
+            album_thumbnail_asset_id=album.album_thumbnail_asset_id,
+            asset_count=album.asset_count if asset_count is None else asset_count,
+            created_at=album.created_at,
+            updated_at=album.updated_at,
+        )
+
     @app.get("/api/albums/manage", response_model=RelationPage[AlbumManagementItem])
     async def manage_albums(page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
                             search: str | None = Query(None, max_length=255),
-                            sort: Literal["name", "asset_count"] = "name",
+                            sort: Literal["name", "asset_count", "description"] = "name",
                             direction: Literal["asc", "desc"] = "asc"):
         albums = await require_immich().list_album_catalog()
         counts = await require_asset_repository().album_asset_counts()
         if search:
             needle = search.casefold()
-            albums = [a for a in albums if needle in a.album_name.casefold()]
+            albums = [
+                album
+                for album in albums
+                if needle in album.album_name.casefold()
+                or needle in album.description.casefold()
+            ]
         albums.sort(
-            key=lambda album: album.album_name.casefold()
-            if sort == "name"
-            else counts.get(album.id, 0),
+            key=lambda album: (
+                album.album_name.casefold()
+                if sort == "name"
+                else album.description.casefold()
+                if sort == "description"
+                else counts.get(album.id, 0)
+            ),
             reverse=direction == "desc",
         )
         total = len(albums)
         start = (page - 1) * page_size
         items = [
-            AlbumManagementItem(
-                id=a.id,
-                name=a.album_name,
-                description=a.description,
-                asset_count=counts.get(a.id, 0),
-                created_at=a.created_at,
-                updated_at=a.updated_at,
-            )
-            for a in albums[start : start + page_size]
+            album_management_item(album, asset_count=counts.get(album.id, 0))
+            for album in albums[start : start + page_size]
         ]
         return RelationPage(
             items=items,
@@ -901,17 +922,14 @@ def create_app(
             pages=(total + page_size - 1) // page_size,
         )
 
+    @app.get("/api/albums/manage/{album_id}", response_model=AlbumManagementItem)
+    async def get_managed_album(album_id: UUID) -> AlbumManagementItem:
+        return album_management_item(await require_immich().get_album(album_id))
+
     @app.post("/api/albums/manage", response_model=AlbumManagementItem)
     async def create_managed_album(request: AlbumCreateRequest):
         album = await require_immich().create_album(request.name, request.description)
-        return AlbumManagementItem(
-            id=album.id,
-            name=album.album_name,
-            description=album.description,
-            asset_count=album.asset_count,
-            created_at=album.created_at,
-            updated_at=album.updated_at,
-        )
+        return album_management_item(album)
 
     @app.post("/api/albums/manage/batch-delete")
     async def batch_delete_albums(request: RelationBatchDeleteRequest):
@@ -932,14 +950,7 @@ def create_app(
         album = await require_immich().update_album(
             album_id, name=request.name, description=request.description
         )
-        return AlbumManagementItem(
-            id=album.id,
-            name=album.album_name,
-            description=album.description,
-            asset_count=album.asset_count,
-            created_at=album.created_at,
-            updated_at=album.updated_at,
-        )
+        return album_management_item(album)
 
     @app.delete("/api/albums/manage/{album_id}", status_code=204)
     async def delete_managed_album(album_id: UUID) -> Response:
