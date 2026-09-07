@@ -260,7 +260,9 @@ class AssetRepository:
                 tag_rows = []
                 tag_memberships = []
                 for tag in tags:
-                    member_ids = [asset_id for asset_id in tag.asset_ids if asset_id in unique_assets]
+                    member_ids = [
+                        asset_id for asset_id in tag.asset_ids if asset_id in unique_assets
+                    ]
                     tag_rows.append(
                         {
                             "id": tag.id,
@@ -530,9 +532,7 @@ class AssetRepository:
                 ids.append(member_id)
         return ids
 
-    async def get_asset_stack(
-        self, asset_id: UUID
-    ) -> tuple[UUID, dict[str, object]] | None:
+    async def get_asset_stack(self, asset_id: UUID) -> tuple[UUID, dict[str, object]] | None:
         """Return an asset's synchronized stack ID and payload, if present."""
 
         async with self._database.sessions() as session:
@@ -560,9 +560,7 @@ class AssetRepository:
 
         async with self._database.sessions() as session, session.begin():
             result = await session.execute(
-                delete(AssetRecord).where(
-                    AssetRecord.id.in_(list(dict.fromkeys(asset_ids)))
-                )
+                delete(AssetRecord).where(AssetRecord.id.in_(list(dict.fromkeys(asset_ids))))
             )
             return int(result.rowcount or 0)
 
@@ -623,10 +621,7 @@ class AssetRepository:
                 await session.execute(
                     insert(AlbumAssetRecord)
                     .values(
-                        [
-                            {"album_id": album_id, "asset_id": asset_id}
-                            for asset_id in unique_ids
-                        ]
+                        [{"album_id": album_id, "asset_id": asset_id} for asset_id in unique_ids]
                     )
                     .on_conflict_do_nothing()
                 )
@@ -660,9 +655,7 @@ class AssetRepository:
                 )
                 await session.execute(
                     insert(TagAssetRecord)
-                    .values(
-                        [{"tag_id": tag_id, "asset_id": asset_id} for asset_id in unique_ids]
-                    )
+                    .values([{"tag_id": tag_id, "asset_id": asset_id} for asset_id in unique_ids])
                     .on_conflict_do_nothing()
                 )
             else:
@@ -673,9 +666,7 @@ class AssetRepository:
                 .where(TagAssetRecord.tag_id == tag_id)
             )
             await session.execute(
-                update(TagRecord)
-                .where(TagRecord.id == tag_id)
-                .values(asset_count=int(count or 0))
+                update(TagRecord).where(TagRecord.id == tag_id).values(asset_count=int(count or 0))
             )
             return int(count or 0)
 
@@ -697,9 +688,7 @@ class AssetRepository:
                     .on_conflict_do_nothing()
                 )
 
-    async def replace_asset_album_memberships(
-        self, asset_id: UUID, album_ids: list[UUID]
-    ) -> None:
+    async def replace_asset_album_memberships(self, asset_id: UUID, album_ids: list[UUID]) -> None:
         """Replace one asset's album memberships after a complete API read."""
 
         unique_ids = list(dict.fromkeys(album_ids))
@@ -714,10 +703,7 @@ class AssetRepository:
                 await session.execute(
                     insert(AlbumAssetRecord)
                     .values(
-                        [
-                            {"album_id": album_id, "asset_id": asset_id}
-                            for album_id in unique_ids
-                        ]
+                        [{"album_id": album_id, "asset_id": asset_id} for album_id in unique_ids]
                     )
                     .on_conflict_do_nothing()
                 )
@@ -1553,9 +1539,7 @@ class AssetRepository:
                 ).all()
             )
 
-    async def selection_membership(
-        self, selection_id: UUID, asset_ids: list[UUID]
-    ) -> list[UUID]:
+    async def selection_membership(self, selection_id: UUID, asset_ids: list[UUID]) -> list[UUID]:
         async with self._database.sessions() as session:
             return list(
                 (
@@ -1593,15 +1577,13 @@ class AssetRepository:
                 literal(selection_id).label("selection_id"), AssetRecord.id.label("asset_id")
             ).where(predicate)
             await session.execute(
-                insert(SelectionSetMemberRecord).from_select(
-                    ["selection_id", "asset_id"], source
-                )
+                insert(SelectionSetMemberRecord).from_select(["selection_id", "asset_id"], source)
             )
             record.selected_count = int(
                 await session.scalar(
-                    select(func.count()).select_from(SelectionSetMemberRecord).where(
-                        SelectionSetMemberRecord.selection_id == selection_id
-                    )
+                    select(func.count())
+                    .select_from(SelectionSetMemberRecord)
+                    .where(SelectionSetMemberRecord.selection_id == selection_id)
                 )
             )
             record.revision += 1
@@ -1634,10 +1616,12 @@ class AssetRepository:
             if selected:
                 await session.execute(
                     insert(SelectionSetMemberRecord)
-                    .values([
-                        {"selection_id": selection_id, "asset_id": asset_id}
-                        for asset_id in asset_ids
-                    ])
+                    .values(
+                        [
+                            {"selection_id": selection_id, "asset_id": asset_id}
+                            for asset_id in asset_ids
+                        ]
+                    )
                     .on_conflict_do_nothing()
                 )
             else:
@@ -1649,9 +1633,9 @@ class AssetRepository:
                 )
             record.selected_count = int(
                 await session.scalar(
-                    select(func.count()).select_from(SelectionSetMemberRecord).where(
-                        SelectionSetMemberRecord.selection_id == selection_id
-                    )
+                    select(func.count())
+                    .select_from(SelectionSetMemberRecord)
+                    .where(SelectionSetMemberRecord.selection_id == selection_id)
                 )
             )
             record.revision += 1

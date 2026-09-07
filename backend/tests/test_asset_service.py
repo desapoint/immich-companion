@@ -94,13 +94,16 @@ class FakeImmich:
 
     async def iter_asset_pages(self, **_kwargs):
         self.calls.append("assets")
-        yield 1, ImmichAssetSearchPage.model_validate(
-            {
-                "count": len(self.assets),
-                "total": len(self.assets),
-                "items": self.assets,
-                "nextPage": None,
-            }
+        yield (
+            1,
+            ImmichAssetSearchPage.model_validate(
+                {
+                    "count": len(self.assets),
+                    "total": len(self.assets),
+                    "items": self.assets,
+                    "nextPage": None,
+                }
+            ),
         )
 
     async def count_assets(self, **_kwargs) -> int:
@@ -457,22 +460,23 @@ async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> N
         page_size: int | None = None
         start_page: int | None = None
 
-        async def iter_asset_pages(
-            self, *, page_size, updated_after, updated_before, start_page
-        ):
+        async def iter_asset_pages(self, *, page_size, updated_after, updated_before, start_page):
             assert updated_after is None
             assert updated_before is None
             self.page_size = page_size
             self.start_page = start_page
             page_items = [media[:4], media[4:8], media[8:]]
             for page_number, items in enumerate(page_items, start=1):
-                yield page_number, ImmichAssetSearchPage.model_validate(
-                    {
-                        "count": len(items),
-                        "total": len(media),
-                        "items": items,
-                        "nextPage": str(page_number + 1) if page_number < 3 else None,
-                    }
+                yield (
+                    page_number,
+                    ImmichAssetSearchPage.model_validate(
+                        {
+                            "count": len(items),
+                            "total": len(media),
+                            "items": items,
+                            "nextPage": str(page_number + 1) if page_number < 3 else None,
+                        }
+                    ),
                 )
 
     immich = PagedImmich()
@@ -522,28 +526,32 @@ async def test_media_sync_resumes_inside_large_api_page() -> None:
     class ResumeImmich:
         start_page: int | None = None
 
-        async def iter_asset_pages(
-            self, *, page_size, updated_after, updated_before, start_page
-        ):
+        async def iter_asset_pages(self, *, page_size, updated_after, updated_before, start_page):
             assert page_size == 1000
             assert updated_after is None
             assert updated_before is None
             self.start_page = start_page
-            yield 2, ImmichAssetSearchPage.model_validate(
-                {
-                    "count": 4,
-                    "total": 5,
-                    "items": media[:4],
-                    "nextPage": "3",
-                }
+            yield (
+                2,
+                ImmichAssetSearchPage.model_validate(
+                    {
+                        "count": 4,
+                        "total": 5,
+                        "items": media[:4],
+                        "nextPage": "3",
+                    }
+                ),
             )
-            yield 3, ImmichAssetSearchPage.model_validate(
-                {
-                    "count": 1,
-                    "total": 5,
-                    "items": media[4:],
-                    "nextPage": None,
-                }
+            yield (
+                3,
+                ImmichAssetSearchPage.model_validate(
+                    {
+                        "count": 1,
+                        "total": 5,
+                        "items": media[4:],
+                        "nextPage": None,
+                    }
+                ),
             )
 
     immich = ResumeImmich()
@@ -639,7 +647,7 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
 
 
 @pytest.mark.asyncio
-async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurrently() -> None:
+async def test_tag_relationships_skip_empty_tags_and_use_runtime_concurrency() -> None:
     class ConcurrentTagImmich:
         def __init__(self) -> None:
             self.active = 0
@@ -656,10 +664,7 @@ async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurre
             yield [] if tag_id == tag_ids[0] else [ASSET_ONE]
             self.active -= 1
 
-    tag_ids = [
-        UUID(f"{index:08x}-0000-4000-8000-000000000000")
-        for index in range(1, 7)
-    ]
+    tag_ids = [UUID(f"{index:08x}-0000-4000-8000-000000000000") for index in range(1, 7)]
     tags = [
         ImmichTag(
             id=tag_id,
@@ -688,7 +693,7 @@ async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurre
     )
 
     assert set(immich.calls) == set(tag_ids)
-    assert immich.maximum_active == 6
+    assert immich.maximum_active == 4
     assert counters["tag_memberships"] == 5
     assert counters["tag_relationships_scanned"] == 6
     assert counters["tag_empty_relationships"] == 1
