@@ -25,22 +25,31 @@ async function requireDestructiveActions(): Promise<void> {
 }
 
 function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source: T): T {
+  const guardedAssets = new Proxy(source.assets, {
+    get(target, property, receiver) {
+      if (property !== 'trash') return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<typeof source.assets.trash>) => {
+        await requireDestructiveActions();
+        return source.assets.trash(...args);
+      };
+    },
+  });
+
+  const guardedDuplicates = new Proxy(source.duplicates, {
+    get(target, property, receiver) {
+      if (property !== 'applyDecisions') return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<typeof source.duplicates.applyDecisions>) => {
+        const [resolution] = args;
+        if (Object.values(resolution.decisions).includes('delete')) await requireDestructiveActions();
+        return source.duplicates.applyDecisions(...args);
+      };
+    },
+  });
+
   return {
     ...source,
-    assets: {
-      ...source.assets,
-      trash: async (target) => {
-        await requireDestructiveActions();
-        return source.assets.trash(target);
-      },
-    },
-    duplicates: {
-      ...source.duplicates,
-      applyDecisions: async (resolution) => {
-        if (Object.values(resolution.decisions).includes('delete')) await requireDestructiveActions();
-        return source.duplicates.applyDecisions(resolution);
-      },
-    },
+    assets: guardedAssets,
+    duplicates: guardedDuplicates,
   } as T;
 }
 
