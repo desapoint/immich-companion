@@ -1,14 +1,16 @@
 """V2-owned task coordinator facade.
 
-The durable PostgreSQL implementation is inherited from the existing coordinator so V2
-keeps the same persisted tasks, LISTEN/NOTIFY updates, retry/lease semantics, and frontend
-stream behavior. V2-specific checkpoint helpers live here and can evolve without changing
-V1 imports.
+V2 reuses the proven durable PostgreSQL repository, leases, retries and LISTEN/NOTIFY
+transport, but owns the handler execution boundary and checkpoint contract. This keeps the
+frontend status behavior compatible while allowing V2 sync semantics to evolve without
+editing the V1 coordinator module.
 """
 
 from __future__ import annotations
 
-from typing import Any
+import asyncio
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
 
 from companion.task_coordinator import (
     PermanentTaskError,
@@ -20,6 +22,7 @@ from companion.task_coordinator import (
     TaskLeaseLostError,
     TaskRepository,
 )
+from companion.v2.task_schema import TaskStatusView
 
 
 class TaskContext(_TaskContext):
@@ -55,14 +58,80 @@ class TaskContext(_TaskContext):
 
 
 class TaskCoordinator(_TaskCoordinator):
-    """V2 coordinator type.
+    """V2 coordinator using the existing durable transport with a V2 context."""
 
-    It intentionally preserves the existing durable storage and notification semantics.
-    The distinct V2 import path prevents future V2-only coordinator changes from requiring
-    edits to the V1 module.
-    """
+    async def _execute(self, task: TaskStatusView, worker_id) -> None:
+        handler = self._handlers.get(task.task_type)
+        if handler is None:
+            await self._repository.fail(
+                task.id,
+                worker_id,
+                ValueError(f"No handler registered for {task.task_type}"),
+                retryable=False,
+                next_attempt_at=None,
+                max_attempts=self._max_attempts,
+            )
+            return
 
-    pass
+        context = TaskContext(
+            self._repository,
+            task,
+            worker_id,
+            self._lease_duration,
+            notify=lambda: self._publish(task.id),
+        )
+        heartbeat = asyncio.create_task(self._heartbeat(context), name=f"heartbeat-{task.id}")
+        try:
+            result = await handler.execute(context, task.payload)
+        except TaskCancelledError as error:
+            await self._repository.fail(
+                task.id,
+                worker_id,
+                error,
+                retryable=False,
+                next_attempt_at=None,
+                max_attempts=self._max_attempts,
+            )
+            await self._publish(task.id)
+        except RetryableTaskError as error:
+            delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
+            await self._repository.fail(
+                task.id,
+                worker_id,
+                error,
+                retryable=True,
+                next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
+                max_attempts=self._max_attempts,
+            )
+            await self._publish(task.id)
+        except PermanentTaskError as error:
+            await self._repository.fail(
+                task.id,
+                worker_id,
+                error,
+                retryable=False,
+                next_attempt_at=None,
+                max_attempts=self._max_attempts,
+            )
+            await self._publish(task.id)
+        except Exception as error:
+            delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
+            await self._repository.fail(
+                task.id,
+                worker_id,
+                error,
+                retryable=True,
+                next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
+                max_attempts=self._max_attempts,
+            )
+            await self._publish(task.id)
+        else:
+            await self._repository.complete(task.id, worker_id, result)
+            await self._publish(task.id)
+        finally:
+            heartbeat.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat
 
 
 __all__ = [
