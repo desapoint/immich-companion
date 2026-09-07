@@ -78,7 +78,10 @@ class SyncProgress(BaseModel):
             album_prefix, _, remainder = self.detail.partition(" album and ")
             if remainder.endswith(" tag associations"):
                 self.detail = f"{album_prefix} album associations"
-        elif self.detail.startswith("Album associations ") and " · tag associations 0/" in self.detail:
+        elif (
+            self.detail.startswith("Album associations ")
+            and " · tag associations 0/" in self.detail
+        ):
             self.detail = self.detail.split(" · tag associations 0/", 1)[0]
         return self
 

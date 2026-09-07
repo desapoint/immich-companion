@@ -9,6 +9,8 @@
     iconOnly?: boolean;
     eligibleLabel?: string;
     ineligibleLabel?: string;
+    selectedLabel?: string;
+    selectedTitle?: string;
     onchange?: () => void;
   }
 
@@ -20,9 +22,11 @@
     iconOnly = false,
     eligibleLabel = 'Make stack main',
     ineligibleLabel = 'Choose Stack first',
+    selectedLabel = 'Stack main',
+    selectedTitle = 'This image is the stack main image',
     onchange,
   }: Props = $props();
-  const label = $derived(selected ? 'Stack main' : eligible ? eligibleLabel : ineligibleLabel);
+  const label = $derived(selected ? selectedLabel : eligible ? eligibleLabel : ineligibleLabel);
 </script>
 
 <button
@@ -33,7 +37,7 @@
   disabled={disabled || !eligible}
   aria-pressed={selected}
   aria-label={label}
-  title={eligible ? (selected ? 'This image is the stack main image' : eligibleLabel) : ineligibleLabel}
+  title={eligible ? (selected ? selectedTitle : eligibleLabel) : ineligibleLabel}
   onclick={() => onchange?.()}
 >
   <Icon name="star" size=".8rem" />

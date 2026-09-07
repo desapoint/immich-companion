@@ -78,6 +78,7 @@ class DuplicateReviewRepository:
         member_fingerprint: str,
         member_decisions: list[dict[str, str]],
         stack_primary_asset_id: UUID | None,
+        stack_resolution: str,
         metadata_keeper_asset_id: UUID | None,
         draft_status: str,
     ) -> DuplicateGroupReviewRecord:
@@ -88,6 +89,7 @@ class DuplicateReviewRepository:
             "member_fingerprint": member_fingerprint,
             "member_decisions": member_decisions,
             "stack_primary_asset_id": stack_primary_asset_id,
+            "stack_resolution": stack_resolution,
             "metadata_keeper_asset_id": metadata_keeper_asset_id,
             "draft_status": draft_status,
             "last_seen_at": now,
@@ -128,6 +130,7 @@ class DuplicateReviewRepository:
                 manual_primary_asset_id=None,
                 member_decisions=[],
                 stack_primary_asset_id=None,
+                stack_resolution="move_selected",
                 metadata_keeper_asset_id=None,
                 draft_status="pending",
                 review_status="pending",

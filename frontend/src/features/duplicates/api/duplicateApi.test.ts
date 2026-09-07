@@ -214,6 +214,7 @@ describe('duplicate API', () => {
         { asset_id: 'asset-2', disposition: 'keep' as const, source: 'manual' as const, status: 'pending' as const },
       ],
       stack_primary_asset_id: 'asset-1',
+      stack_resolution: 'include_existing' as const,
       metadata_keeper_asset_id: 'asset-2',
       status: 'pending' as const,
     };

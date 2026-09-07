@@ -54,6 +54,43 @@ class StackService:
                 )
         return conflicts
 
+    async def conflict_snapshot(self, asset_ids: list[UUID]) -> list[dict[str, object]]:
+        """Freeze exact existing-stack inputs for later drift validation."""
+
+        return self.select_conflict_snapshot(asset_ids, await self.stack_snapshot())
+
+    async def stack_snapshot(self) -> list[dict[str, object]]:
+        """Read the current stack topology once for one planning operation."""
+
+        return sorted(
+            [
+                {
+                    "stack_id": str(stack.id),
+                    "primary_asset_id": str(stack.primary_asset_id),
+                    "member_asset_ids": sorted(str(member.id) for member in stack.assets),
+                }
+                for stack in await self._immich.list_stacks()
+            ],
+            key=lambda item: str(item["stack_id"]),
+        )
+
+    @staticmethod
+    def select_conflict_snapshot(
+        asset_ids: list[UUID],
+        snapshot: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Select relevant topology from an already bounded shared snapshot."""
+
+        selected = set(asset_ids)
+        selected_text = {str(identifier) for identifier in selected}
+        return [
+            item
+            for item in snapshot
+            if selected_text.intersection(
+                str(identifier) for identifier in item["member_asset_ids"]
+            )
+        ]
+
     async def without_existing_members(self, asset_ids: list[UUID]) -> list[UUID]:
         stacked_ids = {
             member.id
