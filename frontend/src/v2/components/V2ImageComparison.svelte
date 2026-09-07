@@ -21,6 +21,7 @@
     diffHue = $bindable(190),
     diffContrast = $bindable(180),
     diffBinary = $bindable(true),
+    diffTolerance = $bindable(8),
   }: {
     selectedSrc: string;
     referenceSrc: string;
@@ -32,6 +33,7 @@
     diffHue?: number;
     diffContrast?: number;
     diffBinary?: boolean;
+    diffTolerance?: number;
   } = $props();
 
   const camera = new ViewerViewportController();
@@ -193,6 +195,7 @@
         bind:diffHue
         bind:diffContrast
         bind:diffBinary
+        bind:diffTolerance
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
         onviewport={setViewport}
