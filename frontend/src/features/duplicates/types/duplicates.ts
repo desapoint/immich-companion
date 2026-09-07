@@ -1,5 +1,6 @@
 import type { DuplicateKeeperPolicy, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
 import type { DuplicateDecisionSource, DuplicateDecisionStatus, DuplicateDisposition } from '../../../lib/types/duplicateReview';
+import type { StackResolution } from '../../../lib/types/stack';
 
 export type { DuplicateKeeperPolicy } from '../../../lib/types/duplicatePolicy';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
@@ -128,11 +129,15 @@ export interface DuplicatePreviewRequest {
   selected_action: DuplicateActionSelection;
   member_decisions: Record<string, DuplicateDisposition>;
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
+  metadata_keeper_asset_id: string | null;
   recommendation_reason_codes: string[];
   members: DuplicateMember[];
   initial_index: number;
   onmemberdispositionchange?: (assetId: string, disposition: DuplicateDisposition) => void;
   onstackprimarychange?: (assetId: string) => void;
+  onstackresolutionchange?: (resolution: StackResolution) => void;
+  onmetadatakeeperchange?: (assetId: string | null) => void;
   onsimilarityreferencechange?: (assetId: string) => Promise<DuplicateMember[]>;
   onpreviousgroup?: () => void;
   onnextgroup?: () => void;
@@ -151,6 +156,7 @@ export interface DuplicateGroupDraft {
   member_fingerprint: string;
   decisions: DuplicateMemberDraftDecision[];
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
   metadata_keeper_asset_id: string | null;
   status: 'pending' | 'completed';
   stale: boolean;
@@ -233,6 +239,7 @@ export interface DuplicateResolutionPlan {
       type: 'stack';
       primary_asset_id: string;
       member_asset_ids: string[];
+      resolution: StackResolution;
       source_fingerprint?: string | null;
       conflict_fingerprint?: string | null;
     } | null;

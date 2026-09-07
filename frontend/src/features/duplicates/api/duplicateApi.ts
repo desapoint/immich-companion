@@ -10,6 +10,7 @@ import type {
   ExactDuplicateGroup,
   SimilarityScanSummary,
 } from '../types/duplicates';
+import type { StackResolution } from '../../../lib/types/stack';
 
 let suppressNextAutomaticDuplicateAnalysis = false;
 
@@ -63,6 +64,7 @@ export function saveDuplicateGroupDraft(request: {
   options: DuplicateAnalysisOptions;
   decisions: DuplicateMemberDraftDecision[];
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
   metadata_keeper_asset_id: string | null;
   status: 'pending' | 'completed';
 }): Promise<DuplicateGroupDraft> {

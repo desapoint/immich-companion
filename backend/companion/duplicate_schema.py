@@ -8,6 +8,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from companion.action_schema import StackResolution
 from companion.integrity import DetectedFormat, IntegrityClassification
 from companion.integrity_schema import IntegrityFreshness
 
@@ -252,6 +253,7 @@ class DuplicatePlanFollowUp(BaseModel):
     type: Literal["stack"]
     primary_asset_id: UUID
     member_asset_ids: list[UUID]
+    resolution: StackResolution = "move_selected"
     source_fingerprint: str | None = None
     conflict_fingerprint: str | None = None
 
@@ -334,6 +336,7 @@ class DuplicateGroupDraftUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     decisions: list[DuplicateMemberDraftDecision] = Field(default_factory=list)
     stack_primary_asset_id: UUID | None = None
+    stack_resolution: StackResolution = "move_selected"
     metadata_keeper_asset_id: UUID | None = None
     status: DuplicateDraftStatus = "pending"
 
@@ -378,6 +381,7 @@ class DuplicateGroupDraft(BaseModel):
     member_fingerprint: str
     decisions: list[DuplicateMemberDraftDecision]
     stack_primary_asset_id: UUID | None = None
+    stack_resolution: StackResolution = "move_selected"
     metadata_keeper_asset_id: UUID | None = None
     status: DuplicateDraftStatus
     stale: bool = False

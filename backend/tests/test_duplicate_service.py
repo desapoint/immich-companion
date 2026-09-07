@@ -239,7 +239,8 @@ def test_same_size_with_different_content_is_not_exact(same_filename: bool) -> N
     )
 
     assert result.groups[0].status == "mismatch"
-    assert not result.groups[0].eligible
+    assert result.groups[0].eligible
+    assert not result.groups[0].auto_resolvable
 
 
 def test_multiple_uploads_and_externals_form_one_exact_group() -> None:
@@ -446,8 +447,10 @@ class FakeStackService:
     def __init__(self, immich, snapshots=None):
         self.immich = immich
         self.snapshots = snapshots or []
+        self.prepared_resolutions = []
 
-    async def prepare(self, asset_ids, _resolution, primary_asset_id):
+    async def prepare(self, asset_ids, resolution, primary_asset_id):
+        self.prepared_resolutions.append(resolution)
         return SimpleNamespace(
             asset_ids=[
                 primary_asset_id,
@@ -531,6 +534,7 @@ class FakeReviews:
         self.record.manual_primary_asset_id = None
         self.record.member_decisions = []
         self.record.stack_primary_asset_id = None
+        self.record.stack_resolution = "move_selected"
         self.record.metadata_keeper_asset_id = None
         self.record.draft_status = "pending"
         self.record.review_status = "pending"
@@ -1237,17 +1241,15 @@ async def test_non_destructive_stack_plan_executes_in_safe_mode() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("action", "expected_disposition", "destructive", "zero_survivors"),
+    ("action", "expected_disposition"),
     [
-        ("keep_all", "keep", False, 0),
-        ("delete_all", "delete", True, 1),
+        ("keep_all", "keep"),
+        ("stack_all", "stack"),
     ],
 )
 async def test_whole_group_actions_have_explicit_member_dispositions(
     action: str,
     expected_disposition: str,
-    destructive: bool,
-    zero_survivors: int,
 ) -> None:
     content = b"same"
     candidate_group = group(
@@ -1271,13 +1273,10 @@ async def test_whole_group_actions_have_explicit_member_dispositions(
         )
     )
 
-    assert plan.destructive is destructive
-    assert plan.groups[0].keeper_asset_id is None
-    assert plan.groups[0].keep_asset_ids == (
-        [UPLOAD_1, EXTERNAL_1] if action == "keep_all" else []
-    )
+    assert plan.destructive is False
+    assert plan.groups[0].keep_asset_ids == [UPLOAD_1, EXTERNAL_1]
     assert {member.disposition for member in plan.groups[0].members} == {expected_disposition}
-    assert plan.zero_survivor_group_count == zero_survivors
+    assert plan.zero_survivor_group_count == 0
 
 
 @pytest.mark.asyncio
@@ -1352,6 +1351,7 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
                 DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="keep"),
             ],
             stack_primary_asset_id=UPLOAD_1,
+            stack_resolution="include_existing",
             metadata_keeper_asset_id=EXTERNAL_1,
         )
     )
@@ -1363,7 +1363,8 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
     assert restored.active_group_id == PUBLIC_GROUP_ID
     assert restored.stale_selected_groups == []
     assert restored.drafts[0].stack_primary_asset_id == UPLOAD_1
-    assert restored.drafts[0].metadata_keeper_asset_id == EXTERNAL_1
+    assert restored.drafts[0].stack_resolution == "include_existing"
+    assert restored.drafts[0].metadata_keeper_asset_id is None
     assert [decision.disposition for decision in restored.drafts[0].decisions] == [
         "stack",
         "keep",
@@ -1516,6 +1517,8 @@ async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None
                 DuplicateMemberDraftDecision(asset_id=EXTERNAL_2, disposition="stack"),
             ],
             stack_primary_asset_id=EXTERNAL_2,
+            stack_resolution="include_existing",
+            metadata_keeper_asset_id=UPLOAD_2,
         )
     )
 
@@ -1531,6 +1534,7 @@ async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None
     assert planned.follow_up is not None
     assert planned.follow_up.primary_asset_id == EXTERNAL_2
     assert planned.follow_up.member_asset_ids == [EXTERNAL_2, EXTERNAL_1]
+    assert planned.follow_up.resolution == "include_existing"
     assert {member.asset_id: member.disposition for member in planned.members} == {
         UPLOAD_1: "delete",
         UPLOAD_2: "keep",
@@ -1562,6 +1566,7 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
     })
     actions = FakeActions()
     reviews = FakeReviews()
+    stacks = FakeStackService(immich)
     service = CrossSourceDuplicateService(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
@@ -1574,7 +1579,7 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
         SimpleNamespace(),
         FakeRuntimeSettings(),
         reviews,
-        stacks=FakeStackService(immich),
+        stacks=stacks,
     )
     current = (await service.result()).groups[0]
     await service.save_group_draft(
@@ -1588,6 +1593,8 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
                 DuplicateMemberDraftDecision(asset_id=EXTERNAL_2, disposition="stack"),
             ],
             stack_primary_asset_id=EXTERNAL_2,
+            stack_resolution="include_existing",
+            metadata_keeper_asset_id=UPLOAD_2,
         )
     )
     await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
@@ -1610,6 +1617,7 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
     assert immich.resolutions[0].keep_asset_ids == [UPLOAD_2, EXTERNAL_1, EXTERNAL_2]
     assert immich.resolutions[0].trash_asset_ids == [UPLOAD_1]
     assert immich.created_stacks == [[EXTERNAL_2, EXTERNAL_1]]
+    assert stacks.prepared_resolutions == ["include_existing"]
     assert immich.album_additions == [(ALBUM_ID, [UPLOAD_2])]
     assert immich.tag_additions == [(TAG_ID, [UPLOAD_2])]
     assert assets.removed == [UPLOAD_1]
@@ -1942,7 +1950,7 @@ async def test_workspace_preserves_but_does_not_reselect_drifted_state() -> None
 
 
 @pytest.mark.asyncio
-async def test_delete_all_uses_explicit_all_trash_duplicate_resolution() -> None:
+async def test_zero_survivor_plan_uses_explicit_all_trash_duplicate_resolution() -> None:
     content = b"same"
     candidate_group = group(
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
@@ -1960,7 +1968,7 @@ async def test_delete_all_uses_explicit_all_trash_duplicate_resolution() -> None
             "groups": [
                 {
                     "duplicate_id": str(GROUP_ID),
-                    "action": "delete_all",
+                    "action": "mixed",
                     "keeper_asset_id": None,
                     "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
                     "trash_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
@@ -1984,11 +1992,11 @@ async def test_delete_all_uses_explicit_all_trash_duplicate_resolution() -> None
     outcome = await service.execute_plan(TaskContext(), GROUP_ID)
 
     assert outcome.status == "completed"
-    assert outcome.counters["groups_deleted_all"] == 1
+    assert outcome.counters["groups_zero_survivor"] == 1
     assert immich.resolutions[0].keep_asset_ids == []
     assert immich.resolutions[0].trash_asset_ids == [UPLOAD_1, EXTERNAL_1]
     assert assets.removed == [UPLOAD_1, EXTERNAL_1]
-    assert reviews.saved["review_status"] == "reviewed_delete_all"
+    assert reviews.saved["review_status"] == "manually_configured"
 
 
 @pytest.mark.asyncio

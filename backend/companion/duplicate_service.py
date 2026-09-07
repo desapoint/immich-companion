@@ -214,6 +214,8 @@ def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         if action == "stack_all" and primary_id is not None
         else None,
     )
+    if normalized["follow_up"] is not None:
+        normalized["follow_up"].setdefault("resolution", "move_selected")
     normalized.setdefault("execution_state", "pending")
     normalized.setdefault("metadata_work", None)
     normalized.setdefault("member_fingerprint", _member_fingerprint(member_ids))
@@ -1119,6 +1121,9 @@ class CrossSourceDuplicateService:
                         member_fingerprint=record.member_fingerprint,
                         decisions=decisions,
                         stack_primary_asset_id=getattr(record, "stack_primary_asset_id", None),
+                        stack_resolution=getattr(
+                            record, "stack_resolution", "move_selected"
+                        ),
                         metadata_keeper_asset_id=getattr(
                             record, "metadata_keeper_asset_id", None
                         ),
@@ -1223,6 +1228,7 @@ class CrossSourceDuplicateService:
                         if group.recommended_action == "stack_all"
                         else None
                     ),
+                    stack_resolution="move_selected",
                     metadata_keeper_asset_id=None,
                     draft_status="pending",
                 )
@@ -1319,11 +1325,24 @@ class CrossSourceDuplicateService:
             stack_primary_asset_id = (
                 preferred_primary if preferred_primary in stack_ids else stack_ids[0]
             )
-        if request.metadata_keeper_asset_id is not None:
-            keeper = decisions.get(request.metadata_keeper_asset_id)
+        survivor_ids = [
+            decision.asset_id
+            for decision in request.decisions
+            if decision.disposition != "delete"
+        ]
+        has_deletions = any(
+            decision.disposition == "delete" for decision in request.decisions
+        )
+        metadata_keeper_asset_id = request.metadata_keeper_asset_id
+        if has_deletions and len(survivor_ids) == 1:
+            metadata_keeper_asset_id = survivor_ids[0]
+        elif not has_deletions:
+            metadata_keeper_asset_id = None
+        if metadata_keeper_asset_id is not None:
+            keeper = decisions.get(metadata_keeper_asset_id)
             if keeper is not None and keeper.disposition == "delete":
                 raise ActionPlanConflictError("The metadata keeper cannot be marked Delete")
-            if request.metadata_keeper_asset_id not in member_ids:
+            if metadata_keeper_asset_id not in member_ids:
                 raise ActionPlanConflictError("The metadata keeper is not a group member")
         record = await self._reviews.save_draft(
             discovery_source=group.discovery_source,
@@ -1333,7 +1352,8 @@ class CrossSourceDuplicateService:
                 decision.model_dump(mode="json") for decision in request.decisions
             ],
             stack_primary_asset_id=stack_primary_asset_id,
-            metadata_keeper_asset_id=request.metadata_keeper_asset_id,
+            stack_resolution=request.stack_resolution,
+            metadata_keeper_asset_id=metadata_keeper_asset_id,
             draft_status=request.status,
         )
         return DuplicateGroupDraft(
@@ -1342,6 +1362,7 @@ class CrossSourceDuplicateService:
             member_fingerprint=record.member_fingerprint,
             decisions=record.member_decisions,
             stack_primary_asset_id=record.stack_primary_asset_id,
+            stack_resolution=record.stack_resolution,
             metadata_keeper_asset_id=record.metadata_keeper_asset_id,
             status=record.draft_status,
             stale=False,
@@ -1476,31 +1497,20 @@ class CrossSourceDuplicateService:
                 if disposition == "delete"
             ]
             stack_primary_id = getattr(record, "stack_primary_asset_id", None) if record else None
+            stack_resolution = getattr(record, "stack_resolution", "move_selected")
             if stack_ids:
                 if stack_primary_id not in stack_ids:
                     preferred = group.effective_primary_asset_id or group.keeper_asset_id
                     stack_primary_id = preferred if preferred in stack_ids else stack_ids[0]
             else:
                 stack_primary_id = None
-            direct_keepers = [
-                member.id
-                for member, disposition in zip(group.members, dispositions, strict=True)
-                if disposition == "keep"
-            ]
             metadata_keeper_id = (
                 getattr(record, "metadata_keeper_asset_id", None) if record else None
             )
             if trash_ids:
                 if metadata_keeper_id not in keep_ids:
-                    preferred_metadata_keeper = (
-                        group.effective_primary_asset_id or group.keeper_asset_id
-                    )
                     metadata_keeper_id = (
-                        direct_keepers[0]
-                        if len(direct_keepers) == 1
-                        else preferred_metadata_keeper
-                        if preferred_metadata_keeper in keep_ids
-                        else keep_ids[0]
+                        keep_ids[0]
                         if len(keep_ids) == 1
                         else None
                     )
@@ -1577,6 +1587,7 @@ class CrossSourceDuplicateService:
                         {
                             "type": "stack",
                             "primary_asset_id": str(stack_primary_id),
+                            "resolution": stack_resolution,
                             "member_asset_ids": [
                                 str(stack_primary_id),
                                 *(
@@ -1992,7 +2003,7 @@ class CrossSourceDuplicateService:
                         )
                     preparation = await self._stacks.prepare(
                         member_ids,
-                        "move_selected",
+                        follow_up.get("resolution", "move_selected"),
                         UUID(follow_up["primary_asset_id"]),
                     )
                     if not await self._stacks.execute(preparation):

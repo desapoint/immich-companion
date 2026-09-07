@@ -570,6 +570,9 @@ class DuplicateGroupReviewRecord(Base):
     manual_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     member_decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     stack_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    stack_resolution: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="move_selected", server_default="move_selected"
+    )
     metadata_keeper_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     draft_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")

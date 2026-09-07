@@ -2,7 +2,10 @@
   import DuplicateDispositionControls from '../../../lib/components/domain/DuplicateDispositionControls.svelte';
   import StackPrimaryControl from '../../../lib/components/domain/StackPrimaryControl.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
+  import type { StackResolution } from '../../../lib/types/stack';
+  import type { SelectOption } from '../../../lib/types/ui';
   import { formatAssetDate } from '../state/assetViewModel';
   import type { AssetDetail, AssetSummary, DuplicateReviewContext } from '../types/assets';
   import AssetInfoRelationships from './AssetInfoRelationships.svelte';
@@ -24,6 +27,8 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatedisposition?: (assetId: string, disposition: DuplicateDisposition) => void;
     onduplicatestackprimary?: (assetId: string) => void;
+    onduplicatestackresolution?: (resolution: StackResolution) => void;
+    onduplicatemetadatakeeper?: (assetId: string) => void;
     onduplicatesimilarityreference?: (assetId: string) => unknown;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
@@ -46,6 +51,8 @@
     duplicateContext = null,
     onduplicatedisposition,
     onduplicatestackprimary,
+    onduplicatestackresolution,
+    onduplicatemetadatakeeper,
     onduplicatesimilarityreference,
     onduplicatepreviousgroup,
     onduplicatenextgroup,
@@ -61,6 +68,17 @@
   );
   const currentSimilarity = $derived(currentDuplicateMember?.similarity ?? null);
   const currentPreservation = $derived(currentDuplicateMember?.preservation ?? null);
+  const duplicateHasStackChoices = $derived(
+    duplicateContext?.members.some((member) => member.disposition === 'stack') ?? false,
+  );
+  const duplicateHasDeleteChoices = $derived(
+    duplicateContext?.members.some((member) => member.disposition === 'delete') ?? false,
+  );
+  const stackResolutionOptions: SelectOption[] = [
+    { value: 'move_selected', label: 'Move selected assets' },
+    { value: 'keep_existing', label: 'Keep existing stacks' },
+    { value: 'include_existing', label: 'Include every stack member' },
+  ];
 
   function formatBytes(value: number | null): string {
     if (value === null) return 'Unavailable';
@@ -131,6 +149,29 @@
             selected={duplicateContext.stack_primary_asset_id === asset.id}
             onchange={() => onduplicatestackprimary?.(asset.id)}
           />
+          {#if duplicateHasDeleteChoices && onduplicatemetadatakeeper}
+            <StackPrimaryControl
+              eligible={currentDuplicateMember?.disposition === 'keep' || currentDuplicateMember?.disposition === 'stack'}
+              selected={duplicateContext.metadata_keeper_asset_id === asset.id}
+              eligibleLabel="Keep albums and tags"
+              ineligibleLabel="Choose Keep or Stack first"
+              selectedLabel="Metadata keeper"
+              selectedTitle="This image keeps albums and tags from deleted copies"
+              onchange={() => onduplicatemetadatakeeper?.(asset.id)}
+            />
+          {/if}
+        </div>
+      {/if}
+      {#if duplicateHasStackChoices && onduplicatestackresolution}
+        <div class="duplicate-stack-resolution">
+          <SelectField
+            id="duplicate-viewer-stack-resolution"
+            label="Existing stack handling"
+            value={duplicateContext.stack_resolution}
+            options={stackResolutionOptions}
+            compact
+            onchange={(value) => onduplicatestackresolution?.(value as StackResolution)}
+          />
         </div>
       {/if}
       {#if onduplicatepreviousgroup || onduplicatenextgroup}
@@ -150,6 +191,8 @@
         <div><dt>Keeper rule</dt><dd>{keeperPolicyLabel(duplicateContext.keeper_policy)}</dd></div>
         <div><dt>Auto rule followed</dt><dd class:positive={automaticRuleRespected} class:warning={!automaticRuleRespected}>{duplicateContext.recommended_keeper_asset_id === null ? 'No unique recommendation' : automaticRuleRespected ? 'Yes' : 'No — manually overridden or undecided'}</dd></div>
         <div><dt>This copy</dt><dd>{currentDuplicateMember?.disposition === 'delete' ? 'Delete' : currentDuplicateMember?.disposition === 'keep' ? 'Keep' : currentDuplicateMember?.disposition === 'stack' ? duplicateContext.stack_primary_asset_id === asset.id ? 'Stack · main image' : 'Stack' : 'Undecided'}</dd></div>
+        {#if duplicateHasDeleteChoices}<div><dt>Metadata keeper</dt><dd>{duplicateContext.metadata_keeper_asset_id === asset.id ? 'This copy' : duplicateContext.metadata_keeper_asset_id ?? 'Not chosen'}</dd></div>{/if}
+        {#if duplicateHasStackChoices}<div><dt>Existing stacks</dt><dd>{duplicateContext.stack_resolution.replaceAll('_', ' ')}</dd></div>{/if}
         <div><dt>Rule recommendation</dt><dd>{currentDuplicateMember?.recommended_disposition ? `${currentDuplicateMember.recommended_disposition[0].toUpperCase()}${currentDuplicateMember.recommended_disposition.slice(1)} this copy` : 'None — manual choice required'}</dd></div>
         <div><dt>Decision reasons</dt><dd>{[...duplicateContext.recommendation_reason_codes, ...(currentDuplicateMember?.recommendation_reason_codes ?? [])].join(', ') || 'No automatic recommendation'}</dd></div>
       </dl>
@@ -356,6 +399,7 @@
   .duplicate-review h3 { margin: 0; }
   .duplicate-review > p { margin: .45rem 0 0; color: var(--color-ink-muted); line-height: 1.45; }
   .duplicate-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; align-items: end; margin-top: .65rem; }
+  .duplicate-stack-resolution { margin-top: .5rem; }
   .duplicate-group-navigation { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: .5rem; }
   .duplicate-group-navigation button { min-width: 0; min-height: 2rem; padding: .35rem .5rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); color: var(--color-ink-strong); background: var(--color-canvas); cursor: pointer; font: inherit; font-size: .62rem; font-weight: 760; }
   .duplicate-group-navigation button:hover:not(:disabled), .duplicate-group-navigation button:focus-visible { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
