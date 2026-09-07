@@ -10,13 +10,25 @@
 
   type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
 
+  const TASK_TRAY_STORAGE_KEY='immich-companion-v2-task-tray-expanded';
+  function readTaskExpanded():boolean{
+    if(typeof localStorage==='undefined')return true;
+    const stored=localStorage.getItem(TASK_TRAY_STORAGE_KEY);
+    return stored===null?true:stored==='true';
+  }
+  function writeTaskExpanded(expanded:boolean):void{
+    if(typeof localStorage==='undefined')return;
+    localStorage.setItem(TASK_TRAY_STORAGE_KEY,String(expanded));
+  }
+
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', connectionLabel='Immich connected', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; connectionLabel?:string; children:import('svelte').Snippet } = $props();
-  let density=$state<V2Density>('standard'), taskExpanded=$state(true), resetConfirming=$state(false), root=$state<HTMLDivElement>();
+  let density=$state<V2Density>('standard'), taskExpanded=$state(readTaskExpanded()), resetConfirming=$state(false), root=$state<HTMLDivElement>();
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
   const mobileItems=[{key:'status',label:'Status'},{key:'assets',label:'Assets'},{key:'duplicates',label:'Review'},{key:'albums',label:'Manage'},{key:'settings',label:'More'}];
   function setDensity(next:V2Density){density=next;writeV2Density(next)}
+  function setTaskExpanded(expanded:boolean){taskExpanded=expanded;writeTaskExpanded(expanded)}
   function resetDemoData(){resetAllDemoData();resetConfirming=false;window.location.reload()}
 
   function syncTaskBounds(): void {
@@ -81,15 +93,15 @@
     </aside>
 
     <div class="v2-shell">
-      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div><div class="v2-top-actions"><input class="v2-top-search" placeholder="Search current interface…" aria-label="Search current interface"><V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" /><V2Button onclick={()=>taskExpanded=true}>Tasks</V2Button><V2Button ariaLabel="More actions"><Ellipsis size={18} strokeWidth={2.1}/></V2Button></div></header>
+      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div><div class="v2-top-actions"><input class="v2-top-search" placeholder="Search current interface…" aria-label="Search current interface"><V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" /><V2Button onclick={()=>setTaskExpanded(true)}>Tasks</V2Button><V2Button ariaLabel="More actions"><Ellipsis size={18} strokeWidth={2.1}/></V2Button></div></header>
       {@render children()}
     </div>
   </div>
 
   {#if taskExpanded}
-    <div class="v2-tasktray"><div class="v2-tasktray-head"><div class="v2-task-summary"><span class="v2-task-status-dot" aria-hidden="true"></span><div><b>Background tasks</b><small class="v2-muted">2 tasks running</small></div></div><small class="v2-task-overview v2-muted">1 determinate · 1 estimating</small><V2Button onclick={()=>taskExpanded=false}>Collapse</V2Button></div><div class="v2-task-list"><div class="v2-task-row"><span class="v2-task-runner" aria-hidden="true"></span><div class="v2-task-copy"><span>Scanning asset changes</span><small class="v2-muted">Known progress · processing local differences</small></div><div class="v2-task-progress"><div class="v2-task-progress-meta"><small>Progress</small><small>62%</small></div><V2Progress value={62} label="Scanning asset changes progress"/></div><span class="v2-task-stat">62%</span></div><div class="v2-task-row"><span class="v2-task-runner" aria-hidden="true"></span><div class="v2-task-copy"><span>Analyzing duplicate candidates</span><small class="v2-muted">Estimating remaining work</small></div><div class="v2-task-progress"><div class="v2-task-progress-meta"><small>Working</small><small>Unknown</small></div><V2Progress indeterminate label="Analyzing duplicate candidates progress"/></div><span class="v2-task-stat">—</span></div></div></div>
+    <div class="v2-tasktray"><div class="v2-tasktray-head"><div class="v2-task-summary"><span class="v2-task-status-dot" aria-hidden="true"></span><div><b>Background tasks</b><small class="v2-muted">2 tasks running</small></div></div><small class="v2-task-overview v2-muted">1 determinate · 1 estimating</small><V2Button onclick={()=>setTaskExpanded(false)}>Collapse</V2Button></div><div class="v2-task-list"><div class="v2-task-row"><span class="v2-task-runner" aria-hidden="true"></span><div class="v2-task-copy"><span>Scanning asset changes</span><small class="v2-muted">Known progress · processing local differences</small></div><div class="v2-task-progress"><div class="v2-task-progress-meta"><small>Progress</small><small>62%</small></div><V2Progress value={62} label="Scanning asset changes progress"/></div><span class="v2-task-stat">62%</span></div><div class="v2-task-row"><span class="v2-task-runner" aria-hidden="true"></span><div class="v2-task-copy"><span>Analyzing duplicate candidates</span><small class="v2-muted">Estimating remaining work</small></div><div class="v2-task-progress"><div class="v2-task-progress-meta"><small>Working</small><small>Unknown</small></div><V2Progress indeterminate label="Analyzing duplicate candidates progress"/></div><span class="v2-task-stat">—</span></div></div></div>
   {:else}
-    <div class="v2-task-bubbles" aria-label="Collapsed background tasks"><V2TaskBubble value={62} label="Scanning asset changes" detail="Known progress" onclick={()=>taskExpanded=true}/><V2TaskBubble indeterminate label="Analyzing duplicate candidates" detail="Estimating remaining work" onclick={()=>taskExpanded=true}/></div>
+    <div class="v2-task-bubbles" aria-label="Collapsed background tasks"><V2TaskBubble value={62} label="Scanning asset changes" detail="Known progress" onclick={()=>setTaskExpanded(true)}/><V2TaskBubble indeterminate label="Analyzing duplicate candidates" detail="Estimating remaining work" onclick={()=>setTaskExpanded(true)}/></div>
   {/if}
 
   <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item}<button aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{item.label}</button>{/each}</nav>
