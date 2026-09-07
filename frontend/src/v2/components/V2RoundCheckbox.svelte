@@ -1,12 +1,16 @@
 <script lang="ts">
   let {
     checked = false,
+    indeterminate = false,
+    disabled = false,
     ariaLabel,
     title = ariaLabel,
     onclick,
     onpointerdown,
   }: {
     checked?: boolean;
+    indeterminate?: boolean;
+    disabled?: boolean;
     ariaLabel: string;
     title?: string;
     onclick?: (event: MouseEvent) => void;
@@ -16,12 +20,14 @@
 
 <button
   class="v2-round-checkbox"
-  class:checked
+  class:checked={checked && !indeterminate}
+  class:indeterminate
   type="button"
   role="checkbox"
-  aria-checked={checked}
+  aria-checked={indeterminate ? 'mixed' : checked}
   aria-label={ariaLabel}
   {title}
+  {disabled}
   onclick={(event) => {
     event.stopPropagation();
     onclick?.(event);
@@ -78,12 +84,26 @@
     box-shadow: 0 2px 7px rgba(0, 0, 0, 0.34), 0 0 0 3px color-mix(in srgb, var(--v2-accent, #6ea8fe) 24%, transparent);
   }
 
+  .v2-round-checkbox.indeterminate .v2-round-checkbox-mark {
+    border-color: var(--v2-accent, #6ea8fe);
+    background: var(--v2-accent-2, #243b69);
+  }
+
   .v2-round-checkbox.checked .v2-round-checkbox-mark::after {
     opacity: 1;
     transform: translateY(-1px) rotate(-45deg) scale(1);
   }
 
-  .v2-round-checkbox:hover .v2-round-checkbox-mark {
+  .v2-round-checkbox.indeterminate .v2-round-checkbox-mark::after {
+    width: 9px;
+    height: 0;
+    border-left: 0;
+    border-bottom: 2px solid white;
+    opacity: 1;
+    transform: none;
+  }
+
+  .v2-round-checkbox:hover:not(:disabled) .v2-round-checkbox-mark {
     border-color: white;
     transform: scale(1.06);
   }
@@ -91,5 +111,13 @@
   .v2-round-checkbox:focus-visible {
     outline: 2px solid white;
     outline-offset: 1px;
+  }
+  .v2-round-checkbox:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+
+  .v2-round-checkbox:disabled .v2-round-checkbox-mark {
+    transform: none;
   }
 </style>

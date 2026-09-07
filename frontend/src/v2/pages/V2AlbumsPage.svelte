@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
+  import { toggleVisibleSelection, visibleSelectionState } from '../components/collectionSelection';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
@@ -13,6 +14,7 @@
   import V2OperationFeedback from '../components/V2OperationFeedback.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Pagination from '../components/V2Pagination.svelte';
+  import V2RoundCheckbox from '../components/V2RoundCheckbox.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Table from '../components/V2Table.svelte';
@@ -25,6 +27,8 @@
   type AlbumModal={id:number;mode:'create'|'edit';albumId:string;name:string;description:string};
   let page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),sort=$state('name:asc'),query=$state(''),total=$state(0),albums=$state<AlbumRecord[]>([]),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),loadError=$state(''),feedback=$state<OperationFeedback|null>(null),retryDeleteIds=$state<string[]>([]),pendingDeleteIds=$state<string[]>([]),deleteDialogOpen=$state(false);
   let modalSequence=0,modals=$state<AlbumModal[]>([]),selectedIds=$state<string[]>([]);
+  const visibleIds=$derived(albums.map((album)=>album.id));
+  const visibleSelection=$derived(visibleSelectionState(selectedIds,visibleIds));
 
   function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(fieldRaw==='assets'||fieldRaw==='description'?fieldRaw:'name') as 'name'|'assets'|'description',direction:(directionRaw==='desc'?'desc':'asc') as 'asc'|'desc'}}
   async function refresh(reset=true){if(loading&&!reset)return;loading=true;try{if(reset)nextCursor=null;const request=resultMode==='Pagination'?{page,pageSize,query,sort:parseSort()}:{pageSize,query,sort:parseSort(),cursor:reset?null:nextCursor};const response=await libraryData.albums.search(request);albums=resultMode==='Infinite'&&!reset?[...albums,...response.items]:response.items;total=response.total;nextCursor=response.nextCursor;loadError='';const lastPage=Math.max(1,Math.ceil(total/pageSize));if(resultMode==='Pagination'&&page>lastPage){page=lastPage;await refresh(true)}}catch(error){loadError=errorMessage(error,'Albums could not be loaded.')}finally{loading=false}}
@@ -34,7 +38,7 @@
   function setPage(next:number){page=next;void refresh(true)}
   async function loadMore(){if(resultMode!=='Infinite'||!nextCursor||loading)return;await refresh(false)}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
-  function selectLoaded(){selectedIds=[...new Set([...selectedIds,...albums.map((album)=>album.id)])]}
+  function toggleVisible(){selectedIds=toggleVisibleSelection(selectedIds,visibleIds)}
   function requestDelete(ids:string[]){if(!ids.length||mutating)return;pendingDeleteIds=[...ids];deleteDialogOpen=true}
   async function deleteIds(ids:string[]){if(!ids.length||mutating)return;mutating=true;loadError='';try{const result=await libraryData.albums.delete(ids);feedback=mutationFeedback('Delete albums',result);retryDeleteIds=result.failed.map((failure)=>failure.id);selectedIds=selectedIds.filter((id)=>retryDeleteIds.includes(id));await refresh(true)}catch(error){feedback=null;retryDeleteIds=[];loadError=errorMessage(error,'Albums could not be deleted.')}finally{mutating=false}}
   async function confirmDelete(){const ids=[...pendingDeleteIds];deleteDialogOpen=false;pendingDeleteIds=[];await deleteIds(ids)}
@@ -51,12 +55,12 @@
 
 <V2PageLayout title="Albums" description="Search, sort, create, edit, delete and use albums to filter the current asset workspace.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!selectedIds.length||mutating} onclick={deleteSelected}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" disabled={mutating} onclick={openCreate}>Create album</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value}><V2Button variant="primary" disabled={loading||mutating} onclick={()=>{page=1;void refresh(true)}}>Search</V2Button></V2Stack></V2Section><V2Section title="Selection"><V2Button disabled={!albums.length||mutating} onclick={selectLoaded}>Select loaded</V2Button></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value}><V2Button variant="primary" disabled={loading||mutating} onclick={()=>{page=1;void refresh(true)}}>Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Album operation unavailable" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     <V2OperationFeedback {feedback} retryLabel={retryDeleteIds.length?'Retry failed':''} onretry={retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
     <V2Toolbar><V2Badge text={`${total} album${total===1?'':'s'}`}/><V2Badge text={mutating?'Applying change…':loading?'Loading…':'Ready'}/>{#snippet actions()}<V2CollectionControls id="album-results" {sort} sortFields={[{value:'name',label:'Name'},{value:'assets',label:'Assets'},{value:'description',label:'Description'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
-    <V2Card><V2Table layout="fixed"><thead><tr><th class="v2-collection-check-column"><span class="v2-visually-hidden">Select</span></th><th>Name</th><th class="v2-collection-count-column">Assets</th><th class="v2-collection-description-column">Description</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each albums as album (album.id)}<tr><td class="v2-collection-check-column"><input type="checkbox" disabled={mutating} aria-label={`Select ${album.album_name}`} checked={selectedIds.includes(album.id)} onchange={(event)=>toggleSelection(album.id,event.currentTarget.checked)}></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description||'—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button disabled={mutating} onclick={()=>filterAssets(album.id)}>Filter assets</V2Button><V2Button disabled={mutating} onclick={()=>openEdit(album)}>Edit</V2Button><V2Button variant="danger" disabled={mutating} onclick={()=>deleteRow(album.id)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="5" class="v2-muted">{loading?'Loading albums…':loadError?'Albums could not be loaded.':'No albums match this search.'}</td></tr>{/each}</tbody></V2Table></V2Card>
+    <V2Card><V2Table layout="fixed"><thead><tr><th class="v2-collection-check-column"><V2RoundCheckbox checked={visibleSelection==='all'} indeterminate={visibleSelection==='some'} disabled={!albums.length||mutating} ariaLabel={visibleSelection==='all'?'Unselect all visible albums':'Select all visible albums'} onclick={toggleVisible}/></th><th>Name</th><th class="v2-collection-count-column">Assets</th><th class="v2-collection-description-column">Description</th><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each albums as album (album.id)}<tr><td class="v2-collection-check-column"><V2RoundCheckbox checked={selectedIds.includes(album.id)} disabled={mutating} ariaLabel={`${selectedIds.includes(album.id)?'Unselect':'Select'} ${album.album_name}`} onclick={()=>toggleSelection(album.id,!selectedIds.includes(album.id))}/></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description||'—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button disabled={mutating} onclick={()=>filterAssets(album.id)}>Filter assets</V2Button><V2Button disabled={mutating} onclick={()=>openEdit(album)}>Edit</V2Button><V2Button variant="danger" disabled={mutating} onclick={()=>deleteRow(album.id)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="5" class="v2-muted">{loading?'Loading albums…':loadError?'Albums could not be loaded.':'No albums match this search.'}</td></tr>{/each}</tbody></V2Table></V2Card>
     {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<V2InfiniteFooter loaded={albums.length} {total} batchSize={pageSize} noun="albums" onloadmore={loadMore}/>{/if}
   </V2Zone>
 </V2PageLayout>
