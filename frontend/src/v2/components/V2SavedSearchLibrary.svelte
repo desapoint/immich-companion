@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Pencil, Play, RefreshCw, Save, Trash2 } from '@lucide/svelte';
-  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import ConfirmDialog from './V2ConfirmDialog.svelte';
   import V2Badge from './V2Badge.svelte';
   import V2Button from './V2Button.svelte';
   import V2Card from './V2Card.svelte';

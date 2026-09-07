@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';

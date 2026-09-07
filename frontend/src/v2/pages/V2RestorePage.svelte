@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { CheckCheck,ListChecks,RotateCcw } from '@lucide/svelte';
-  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
   import V2AssetGrid from '../components/V2AssetGrid.svelte';
   import V2AssetSelectionToolbar from '../components/V2AssetSelectionToolbar.svelte';
   import V2AssetTile from '../components/V2AssetTile.svelte';
