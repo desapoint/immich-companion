@@ -13,17 +13,19 @@ if (!target) {
   throw new Error('The frontend mount element is missing.');
 }
 
+const mountTarget: HTMLElement = target;
+
 async function bootstrap(): Promise<void> {
   try {
     if (!isV2) {
       await import('./styles/global.css');
     }
 
-    mount(App, { target });
+    mount(App, { target: mountTarget });
   } catch (error) {
-    target.replaceChildren();
+    mountTarget.replaceChildren();
     mount(AppRuntimeError, {
-      target,
+      target: mountTarget,
       props: {
         message: errorMessage(error),
         onretry: () => window.location.reload(),
