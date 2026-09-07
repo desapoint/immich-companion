@@ -8,7 +8,7 @@
   import V2StatusContext from '../status/V2StatusContext.svelte';
   import V2StatusInspector from '../status/V2StatusInspector.svelte';
 
-  let loadState = $state<StatusLoadState>({ kind: 'loading' });
+  let loadState = $state.raw<StatusLoadState>({ kind: 'loading' });
   let active = true;
 
   async function refresh(): Promise<void> {

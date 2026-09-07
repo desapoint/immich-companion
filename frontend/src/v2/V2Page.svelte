@@ -2,6 +2,7 @@
   import V2Shell from './components/V2Shell.svelte';
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
+  import V2StatusPage from './pages/V2StatusPage.svelte';
   import {
     v2PageFromLegacyHash,
     v2PageFromPath,
@@ -65,7 +66,9 @@
 <svelte:head><title>{titles[activeKey]} · Immich Companion V2</title></svelte:head>
 
 <V2Shell {activeKey} title={titles[activeKey]} {navItems} onnavigate={navigate}>
-  {#if activeKey === 'settings'}
+  {#if activeKey === 'status'}
+    <V2StatusPage />
+  {:else if activeKey === 'settings'}
     <V2SettingsPage />
   {:else}
     <V2ImplementationWarning
