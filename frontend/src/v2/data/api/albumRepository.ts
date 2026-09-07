@@ -98,7 +98,9 @@ function mutationFailure(id: string, error: unknown): MutationResult {
 export function createAlbumRepository(fetcher: AlbumApiFetcher = globalThis.fetch): AlbumRepository {
   async function search(query: AlbumSearchQuery): Promise<PageResult<AlbumRecord>> {
     const page = query.page ?? pageFromCursor(query.cursor);
-    const result = await requestJson<AlbumManagementPage>(fetcher, managementPath(query, page));
+    const result = await requestJson<AlbumManagementPage>(fetcher, managementPath(query, page), {
+      signal: query.signal,
+    });
     return {
       items: result.items.map(normalizeAlbum),
       total: result.total,
@@ -114,6 +116,7 @@ export function createAlbumRepository(fetcher: AlbumApiFetcher = globalThis.fetc
       cursor: query.cursor,
       query: query.query,
       sort: { field: 'name', direction: 'asc' },
+      signal: query.signal,
     });
     return {
       items: result.items.map((album) => ({

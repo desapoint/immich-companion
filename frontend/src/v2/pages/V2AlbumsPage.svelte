@@ -23,15 +23,36 @@
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage, mutationFeedback, type OperationFeedback } from '../data/mutationFeedback';
   import type { AlbumRecord } from '../data/contracts';
+  import { LatestRequestController } from '../state/latestRequest';
 
   type AlbumModal={id:number;mode:'create'|'edit';albumId:string;name:string;description:string};
   let page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),sort=$state('name:asc'),query=$state(''),total=$state(0),albums=$state<AlbumRecord[]>([]),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),loadError=$state(''),feedback=$state<OperationFeedback|null>(null),retryDeleteIds=$state<string[]>([]),pendingDeleteIds=$state<string[]>([]),deleteDialogOpen=$state(false);
   let modalSequence=0,modals=$state<AlbumModal[]>([]),selectedIds=$state<string[]>([]);
+  const requests=new LatestRequestController();
   const visibleIds=$derived(albums.map((album)=>album.id));
   const visibleSelection=$derived(visibleSelectionState(selectedIds,visibleIds));
 
   function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(fieldRaw==='assets'||fieldRaw==='description'?fieldRaw:'name') as 'name'|'assets'|'description',direction:(directionRaw==='desc'?'desc':'asc') as 'asc'|'desc'}}
-  async function refresh(reset=true){if(loading&&!reset)return;loading=true;try{if(reset)nextCursor=null;const request=resultMode==='Pagination'?{page,pageSize,query,sort:parseSort()}:{pageSize,query,sort:parseSort(),cursor:reset?null:nextCursor};const response=await libraryData.albums.search(request);albums=resultMode==='Infinite'&&!reset?[...albums,...response.items]:response.items;total=response.total;nextCursor=response.nextCursor;loadError='';const lastPage=Math.max(1,Math.ceil(total/pageSize));if(resultMode==='Pagination'&&page>lastPage){page=lastPage;await refresh(true)}}catch(error){loadError=errorMessage(error,'Albums could not be loaded.')}finally{loading=false}}
+  async function refresh(reset=true):Promise<void>{
+    if(loading&&!reset)return;
+    const mode=resultMode,requestedPage=page,requestedPageSize=pageSize,requestedQuery=query,requestedSort=parseSort(),cursor=reset?null:nextCursor;
+    const request=requests.begin();
+    loading=true;
+    if(reset)nextCursor=null;
+    try{
+      const response=await libraryData.albums.search(mode==='Pagination'
+        ?{page:requestedPage,pageSize:requestedPageSize,query:requestedQuery,sort:requestedSort,signal:request.signal}
+        :{pageSize:requestedPageSize,query:requestedQuery,sort:requestedSort,cursor,signal:request.signal});
+      if(!requests.isCurrent(request))return;
+      albums=mode==='Infinite'&&!reset?[...albums,...response.items]:response.items;
+      total=response.total;
+      nextCursor=response.nextCursor;
+      loadError='';
+      const lastPage=Math.max(1,Math.ceil(total/requestedPageSize));
+      if(mode==='Pagination'&&requestedPage>lastPage){page=lastPage;await refresh(true)}
+    }catch(error){if(requests.isCurrent(request))loadError=errorMessage(error,'Albums could not be loaded.')}
+    finally{if(requests.finish(request))loading=false}
+  }
   function setPageSize(next:number){pageSize=next;page=1;void refresh(true)}
   function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}
   function setSort(value:string){sort=value;page=1;void refresh(true)}
@@ -50,7 +71,7 @@
   async function saveModal(modal:AlbumModal){if(!modal.name.trim()||mutating)return;mutating=true;loadError='';try{if(modal.mode==='create'){const created=await libraryData.albums.create(modal.name,modal.description);if(!created)throw new Error('The album was not created.');feedback={tone:'ok',title:'Album created',detail:`${created.album_name} was created.`,failures:[]}}else{const result=await libraryData.albums.update(modal.albumId,{name:modal.name,description:modal.description});feedback=mutationFeedback('Update album',result);if(result.failed.length)return}closeModal(modal.id);await refresh(true)}catch(error){feedback=null;loadError=errorMessage(error,'The album could not be saved.')}finally{mutating=false}}
   function deleteRow(id:string){requestDelete([id])}
   function filterAssets(albumId:string){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[albumId],tagIds:[]}));window.location.assign('/v2/assets')}
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();await refresh(true)}catch(error){loadError=errorMessage(error,'The album data source could not be initialized.')}})()});
+  onMount(()=>{let mounted=true;void(async()=>{try{await libraryData.initialize();if(mounted)await refresh(true)}catch(error){if(mounted)loadError=errorMessage(error,'The album data source could not be initialized.')}})();return()=>{mounted=false;requests.cancel()}});
 </script>
 
 <V2PageLayout title="Albums" description="Search, sort, create, edit, delete and use albums to filter the current asset workspace.">

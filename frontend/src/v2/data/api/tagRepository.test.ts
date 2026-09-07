@@ -40,6 +40,7 @@ describe('live V2 tag repository', () => {
       items: [child], total: 42, page: 2, page_size: 48, pages: 3,
     }));
     const repository = createTagRepository(fetcher);
+    const controller = new AbortController();
 
     const result = await repository.search({
       page: 2,
@@ -47,9 +48,11 @@ describe('live V2 tag repository', () => {
       query: ' Montréal ',
       includeHierarchy: true,
       sort: { field: 'children', direction: 'desc' },
+      signal: controller.signal,
     });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/tags/manage?page=2&page_size=48&sort=child_count&direction=desc&flat=true&include_hierarchy=true&search=Montr%C3%A9al');
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
     expect(result).toEqual({
       items: [{
         id: child.id,
@@ -74,10 +77,12 @@ describe('live V2 tag repository', () => {
       items: [child], total: 3, page: 2, page_size: 1, pages: 3,
     }));
     const repository = createTagRepository(fetcher);
+    const controller = new AbortController();
 
-    const result = await repository.searchOptions({ query: 'Places', pageSize: 1, cursor: '2' });
+    const result = await repository.searchOptions({ query: 'Places', pageSize: 1, cursor: '2', signal: controller.signal });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/tags/manage?page=2&page_size=1&sort=path&direction=asc&flat=true&include_hierarchy=true&search=Places');
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
     expect(result).toEqual({
       items: [{ value: child.id, label: 'Places / Montréal', subtitle: '5 assets' }],
       nextCursor: '3',

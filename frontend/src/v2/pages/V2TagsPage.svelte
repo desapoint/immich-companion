@@ -25,15 +25,36 @@
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage, mutationFeedback, type OperationFeedback } from '../data/mutationFeedback';
   import type { TagHierarchyRow } from '../data/contracts';
+  import { LatestRequestController } from '../state/latestRequest';
 
   type TagModal={id:number;mode:'create'|'edit';tagId:string;name:string;color:string;parent:string;parentOptions:Array<{value:string;label:string;subtitle:string}>};
   let query=$state(''),includeHierarchy=$state(false),selectedIds=$state<string[]>([]),page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),sort=$state('name:asc'),rows=$state<TagHierarchyRow[]>([]),resultTotal=$state(0),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),loadError=$state(''),feedback=$state<OperationFeedback|null>(null),retryDeleteIds=$state<string[]>([]),pendingDeleteIds=$state<string[]>([]),deleteDialogOpen=$state(false);
   let modalSequence=0,modals=$state<TagModal[]>([]);
+  const requests=new LatestRequestController();
   const visibleIds=$derived(rows.map((tag)=>tag.id));
   const visibleSelection=$derived(visibleSelectionState(selectedIds,visibleIds));
 
   function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(['path','assets','children'].includes(fieldRaw)?fieldRaw:'name') as 'name'|'path'|'assets'|'children',direction:(directionRaw==='desc'?'desc':'asc') as 'asc'|'desc'}}
-  async function refresh(reset=true){if(loading&&!reset)return;loading=true;try{if(reset)nextCursor=null;const request=resultMode==='Pagination'?{page,pageSize,query,includeHierarchy,sort:parseSort()}:{pageSize,query,includeHierarchy,sort:parseSort(),cursor:reset?null:nextCursor};const result=await libraryData.tags.search(request);rows=resultMode==='Infinite'&&!reset?[...rows,...result.items]:result.items;resultTotal=result.total;nextCursor=result.nextCursor;loadError='';const lastPage=Math.max(1,Math.ceil(resultTotal/pageSize));if(resultMode==='Pagination'&&page>lastPage){page=lastPage;await refresh(true)}}catch(error){loadError=errorMessage(error,'Tags could not be loaded.')}finally{loading=false}}
+  async function refresh(reset=true):Promise<void>{
+    if(loading&&!reset)return;
+    const mode=resultMode,requestedPage=page,requestedPageSize=pageSize,requestedQuery=query,requestedHierarchy=includeHierarchy,requestedSort=parseSort(),cursor=reset?null:nextCursor;
+    const request=requests.begin();
+    loading=true;
+    if(reset)nextCursor=null;
+    try{
+      const result=await libraryData.tags.search(mode==='Pagination'
+        ?{page:requestedPage,pageSize:requestedPageSize,query:requestedQuery,includeHierarchy:requestedHierarchy,sort:requestedSort,signal:request.signal}
+        :{pageSize:requestedPageSize,query:requestedQuery,includeHierarchy:requestedHierarchy,sort:requestedSort,cursor,signal:request.signal});
+      if(!requests.isCurrent(request))return;
+      rows=mode==='Infinite'&&!reset?[...rows,...result.items]:result.items;
+      resultTotal=result.total;
+      nextCursor=result.nextCursor;
+      loadError='';
+      const lastPage=Math.max(1,Math.ceil(resultTotal/requestedPageSize));
+      if(mode==='Pagination'&&requestedPage>lastPage){page=lastPage;await refresh(true)}
+    }catch(error){if(requests.isCurrent(request))loadError=errorMessage(error,'Tags could not be loaded.')}
+    finally{if(requests.finish(request))loading=false}
+  }
   function setPageSize(next:number){pageSize=next;page=1;void refresh(true)}
   function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}
   function setSort(value:string){sort=value;page=1;void refresh(true)}
@@ -42,7 +63,7 @@
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function toggleVisible(){selectedIds=toggleVisibleSelection(selectedIds,visibleIds)}
   function realTagIdsFor(row:TagHierarchyRow){return row.realTagIds}
-  function selectedRealTagIds(){const ids=new Set<string>();for(const id of selectedIds){const row=rows.find((tag)=>tag.id===id);if(row)for(const realId of row.realTagIds)ids.add(realId)}return[...ids]}
+  function selectedRealTagIds(){const ids:string[]=[];for(const id of selectedIds){const row=rows.find((tag)=>tag.id===id);if(row)for(const realId of row.realTagIds)if(!ids.includes(realId))ids.push(realId)}return ids}
   function requestDelete(ids:string[]){if(!ids.length||mutating)return;pendingDeleteIds=[...ids];deleteDialogOpen=true}
   async function deleteIds(ids:string[]){if(!ids.length||mutating)return;mutating=true;loadError='';try{const result=await libraryData.tags.delete(ids);feedback=mutationFeedback('Delete tags',result);retryDeleteIds=result.failed.map((failure)=>failure.id);selectedIds=selectedIds.filter((id)=>{const row=rows.find((tag)=>tag.id===id);return row?.realTagIds.some((realId)=>retryDeleteIds.includes(realId))??false});await refresh(true)}catch(error){feedback=null;retryDeleteIds=[];loadError=errorMessage(error,'Tags could not be deleted.')}finally{mutating=false}}
   async function confirmDelete(){const ids=[...pendingDeleteIds];deleteDialogOpen=false;pendingDeleteIds=[];await deleteIds(ids)}
@@ -54,7 +75,7 @@
   async function saveModal(modal:TagModal){if(!modal.name.trim()||mutating)return;mutating=true;loadError='';try{if(modal.mode==='create'){const created=await libraryData.tags.create(modal.name,modal.color||null,modal.parent);if(!created)throw new Error('The tag was not created.');feedback={tone:'ok',title:'Tag created',detail:`${created.tag_name} was created.`,failures:[]}}else{const result=await libraryData.tags.update(modal.tagId,{name:modal.name,color:modal.color||null,parentPath:modal.parent});feedback=mutationFeedback('Update tag',result);if(result.failed.length)return}closeModal(modal.id);await refresh(true)}catch(error){feedback=null;loadError=errorMessage(error,'The tag could not be saved.')}finally{mutating=false}}
   function deleteRow(tag:TagHierarchyRow){requestDelete(realTagIdsFor(tag))}
   function filterAssets(tag:TagHierarchyRow){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[],tagIds:realTagIdsFor(tag)}));window.location.assign('/v2/assets')}
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();await refresh(true)}catch(error){loadError=errorMessage(error,'The tag data source could not be initialized.')}})()});
+  onMount(()=>{let mounted=true;void(async()=>{try{await libraryData.initialize();if(mounted)await refresh(true)}catch(error){if(mounted)loadError=errorMessage(error,'The tag data source could not be initialized.')}})();return()=>{mounted=false;requests.cancel()}});
 </script>
 
 <V2PageLayout title="Tags" description="Search and manage hierarchical tags through the active data source.">

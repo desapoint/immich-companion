@@ -25,15 +25,18 @@ describe('live V2 album repository', () => {
       items: [album], total: 100, page: 2, page_size: 48, pages: 3,
     }));
     const repository = createAlbumRepository(fetcher);
+    const controller = new AbortController();
 
     const result = await repository.search({
       page: 2,
       pageSize: 48,
       query: ' Summer ',
       sort: { field: 'description', direction: 'desc' },
+      signal: controller.signal,
     });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/albums/manage?page=2&page_size=48&sort=description&direction=desc&search=Summer');
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
     expect(result).toMatchObject({
       total: 100,
       page: 2,
@@ -57,10 +60,12 @@ describe('live V2 album repository', () => {
       items: [album], total: 3, page: 2, page_size: 1, pages: 3,
     }));
     const repository = createAlbumRepository(fetcher);
+    const controller = new AbortController();
 
-    const result = await repository.searchOptions({ query: 'Fam', pageSize: 1, cursor: '2' });
+    const result = await repository.searchOptions({ query: 'Fam', pageSize: 1, cursor: '2', signal: controller.signal });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/albums/manage?page=2&page_size=1&sort=name&direction=asc&search=Fam');
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
     expect(result).toEqual({
       items: [{ value: album.id, label: 'Family', subtitle: '14 assets' }],
       nextCursor: '3',

@@ -120,7 +120,9 @@ function mutationFailure(id: string, error: unknown): MutationResult {
 export function createTagRepository(fetcher: TagApiFetcher = globalThis.fetch): TagRepository {
   async function search(query: TagSearchQuery): Promise<PageResult<TagHierarchyRow>> {
     const page = query.page ?? pageFromCursor(query.cursor);
-    const result = await requestJson<TagManagementPage>(fetcher, managementPath(query, page));
+    const result = await requestJson<TagManagementPage>(fetcher, managementPath(query, page), {
+      signal: query.signal,
+    });
     return {
       items: result.items.map(normalizeRow),
       total: result.total,
@@ -166,6 +168,7 @@ export function createTagRepository(fetcher: TagApiFetcher = globalThis.fetch): 
         query: query.query,
         includeHierarchy: true,
         sort: { field: 'path', direction: 'asc' },
+        signal: query.signal,
       });
       return {
         items: result.items.map((tag) => ({
