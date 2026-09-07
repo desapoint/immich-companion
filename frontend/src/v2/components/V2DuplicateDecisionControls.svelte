@@ -40,10 +40,11 @@
 </div>
 
 <style>
-  .v2-duplicate-decision-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr);gap:5px;margin-top:6px;width:100%;align-items:stretch}
-  .v2-duplicate-decision-controls.has-primary{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) 38px}
+  .v2-duplicate-decision-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) 38px;gap:5px;margin-top:6px;width:100%;align-items:stretch}
   .v2-duplicate-decision-controls>div{min-width:0}
   .v2-duplicate-decision-controls :global(.v2-button){width:100%;min-width:0;height:100%;padding:7px 5px;font-size:12px}
-  .primary-slot{width:38px;min-width:38px;display:grid;place-items:stretch}
+  .stack-action{grid-column:3/5}
+  .has-primary .stack-action{grid-column:3}
+  .primary-slot{grid-column:4;width:38px;min-width:38px;display:grid;place-items:stretch}
   .primary-slot :global(.v2-button){width:38px;min-width:38px;padding-inline:0}
 </style>
