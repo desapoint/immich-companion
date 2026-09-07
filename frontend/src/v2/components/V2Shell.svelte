@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
-  import { getAssetSyncStatus, openTaskUpdates } from '../../features/assets/api/assetApi';
   import type { AssetSyncCoordinatorStatus, AssetSyncRunStatus, AssetTaskStatus } from '../../features/assets/types/assets';
+  import { libraryData } from '../data/currentDataSource.svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
   import V2Progress from './V2Progress.svelte';
@@ -62,7 +62,7 @@
 
   async function refreshSyncStatus():Promise<void>{
     try{
-      const next=await getAssetSyncStatus();
+      const next=await libraryData.sync.status();
       if(!active)return;
       syncStatus=next;
       syncStatusError=false;
@@ -77,7 +77,7 @@
 
   function connectTaskUpdates():void{
     if(!active || taskSocket)return;
-    taskSocket=openTaskUpdates(
+    taskSocket=libraryData.sync.openUpdates(
       handleTaskUpdate,
       ()=>undefined,
       ()=>{
