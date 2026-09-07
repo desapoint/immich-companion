@@ -22,23 +22,26 @@
     ondecision: (decision: DuplicateDecision) => void;
     onprimary: () => void;
   } = $props();
+
+  const showPrimary=$derived(decisions.includes('stack')&&stackEnabled&&decision==='stack');
 </script>
 
-<div class="v2-duplicate-decision-controls">
+<div class="v2-duplicate-decision-controls" class:has-primary={showPrimary}>
   <div>{#if decisions.includes('keep')}<V2Button {disabled} active={decision==='keep'} onclick={()=>ondecision('keep')}>Keep</V2Button>{/if}</div>
   <div>{#if decisions.includes('delete')}<V2Button {disabled} active={decision==='delete'} onclick={()=>ondecision('delete')}>Delete</V2Button>{/if}</div>
   <div class="stack-action">{#if decisions.includes('stack')}<V2Button {disabled} active={decision==='stack'} onclick={()=>ondecision('stack')}>{decision==='stack'?stackLabel:'Stack'}</V2Button>{/if}</div>
-  <div class="primary-slot">
-    {#if decisions.includes('stack') && stackEnabled && decision==='stack'}
+  {#if showPrimary}
+    <div class="primary-slot">
       <V2Button iconOnly {disabled} active={isPrimary} title={isPrimary?'Stack primary':'Set as stack primary'} ariaLabel={isPrimary?'Stack primary':'Set as stack primary'} onclick={onprimary}>
         <Star size={16} fill={isPrimary?'currentColor':'none'} aria-hidden="true"/>
       </V2Button>
-    {/if}
-  </div>
+    </div>
+  {/if}
 </div>
 
 <style>
-  .v2-duplicate-decision-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) 38px;gap:5px;margin-top:6px;width:100%;align-items:stretch}
+  .v2-duplicate-decision-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr);gap:5px;margin-top:6px;width:100%;align-items:stretch}
+  .v2-duplicate-decision-controls.has-primary{grid-template-columns:minmax(0,1fr) minmax(0,1fr) minmax(0,2fr) 38px}
   .v2-duplicate-decision-controls>div{min-width:0}
   .v2-duplicate-decision-controls :global(.v2-button){width:100%;min-width:0;height:100%;padding:7px 5px;font-size:12px}
   .primary-slot{width:38px;min-width:38px;display:grid;place-items:stretch}
