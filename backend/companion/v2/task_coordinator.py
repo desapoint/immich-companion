@@ -3,7 +3,7 @@
 V2 reuses the proven durable PostgreSQL repository, leases, retries and LISTEN/NOTIFY
 transport, but owns the handler execution boundary and checkpoint contract. This keeps the
 frontend status behavior compatible while allowing V2 sync semantics to evolve without
-editing the V1 coordinator module.
+editing the preserved coordinator implementation.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import asyncio
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 
-from companion.task_coordinator import (
+from companion.v2.legacy_task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
     TaskCancelledError,
