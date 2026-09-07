@@ -179,10 +179,17 @@
 
   function chooseDisposition(assetId: string, disposition: DuplicateDisposition): void {
     memberDecisions = { ...memberDecisions, [assetId]: disposition };
-    if (disposition === 'delete' && metadataKeeperAssetId === assetId) {
-      metadataKeeperAssetId = null;
-      review.onmetadatakeeperchange?.(null);
-    }
+    const survivorIds = members
+      .filter((member) => memberDecisions[member.id] !== 'delete')
+      .map((member) => member.id);
+    const hasDeletions = members.some((member) => memberDecisions[member.id] === 'delete');
+    metadataKeeperAssetId = !hasDeletions
+      ? null
+      : survivorIds.includes(metadataKeeperAssetId ?? '')
+        ? metadataKeeperAssetId
+        : survivorIds.length === 1
+          ? survivorIds[0]
+          : null;
     stackPrimaryAssetId = resolveStackPrimary(
       members
         .filter((member) => memberDecisions[member.id] === 'stack')
