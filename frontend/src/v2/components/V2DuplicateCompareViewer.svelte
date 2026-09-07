@@ -4,6 +4,7 @@
   import V2Card from './V2Card.svelte';
   import V2ImageComparison, { type ComparisonMode } from './V2ImageComparison.svelte';
   import V2Inline from './V2Inline.svelte';
+  import V2KeyboardShortcuts, { type KeyboardShortcut } from './V2KeyboardShortcuts.svelte';
   import V2Section from './V2Section.svelte';
   import V2Stack from './V2Stack.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
@@ -12,6 +13,16 @@
   import type { AssetRecord, DuplicateDecision } from '../data/contracts';
 
   let { open, group, assetIds=[], member=$bindable(0), reference=$bindable(0), decisions=$bindable<Record<string,DuplicateDecision>>({}), onclose }: { open:boolean; group:number; assetIds?:string[]; member?:number; reference?:number; decisions?:Record<string,DuplicateDecision>; onclose:()=>void }=$props();
+  const shortcuts:KeyboardShortcut[]=[
+    {keys:'Esc',description:'Close comparison'},
+    {keys:'←',description:'Previous group member'},
+    {keys:'→',description:'Next group member'},
+    {keys:'R',description:'Set current asset as reference'},
+    {keys:'1',description:'Side by side'},
+    {keys:'2',description:'Swipe'},
+    {keys:'3',description:'Transparency'},
+    {keys:'4',description:'Difference'},
+  ];
   let mode=$state<ComparisonMode>('Side by side'),split=$state(50),opacity=$state(50),diffHue=$state(190),diffContrast=$state(180),diffBinary=$state(true),diffTolerance=$state(8),assets=$state<AssetRecord[]>([]),memberData=$state<ComparisonMemberData[]>([]),decisionOptions=$state<DuplicateDecision[]>([]);
   const emptyData:ComparisonMemberData={name:'Unknown asset',source:'—',size:'—',sizeNum:0,dims:'—',taken:'—',codec:'Unknown type',library:'—',uploaded:'—',similarity:'0.0'};
   const videoPlaceholder='data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640"><rect width="960" height="640" fill="#222831"/><circle cx="480" cy="320" r="82" fill="#ffffff22"/><path d="M455 270 545 320 455 370Z" fill="white"/><text x="480" y="450" text-anchor="middle" fill="white" font-family="sans-serif" font-size="34">Video asset</text></svg>`);
@@ -22,10 +33,22 @@
   function prev(){if(activeCount)member=(member-1+activeCount)%activeCount}
   function next(){if(activeCount)member=(member+1)%activeCount}
   function setDecision(decision:DuplicateDecision){if(decisionKey&&decisionOptions.includes(decision))decisions={...decisions,[decisionKey]:decision}}
+  function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
+  function handleShortcut(event:KeyboardEvent){
+    if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||editableTarget(event.target))return;
+    if(event.key==='ArrowLeft'&&activeCount){event.preventDefault();prev();return}
+    if(event.key==='ArrowRight'&&activeCount){event.preventDefault();next();return}
+    if((event.key==='r'||event.key==='R')&&selectedAsset){event.preventDefault();reference=member;return}
+    const modes:Record<string,ComparisonMode>={'1':'Side by side','2':'Swipe','3':'Transparency','4':'Difference'};
+    const nextMode=modes[event.key];
+    if(nextMode){event.preventDefault();mode=nextMode}
+  }
 </script>
 
+<svelte:window onkeydown={handleShortcut}/>
+
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
-  {#snippet header()}<V2Inline gap="sm" wrap={true}><V2Button onclick={onclose}>✕</V2Button><b>Duplicate comparison</b><V2Badge text={`Group ${group}`}/><V2Badge text={`${activeCount} images`}/></V2Inline><V2Inline gap="sm" wrap={true}><V2Button disabled={!activeCount} onclick={prev}>← Previous</V2Button><V2Button disabled={!activeCount} onclick={next}>Next →</V2Button><V2Button disabled={!selectedAsset} onclick={()=>reference=member}>Set as reference</V2Button></V2Inline>{/snippet}
+  {#snippet header()}<V2Inline gap="sm" wrap={true}><V2Button onclick={onclose}>✕</V2Button><b>Duplicate comparison</b><V2Badge text={`Group ${group}`}/><V2Badge text={`${activeCount} images`}/></V2Inline><V2Inline gap="sm" wrap={true}><V2Button disabled={!activeCount} onclick={prev}>← Previous</V2Button><V2Button disabled={!activeCount} onclick={next}>Next →</V2Button><V2Button disabled={!selectedAsset} onclick={()=>reference=member}>Set as reference</V2Button><V2KeyboardShortcuts {shortcuts}/></V2Inline>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual"><V2ImageComparison selectedSrc={selectedImage} referenceSrc={referenceImage} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance/>
     <div class="v2-filmstrip">{#each assetIds as assetId,index}{@const asset=assets.find((candidate)=>candidate.id===assetId)}{@const data=memberData[index]??emptyData}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>member=index}>{#if asset}<img src={visualSource(asset,false)} alt={data.name} loading="lazy" decoding="async">{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}%</small></button>{/each}</div>
   </section><aside class="v2-compare-data"><V2Section title="Quick comparison"><V2Card><V2Stack gap="sm"><V2Inline justify="between"><span>Visual similarity</span><b>{selectedData.similarity}%</b></V2Inline><V2Inline justify="between"><span>File size difference</span><b>{selectedData.sizeNum-referenceData.sizeNum>=0?'+':''}{(selectedData.sizeNum-referenceData.sizeNum).toFixed(1)} MB</b></V2Inline><V2Inline justify="between"><span>Resolution</span><b>{selectedData.dims===referenceData.dims?'Same':'Different'}</b></V2Inline><V2Inline justify="between"><span>Difference source</span><V2Badge tone="ok" text="Layered displayed pixels"/></V2Inline></V2Stack></V2Card></V2Section><V2Section title="Metadata side by side"><div class="v2-compare-grid"><b>Selected</b><b>Reference</b><span>{selectedData.name}</span><span>{referenceData.name}</span><span>{selectedData.codec}</span><span>{referenceData.codec}</span><span>{selectedData.size}</span><span>{referenceData.size}</span><span>{selectedData.dims}</span><span>{referenceData.dims}</span><span>{selectedData.taken}</span><span>{referenceData.taken}</span><span>{selectedData.library}</span><span>{referenceData.library}</span><span>{selectedData.uploaded}</span><span>{referenceData.uploaded}</span></div></V2Section></aside></div>
