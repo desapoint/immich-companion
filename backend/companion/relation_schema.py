@@ -25,6 +25,7 @@ class TagManagementItem(BaseModel):
     parent_id: UUID | None = None
     parent_path: list[str] = Field(default_factory=list)
     asset_count: int = 0
+    child_count: int = 0
     children: list[TagManagementItem] = Field(default_factory=list)
 
 

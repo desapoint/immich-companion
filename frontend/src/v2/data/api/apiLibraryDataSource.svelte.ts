@@ -15,12 +15,12 @@ import type {
   DuplicateRepository,
   MediaRepository,
   SavedSearchRepository,
-  TagRepository,
   ViewerNavigationRepository,
 } from '../contracts';
 import type { LiveLibraryDataSource, SyncDataRepository } from '../liveContracts';
 import { notImplemented } from '../notImplemented';
 import { createAlbumRepository } from './albumRepository';
+import { createTagRepository } from './tagRepository';
 
 function unsupportedRepository<T extends object>(area: string): T {
   return new Proxy({}, {
@@ -56,7 +56,7 @@ export function createApiLibraryDataSource(): LiveLibraryDataSource {
     initialize: async () => undefined,
     assets: unsupportedRepository<AssetRepository>('assets'),
     albums: createAlbumRepository(),
-    tags: unsupportedRepository<TagRepository>('tags'),
+    tags: createTagRepository(),
     savedSearches: unsupportedRepository<SavedSearchRepository>('savedSearches'),
     duplicates: unsupportedRepository<DuplicateRepository>('duplicates'),
     media: unsupportedRepository<MediaRepository>('media'),

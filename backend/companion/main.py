@@ -965,8 +965,12 @@ def create_app(
     @app.get("/api/tags/manage", response_model=RelationPage[TagManagementItem])
     async def manage_tags(page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
                           search: str | None = Query(None, max_length=255),
-                          sort: Literal["name", "asset_count"] = "name",
-                          direction: Literal["asc", "desc"] = "asc"):
+                          sort: Literal[
+                              "name", "asset_count", "path", "child_count"
+                          ] = "name",
+                          direction: Literal["asc", "desc"] = "asc",
+                          flat: bool = False,
+                          include_hierarchy: bool = False):
         catalog = await require_immich().list_tag_catalog()
         counts = await require_asset_repository().tag_asset_counts()
         tags_by_id = {tag.id: tag for tag in catalog}
@@ -978,7 +982,7 @@ def create_app(
             else:
                 roots.append(tag)
 
-        def parent_path(tag: ImmichTag) -> list[str]:
+        def resolve_parent_path(tag: ImmichTag) -> list[str]:
             path: list[str] = []
             parent_id = tag.parent_id
             visited = {tag.id}
@@ -991,7 +995,57 @@ def create_app(
                 parent_id = parent.parent_id
             return list(reversed(path))
 
+        parent_paths = {tag.id: resolve_parent_path(tag) for tag in catalog}
+
+        def canonical_path(tag: ImmichTag) -> str:
+            return " / ".join([*parent_paths[tag.id], tag.name])
+
+        def sort_key(tag: ImmichTag) -> str | int:
+            if sort == "asset_count":
+                return counts.get(tag.id, 0)
+            if sort == "child_count":
+                return len(children_by_parent.get(tag.id, []))
+            if sort == "path":
+                return canonical_path(tag).casefold()
+            return tag.name.casefold()
+
+        def management_item(
+            tag: ImmichTag, *, children: list[TagManagementItem] | None = None
+        ) -> TagManagementItem:
+            return TagManagementItem(
+                id=tag.id,
+                name=tag.name,
+                color=tag.color,
+                parent_id=tag.parent_id,
+                parent_path=parent_paths[tag.id],
+                asset_count=counts.get(tag.id, 0),
+                child_count=len(children_by_parent.get(tag.id, [])),
+                children=children or [],
+            )
+
         needle = search.casefold().strip() if search else ""
+        if flat:
+            matching_tags = [
+                tag
+                for tag in catalog
+                if not needle
+                or needle in tag.name.casefold()
+                or (include_hierarchy and needle in canonical_path(tag).casefold())
+            ]
+            matching_tags.sort(key=sort_key, reverse=direction == "desc")
+            total = len(matching_tags)
+            start = (page - 1) * page_size
+            return RelationPage(
+                items=[
+                    management_item(tag)
+                    for tag in matching_tags[start : start + page_size]
+                ],
+                total=total,
+                page=page,
+                page_size=page_size,
+                pages=(total + page_size - 1) // page_size,
+            )
+
         matching_ids = {
             tag.id for tag in catalog if not needle or needle in tag.name.casefold()
         }
@@ -1007,10 +1061,6 @@ def create_app(
                 parent = tags_by_id.get(parent_id)
                 parent_id = parent.parent_id if parent is not None else None
 
-        def sort_key(tag: ImmichTag) -> str | int:
-            return tag.name.casefold() if sort == "name" else counts.get(tag.id, 0)
-
-
         def build_node(tag: ImmichTag) -> TagManagementItem | None:
             if tag.id not in included_ids:
                 return None
@@ -1021,15 +1071,7 @@ def create_app(
                 )
                 if (node := build_node(child)) is not None
             ]
-            return TagManagementItem(
-                id=tag.id,
-                name=tag.name,
-                color=tag.color,
-                parent_id=tag.parent_id,
-                parent_path=parent_path(tag),
-                asset_count=counts.get(tag.id, 0),
-                children=child_nodes,
-            )
+            return management_item(tag, children=child_nodes)
 
         visible_roots = [
             node
@@ -1045,6 +1087,33 @@ def create_app(
             page=page,
             page_size=page_size,
             pages=(total + page_size - 1) // page_size,
+        )
+
+    @app.get("/api/tags/manage/{tag_id}", response_model=TagManagementItem)
+    async def get_managed_tag(tag_id: UUID) -> TagManagementItem:
+        catalog = await require_immich().list_tag_catalog()
+        tags_by_id = {tag.id: tag for tag in catalog}
+        tag = tags_by_id.get(tag_id)
+        if tag is None:
+            raise HTTPException(status_code=404, detail="Tag not found.")
+        path: list[str] = []
+        parent_id = tag.parent_id
+        visited = {tag.id}
+        while parent_id is not None and parent_id not in visited:
+            parent = tags_by_id.get(parent_id)
+            if parent is None:
+                break
+            path.append(parent.name)
+            visited.add(parent.id)
+            parent_id = parent.parent_id
+        return TagManagementItem(
+            id=tag.id,
+            name=tag.name,
+            color=tag.color,
+            parent_id=tag.parent_id,
+            parent_path=list(reversed(path)),
+            asset_count=tag.asset_count,
+            child_count=sum(item.parent_id == tag.id for item in catalog),
         )
 
     @app.post("/api/tags/manage", response_model=TagManagementItem)

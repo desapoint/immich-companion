@@ -268,6 +268,57 @@ def test_managed_album_detail_is_read_directly_from_immich() -> None:
     }
 
 
+def test_managed_tag_detail_includes_its_live_hierarchy() -> None:
+    parent_id = "44444444-4444-4444-8444-444444444444"
+    tag_id = "55555555-5555-4555-8555-555555555555"
+    child_id = "66666666-6666-4666-8666-666666666666"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": parent_id,
+                    "name": "Places",
+                    "value": "Places",
+                    "color": "#7ea6ff",
+                    "assetCount": 8,
+                },
+                {
+                    "id": tag_id,
+                    "name": "Montréal",
+                    "value": "Montréal",
+                    "color": "#68d391",
+                    "parentId": parent_id,
+                    "assetCount": 5,
+                },
+                {
+                    "id": child_id,
+                    "name": "Old Port",
+                    "value": "Old Port",
+                    "parentId": tag_id,
+                    "assetCount": 2,
+                },
+            ],
+        )
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get(f"/api/tags/manage/{tag_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": tag_id,
+        "name": "Montréal",
+        "color": "#68d391",
+        "parent_id": parent_id,
+        "parent_path": ["Places"],
+        "asset_count": 5,
+        "child_count": 1,
+        "children": [],
+    }
+
+
 def test_cross_source_duplicate_api_requires_companion_database() -> None:
     with TestClient(create_app(settings(), pong_transport())) as client:
         result = client.get("/api/assets/duplicates/cross-source")
