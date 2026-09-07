@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { cancelTask, getAssetSyncStatus, startAssetSync } from '../../features/assets/api/assetApi';
-  import type { AssetSyncCoordinatorStatus, AssetSyncMode, AssetSyncRunStatus } from '../../features/assets/types/assets';
+  import { cancelTask, getAssetSyncStatus, openTaskUpdates, startAssetSync } from '../../features/assets/api/assetApi';
+  import type { AssetSyncCoordinatorStatus, AssetSyncMode, AssetSyncRunStatus, AssetTaskStatus } from '../../features/assets/types/assets';
   import { loadSyncRuntimeSettings, loadSyncSchedules, saveSyncRuntimeSettings, saveSyncSchedule } from '../../features/settings/api/settingsApi';
   import type { SyncRuntimeSettings, SyncSchedule } from '../../features/settings/types/settings';
   import V2Badge from '../components/V2Badge.svelte';
@@ -12,6 +12,7 @@
   import V2Field from '../components/V2Field.svelte';
   import V2Notice from '../components/V2Notice.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
+  import V2Progress from '../components/V2Progress.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Tabs from '../components/V2Tabs.svelte';
@@ -30,10 +31,15 @@
   let success = $state<string | null>(null);
   let active = true;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let taskSocket: WebSocket | null = null;
 
   const currentRun = $derived(statusState?.active ?? statusState?.pending ?? null);
   const fullSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-full') ?? null);
   const incrementalSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-incremental') ?? null);
+  const progressKnown = $derived(
+    currentRun?.progress.total != null && currentRun.progress.percent != null,
+  );
 
   function message(value: unknown, fallback: string): string {
     return value instanceof Error ? value.message : fallback;
@@ -46,6 +52,23 @@
     } catch (value) {
       if (active && !statusState) error = message(value, 'Could not load synchronization status.');
     }
+  }
+
+  function handleTaskUpdate(task: AssetTaskStatus): void {
+    if (task.task_type === 'asset_sync') void refreshStatus();
+  }
+
+  function connectTaskUpdates(): void {
+    if (!active || taskSocket) return;
+    taskSocket = openTaskUpdates(
+      handleTaskUpdate,
+      () => undefined,
+      () => {
+        taskSocket = null;
+        if (!active) return;
+        reconnectTimer = setTimeout(connectTaskUpdates, 2000);
+      },
+    );
   }
 
   async function loadLiveConfiguration(): Promise<void> {
@@ -160,10 +183,14 @@
   onMount(() => {
     active = true;
     void loadLiveConfiguration();
-    pollTimer = setInterval(() => void refreshStatus(), 1500);
+    connectTaskUpdates();
+    pollTimer = setInterval(() => void refreshStatus(), 10000);
     return () => {
       active = false;
       if (pollTimer) clearInterval(pollTimer);
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      taskSocket?.close();
+      taskSocket = null;
     };
   });
 </script>
@@ -200,10 +227,14 @@
                 <div><span>Phase</span><strong>{currentRun.progress.phase || currentRun.phase}</strong></div>
                 <div><span>Processed</span><strong>{formatNumber(currentRun.progress.completed)} / {formatNumber(currentRun.progress.total)}</strong></div>
               </div>
-              <div class="sync-progress" aria-label="Synchronization progress">
-                <span style={`width:${currentRun.progress.percent ?? 0}%`}></span>
+              <V2Progress
+                value={progressKnown ? currentRun.progress.percent ?? undefined : undefined}
+                indeterminate={!progressKnown}
+                label={`Synchronization ${currentRun.progress.phase || currentRun.phase} progress`}
+              />
+              <div class="v2-small v2-muted">
+                {currentRun.progress.detail ?? (progressKnown ? `${formatNumber(currentRun.progress.completed)} of ${formatNumber(currentRun.progress.total)} processed` : 'Synchronization is running; total work is not known yet.')}
               </div>
-              <div class="v2-small v2-muted">{currentRun.progress.detail ?? 'Synchronization is running.'}</div>
             {:else}
               <V2Notice tone="info">No synchronization is currently active or queued.</V2Notice>
             {/if}
@@ -260,8 +291,8 @@
                 {#snippet actions()}<V2Badge tone={incrementalSchedule.enabled ? 'ok' : 'default'} text={incrementalSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
                 <V2Stack gap="sm">
                   <V2Checkbox label="Enable incremental sync schedule" checked={incrementalSchedule.enabled} onchange={(checked) => updateSchedule(incrementalSchedule.name, { enabled: checked })} />
-                  <V2CronField id="settings-incremental-cron" label="Incremental synchronization" enabled={incrementalSchedule.enabled} value={incrementalSchedule.cron_expression ?? '*/15 * * * *'} onchange={(value) => updateSchedule(incrementalSchedule.name, { cron_expression: value })} />
-                  <div><V2Button variant="primary" disabled={busy} onclick={() => void persistSchedule(incrementalSchedule)}>Save incremental schedule</V2Button></div>
+                  <V2CronField id="settings-incremental-cron" label="Incremental synchronization" enabled={incrementalSchedule.enabled} value={incrementalSchedule.cron_expression ?? ''} onchange={(value) => updateSchedule(incrementalSchedule.name, { cron_expression: value })} />
+                  <div><V2Button variant="primary" disabled={busy || !incrementalSchedule.cron_expression} onclick={() => void persistSchedule(incrementalSchedule)}>Save incremental schedule</V2Button></div>
                 </V2Stack>
               </V2Card>
             {/if}
@@ -271,8 +302,8 @@
                 {#snippet actions()}<V2Badge tone={fullSchedule.enabled ? 'ok' : 'default'} text={fullSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
                 <V2Stack gap="sm">
                   <V2Checkbox label="Enable global full-sync schedule" checked={fullSchedule.enabled} onchange={(checked) => updateSchedule(fullSchedule.name, { enabled: checked })} />
-                  <V2CronField id="settings-global-cron" label="Global full synchronization" enabled={fullSchedule.enabled} value={fullSchedule.cron_expression ?? '0 0 * * 0'} onchange={(value) => updateSchedule(fullSchedule.name, { cron_expression: value })} />
-                  <div><V2Button variant="primary" disabled={busy} onclick={() => void persistSchedule(fullSchedule)}>Save global schedule</V2Button></div>
+                  <V2CronField id="settings-global-cron" label="Global full synchronization" enabled={fullSchedule.enabled} value={fullSchedule.cron_expression ?? ''} onchange={(value) => updateSchedule(fullSchedule.name, { cron_expression: value })} />
+                  <div><V2Button variant="primary" disabled={busy || !fullSchedule.cron_expression} onclick={() => void persistSchedule(fullSchedule)}>Save global schedule</V2Button></div>
                 </V2Stack>
               </V2Card>
             {/if}
@@ -288,8 +319,6 @@
   .sync-run-summary,.sync-counter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}
   .sync-run-summary>div,.sync-counter-grid>div{display:grid;gap:.15rem;padding:.7rem;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:.65rem}
   .sync-run-summary span,.sync-counter-grid span{font-size:.78rem;opacity:.7;text-transform:capitalize}
-  .sync-progress{height:.55rem;overflow:hidden;border-radius:999px;background:var(--v2-surface-subtle,rgba(127,127,127,.12))}
-  .sync-progress>span{display:block;height:100%;border-radius:inherit;background:currentColor;opacity:.65;transition:width .2s ease}
   .sync-control-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
   @media(max-width:900px){.sync-control-grid,.sync-run-summary,.sync-counter-grid{grid-template-columns:1fr}}
 </style>
