@@ -1,9 +1,9 @@
 """V2 sync-step contracts stay isolated and frontend-progress compatible."""
 
-import asyncio
-
 import pytest
 
+from companion.asset_service import AssetSyncService
+from companion.v2.legacy_asset_service import AssetSyncService as LegacyAssetSyncService
 from companion.v2.sync_steps import (
     SyncStepConditionals,
     SyncStepConfig,
@@ -33,9 +33,7 @@ def test_v2_step_config_validates_shared_operational_limits() -> None:
 
 
 def test_manual_execution_can_bypass_conditionals() -> None:
-    config = SyncStepConfig(
-        conditionals=SyncStepConditionals(enabled=False)
-    )
+    config = SyncStepConfig(conditionals=SyncStepConditionals(enabled=False))
     context = SyncStepContext(
         mode="full",
         generation=0,
@@ -76,3 +74,8 @@ def test_progress_percent_is_derived_from_committed_work() -> None:
     progress = SyncStepProgress(phase="catalogs", completed=3, total=12)
     assert progress.percent == 25.0
     assert progress.as_dict()["step"] == "catalogs"
+
+
+def test_live_v2_asset_sync_overrides_only_extracted_catalog_stage() -> None:
+    assert issubclass(AssetSyncService, LegacyAssetSyncService)
+    assert AssetSyncService._sync_catalogs is not LegacyAssetSyncService._sync_catalogs
