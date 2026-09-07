@@ -1,7 +1,6 @@
-import { createDemoLibraryDataSource } from './demo/demoLibraryDataSource.svelte';
-import { withDemoMediaProfiles } from './demo/demoMediaProfile';
-import { withDemoSavedSearches } from './demo/demoSavedSearches';
+import { createApiLibraryDataSource } from './api/apiLibraryDataSource.svelte';
 import type { ResolvedLibraryDataSource } from './contracts';
+import type { LiveLibraryDataSource } from './liveContracts';
 
 type CapabilityResponse = { destructive_actions?: boolean };
 
@@ -25,7 +24,7 @@ async function requireDestructiveActions(): Promise<void> {
   throw new Error('Destructive actions are disabled by ALLOW_DESTRUCTIVE_ACTIONS.');
 }
 
-function withDestructiveActionGuard(source: ResolvedLibraryDataSource): ResolvedLibraryDataSource {
+function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source: T): T {
   return {
     ...source,
     assets: {
@@ -42,10 +41,12 @@ function withDestructiveActionGuard(source: ResolvedLibraryDataSource): Resolved
         return source.duplicates.applyDecisions(resolution);
       },
     },
-  };
+  } as T;
 }
 
-// Single composition point for the V2 UI. Replacing this with an API-backed
-// implementation should not require page/component changes.
-const demoLibraryData = withDemoSavedSearches(withDemoMediaProfiles(createDemoLibraryDataSource()));
-export const libraryData = withDestructiveActionGuard(demoLibraryData);
+// Single production composition point for the V2 UI. A V2 operation is live only when
+// createApiLibraryDataSource explicitly implements it. Unsupported operations fail closed
+// with V2NotImplementedError rather than falling back to demo data or an existing V1 API.
+export const libraryData: LiveLibraryDataSource = withDestructiveActionGuard(
+  createApiLibraryDataSource(),
+);
