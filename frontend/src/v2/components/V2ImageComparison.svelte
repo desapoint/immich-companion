@@ -13,7 +13,6 @@
   let {
     selectedSrc,
     referenceSrc,
-    differenceSrc,
     selectedLabel = 'Selected image',
     referenceLabel = 'Reference / keeper candidate',
     mode = $bindable<ComparisonMode>('Side by side'),
@@ -25,7 +24,6 @@
   }: {
     selectedSrc: string;
     referenceSrc: string;
-    differenceSrc: string;
     selectedLabel?: string;
     referenceLabel?: string;
     mode?: ComparisonMode;
@@ -71,12 +69,6 @@
     const image = event.currentTarget as HTMLImageElement;
     referenceNatural = { width: image.naturalWidth, height: image.naturalHeight };
     syncNaturalSize();
-    requestAnimationFrame(() => camera.fit());
-  }
-
-  function differenceLoaded(event: Event): void {
-    const image = event.currentTarget as HTMLImageElement;
-    camera.setNaturalSize(image.naturalWidth, image.naturalHeight);
     requestAnimationFrame(() => camera.fit());
   }
 
@@ -193,12 +185,16 @@
       />
     {:else}
       <V2CompareDifference
-        {differenceSrc}
+        {selectedSrc}
+        {referenceSrc}
+        {selectedLabel}
+        {referenceLabel}
         transform={camera.transform}
         bind:diffHue
         bind:diffContrast
         bind:diffBinary
-        onimageload={differenceLoaded}
+        onselectedload={selectedLoaded}
+        onreferenceload={referenceLoaded}
         onviewport={setViewport}
       />
     {/if}
