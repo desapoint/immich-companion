@@ -36,12 +36,12 @@
   let diffColor = $state('#00FFFF');
 
   const safeTolerance = $derived(Math.max(1, Math.min(50, diffTolerance)));
-  const toleranceGain = $derived(Math.min(20, 50 / safeTolerance));
-  const continuousGain = $derived(Math.max(0.35, Math.min(4, 12 / safeTolerance)));
-  const colorize = $derived(`sepia(1) saturate(8) hue-rotate(${diffHue - 40}deg)`);
-  const renderFilter = $derived(diffBinary
-    ? `grayscale(1) brightness(${toleranceGain}) contrast(1400%) ${colorize}`
-    : `grayscale(1) brightness(${continuousGain}) contrast(${diffContrast}%) ${colorize}`);
+  const binaryContrast = $derived(Math.round(700 + safeTolerance * 18));
+  const binaryBrightness = $derived(Math.max(0.55, 1.55 - safeTolerance / 55));
+  const continuousContrast = $derived(Math.max(50, Math.min(300, diffContrast)));
+  const differenceFilter = $derived(diffBinary
+    ? `grayscale(1) brightness(${binaryBrightness}) contrast(${binaryContrast}%) sepia(1) saturate(8) hue-rotate(${diffHue - 40}deg)`
+    : `grayscale(1) brightness(${Math.max(0.7, 1.25 - safeTolerance / 100)}) contrast(${continuousContrast}%) sepia(1) saturate(8) hue-rotate(${diffHue - 40}deg)`);
 
   function showControls(): void {
     if (hoverTimer) clearTimeout(hoverTimer);
@@ -70,16 +70,19 @@
   onfocusin={showControls}
   onfocusout={hideControlsSoon}
 >
-  <div class="v2-difference-stack" style={`filter:${renderFilter}`}>
-    <div class="v2-compare-layer">
-      <div class="v2-compare-transform" style={`transform:${transform}`}>
-        <img src={referenceSrc} alt={referenceLabel} onload={onreferenceload}>
-      </div>
+  <div class="v2-compare-layer">
+    <div class="v2-compare-transform" style={`transform:${transform}`}>
+      <img src={referenceSrc} alt={referenceLabel} onload={onreferenceload}>
     </div>
-    <div class="v2-compare-layer top v2-difference-selected">
-      <div class="v2-compare-transform" style={`transform:${transform}`}>
-        <img src={selectedSrc} alt={selectedLabel} onload={onselectedload}>
-      </div>
+  </div>
+  <div class="v2-compare-layer top v2-difference-selected">
+    <div class="v2-compare-transform" style={`transform:${transform}`}>
+      <img
+        src={selectedSrc}
+        alt={selectedLabel}
+        onload={onselectedload}
+        style={`filter:${differenceFilter}`}
+      >
     </div>
   </div>
 
@@ -123,6 +126,7 @@
 </div>
 
 <style>
-  .v2-difference-stack { position:absolute; inset:0; background:#000; isolation:isolate; }
-  .v2-difference-selected img { mix-blend-mode:difference; }
+  .v2-difference-selected img {
+    mix-blend-mode:difference;
+  }
 </style>
