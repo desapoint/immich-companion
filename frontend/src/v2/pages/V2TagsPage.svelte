@@ -48,7 +48,7 @@
   function updateModal(id:number,patch:Partial<TagModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
   async function saveModal(modal:TagModal){if(!modal.name.trim()||mutating)return;mutating=true;loadError='';try{if(modal.mode==='create'){const created=await libraryData.tags.create(modal.name,modal.color||null,modal.parent);if(!created)throw new Error('The tag was not created.');feedback={tone:'ok',title:'Tag created',detail:`${created.tag_name} was created.`,failures:[]}}else{const result=await libraryData.tags.update(modal.tagId,{name:modal.name,color:modal.color||null,parentPath:modal.parent});feedback=mutationFeedback('Update tag',result);if(result.failed.length)return}closeModal(modal.id);await refresh(true)}catch(error){feedback=null;loadError=errorMessage(error,'The tag could not be saved.')}finally{mutating=false}}
   function deleteRow(tag:TagHierarchyRow){requestDelete(realTagIdsFor(tag))}
-  function filterAssets(tag:TagHierarchyRow){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[],tagIds:realTagIdsFor(tag)}));window.location.hash='assets'}
+  function filterAssets(tag:TagHierarchyRow){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[],tagIds:realTagIdsFor(tag)}));window.location.assign('/v2/assets')}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();await refresh(true)}catch(error){loadError=errorMessage(error,'The tag data source could not be initialized.')}})()});
 </script>
 

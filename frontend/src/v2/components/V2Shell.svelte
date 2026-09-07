@@ -9,7 +9,7 @@
   import V2Segmented from './V2Segmented.svelte';
   import V2TaskBubble from './V2TaskBubble.svelte';
 
-  type NavItem = { key:string; label:string; group?:string; position?:'top'|'bottom' };
+  type NavItem = { key:string; label:string; href:string; group?:string; position?:'top'|'bottom' };
 
   const TASK_TRAY_STORAGE_KEY='immich-companion-v2-task-tray-expanded';
   function readTaskExpanded():boolean{
@@ -31,12 +31,24 @@
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
-  const mobileItems=[{key:'status',label:'Status'},{key:'assets',label:'Assets'},{key:'duplicates',label:'Review'},{key:'albums',label:'Manage'},{key:'settings',label:'More'}];
+  const mobileItems=$derived([
+    {key:'status',label:'Status'},
+    {key:'assets',label:'Assets'},
+    {key:'duplicates',label:'Review'},
+    {key:'albums',label:'Manage'},
+    {key:'settings',label:'More'},
+  ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??`/v2/${mobileItem.key}` })));
   const currentRun=$derived(syncStatus?.active ?? syncStatus?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
 
   function setDensity(next:V2Density){density=next;writeV2Density(next)}
   function setTaskExpanded(expanded:boolean){taskExpanded=expanded;writeTaskExpanded(expanded)}
+
+  function handleNavigation(event:MouseEvent,item:NavItem):void{
+    if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
+    event.preventDefault();
+    onnavigate(item.key);
+  }
 
   function syncTaskBounds(): void {
     if (!root) return;
@@ -121,7 +133,7 @@
 
 {#snippet navIcon(key:string)}
   <span class="v2-nav-icon" aria-hidden="true">
-    {#if key==='status'}<CircleGauge size={17}/>{:else if key==='assets'}<Images size={17}/>{:else if key==='restore'}<RotateCcw size={17}/>{:else if key==='duplicates'}<Copy size={17}/>{:else if key==='albums'}<Album size={17}/>{:else if key==='tags'}<Tags size={17}/>{:else if key==='settings'}<Settings size={17}/>{:else if key==='api-docs'}<BookOpen size={17}/>{:else}<CircleGauge size={17}/>{/if}
+    {#if key==='status'}<CircleGauge size={17}/>{:else if key==='assets'}<Images size={17}/>{:else if key==='restore'}<RotateCcw size={17}/>{:else if key==='duplicates'}<Copy size={17}/>{:else if key==='albums'}<Album size={17}/>{:else if key==='tags'}<Tags size={17}/>{:else if key==='settings'}<Settings size={17}/>{:else if key==='docs'}<BookOpen size={17}/>{:else}<CircleGauge size={17}/>{/if}
   </span>
 {/snippet}
 
@@ -129,12 +141,12 @@
   <div class="v2-app">
     <aside class="v2-sidebar">
       <div class="v2-brand"><div class="v2-logo"></div><span class="v2-brand-text">{brand}</span></div>
-      {#each topGroups as group}
+      {#each topGroups as group (group.label)}
         {#if group.label}<div class="v2-nav-label">{group.label}</div>{/if}
-        <nav class="v2-nav" aria-label={group.label||'Navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></button>{/each}</nav>
+        <nav class="v2-nav" aria-label={group.label||'Navigation'}>{#each group.items as item (item.key)}<a class="v2-nav-button" href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></a>{/each}</nav>
       {/each}
       <div class="v2-grow"></div>
-      {#each bottomGroups as group}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item}<button class="v2-nav-button" aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></button>{/each}</nav>{/each}
+      {#each bottomGroups as group (group.label)}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item (item.key)}<a class="v2-nav-button" href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></a>{/each}</nav>{/each}
       <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel} <small class="v2-muted">v2.x</small></div>
     </aside>
 
@@ -199,5 +211,5 @@
     </div>
   {/if}
 
-  <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item}<button aria-current={item.key===activeKey?'page':undefined} onclick={()=>onnavigate(item.key)}>{item.label}</button>{/each}</nav>
+  <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item (item.key)}<a href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{item.label}</a>{/each}</nav>
 </div>

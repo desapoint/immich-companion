@@ -2,24 +2,29 @@
   import V2Shell from './components/V2Shell.svelte';
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
+  import {
+    v2PageFromLegacyHash,
+    v2PageFromPath,
+    v2PagePath,
+    type V2PageKey,
+  } from './navigation';
   import './styles/index.css';
 
-  type PageKey = 'status' | 'assets' | 'restore' | 'duplicates' | 'albums' | 'tags' | 'settings' | 'docs' | 'playground';
-  type NavItem = { key: PageKey; label: string; group?: string; position?: 'top' | 'bottom' };
+  type NavItem = { key: V2PageKey; label: string; href: string; group?: string; position?: 'top' | 'bottom' };
 
   const navItems: NavItem[] = [
-    { key: 'status', label: 'Status', group: 'Library' },
-    { key: 'assets', label: 'Assets', group: 'Library' },
-    { key: 'restore', label: 'Restore', group: 'Library' },
-    { key: 'duplicates', label: 'Duplicates', group: 'Library' },
-    { key: 'albums', label: 'Albums', group: 'Organize' },
-    { key: 'tags', label: 'Tags', group: 'Organize' },
-    { key: 'settings', label: 'Settings', position: 'bottom' },
-    { key: 'docs', label: 'API Docs', position: 'bottom' },
-    { key: 'playground', label: 'Playground', position: 'bottom' },
+    { key: 'status', label: 'Status', href: v2PagePath('status'), group: 'Library' },
+    { key: 'assets', label: 'Assets', href: v2PagePath('assets'), group: 'Library' },
+    { key: 'restore', label: 'Restore', href: v2PagePath('restore'), group: 'Library' },
+    { key: 'duplicates', label: 'Duplicates', href: v2PagePath('duplicates'), group: 'Library' },
+    { key: 'albums', label: 'Albums', href: v2PagePath('albums'), group: 'Organize' },
+    { key: 'tags', label: 'Tags', href: v2PagePath('tags'), group: 'Organize' },
+    { key: 'settings', label: 'Settings', href: v2PagePath('settings'), position: 'bottom' },
+    { key: 'docs', label: 'API Docs', href: v2PagePath('docs'), position: 'bottom' },
+    { key: 'playground', label: 'Playground', href: v2PagePath('playground'), position: 'bottom' },
   ];
 
-  const titles: Record<PageKey, string> = {
+  const titles: Record<V2PageKey, string> = {
     status: 'Status',
     assets: 'Assets',
     restore: 'Restore',
@@ -31,21 +36,33 @@
     playground: 'Playground',
   };
 
-  function keyFromHash(): PageKey {
-    const key = window.location.hash.slice(1) as PageKey;
-    return navItems.some((item) => item.key === key) ? key : 'settings';
+  function keyFromLocation(): V2PageKey {
+    const legacyKey = v2PageFromLegacyHash(window.location.hash);
+    if (legacyKey) {
+      history.replaceState(null, '', v2PagePath(legacyKey));
+      return legacyKey;
+    }
+    return v2PageFromPath(window.location.pathname);
   }
 
-  let activeKey = $state<PageKey>(keyFromHash());
+  let activeKey = $state<V2PageKey>(keyFromLocation());
 
   function navigate(key: string): void {
-    activeKey = key as PageKey;
-    history.replaceState(null, '', `#${key}`);
+    const nextKey = key as V2PageKey;
+    const path = v2PagePath(nextKey);
+    if (window.location.pathname !== path || window.location.search || window.location.hash) {
+      history.pushState(null, '', path);
+    }
+    activeKey = nextKey;
+  }
+
+  function syncFromLocation(): void {
+    activeKey = keyFromLocation();
   }
 </script>
 
-<svelte:window onhashchange={() => (activeKey = keyFromHash())} />
-<svelte:head><title>Immich Companion V2</title></svelte:head>
+<svelte:window onpopstate={syncFromLocation} />
+<svelte:head><title>{titles[activeKey]} · Immich Companion V2</title></svelte:head>
 
 <V2Shell {activeKey} title={titles[activeKey]} {navItems} onnavigate={navigate}>
   {#if activeKey === 'settings'}

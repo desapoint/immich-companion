@@ -45,7 +45,7 @@
   function updateModal(id:number,patch:Partial<AlbumModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
   async function saveModal(modal:AlbumModal){if(!modal.name.trim()||mutating)return;mutating=true;loadError='';try{if(modal.mode==='create'){const created=await libraryData.albums.create(modal.name,modal.description);if(!created)throw new Error('The album was not created.');feedback={tone:'ok',title:'Album created',detail:`${created.album_name} was created.`,failures:[]}}else{const result=await libraryData.albums.update(modal.albumId,{name:modal.name,description:modal.description});feedback=mutationFeedback('Update album',result);if(result.failed.length)return}closeModal(modal.id);await refresh(true)}catch(error){feedback=null;loadError=errorMessage(error,'The album could not be saved.')}finally{mutating=false}}
   function deleteRow(id:string){requestDelete([id])}
-  function filterAssets(albumId:string){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[albumId],tagIds:[]}));window.location.hash='assets'}
+  function filterAssets(albumId:string){if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immichCompanionV2AssetFilterHandoff',JSON.stringify({albumIds:[albumId],tagIds:[]}));window.location.assign('/v2/assets')}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();await refresh(true)}catch(error){loadError=errorMessage(error,'The album data source could not be initialized.')}})()});
 </script>
 
