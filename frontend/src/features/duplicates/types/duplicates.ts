@@ -227,11 +227,14 @@ export interface DuplicateResolutionPlan {
       keeper_asset_id: string;
       album_ids: string[];
       tag_ids: string[];
+      source_fingerprint?: string | null;
     } | null;
     follow_up: {
       type: 'stack';
       primary_asset_id: string;
       member_asset_ids: string[];
+      source_fingerprint?: string | null;
+      conflict_fingerprint?: string | null;
     } | null;
     execution_state: 'pending' | 'duplicate_resolved' | 'follow_up_pending' | 'completed' | 'failed' | 'drifted';
     member_fingerprint: string;

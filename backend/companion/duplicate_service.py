@@ -100,6 +100,24 @@ def _plan_digest(groups: list[dict[str, Any]]) -> str:
     return sha256(raw.encode()).hexdigest()
 
 
+def _stable_fingerprint(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return sha256(raw.encode()).hexdigest()
+
+
+def _source_fingerprint(assets: list[Any]) -> str:
+    return _stable_fingerprint(
+        [
+            {
+                "asset_id": str(asset.id),
+                "file_modified_at": asset.file_modified_at.isoformat(),
+                "file_size_bytes": asset.file_size_bytes,
+            }
+            for asset in sorted(assets, key=lambda item: str(item.id))
+        ]
+    )
+
+
 def _member_fingerprint(asset_ids: list[UUID]) -> str:
     raw = ",".join(sorted(str(asset_id) for asset_id in asset_ids))
     return sha256(raw.encode()).hexdigest()
@@ -1329,6 +1347,27 @@ class CrossSourceDuplicateService:
             stale=False,
         )
 
+    async def _relation_snapshot(
+        self,
+        member_ids: set[UUID],
+    ) -> tuple[dict[UUID, tuple[set[UUID], set[UUID]]], str]:
+        relations: dict[UUID, tuple[set[UUID], set[UUID]]] = {}
+        serialized: dict[str, dict[str, list[str]]] = {}
+        for member_id in sorted(member_ids):
+            summary = await self._assets.get_asset_summary(member_id)
+            albums = {album.id for album in summary.albums} if summary is not None else set()
+            tags = (
+                {UUID(str(tag.id)) for tag in summary.tags}
+                if summary is not None
+                else set()
+            )
+            relations[member_id] = (albums, tags)
+            serialized[str(member_id)] = {
+                "album_ids": sorted(str(identifier) for identifier in albums),
+                "tag_ids": sorted(str(identifier) for identifier in tags),
+            }
+        return relations, _stable_fingerprint(serialized)
+
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
         result = await self.result(request.options)
         selected = (
@@ -1496,12 +1535,10 @@ class CrossSourceDuplicateService:
                 keeper_tags: set[UUID] = set()
                 trash_albums: set[UUID] = set()
                 trash_tags: set[UUID] = set()
-                for member_id in member_ids:
-                    summary = await self._assets.get_asset_summary(member_id)
-                    if summary is None:
-                        continue
-                    albums = {album.id for album in summary.albums}
-                    tags = {UUID(str(tag.id)) for tag in summary.tags}
+                relation_snapshot, relation_fingerprint = await self._relation_snapshot(
+                    member_ids
+                )
+                for member_id, (albums, tags) in relation_snapshot.items():
                     if member_id == metadata_keeper_id:
                         keeper_albums.update(albums)
                         keeper_tags.update(tags)
@@ -1516,7 +1553,15 @@ class CrossSourceDuplicateService:
                     "tag_ids": [
                         str(identifier) for identifier in sorted(trash_tags - keeper_tags)
                     ],
+                    "source_fingerprint": relation_fingerprint,
                 }
+            stack_source_fingerprint = (
+                _source_fingerprint(
+                    [member for member in group.members if member.id in stack_ids]
+                )
+                if stack_ids
+                else None
+            )
             plan_groups.append(
                 {
                     "group_id": group.group_id,
@@ -1540,6 +1585,8 @@ class CrossSourceDuplicateService:
                                     if asset_id != stack_primary_id
                                 ),
                             ],
+                            "source_fingerprint": stack_source_fingerprint,
+                            "conflict_fingerprint": None,
                         }
                         if stack_primary_id is not None
                         else None
@@ -1558,6 +1605,17 @@ class CrossSourceDuplicateService:
                     ],
                 }
             )
+        stack_plan_groups = [
+            planned for planned in plan_groups if planned["follow_up"] is not None
+        ]
+        if stack_plan_groups and self._stacks is not None:
+            stack_snapshot = await self._stacks.stack_snapshot()
+            for planned in stack_plan_groups:
+                follow_up = planned["follow_up"]
+                member_ids = [UUID(value) for value in follow_up["member_asset_ids"]]
+                follow_up["conflict_fingerprint"] = _stable_fingerprint(
+                    self._stacks.select_conflict_snapshot(member_ids, stack_snapshot)
+                )
         plan_groups.sort(key=lambda item: item["group_id"])
         record = await self._actions.create_duplicate_plan(
             groups=plan_groups,
@@ -1622,6 +1680,9 @@ class CrossSourceDuplicateService:
                 return stored["state"]
             return planned.get("execution_state", "pending")
 
+        failed_ids: list[str] = []
+        drifted_ids: list[str] = []
+        trashed_ids: list[UUID] = []
         pending_resolution = [
             planned for planned in raw_groups if execution_state(planned) == "pending"
         ]
@@ -1630,6 +1691,7 @@ class CrossSourceDuplicateService:
             if pending_resolution
             else {}
         )
+        preflight_ready: list[dict[str, Any]] = []
         for planned in pending_resolution:
             live_group = reviewed.get(planned["group_id"])
             planned_members = {UUID(value) for value in planned["member_asset_ids"]}
@@ -1654,8 +1716,22 @@ class CrossSourceDuplicateService:
                     )
                 )
             ):
-                await self._actions.finish_plan(plan_id, "drifted", {"error": "group_drift"})
-                raise PermanentTaskError("A duplicate group changed after review")
+                identifier = planned["group_id"]
+                failed_ids.append(identifier)
+                drifted_ids.append(identifier)
+                stored_execution[identifier] = {
+                    "state": "drifted",
+                    "error": "group_drift",
+                }
+                await self._actions.record_duplicate_group_execution(
+                    plan_id,
+                    identifier,
+                    "drifted",
+                    error="group_drift",
+                )
+            else:
+                preflight_ready.append(planned)
+        pending_resolution = preflight_ready
 
         if existing.status == "planned":
             claimed = await self._actions.claim_plan(plan_id)
@@ -1682,8 +1758,6 @@ class CrossSourceDuplicateService:
             if execution_state(planned)
             in {"duplicate_resolved", "follow_up_pending", "completed"}
         }
-        failed_ids: list[str] = []
-        trashed_ids: list[UUID] = []
 
         async def checkpoint(detail: str) -> None:
             successful = sum(
@@ -1729,6 +1803,15 @@ class CrossSourceDuplicateService:
             identifier = planned["group_id"]
             keeper_asset_id = UUID(metadata_work["keeper_asset_id"])
             try:
+                expected_fingerprint = metadata_work.get("source_fingerprint")
+                if expected_fingerprint is not None:
+                    _, current_fingerprint = await self._relation_snapshot(
+                        {UUID(value) for value in planned["member_asset_ids"]}
+                    )
+                    if current_fingerprint != expected_fingerprint:
+                        raise ActionPlanConflictError(
+                            "Duplicate metadata inputs changed after review"
+                        )
                 for album_id in metadata_work.get("album_ids", []):
                     await self._immich.add_assets_to_album(
                         UUID(album_id),
@@ -1739,6 +1822,19 @@ class CrossSourceDuplicateService:
                         UUID(tag_id),
                         [keeper_asset_id],
                     )
+            except ActionPlanConflictError:
+                failed_ids.append(identifier)
+                drifted_ids.append(identifier)
+                stored_execution[identifier] = {
+                    "state": "drifted",
+                    "error": "metadata_input_drift",
+                }
+                await self._actions.record_duplicate_group_execution(
+                    plan_id,
+                    identifier,
+                    "drifted",
+                    error="metadata_input_drift",
+                )
             except ImmichApiError:
                 failed_ids.append(identifier)
                 stored_execution[identifier] = {
@@ -1864,6 +1960,23 @@ class CrossSourceDuplicateService:
                 for asset_id in member_ids:
                     asset = await self._immich.get_asset(asset_id)
                     refreshed_assets.append(asset)
+                expected_source = follow_up.get("source_fingerprint")
+                if (
+                    expected_source is not None
+                    and _source_fingerprint(refreshed_assets) != expected_source
+                ):
+                    raise ActionPlanConflictError(
+                        "Stack member files changed after review"
+                    )
+                expected_conflicts = follow_up.get("conflict_fingerprint")
+                if expected_conflicts is not None and (
+                    self._stacks is None or _stable_fingerprint(
+                        await self._stacks.conflict_snapshot(member_ids)
+                    ) != expected_conflicts
+                ):
+                    raise ActionPlanConflictError(
+                        "Existing stack memberships changed after review"
+                    )
                 stack_ids = {
                     str(asset.stack.get("id"))
                     for asset in refreshed_assets
@@ -1897,6 +2010,21 @@ class CrossSourceDuplicateService:
                     raise ImmichApiError("verify created stack")
                 for asset in refreshed_assets:
                     await self._assets.refresh_asset(asset)
+            except ActionPlanConflictError:
+                if identifier not in failed_ids:
+                    failed_ids.append(identifier)
+                if identifier not in drifted_ids:
+                    drifted_ids.append(identifier)
+                stored_execution[identifier] = {
+                    "state": "drifted",
+                    "error": "stack_input_drift",
+                }
+                await self._actions.record_duplicate_group_execution(
+                    plan_id,
+                    identifier,
+                    "drifted",
+                    error="stack_input_drift",
+                )
             except (ImmichApiError, StackSelectionError):
                 if identifier not in failed_ids:
                     failed_ids.append(identifier)
@@ -1985,6 +2113,7 @@ class CrossSourceDuplicateService:
             "zero_survivor_group_count": len(zero_survivor_ids),
             "stacked_group_count": len(stacked_ids),
             "failed_group_ids": failed_ids,
+            "drifted_group_ids": drifted_ids,
             "follow_up_pending_group_ids": follow_up_pending_ids,
             "trashed_asset_count": len(trashed_ids),
             "verified": not failed_ids,

@@ -252,12 +252,15 @@ class DuplicatePlanFollowUp(BaseModel):
     type: Literal["stack"]
     primary_asset_id: UUID
     member_asset_ids: list[UUID]
+    source_fingerprint: str | None = None
+    conflict_fingerprint: str | None = None
 
 
 class DuplicatePlanMetadataWork(BaseModel):
     keeper_asset_id: UUID
     album_ids: list[UUID] = Field(default_factory=list)
     tag_ids: list[UUID] = Field(default_factory=list)
+    source_fingerprint: str | None = None
 
 
 class DuplicateResolutionPlanGroup(BaseModel):

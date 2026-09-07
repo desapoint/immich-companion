@@ -52,6 +52,7 @@ LIBRARY_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 GROUP_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 ALBUM_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 TAG_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
+OTHER_ALBUM_ID = UUID("99999999-9999-4999-8999-999999999999")
 PUBLIC_GROUP_ID = f"immich:{GROUP_ID}"
 MODIFIED = datetime(2026, 8, 29, 12, tzinfo=UTC)
 
@@ -442,8 +443,9 @@ class FakeAssets:
 
 
 class FakeStackService:
-    def __init__(self, immich):
+    def __init__(self, immich, snapshots=None):
         self.immich = immich
+        self.snapshots = snapshots or []
 
     async def prepare(self, asset_ids, _resolution, primary_asset_id):
         return SimpleNamespace(
@@ -453,6 +455,20 @@ class FakeStackService:
             ],
             primary_asset_id=primary_asset_id,
         )
+
+    async def conflict_snapshot(self, _asset_ids):
+        return self.snapshots
+
+    async def stack_snapshot(self):
+        return self.snapshots
+
+    def select_conflict_snapshot(self, asset_ids, snapshot):
+        selected = {str(asset_id) for asset_id in asset_ids}
+        return [
+            item
+            for item in snapshot
+            if selected.intersection(item["member_asset_ids"])
+        ]
 
     async def execute(self, preparation):
         await self.immich.create_stack(preparation.asset_ids)
@@ -621,6 +637,21 @@ class FakeActions:
 class FakeRuntimeSettings:
     async def get(self):
         return SimpleNamespace(full_batch_size=100, full_min_batch_delay_seconds=0)
+
+
+def created_plan_record(actions: FakeActions, *, destructive: bool):
+    return SimpleNamespace(
+        id=GROUP_ID,
+        action="resolve_duplicates",
+        status="planned",
+        destructive=destructive,
+        expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        relation_work={
+            "groups": actions.created["groups"],
+            "options": actions.created["options"],
+        },
+        result=None,
+    )
 
 
 class FakeTasks:
@@ -1582,6 +1613,160 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
     assert immich.album_additions == [(ALBUM_ID, [UPLOAD_2])]
     assert immich.tag_additions == [(TAG_ID, [UPLOAD_2])]
     assert assets.removed == [UPLOAD_1]
+
+
+@pytest.mark.asyncio
+async def test_metadata_relation_drift_blocks_only_that_group_before_resolution() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    summaries = {
+        UPLOAD_1: SimpleNamespace(albums=[], tags=[]),
+        EXTERNAL_1: SimpleNamespace(
+            albums=[SimpleNamespace(id=ALBUM_ID)],
+            tags=[],
+        ),
+    }
+    assets = FakeAssets(summaries)
+    actions = FakeActions()
+    reviews = FakeReviews()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        assets,
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+        reviews,
+    )
+    current = (await service.result()).groups[0]
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="delete"),
+            ],
+        )
+    )
+    await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
+    actions.record = created_plan_record(actions, destructive=True)
+    summaries[EXTERNAL_1].albums.append(SimpleNamespace(id=OTHER_ALBUM_ID))
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "failed"
+    assert outcome.summary["drifted_group_ids"] == [PUBLIC_GROUP_ID]
+    assert immich.resolutions == []
+    assert actions.record.result["group_execution"][PUBLIC_GROUP_ID] == {
+        "state": "drifted",
+        "error": "metadata_input_drift",
+    }
+
+
+@pytest.mark.asyncio
+async def test_stack_source_drift_blocks_follow_up_after_native_resolution() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    actions = FakeActions()
+    reviews = FakeReviews()
+    stacks = FakeStackService(immich)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+        reviews,
+        stacks=stacks,
+    )
+    current = (await service.result()).groups[0]
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="stack"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="stack"),
+            ],
+            stack_primary_asset_id=UPLOAD_1,
+        )
+    )
+    await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
+    actions.record = created_plan_record(actions, destructive=False)
+    candidate_group.assets[1].file_modified_at += timedelta(seconds=1)
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "failed"
+    assert outcome.summary["drifted_group_ids"] == [PUBLIC_GROUP_ID]
+    assert immich.events == ["resolve"]
+    assert immich.created_stacks == []
+    assert actions.record.result["group_execution"][PUBLIC_GROUP_ID] == {
+        "state": "drifted",
+        "error": "stack_input_drift",
+    }
+
+
+@pytest.mark.asyncio
+async def test_existing_stack_drift_blocks_follow_up() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    actions = FakeActions()
+    reviews = FakeReviews()
+    stacks = FakeStackService(immich)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+        reviews,
+        stacks=stacks,
+    )
+    current = (await service.result()).groups[0]
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="stack"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="stack"),
+            ],
+            stack_primary_asset_id=UPLOAD_1,
+        )
+    )
+    await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
+    actions.record = created_plan_record(actions, destructive=False)
+    stacks.snapshots.append({
+        "stack_id": str(GROUP_ID),
+        "primary_asset_id": str(UPLOAD_1),
+        "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+    })
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "failed"
+    assert outcome.summary["drifted_group_ids"] == [PUBLIC_GROUP_ID]
+    assert immich.events == ["resolve"]
+    assert immich.created_stacks == []
 
 
 @pytest.mark.asyncio

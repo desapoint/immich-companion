@@ -29,8 +29,10 @@ class FakeImmich:
     def __init__(self, stacks=None) -> None:
         self.stacks = list(stacks or [])
         self.calls: list[tuple[str, UUID | None, list[UUID]]] = []
+        self.list_calls = 0
 
     async def list_stacks(self):
+        self.list_calls += 1
         return self.stacks
 
     async def create_stack(self, asset_ids):
@@ -74,6 +76,23 @@ async def test_conflicts_report_selected_and_unselected_members() -> None:
     assert conflicts[0].selected_count == 2
     assert conflicts[0].member_count == 3
     assert conflicts[0].includes_unselected is True
+
+
+@pytest.mark.asyncio
+async def test_one_stack_snapshot_can_serve_multiple_group_filters() -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_TWO, ASSET_THREE)])
+    workflow = service(immich)
+
+    snapshot = await workflow.stack_snapshot()
+    first = workflow.select_conflict_snapshot([ASSET_ONE], snapshot)
+    second = workflow.select_conflict_snapshot([ASSET_TWO], snapshot)
+
+    assert immich.list_calls == 1
+    assert first == second == [{
+        "stack_id": str(STACK_ID),
+        "primary_asset_id": str(ASSET_ONE),
+        "member_asset_ids": sorted(map(str, [ASSET_ONE, ASSET_TWO, ASSET_THREE])),
+    }]
 
 
 @pytest.mark.asyncio
