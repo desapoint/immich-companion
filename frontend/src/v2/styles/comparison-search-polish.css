@@ -1,20 +1,6 @@
-/* Search mode stays available without presenting as another pill-shaped header control. */
-.v2-section:has(> .v2-segmented[aria-label="Search mode"]) > .v2-section-header { display:none; }
-.v2-segmented[aria-label="Search mode"] {
-  border:0;
-  border-radius:0;
-  overflow:visible;
-  gap:14px;
-}
-.v2-segmented[aria-label="Search mode"] button {
-  padding:4px 0;
-  border-bottom:2px solid transparent;
-  color:var(--v2-muted);
-}
-.v2-segmented[aria-label="Search mode"] button[aria-pressed="true"] {
-  background:transparent;
-  color:var(--v2-text);
-  border-bottom-color:var(--v2-accent);
+/* The asset result toolbar does not need to repeat the active search expression beside pagination controls. */
+.v2-toolbar:has(#asset-results) > .v2-toolbar-group:first-child > .v2-badge:nth-child(2) {
+  display:none;
 }
 
 /* Never discard one side of an image comparison merely because the viewport narrows. */
