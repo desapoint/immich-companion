@@ -1,8 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { cancelTask, getAssetSyncStatus, openTaskUpdates, startAssetSync } from '../../features/assets/api/assetApi';
   import type { AssetSyncCoordinatorStatus, AssetSyncMode, AssetSyncRunStatus, AssetTaskStatus } from '../../features/assets/types/assets';
-  import { loadSyncRuntimeSettings, loadSyncSchedules, saveSyncRuntimeSettings, saveSyncSchedule } from '../../features/settings/api/settingsApi';
   import type { SyncRuntimeSettings, SyncSchedule } from '../../features/settings/types/settings';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
@@ -18,6 +16,7 @@
   import V2Tabs from '../components/V2Tabs.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
+  import { libraryData } from '../data/currentDataSource.svelte';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
 
@@ -47,7 +46,7 @@
 
   async function refreshStatus(): Promise<void> {
     try {
-      const next = await getAssetSyncStatus();
+      const next = await libraryData.sync.status();
       if (active) statusState = next;
     } catch (value) {
       if (active && !statusState) error = message(value, 'Could not load synchronization status.');
@@ -60,7 +59,7 @@
 
   function connectTaskUpdates(): void {
     if (!active || taskSocket) return;
-    taskSocket = openTaskUpdates(
+    taskSocket = libraryData.sync.openUpdates(
       handleTaskUpdate,
       () => undefined,
       () => {
@@ -76,9 +75,9 @@
     error = null;
     try {
       const [nextStatus, nextRuntime, nextSchedules] = await Promise.all([
-        getAssetSyncStatus(),
-        loadSyncRuntimeSettings(),
-        loadSyncSchedules(),
+        libraryData.sync.status(),
+        libraryData.sync.runtimeSettings(),
+        libraryData.sync.schedules(),
       ]);
       if (!active) return;
       statusState = nextStatus;
@@ -96,7 +95,7 @@
     error = null;
     success = null;
     try {
-      await startAssetSync(mode);
+      await libraryData.sync.start(mode);
       await refreshStatus();
       if (active) success = `${mode === 'full' ? 'Global' : 'Incremental'} synchronization submitted.`;
     } catch (value) {
@@ -113,7 +112,7 @@
     error = null;
     success = null;
     try {
-      await cancelTask(run.task_id ?? run.id);
+      await libraryData.sync.cancel(run.task_id ?? run.id);
       await refreshStatus();
       if (active) success = 'Cancellation requested.';
     } catch (value) {
@@ -129,7 +128,7 @@
     error = null;
     success = null;
     try {
-      runtime = await saveSyncRuntimeSettings(runtime);
+      runtime = await libraryData.sync.saveRuntimeSettings(runtime);
       success = 'Synchronization runtime settings saved.';
     } catch (value) {
       error = message(value, 'Could not save synchronization runtime settings.');
@@ -155,7 +154,7 @@
     error = null;
     success = null;
     try {
-      const saved = await saveSyncSchedule(schedule.name, {
+      const saved = await libraryData.sync.saveSchedule(schedule.name, {
         enabled: schedule.enabled,
         cron_expression: schedule.cron_expression,
       });
