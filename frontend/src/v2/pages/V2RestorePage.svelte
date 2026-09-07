@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { CheckCheck,ListChecks,RotateCcw } from '@lucide/svelte';
+  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
   import V2AssetGrid from '../components/V2AssetGrid.svelte';
   import V2AssetSelectionToolbar from '../components/V2AssetSelectionToolbar.svelte';
   import V2AssetTile from '../components/V2AssetTile.svelte';
@@ -24,7 +25,7 @@
   import type { TrashAssetRecord, TrashSelectionTarget } from '../data/contracts';
 
   const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionRestoreResultMode'});
-  let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),loadError=$state(''),feedback=$state<OperationFeedback|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null);
+  let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),loadError=$state(''),feedback=$state<OperationFeedback|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null),confirmRestoreAll=$state(false);
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const itemIds=$derived(items.map((asset)=>asset.id));
   const selectedCount=$derived(getAssetSelectionCount(selection,total)),selectionActive=$derived(selectedCount>0),allMatchingSelected=$derived(selection.allMatchingSelected),allVisibleSelected=$derived(isAllVisibleSelected(selection,itemIds));
@@ -47,13 +48,13 @@
   function setPage(value:number){collection.setPage(value);void refresh(true)}
   async function runRestore(nextTarget:TrashSelectionTarget){if(mutating)return;mutating=true;loadError='';try{const result=await libraryData.assets.restore(nextTarget);feedback=mutationFeedback('Restore',result);retryTarget=result.failed.length?{kind:'ids',ids:result.failed.map((failure)=>failure.id)}:null;clearSelection();await refresh(true)}catch(error){feedback=null;retryTarget=null;loadError=errorMessage(error,'Restore could not be completed.')}finally{mutating=false}}
   async function restoreSelected(){await runRestore(target())}
-  async function restoreAll(){await runRestore({kind:'all',excludedIds:[]});collection.reset()}
+  async function restoreAll(){confirmRestoreAll=false;await runRestore({kind:'all',excludedIds:[]});collection.reset()}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await refresh(true)}catch(error){loadError=errorMessage(error,'The trash data source could not be initialized.')}})();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
 <V2PageLayout title="Restore" description="Restore assets from the current trash data source while preserving provider-defined relationships.">
-  {#snippet headerActions()}<V2Button variant="primary" disabled={total===0||loading||mutating} onclick={restoreAll}>{mutating?'Restoring…':'Restore all'}</V2Button>{/snippet}
+  {#snippet headerActions()}<V2Button variant="primary" disabled={total===0||loading||mutating} onclick={()=>confirmRestoreAll=true}>{mutating?'Restoring…':'Restore all'}</V2Button>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Restore unavailable" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     <V2OperationFeedback {feedback} retryLabel={retryTarget?'Retry failed':''} onretry={retryTarget?()=>void runRestore(retryTarget!):undefined}/>
@@ -63,3 +64,4 @@
   </V2Zone>
 </V2PageLayout>
 <V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} onclose={()=>viewer=false}/>
+{#if confirmRestoreAll}<ConfirmDialog title="Restore all trash assets?" message={`Restore all ${total.toLocaleString()} assets currently in trash?`} confirmLabel="Restore all" icon="check" busy={mutating} onconfirm={()=>void restoreAll()} onclose={()=>{if(!mutating)confirmRestoreAll=false}}/>{/if}
