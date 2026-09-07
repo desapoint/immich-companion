@@ -37,9 +37,9 @@ function withDestructiveActionGuard(source: ResolvedLibraryDataSource): Resolved
     },
     duplicates: {
       ...source.duplicates,
-      applyDecisions: async (decisions) => {
-        if (Object.values(decisions).includes('delete')) await requireDestructiveActions();
-        return source.duplicates.applyDecisions(decisions);
+      applyDecisions: async (resolution) => {
+        if (Object.values(resolution.decisions).includes('delete')) await requireDestructiveActions();
+        return source.duplicates.applyDecisions(resolution);
       },
     },
   };
