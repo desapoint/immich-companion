@@ -328,6 +328,5 @@ only after their corresponding parity tasks have passed staging validation.
 
 ## Roadmap
 
-The detailed task graph is maintained locally in the ignored `TASKS.md` file.
 The implementation guide and imported reference scripts remain local under the
 ignored `docs/` directory.

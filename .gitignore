@@ -4,10 +4,6 @@
 /.agents/
 /.codex
 
-# Local task graph and task workspaces
-/TASKS.md
-*.local/
-
 # Secrets and local configuration
 .env
 .env.*
@@ -39,3 +35,6 @@ test-results/
 *.swo
 *~
 .DS_Store
+
+# Local developer runtime state and generated configuration
+/.local/
