@@ -3,6 +3,7 @@
     checked = false,
     indeterminate = false,
     disabled = false,
+    size = 'md',
     ariaLabel,
     title = ariaLabel,
     onclick,
@@ -11,6 +12,7 @@
     checked?: boolean;
     indeterminate?: boolean;
     disabled?: boolean;
+    size?: 'sm' | 'md';
     ariaLabel: string;
     title?: string;
     onclick?: (event: MouseEvent) => void;
@@ -20,6 +22,7 @@
 
 <button
   class="v2-round-checkbox"
+  class:small={size === 'sm'}
   class:checked={checked && !indeterminate}
   class:indeterminate
   type="button"
@@ -65,6 +68,31 @@
     background: rgba(10, 15, 21, 0.72);
     box-shadow: 0 2px 7px rgba(0, 0, 0, 0.34);
     transition: background 120ms ease, border-color 120ms ease, box-shadow 120ms ease, transform 120ms ease;
+  }
+
+  .v2-round-checkbox.small {
+    width: 28px;
+    height: 28px;
+  }
+
+  .v2-round-checkbox.small .v2-round-checkbox-mark {
+    width: 17px;
+    height: 17px;
+    border-width: 1.5px;
+  }
+
+  .v2-round-checkbox.small .v2-round-checkbox-mark::after {
+    width: 6px;
+    height: 3px;
+    border-left-width: 1.5px;
+    border-bottom-width: 1.5px;
+  }
+
+  .v2-round-checkbox.small.indeterminate .v2-round-checkbox-mark::after {
+    width: 7px;
+    height: 0;
+    border-left: 0;
+    border-bottom-width: 1.5px;
   }
 
   .v2-round-checkbox-mark::after {
