@@ -12,15 +12,18 @@
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Progress from '../components/V2Progress.svelte';
   import V2Section from '../components/V2Section.svelte';
+  import V2Segmented from '../components/V2Segmented.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Tabs from '../components/V2Tabs.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
+  import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
 
-  let tab = $state<SettingsTab>('Sync');
+  let tab = $state<SettingsTab>('General');
+  let density = $state<V2Density>('standard');
   let statusState = $state<AssetSyncCoordinatorStatus | null>(null);
   let runtime = $state<SyncRuntimeSettings | null>(null);
   let schedules = $state<SyncSchedule[]>([]);
@@ -42,6 +45,11 @@
 
   function message(value: unknown, fallback: string): string {
     return value instanceof Error ? value.message : fallback;
+  }
+
+  function setDensity(next: V2Density): void {
+    density = next;
+    writeV2Density(next);
   }
 
   async function refreshStatus(): Promise<void> {
@@ -181,11 +189,15 @@
 
   onMount(() => {
     active = true;
+    density = readV2Density();
+    const onDensity = (event: Event) => density = (event as CustomEvent<V2Density>).detail;
+    window.addEventListener(V2_DENSITY_EVENT, onDensity);
     void loadLiveConfiguration();
     connectTaskUpdates();
     pollTimer = setInterval(() => void refreshStatus(), 10000);
     return () => {
       active = false;
+      window.removeEventListener(V2_DENSITY_EVENT, onDensity);
       if (pollTimer) clearInterval(pollTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
       taskSocket?.close();
@@ -194,7 +206,7 @@
   });
 </script>
 
-<V2PageLayout title="Settings" description="Only synchronization and its configuration are live in V2 right now.">
+<V2PageLayout title="Settings" description="Configure interface behavior and live synchronization controls.">
   {#snippet tabs()}
     <V2Tabs items={['General', 'Duplicates', 'Sync']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />
   {/snippet}
@@ -202,11 +214,22 @@
   <V2Zone>
     <V2Toolbar sticky={false}><b>{tab}</b></V2Toolbar>
 
-    {#if tab !== 'Sync'}
+    {#if tab === 'General'}
+      <div class="v2-setting-grid">
+        <V2Card title="Interface density">
+          {#snippet actions()}<V2Badge tone="ok" text="Saved locally" />{/snippet}
+          <V2Stack gap="sm">
+            <span class="v2-small v2-muted">Controls spacing, table row height, card padding and grid thumbnail density throughout V2.</span>
+            <V2Segmented items={['Standard', 'Condensed']} active={density === 'standard' ? 'Standard' : 'Condensed'} onselect={(value) => setDensity(value === 'Standard' ? 'standard' : 'condensed')} ariaLabel="Interface density" />
+            <span class="v2-small v2-muted">The preference is applied immediately and retained across pages and browser reloads.</span>
+          </V2Stack>
+        </V2Card>
+      </div>
+    {:else if tab === 'Duplicates'}
       <V2Card title="Implementation not done yet">
         {#snippet actions()}<V2Badge tone="warn" text="Live actions disabled" />{/snippet}
         <V2Notice tone="warning" title="This settings area is not live yet">
-          {tab} settings are intentionally disabled in V2. Synchronization and synchronization configuration are the only live V2 workflows for now.
+          Duplicate settings are intentionally disabled in V2 until their live integration is complete.
         </V2Notice>
       </V2Card>
     {:else if loading}
@@ -249,13 +272,13 @@
         <V2Card title="Run counters">
           {#if currentRun}
             <div class="sync-counter-grid">
-              {#each Object.entries(currentRun.counters) as [name, value]}
+              {#each Object.entries(currentRun.counters) as [name, value] (name)}
                 <div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>
               {/each}
             </div>
           {:else if statusState?.last_success}
             <div class="sync-counter-grid">
-              {#each Object.entries(statusState.last_success.counters) as [name, value]}
+              {#each Object.entries(statusState.last_success.counters) as [name, value] (name)}
                 <div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>
               {/each}
             </div>
