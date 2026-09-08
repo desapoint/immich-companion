@@ -14,7 +14,20 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     image.src = url;
   });
   imageCache.set(url, pending);
+  void pending.catch(() => imageCache.delete(url));
   return pending;
+}
+
+async function loadResourceImage(resource: MediaResource): Promise<HTMLImageElement> {
+  const urls = [...new Set([resource.url, ...resource.fallbackUrls].filter(Boolean))];
+  for (const url of urls) {
+    try {
+      return await loadImage(url);
+    } catch {
+      // Continue through the same ordered fallbacks used by the media viewer.
+    }
+  }
+  throw new Error(`Unable to load comparison image: ${resource.url}`);
 }
 
 function fitDimensions(width: number, height: number): { width: number; height: number } {
@@ -69,7 +82,10 @@ export async function renderPixelDifference(
   reference: MediaResource,
   options: DifferenceOptions = {},
 ): Promise<MediaResource> {
-  const [selectedImage, referenceImage] = await Promise.all([loadImage(selected.url), loadImage(reference.url)]);
+  const [selectedImage, referenceImage] = await Promise.all([
+    loadResourceImage(selected),
+    loadResourceImage(reference),
+  ]);
   const naturalWidth = Math.max(selectedImage.naturalWidth, referenceImage.naturalWidth);
   const naturalHeight = Math.max(selectedImage.naturalHeight, referenceImage.naturalHeight);
   const { width, height } = fitDimensions(naturalWidth, naturalHeight);
@@ -108,6 +124,7 @@ export async function renderPixelDifference(
   selectedContext.putImageData(output, 0, 0);
   return {
     url: selectedCanvas.toDataURL('image/png'),
+    fallbackUrls: [],
     mimeType: 'image/png',
     posterUrl: null,
     delivery: 'difference',

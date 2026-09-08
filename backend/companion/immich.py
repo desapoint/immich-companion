@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -38,13 +38,22 @@ class ImmichApiError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class ImmichOriginalStream:
-    """Metadata and bounded chunks for one live original response."""
+class ImmichMediaStream:
+    """Metadata and bounded chunks for one live media response."""
 
     chunks: AsyncIterator[bytes]
+    status_code: int
     media_type: str
     content_length: int | None
     etag: str | None
+    cache_control: str | None
+    content_range: str | None
+    accept_ranges: str | None
+    last_modified: str | None
+
+
+# Backwards-compatible name for integrity-service test doubles and callers.
+ImmichOriginalStream = ImmichMediaStream
 
 
 class ImmichModel(BaseModel):
@@ -680,7 +689,7 @@ class ImmichApiClient:
         self,
         asset_id: UUID,
         *,
-        size: Literal["thumbnail", "preview"] = "thumbnail",
+        size: Literal["thumbnail", "preview", "fullsize"] = "thumbnail",
     ) -> ImmichMedia:
         """Retrieve safe thumbnail or preview bytes for browser proxying."""
 
@@ -713,47 +722,55 @@ class ImmichApiClient:
         )
 
     @asynccontextmanager
-    async def stream_original(
+    async def stream_asset_media(
         self,
         asset_id: UUID,
         *,
+        kind: Literal["original", "video_playback"],
+        request_headers: Mapping[str, str] | None = None,
         chunk_size: int = 1024 * 1024,
-    ) -> AsyncIterator[ImmichOriginalStream]:
-        """Stream an original through the shared pool without buffering its body."""
+    ) -> AsyncIterator[ImmichMediaStream]:
+        """Stream original or compatible video media through the shared HTTP pool."""
 
         attempts = self._settings.immich_retry_attempts
         response: httpx.Response | None = None
+        path = (
+            f"/api/assets/{asset_id}/original"
+            if kind == "original"
+            else f"/api/assets/{asset_id}/video/playback"
+        )
+        operation = "stream original asset" if kind == "original" else "stream video playback"
         for attempt in range(attempts):
             try:
                 request = self._client().build_request(
-                    "GET", f"/api/assets/{asset_id}/original"
+                    "GET",
+                    path,
+                    headers=dict(request_headers or {}),
                 )
                 response = await self._client().send(request, stream=True)
             except httpx.RequestError as error:
                 if attempt + 1 >= attempts:
-                    raise ImmichApiError("stream original asset") from error
+                    raise ImmichApiError(operation) from error
             else:
                 if response.status_code not in TRANSIENT_STATUS_CODES:
                     try:
                         response.raise_for_status()
                     except httpx.HTTPStatusError as error:
                         await response.aclose()
-                        raise ImmichApiError(
-                            "stream original asset", response.status_code
-                        ) from error
+                        raise ImmichApiError(operation, response.status_code) from error
                     break
                 status_code = response.status_code
                 await response.aclose()
                 response = None
                 if attempt + 1 >= attempts:
-                    raise ImmichApiError("stream original asset", status_code)
+                    raise ImmichApiError(operation, status_code)
 
             backoff = self._settings.immich_retry_backoff_seconds * (2**attempt)
             if backoff:
                 await asyncio.sleep(backoff)
 
         if response is None:
-            raise ImmichApiError("stream original asset")
+            raise ImmichApiError(operation)
 
         content_length: int | None = None
         raw_content_length = response.headers.get("content-length")
@@ -766,16 +783,64 @@ class ImmichApiClient:
                 content_length = parsed_length if parsed_length >= 0 else None
 
         try:
-            yield ImmichOriginalStream(
+            yield ImmichMediaStream(
                 chunks=response.aiter_bytes(chunk_size),
+                status_code=response.status_code,
                 media_type=response.headers.get("content-type", "application/octet-stream"),
                 content_length=content_length,
                 etag=response.headers.get("etag"),
+                cache_control=response.headers.get("cache-control"),
+                content_range=response.headers.get("content-range"),
+                accept_ranges=response.headers.get("accept-ranges"),
+                last_modified=response.headers.get("last-modified"),
             )
         except httpx.RequestError as error:
-            raise ImmichApiError("stream original asset") from error
+            raise ImmichApiError(operation) from error
         finally:
             await response.aclose()
+
+    @asynccontextmanager
+    async def stream_original(
+        self,
+        asset_id: UUID,
+        *,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[ImmichMediaStream]:
+        """Stream an original without buffering it in Companion memory."""
+
+        async with self.stream_asset_media(
+            asset_id,
+            kind="original",
+            chunk_size=chunk_size,
+        ) as media:
+            yield media
+
+    @asynccontextmanager
+    async def stream_video_playback(
+        self,
+        asset_id: UUID,
+        *,
+        range_header: str | None = None,
+        if_range_header: str | None = None,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[ImmichMediaStream]:
+        """Stream Immich's browser-compatible video, preserving safe range headers."""
+
+        headers = {
+            key: value
+            for key, value in {
+                "range": range_header,
+                "if-range": if_range_header,
+            }.items()
+            if value
+        }
+        async with self.stream_asset_media(
+            asset_id,
+            kind="video_playback",
+            request_headers=headers,
+            chunk_size=chunk_size,
+        ) as media:
+            yield media
 
     async def remove_assets_from_album(self, album_id: UUID, asset_ids: list[UUID]) -> None:
         """Remove current members from one album through the supported API."""

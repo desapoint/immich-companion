@@ -32,4 +32,11 @@ describe('viewer media fallback selection', () => {
     expect(isHeicMimeType('image/jpeg')).toBe(false);
     expect(isHeicMimeType(null)).toBe(false);
   });
+
+  it('skips browser-incompatible raw originals', () => {
+    expect(buildViewerMediaUrls('raw asset', 'image/x-adobe-dng', true)).toEqual([
+      '/api/assets/raw%20asset/thumbnail?size=fullsize',
+      '/api/assets/raw%20asset/thumbnail?size=preview',
+    ]);
+  });
 });

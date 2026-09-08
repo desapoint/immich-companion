@@ -1,4 +1,10 @@
 import { renderPixelDifference } from '../mediaDifference';
+import {
+  assetThumbnailUrl,
+  assetVideoPlaybackUrl,
+  buildViewerMediaUrls,
+  isHeicMimeType,
+} from '../../../lib/utils/viewerMedia';
 import type {
   AssetRecord,
   AssetRepository,
@@ -131,6 +137,6 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
   }
   async function adjacentTrash(currentId:string){for(const [page,items] of trashPages){const index=items.findIndex((item)=>item.id===currentId);if(index<0)continue;let previousId:string|null=items[index-1]?.id??null,nextId:string|null=items[index+1]?.id??null;if(!previousId&&page>1&&lastTrashQuery){const prior=await assets.searchTrash({...lastTrashQuery,page:page-1,cursor:undefined});previousId=prior.items.at(-1)?.id??null}if(!nextId&&lastTrashQuery&&page*lastTrashQuery.pageSize<lastTrashTotal){const following=await assets.searchTrash({...lastTrashQuery,page:page+1,cursor:undefined});nextId=following.items[0]?.id??null}return{previousId,nextId,position:(page-1)*(lastTrashQuery?.pageSize??items.length)+index+1,total:lastTrashTotal}}return{previousId:null,nextId:null,position:null,total:lastTrashTotal}}
   const navigation:ViewerNavigationRepository={asset:adjacent,trash:adjacentTrash};
-  const media:MediaRepository={thumbnail(asset){return{url:`/api/assets/${encodeURIComponent(asset.id)}/thumbnail?size=thumbnail`,mimeType:'image/jpeg',posterUrl:null,delivery:'thumbnail',originalMimeType:asset.original_mime_type,expiresAt:null}},view(asset){const video=('asset_type'in asset?asset.asset_type:asset.type)==='VIDEO';return{url:video?`/api/assets/${encodeURIComponent(asset.id)}/original`:`/api/assets/${encodeURIComponent(asset.id)}/thumbnail?size=fullsize`,mimeType:video?asset.original_mime_type:'image/jpeg',posterUrl:video?`/api/assets/${encodeURIComponent(asset.id)}/thumbnail?size=preview`:null,delivery:video?'original':'preview',originalMimeType:asset.original_mime_type,expiresAt:null}},async difference(selected,reference,options={}){return renderPixelDifference(media.view(selected),media.view(reference),options)},async refresh(asset,purpose){return purpose==='thumbnail'?media.thumbnail(asset):media.view(asset)}};
+  const media:MediaRepository={thumbnail(asset){return{url:assetThumbnailUrl(asset.id,'thumbnail'),fallbackUrls:[],mimeType:'image/jpeg',posterUrl:null,delivery:'thumbnail',originalMimeType:asset.original_mime_type,expiresAt:null}},view(asset){const video=('asset_type'in asset?asset.asset_type:asset.type)==='VIDEO';if(video)return{url:assetVideoPlaybackUrl(asset.id),fallbackUrls:[],mimeType:'video/mp4',posterUrl:assetThumbnailUrl(asset.id,'preview'),delivery:'transcoded',originalMimeType:asset.original_mime_type,expiresAt:null};const [url,...fallbackUrls]=buildViewerMediaUrls(asset.id,asset.original_mime_type,false),original=Boolean(url?.includes('/original'));return{url:url??assetThumbnailUrl(asset.id,'preview'),fallbackUrls,mimeType:original?asset.original_mime_type:'image/jpeg',posterUrl:null,delivery:isHeicMimeType(asset.original_mime_type)||!original?'decoded':'original',originalMimeType:asset.original_mime_type,expiresAt:null}},async difference(selected,reference,options={}){return renderPixelDifference(media.view(selected),media.view(reference),options)},async refresh(asset,purpose){return purpose==='thumbnail'?media.thumbnail(asset):media.view(asset)}};
   return{assets,navigation,media};
 }

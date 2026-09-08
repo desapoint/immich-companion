@@ -17,12 +17,13 @@ from fastapi import (
     FastAPI,
     HTTPException,
     Query,
+    Request,
     Response,
     WebSocket,
     WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from companion.action_repository import ActionRepository
@@ -117,6 +118,7 @@ from companion.integrity_service import (
     IntegrityService,
     IntegrityTaskHandler,
 )
+from companion.media_proxy import media_stream_response
 from companion.migrate import run_migrations
 from companion.relation_schema import (
     AlbumCreateRequest,
@@ -1659,19 +1661,29 @@ def create_app(
             headers["ETag"] = media.etag
         return Response(content=media.content, media_type=media.media_type, headers=headers)
 
-    @app.get("/api/assets/{asset_id}/original", response_class=Response)
-    async def asset_original(asset_id: UUID) -> Response:
+    @app.get("/api/assets/{asset_id}/original")
+    async def asset_original(asset_id: UUID) -> StreamingResponse:
+        """Stream an original from Immich without materializing it in Companion."""
+
         try:
-            media = await immich.get_original(asset_id)
+            return await media_stream_response(immich.stream_original(asset_id))
         except ImmichApiError as error:
             raise map_immich_error(error) from error
-        headers = {
-            "Cache-Control": media.cache_control or "private, max-age=300",
-            "X-Content-Type-Options": "nosniff",
-        }
-        if media.etag:
-            headers["ETag"] = media.etag
-        return Response(content=media.content, media_type=media.media_type, headers=headers)
+
+    @app.get("/api/assets/{asset_id}/video/playback")
+    async def asset_video_playback(asset_id: UUID, request: Request) -> StreamingResponse:
+        """Proxy Immich's browser-compatible, byte-range-aware video stream."""
+
+        try:
+            return await media_stream_response(
+                immich.stream_video_playback(
+                    asset_id,
+                    range_header=request.headers.get("range"),
+                    if_range_header=request.headers.get("if-range"),
+                )
+            )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
 
     if runtime_settings.companion_env == "test":
 

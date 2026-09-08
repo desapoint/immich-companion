@@ -49,6 +49,33 @@ describe('live V2 asset repository',()=>{
   it('exposes companion media proxies for tiles and the viewer',()=>{
     const {media}=createAssetApiProfile(vi.fn());const asset={...summary,asset_type:'IMAGE'} as never;
     expect(media.thumbnail(asset).url).toBe(`/api/assets/${id}/thumbnail?size=thumbnail`);
-    expect(media.view(asset)).toMatchObject({url:`/api/assets/${id}/thumbnail?size=fullsize`,delivery:'preview'});
+    expect(media.view(asset)).toMatchObject({
+      url:`/api/assets/${id}/thumbnail?size=fullsize`,
+      fallbackUrls:[`/api/assets/${id}/thumbnail?size=preview`],
+      delivery:'decoded',
+    });
+  });
+
+  it('uses originals with derivative fallbacks for browser-compatible images',()=>{
+    const {media}=createAssetApiProfile(vi.fn());const asset={...summary,asset_type:'IMAGE',original_mime_type:'image/png'} as never;
+    expect(media.view(asset)).toMatchObject({
+      url:`/api/assets/${id}/original`,
+      fallbackUrls:[
+        `/api/assets/${id}/thumbnail?size=fullsize`,
+        `/api/assets/${id}/thumbnail?size=preview`,
+      ],
+      delivery:'original',
+    });
+  });
+
+  it('uses the compatible Immich playback proxy for videos',()=>{
+    const {media}=createAssetApiProfile(vi.fn());const asset={...summary,asset_type:'VIDEO',original_mime_type:'video/quicktime'} as never;
+    expect(media.view(asset)).toMatchObject({
+      url:`/api/assets/${id}/video/playback`,
+      fallbackUrls:[],
+      posterUrl:`/api/assets/${id}/thumbnail?size=preview`,
+      mimeType:'video/mp4',
+      delivery:'transcoded',
+    });
   });
 });

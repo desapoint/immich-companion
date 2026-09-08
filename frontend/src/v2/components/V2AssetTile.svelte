@@ -35,7 +35,7 @@
   const cacheKey = $derived(`asset-thumbnail:${String(assetId)}`);
   const resolveImage = $derived((): ThumbnailSource => {
     if (typeof image === 'function') return image();
-    return image ?? ({ url:'', mimeType:null, posterUrl:null, delivery:'thumbnail', originalMimeType:null, expiresAt:null } satisfies MediaResource);
+    return image ?? ({ url:'', fallbackUrls:[], mimeType:null, posterUrl:null, delivery:'thumbnail', originalMimeType:null, expiresAt:null } satisfies MediaResource);
   });
 </script>
 

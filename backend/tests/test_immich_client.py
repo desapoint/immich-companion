@@ -558,11 +558,51 @@ async def test_original_stream_is_chunked_and_reuses_the_shared_client() -> None
 
     assert b"".join(chunks) == payload
     assert all(len(chunk) <= 4 for chunk in chunks)
+    assert original.status_code == 200
     assert original.content_length == len(payload)
     assert original.media_type == "image/jpeg"
     assert shared_client is not None
     await client.get_asset(ASSET_ONE)
     assert client._http_client is shared_client
+
+
+@pytest.mark.asyncio
+async def test_video_playback_stream_forwards_range_and_preserves_partial_metadata() -> None:
+    payload = b"video-range"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{ASSET_ONE}/video/playback"
+        assert request.headers["range"] == "bytes=10-20"
+        assert request.headers["if-range"] == '"video-etag"'
+        return httpx.Response(
+            206,
+            content=payload,
+            headers={
+                "content-type": "video/mp4",
+                "content-length": str(len(payload)),
+                "content-range": "bytes 10-20/100",
+                "accept-ranges": "bytes",
+                "etag": '"video-etag"',
+                "cache-control": "private, max-age=600",
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+
+    async with client.stream_video_playback(
+        ASSET_ONE,
+        range_header="bytes=10-20",
+        if_range_header='"video-etag"',
+    ) as media:
+        chunks = [chunk async for chunk in media.chunks]
+
+    assert b"".join(chunks) == payload
+    assert media.status_code == 206
+    assert media.media_type == "video/mp4"
+    assert media.content_range == "bytes 10-20/100"
+    assert media.accept_ranges == "bytes"
+    assert media.etag == '"video-etag"'
+    assert media.cache_control == "private, max-age=600"
 
 
 @pytest.mark.asyncio
