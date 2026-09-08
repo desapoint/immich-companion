@@ -1,8 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import { loadStatus } from '../../features/status/api/statusApi';
-  import type { StatusLoadState } from '../../features/status/types/status';
+  import { loadStatus } from '../../lib/api/status';
+  import type { StatusLoadState } from '../../lib/types/status';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2StatusContent from '../status/V2StatusContent.svelte';
   import V2StatusContext from '../status/V2StatusContext.svelte';
