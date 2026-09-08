@@ -228,7 +228,7 @@
   });
 </script>
 
-<div class="v2-date-time-field" role="group" aria-label={label || (showTime ? 'Date and time' : 'Date')} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }} onkeydown={handleKeydown}>
+<div class="v2-date-time-field" role="group" aria-label={label || (showTime ? 'Date and time' : 'Date')} use:clickOutside={{ enabled: open, onoutside: () => (open = false) }}>
   {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
   <div class="v2-date-time-control">
     <button
@@ -242,12 +242,13 @@
       aria-expanded={open}
       aria-controls={`${id}-picker`}
       onclick={() => (open ? open = false : show())}
+      onkeydown={handleKeydown}
     >
       <span>{displayValue}</span>
       <CalendarDays size={16} aria-hidden="true" />
     </button>
     {#if selected}
-      <button class="v2-date-time-clear" type="button" {disabled} aria-label={`Clear ${label || (showTime ? 'date and time' : 'date')}`} onclick={clear}>×</button>
+      <button class="v2-date-time-clear" type="button" {disabled} aria-label={`Clear ${label || (showTime ? 'date and time' : 'date')}`} onclick={clear} onkeydown={handleKeydown}>×</button>
     {/if}
   </div>
 
@@ -258,8 +259,10 @@
       class="v2-date-time-popup"
       data-placement={popupPlacement}
       role="dialog"
+      tabindex="-1"
       aria-label={label ? `${label} ${showTime ? 'date and time' : 'date'} picker` : showTime ? 'Date and time picker' : 'Date picker'}
       style={`top:${popupTop}px;left:${popupLeft}px;width:min(320px,calc(100vw - 20px))`}
+      onkeydown={handleKeydown}
     >
       <div class="v2-date-time-month-head">
         <button type="button" aria-label="Previous month" onclick={() => shiftMonth(-1)}><ChevronLeft size={17}/></button>
@@ -268,7 +271,7 @@
       </div>
 
       <div class="v2-date-time-weekdays" aria-hidden="true">
-        {#each weekdays as weekday}<span>{weekday}</span>{/each}
+        {#each weekdays as weekday (weekday)}<span>{weekday}</span>{/each}
       </div>
 
       <div class="v2-date-time-calendar" aria-label={monthFormatter.format(new Date(viewYear, viewMonth, 1))}>

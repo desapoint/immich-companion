@@ -38,3 +38,5 @@ test-results/
 
 # Local developer runtime state and generated configuration
 /.local/
+/TASKS.md
+*.local

@@ -33,10 +33,9 @@
     {keys:'0',description:'Reset zoom / fit image'},
     {keys:'1',description:'Actual pixel size (1:1)'},
   ];
-  let currentId=$state<string|null>(assetId),asset=$state<AssetRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
+  let currentId=$derived<string|null>(assetId),asset=$state<AssetRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
   let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),loadRequest=0;
   let actionBusy=$state(false),actionError=$state(''),relationDialog=$state<RelationDialog>(null),relationAlbum=$state(''),relationTags=$state<string[]>([]);
-  $effect(()=>{if(assetId!==null)currentId=assetId});
   $effect(()=>{const id=currentId;if(!id){asset=undefined;media=null;navigation=emptyNavigation();return}void loadCurrent(id)});
 
   const fallbackIndex=$derived(currentId?assetIds.indexOf(currentId):-1),mediaSrc=$derived(media?.url??''),posterSrc=$derived(media?.posterUrl??(asset?libraryData.media.thumbnail(asset).url:'')),isVideo=$derived(asset?.asset_type==='VIDEO'),needsDecodedImage=$derived(media?.delivery==='decoded'),needsVideoProxy=$derived(media?.delivery==='transcoded');

@@ -20,8 +20,8 @@
     onsave: (name: string, description: string) => void;
   } = $props();
 
-  let draftName = $state(name);
-  let draftDescription = $state(description);
+  let draftName = $derived(name);
+  let draftDescription = $derived(description);
 </script>
 
 <V2Modal id="saved-search-editor" {title} description="Store the current asset search criteria in the active data source." size="md" {onclose}>
