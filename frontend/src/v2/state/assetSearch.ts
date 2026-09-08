@@ -1,4 +1,4 @@
-import type { AssetSearchCriteria,AssetSearchGroup } from '../data/contracts';
+import type { AssetSearchCriteria,AssetSearchGroup,AssetSearchRule } from '../data/contracts';
 import type { SimpleAdvancedFilters } from '../components/V2SimpleAdvancedFilters.svelte';
 
 export type AssetSearchMode='Simple'|'Expert';
@@ -7,16 +7,40 @@ export type AssetGroup={id:number;logic:'AND'|'OR';negated:boolean;rules:AssetRu
 export type AssetSimpleSnapshot={filename:string;mediaType:string;favorite:string;archived:string;advanced:SimpleAdvancedFilters};
 
 export const assetFieldOptions=[['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
-export const assetOperatorOptions=[['is','is'],['isNot','is not'],['hasNone','has none'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
+export const assetOperatorOptions=[['is','is'],['all','matches all selected'],['isNot','is not'],['hasNone','has none'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
 export const assetFieldSelectOptions=assetFieldOptions.map(([value,label])=>({value,label}));
 export const assetOperatorSelectOptions=assetOperatorOptions.map(([value,label])=>({value,label}));
 export function assetOperatorOptionsForField(field:string){
-  const allowed=field==='filename'?['is','isNot','contains','notContains']
-    :['album','tag'].includes(field)?['is','isNot','hasNone']
-      :['mediaType','favorite','archived'].includes(field)?['is','isNot']
-      :field==='takenDate'?['gt','gte','lt','lte']
-        :['is','gt','gte','lt','lte'];
-  return assetOperatorSelectOptions.filter((option)=>allowed.includes(option.value));
+  if(field==='filename')return[
+    {value:'contains',label:'contains'},
+    {value:'is',label:'is exactly'},
+    {value:'isNot',label:'is not'},
+    {value:'notContains',label:'does not contain'},
+  ];
+  if(field==='album'||field==='tag')return[
+    {value:'is',label:'matches any selected (OR)'},
+    {value:'all',label:'matches all selected (AND)'},
+    {value:'isNot',label:'matches none selected (NOT)'},
+    {value:'hasNone',label:`has no ${field==='album'?'albums':'tags'}`},
+  ];
+  if(field==='mediaType'||field==='favorite'||field==='archived')return[
+    {value:'is',label:'is'},
+    {value:'isNot',label:'is not'},
+  ];
+  if(field==='takenDate')return[
+    {value:'gte',label:'is on or after'},
+    {value:'lte',label:'is on or before'},
+  ];
+  if(field==='aspectRatio')return[
+    {value:'gte',label:'is at least'},
+    {value:'lte',label:'is at most'},
+    {value:'is',label:'is approximately'},
+  ];
+  return[
+    {value:'gte',label:'is at least'},
+    {value:'lte',label:'is at most'},
+    {value:'is',label:'is equal to'},
+  ];
 }
 export const savedAssetSearches=['Favorite images not archived','Family album or Vacation tag','Large landscape images'];
 
@@ -62,7 +86,24 @@ export function simpleAssetSearchToExpert(simple:AssetSimpleSnapshot,nextRuleId:
   return{rules,groups:[],logic:'AND',negated:false};
 }
 
-const criteriaGroup=(group:AssetGroup):AssetSearchGroup=>({logic:group.logic,negated:group.negated,rules:group.rules.map(({field,op,value})=>({field,op,value})),groups:(group.groups??[]).map(criteriaGroup)});
+type CriteriaParts={rules:AssetSearchRule[];groups:AssetSearchGroup[]};
+function criteriaParts(rules:readonly AssetRule[],groups:readonly AssetGroup[]):CriteriaParts{
+  const output:CriteriaParts={rules:[],groups:groups.map(criteriaGroup)};
+  for(const rule of rules){
+    if((rule.field==='album'||rule.field==='tag')&&rule.op==='all'){
+      const values=splitAssetIds(rule.value);
+      if(values.length===1)output.rules.push({field:rule.field,op:'is',value:values[0]});
+      else if(values.length>1)output.groups.push({logic:'AND',negated:false,rules:values.map((value)=>({field:rule.field,op:'is',value})),groups:[]});
+      continue;
+    }
+    output.rules.push({field:rule.field,op:rule.op,value:rule.value});
+  }
+  return output;
+}
+function criteriaGroup(group:AssetGroup):AssetSearchGroup{
+  const parts=criteriaParts(group.rules,group.groups??[]);
+  return{logic:group.logic,negated:group.negated,rules:parts.rules,groups:parts.groups};
+}
 
 export function buildAssetCriteria(input:{sort:string;mode:AssetSearchMode;simple:AssetSimpleSnapshot;rules:AssetRule[];groups:AssetGroup[];logic:'AND'|'OR';negated:boolean}):AssetSearchCriteria{
   const[sortFieldRaw,sortDirectionRaw]=input.sort.split(':');
@@ -72,12 +113,13 @@ export function buildAssetCriteria(input:{sort:string;mode:AssetSearchMode;simpl
     const advanced=input.simple.advanced;
     return{mode:'simple',sort:{field,direction},filters:{filename:input.simple.filename,mediaType:input.simple.mediaType as 'Image'|'Video'|'',favorite:input.simple.favorite as 'Favorite'|'Not favorite'|'',archived:input.simple.archived as 'Archived'|'Not archived'|'',albumIds:splitAssetIds(advanced.albumIds),tagIds:splitAssetIds(advanced.tagIds),noAlbum:advanced.noAlbum,noTag:advanced.noTag,takenAfter:advanced.takenAfter,takenBefore:advanced.takenBefore,minWidth:advanced.minWidth,maxWidth:advanced.maxWidth,minHeight:advanced.minHeight,maxHeight:advanced.maxHeight,minAspectRatio:advanced.minAspectRatio,maxAspectRatio:advanced.maxAspectRatio}};
   }
-  return{mode:'expert',sort:{field,direction},rules:input.rules.map(({field,op,value})=>({field,op,value})),groups:input.groups.map(criteriaGroup),logic:input.logic,negated:input.negated};
+  const parts=criteriaParts(input.rules,input.groups);
+  return{mode:'expert',sort:{field,direction},rules:parts.rules,groups:parts.groups,logic:input.logic,negated:input.negated};
 }
 
 export function savedAssetSearchPreset(value:string,nextRuleId:()=>number,nextGroupId:()=>number):{rules:AssetRule[];groups:AssetGroup[]}{
   if(value.includes('Favorite'))return{rules:[{id:nextRuleId(),field:'mediaType',op:'is',value:'Image'},{id:nextRuleId(),field:'favorite',op:'is',value:'true'},{id:nextRuleId(),field:'archived',op:'is',value:'false'}],groups:[]};
-  if(value.includes('Family'))return{rules:[{id:nextRuleId(),field:'mediaType',op:'is',value:'Image'}],groups:[{id:nextGroupId(),logic:'OR',negated:false,rules:[{id:nextRuleId(),field:'album',op:'contains',value:'Family'},{id:nextRuleId(),field:'tag',op:'contains',value:'Vacation'}],groups:[]}]};
+  if(value.includes('Family'))return{rules:[{id:nextRuleId(),field:'mediaType',op:'is',value:'Image'}],groups:[{id:nextGroupId(),logic:'OR',negated:false,rules:[{id:nextRuleId(),field:'album',op:'is',value:'Family'},{id:nextRuleId(),field:'tag',op:'is',value:'Vacation'}],groups:[]}]};
   if(value.includes('Large'))return{rules:[{id:nextRuleId(),field:'mediaType',op:'is',value:'Image'},{id:nextRuleId(),field:'width',op:'gte',value:'3000'},{id:nextRuleId(),field:'aspectRatio',op:'gt',value:'1'}],groups:[]};
   return{rules:[],groups:[]};
 }
