@@ -1,7 +1,7 @@
 export type JsonSocketHandlers<T> = {
   onopen?: () => void;
   onmessage: (value: T) => void;
-  onerror?: () => void;
+  oninvalid?: (error: Error) => void;
   onclose?: () => void;
 };
 
@@ -19,10 +19,12 @@ export function openJsonSocket<T>(path: string, handlers: JsonSocketHandlers<T>)
     try {
       handlers.onmessage(JSON.parse(event.data) as T);
     } catch {
-      handlers.onerror?.();
+      handlers.oninvalid?.(new Error('WebSocket message was not valid JSON.'));
     }
   };
-  socket.onerror = () => handlers.onerror?.();
+  socket.onerror = () => {
+    if (!closedByClient) socket.close();
+  };
   socket.onclose = () => {
     if (!closedByClient) handlers.onclose?.();
   };
