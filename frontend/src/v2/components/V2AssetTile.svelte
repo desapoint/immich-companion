@@ -56,12 +56,12 @@
   </button>
 
   {#if hasPills}
-    <span class="v2-asset-pill-row" aria-label="Asset metadata">
+    <div class="v2-asset-pill-row" aria-label="Asset metadata">
       {#if favorite}<span class="v2-asset-favorite-pill" aria-label="Favorite"><Heart size={12} fill="currentColor" aria-hidden="true"/></span>{/if}
       {#if albums.length}<V2AssetMetaPill kind="albums" count={albums.length} items={albums}/>{/if}
       {#if tags.length}<V2AssetMetaPill kind="tags" count={tags.length} items={tags}/>{/if}
       {#if stackCount>0}<V2AssetMetaPill kind="stack" count={stackCount}/>{/if}
-    </span>
+    </div>
   {/if}
 
   <span class="v2-asset-checkbox-zone"><V2RoundCheckbox checked={selected} ariaLabel={`${selected ? 'Deselect' : 'Select'} ${label}`} onclick={onselect}/></span>
