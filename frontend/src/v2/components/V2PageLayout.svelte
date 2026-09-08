@@ -23,7 +23,7 @@
   } = $props();
 </script>
 
-<div class="v2-page-host">
+<div class="v2-page-host" data-page-title={title}>
   <V2PageHeader {title} {description} {eyebrow} actions={headerActions} {tabs} />
   <V2Workspace {context} {inspector}>{@render children()}</V2Workspace>
 </div>
