@@ -11,19 +11,21 @@ describe('viewer collection navigation', () => {
   });
 
   it('scrolls and focuses the matching asset tile', () => {
-    const container = document.createElement('div');
-    const tile = document.createElement('div');
-    tile.dataset.assetId = 'asset-2';
-    const button = document.createElement('button');
-    button.className = 'v2-asset-main';
-    tile.append(button);
-    container.append(tile);
-    tile.scrollIntoView = vi.fn();
-    button.focus = vi.fn();
+    const scrollIntoView = vi.fn();
+    const focus = vi.fn();
+    const button = { focus };
+    const tile = {
+      dataset: { assetId: 'asset-2' },
+      scrollIntoView,
+      querySelector: vi.fn(() => button),
+    };
+    const container = {
+      querySelectorAll: vi.fn(() => [tile]),
+    } as unknown as HTMLElement;
 
     expect(scrollViewedAssetIntoView(container, 'asset-2')).toBe(true);
-    expect(tile.scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'nearest' });
-    expect(button.focus).toHaveBeenCalledWith({ preventScroll: true });
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'center', inline: 'nearest' });
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
     expect(scrollViewedAssetIntoView(container, 'missing')).toBe(false);
   });
 });
