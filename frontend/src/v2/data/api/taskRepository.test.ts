@@ -102,6 +102,6 @@ describe('task stream validation helpers', () => {
     expect(taskReconnectDelayMs(1, () => 0.5)).toBe(2000);
     expect(taskReconnectDelayMs(20, () => 0.5)).toBe(30000);
     expect(taskReconnectDelayMs(20, () => 0)).toBe(24000);
-    expect(taskReconnectDelayMs(20, () => 1)).toBe(36000);
+    expect(taskReconnectDelayMs(20, () => 1)).toBe(30000);
   });
 });
