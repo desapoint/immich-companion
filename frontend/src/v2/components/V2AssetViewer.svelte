@@ -7,13 +7,13 @@
   import V2MediaViewport from './V2MediaViewport.svelte';
   import V2Inline from './V2Inline.svelte';
   import V2KeyboardShortcuts, { type KeyboardShortcut } from './V2KeyboardShortcuts.svelte';
-  import V2OperationFeedback from './V2OperationFeedback.svelte';
   import V2Section from './V2Section.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
   import { AssetMutationController } from '../state/assetMutations.svelte';
   import { AssetRelationOptionsController } from '../state/assetRelationOptions.svelte';
+  import { useOptionalV2Toasts } from '../state/toasts.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { AssetDetailRecord, AssetSelectionTarget, MediaResource, MutationResult, ViewerNavigationWindow } from '../data/contracts';
@@ -23,6 +23,7 @@
   let { open=false, assetId=null, assetIds=[], onclose, onnavigate, onfilterrelation }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>; onfilterrelation?:(kind:'album'|'tag',id:string)=>void|Promise<void> }=$props();
   const camera=new ViewerViewportController();
   const relations=new AssetRelationOptionsController();
+  const toasts=useOptionalV2Toasts();
   const mutations=new AssetMutationController(()=>reload(),()=>{});
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
@@ -39,7 +40,7 @@
   let currentId=$derived<string|null>(assetId),asset=$state<AssetDetailRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
   let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),loadRequest=0;
   let relationDialog=$state<RelationDialog>(null),relationAlbum=$state(''),relationTags=$state<string[]>([]);
-  const actionBusy=$derived(mutations.busy),actionError=$derived(mutations.error),actionStatus=$derived(mutations.phase==='applying'?'Applying change…':mutations.phase==='refreshing'?'Refreshing asset…':'');
+  const actionBusy=$derived(mutations.busy),actionStatus=$derived(mutations.phase==='applying'?'Applying change…':mutations.phase==='refreshing'?'Refreshing asset…':'');
   $effect(()=>{const id=currentId;if(!id){asset=undefined;media=null;navigation=emptyNavigation();return}void loadCurrent(id)});
 
   const fallbackIndex=$derived(currentId?assetIds.indexOf(currentId):-1),isVideo=$derived(asset?.asset_type==='VIDEO'),needsDecodedImage=$derived(media?.delivery==='decoded'),needsVideoProxy=$derived(media?.delivery==='transcoded');
@@ -73,6 +74,15 @@
     return`${value.toFixed(value>=10?1:2)} ${units[index]}`;
   }
   function filterRelationship(kind:'album'|'tag',id:string){void onfilterrelation?.(kind,id)}
+  function publishMutation(label:string):void{
+    if(!toasts)return;
+    const retry=mutations.retry;
+    const action=retry?{label:'Retry failed',run:async()=>{await retry();publishMutation(label)}}:undefined;
+    if(mutations.error){toasts.push({tone:mutations.feedback?'warning':'error',title:mutations.feedback?`${label} needs attention`:`${label} failed`,message:mutations.error,action});return}
+    const feedback=mutations.feedback;
+    if(!feedback||feedback.tone==='pending')return;
+    toasts.push({tone:feedback.tone==='ok'?'success':feedback.tone==='warn'?'warning':'error',title:feedback.title,message:[feedback.detail,feedback.failures[0]?.reason].filter(Boolean).join(' '),action});
+  }
   async function moveTo(id:string,delta:-1|1){
     mutations.clearOutcome();
     if(navigation.position!==null){
@@ -90,6 +100,7 @@
     if(!asset||actionBusy)return;
     const id=asset.id;
     await mutations.run(label,()=>action(id),target(id));
+    publishMutation(label);
   }
   async function favorite(){if(!asset)return;const next=!asset.is_favorite;await runAction(next?'Favorite':'Unfavorite',(id)=>libraryData.assets.setFavorite(target(id),next))}
   async function archive(){if(!asset)return;const next=!asset.is_archived;await runAction(next?'Archive':'Unarchive',(id)=>libraryData.assets.setArchived(target(id),next))}
@@ -110,6 +121,7 @@
       },
       refreshError:'The asset was moved to trash, but the viewer could not move to the next asset.',
     });
+    publishMutation('Move to trash');
   }
   function selectedOptionValues(kind:'album'|'tag'){return kind==='album'?[relationAlbum].filter(Boolean):[...relationTags]}
   const searchAlbumOptions=(query:string,append=false)=>relations.searchAlbums(query,selectedOptionValues('album'),append);
@@ -124,15 +136,15 @@
     if(!asset||!relationDialog||actionBusy)return;
     const kind=relationDialog,id=asset.id;
     let result:MutationResult|null=null;
-    if(kind==='album'&&relationAlbum)result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),relationAlbum),target(id));
-    if(kind==='tags'&&relationTags.length)result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),relationTags),target(id));
+    if(kind==='album'&&relationAlbum){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),relationAlbum),target(id));publishMutation('Add to album')}
+    if(kind==='tags'&&relationTags.length){result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),relationTags),target(id));publishMutation('Add tags')}
     if(result)relationDialog=null;
   }
   async function applyCreatedRelation(kind:'album'|'tag',value:string){
     if(!asset||actionBusy)return;
     const id=asset.id;
-    if(kind==='album')await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),value),target(id));
-    else await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),[value]),target(id));
+    if(kind==='album'){await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),value),target(id));publishMutation('Add to album')}
+    else{await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),[value]),target(id));publishMutation('Add tags')}
   }
   function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
   function handleShortcut(event:KeyboardEvent){
@@ -154,8 +166,6 @@
   <div class="v2-viewer-stage">
     <div class="v2-image-stage">{#if loading}<span class="v2-muted">Loading asset…</span>{:else if assetError}<V2ErrorState title="Asset unavailable" message={assetError} onretry={()=>currentId&&void loadCurrent(currentId)}/>{:else if mediaError}<V2ErrorState title={asset?.is_offline?'Source offline':'Media unavailable'} message={mediaError} retryLabel={mediaRefreshing?'Refreshing…':'Retry media'} onretry={()=>void retryMedia()}/>{:else if asset&&media}{#key mediaAttempt}<V2MediaViewport resource={media} assetType={asset.asset_type} alt={asset.original_file_name} controller={camera} onerror={markMediaFailed}/>{/key}{/if}</div>
     <aside class="v2-viewer-info">
-      {#if actionError}<V2Section title="Action"><V2Card><span class="v2-small viewer-action-error">{actionError}</span></V2Card></V2Section>{/if}
-      <V2OperationFeedback feedback={mutations.feedback} retryLabel={mutations.retry?'Retry failed':''} onretry={mutations.retry?()=>void mutations.retry?.():undefined}/>
       {#if navigationError}<V2Section title="Navigation"><V2Card><span class="v2-small v2-muted">{navigationError} Loaded-page navigation remains available when possible.</span></V2Card></V2Section>{/if}
       {#if asset}
         <V2Section title="Details"><V2Card><b>{asset.original_file_name}</b><p class="v2-small v2-muted">{asset.width??'—'} × {asset.height??'—'} · {asset.original_mime_type??'Unknown type'} · {sizeLabel}</p>{#if asset.is_offline}<p class="v2-small v2-muted">The original source is currently offline. A cached or generated derivative may still be viewable.</p>{/if}{#if needsVideoProxy}<p class="v2-small v2-muted">Original format is preserved in metadata; playback uses a browser-compatible derivative.</p>{:else if needsDecodedImage}<p class="v2-small v2-muted">Original format is preserved; viewing uses a decoded browser-compatible derivative.</p>{/if}</V2Card></V2Section>
@@ -195,6 +205,5 @@
 {/if}
 
 <style>
-  .viewer-action-error { color:var(--v2-danger,#e05a5a); }
   .viewer-facts{display:grid;gap:.5rem;margin:0}.viewer-facts div{display:grid;grid-template-columns:4.5rem minmax(0,1fr);gap:.65rem}.viewer-facts dt,.viewer-relation>b,.viewer-status-grid b{color:var(--v2-muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.05em}.viewer-facts dd{margin:0;font-size:.75rem;overflow-wrap:anywhere}.viewer-relations{display:grid;gap:.85rem}.viewer-relation{display:grid;gap:.4rem}.viewer-pills{display:flex;flex-wrap:wrap;gap:.35rem}.viewer-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.viewer-status-grid div{display:grid;gap:.25rem}
 </style>

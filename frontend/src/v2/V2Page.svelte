@@ -1,11 +1,15 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import V2Shell from './components/V2Shell.svelte';
+  import V2ToastViewport from './components/V2ToastViewport.svelte';
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
   import V2AlbumsPage from './pages/V2AlbumsPage.svelte';
   import V2AssetsPage from './pages/V2AssetsPage.svelte';
+  import V2PlaygroundPage from './pages/V2PlaygroundPage.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
   import V2StatusPage from './pages/V2StatusPage.svelte';
   import V2TagsPage from './pages/V2TagsPage.svelte';
+  import { provideV2Toasts, V2ToastController } from './state/toasts.svelte';
   import {
     storeV2AssetFilterHandoff,
     v2PageFromLegacyHash,
@@ -52,6 +56,8 @@
   }
 
   let activeKey = $state<V2PageKey>(keyFromLocation());
+  const toasts = provideV2Toasts(new V2ToastController());
+  onDestroy(() => toasts.destroy());
 
   function navigate(key: string): void {
     const nextKey = key as V2PageKey;
@@ -85,7 +91,9 @@
   {:else if activeKey === 'tags'}
     <V2TagsPage onfilterassets={(tagIds)=>openAssetsWithFilter({tagIds})}/>
   {:else if activeKey === 'settings'}
-    <V2SettingsPage />
+    <V2SettingsPage toastPosition={toasts.position} ontoastpositionchange={(position)=>toasts.setPosition(position)} onopenplayground={()=>navigate('playground')}/>
+  {:else if activeKey === 'playground'}
+    <V2PlaygroundPage />
   {:else}
     <V2ImplementationWarning
       title={titles[activeKey]}
@@ -93,3 +101,4 @@
     />
   {/if}
 </V2Shell>
+<V2ToastViewport controller={toasts}/>

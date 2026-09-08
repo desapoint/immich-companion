@@ -5,6 +5,7 @@
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
   import V2Checkbox from '../components/V2Checkbox.svelte';
+  import V2ColorField from '../components/V2ColorField.svelte';
   import V2Field from '../components/V2Field.svelte';
   import V2Inline from '../components/V2Inline.svelte';
   import V2Modal from '../components/V2Modal.svelte';
@@ -21,6 +22,7 @@
   import V2Toggle from '../components/V2Toggle.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
+  import { useOptionalV2Toasts, type V2ToastTone } from '../state/toasts.svelte';
 
   const shortOptions = ['One', 'Two', 'Three'];
   const richOptions = [
@@ -50,6 +52,16 @@
   let toggled = $state(false);
   let slider = $state(62);
   let modalSelect = $state('montreal');
+  let color = $state<string|null>('#9A78FF');
+  const toasts = useOptionalV2Toasts();
+
+  function showToast(tone:V2ToastTone):void{
+    const labels={info:'Information',success:'Action completed',warning:'Action needs review',error:'Action failed'};
+    toasts?.push({tone,title:labels[tone],message:`This is a ${tone} toast from the static component playground.`});
+  }
+  function showToastStack():void{
+    showToast('success');showToast('warning');showToast('error');
+  }
 </script>
 
 <V2PageLayout title="Playground" description="Exercise shared V2 primitives, component states and overlay positioning without touching backend state.">
@@ -69,6 +81,7 @@
             <span class="v2-small">Relation filter exclusivity</span>
             <span class="v2-small">Date-only and 24-hour date/time picker modes</span>
             <span class="v2-small">Buttons, fields, toggles, sliders, tabs, progress, notices and modal states</span>
+            <span class="v2-small">Color selection and stacked toast notifications</span>
           </V2Stack>
         </V2Card>
       </V2Section>
@@ -88,6 +101,18 @@
           <V2Notice tone="warning" title="Warning">The operation can continue, but the user should understand an important condition.</V2Notice>
           <V2Notice tone="error" title="Error">The operation failed or is blocked and needs attention before continuing.</V2Notice>
         </V2Stack>
+      </V2Card>
+
+      <V2Card title="Toast notifications">
+        <V2Stack gap="sm">
+          <span class="v2-small v2-muted">Toasts use the corner selected in Settings → General and can stack without replacing one another.</span>
+          <V2Inline gap="sm" wrap><V2Button onclick={()=>showToast('info')}>Info</V2Button><V2Button onclick={()=>showToast('success')}>Success</V2Button><V2Button onclick={()=>showToast('warning')}>Warning</V2Button><V2Button variant="danger" onclick={()=>showToast('error')}>Error</V2Button></V2Inline>
+          <V2Button block onclick={showToastStack}>Show multiple toasts</V2Button>
+        </V2Stack>
+      </V2Card>
+
+      <V2Card title="Color field">
+        <V2Stack gap="sm"><V2ColorField id="playground-color" label="Reusable color" value={color} onchange={(value)=>color=value}/><span class="v2-small v2-muted">Selected: {color??'No color'}</span></V2Stack>
       </V2Card>
 
       <V2Card title="Select · single / searchable">

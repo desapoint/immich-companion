@@ -11,6 +11,9 @@ describe('V2SettingsPage', () => {
     expect(body).toContain('Interface density');
     expect(body).toContain('Saved locally');
     expect(body).toContain('retained across pages and browser reloads');
+    expect(body).toContain('Action notifications');
+    expect(body).toContain('Toast position');
+    expect(body).toContain('Open playground');
     expect(body).toMatch(/aria-selected="true"[^>]*>General<\/button>/);
   });
 });

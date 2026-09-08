@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
+  import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
@@ -20,9 +21,12 @@
   import type { SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule } from '../data/syncContracts';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import { syncStatus } from '../state/syncStatus.svelte';
+  import { V2_TOAST_POSITIONS, type V2ToastPosition } from '../state/toasts.svelte';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
   type PendingOperation = 'starting' | 'cancelling' | 'runtime' | 'schedules' | null;
+
+  let { toastPosition = 'top-right', ontoastpositionchange, onopenplayground }: { toastPosition?: V2ToastPosition; ontoastpositionchange?: (position: V2ToastPosition) => void; onopenplayground?: () => void } = $props();
 
   let tab = $state<SettingsTab>('General');
   let density = $state<V2Density>('standard');
@@ -219,6 +223,20 @@
             <span class="v2-small v2-muted">Controls spacing, table row height, card padding and grid thumbnail density throughout V2.</span>
             <V2Segmented items={['Standard', 'Condensed']} active={density === 'standard' ? 'Standard' : 'Condensed'} onselect={(value) => setDensity(value === 'Standard' ? 'standard' : 'condensed')} ariaLabel="Interface density" />
             <span class="v2-small v2-muted">The preference is applied immediately and retained across pages and browser reloads.</span>
+          </V2Stack>
+        </V2Card>
+        <V2Card title="Action notifications">
+          {#snippet actions()}<V2Badge tone="ok" text="Saved locally" />{/snippet}
+          <V2Stack gap="sm">
+            <span class="v2-small v2-muted">Choose which corner anchors standard action success, warning and error toasts.</span>
+            <SelectField id="settings-toast-position" label="Toast position" value={toastPosition} options={V2_TOAST_POSITIONS} onchange={(value)=>ontoastpositionchange?.(value as V2ToastPosition)}/>
+            <span class="v2-small v2-muted">Top positions place each latest notification below the previous one; bottom positions grow upward.</span>
+          </V2Stack>
+        </V2Card>
+        <V2Card title="Component playground">
+          <V2Stack gap="sm">
+            <span class="v2-small v2-muted">Open the static V2 component reference. It behaves the same in demo and live modes and never mutates backend data.</span>
+            <div><V2Button variant="primary" onclick={()=>onopenplayground?.()}>Open playground</V2Button></div>
           </V2Stack>
         </V2Card>
       </div>
