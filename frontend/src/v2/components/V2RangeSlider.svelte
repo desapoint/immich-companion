@@ -10,6 +10,8 @@
     suffix = '',
     track = 'fill',
     width = 160,
+    grow = false,
+    showValue = true,
     trackHeight = 8,
     thumbSize = 20,
     thumbWidth,
@@ -24,6 +26,7 @@
     swatch,
     ariaLabel,
     valueLabel,
+    class: className = '',
     onchange,
     onnumericchange,
     onnormalizedchange,
@@ -40,6 +43,8 @@
     suffix?: string;
     track?: 'fill' | 'spectrum' | 'plain';
     width?: number;
+    grow?: boolean;
+    showValue?: boolean;
     trackHeight?: number;
     thumbSize?: number;
     thumbWidth?: number;
@@ -54,6 +59,7 @@
     swatch?: string;
     ariaLabel?: string;
     valueLabel?: string;
+    class?: string;
     onchange?: (value: number | string) => void;
     onnumericchange?: (value: number) => void;
     onnormalizedchange?: (value: number) => void;
@@ -178,7 +184,7 @@
   });
 </script>
 
-<label class="v2-range-slider" style={rootStyle} data-disabled={disabled || undefined}>
+<label class={`v2-range-slider ${className}`.trim()} style={rootStyle} data-disabled={disabled || undefined} data-grow={grow || undefined}>
   {#if label}<span>{label}</span>{/if}
   {#if swatch}<i class="v2-range-swatch" style={`background:${swatch}`} aria-hidden="true"></i>{/if}
   <span class="v2-range-control" data-track={track}>
@@ -206,7 +212,7 @@
       <span class="v2-range-thumb"></span>
     </span>
   </span>
-  <span class="v2-range-value">{displayedValue}</span>
+  {#if showValue}<span class="v2-range-value">{displayedValue}</span>{/if}
 </label>
 
 <style>
@@ -244,6 +250,13 @@
   .v2-range-control[data-track="spectrum"] .v2-range-thumb{background:var(--v2-range-spectrum-color)}
   .v2-range-control input:not(:disabled):active ~ .v2-range-thumb-rail .v2-range-thumb{width:var(--v2-range-thumb-dragging-width);height:var(--v2-range-thumb-dragging-height);border-radius:var(--v2-range-thumb-dragging-radius)}
   .v2-range-control input:focus-visible ~ .v2-range-thumb-rail .v2-range-thumb{outline:2px solid #4169a8;outline-offset:2px}
+
+  .v2-range-slider[data-grow="true"]{width:100%;min-width:0;flex:1 1 auto}
+  .v2-range-slider[data-grow="true"] .v2-range-control{width:auto;min-width:0;flex:1 1 auto}
+  .v2-range-slider[data-grow="true"] .v2-range-track{left:var(--v2-range-thumb-overhang);right:var(--v2-range-thumb-overhang);width:auto}
+  .v2-range-slider[data-grow="true"] .v2-range-control input{left:var(--v2-range-thumb-overhang);right:var(--v2-range-thumb-overhang);width:auto}
+  .v2-range-slider[data-grow="true"] .v2-range-thumb-rail{left:calc(var(--v2-range-thumb-overhang) + var(--v2-range-slider-radius));right:calc(var(--v2-range-thumb-overhang) + var(--v2-range-slider-radius));width:auto}
+  .v2-range-slider[data-grow="true"] .v2-range-fill{width:calc(var(--v2-range-slider-radius) + var(--v2-range-position) * (100% - var(--v2-range-slider-height)))}
 
   .v2-range-slider[data-disabled="true"]{opacity:.5;filter:saturate(.45)}
   .v2-range-slider[data-disabled="true"] .v2-range-thumb{box-shadow:none}
