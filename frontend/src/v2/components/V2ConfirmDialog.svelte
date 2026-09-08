@@ -66,7 +66,7 @@
     >
       {#if busy && loading}
         <span class="v2-confirmation-loading" aria-live="polite">
-          <LoadingSpinner size="14px" thickness="2px" trackColor="currentColor" accentColor="transparent" />
+          <LoadingSpinner size="14px" thickness="2px" />
           <span>Applying…</span>
         </span>
       {:else}
