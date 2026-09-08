@@ -10,6 +10,7 @@
     assetIds = [],
     onclose,
     onnavigate,
+    onfilterrelation,
   }: {
     open?: boolean;
     title?: string;
@@ -18,11 +19,12 @@
     assetIds?: string[];
     onclose: () => void;
     onnavigate?: (assetId: string, navigation: ViewerNavigationWindow) => void | Promise<void>;
+    onfilterrelation?: (kind: 'album' | 'tag', id: string) => void | Promise<void>;
   } = $props();
 </script>
 
 {#if mode === 'restore'}
   <V2RestoreViewer {open} {assetId} {assetIds} {onclose} {onnavigate} />
 {:else}
-  <V2AssetViewer {open} {assetId} {assetIds} {onclose} {onnavigate} />
+  <V2AssetViewer {open} {assetId} {assetIds} {onclose} {onnavigate} {onfilterrelation} />
 {/if}

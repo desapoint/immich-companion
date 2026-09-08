@@ -128,6 +128,11 @@
   }
   function handleViewerNavigate(id:string,navigation:ViewerNavigationWindow):Promise<void>{const sync=synchronizeViewerCollection(id,navigation);viewerCollectionSync=sync.catch(()=>{});return sync}
   function closeViewer(){viewer=false;const id=viewerLastId;const pending=viewerCollectionSync;void(async()=>{await pending;await tick();scrollViewedAssetIntoView(assetGrid,id)})()}
+  async function filterViewerRelationship(kind:'album'|'tag',id:string){
+    viewer=false;viewerAssetId=null;tab='Browse';selectedSaved='';searchMode='Expert';
+    rules=[{id:++seq,field:kind,op:'is',value:id}];groups=[];logic='AND';negated=false;
+    await runSearch();
+  }
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
   async function setSelectedFavorite(){if(!selectionActive)return;const next=favoriteActionLabel==='Favorite';await mutations.run(next?'Favorite':'Unfavorite',(target)=>libraryData.assets.setFavorite(target,next),selectionTarget());moreOpen=false}
   async function setSelectedArchived(){if(!selectionActive)return;const next=archiveActionLabel==='Archive';await mutations.run(next?'Archive':'Unarchive',(target)=>libraryData.assets.setArchived(target,next),selectionTarget());moreOpen=false}
@@ -170,7 +175,7 @@
   {:else}<V2SavedSearchLibrary controller={savedSearches} currentCriteria={criteria()} onopen={openSaved}/>{/if}</V2Zone>
 </V2PageLayout>
 
-<V2Viewer open={viewer} mode="assets" assetId={viewerAssetId} assetIds={ids} onclose={closeViewer} onnavigate={handleViewerNavigate}/>
+<V2Viewer open={viewer} mode="assets" assetId={viewerAssetId} assetIds={ids} onclose={closeViewer} onnavigate={handleViewerNavigate} onfilterrelation={filterViewerRelationship}/>
 {#if trashConfirmOpen}<V2ConfirmDialog title="Move selected assets to trash?" message={`${selectedCount.toLocaleString()} selected asset${selectedCount===1?'':'s'} will be moved to trash.`} confirmLabel="Move to trash" icon="trash" destructive pending={mutations.busy} onconfirm={()=>void trashSelected()} onclose={()=>{if(!mutations.busy)trashConfirmOpen=false}}/>{/if}
 {#if relationDialog}<V2AssetRelationModal kind={relationDialog} {selectedCount} albumValue={relationAlbum} tagValues={relationTags} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} busy={mutations.busy} onalbumchange={(value)=>relationAlbum=value} ontagschange={(values)=>relationTags=values} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} onclose={()=>relationDialog=null} onapply={()=>void applyRelationDialog()}/>{/if}
 {#if drawer}<V2AssetSearchDrawer bind:rules={draftRules} bind:groups={draftGroups} bind:logic={draftLogic} bind:negated={draftNegated} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} onclose={()=>drawer=false} onapply={applyDrawer}/>{/if}

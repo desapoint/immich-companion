@@ -9,7 +9,7 @@ import { normalizeDemoStacks } from '../../demo/demoAssetConsistency';
 import { demoAssetFullSize, demoAssetPreview } from '../../demo/demoAssetVisuals';
 import { demoDifferenceMask } from '../../demo/duplicateVisuals';
 import type {
-  AlbumRecord, AlbumSearchQuery, AssetRecord, AssetSearchCriteria, AssetSearchGroup, AssetSearchQuery, AssetSearchRule,
+  AlbumRecord, AlbumSearchQuery, AssetDetailRecord, AssetRecord, AssetSearchCriteria, AssetSearchGroup, AssetSearchQuery, AssetSearchRule,
   AssetSelectionCapabilities, AssetSelectionTarget, CollectionRequest, DuplicateDecision, DuplicateDiscoveryOptions,
   DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateSearchQuery, LibraryDataSource, MutationResult, OptionSearchQuery,
   OptionSearchResult, PageResult, RelationOption, TagHierarchyRow, TagRecord, TagSearchQuery, TrashAssetRecord,
@@ -46,6 +46,7 @@ function searchTags(query:TagSearchQuery){const normalized=(query.query??'').tri
 function searchAlbums(query:AlbumSearchQuery){const normalized=(query.query??'').trim().toLowerCase(),mul=query.sort.direction==='desc'?-1:1;return[...demoAssetState.albums].filter((album)=>!normalized||`${album.album_name}\n${album.description}`.toLowerCase().includes(normalized)).sort((a,b)=>{if(query.sort.field==='assets')return(a.asset_count-b.asset_count)*mul;if(query.sort.field==='description')return a.description.localeCompare(b.description)*mul;return a.album_name.localeCompare(b.album_name)*mul})}
 function albumOptions(query:OptionSearchQuery){const normalized=(query.query??'').trim().toLowerCase();return demoAssetState.albums.filter((album)=>!normalized||`${album.album_name}\n${album.description}`.toLowerCase().includes(normalized)).sort((a,b)=>a.album_name.localeCompare(b.album_name)).map((album)=>({value:album.id,label:album.album_name,subtitle:`${album.asset_count.toLocaleString()} assets`}))}
 function tagOptions(query:OptionSearchQuery){const normalized=(query.query??'').trim().toLowerCase();return demoAssetState.tags.filter((tag)=>!normalized||tag.tag_name.toLowerCase().includes(normalized)).sort((a,b)=>a.tag_name.localeCompare(b.tag_name)).map((tag)=>({value:tag.id,label:tag.tag_name,subtitle:`${tag.asset_count.toLocaleString()} assets`}))}
+function demoAssetDetails(id:string):AssetDetailRecord|undefined{const asset=demoAssetById(id) as AssetRecord|undefined;if(!asset)return undefined;const albumIds=new Set(demoAssetState.album_assets.filter((membership)=>membership.asset_id===id).map((membership)=>membership.album_id));return{...asset,albums:demoAssetState.albums.filter((album)=>albumIds.has(album.id)).map((album)=>({id:album.id,name:album.album_name}))}}
 
 const duplicateDefinitions=[
   {count:2,state:'Actionable',kind:'Exact pair',exact:true},{count:2,state:'Needs review',kind:'Similar pair',exact:false},{count:3,state:'Actionable',kind:'Exact group',exact:true},
@@ -68,6 +69,7 @@ export function createDemoLibraryDataSource():LibraryDataSource{return{
   async initialize(){initializeDemoAssetState();normalizeDemoStacks();initializeDuplicates();await delay()},
   assets:{
     async getById(id){await delay();return demoAssetById(id) as AssetRecord|undefined},
+    async details(id){await delay();return demoAssetDetails(id)},
     async getMany(ids){await delay();const set=new Set(ids);return(indexedDemoAssets() as AssetRecord[]).filter((asset)=>set.has(asset.id))},
     async getTrashById(id){await delay();return trashApiDemoAssets().find((asset)=>asset.id===id) as TrashAssetRecord|undefined},
     async search(query:AssetSearchQuery){await delay();return collectionPage(searchAssets(query),query)},
