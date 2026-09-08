@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { AssetSyncCoordinatorStatus, AssetSyncMode, AssetSyncRunStatus, AssetTaskStatus } from '../../features/assets/types/assets';
-  import type { SyncRuntimeSettings, SyncSchedule } from '../../features/settings/types/settings';
+  import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
@@ -18,30 +17,40 @@
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
+  import type { SyncCoordinatorStatus, SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule, TaskConnectionState, TaskSubscription } from '../data/syncContracts';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
+  type PendingOperation = 'starting' | 'cancelling' | 'runtime' | 'schedules' | null;
 
   let tab = $state<SettingsTab>('General');
   let density = $state<V2Density>('standard');
-  let statusState = $state<AssetSyncCoordinatorStatus | null>(null);
+  let statusState = $state<SyncCoordinatorStatus | null>(null);
   let runtime = $state<SyncRuntimeSettings | null>(null);
+  let savedRuntime = $state<SyncRuntimeSettings | null>(null);
   let schedules = $state<SyncSchedule[]>([]);
+  let savedSchedules = $state<SyncSchedule[]>([]);
   let loading = $state(true);
-  let busy = $state(false);
+  let pendingOperation = $state<PendingOperation>(null);
   let error = $state<string | null>(null);
   let success = $state<string | null>(null);
+  let connectionState = $state<TaskConnectionState>('connecting');
   let active = true;
   let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  let taskSocket: WebSocket | null = null;
+  let taskSubscription: TaskSubscription | null = null;
 
   const currentRun = $derived(statusState?.active ?? statusState?.pending ?? null);
   const fullSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-full') ?? null);
   const incrementalSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-incremental') ?? null);
-  const progressKnown = $derived(
-    currentRun?.progress.total != null && currentRun.progress.percent != null,
-  );
+  const progressKnown = $derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
+  const runtimeDirty = $derived(Boolean(runtime && savedRuntime && JSON.stringify(runtime) !== JSON.stringify(savedRuntime)));
+  const schedulesDirty = $derived(JSON.stringify(scheduleSnapshot(schedules)) !== JSON.stringify(scheduleSnapshot(savedSchedules)));
+  const schedulesValid = $derived(schedules.every((item) => !item.enabled || Boolean(item.cronExpression)));
+  const busy = $derived(pendingOperation !== null);
+
+  function scheduleSnapshot(values: SyncSchedule[]): Array<{ name: string; enabled: boolean; cronExpression: string | null }> {
+    return values.map(({ name, enabled, cronExpression }) => ({ name, enabled, cronExpression })).sort((a, b) => a.name.localeCompare(b.name));
+  }
 
   function message(value: unknown, fallback: string): string {
     return value instanceof Error ? value.message : fallback;
@@ -61,23 +70,6 @@
     }
   }
 
-  function handleTaskUpdate(task: AssetTaskStatus): void {
-    if (task.task_type === 'asset_sync') void refreshStatus();
-  }
-
-  function connectTaskUpdates(): void {
-    if (!active || taskSocket) return;
-    taskSocket = libraryData.sync.openUpdates(
-      handleTaskUpdate,
-      () => undefined,
-      () => {
-        taskSocket = null;
-        if (!active) return;
-        reconnectTimer = setTimeout(connectTaskUpdates, 2000);
-      },
-    );
-  }
-
   async function loadLiveConfiguration(): Promise<void> {
     loading = true;
     error = null;
@@ -89,8 +81,10 @@
       ]);
       if (!active) return;
       statusState = nextStatus;
-      runtime = nextRuntime;
-      schedules = nextSchedules;
+      runtime = { ...nextRuntime };
+      savedRuntime = { ...nextRuntime };
+      schedules = nextSchedules.map((item) => ({ ...item }));
+      savedSchedules = nextSchedules.map((item) => ({ ...item }));
     } catch (value) {
       if (active) error = message(value, 'Could not load live synchronization configuration.');
     } finally {
@@ -98,50 +92,55 @@
     }
   }
 
-  async function start(mode: AssetSyncMode): Promise<void> {
-    busy = true;
+  async function start(mode: SyncMode): Promise<void> {
+    if (busy) return;
+    pendingOperation = 'starting';
     error = null;
     success = null;
     try {
       await libraryData.sync.start(mode);
       await refreshStatus();
-      if (active) success = `${mode === 'full' ? 'Global' : 'Incremental'} synchronization submitted.`;
+      if (active) success = `${mode === 'full' ? 'Global' : 'Incremental'} synchronization started.`;
     } catch (value) {
       if (active) error = message(value, 'Could not start synchronization.');
     } finally {
-      if (active) busy = false;
+      if (active) pendingOperation = null;
     }
   }
 
   async function cancelCurrent(): Promise<void> {
     const run = currentRun;
-    if (!run) return;
-    busy = true;
+    if (!run || busy) return;
+    pendingOperation = 'cancelling';
     error = null;
     success = null;
     try {
-      await libraryData.sync.cancel(run.task_id ?? run.id);
+      await libraryData.tasks.cancel(run.taskId ?? run.id);
       await refreshStatus();
       if (active) success = 'Cancellation requested.';
     } catch (value) {
       if (active) error = message(value, 'Could not cancel synchronization.');
     } finally {
-      if (active) busy = false;
+      if (active) pendingOperation = null;
     }
   }
 
   async function saveRuntime(): Promise<void> {
-    if (!runtime) return;
-    busy = true;
+    if (!runtime || !runtimeDirty || busy) return;
+    pendingOperation = 'runtime';
     error = null;
     success = null;
+    const draft = { ...runtime };
     try {
-      runtime = await libraryData.sync.saveRuntimeSettings(runtime);
+      const saved = await libraryData.sync.saveRuntimeSettings(draft);
+      if (!active) return;
+      runtime = { ...saved };
+      savedRuntime = { ...saved };
       success = 'Synchronization runtime settings saved.';
     } catch (value) {
-      error = message(value, 'Could not save synchronization runtime settings.');
+      if (active) error = message(value, 'Could not save synchronization runtime settings. Your unsaved values are still shown.');
     } finally {
-      busy = false;
+      if (active) pendingOperation = null;
     }
   }
 
@@ -152,35 +151,49 @@
     runtime = { ...runtime, [key]: value };
   }
 
-  function updateSchedule(name: string, patch: Partial<Pick<SyncSchedule, 'enabled' | 'cron_expression'>>): void {
+  function updateSchedule(name: string, patch: Partial<Pick<SyncSchedule, 'enabled' | 'cronExpression'>>): void {
     schedules = schedules.map((item) => item.name === name ? { ...item, ...patch } : item);
   }
 
-  async function persistSchedule(schedule: SyncSchedule | null): Promise<void> {
-    if (!schedule || !schedule.cron_expression) return;
-    busy = true;
+  async function saveScheduleSection(): Promise<void> {
+    if (!schedulesDirty || !schedulesValid || busy) return;
+    pendingOperation = 'schedules';
     error = null;
     success = null;
+    const draft = schedules.map((item) => ({ ...item }));
     try {
-      const saved = await libraryData.sync.saveSchedule(schedule.name, {
-        enabled: schedule.enabled,
-        cron_expression: schedule.cron_expression,
-      });
-      schedules = schedules.map((item) => item.name === saved.name ? saved : item);
-      success = `${schedule.name === 'asset-sync-full' ? 'Global' : 'Incremental'} schedule saved.`;
+      const saved = await libraryData.sync.saveSchedules(scheduleSnapshot(draft));
+      if (!active) return;
+      const byName = new Map(saved.map((item) => [item.name, item]));
+      schedules = draft.map((item) => byName.get(item.name) ?? item);
+      savedSchedules = schedules.map((item) => ({ ...item }));
+      success = 'Synchronization schedules saved.';
     } catch (value) {
-      error = message(value, 'Could not save synchronization schedule.');
+      if (!active) return;
+      error = message(value, 'Could not save all synchronization schedules. Unsaved values are still shown.');
+      try {
+        savedSchedules = (await libraryData.sync.schedules()).map((item) => ({ ...item }));
+      } catch {
+        // Keep the last confirmed snapshot when reconciliation is unavailable.
+      }
     } finally {
-      busy = false;
+      if (active) pendingOperation = null;
     }
   }
 
-  function runLabel(run: AssetSyncRunStatus | null): string {
+  function runLabel(run: SyncRun | null): string {
     if (!run) return 'Idle';
     if (run.status === 'queued') return 'Queued';
     if (run.status === 'retrying') return 'Retrying';
     if (run.status === 'recovering') return 'Recovering';
     return 'Running';
+  }
+
+  function connectionLabel(): string {
+    if (connectionState === 'connected') return 'Live';
+    if (connectionState === 'reconnecting') return 'Reconnecting';
+    if (connectionState === 'connecting') return 'Connecting';
+    return 'Disconnected';
   }
 
   function formatNumber(value: number | null | undefined): string {
@@ -193,23 +206,28 @@
     const onDensity = (event: Event) => density = (event as CustomEvent<V2Density>).detail;
     window.addEventListener(V2_DENSITY_EVENT, onDensity);
     void loadLiveConfiguration();
-    connectTaskUpdates();
+    taskSubscription = libraryData.tasks.subscribe({
+      onTask: (task) => { if (task.taskType === 'asset_sync') void refreshStatus(); },
+      onConnectionState: (state) => {
+        const wasDisconnected = connectionState === 'reconnecting' || connectionState === 'disconnected';
+        connectionState = state;
+        if (state === 'connected' && wasDisconnected) void refreshStatus();
+      },
+      onError: () => undefined,
+    });
     pollTimer = setInterval(() => void refreshStatus(), 10000);
     return () => {
       active = false;
       window.removeEventListener(V2_DENSITY_EVENT, onDensity);
       if (pollTimer) clearInterval(pollTimer);
-      if (reconnectTimer) clearTimeout(reconnectTimer);
-      taskSocket?.close();
-      taskSocket = null;
+      taskSubscription?.close();
+      taskSubscription = null;
     };
   });
 </script>
 
 <V2PageLayout title="Settings" description="Configure interface behavior and live synchronization controls.">
-  {#snippet tabs()}
-    <V2Tabs items={['General', 'Duplicates', 'Sync']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />
-  {/snippet}
+  {#snippet tabs()}<V2Tabs items={['General', 'Duplicates', 'Sync']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />{/snippet}
 
   <V2Zone>
     <V2Toolbar sticky={false}><b>{tab}</b></V2Toolbar>
@@ -228,9 +246,7 @@
     {:else if tab === 'Duplicates'}
       <V2Card title="Implementation not done yet">
         {#snippet actions()}<V2Badge tone="warn" text="Live actions disabled" />{/snippet}
-        <V2Notice tone="warning" title="This settings area is not live yet">
-          Duplicate settings are intentionally disabled in V2 until their live integration is complete.
-        </V2Notice>
+        <V2Notice tone="warning" title="This settings area is not live yet">Duplicate settings are intentionally disabled in V2 until their live integration is complete.</V2Notice>
       </V2Card>
     {:else if loading}
       <V2Notice>Loading live synchronization status and configuration…</V2Notice>
@@ -238,9 +254,12 @@
       <V2Stack gap="md">
         {#if error}<V2Notice tone="error" title="Synchronization request failed">{error}</V2Notice>{/if}
         {#if success}<V2Notice tone="success">{success}</V2Notice>{/if}
+        {#if connectionState === 'reconnecting' || connectionState === 'disconnected'}
+          <V2Notice tone="warning" title="Live updates interrupted">The last known synchronization state is still shown. Live task updates are {connectionState === 'reconnecting' ? 'reconnecting automatically' : 'disconnected'}; status polling continues in the meantime.</V2Notice>
+        {/if}
 
         <V2Card title="Current synchronization">
-          {#snippet actions()}<V2Badge tone={currentRun ? 'ok' : 'default'} text={runLabel(currentRun)} />{/snippet}
+          {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={currentRun ? 'ok' : 'default'} text={runLabel(currentRun)} /><V2Badge tone={connectionState === 'connected' ? 'ok' : connectionState === 'disconnected' ? 'warn' : 'default'} text={connectionLabel()} /></span>{/snippet}
           <V2Stack gap="sm">
             {#if currentRun}
               <div class="sync-run-summary">
@@ -249,21 +268,15 @@
                 <div><span>Phase</span><strong>{currentRun.progress.phase || currentRun.phase}</strong></div>
                 <div><span>Processed</span><strong>{formatNumber(currentRun.progress.completed)} / {formatNumber(currentRun.progress.total)}</strong></div>
               </div>
-              <V2Progress
-                value={progressKnown ? currentRun.progress.percent ?? undefined : undefined}
-                indeterminate={!progressKnown}
-                label={`Synchronization ${currentRun.progress.phase || currentRun.phase} progress`}
-              />
-              <div class="v2-small v2-muted">
-                {currentRun.progress.detail ?? (progressKnown ? `${formatNumber(currentRun.progress.completed)} of ${formatNumber(currentRun.progress.total)} processed` : 'Synchronization is running; total work is not known yet.')}
-              </div>
+              <V2Progress value={progressKnown ? currentRun.progress.percent ?? undefined : undefined} indeterminate={!progressKnown} label={`Synchronization ${currentRun.progress.phase || currentRun.phase} progress`} />
+              <div class="v2-small v2-muted">{currentRun.progress.detail ?? (progressKnown ? `${formatNumber(currentRun.progress.completed)} of ${formatNumber(currentRun.progress.total)} processed` : 'Synchronization is running; total work is not known yet.')}</div>
             {:else}
               <V2Notice tone="info">No synchronization is currently active or queued.</V2Notice>
             {/if}
             <div class="sync-run-actions">
-              <V2Button variant="primary" disabled={busy || Boolean(currentRun)} onclick={() => void start('full')}>Start global sync</V2Button>
+              <V2Button variant="primary" disabled={busy || Boolean(currentRun)} onclick={() => void start('full')}>{#if pendingOperation === 'starting'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Starting…</span>{:else}Start global sync{/if}</V2Button>
               <V2Button disabled={busy || Boolean(currentRun)} onclick={() => void start('incremental')}>Start incremental sync</V2Button>
-              <V2Button variant="danger" disabled={busy || !currentRun} onclick={() => void cancelCurrent()}>Cancel sync</V2Button>
+              <V2Button variant="danger" disabled={busy || !currentRun} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button>
               <V2Button disabled={busy} onclick={() => void refreshStatus()}>Refresh</V2Button>
             </div>
           </V2Stack>
@@ -271,65 +284,51 @@
 
         <V2Card title="Run counters">
           {#if currentRun}
-            <div class="sync-counter-grid">
-              {#each Object.entries(currentRun.counters) as [name, value] (name)}
-                <div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>
-              {/each}
-            </div>
-          {:else if statusState?.last_success}
-            <div class="sync-counter-grid">
-              {#each Object.entries(statusState.last_success.counters) as [name, value] (name)}
-                <div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>
-              {/each}
-            </div>
-          {:else}
-            <span class="v2-small v2-muted">No completed synchronization counters are available yet.</span>
-          {/if}
+            <div class="sync-counter-grid">{#each Object.entries(currentRun.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>
+          {:else if statusState?.lastSuccess}
+            <div class="sync-counter-grid">{#each Object.entries(statusState.lastSuccess.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>
+          {:else}<span class="v2-small v2-muted">No completed synchronization counters are available yet.</span>{/if}
         </V2Card>
 
         <V2Section title="Live runtime configuration">
           <V2Card title="Synchronization load controls">
-            {#snippet actions()}<V2Badge tone="ok" text="Live backend settings" />{/snippet}
+            {#snippet actions()}<V2Badge tone={runtimeDirty ? 'warn' : 'ok'} text={runtimeDirty ? 'Unsaved changes' : 'Saved'} />{/snippet}
             {#if runtime}
               <V2Stack gap="sm">
-                <V2Field label="Full-sync persistence batch size" type="number" min="1" value={runtime.full_batch_size} onchange={(value) => setRuntime('full_batch_size', value)} />
-                <V2Field label="Minimum full-sync batch delay (seconds)" type="number" min="0" step="0.1" value={runtime.full_min_batch_delay_seconds} onchange={(value) => setRuntime('full_min_batch_delay_seconds', value)} />
-                <V2Field label="Tag association concurrency" type="number" min="1" max="32" value={runtime.tag_association_concurrency} onchange={(value) => setRuntime('tag_association_concurrency', value)} />
-                <V2Notice tone="info" title="Only persisted controls are shown">
-                  Page concurrency and the additional per-step controls from the earlier V2 mockup are hidden until their backend implementation is live. This screen does not pretend to save unsupported values.
-                </V2Notice>
-                <div><V2Button variant="primary" disabled={busy} onclick={() => void saveRuntime()}>Save runtime settings</V2Button></div>
+                <V2Field label="Full-sync persistence batch size" type="number" min="1" value={runtime.fullBatchSize} onchange={(value) => setRuntime('fullBatchSize', value)} />
+                <V2Field label="Minimum full-sync batch delay (seconds)" type="number" min="0" step="0.1" value={runtime.fullMinBatchDelaySeconds} onchange={(value) => setRuntime('fullMinBatchDelaySeconds', value)} />
+                <V2Field label="Tag association concurrency" type="number" min="1" max="32" value={runtime.tagAssociationConcurrency} onchange={(value) => setRuntime('tagAssociationConcurrency', value)} />
+                <V2Notice tone="info" title="Only persisted controls are shown">Page concurrency and additional per-step controls remain hidden until their backend implementation is live.</V2Notice>
+                <div><V2Button variant="primary" disabled={busy || !runtimeDirty} onclick={() => void saveRuntime()}>{#if pendingOperation === 'runtime'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Saving…</span>{:else}Save runtime settings{/if}</V2Button></div>
               </V2Stack>
-            {:else}
-              <V2Notice tone="error">Runtime settings were not available.</V2Notice>
-            {/if}
+            {:else}<V2Notice tone="error">Runtime settings were not available.</V2Notice>{/if}
           </V2Card>
         </V2Section>
 
         <V2Section title="Schedules">
-          <div class="sync-control-grid">
-            {#if incrementalSchedule}
-              <V2Card title="Incremental sync schedule">
-                {#snippet actions()}<V2Badge tone={incrementalSchedule.enabled ? 'ok' : 'default'} text={incrementalSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
-                <V2Stack gap="sm">
-                  <V2Checkbox label="Enable incremental sync schedule" checked={incrementalSchedule.enabled} onchange={(checked) => updateSchedule(incrementalSchedule.name, { enabled: checked })} />
-                  <V2CronField id="settings-incremental-cron" label="Incremental synchronization" enabled={incrementalSchedule.enabled} value={incrementalSchedule.cron_expression ?? ''} onchange={(value) => updateSchedule(incrementalSchedule.name, { cron_expression: value })} />
-                  <div><V2Button variant="primary" disabled={busy || !incrementalSchedule.cron_expression} onclick={() => void persistSchedule(incrementalSchedule)}>Save incremental schedule</V2Button></div>
-                </V2Stack>
-              </V2Card>
-            {/if}
-
-            {#if fullSchedule}
-              <V2Card title="Global full-sync schedule">
-                {#snippet actions()}<V2Badge tone={fullSchedule.enabled ? 'ok' : 'default'} text={fullSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
-                <V2Stack gap="sm">
-                  <V2Checkbox label="Enable global full-sync schedule" checked={fullSchedule.enabled} onchange={(checked) => updateSchedule(fullSchedule.name, { enabled: checked })} />
-                  <V2CronField id="settings-global-cron" label="Global full synchronization" enabled={fullSchedule.enabled} value={fullSchedule.cron_expression ?? ''} onchange={(value) => updateSchedule(fullSchedule.name, { cron_expression: value })} />
-                  <div><V2Button variant="primary" disabled={busy || !fullSchedule.cron_expression} onclick={() => void persistSchedule(fullSchedule)}>Save global schedule</V2Button></div>
-                </V2Stack>
-              </V2Card>
-            {/if}
-          </div>
+          <V2Stack gap="sm">
+            <div class="sync-control-grid">
+              {#if incrementalSchedule}
+                <V2Card title="Incremental sync schedule">
+                  {#snippet actions()}<V2Badge tone={incrementalSchedule.enabled ? 'ok' : 'default'} text={incrementalSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
+                  <V2Stack gap="sm">
+                    <V2Checkbox label="Enable incremental sync schedule" checked={incrementalSchedule.enabled} onchange={(checked) => updateSchedule(incrementalSchedule.name, { enabled: checked })} />
+                    <V2CronField id="settings-incremental-cron" label="Incremental synchronization" enabled={incrementalSchedule.enabled} value={incrementalSchedule.cronExpression ?? ''} onchange={(value) => updateSchedule(incrementalSchedule.name, { cronExpression: value })} />
+                  </V2Stack>
+                </V2Card>
+              {/if}
+              {#if fullSchedule}
+                <V2Card title="Global full-sync schedule">
+                  {#snippet actions()}<V2Badge tone={fullSchedule.enabled ? 'ok' : 'default'} text={fullSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
+                  <V2Stack gap="sm">
+                    <V2Checkbox label="Enable global full-sync schedule" checked={fullSchedule.enabled} onchange={(checked) => updateSchedule(fullSchedule.name, { enabled: checked })} />
+                    <V2CronField id="settings-global-cron" label="Global full synchronization" enabled={fullSchedule.enabled} value={fullSchedule.cronExpression ?? ''} onchange={(value) => updateSchedule(fullSchedule.name, { cronExpression: value })} />
+                  </V2Stack>
+                </V2Card>
+              {/if}
+            </div>
+            <div class="sync-section-save"><V2Badge tone={schedulesDirty ? 'warn' : 'ok'} text={schedulesDirty ? 'Unsaved changes' : 'Saved'} /><V2Button variant="primary" disabled={busy || !schedulesDirty || !schedulesValid} onclick={() => void saveScheduleSection()}>{#if pendingOperation === 'schedules'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Saving schedules…</span>{:else}Save schedule changes{/if}</V2Button></div>
+          </V2Stack>
         </V2Section>
       </V2Stack>
     {/if}
@@ -337,7 +336,8 @@
 </V2PageLayout>
 
 <style>
-  .sync-run-actions{display:flex;flex-wrap:wrap;gap:.5rem}
+  .sync-run-actions,.sync-status-badges,.sync-section-save,.pending-label{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}
+  .sync-section-save{justify-content:flex-end}
   .sync-run-summary,.sync-counter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}
   .sync-run-summary>div,.sync-counter-grid>div{display:grid;gap:.15rem;padding:.7rem;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:.65rem}
   .sync-run-summary span,.sync-counter-grid span{font-size:.78rem;opacity:.7;text-transform:capitalize}
