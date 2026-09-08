@@ -23,6 +23,8 @@
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { createCollectionView } from '../state/collectionView.svelte';
+  import { CollectionRequestController } from '../state/collectionRequest.svelte';
+  import { OperationController } from '../state/operationController.svelte';
   import {
     assignAssetToActiveStack,
     assignGroupToSingleStack,
@@ -38,7 +40,7 @@
     stacksForGroup,
   } from '../state/duplicateStackResolution';
   import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage, mutationFeedback, type OperationFeedback } from '../data/mutationFeedback';
+  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
   import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateResolutionPlan, DuplicateState } from '../data/contracts';
 
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
@@ -46,10 +48,12 @@
   const collection=createCollectionView({pageSize:6,resultModeStorageKey:'immichCompanionDuplicateResultMode'});
   let tab=$state<DuplicateTab>('Review'),compare=$state(false),group=$state(1),member=$state(0),reference=$state(0);
   let decisions=$state<Record<string,DuplicateDecision>>({}),stackWorkspace=$state(createDuplicateStackWorkspace()),selectedGroups=$state<number[]>([]),reviewFilter=$state<DuplicateState|'All groups'|'Auto-ready'>('All groups');
-  let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),loadError=$state(''),feedback=$state<OperationFeedback|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null);
+  let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null),interactionError=$state('');
   let capabilities=$state<DuplicateCapabilities>({canRunDiscovery:false,canApplyDecisions:false,canViewHistory:false,reviewFilters:['All groups'],decisions:[]});
   let similarityThreshold=$state('82'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('20'),discoverySummary=$state('');
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]);
+  const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
+  const loading=$derived(groupRequests.loading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
   const activeGroup=$derived(groups.find((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),decisionCount=$derived(Object.keys(decisions).length);
   const reviewFilterOptions=$derived(capabilities.reviewFilters.map(String));
@@ -72,12 +76,29 @@
     if(completed.some((id)=>!selectedGroups.includes(id)))selectedGroups=[...new Set([...selectedGroups,...completed])];
   });
 
-  async function refreshGroups(reset=true){if(loading)return;loading=true;try{if(reset){nextCursor=null;if(collection.resultMode==='Infinite')collection.reset()}const query=collection.resultMode==='Pagination'?{state:reviewFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,pageSize:collection.pageSize,cursor:reset?null:nextCursor};const result=await libraryData.duplicates.search(query);groups=collection.resultMode==='Infinite'&&!reset?[...groups,...result.items]:result.items;total=result.total;nextCursor=result.nextCursor;collection.clampPage(total);loadError=''}catch(error){loadError=errorMessage(error,'Duplicate groups could not be loaded.')}finally{loading=false}}
-  async function loadMore(){if(!nextCursor||loading)return;collection.loadMore(total);await refreshGroups(false)}
+  async function refreshGroups(reset=true):Promise<boolean>{
+    if(groupRequests.loading&&!reset)return false;
+    if(reset){nextCursor=null;if(collection.resultMode==='Infinite')collection.reset()}
+    const query=collection.resultMode==='Pagination'?{state:reviewFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,pageSize:collection.pageSize,cursor:reset?null:nextCursor};
+    const result=await groupRequests.run((signal)=>libraryData.duplicates.search({...query,signal}),{
+      fallbackError:'Duplicate groups could not be loaded.',
+      mode:collection.resultMode==='Infinite'&&!reset?'append':'replace',
+      apply:(response,mode)=>{
+        groups=mode==='append'?[...groups,...response.items]:response.items;
+        total=response.total;
+        nextCursor=response.nextCursor;
+        collection.clampPage(total);
+      },
+    });
+    return result!==null;
+  }
+  async function reconcileGroups(action:string):Promise<void>{if(!await refreshGroups())throw new Error(groupRequests.error||`${action} was applied, but duplicate groups could not be refreshed.`)}
+  function pending(action:string){return(phase:'applying'|'reconciling')=>pendingOperationFeedback(action,phase==='applying'?'applying':'refreshing')}
+  async function loadMore(){if(!nextCursor||groupRequests.loading)return;collection.loadMore(total);await refreshGroups(false)}
   function setPage(value:number){collection.setPage(value);void refreshGroups()}
   function setPageSize(value:number){collection.setPageSize(value,total);void refreshGroups()}
   function setMode(value:ResultMode){collection.setMode(value);void refreshGroups()}
-  function setReviewFilter(value:string){reviewFilter=value as typeof reviewFilter;collection.reset();selectedGroups=[];void refreshGroups()}
+  function setReviewFilter(value:string){reviewFilter=value as typeof reviewFilter;collection.reset();selectedGroups=[];interactionError='';void refreshGroups()}
   function openCompare(nextGroup:number,index:number){group=nextGroup;member=index;reference=0;compare=true}
   function setDecision(groupId:number,assetId:string,decision:DuplicateDecision){if(!capabilities.decisions.includes(decision))return;decisions={...decisions,[assetId]:decision};stackWorkspace=decision==='stack'?assignAssetToActiveStack(stackWorkspace,groupId,assetId):removeAssetFromPendingStack(stackWorkspace,assetId)}
   function setStackPrimary(assetId:string){if(decisions[assetId]!=='stack')return;stackWorkspace=setPendingStackPrimary(stackWorkspace,assetId)}
@@ -91,28 +112,81 @@
   function groupResolution(item:DuplicateGroupRecord):DuplicateResolutionPlan{const ids=new Set(item.members.map((entry)=>entry.asset.id));const groupDecisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>ids.has(id))) as Record<string,DuplicateDecision>;return{decisions:groupDecisions,stacks:resolutionStacks(stackWorkspace).filter((stack)=>stack.groupId===item.id&&stack.assetIds.every((id)=>groupDecisions[id]==='stack'))}}
   function groupComplete(item:DuplicateGroupRecord){return item.members.length>0&&item.members.every((entry)=>Boolean(decisions[entry.asset.id]))}
   function groupHasInvalidStack(item:DuplicateGroupRecord){return stacksForGroup(stackWorkspace,item.id).some((stack)=>stack.assetIds.length===1)}
-  function requestReviewAll(resolution=currentResolution()){if(invalidStackCount){loadError=`${invalidStackCount} pending stack${invalidStackCount===1?' has':'s have'} only one asset. Add another asset or choose Keep/Delete before applying.`;return}pendingReview={scope:'all',groupId:null,resolution}}
-  function requestReviewGroup(item:DuplicateGroupRecord){if(!groupComplete(item)){loadError=`Group ${item.id} still has assets without a decision.`;return}if(groupHasInvalidStack(item)){loadError=`Group ${item.id} has an incomplete one-asset stack.`;return}pendingReview={scope:'group',groupId:item.id,resolution:groupResolution(item)}}
-  async function refillAfterGroupReview(groupId:number){const remaining=groups.filter((item)=>item.id!==groupId);const query=collection.resultMode==='Pagination'?{state:reviewFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,pageSize:collection.pageSize,cursor:null};const result=await libraryData.duplicates.search(query);const preserved=new Map(remaining.map((item)=>[item.id,item]));if(collection.resultMode==='Pagination'){groups=result.items.map((item)=>preserved.get(item.id)??item)}else{const existingIds=new Set(remaining.map((item)=>item.id));groups=[...remaining,...result.items.filter((item)=>!existingIds.has(item.id))]}total=result.total;nextCursor=result.nextCursor;collection.clampPage(total)}
+  function requestReviewAll(resolution=currentResolution()){interactionError='';if(invalidStackCount){interactionError=`${invalidStackCount} pending stack${invalidStackCount===1?' has':'s have'} only one asset. Add another asset or choose Keep/Delete before applying.`;return}pendingReview={scope:'all',groupId:null,resolution}}
+  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';if(!groupComplete(item)){interactionError=`Group ${item.id} still has assets without a decision.`;return}if(groupHasInvalidStack(item)){interactionError=`Group ${item.id} has an incomplete one-asset stack.`;return}pendingReview={scope:'group',groupId:item.id,resolution:groupResolution(item)}}
+  async function refillAfterGroupReview(groupId:number):Promise<void>{
+    const remaining=groups.filter((item)=>item.id!==groupId);
+    const query=collection.resultMode==='Pagination'?{state:reviewFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,pageSize:collection.pageSize,cursor:null};
+    const result=await groupRequests.run((signal)=>libraryData.duplicates.search({...query,signal}),{
+      fallbackError:`Group ${groupId} was reviewed, but duplicate groups could not be refreshed.`,
+      apply:(response)=>{
+        const preserved=new Map(remaining.map((item)=>[item.id,item]));
+        if(collection.resultMode==='Pagination')groups=response.items.map((item)=>preserved.get(item.id)??item);
+        else{const existingIds=new Set(remaining.map((item)=>item.id));groups=[...remaining,...response.items.filter((item)=>!existingIds.has(item.id))]}
+        total=response.total;nextCursor=response.nextCursor;collection.clampPage(total);
+      },
+    });
+    if(!result)throw new Error(groupRequests.error||`Group ${groupId} was reviewed, but duplicate groups could not be refreshed.`);
+  }
   function clearAppliedGroupState(item:DuplicateGroupRecord){const ids=new Set(item.members.map((entry)=>entry.asset.id));decisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>!ids.has(id))) as Record<string,DuplicateDecision>;stackWorkspace=clearGroupStacks(stackWorkspace,item.id);selectedGroups=selectedGroups.filter((id)=>id!==item.id)}
-  async function applyDecisionSet(resolution:DuplicateResolutionPlan){if(!capabilities.canApplyDecisions||Object.keys(resolution.decisions).length===0||mutating)return;mutating=true;loadError='';try{const result=await libraryData.duplicates.applyDecisions(resolution);feedback=mutationFeedback('Duplicate decisions',result);const failedIds=new Set(result.failed.map((failure)=>failure.id));const failedDecisions=Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>failedIds.has(id))) as Record<string,DuplicateDecision>;retryResolution=result.failed.length?{decisions:failedDecisions,stacks:resolution.stacks.filter((stack)=>stack.assetIds.some((id)=>failedIds.has(id)))}:null;decisions={...failedDecisions};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[];compare=false;await refreshGroups()}catch(error){feedback=null;retryResolution=null;loadError=errorMessage(error,'Duplicate decisions could not be applied.')}finally{mutating=false}}
-  async function applyGroupDecisionSet(groupId:number,resolution:DuplicateResolutionPlan){if(!capabilities.canApplyDecisions||mutating)return;const item=groups.find((entry)=>entry.id===groupId);if(!item)return;mutating=true;loadError='';try{const result=await libraryData.duplicates.applyDecisions(resolution);feedback=mutationFeedback(`Review group ${groupId}`,result);const failedIds=new Set(result.failed.map((failure)=>failure.id));if(result.failed.length){const failedDecisions=Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>failedIds.has(id))) as Record<string,DuplicateDecision>;retryResolution={decisions:failedDecisions,stacks:resolution.stacks.filter((stack)=>stack.assetIds.some((id)=>failedIds.has(id)))};return}retryResolution=null;clearAppliedGroupState(item);if(compare&&group===groupId)compare=false;await refillAfterGroupReview(groupId)}catch(error){feedback=null;loadError=errorMessage(error,`Group ${groupId} could not be reviewed.`)}finally{mutating=false}}
+  async function applyDecisionSet(resolution:DuplicateResolutionPlan){
+    if(!capabilities.canApplyDecisions||Object.keys(resolution.decisions).length===0||mutating)return;
+    operations.clearOutcome();interactionError='';
+    await operations.run('Duplicate decisions',()=>libraryData.duplicates.applyDecisions(resolution),{
+      pending:pending('Duplicate decisions'),
+      outcome:(result)=>mutationFeedback('Duplicate decisions',result),
+      onOutcome:(_feedback,result)=>{const failedIds=new Set(result.failed.map((failure)=>failure.id));const failedDecisions=Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>failedIds.has(id))) as Record<string,DuplicateDecision>;retryResolution=result.failed.length?{decisions:failedDecisions,stacks:resolution.stacks.filter((stack)=>stack.assetIds.some((id)=>failedIds.has(id)))}:null;decisions={...failedDecisions};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[];compare=false},
+      reconcile:()=>reconcileGroups('Duplicate decisions'),
+      reconcileError:'Duplicate decisions were applied, but the latest groups could not be loaded.',
+    });
+  }
+  async function applyGroupDecisionSet(groupId:number,resolution:DuplicateResolutionPlan){
+    if(!capabilities.canApplyDecisions||mutating)return;
+    const item=groups.find((entry)=>entry.id===groupId);if(!item)return;
+    operations.clearOutcome();interactionError='';
+    await operations.run(`Review group ${groupId}`,()=>libraryData.duplicates.applyDecisions(resolution),{
+      pending:pending(`Review group ${groupId}`),
+      outcome:(result)=>mutationFeedback(`Review group ${groupId}`,result),
+      onOutcome:(_feedback,result)=>{const failedIds=new Set(result.failed.map((failure)=>failure.id));if(result.failed.length){const failedDecisions=Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>failedIds.has(id))) as Record<string,DuplicateDecision>;retryResolution={decisions:failedDecisions,stacks:resolution.stacks.filter((stack)=>stack.assetIds.some((id)=>failedIds.has(id)))};return}retryResolution=null;clearAppliedGroupState(item);if(compare&&group===groupId)compare=false},
+      reconcile:async(result)=>{if(!result.failed.length)await refillAfterGroupReview(groupId)},
+      reconcileError:`Group ${groupId} was reviewed, but the latest groups could not be loaded.`,
+    });
+  }
   async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.resolution);else await applyDecisionSet(review.resolution);pendingReview=null}
-  async function runDiscovery(){if(!capabilities.canRunDiscovery||mutating)return;mutating=true;loadError='';try{const result=await libraryData.duplicates.runDiscovery({similarityThreshold:Number(similarityThreshold)||0,includeSimilar,includeExact,maxCandidates:Math.max(1,Number(maxCandidates)||20)});discoverySummary=`${result.groupCount} groups · ${result.candidateCount} candidates`;feedback={tone:'ok',title:'Discovery completed',detail:discoverySummary,failures:[]};stackWorkspace=createDuplicateStackWorkspace();await refreshGroups()}catch(error){feedback=null;loadError=errorMessage(error,'Duplicate discovery could not be completed.')}finally{mutating=false}}
-  async function refreshHistory(){if(!capabilities.canViewHistory){history=[];return}try{const result=await libraryData.duplicates.history({range:historyRange,page:1,pageSize:50});history=result.items;loadError=''}catch(error){loadError=errorMessage(error,'Resolution history could not be loaded.')}}
+  async function runDiscovery(){
+    if(!capabilities.canRunDiscovery||mutating)return;
+    operations.clearOutcome();interactionError='';
+    await operations.run('Duplicate discovery',()=>libraryData.duplicates.runDiscovery({similarityThreshold:Number(similarityThreshold)||0,includeSimilar,includeExact,maxCandidates:Math.max(1,Number(maxCandidates)||20)}),{
+      pending:pending('Duplicate discovery'),
+      outcome:(result)=>({tone:'ok',title:'Discovery completed',detail:`${result.groupCount} groups · ${result.candidateCount} candidates`,failures:[]}),
+      onOutcome:(outcome)=>{discoverySummary=outcome.detail;stackWorkspace=createDuplicateStackWorkspace()},
+      reconcile:()=>reconcileGroups('Duplicate discovery'),
+      reconcileError:'Duplicate discovery completed, but the latest groups could not be loaded.',
+    });
+  }
+  async function refreshHistory():Promise<boolean>{
+    if(!capabilities.canViewHistory){history=[];return true}
+    const result=await historyRequests.run((signal)=>libraryData.duplicates.history({range:historyRange,page:1,pageSize:50,signal}),{
+      fallbackError:'Resolution history could not be loaded.',
+      apply:(response)=>{history=response.items},
+    });
+    return result!==null;
+  }
 
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';await Promise.all([refreshGroups(),refreshHistory()])}catch(error){loadError=errorMessage(error,'The duplicate data source could not be initialized.')}})()});
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';await Promise.all([refreshGroups(),refreshHistory()])}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}})();return()=>{groupRequests.cancel();historyRequests.cancel()}});
 </script>
 
 <V2PageLayout title="Duplicates" description="Review duplicate groups supplied by the active data source, with provider-backed discovery and decisions.">
-  {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!capabilities.canRunDiscovery||loading||mutating} onclick={runDiscovery}>{mutating?'Working…':'Scan similar'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||decisionCount===0||mutating} onclick={()=>requestReviewAll()}>Review actions{decisionCount?` (${decisionCount})`:''}</V2Button></V2Inline>{/snippet}
+  {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!capabilities.canRunDiscovery||loading||mutating} onclick={runDiscovery}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Scan similar'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||decisionCount===0||mutating} onclick={()=>requestReviewAll()}>Review actions{decisionCount?` (${decisionCount})`:''}</V2Button></V2Inline>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} ariaLabel="Duplicate sections" onselect={(value)=>{tab=value as DuplicateTab;if(tab==='Resolution history')void refreshHistory()}}/>{/snippet}
-  {#snippet context()}<V2Zone>{#if tab==='Review'}<V2Section title="Review filter"><V2Stack gap="sm"><SelectField id="duplicate-review-filter" label="Group state" value={reviewFilter} options={reviewFilterOptions} onchange={setReviewFilter}/><V2Button disabled={mutating||!groups.some((item)=>item.state==='Actionable')} onclick={()=>selectedGroups=groups.filter((item)=>item.state==='Actionable').map((item)=>item.id)}>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><span class="v2-small v2-muted">Similarity remains review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm">{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('keep')}>Keep all copies</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('delete')}>Mark all for deletion</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('stack')}>Stack each group</V2Button>{/if}</V2Stack></V2Section>{:else if tab==='Rules & discovery'}<V2Section title="Discovery"><V2Stack gap="sm"><V2Field label="Similarity threshold" value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><V2Checkbox label="Include visually similar assets" checked={includeSimilar} onchange={(checked)=>includeSimilar=checked}/><V2Checkbox label="Include exact file matches" checked={includeExact} onchange={(checked)=>includeExact=checked}/><V2Field label="Maximum candidates per asset" value={maxCandidates} onchange={(value)=>maxCandidates=value}/><V2Button variant="primary" disabled={!capabilities.canRunDiscovery||mutating} onclick={runDiscovery}>{mutating?'Scanning…':'Run discovery'}</V2Button>{#if discoverySummary}<span class="v2-small v2-muted">{discoverySummary}</span>{/if}</V2Stack></V2Section>{:else}<V2Section title="History filter"><V2Stack gap="sm"><SelectField id="duplicate-history-range" label="Range" value={historyRange} options={['Last 30 days','Last 90 days','All history']} onchange={(value)=>{historyRange=value as typeof historyRange;void refreshHistory()}}/><V2Button disabled={!capabilities.canViewHistory||mutating} onclick={refreshHistory}>Refresh history</V2Button></V2Stack></V2Section>{/if}</V2Zone>{/snippet}
+  {#snippet context()}<V2Zone>{#if tab==='Review'}<V2Section title="Review filter"><V2Stack gap="sm"><SelectField id="duplicate-review-filter" label="Group state" value={reviewFilter} options={reviewFilterOptions} onchange={setReviewFilter}/><V2Button disabled={mutating||!groups.some((item)=>item.state==='Actionable')} onclick={()=>selectedGroups=groups.filter((item)=>item.state==='Actionable').map((item)=>item.id)}>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Similarity"><V2Field label="Threshold" value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><span class="v2-small v2-muted">Similarity remains review evidence only.</span></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm">{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('keep')}>Keep all copies</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('delete')}>Mark all for deletion</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('stack')}>Stack each group</V2Button>{/if}</V2Stack></V2Section>{:else if tab==='Rules & discovery'}<V2Section title="Discovery"><V2Stack gap="sm"><V2Field label="Similarity threshold" value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><V2Checkbox label="Include visually similar assets" checked={includeSimilar} onchange={(checked)=>includeSimilar=checked}/><V2Checkbox label="Include exact file matches" checked={includeExact} onchange={(checked)=>includeExact=checked}/><V2Field label="Maximum candidates per asset" value={maxCandidates} onchange={(value)=>maxCandidates=value}/><V2Button variant="primary" disabled={!capabilities.canRunDiscovery||mutating} onclick={runDiscovery}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Scanning…'):'Run discovery'}</V2Button>{#if discoverySummary}<span class="v2-small v2-muted">{discoverySummary}</span>{/if}</V2Stack></V2Section>{:else}<V2Section title="History filter"><V2Stack gap="sm"><SelectField id="duplicate-history-range" label="Range" value={historyRange} options={['Last 30 days','Last 90 days','All history']} onchange={(value)=>{historyRange=value as typeof historyRange;void refreshHistory()}}/><V2Button disabled={!capabilities.canViewHistory||mutating} onclick={refreshHistory}>Refresh history</V2Button></V2Stack></V2Section>{/if}</V2Zone>{/snippet}
 
   <V2Zone>
-    {#if loadError}<V2ErrorState title="Duplicate operation unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
+    {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
+    {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
+    {#if operationError}<V2ErrorState title="Duplicate operation failed" message={operationError}/>{/if}
     <V2OperationFeedback {feedback} retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll(retryResolution!):undefined}/>
-    {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24]} resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={mutating} onclick={()=>{decisions={};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[]}}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
+    {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24]} resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={mutating} onclick={()=>{decisions={};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[];interactionError=''}}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item}
       {@const groupStacks=stacksForGroup(stackWorkspace,item.id)}
       <V2Card class="v2-duplicate-group"><V2Stack gap="md"><V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><input type="checkbox" disabled={mutating} checked={selectedGroups.includes(item.id)} onchange={(event)=>toggleGroup(item.id,event.currentTarget.checked)}><b>Group {item.id}</b><V2Badge text={`${item.members.length} assets`}/><V2Badge text={item.kind}/><V2Badge tone={item.state==='Actionable'?'ok':item.state==='Blocked'?'bad':'warn'} text={item.state}/></V2Inline><V2Inline gap="sm" wrap={true}>{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'keep')}>Keep all</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'delete')}>Delete all</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'stack')}>Stack all</V2Button>{/if}<V2Button disabled={mutating} onclick={()=>clearGroupChoices(item)}>Clear choices</V2Button><V2Button disabled={mutating} onclick={()=>openCompare(item.id,0)}>Compare</V2Button><V2Button variant="primary" disabled={mutating||!capabilities.canApplyDecisions||!groupComplete(item)||groupHasInvalidStack(item)} title={!groupComplete(item)?'Choose an action for every asset first':groupHasInvalidStack(item)?'Complete the pending stack first':'Review only this group'} onclick={()=>requestReviewGroup(item)}>Review group</V2Button></V2Inline></V2Inline>
