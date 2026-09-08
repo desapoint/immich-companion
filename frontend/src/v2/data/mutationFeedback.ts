@@ -1,7 +1,7 @@
 import type { MutationResult } from './contracts';
 
 export type OperationFeedback = {
-  tone: 'ok' | 'warn' | 'bad';
+  tone: 'pending' | 'ok' | 'warn' | 'bad';
   title: string;
   detail: string;
   failures: Array<{ id: string; reason: string }>;
@@ -11,6 +11,15 @@ export function errorMessage(error: unknown, fallback = 'The request could not b
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === 'string' && error.trim()) return error;
   return fallback;
+}
+
+export function pendingOperationFeedback(action: string, phase: 'applying' | 'refreshing'): OperationFeedback {
+  return {
+    tone: 'pending',
+    title: phase === 'applying' ? `${action} in progress` : `${action} applied`,
+    detail: phase === 'applying' ? 'Applying change…' : 'Refreshing latest asset state…',
+    failures: [],
+  };
 }
 
 export function mutationFeedback(action: string, result: MutationResult): OperationFeedback {
