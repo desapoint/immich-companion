@@ -72,7 +72,7 @@
 
 <V2Modal id={`asset-create-${kind}`} title={`Create ${kind}`} description={kind==='album'?'Add an album to the current data source.':'Create a tag with an optional parent.'} size="md" {onclose}>
   <V2Stack gap="md">
-    <V2Field label="Name" value={name} disabled={saving||busy} onchange={(value)=>name=value}/>
+    <V2Field label="Name" value={name} disabled={saving||busy} onvalueinput={(value)=>name=value}/>
     {#if kind==='album'}
       <V2Field label="Description" value={description} multiline={true} disabled={saving||busy} onchange={(value)=>description=value}/>
     {:else}

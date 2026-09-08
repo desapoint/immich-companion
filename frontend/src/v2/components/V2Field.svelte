@@ -10,6 +10,7 @@
     max,
     step,
     onchange,
+    onvalueinput,
     onenter,
   }: {
     label: string;
@@ -22,6 +23,7 @@
     max?: string | number;
     step?: string | number;
     onchange?: (value: string) => void;
+    onvalueinput?: (value: string) => void;
     onenter?: (value: string) => void;
   } = $props();
 
@@ -35,8 +37,8 @@
 <label class="v2-field">
   <span class="v2-field-label">{label}</span>
   {#if multiline}
-    <textarea value={String(value)} {placeholder} {disabled} onchange={(event) => onchange?.(event.currentTarget.value)}></textarea>
+    <textarea value={String(value)} {placeholder} {disabled} oninput={(event) => onvalueinput?.(event.currentTarget.value)} onchange={(event) => onchange?.(event.currentTarget.value)}></textarea>
   {:else}
-    <input {type} value={value} {placeholder} {disabled} {min} {max} {step} onchange={(event) => onchange?.(event.currentTarget.value)} onkeydown={handleKeydown}>
+    <input {type} value={value} {placeholder} {disabled} {min} {max} {step} oninput={(event) => onvalueinput?.(event.currentTarget.value)} onchange={(event) => onchange?.(event.currentTarget.value)} onkeydown={handleKeydown}>
   {/if}
 </label>
