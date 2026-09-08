@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { Archive,ArchiveRestore,CheckCheck,FolderMinus,FolderPlus,Heart,HeartOff,Layers3,ListChecks,MoreHorizontal,RefreshCw,Star,Tag,Tags,Trash2,Unlink } from '@lucide/svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2AssetGrid from '../components/V2AssetGrid.svelte';
@@ -38,10 +38,11 @@
   import { SavedSearchController } from '../state/savedSearches.svelte';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { LatestRequestController } from '../state/latestRequest';
+  import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
   import { consumeV2AssetFilterHandoff } from '../navigation';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
-  import type { AssetRecord, AssetSearchCriteria, AssetSearchQuery, AssetSelectionCapabilities, AssetSelectionTarget, SavedSearchRecord } from '../data/contracts';
+  import type { AssetRecord, AssetSearchCriteria, AssetSearchQuery, AssetSelectionCapabilities, AssetSelectionTarget, SavedSearchRecord, ViewerNavigationWindow } from '../data/contracts';
 
   type AssetTab='Browse'|'Saved searches';
   type RelationDialog='album'|'tags'|null;
@@ -54,6 +55,7 @@
   let items=$state<AssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),selectionCapabilities=$state<AssetSelectionCapabilities>(emptyCapabilities()),selectionError=$state('');
   let seq=$state(0),groupSeq=$state(0),logic=$state<'AND'|'OR'>('AND'),negated=$state(false),rules=$state<AssetRule[]>([]),groups=$state<AssetGroup[]>([]);
   let appliedRules=$state<AssetRule[]>([]),appliedGroups=$state<AssetGroup[]>([]),appliedLogic=$state<'AND'|'OR'>('AND'),appliedNegated=$state(false),draftRules=$state<AssetRule[]>([]),draftGroups=$state<AssetGroup[]>([]),draftLogic=$state<'AND'|'OR'>('AND'),draftNegated=$state(false);
+  let viewerLastId:string|null=null,viewerLastPosition:number|null=null,viewerCollectionSync:Promise<void>=Promise.resolve();
 
   const relations=new AssetRelationOptionsController();
   const savedSearches=new SavedSearchController();
@@ -110,7 +112,21 @@
   function selectAllMatching(){selection=selectAllMatchingAssets(ids[0]??null);void refreshSelectionCapabilities()}
   function invertSelection(){selection=invertAssetSelection(selection);void refreshSelectionCapabilities()}
   function handleSelectionClick(id:string,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,ids,id):toggleAssetSelected(selection,id);void refreshSelectionCapabilities()}
-  function openViewer(id:string){viewerAssetId=id;viewer=true}
+  function openViewer(id:string){const index=items.findIndex((item)=>item.id===id);viewerAssetId=id;viewerLastId=id;viewerLastPosition=index<0?null:collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index+1:index+1;viewer=true}
+  async function synchronizeViewerCollection(id:string,navigation:ViewerNavigationWindow):Promise<void>{
+    viewerLastId=id;
+    if(navigation.position!==null)viewerLastPosition=navigation.position;
+    const position=navigation.position??viewerLastPosition;
+    if(position===null)return;
+    if(collection.resultMode==='Pagination'){
+      const targetPage=viewerPageForPosition(position,collection.pageSize);
+      if(targetPage!==null&&(collection.page!==targetPage||!items.some((item)=>item.id===id))){collection.setPage(targetPage);await refreshSearch(true)}
+      return;
+    }
+    while(!items.some((item)=>item.id===id)&&items.length<position&&nextCursor){const before=items.length;await refreshSearch(false);if(items.length===before)break}
+  }
+  function handleViewerNavigate(id:string,navigation:ViewerNavigationWindow):Promise<void>{const sync=synchronizeViewerCollection(id,navigation);viewerCollectionSync=sync.catch(()=>{});return sync}
+  function closeViewer(){viewer=false;const id=viewerLastId;const pending=viewerCollectionSync;void(async()=>{await pending;await tick();scrollViewedAssetIntoView(assetGrid,id)})()}
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
   async function setSelectedFavorite(){if(!selectionActive)return;const next=favoriteActionLabel==='Favorite';await mutations.run(next?'Favorite':'Unfavorite',(target)=>libraryData.assets.setFavorite(target,next),selectionTarget());moreOpen=false}
   async function setSelectedArchived(){if(!selectionActive)return;const next=archiveActionLabel==='Archive';await mutations.run(next?'Archive':'Unarchive',(target)=>libraryData.assets.setArchived(target,next),selectionTarget());moreOpen=false}
@@ -139,7 +155,7 @@
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true)}catch(error){searchRequests.setError(errorMessage(error,'The asset data source could not be initialized.'))}})();return()=>{searchRequests.cancel();capabilityRequests.cancel();relations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
-<svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(trashConfirmOpen){if(!mutations.busy)trashConfirmOpen=false}else if(relationDialog)relationDialog=null;else if(moreOpen)moreOpen=false;else if(drawer)drawer=false;else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
+<svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(trashConfirmOpen){if(!mutations.busy)trashConfirmOpen=false}else if(relationDialog)relationDialog=null;else if(moreOpen)moreOpen=false;else if(drawer)drawer=false;else if(viewer)closeViewer();else if(selectionActive)clearSelection()}}}/>
 
 <V2PageLayout title="Assets" description="Search, browse, select and mutate assets through the active V2 data source.">
   {#snippet tabs()}<V2Tabs items={['Browse','Saved searches']} active={tab} ariaLabel="Asset sections" onselect={(value)=>tab=value as AssetTab}/>{/snippet}
@@ -153,7 +169,7 @@
   {:else}<V2SavedSearchLibrary controller={savedSearches} currentCriteria={criteria()} onopen={openSaved}/>{/if}</V2Zone>
 </V2PageLayout>
 
-<V2Viewer open={viewer} mode="assets" assetId={viewerAssetId} assetIds={ids} onclose={()=>viewer=false}/>
+<V2Viewer open={viewer} mode="assets" assetId={viewerAssetId} assetIds={ids} onclose={closeViewer} onnavigate={handleViewerNavigate}/>
 {#if trashConfirmOpen}<V2ConfirmDialog title="Move selected assets to trash?" message={`${selectedCount.toLocaleString()} selected asset${selectedCount===1?'':'s'} will be moved to trash.`} confirmLabel="Move to trash" icon="trash" destructive pending={mutations.busy} onconfirm={()=>void trashSelected()} onclose={()=>{if(!mutations.busy)trashConfirmOpen=false}}/>{/if}
 {#if relationDialog}<V2AssetRelationModal kind={relationDialog} {selectedCount} albumValue={relationAlbum} tagValues={relationTags} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} busy={mutations.busy} onalbumchange={(value)=>relationAlbum=value} ontagschange={(values)=>relationTags=values} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} onclose={()=>relationDialog=null} onapply={()=>void applyRelationDialog()}/>{/if}
 {#if drawer}<V2AssetSearchDrawer bind:rules={draftRules} bind:groups={draftGroups} bind:logic={draftLogic} bind:negated={draftNegated} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} onclose={()=>drawer=false} onapply={applyDrawer}/>{/if}
