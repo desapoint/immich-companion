@@ -14,7 +14,7 @@ const target={kind:'ids' as const,ids:['asset-1']};
 const success:MutationResult={affectedIds:['asset-1'],failed:[]};
 
 describe('AssetMutationController',()=>{
-  it('uses one applying then refreshing lifecycle',async()=>{
+  it('uses one applying then refreshing lifecycle with pending feedback',async()=>{
     const execute=deferred<MutationResult>();
     const refresh=deferred<void>();
     const controller=new AssetMutationController(()=>refresh.promise,()=>{});
@@ -22,16 +22,18 @@ describe('AssetMutationController',()=>{
     const pending=controller.run('Favorite',()=>execute.promise,target);
     expect(controller.busy).toBe(true);
     expect(controller.phase).toBe('applying');
+    expect(controller.feedback).toMatchObject({tone:'pending',title:'Favorite in progress',detail:'Applying change…'});
 
     execute.resolve(success);
     await Promise.resolve();
     await Promise.resolve();
     expect(controller.busy).toBe(true);
     expect(controller.phase).toBe('refreshing');
-    expect(controller.feedback?.tone).toBe('ok');
+    expect(controller.feedback).toMatchObject({tone:'pending',title:'Favorite applied',detail:'Refreshing latest asset state…'});
 
     refresh.resolve();
     await pending;
+    expect(controller.feedback?.tone).toBe('ok');
     expect(controller.busy).toBe(false);
     expect(controller.phase).toBe('idle');
   });
