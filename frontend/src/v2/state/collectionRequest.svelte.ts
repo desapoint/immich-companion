@@ -35,6 +35,10 @@ export class CollectionRequestController {
     }
   }
 
+  setError(message: string): void {
+    this.error = message;
+  }
+
   cancel(): void {
     this.requests.cancel();
     this.loading = false;
