@@ -7,6 +7,7 @@
 <script lang="ts">
   import type { AssetRecord, MediaResource } from '../data/contracts';
   import V2ImageViewport from './V2ImageViewport.svelte';
+  import V2VideoPlayer from './V2VideoPlayer.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
 
   let {
@@ -40,23 +41,7 @@
 </script>
 
 {#if assetType === 'VIDEO'}
-  <!-- svelte-ignore a11y_media_has_caption -->
-  <video
-    class="v2-video-player"
-    controls
-    playsinline
-    preload="metadata"
-    poster={resource.posterUrl ?? undefined}
-    aria-label={alt}
-    src={source}
-    onerror={sourceFailed}
-  >
-    Your browser cannot play the compatible video stream.
-  </video>
+  <V2VideoPlayer src={source} poster={resource.posterUrl} label={alt} onerror={sourceFailed}/>
 {:else}
   <V2ImageViewport src={source} {alt} {controller} onerror={sourceFailed}/>
 {/if}
-
-<style>
-  .v2-video-player { width:100%; height:100%; object-fit:contain; background:#000; }
-</style>

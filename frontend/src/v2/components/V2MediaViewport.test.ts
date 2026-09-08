@@ -39,5 +39,7 @@ describe('V2MediaViewport', () => {
     });
     expect(body).toContain(`src="${resource.url}"`);
     expect(body).toContain('poster="/poster"');
+    expect(body).toContain('aria-label="Seek video"');
+    expect(body).toContain('aria-label="Video volume"');
   });
 });

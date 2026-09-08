@@ -21,6 +21,7 @@
   import V2TaskBubble from '../components/V2TaskBubble.svelte';
   import V2Toggle from '../components/V2Toggle.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
+  import V2VideoPlayer from '../components/V2VideoPlayer.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { useOptionalV2Toasts, type V2ToastTone } from '../state/toasts.svelte';
 
@@ -113,6 +114,10 @@
 
       <V2Card title="Color field">
         <V2Stack gap="sm"><V2ColorField id="playground-color" label="Reusable color" value={color} onchange={(value)=>color=value}/><span class="v2-small v2-muted">Selected: {color??'No color'}</span></V2Stack>
+      </V2Card>
+
+      <V2Card title="Video playback overlay">
+        <div class="v2-playground-video"><V2VideoPlayer src="/demo-fixtures/clip.mp4" poster="/demo-fixtures/video-poster.jpg" label="Playground video"/></div>
       </V2Card>
 
       <V2Card title="Select · single / searchable">
@@ -245,6 +250,8 @@
     {#snippet footer()}<V2Button onclick={() => modalOpen = false}>Close</V2Button><V2Button variant="primary">Primary action</V2Button>{/snippet}
   </V2Modal>
 {/if}
+
+<style>.v2-playground-video{height:15rem;overflow:hidden;border:1px solid var(--v2-line);border-radius:.65rem;background:#000}</style>
 
 {#if edgeProbes}
   <div class="v2-playground-edge-probe v2-playground-edge-tl"><span>top-left</span><SelectField id="playground-edge-tl" width="content" value="family" options={richOptions}/></div>
