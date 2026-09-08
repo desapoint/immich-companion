@@ -48,7 +48,9 @@ export class AssetMutationController{
       try{
         if(options.refresh)await options.refresh(result);else await this.refresh();
       }catch(error){
-        this.error=errorMessage(error,options.refreshError??`${action} was applied, but the latest asset state could not be loaded.`);
+        const context=options.refreshError??`${action} was applied, but the latest asset state could not be loaded.`;
+        const detail=errorMessage(error,'');
+        this.error=detail?`${context} ${detail}`:context;
       }
       this.feedback=outcome;
       return result;
