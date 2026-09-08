@@ -41,7 +41,9 @@
 </script>
 
 {#if assetType === 'VIDEO'}
-  <V2VideoPlayer src={source} poster={resource.posterUrl} label={alt} onerror={sourceFailed}/>
+  {#key source}
+    <V2VideoPlayer src={source} poster={resource.posterUrl} label={alt} onerror={sourceFailed}/>
+  {/key}
 {:else}
   <V2ImageViewport src={source} {alt} {controller} onerror={sourceFailed}/>
 {/if}
