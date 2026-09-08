@@ -14,7 +14,7 @@
   import { errorMessage } from '../data/mutationFeedback';
   import type { MediaResource, TrashAssetRecord, ViewerNavigationWindow } from '../data/contracts';
 
-  let { open=false, assetId=null, assetIds=[], onclose }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void }=$props();
+  let { open=false, assetId=null, assetIds=[], onclose, onnavigate }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void> }=$props();
   const camera=new ViewerViewportController();
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
@@ -46,7 +46,8 @@
       navigation=nextNavigation;
       media=nextAsset?libraryData.media.view(nextAsset):null;
       mediaAttempt+=1;
-      if(!nextAsset)assetError='This item is no longer in trash.';
+      if(nextAsset)void onnavigate?.(id,nextNavigation);
+      else assetError='This item is no longer in trash.';
     }catch(error){if(request===loadRequest){asset=undefined;media=null;assetError=errorMessage(error,'The trash asset could not be loaded.')}}
     finally{if(request===loadRequest){loading=false;navigationLoading=false}}
   }
