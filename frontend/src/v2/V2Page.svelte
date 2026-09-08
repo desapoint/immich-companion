@@ -2,6 +2,7 @@
   import V2Shell from './components/V2Shell.svelte';
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
   import V2AlbumsPage from './pages/V2AlbumsPage.svelte';
+  import V2AssetsPage from './pages/V2AssetsPage.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
   import V2StatusPage from './pages/V2StatusPage.svelte';
   import V2TagsPage from './pages/V2TagsPage.svelte';
@@ -70,6 +71,8 @@
 <V2Shell {activeKey} title={titles[activeKey]} {navItems} onnavigate={navigate}>
   {#if activeKey === 'status'}
     <V2StatusPage />
+  {:else if activeKey === 'assets'}
+    <V2AssetsPage />
   {:else if activeKey === 'albums'}
     <V2AlbumsPage />
   {:else if activeKey === 'tags'}
