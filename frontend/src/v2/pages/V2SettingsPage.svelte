@@ -17,15 +17,15 @@
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
-  import type { SyncCoordinatorStatus, SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule, TaskConnectionState, TaskSubscription } from '../data/syncContracts';
+  import type { SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule } from '../data/syncContracts';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
+  import { syncStatus } from '../state/syncStatus.svelte';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync';
   type PendingOperation = 'starting' | 'cancelling' | 'runtime' | 'schedules' | null;
 
   let tab = $state<SettingsTab>('General');
   let density = $state<V2Density>('standard');
-  let statusState = $state<SyncCoordinatorStatus | null>(null);
   let runtime = $state<SyncRuntimeSettings | null>(null);
   let savedRuntime = $state<SyncRuntimeSettings | null>(null);
   let schedules = $state<SyncSchedule[]>([]);
@@ -34,12 +34,9 @@
   let pendingOperation = $state<PendingOperation>(null);
   let error = $state<string | null>(null);
   let success = $state<string | null>(null);
-  let connectionState = $state<TaskConnectionState>('connecting');
   let active = true;
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  let taskSubscription: TaskSubscription | null = null;
 
-  const currentRun = $derived(statusState?.active ?? statusState?.pending ?? null);
+  const currentRun = $derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
   const fullSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-full') ?? null);
   const incrementalSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-incremental') ?? null);
   const progressKnown = $derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
@@ -62,25 +59,18 @@
   }
 
   async function refreshStatus(): Promise<void> {
-    try {
-      const next = await libraryData.sync.status();
-      if (active) statusState = next;
-    } catch (value) {
-      if (active && !statusState) error = message(value, 'Could not load synchronization status.');
-    }
+    await syncStatus.refresh();
   }
 
   async function loadLiveConfiguration(): Promise<void> {
     loading = true;
     error = null;
     try {
-      const [nextStatus, nextRuntime, nextSchedules] = await Promise.all([
-        libraryData.sync.status(),
+      const [nextRuntime, nextSchedules] = await Promise.all([
         libraryData.sync.runtimeSettings(),
         libraryData.sync.schedules(),
       ]);
       if (!active) return;
-      statusState = nextStatus;
       runtime = { ...nextRuntime };
       savedRuntime = { ...nextRuntime };
       schedules = nextSchedules.map((item) => ({ ...item }));
@@ -99,7 +89,7 @@
     success = null;
     try {
       await libraryData.sync.start(mode);
-      await refreshStatus();
+      await syncStatus.refresh();
       if (active) success = `${mode === 'full' ? 'Global' : 'Incremental'} synchronization started.`;
     } catch (value) {
       if (active) error = message(value, 'Could not start synchronization.');
@@ -116,7 +106,7 @@
     success = null;
     try {
       await libraryData.tasks.cancel(run.taskId ?? run.id);
-      await refreshStatus();
+      await syncStatus.refresh();
       if (active) success = 'Cancellation requested.';
     } catch (value) {
       if (active) error = message(value, 'Could not cancel synchronization.');
@@ -190,9 +180,9 @@
   }
 
   function connectionLabel(): string {
-    if (connectionState === 'connected') return 'Live';
-    if (connectionState === 'reconnecting') return 'Reconnecting';
-    if (connectionState === 'connecting') return 'Connecting';
+    if (syncStatus.connectionState === 'connected') return 'Live';
+    if (syncStatus.connectionState === 'reconnecting') return 'Reconnecting';
+    if (syncStatus.connectionState === 'connecting') return 'Connecting';
     return 'Disconnected';
   }
 
@@ -203,25 +193,14 @@
   onMount(() => {
     active = true;
     density = readV2Density();
+    const releaseSyncStatus = syncStatus.acquire();
     const onDensity = (event: Event) => density = (event as CustomEvent<V2Density>).detail;
     window.addEventListener(V2_DENSITY_EVENT, onDensity);
     void loadLiveConfiguration();
-    taskSubscription = libraryData.tasks.subscribe({
-      onTask: (task) => { if (task.taskType === 'asset_sync') void refreshStatus(); },
-      onConnectionState: (state) => {
-        const wasDisconnected = connectionState === 'reconnecting' || connectionState === 'disconnected';
-        connectionState = state;
-        if (state === 'connected' && wasDisconnected) void refreshStatus();
-      },
-      onError: () => undefined,
-    });
-    pollTimer = setInterval(() => void refreshStatus(), 10000);
     return () => {
       active = false;
+      releaseSyncStatus();
       window.removeEventListener(V2_DENSITY_EVENT, onDensity);
-      if (pollTimer) clearInterval(pollTimer);
-      taskSubscription?.close();
-      taskSubscription = null;
     };
   });
 </script>
@@ -253,13 +232,14 @@
     {:else}
       <V2Stack gap="md">
         {#if error}<V2Notice tone="error" title="Synchronization request failed">{error}</V2Notice>{/if}
+        {#if syncStatus.error && !syncStatus.status}<V2Notice tone="error" title="Synchronization status unavailable">{syncStatus.error}</V2Notice>{/if}
         {#if success}<V2Notice tone="success">{success}</V2Notice>{/if}
-        {#if connectionState === 'reconnecting' || connectionState === 'disconnected'}
-          <V2Notice tone="warning" title="Live updates interrupted">The last known synchronization state is still shown. Live task updates are {connectionState === 'reconnecting' ? 'reconnecting automatically' : 'disconnected'}; status polling continues in the meantime.</V2Notice>
+        {#if syncStatus.connectionState === 'reconnecting' || syncStatus.connectionState === 'disconnected'}
+          <V2Notice tone="warning" title="Live updates interrupted">The last known synchronization state is still shown. Live task updates are {syncStatus.connectionState === 'reconnecting' ? 'reconnecting automatically' : 'disconnected'}; shared status polling continues in the meantime.</V2Notice>
         {/if}
 
         <V2Card title="Current synchronization">
-          {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={currentRun ? 'ok' : 'default'} text={runLabel(currentRun)} /><V2Badge tone={connectionState === 'connected' ? 'ok' : connectionState === 'disconnected' ? 'warn' : 'default'} text={connectionLabel()} /></span>{/snippet}
+          {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={currentRun ? 'ok' : 'default'} text={runLabel(currentRun)} /><V2Badge tone={syncStatus.connectionState === 'connected' ? 'ok' : syncStatus.connectionState === 'disconnected' ? 'warn' : 'default'} text={connectionLabel()} /></span>{/snippet}
           <V2Stack gap="sm">
             {#if currentRun}
               <div class="sync-run-summary">
@@ -277,7 +257,7 @@
               <V2Button variant="primary" disabled={busy || Boolean(currentRun)} onclick={() => void start('full')}>{#if pendingOperation === 'starting'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Starting…</span>{:else}Start global sync{/if}</V2Button>
               <V2Button disabled={busy || Boolean(currentRun)} onclick={() => void start('incremental')}>Start incremental sync</V2Button>
               <V2Button variant="danger" disabled={busy || !currentRun} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button>
-              <V2Button disabled={busy} onclick={() => void refreshStatus()}>Refresh</V2Button>
+              <V2Button disabled={busy || syncStatus.loading} onclick={() => void refreshStatus()}>Refresh</V2Button>
             </div>
           </V2Stack>
         </V2Card>
@@ -285,8 +265,8 @@
         <V2Card title="Run counters">
           {#if currentRun}
             <div class="sync-counter-grid">{#each Object.entries(currentRun.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>
-          {:else if statusState?.lastSuccess}
-            <div class="sync-counter-grid">{#each Object.entries(statusState.lastSuccess.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>
+          {:else if syncStatus.status?.lastSuccess}
+            <div class="sync-counter-grid">{#each Object.entries(syncStatus.status.lastSuccess.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>
           {:else}<span class="v2-small v2-muted">No completed synchronization counters are available yet.</span>{/if}
         </V2Card>
 
