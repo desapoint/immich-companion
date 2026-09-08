@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { CheckCheck,ListChecks,RotateCcw } from '@lucide/svelte';
   import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
   import V2AssetGrid from '../components/V2AssetGrid.svelte';
@@ -22,12 +22,14 @@
   import { createCollectionView } from '../state/collectionView.svelte';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { OperationController } from '../state/operationController.svelte';
+  import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
-  import type { TrashAssetRecord, TrashSelectionTarget } from '../data/contracts';
+  import type { TrashAssetRecord, TrashSelectionTarget, ViewerNavigationWindow } from '../data/contracts';
 
   const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionRestoreResultMode'});
   let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null),confirmRestoreAll=$state(false);
+  let viewerLastId:string|null=null,viewerLastPosition:number|null=null,viewerCollectionSync:Promise<void>=Promise.resolve();
   const collectionRequests=new CollectionRequestController();
   const operations=new OperationController();
   const loading=$derived(collectionRequests.loading),loadError=$derived(collectionRequests.error),mutating=$derived(operations.busy),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
@@ -62,7 +64,21 @@
   function clearSelection(){selection=emptyAssetSelection<string>()}
   function selectVisible(){selection=selectVisibleAssets(itemIds)}function selectAllMatching(){selection=selectAllMatchingAssets(itemIds[0]??null)}function invertSelection(){selection=invertAssetSelection(selection)}
   function handleSelectionClick(id:string,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,itemIds,id):toggleAssetSelected(selection,id)}
-  function openViewer(id:string){viewerAssetId=id;viewer=true}
+  function openViewer(id:string){const index=items.findIndex((item)=>item.id===id);viewerAssetId=id;viewerLastId=id;viewerLastPosition=index<0?null:collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index+1:index+1;viewer=true}
+  async function synchronizeViewerCollection(id:string,navigation:ViewerNavigationWindow):Promise<void>{
+    viewerLastId=id;
+    if(navigation.position!==null)viewerLastPosition=navigation.position;
+    const position=navigation.position??viewerLastPosition;
+    if(position===null)return;
+    if(collection.resultMode==='Pagination'){
+      const targetPage=viewerPageForPosition(position,collection.pageSize);
+      if(targetPage!==null&&(collection.page!==targetPage||!items.some((item)=>item.id===id))){collection.setPage(targetPage);await refresh(true)}
+      return;
+    }
+    while(!items.some((item)=>item.id===id)&&items.length<position&&nextCursor){const before=items.length;await refresh(false);if(items.length===before)break}
+  }
+  function handleViewerNavigate(id:string,navigation:ViewerNavigationWindow):Promise<void>{const sync=synchronizeViewerCollection(id,navigation);viewerCollectionSync=sync.catch(()=>{});return sync}
+  function closeViewer(){viewer=false;const id=viewerLastId;const pending=viewerCollectionSync;void(async()=>{await pending;await tick();scrollViewedAssetIntoView(assetGrid,id)})()}
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
   function setSort(value:string){sort=value;collection.reset();void refresh(true)}
   function setPageSize(value:number){collection.setPageSize(value,total);void refresh(true)}
@@ -86,7 +102,7 @@
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await refresh(true)}catch(error){collectionRequests.setError(errorMessage(error,'The trash data source could not be initialized.'))}})();return()=>{collectionRequests.cancel();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
-<svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(confirmRestoreAll){if(!mutating)confirmRestoreAll=false}else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
+<svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(confirmRestoreAll){if(!mutating)confirmRestoreAll=false}else if(viewer)closeViewer();else if(selectionActive)clearSelection()}}}/>
 <V2PageLayout title="Restore" description="Restore assets from the current trash data source while preserving provider-defined relationships.">
   {#snippet headerActions()}<V2Button variant="primary" disabled={total===0||loading||mutating} onclick={()=>confirmRestoreAll=true}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Restoring…'):'Restore all'}</V2Button>{/snippet}
   <V2Zone>
@@ -98,5 +114,5 @@
     {#if total===0}<p class="v2-muted">{loading?'Loading trash…':loadError?'Trash could not be loaded.':'Trash is empty.'}</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={items.length} noun="trash assets" onpage={setPage} onloadmore={loadMore}/>{/if}
   </V2Zone>
 </V2PageLayout>
-<V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} onclose={()=>viewer=false}/>
+<V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} onclose={closeViewer} onnavigate={handleViewerNavigate}/>
 {#if confirmRestoreAll}<ConfirmDialog title="Restore all trash assets?" message={`Restore all ${total.toLocaleString()} assets currently in trash?`} confirmLabel="Restore all" icon="check" pending={mutating} onconfirm={()=>void restoreAll()} onclose={()=>{if(!mutating)confirmRestoreAll=false}}/>{/if}
