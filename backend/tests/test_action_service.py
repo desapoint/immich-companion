@@ -59,12 +59,16 @@ class FakeAssets:
         self.applicability = applicability
         self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
         self.removed_batches: list[list[UUID]] = []
+        self.relation_ids: list[UUID] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
         return self.current
 
     async def applicable_action_ids(self, *_args, **_kwargs):
         return self.applicability.pop(0)
+
+    async def relation_ids_for_assets(self, *_args, **_kwargs):
+        return self.relation_ids
 
     async def stack_asset_ids(self, asset_id):
         return [asset_id]
@@ -370,6 +374,21 @@ async def test_relation_action_skips_assets_already_in_the_requested_state(
     assert result.skipped_ids == [ASSET_TWO]
     assert result.verified is True
     assert actions.finished is not None
+
+
+@pytest.mark.asyncio
+async def test_remove_all_relations_resolves_current_ids_before_planning() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    instance, actions, _, _ = service(resolution(), [{ASSET_ONE}, {ASSET_TWO}])
+    instance._assets.relation_ids = [RELATION_ID, RELATION_TWO]
+
+    plan = await instance.plan(
+        AssetActionPlanRequest(selection=selection, action="remove_tag")
+    )
+
+    assert plan.relation_ids == [RELATION_ID, RELATION_TWO]
+    assert actions.record is not None
+    assert actions.record.relation_ids == [str(RELATION_ID), str(RELATION_TWO)]
 
 
 @pytest.mark.asyncio

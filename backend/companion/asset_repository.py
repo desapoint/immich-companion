@@ -6,6 +6,7 @@ import hashlib
 import json
 import math
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import (
@@ -28,6 +29,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from companion.action_schema import (
     AssetActionOperation,
+    AssetSelectionCapabilities,
     AssetSelectionRequest,
     AssetSelectionResolution,
     AssetSelectionSummary,
@@ -1153,6 +1155,10 @@ class AssetRepository:
                 return column >= int(value)
             if condition.operator == "at_most":
                 return column <= int(value)
+            if condition.operator == "greater_than":
+                return column > int(value)
+            if condition.operator == "less_than":
+                return column < int(value)
             return column == int(value)
         if condition.field == "aspect_ratio":
             ratio = cast(AssetRecord.width, Float) / cast(AssetRecord.height, Float)
@@ -1161,6 +1167,10 @@ class AssetRepository:
                 return ratio >= numeric
             if condition.operator == "at_most":
                 return ratio <= numeric
+            if condition.operator == "greater_than":
+                return ratio > numeric
+            if condition.operator == "less_than":
+                return ratio < numeric
             return func.abs(ratio - numeric) <= numeric * ASPECT_RATIO_RELATIVE_TOLERANCE
         if condition.field in {"favorite", "archived", "trashed"}:
             column = {
@@ -1497,6 +1507,94 @@ class AssetRepository:
             missing_ids=missing_ids,
             summary=summary,
         )
+
+    async def selection_capabilities(
+        self, selection: AssetSelectionRequest
+    ) -> AssetSelectionCapabilities:
+        """Return toolbar capabilities with database-side aggregate queries."""
+
+        if selection.selection_id is not None:
+            target_ids = select(SelectionSetMemberRecord.asset_id).where(
+                SelectionSetMemberRecord.selection_id == selection.selection_id
+            )
+            predicate = AssetRecord.id.in_(target_ids)
+        elif selection.mode == "explicit":
+            predicate = AssetRecord.id.in_(selection.ids)
+        else:
+            assert selection.expression is not None
+            predicate = self._compile_group(selection.expression)
+            if selection.excluded_ids:
+                predicate = and_(predicate, AssetRecord.id.not_in(selection.excluded_ids))
+
+        active = and_(AssetRecord.is_trashed.is_(False), predicate)
+        target_ids = select(AssetRecord.id).where(active)
+        async with self._database.sessions() as session:
+            count, favorite_count, archived_count, stack_count = (
+                await session.execute(
+                    select(
+                        func.count(AssetRecord.id),
+                        func.count().filter(AssetRecord.is_favorite.is_(True)),
+                        func.count().filter(AssetRecord.is_archived.is_(True)),
+                        func.count().filter(func.json_typeof(AssetRecord.stack) == "object"),
+                    ).where(active)
+                )
+            ).one()
+            has_albums = bool(
+                await session.scalar(
+                    select(exists().where(AlbumAssetRecord.asset_id.in_(target_ids)))
+                )
+            )
+            has_tags = bool(
+                await session.scalar(
+                    select(exists().where(TagAssetRecord.asset_id.in_(target_ids)))
+                )
+            )
+            single = (
+                await session.scalar(select(AssetRecord).where(active).limit(1))
+                if count == 1
+                else None
+            )
+
+        stack = single.stack if single is not None and isinstance(single.stack, dict) else None
+        return AssetSelectionCapabilities(
+            count=count,
+            all_favorite=count > 0 and favorite_count == count,
+            all_archived=count > 0 and archived_count == count,
+            has_tags=has_tags,
+            has_albums=has_albums,
+            has_stack_members=stack_count > 0,
+            can_stack=count >= 2,
+            single_asset_id=single.id if single is not None else None,
+            can_set_stack_primary=bool(
+                single is not None
+                and stack
+                and str(stack.get("primaryAssetId")) != str(single.id)
+            ),
+            can_remove_complete_stack=bool(stack),
+        )
+
+    async def relation_ids_for_assets(
+        self, operation: Literal["remove_album", "remove_tag"], asset_ids: list[UUID]
+    ) -> list[UUID]:
+        """Resolve every current relation needed by a remove-all action."""
+
+        if not asset_ids:
+            return []
+        model = AlbumAssetRecord if operation == "remove_album" else TagAssetRecord
+        relation_column = (
+            AlbumAssetRecord.album_id if operation == "remove_album" else TagAssetRecord.tag_id
+        )
+        async with self._database.sessions() as session:
+            return list(
+                (
+                    await session.scalars(
+                        select(relation_column)
+                        .where(model.asset_id.in_(asset_ids))
+                        .distinct()
+                        .order_by(relation_column)
+                    )
+                ).all()
+            )
 
     async def list_matching_asset_ids(self, expression: SearchGroup) -> list[UUID]:
         """Materialize a search result as explicit IDs at selection time."""

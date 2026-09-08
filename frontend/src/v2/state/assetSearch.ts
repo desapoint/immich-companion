@@ -10,6 +10,13 @@ export const assetFieldOptions=[['filename','Filename'],['mediaType','Media type
 export const assetOperatorOptions=[['is','is'],['isNot','is not'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
 export const assetFieldSelectOptions=assetFieldOptions.map(([value,label])=>({value,label}));
 export const assetOperatorSelectOptions=assetOperatorOptions.map(([value,label])=>({value,label}));
+export function assetOperatorOptionsForField(field:string){
+  const allowed=field==='filename'?['is','isNot','contains','notContains']
+    :['mediaType','favorite','archived','album','tag'].includes(field)?['is','isNot']
+      :field==='takenDate'?['gt','gte','lt','lte']
+        :['is','gt','gte','lt','lte'];
+  return assetOperatorSelectOptions.filter((option)=>allowed.includes(option.value));
+}
 export const savedAssetSearches=['Favorite images not archived','Family album or Vacation tag','Large landscape images'];
 
 export const emptyAssetAdvanced=():SimpleAdvancedFilters=>({albumIds:'',tagIds:'',noAlbum:false,noTag:false,takenAfter:'',takenBefore:'',minWidth:'',maxWidth:'',minHeight:'',maxHeight:'',minAspectRatio:'',maxAspectRatio:''});

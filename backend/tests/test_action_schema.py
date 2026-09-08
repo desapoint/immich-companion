@@ -31,7 +31,7 @@ def test_selection_modes_are_explicit_and_deduplicated() -> None:
         AssetSelectionRequest(mode="all_matching")
 
 
-def test_relation_actions_require_one_or_more_unique_relations() -> None:
+def test_relation_actions_require_ids_for_adds_and_allow_remove_all() -> None:
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE])
 
     request = AssetActionPlanRequest(
@@ -41,8 +41,9 @@ def test_relation_actions_require_one_or_more_unique_relations() -> None:
     )
     assert request.relation_ids == [ALBUM_ID, SECOND_ALBUM_ID]
 
+    assert AssetActionPlanRequest(selection=selection, action="remove_tag").relation_ids == []
     with pytest.raises(ValidationError):
-        AssetActionPlanRequest(selection=selection, action="remove_tag")
+        AssetActionPlanRequest(selection=selection, action="add_tag")
     with pytest.raises(ValidationError):
         AssetActionPlanRequest(
             selection=selection,

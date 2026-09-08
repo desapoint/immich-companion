@@ -11,15 +11,13 @@ import {
   saveSyncSchedule,
 } from '../../../features/settings/api/settingsApi';
 import type {
-  AssetRepository,
   DuplicateRepository,
-  MediaRepository,
-  SavedSearchRepository,
-  ViewerNavigationRepository,
 } from '../contracts';
 import type { LiveLibraryDataSource, SyncDataRepository } from '../liveContracts';
 import { notImplemented } from '../notImplemented';
 import { createAlbumRepository } from './albumRepository';
+import { createAssetApiProfile } from './assetRepository';
+import { createLocalSavedSearchRepository } from './localSavedSearchRepository';
 import { createTagRepository } from './tagRepository';
 
 function unsupportedRepository<T extends object>(area: string): T {
@@ -51,16 +49,17 @@ const sync: SyncDataRepository = {
  * to make a V2 action live; the operation must be explicitly implemented here.
  */
 export function createApiLibraryDataSource(): LiveLibraryDataSource {
+  const assetProfile = createAssetApiProfile();
   return {
     kind: 'api',
     initialize: async () => undefined,
-    assets: unsupportedRepository<AssetRepository>('assets'),
+    assets: assetProfile.assets,
     albums: createAlbumRepository(),
     tags: createTagRepository(),
-    savedSearches: unsupportedRepository<SavedSearchRepository>('savedSearches'),
+    savedSearches: createLocalSavedSearchRepository(),
     duplicates: unsupportedRepository<DuplicateRepository>('duplicates'),
-    media: unsupportedRepository<MediaRepository>('media'),
-    navigation: unsupportedRepository<ViewerNavigationRepository>('navigation'),
+    media: assetProfile.media,
+    navigation: assetProfile.navigation,
     sync,
   };
 }

@@ -36,6 +36,7 @@
   import { AssetRelationOptionsController } from '../state/assetRelationOptions.svelte';
   import { assetExpressionText,buildAssetCriteria,emptyAssetAdvanced,emptyAssetSimple,splitAssetIds,type AssetGroup,type AssetRule,type AssetSearchMode,type AssetSimpleSnapshot } from '../state/assetSearch';
   import { SavedSearchController } from '../state/savedSearches.svelte';
+  import { LatestRequestController } from '../state/latestRequest';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { AssetRecord, AssetSearchCriteria, AssetSearchQuery, AssetSelectionCapabilities, AssetSelectionTarget, SavedSearchRecord } from '../data/contracts';
@@ -48,12 +49,13 @@
   let tab=$state<AssetTab>('Browse'),searchMode=$state<AssetSearchMode>('Simple'),appliedSearchMode=$state<AssetSearchMode>('Simple'),viewer=$state(false),viewerAssetId=$state<string|null>(null),drawer=$state(false),selectedSaved=$state(''),sort=$state('takenDate:desc');
   let filename=$state(''),mediaType=$state(''),favorite=$state(''),archived=$state(''),simpleAdvanced=$state(emptyAssetAdvanced()),appliedSimple=$state<AssetSimpleSnapshot>(emptyAssetSimple());
   let assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),moreOpen=$state(false),relationDialog=$state<RelationDialog>(null),relationAlbum=$state(''),relationTags=$state<string[]>([]),trashConfirmOpen=$state(false);
-  let items=$state<AssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),searching=$state(false),searchRequest=0,selectionCapabilities=$state<AssetSelectionCapabilities>(emptyCapabilities()),loadError=$state('');
-  let seq=$state(4),groupSeq=$state(2),logic=$state<'AND'|'OR'>('AND'),negated=$state(false),rules=$state<AssetRule[]>([{id:1,field:'mediaType',op:'is',value:'Image'},{id:2,field:'favorite',op:'is',value:'true'}]),groups=$state<AssetGroup[]>([{id:2,logic:'OR',negated:false,rules:[{id:3,field:'album',op:'is',value:'Family'},{id:4,field:'tag',op:'is',value:'Vacation'}]}]);
+  let items=$state<AssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),searching=$state(false),selectionCapabilities=$state<AssetSelectionCapabilities>(emptyCapabilities()),loadError=$state('');
+  let seq=$state(0),groupSeq=$state(0),logic=$state<'AND'|'OR'>('AND'),negated=$state(false),rules=$state<AssetRule[]>([]),groups=$state<AssetGroup[]>([]);
   let appliedRules=$state<AssetRule[]>([]),appliedGroups=$state<AssetGroup[]>([]),appliedLogic=$state<'AND'|'OR'>('AND'),appliedNegated=$state(false),draftRules=$state<AssetRule[]>([]),draftGroups=$state<AssetGroup[]>([]),draftLogic=$state<'AND'|'OR'>('AND'),draftNegated=$state(false);
 
   const relations=new AssetRelationOptionsController();
   const savedSearches=new SavedSearchController();
+  const searchRequests=new LatestRequestController(),capabilityRequests=new LatestRequestController();
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const ids=$derived(items.map((asset)=>asset.id));
   const expression=$derived(assetExpressionText(rules,groups,logic,negated));
@@ -89,8 +91,8 @@
   function criteria():AssetSearchCriteria{return buildAssetCriteria({sort,mode:appliedSearchMode,simple:appliedSimple,rules:appliedRules,groups:appliedGroups,logic:appliedLogic,negated:appliedNegated})}
   function pageQuery(reset=true):AssetSearchQuery{const base=criteria();return collection.resultMode==='Pagination'?{...base,page:collection.page,pageSize:collection.pageSize}:{...base,pageSize:collection.pageSize,cursor:reset?null:nextCursor}}
   function selectionTarget():AssetSelectionTarget{return selection.allMatchingSelected?{kind:'query',criteria:criteria(),excludedIds:[...selection.excludedIds]}:{kind:'ids',ids:[...selection.selectedIds]}}
-  async function refreshSelectionCapabilities(){if(!selectionActive){selectionCapabilities=emptyCapabilities();return}selectionCapabilities=await libraryData.assets.selectionCapabilities(selectionTarget())}
-  async function refreshSearch(reset=true){const request=++searchRequest;if(searching&&!reset)return;searching=true;try{if(reset)nextCursor=null;const result=await libraryData.assets.search(pageQuery(reset));if(request!==searchRequest)return;items=collection.resultMode==='Infinite'&&!reset?[...items,...result.items]:result.items;total=result.total;nextCursor=result.nextCursor;collection.clampPage(total);loadError='';await refreshSelectionCapabilities()}catch(error){if(request===searchRequest)loadError=errorMessage(error,'Assets could not be loaded.')}finally{if(request===searchRequest)searching=false}}
+  async function refreshSelectionCapabilities(){if(!selectionActive){capabilityRequests.cancel();selectionCapabilities=emptyCapabilities();return}const request=capabilityRequests.begin();try{const result=await libraryData.assets.selectionCapabilities(selectionTarget(),request.signal);if(capabilityRequests.isCurrent(request))selectionCapabilities=result}catch(error){if(capabilityRequests.isCurrent(request))loadError=errorMessage(error,'Selection details could not be loaded.')}finally{capabilityRequests.finish(request)}}
+  async function refreshSearch(reset=true){if(searching&&!reset)return;const request=searchRequests.begin();searching=true;try{if(reset)nextCursor=null;const result=await libraryData.assets.search({...pageQuery(reset),signal:request.signal});if(!searchRequests.isCurrent(request))return;items=collection.resultMode==='Infinite'&&!reset?[...items,...result.items]:result.items;total=result.total;nextCursor=result.nextCursor;collection.clampPage(total);loadError='';await refreshSelectionCapabilities()}catch(error){if(searchRequests.isCurrent(request))loadError=errorMessage(error,'Assets could not be loaded.')}finally{if(searchRequests.finish(request))searching=false}}
   const mutations=new AssetMutationController(()=>refreshSearch(true),()=>{});
 
   async function loadMore(){if(collection.resultMode!=='Infinite'||!nextCursor||searching)return;collection.loadMore(total);await refreshSearch(false)}
@@ -107,7 +109,7 @@
   function openSaved(record:SavedSearchRecord){tab='Browse';applySavedSearch(record,true)}
   function assetSublabel(asset:AssetRecord){const state=[asset.is_favorite?'Favorite':null,asset.is_archived?'Archived':null].filter(Boolean);state.push(new Date(asset.file_created_at).toLocaleDateString());return state.join(' · ')}
   function isSelected(id:string){return isAssetSelected(selection,id)}
-  function clearSelection(){selection=emptyAssetSelection<string>();moreOpen=false;selectionCapabilities=emptyCapabilities()}
+  function clearSelection(){capabilityRequests.cancel();selection=emptyAssetSelection<string>();moreOpen=false;selectionCapabilities=emptyCapabilities()}
   function selectVisible(){selection=selectVisibleAssets(ids);void refreshSelectionCapabilities()}
   function selectAllMatching(){selection=selectAllMatchingAssets(ids[0]??null);void refreshSelectionCapabilities()}
   function invertSelection(){selection=invertAssetSelection(selection);void refreshSelectionCapabilities()}
@@ -125,7 +127,11 @@
   async function setPrimary(){if(!singleSelectedId)return;await mutations.run('Set stack primary',()=>libraryData.assets.setStackPrimary(singleSelectedId),{kind:'ids',ids:[singleSelectedId]});moreOpen=false}
   async function removeCompleteStack(){if(!singleSelectedId)return;await mutations.run('Remove complete stack',()=>libraryData.assets.removeCompleteStack(singleSelectedId),{kind:'ids',ids:[singleSelectedId]});moreOpen=false}
 
-  function selectedOptionValues(kind:'album'|'tag'){return kind==='album'?[relationAlbum,...splitAssetIds(simpleAdvanced.albumIds)].filter(Boolean):[...relationTags,...splitAssetIds(simpleAdvanced.tagIds)]}
+  function selectedOptionValues(kind:'album'|'tag'){
+    const field=kind==='album'?'album':'tag';
+    const expert=[...rules,...groups.flatMap((group)=>group.rules),...draftRules,...draftGroups.flatMap((group)=>group.rules)].filter((rule)=>rule.field===field).flatMap((rule)=>splitAssetIds(rule.value));
+    return kind==='album'?[relationAlbum,...splitAssetIds(simpleAdvanced.albumIds),...expert].filter(Boolean):[...relationTags,...splitAssetIds(simpleAdvanced.tagIds),...expert];
+  }
   const searchAlbumOptions=(query:string,append=false)=>relations.searchAlbums(query,selectedOptionValues('album'),append);
   const searchTagOptions=(query:string,append=false)=>relations.searchTags(query,selectedOptionValues('tag'),append);
   function openRelationDialog(kind:RelationDialog){relationDialog=kind;relationAlbum='';relationTags=[];moreOpen=false;if(kind==='album')void searchAlbumOptions('');if(kind==='tags')void searchTagOptions('')}
@@ -134,7 +140,7 @@
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen&&target instanceof Element&&!target.closest('.v2-selection-more'))moreOpen=false}
   async function consumeFilterHandoff(){if(typeof sessionStorage==='undefined')return false;const raw=sessionStorage.getItem('immichCompanionV2AssetFilterHandoff');if(!raw)return false;sessionStorage.removeItem('immichCompanionV2AssetFilterHandoff');try{const handoff=JSON.parse(raw) as {albumIds?:string[];tagIds?:string[]};simpleAdvanced={...emptyAssetAdvanced(),albumIds:(handoff.albumIds??[]).join(','),tagIds:(handoff.tagIds??[]).join(',')};searchMode='Simple';await runSearch();return true}catch{return false}}
   async function retryPageError(){mutations.clearError();relations.clearError();savedSearches.error='';await Promise.all([refreshSearch(true),searchAlbumOptions(relations.albumQuery),searchTagOptions(relations.tagQuery),savedSearches.refresh()])}
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true)}catch(error){loadError=errorMessage(error,'The asset data source could not be initialized.')}})();return()=>{relations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true)}catch(error){loadError=errorMessage(error,'The asset data source could not be initialized.')}})();return()=>{searchRequests.cancel();capabilityRequests.cancel();relations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(trashConfirmOpen){if(!mutations.busy)trashConfirmOpen=false}else if(relationDialog)relationDialog=null;else if(moreOpen)moreOpen=false;else if(drawer)drawer=false;else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
@@ -154,6 +160,6 @@
 <V2Viewer open={viewer} mode="assets" assetId={viewerAssetId} assetIds={ids} onclose={()=>viewer=false}/>
 {#if trashConfirmOpen}<V2ConfirmDialog title="Move selected assets to trash?" message={`${selectedCount.toLocaleString()} selected asset${selectedCount===1?'':'s'} will be moved to trash.`} confirmLabel="Move to trash" icon="trash" destructive busy={mutations.busy} loading onconfirm={()=>void trashSelected()} onclose={()=>{if(!mutations.busy)trashConfirmOpen=false}}/>{/if}
 {#if relationDialog}<V2AssetRelationModal kind={relationDialog} {selectedCount} albumValue={relationAlbum} tagValues={relationTags} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} busy={mutations.busy} onalbumchange={(value)=>relationAlbum=value} ontagschange={(values)=>relationTags=values} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} onclose={()=>relationDialog=null} onapply={()=>void applyRelationDialog()}/>{/if}
-{#if drawer}<V2AssetSearchDrawer bind:rules={draftRules} bind:groups={draftGroups} bind:logic={draftLogic} bind:negated={draftNegated} onclose={()=>drawer=false} onapply={applyDrawer}/>{/if}
+{#if drawer}<V2AssetSearchDrawer bind:rules={draftRules} bind:groups={draftGroups} bind:logic={draftLogic} bind:negated={draftNegated} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} onclose={()=>drawer=false} onapply={applyDrawer}/>{/if}
 
 <style>:global(.v2-selection-toolbar .v2-toolbar-group){flex-wrap:wrap}.v2-selection-more{position:relative}.v2-selection-menu{position:absolute;z-index:30;top:calc(100% + .4rem);right:0;min-width:14.5rem;display:grid;gap:.18rem;padding:.4rem;border:1px solid var(--v2-border,rgba(127,127,127,.32));border-radius:.65rem;background:var(--v2-surface,Canvas);box-shadow:0 .65rem 1.8rem rgba(0,0,0,.18)}.v2-selection-menu button{border:0;border-radius:.45rem;background:transparent;color:inherit;padding:.55rem .65rem;text-align:left;font:inherit;cursor:pointer;display:flex;align-items:center;gap:.6rem}.v2-selection-menu button:hover:not(:disabled){background:color-mix(in srgb,currentColor 8%,transparent)}.v2-selection-menu button:disabled{opacity:.42;cursor:not-allowed}.v2-selection-menu-separator{height:1px;background:var(--v2-border,rgba(127,127,127,.28));margin:.25rem 0}.v2-selection-menu-label{padding:.35rem .65rem .15rem;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;opacity:.62}</style>

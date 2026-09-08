@@ -121,6 +121,20 @@ def test_dimensions_aspect_ratio_and_states_compile() -> None:
     assert "assets.is_trashed = false" in sql
 
 
+def test_strict_dimension_and_aspect_ratio_comparisons_compile() -> None:
+    expression = SearchGroup(
+        children=[
+            SearchCondition(field="width", operator="greater_than", value=3000),
+            SearchCondition(field="aspect_ratio", operator="less_than", value="4/3"),
+        ]
+    )
+
+    sql = compiled_sql(expression)
+
+    assert "assets.width > 3000" in sql
+    assert "< 1.3333333333333333" in sql
+
+
 def test_fractional_aspect_ratio_uses_small_relative_approximation() -> None:
     condition = SearchCondition(field="aspect_ratio", operator="equals", value="16/9")
 

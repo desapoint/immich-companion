@@ -32,6 +32,7 @@ from companion.action_schema import (
     AssetActionPlanRequest,
     AssetActionResult,
     AssetActionTaskStart,
+    AssetSelectionCapabilities,
     AssetSelectionRequest,
     AssetSelectionResolution,
     SelectionSetMembershipRequest,
@@ -1167,6 +1168,19 @@ def create_app(
             if selection.selection_id is not None:
                 return resolution.model_copy(update={"ids": [], "missing_ids": []})
             return resolution
+        except ValueError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/selection/capabilities",
+        response_model=AssetSelectionCapabilities,
+    )
+    async def asset_selection_capabilities(
+        selection: AssetSelectionRequest,
+    ) -> AssetSelectionCapabilities:
+        repository = require_asset_repository()
+        try:
+            return await repository.selection_capabilities(selection)
         except ValueError as error:
             raise map_action_error(error) from error
 
