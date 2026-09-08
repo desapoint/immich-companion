@@ -88,6 +88,7 @@ export interface TaskRepository {
   subscribe(handlers: {
     onTask: (task: TaskRecord) => void;
     onConnectionState: (state: TaskConnectionState) => void;
+    onRecovered?: () => void;
     onError?: (error: Error) => void;
   }): TaskSubscription;
 }
