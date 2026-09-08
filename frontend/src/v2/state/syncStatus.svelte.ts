@@ -1,7 +1,12 @@
 import { libraryData } from '../data/currentDataSource.svelte';
-import type { SyncCoordinatorStatus, TaskConnectionState, TaskSubscription } from '../data/syncContracts';
+import type { SyncCoordinatorStatus, SyncDataRepository, TaskConnectionState, TaskRepository, TaskSubscription } from '../data/syncContracts';
 
 const POLL_INTERVAL_MS = 10_000;
+
+type SyncStatusSource = {
+  sync: Pick<SyncDataRepository, 'status'>;
+  tasks: Pick<TaskRepository, 'subscribe'>;
+};
 
 export class SyncStatusController {
   status = $state<SyncCoordinatorStatus | null>(null);
@@ -14,6 +19,11 @@ export class SyncStatusController {
   private taskSubscription: TaskSubscription | null = null;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private refreshGeneration = 0;
+
+  constructor(
+    private readonly source: SyncStatusSource = libraryData,
+    private readonly pollIntervalMs = POLL_INTERVAL_MS,
+  ) {}
 
   get stale(): boolean {
     return this.connectionState === 'reconnecting' || this.connectionState === 'disconnected' || Boolean(this.error);
@@ -35,7 +45,7 @@ export class SyncStatusController {
     const generation = ++this.refreshGeneration;
     this.loading = this.status === null;
     try {
-      const next = await libraryData.sync.status();
+      const next = await this.source.sync.status();
       if (generation !== this.refreshGeneration) return;
       this.status = next;
       this.error = '';
@@ -52,7 +62,7 @@ export class SyncStatusController {
 
   private start(): void {
     void this.refresh();
-    this.taskSubscription = libraryData.tasks.subscribe({
+    this.taskSubscription = this.source.tasks.subscribe({
       onTask: (task) => {
         if (task.taskType === 'asset_sync') void this.refresh();
       },
@@ -64,7 +74,7 @@ export class SyncStatusController {
       },
       onError: () => undefined,
     });
-    this.pollTimer = setInterval(() => void this.refresh(), POLL_INTERVAL_MS);
+    this.pollTimer = setInterval(() => void this.refresh(), this.pollIntervalMs);
   }
 
   private stop(): void {
