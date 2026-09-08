@@ -10,13 +10,12 @@
   import V2Section from './V2Section.svelte';
   import V2Segmented from './V2Segmented.svelte';
   import V2Stack from './V2Stack.svelte';
-  import { assetExpressionText,assetGroupCount,assetRuleCount,maxAssetSearchId,type AssetGroup,type AssetRule } from '../state/assetSearch';
+  import { assetGroupCount,assetRuleCount,maxAssetSearchId,type AssetGroup,type AssetRule } from '../state/assetSearch';
   import type { RelationOption } from '../data/contracts';
 
   let { rules=$bindable<AssetRule[]>([]),groups=$bindable<AssetGroup[]>([]),logic=$bindable<'AND'|'OR'>('AND'),negated=$bindable(false),albumOptions=[],tagOptions=[],albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,onclose,onapply }:{rules?:AssetRule[];groups?:AssetGroup[];logic?:'AND'|'OR';negated?:boolean;albumOptions?:RelationOption[];tagOptions?:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;onalbumsearch?:(value:string)=>void;ontagsearch?:(value:string)=>void;onalbumloadmore?:()=>void;ontagloadmore?:()=>void;onclose:()=>void;onapply:()=>void}=$props();
   let seq=$state(maxAssetSearchId(rules,groups));
   let drawer=$state<HTMLElement>();
-  const expression=$derived(assetExpressionText(rules,groups,logic,negated));
   const ruleCount=$derived(rules.length+assetRuleCount(groups));
   const groupCount=$derived(assetGroupCount(groups));
   const groupLogicItems=[{value:'AND',label:'All'},{value:'OR',label:'Any'}];
@@ -51,7 +50,12 @@
         <V2Inline gap="sm" wrap><V2Button onclick={addRule}>+ Rule</V2Button><V2Button onclick={addGroup}>+ Nested group</V2Button></V2Inline>
       </V2Stack></V2Card>
     </V2Stack></V2Section>
-    <V2Section title="Expression preview"><div class="v2-expression">{expression}</div></V2Section>
+    <V2Section title="Current expression">
+      <V2Inline gap="sm" wrap>
+        <V2Badge text={`${ruleCount} search token${ruleCount===1?'':'s'}`}/>
+        <span class="v2-small v2-muted">{groupCount===0?'No nested groups':`${groupCount} nested group${groupCount===1?'':'s'}`}</span>
+      </V2Inline>
+    </V2Section>
   </div>
-  <div class="v2-drawer-foot"><V2Badge text={`${ruleCount} rules · ${groupCount} groups`}/><V2Inline gap="sm"><V2Button onclick={reset}>Reset</V2Button><V2Button onclick={onclose}>Cancel</V2Button><V2Button variant="primary" onclick={onapply}>Apply & Search</V2Button></V2Inline></div>
+  <div class="v2-drawer-foot"><V2Badge text={`${ruleCount} search token${ruleCount===1?'':'s'} · ${groupCount} group${groupCount===1?'':'s'}`}/><V2Inline gap="sm"><V2Button onclick={reset}>Reset</V2Button><V2Button onclick={onclose}>Cancel</V2Button><V2Button variant="primary" onclick={onapply}>Apply & Search</V2Button></V2Inline></div>
 </aside>
