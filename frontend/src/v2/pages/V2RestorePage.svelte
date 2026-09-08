@@ -48,11 +48,11 @@
   function setPage(value:number){collection.setPage(value);void refresh(true)}
   async function runRestore(nextTarget:TrashSelectionTarget){if(mutating)return;mutating=true;loadError='';try{const result=await libraryData.assets.restore(nextTarget);feedback=mutationFeedback('Restore',result);retryTarget=result.failed.length?{kind:'ids',ids:result.failed.map((failure)=>failure.id)}:null;clearSelection();await refresh(true)}catch(error){feedback=null;retryTarget=null;loadError=errorMessage(error,'Restore could not be completed.')}finally{mutating=false}}
   async function restoreSelected(){await runRestore(target())}
-  async function restoreAll(){confirmRestoreAll=false;await runRestore({kind:'all',excludedIds:[]});collection.reset()}
+  async function restoreAll(){if(mutating)return;await runRestore({kind:'all',excludedIds:[]});collection.reset();confirmRestoreAll=false}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await refresh(true)}catch(error){loadError=errorMessage(error,'The trash data source could not be initialized.')}})();return()=>{gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
-<svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
+<svelte:window onpointermove={interaction.move} onpointerup={interaction.finish} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(confirmRestoreAll){if(!mutating)confirmRestoreAll=false}else if(viewer)viewer=false;else if(selectionActive)clearSelection()}}}/>
 <V2PageLayout title="Restore" description="Restore assets from the current trash data source while preserving provider-defined relationships.">
   {#snippet headerActions()}<V2Button variant="primary" disabled={total===0||loading||mutating} onclick={()=>confirmRestoreAll=true}>{mutating?'Restoring…':'Restore all'}</V2Button>{/snippet}
   <V2Zone>
@@ -64,4 +64,4 @@
   </V2Zone>
 </V2PageLayout>
 <V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} onclose={()=>viewer=false}/>
-{#if confirmRestoreAll}<ConfirmDialog title="Restore all trash assets?" message={`Restore all ${total.toLocaleString()} assets currently in trash?`} confirmLabel="Restore all" icon="check" busy={mutating} onconfirm={()=>void restoreAll()} onclose={()=>{if(!mutating)confirmRestoreAll=false}}/>{/if}
+{#if confirmRestoreAll}<ConfirmDialog title="Restore all trash assets?" message={`Restore all ${total.toLocaleString()} assets currently in trash?`} confirmLabel="Restore all" icon="check" busy={mutating} loading onconfirm={()=>void restoreAll()} onclose={()=>{if(!mutating)confirmRestoreAll=false}}/>{/if}
