@@ -90,8 +90,7 @@
     confirmLabel={confirmation.action === 'replace' ? 'Replace criteria' : 'Delete saved search'}
     icon={confirmation.action === 'replace' ? 'sync' : 'trash'}
     destructive={confirmation.action === 'delete'}
-    busy={controller.busy}
-    loading
+    pending={controller.busy}
     onconfirm={()=>void confirmAction()}
     onclose={closeConfirmation}
   />
