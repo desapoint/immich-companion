@@ -20,5 +20,7 @@ test('routes the implemented live Assets workspace from the V2 shell', async ({ 
   await expect(page.getByRole('heading', { level: 1, name: 'Assets' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Search assets' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Browse' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByText('0 matches', { exact: true })).toBeVisible();
+  await expect(page.getByText('Simple search · No filters', { exact: true })).toHaveCount(0);
   await expect(page.getByText(/remains intentionally non-live in V2/)).toHaveCount(0);
 });
