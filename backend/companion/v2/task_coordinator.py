@@ -16,12 +16,12 @@ from companion.v2.legacy_task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
     TaskCancelledError,
-    TaskContext as _TaskContext,
-    TaskCoordinator as _TaskCoordinator,
     TaskHandler,
     TaskLeaseLostError,
     TaskRepository,
 )
+from companion.v2.legacy_task_coordinator import TaskContext as _TaskContext
+from companion.v2.legacy_task_coordinator import TaskCoordinator as _TaskCoordinator
 from companion.v2.task_schema import TaskStatusView
 
 

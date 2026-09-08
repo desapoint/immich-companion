@@ -8,15 +8,11 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
-from typing import Generic, TypeVar
 
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
 from companion.sync_schema import SyncMode
 from companion.v2.task_coordinator import TaskContext
-
-InputT = TypeVar("InputT")
-ResultT = TypeVar("ResultT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,7 +129,7 @@ class SyncStepResult:
     counters: dict[str, int]
 
 
-class SyncStep(ABC, Generic[InputT]):
+class SyncStep[InputT](ABC):
     name: str
     phase: str
 
@@ -172,7 +168,7 @@ class SyncStep(ABC, Generic[InputT]):
             return
         await asyncio.sleep(max(0.0, delay - (perf_counter() - started)))
 
-    async def bounded_map(
+    async def bounded_map[ResultT](
         self,
         context: SyncStepContext,
         items: Sequence[InputT],
@@ -262,7 +258,10 @@ class CatalogSyncStep(SyncStep[CatalogSyncInput]):
                 f"albums:{index}",
                 min(context.counters["albums_seen"], len(albums)),
                 total,
-                f"Albums {min(context.counters['albums_seen'], len(albums))}/{len(albums)} · tags 0/{len(tags)}",
+                (
+                    f"Albums {min(context.counters['albums_seen'], len(albums))}/"
+                    f"{len(albums)} · tags 0/{len(tags)}"
+                ),
             )
             await self.pace(context, started)
 
@@ -279,7 +278,10 @@ class CatalogSyncStep(SyncStep[CatalogSyncInput]):
                 f"tags:{index}",
                 len(albums) + min(context.counters["tags_seen"], len(tags)),
                 total,
-                f"Albums {len(albums)}/{len(albums)} · tags {min(context.counters['tags_seen'], len(tags))}/{len(tags)}",
+                (
+                    f"Albums {len(albums)}/{len(albums)} · tags "
+                    f"{min(context.counters['tags_seen'], len(tags))}/{len(tags)}"
+                ),
             )
             await self.pace(context, started)
 

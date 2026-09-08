@@ -11,18 +11,14 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
-from typing import Generic, TypeVar
 
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
 from companion.sync_schema import SyncMode
-
-InputT = TypeVar("InputT")
-ResultT = TypeVar("ResultT")
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,7 +153,7 @@ class SyncStepResult:
     counters: dict[str, int]
 
 
-class SyncStep(ABC, Generic[InputT]):
+class SyncStep[InputT](ABC):
     """Base class for independently runnable V2 synchronization steps."""
 
     name: str
@@ -201,7 +197,7 @@ class SyncStep(ABC, Generic[InputT]):
         elapsed = perf_counter() - started
         await asyncio.sleep(max(0.0, delay - elapsed))
 
-    async def bounded_map(
+    async def bounded_map[ResultT](
         self,
         context: SyncStepContext,
         items: Sequence[InputT],
