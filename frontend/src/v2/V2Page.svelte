@@ -7,9 +7,11 @@
   import V2StatusPage from './pages/V2StatusPage.svelte';
   import V2TagsPage from './pages/V2TagsPage.svelte';
   import {
+    storeV2AssetFilterHandoff,
     v2PageFromLegacyHash,
     v2PageFromPath,
     v2PagePath,
+    type V2AssetFilterHandoff,
     type V2PageKey,
   } from './navigation';
   import './styles/index.css';
@@ -60,6 +62,11 @@
     activeKey = nextKey;
   }
 
+  function openAssetsWithFilter(handoff: V2AssetFilterHandoff): void {
+    storeV2AssetFilterHandoff(handoff);
+    navigate('assets');
+  }
+
   function syncFromLocation(): void {
     activeKey = keyFromLocation();
   }
@@ -74,9 +81,9 @@
   {:else if activeKey === 'assets'}
     <V2AssetsPage />
   {:else if activeKey === 'albums'}
-    <V2AlbumsPage />
+    <V2AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
   {:else if activeKey === 'tags'}
-    <V2TagsPage />
+    <V2TagsPage onfilterassets={(tagIds)=>openAssetsWithFilter({tagIds})}/>
   {:else if activeKey === 'settings'}
     <V2SettingsPage />
   {:else}
