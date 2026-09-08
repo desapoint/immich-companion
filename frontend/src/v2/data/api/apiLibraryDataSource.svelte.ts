@@ -1,24 +1,14 @@
-import {
-  cancelTask,
-  getAssetSyncStatus,
-  openTaskUpdates,
-  startAssetSync,
-} from '../../../features/assets/api/assetApi';
-import {
-  loadSyncRuntimeSettings,
-  loadSyncSchedules,
-  saveSyncRuntimeSettings,
-  saveSyncSchedule,
-} from '../../../features/settings/api/settingsApi';
 import type {
   DuplicateRepository,
 } from '../contracts';
-import type { LiveLibraryDataSource, SyncDataRepository } from '../liveContracts';
+import type { LiveLibraryDataSource } from '../liveContracts';
 import { notImplemented } from '../notImplemented';
 import { createAlbumRepository } from './albumRepository';
 import { createAssetApiProfile } from './assetRepository';
 import { createLocalSavedSearchRepository } from './localSavedSearchRepository';
+import { createSyncRepository } from './syncRepository';
 import { createTagRepository } from './tagRepository';
+import { createTaskRepository } from './taskRepository';
 
 function unsupportedRepository<T extends object>(area: string): T {
   return new Proxy({}, {
@@ -28,17 +18,6 @@ function unsupportedRepository<T extends object>(area: string): T {
     },
   }) as T;
 }
-
-const sync: SyncDataRepository = {
-  status: (signal) => getAssetSyncStatus(signal),
-  start: (mode) => startAssetSync(mode),
-  cancel: (taskId) => cancelTask(taskId),
-  runtimeSettings: () => loadSyncRuntimeSettings(),
-  saveRuntimeSettings: (value) => saveSyncRuntimeSettings(value),
-  schedules: () => loadSyncSchedules(),
-  saveSchedule: (name, value) => saveSyncSchedule(name, value),
-  openUpdates: (onstatus, onerror, onclose) => openTaskUpdates(onstatus, onerror, onclose),
-};
 
 /**
  * Production V2 data source.
@@ -60,6 +39,7 @@ export function createApiLibraryDataSource(): LiveLibraryDataSource {
     duplicates: unsupportedRepository<DuplicateRepository>('duplicates'),
     media: assetProfile.media,
     navigation: assetProfile.navigation,
-    sync,
+    sync: createSyncRepository(),
+    tasks: createTaskRepository(),
   };
 }
