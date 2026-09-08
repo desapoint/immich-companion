@@ -13,12 +13,13 @@
 
   let { group,depth=1,albumOptions=[],tagOptions=[],albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,nextId,onchange,onremove,onapply }:{group:AssetGroup;depth?:number;albumOptions?:RelationOption[];tagOptions?:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;onalbumsearch?:(value:string)=>void;ontagsearch?:(value:string)=>void;onalbumloadmore?:()=>void;ontagloadmore?:()=>void;nextId:()=>number;onchange:(group:AssetGroup)=>void;onremove:()=>void;onapply:()=>void}=$props();
 
+  const groupLogicItems=[{value:'AND',label:'All'},{value:'OR',label:'Any'}];
   function update(patch:Partial<AssetGroup>){onchange({...group,...patch})}
-  function focusRuleField(groupId:number,ruleId:number){void tick().then(()=>requestAnimationFrame(()=>document.getElementById(`expert-group-${groupId}-field-${ruleId}`)?.focus()))}
-  function addRule(){const id=nextId();update({rules:[...group.rules,{id,field:'filename',op:'contains',value:''}]});focusRuleField(group.id,id)}
+  async function focusField(id:string){await tick();document.getElementById(id)?.focus()}
+  function addRule(){const id=nextId();update({rules:[...group.rules,{id,field:'filename',op:'contains',value:''}]});void focusField(`expert-group-${group.id}-field-${id}`)}
   function changeRule(next:AssetRule){update({rules:group.rules.map((rule)=>rule.id===next.id?next:rule)})}
   function removeRule(id:number){update({rules:group.rules.filter((rule)=>rule.id!==id)})}
-  function addGroup(){const groupId=nextId(),ruleId=nextId();update({groups:[...(group.groups??[]),{id:groupId,logic:'AND',negated:false,rules:[{id:ruleId,field:'tag',op:'is',value:''}],groups:[]}]});focusRuleField(groupId,ruleId)}
+  function addGroup(){const childId=nextId(),ruleId=nextId();update({groups:[...(group.groups??[]),{id:childId,logic:'AND',negated:false,rules:[{id:ruleId,field:'tag',op:'matchAny',value:''}],groups:[]}]});void focusField(`expert-group-${childId}-field-${ruleId}`)}
   function changeChild(next:AssetGroup){update({groups:(group.groups??[]).map((child)=>child.id===next.id?next:child)})}
   function removeChild(id:number){update({groups:(group.groups??[]).filter((child)=>child.id!==id)})}
 </script>
@@ -28,7 +29,7 @@
     <V2Inline justify="between" wrap>
       <V2Inline gap="sm" wrap>
         <V2Badge text={`Nested group · level ${depth}`}/>
-        <V2Segmented items={['AND','OR']} active={group.logic} onselect={(value)=>update({logic:value as 'AND'|'OR'})} ariaLabel={`Nested group level ${depth} logic`}/>
+        <V2Segmented items={groupLogicItems} active={group.logic} onselect={(value)=>update({logic:value as 'AND'|'OR'})} ariaLabel={`Nested group level ${depth} matching`}/>
         <V2Checkbox label="NOT group" checked={group.negated} onchange={(checked)=>update({negated:checked})}/>
       </V2Inline>
       <V2Button onclick={onremove}>Remove group</V2Button>
