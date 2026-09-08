@@ -1,8 +1,8 @@
 [data-page-title="Assets"] .v2-context .v2-zone-body > .v2-inline {
   flex-wrap: wrap !important;
   border-top: 1px solid var(--v2-line);
-  padding-top: var(--v2-space-3);
-  margin-top: var(--v2-space-1);
+  padding-top: var(--v2-space-4);
+  margin-top: 0;
 }
 
 [data-page-title="Assets"] .v2-context .v2-zone-body > .v2-inline > .v2-button:nth-child(1) {
