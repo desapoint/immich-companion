@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  V2_ASSET_FILTER_HANDOFF_KEY,
   V2_DEFAULT_PAGE,
   V2_PAGE_KEYS,
+  consumeV2AssetFilterHandoff,
+  storeV2AssetFilterHandoff,
   v2PageFromLegacyHash,
   v2PageFromPath,
   v2PagePath,
@@ -31,5 +34,19 @@ describe('V2 navigation paths', () => {
     expect(v2PageFromLegacyHash('assets')).toBe('assets');
     expect(v2PageFromLegacyHash('#unknown')).toBeNull();
     expect(v2PageFromLegacyHash('')).toBeNull();
+  });
+
+  it('stores and consumes an asset filter handoff once', () => {
+    const values = new Map<string, string>();
+    const storage = {
+      setItem: (key: string, value: string) => values.set(key, value),
+      getItem: (key: string) => values.get(key) ?? null,
+      removeItem: (key: string) => values.delete(key),
+    };
+
+    storeV2AssetFilterHandoff({ albumIds: ['album-1'], tagIds: ['tag-1', 'tag-2'] }, storage);
+    expect(values.has(V2_ASSET_FILTER_HANDOFF_KEY)).toBe(true);
+    expect(consumeV2AssetFilterHandoff(storage)).toEqual({ albumIds: ['album-1'], tagIds: ['tag-1', 'tag-2'] });
+    expect(consumeV2AssetFilterHandoff(storage)).toBeNull();
   });
 });
