@@ -1,27 +1,24 @@
+import { destructiveActionAvailability, type CapabilityAvailability } from '../../lib/api/capabilities';
 import { createApiLibraryDataSource } from './api/apiLibraryDataSource.svelte';
 import type { ResolvedLibraryDataSource } from './contracts';
 import type { LiveLibraryDataSource } from './liveContracts';
 
-type CapabilityResponse = { destructive_actions?: boolean };
+let destructiveCapabilityPromise: Promise<CapabilityAvailability> | null = null;
 
-let destructiveCapabilityPromise: Promise<boolean> | null = null;
-
-export function destructiveActionsEnabled(): Promise<boolean> {
-  destructiveCapabilityPromise ??= fetch('/api/capabilities', {
-    headers: { accept: 'application/json' },
-  })
-    .then(async (response) => {
-      if (!response.ok) return false;
-      const payload = (await response.json()) as CapabilityResponse;
-      return payload.destructive_actions === true;
-    })
-    .catch(() => false);
+export function destructiveActionsAvailability(): Promise<CapabilityAvailability> {
+  destructiveCapabilityPromise ??= destructiveActionAvailability();
   return destructiveCapabilityPromise;
 }
 
+export async function destructiveActionsEnabled(): Promise<boolean> {
+  return (await destructiveActionsAvailability()).state === 'enabled';
+}
+
 async function requireDestructiveActions(): Promise<void> {
-  if (await destructiveActionsEnabled()) return;
-  throw new Error('Destructive actions are disabled by ALLOW_DESTRUCTIVE_ACTIONS.');
+  const availability = await destructiveActionsAvailability();
+  if (availability.state === 'enabled') return;
+  if (availability.state === 'disabled') throw new Error(availability.reason);
+  throw new Error(`Destructive-action availability could not be verified. The action was not attempted. ${availability.error.message}`);
 }
 
 function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source: T): T {
