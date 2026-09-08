@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
-  import type { AssetSyncCoordinatorStatus, AssetSyncRunStatus, AssetTaskStatus } from '../../features/assets/types/assets';
   import { libraryData } from '../data/currentDataSource.svelte';
+  import type { SyncCoordinatorStatus, SyncRun, TaskSubscription } from '../data/syncContracts';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import V2Button from './V2Button.svelte';
   import V2Progress from './V2Progress.svelte';
@@ -24,10 +24,9 @@
 
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', connectionLabel='Immich connected', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; connectionLabel?:string; children:import('svelte').Snippet } = $props();
   let density=$state<V2Density>('standard'), taskExpanded=$state(readTaskExpanded()), root=$state<HTMLDivElement>();
-  let syncStatus=$state<AssetSyncCoordinatorStatus | null>(null), syncStatusError=$state(false), taskSocket=$state<WebSocket | null>(null);
+  let syncStatus=$state<SyncCoordinatorStatus | null>(null), syncStatusError=$state(false), taskSubscription=$state<TaskSubscription | null>(null);
   let active=true;
   let pollTimer:ReturnType<typeof setInterval> | null=null;
-  let reconnectTimer:ReturnType<typeof setTimeout> | null=null;
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
@@ -60,14 +59,14 @@
     root.style.setProperty('--v2-task-right', `${Math.max(9, window.innerWidth - rect.right + 18)}px`);
   }
 
-  function runLabel(run:AssetSyncRunStatus | null):string{
+  function runLabel(run:SyncRun | null):string{
     if(!run)return 'No synchronization running';
     const mode=run.mode==='full'?'Global':'Incremental';
     const phase=run.progress.phase || run.phase;
     return `${mode} sync · ${phase}`;
   }
 
-  function progressDetail(run:AssetSyncRunStatus):string{
+  function progressDetail(run:SyncRun):string{
     if(run.progress.detail)return run.progress.detail;
     if(run.progress.total != null)return `${run.progress.completed.toLocaleString()} of ${run.progress.total.toLocaleString()} processed`;
     return `${run.progress.completed.toLocaleString()} processed · total work not known yet`;
@@ -84,28 +83,15 @@
     }
   }
 
-  function handleTaskUpdate(task:AssetTaskStatus):void{
-    if(task.task_type==='asset_sync')void refreshSyncStatus();
-  }
-
-  function connectTaskUpdates():void{
-    if(!active || taskSocket)return;
-    taskSocket=libraryData.sync.openUpdates(
-      handleTaskUpdate,
-      ()=>undefined,
-      ()=>{
-        taskSocket=null;
-        if(!active)return;
-        reconnectTimer=setTimeout(connectTaskUpdates,2000);
-      },
-    );
-  }
-
   onMount(()=>{
     active=true;
     density=readV2Density();
     void refreshSyncStatus();
-    connectTaskUpdates();
+    taskSubscription=libraryData.tasks.subscribe({
+      onTask:(task)=>{if(task.taskType==='asset_sync')void refreshSyncStatus()},
+      onConnectionState:(state)=>{if(state==='connected')void refreshSyncStatus()},
+      onError:()=>undefined,
+    });
     pollTimer=setInterval(()=>void refreshSyncStatus(),10000);
     const onDensity=(event:Event)=>density=(event as CustomEvent<V2Density>).detail;
     const observer=new ResizeObserver(syncTaskBounds);
@@ -119,9 +105,8 @@
       window.removeEventListener(V2_DENSITY_EVENT,onDensity);
       window.removeEventListener('resize',syncTaskBounds);
       if(pollTimer)clearInterval(pollTimer);
-      if(reconnectTimer)clearTimeout(reconnectTimer);
-      taskSocket?.close();
-      taskSocket=null;
+      taskSubscription?.close();
+      taskSubscription=null;
     }
   });
 
