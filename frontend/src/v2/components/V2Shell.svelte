@@ -40,6 +40,7 @@
   ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??`/v2/${mobileItem.key}` })));
   const currentRun=$derived(syncStatus?.active ?? syncStatus?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
+  const taskOverlayVisible=$derived(taskExpanded || currentRun !== null);
 
   function setDensity(next:V2Density){density=next;writeV2Density(next)}
   function setTaskExpanded(expanded:boolean){taskExpanded=expanded;writeTaskExpanded(expanded)}
@@ -137,7 +138,7 @@
   </span>
 {/snippet}
 
-<div class="v2-root" data-density={density} bind:this={root}>
+<div class="v2-root" data-density={density} data-task-overlay={taskOverlayVisible || undefined} bind:this={root}>
   <div class="v2-app">
     <aside class="v2-sidebar">
       <div class="v2-brand"><div class="v2-logo"></div><span class="v2-brand-text">{brand}</span></div>
