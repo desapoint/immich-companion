@@ -14,6 +14,7 @@
     children,
     detail,
     busy = false,
+    loading = false,
     confirmDisabled = false,
     destructive = false,
     onconfirm,
@@ -26,6 +27,7 @@
     children?: Snippet;
     detail?: Snippet;
     busy?: boolean;
+    loading?: boolean;
     confirmDisabled?: boolean;
     destructive?: boolean;
     onconfirm: () => void;
@@ -60,7 +62,16 @@
       variant={destructive ? 'danger' : 'primary'}
       disabled={busy || confirmDisabled}
       onclick={onconfirm}
-    >{busy ? 'Applying…' : confirmLabel}</V2Button>
+    >
+      {#if busy && loading}
+        <span class="v2-confirmation-loading" aria-live="polite">
+          <span class="v2-confirmation-spinner" aria-hidden="true"></span>
+          <span>Applying…</span>
+        </span>
+      {:else}
+        {confirmLabel}
+      {/if}
+    </V2Button>
   {/snippet}
 </V2Modal>
 
@@ -91,4 +102,15 @@
   p { margin: 2px 0 0; line-height: 1.5; }
   .v2-confirmation-detail { margin-top: 10px; color: var(--v2-muted); font-size: 12px; }
   .v2-confirmation-form { min-width: 0; margin-top: 12px; }
+  .v2-confirmation-loading { display: inline-flex; align-items: center; gap: 8px; }
+  .v2-confirmation-spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid currentColor;
+    border-right-color: transparent;
+    border-radius: 999px;
+    animation: v2-confirmation-spin .7s linear infinite;
+  }
+
+  @keyframes v2-confirmation-spin { to { transform: rotate(360deg); } }
 </style>
