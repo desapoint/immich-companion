@@ -23,6 +23,11 @@ export class OperationController {
     this.error = '';
   }
 
+  setError(error: unknown, fallback = 'The operation could not be completed.'): void {
+    this.feedback = null;
+    this.error = errorMessage(error, fallback);
+  }
+
   clearOutcome(): void {
     this.feedback = null;
     this.error = '';
