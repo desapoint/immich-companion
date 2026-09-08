@@ -13,6 +13,7 @@
 
 <script lang="ts">
   import { Expand, LoaderCircle, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
+  import V2RangeSlider from './V2RangeSlider.svelte';
 
   let { src, poster = null, label, onerror }: { src: string; poster?: string | null; label: string; onerror?: () => void } = $props();
 
@@ -24,35 +25,37 @@
   let duration = $state(0);
   let volume = $state(1);
   let muted = $state(false);
-  const progress = $derived(duration > 0 ? Math.min(100, Math.max(0, currentTime / duration * 100)) : 0);
-  const volumeProgress = $derived(muted ? 0 : volume * 100);
 
   async function togglePlayback(): Promise<void> {
     if (!video) return;
     if (video.paused || video.ended) {
-      try { await video.play(); } catch { /* Browser playback policy leaves the player paused. */ }
+      try { await video.play(); } catch { playing = false; waiting = false; }
     } else video.pause();
   }
 
-  function seek(value: string): void {
+  function seek(value: number | string): void {
     if (!video || !duration) return;
     const next = Number(value);
     if (!Number.isFinite(next)) return;
-    video.currentTime = Math.min(duration, Math.max(0, next));
-    currentTime = video.currentTime;
+    const target = Math.min(duration, Math.max(0, next));
+    video.currentTime = target;
+    currentTime = target;
   }
 
-  function setVolume(value: string): void {
+  function setVolume(value: number | string): void {
     if (!video) return;
     const next = Math.min(1, Math.max(0, Number(value)));
     if (!Number.isFinite(next)) return;
     video.volume = next;
     video.muted = next === 0;
+    volume = video.volume;
+    muted = video.muted;
   }
 
   function toggleMute(): void {
     if (!video) return;
     video.muted = !video.muted;
+    muted = video.muted;
   }
 
   async function toggleFullscreen(): Promise<void> {
@@ -66,11 +69,10 @@
   function syncMetadata(): void {
     if (!video) return;
     duration = Number.isFinite(video.duration) ? video.duration : 0;
-    currentTime = video.currentTime;
+    currentTime = Number.isFinite(video.currentTime) ? video.currentTime : 0;
     volume = video.volume;
     muted = video.muted;
   }
-
 </script>
 
 <div class="v2-video-player" bind:this={root} role="group" aria-label={`Video player · ${label}`}>
@@ -84,8 +86,12 @@
     aria-label={label}
     onclick={() => void togglePlayback()}
     onloadedmetadata={syncMetadata}
+    onloadeddata={syncMetadata}
     ondurationchange={syncMetadata}
     ontimeupdate={() => { if (video) currentTime = video.currentTime; }}
+    onseeking={() => waiting = true}
+    onseeked={() => { waiting = false; syncMetadata(); }}
+    oncanplay={() => waiting = false}
     onplay={() => { playing = true; waiting = false; }}
     onpause={() => playing = false}
     onended={() => { playing = false; waiting = false; }}
@@ -101,13 +107,13 @@
   {#if waiting}<span class="v2-video-waiting" aria-label="Video buffering"><LoaderCircle size={28}/></span>{/if}
 
   <div class="v2-video-controls">
-    <input class="v2-video-seek" style:--progress={`${progress}%`} type="range" min="0" max={duration || 0} step="0.1" value={currentTime} aria-label="Seek video" disabled={!duration} oninput={(event) => seek(event.currentTarget.value)}>
+    <V2RangeSlider class="v2-video-seek" min={0} max={duration || 1} step={0.1} value={currentTime} grow={true} showValue={false} trackHeight={4} thumbSize={14} thumbBorderWidth={2} hitHeight={22} ariaLabel="Seek video" disabled={!duration} onchange={seek}/>
     <div class="v2-video-control-row">
       <button type="button" class="v2-video-control" aria-label={playing ? 'Pause video' : 'Play video'} title={playing ? 'Pause' : 'Play'} onclick={() => void togglePlayback()}>{#if playing}<Pause size={20} fill="currentColor"/>{:else}<Play size={20} fill="currentColor"/>{/if}</button>
       <span class="v2-video-time">{formatMediaTime(currentTime)} / {formatMediaTime(duration)}</span>
       <div class="v2-video-spacer"></div>
       <button type="button" class="v2-video-control" aria-label={muted || volume === 0 ? 'Unmute video' : 'Mute video'} title="Mute" onclick={toggleMute}>{#if muted || volume === 0}<VolumeX size={20}/>{:else}<Volume2 size={20}/>{/if}</button>
-      <input class="v2-video-volume" style:--progress={`${volumeProgress}%`} type="range" min="0" max="1" step="0.05" value={muted ? 0 : volume} aria-label="Video volume" oninput={(event) => setVolume(event.currentTarget.value)}>
+      <V2RangeSlider class="v2-video-volume" min={0} max={1} step={0.05} value={muted ? 0 : volume} width={88} showValue={false} trackHeight={4} thumbSize={14} thumbBorderWidth={2} hitHeight={22} ariaLabel="Video volume" onchange={setVolume}/>
       <button type="button" class="v2-video-control" aria-label="Toggle fullscreen video" title="Fullscreen" onclick={() => void toggleFullscreen()}><Expand size={20}/></button>
     </div>
   </div>
@@ -120,7 +126,7 @@
   .v2-video-waiting{position:absolute;left:50%;top:50%;display:grid;place-items:center;transform:translate(-50%,-50%);filter:drop-shadow(0 1px 4px #000)}.v2-video-waiting :global(svg){animation:v2-video-spin .8s linear infinite}
   .v2-video-controls{position:absolute;z-index:2;left:0;right:0;bottom:0;display:grid;gap:.25rem;padding:2.5rem .75rem .65rem;background:linear-gradient(transparent,rgb(0 0 0/.82));opacity:1;transition:opacity 140ms ease}
   .v2-video-control-row{display:flex;align-items:center;gap:.5rem;min-width:0}.v2-video-control{display:grid;place-items:center;flex:0 0 auto;border:0;border-radius:.4rem;background:transparent;color:#fff;padding:.3rem;cursor:pointer}.v2-video-control:hover{background:rgb(255 255 255/.16)}.v2-video-spacer{flex:1}.v2-video-time{font-variant-numeric:tabular-nums;font-size:.75rem;text-shadow:0 1px 3px #000;white-space:nowrap}
-  .v2-video-seek,.v2-video-volume{height:1rem;margin:0;accent-color:var(--v2-accent);cursor:pointer;background:transparent}.v2-video-seek{width:100%}.v2-video-volume{width:5.5rem}.v2-video-seek:disabled{cursor:not-allowed;opacity:.45}.v2-video-seek::-webkit-slider-runnable-track,.v2-video-volume::-webkit-slider-runnable-track{height:.25rem;border-radius:999px;background:linear-gradient(to right,var(--v2-accent) var(--progress),rgb(255 255 255/.35) var(--progress))}.v2-video-seek::-moz-range-track,.v2-video-volume::-moz-range-track{height:.25rem;border-radius:999px;background:linear-gradient(to right,var(--v2-accent) var(--progress),rgb(255 255 255/.35) var(--progress))}.v2-video-seek::-webkit-slider-thumb,.v2-video-volume::-webkit-slider-thumb{margin-top:-.3rem}.v2-video-seek:focus-visible,.v2-video-volume:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  :global(.v2-video-seek){width:100%;min-width:0}.v2-video-controls :global(.v2-range-track){background:rgb(255 255 255/.35)}.v2-video-controls :global(.v2-range-fill){background:var(--v2-accent,#7ea6ff)}.v2-video-controls :global(.v2-range-thumb){border-color:var(--v2-accent,#7ea6ff)}
   @keyframes v2-video-spin{to{transform:rotate(360deg)}}
-  @media(max-width:620px){.v2-video-volume{display:none}.v2-video-primary-play{width:4rem;height:4rem}.v2-video-controls{padding-inline:.45rem}}
+  @media(max-width:620px){:global(.v2-video-volume){display:none}.v2-video-primary-play{width:4rem;height:4rem}.v2-video-controls{padding-inline:.45rem}}
 </style>
