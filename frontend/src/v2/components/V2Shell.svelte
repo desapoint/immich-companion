@@ -1,9 +1,9 @@
 <script lang="ts">
   import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
-  import type { SyncCoordinatorStatus, SyncRun, TaskSubscription } from '../data/syncContracts';
+  import type { SyncRun } from '../data/syncContracts';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
+  import { syncStatus } from '../state/syncStatus.svelte';
   import V2Button from './V2Button.svelte';
   import V2Progress from './V2Progress.svelte';
   import V2Segmented from './V2Segmented.svelte';
@@ -24,9 +24,6 @@
 
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', connectionLabel='Immich connected', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; connectionLabel?:string; children:import('svelte').Snippet } = $props();
   let density=$state<V2Density>('standard'), taskExpanded=$state(readTaskExpanded()), root=$state<HTMLDivElement>();
-  let syncStatus=$state<SyncCoordinatorStatus | null>(null), syncStatusError=$state(false), taskSubscription=$state<TaskSubscription | null>(null);
-  let active=true;
-  let pollTimer:ReturnType<typeof setInterval> | null=null;
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
@@ -37,7 +34,7 @@
     {key:'albums',label:'Manage'},
     {key:'settings',label:'More'},
   ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??`/v2/${mobileItem.key}` })));
-  const currentRun=$derived(syncStatus?.active ?? syncStatus?.pending ?? null);
+  const currentRun=$derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
   const taskOverlayVisible=$derived(taskExpanded || currentRun !== null);
 
@@ -72,27 +69,9 @@
     return `${run.progress.completed.toLocaleString()} processed · total work not known yet`;
   }
 
-  async function refreshSyncStatus():Promise<void>{
-    try{
-      const next=await libraryData.sync.status();
-      if(!active)return;
-      syncStatus=next;
-      syncStatusError=false;
-    }catch{
-      if(active)syncStatusError=true;
-    }
-  }
-
   onMount(()=>{
-    active=true;
     density=readV2Density();
-    void refreshSyncStatus();
-    taskSubscription=libraryData.tasks.subscribe({
-      onTask:(task)=>{if(task.taskType==='asset_sync')void refreshSyncStatus()},
-      onConnectionState:(state)=>{if(state==='connected')void refreshSyncStatus()},
-      onError:()=>undefined,
-    });
-    pollTimer=setInterval(()=>void refreshSyncStatus(),10000);
+    const releaseSyncStatus=syncStatus.acquire();
     const onDensity=(event:Event)=>density=(event as CustomEvent<V2Density>).detail;
     const observer=new ResizeObserver(syncTaskBounds);
     if(root) observer.observe(root);
@@ -100,13 +79,10 @@
     window.addEventListener('resize',syncTaskBounds);
     void tick().then(syncTaskBounds);
     return()=>{
-      active=false;
+      releaseSyncStatus();
       observer.disconnect();
       window.removeEventListener(V2_DENSITY_EVENT,onDensity);
       window.removeEventListener('resize',syncTaskBounds);
-      if(pollTimer)clearInterval(pollTimer);
-      taskSubscription?.close();
-      taskSubscription=null;
     }
   });
 
@@ -152,7 +128,7 @@
         <small class="v2-task-overview v2-muted">
           {#if currentRun}
             {progressKnown ? 'Live determinate progress' : 'Live progress · total pending'}
-          {:else if syncStatusError}
+          {:else if syncStatus.error}
             Status temporarily unavailable
           {:else}
             Idle
