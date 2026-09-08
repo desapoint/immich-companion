@@ -65,8 +65,15 @@
     }catch(error){if(request===loadRequest){asset=undefined;media=null;assetError=errorMessage(error,'The asset could not be loaded.')}}
     finally{if(request===loadRequest){loading=false;navigationLoading=false}}
   }
-  function previous(){const id=navigation.previousId??(fallbackIndex>0?assetIds[fallbackIndex-1]:null);if(id){mutations.clearOutcome();currentId=id}}
-  function next(){const id=navigation.nextId??(fallbackIndex>=0&&fallbackIndex<assetIds.length-1?assetIds[fallbackIndex+1]:null);if(id){mutations.clearOutcome();currentId=id}}
+  async function moveTo(id:string,delta:-1|1){
+    mutations.clearOutcome();
+    if(navigation.position!==null){
+      try{await onnavigate?.(id,{previousId:null,nextId:null,position:navigation.position+delta,total:navigation.total})}catch{/* Viewer navigation remains available even if the backing collection cannot preload. */}
+    }
+    currentId=id;
+  }
+  function previous(){const id=navigation.previousId??(fallbackIndex>0?assetIds[fallbackIndex-1]:null);if(id)void moveTo(id,-1)}
+  function next(){const id=navigation.nextId??(fallbackIndex>=0&&fallbackIndex<assetIds.length-1?assetIds[fallbackIndex+1]:null);if(id)void moveTo(id,1)}
   function target(id:string):AssetSelectionTarget{return{kind:'ids',ids:[id]}}
   async function reload(){if(currentId)await loadCurrent(currentId)}
   async function retryMedia(){if(!asset||mediaRefreshing)return;mediaRefreshing=true;mediaError='';try{media=await libraryData.media.refresh(asset,'view');mediaAttempt+=1}catch(error){mediaError=errorMessage(error,'Media could not be refreshed.')}finally{mediaRefreshing=false}}
