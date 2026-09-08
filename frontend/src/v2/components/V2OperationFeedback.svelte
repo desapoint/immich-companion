@@ -6,25 +6,15 @@
   import V2Stack from './V2Stack.svelte';
   import type { OperationFeedback } from '../data/mutationFeedback';
 
-  let {
-    feedback,
-    pendingLabel = '',
-    retryLabel = '',
-    onretry,
-  }: {
-    feedback: OperationFeedback | null;
-    pendingLabel?: string;
-    retryLabel?: string;
-    onretry?: () => void;
-  } = $props();
+  let { feedback, retryLabel = '', onretry }: { feedback: OperationFeedback | null; retryLabel?: string; onretry?: () => void } = $props();
   const toneClass = $derived(feedback ? `v2-operation-feedback v2-operation-feedback-${feedback.tone}` : 'v2-operation-feedback');
 </script>
 
-{#if pendingLabel}
-  <V2Card class="v2-operation-feedback v2-operation-feedback-pending">
+{#if feedback?.tone === 'pending'}
+  <V2Card class={toneClass}>
     <V2Inline gap="sm" align="center">
       <LoadingSpinner size="1rem" thickness="0.12rem" />
-      <span class="v2-small" role="status" aria-live="polite">{pendingLabel}</span>
+      <div role="status" aria-live="polite"><b>{feedback.title}</b><div class="v2-small v2-muted">{feedback.detail}</div></div>
     </V2Inline>
   </V2Card>
 {:else if feedback}
