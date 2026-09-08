@@ -91,6 +91,7 @@
     icon={confirmation.action === 'replace' ? 'sync' : 'trash'}
     destructive={confirmation.action === 'delete'}
     busy={controller.busy}
+    loading
     onconfirm={()=>void confirmAction()}
     onclose={closeConfirmation}
   />
