@@ -7,12 +7,13 @@ export type AssetGroup={id:number;logic:'AND'|'OR';negated:boolean;rules:AssetRu
 export type AssetSimpleSnapshot={filename:string;mediaType:string;favorite:string;archived:string;advanced:SimpleAdvancedFilters};
 
 export const assetFieldOptions=[['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
-export const assetOperatorOptions=[['is','is'],['isNot','is not'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
+export const assetOperatorOptions=[['is','is'],['isNot','is not'],['hasNone','has none'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
 export const assetFieldSelectOptions=assetFieldOptions.map(([value,label])=>({value,label}));
 export const assetOperatorSelectOptions=assetOperatorOptions.map(([value,label])=>({value,label}));
 export function assetOperatorOptionsForField(field:string){
   const allowed=field==='filename'?['is','isNot','contains','notContains']
-    :['mediaType','favorite','archived','album','tag'].includes(field)?['is','isNot']
+    :['album','tag'].includes(field)?['is','isNot','hasNone']
+      :['mediaType','favorite','archived'].includes(field)?['is','isNot']
       :field==='takenDate'?['gt','gte','lt','lte']
         :['is','gt','gte','lt','lte'];
   return assetOperatorSelectOptions.filter((option)=>allowed.includes(option.value));
@@ -25,7 +26,7 @@ export const splitAssetIds=(value:string)=>value.split(',').map((part)=>part.tri
 
 const fieldLabel=(value:string)=>assetFieldOptions.find(([key])=>key===value)?.[1]??value;
 const operatorLabel=(value:string)=>assetOperatorOptions.find(([key])=>key===value)?.[1]??value;
-export const assetRuleText=(rule:AssetRule)=>`${fieldLabel(rule.field)} ${operatorLabel(rule.op)} ${rule.value||'…'}`;
+export const assetRuleText=(rule:AssetRule)=>`${fieldLabel(rule.field)} ${operatorLabel(rule.op)}${rule.op==='hasNone'?'':` ${rule.value||'…'}`}`;
 const assetGroupExpressionText=(group:Pick<AssetGroup,'rules'|'groups'|'logic'|'negated'>):string=>{
   const parts=[...group.rules.map(assetRuleText),...(group.groups??[]).map(assetGroupExpressionText)];
   const text=`(${parts.join(` ${group.logic} `)||'empty'})`;
@@ -42,6 +43,24 @@ export function assetRuleCount(groups:readonly AssetGroup[]):number{return asset
 export function assetGroupCount(groups:readonly AssetGroup[]):number{return assetSearchCounts([],groups).groups}
 export function maxAssetSearchId(rules:readonly AssetRule[],groups:readonly AssetGroup[]):number{return Math.max(0,...rules.map((rule)=>rule.id),...groups.flatMap((group)=>[group.id,maxAssetSearchId(group.rules,group.groups??[])]))}
 export function hydrateAssetGroups(groups:readonly AssetSearchGroup[],nextRuleId:()=>number,nextGroupId:()=>number):AssetGroup[]{return groups.map((group)=>({id:nextGroupId(),logic:group.logic,negated:group.negated,rules:group.rules.map((rule)=>({id:nextRuleId(),...rule})),groups:hydrateAssetGroups(group.groups??[],nextRuleId,nextGroupId)}))}
+
+export function simpleAssetSearchToExpert(simple:AssetSimpleSnapshot,nextRuleId:()=>number):{rules:AssetRule[];groups:AssetGroup[];logic:'AND';negated:false}{
+  const rules:AssetRule[]=[];
+  const add=(field:string,op:string,value:string)=>rules.push({id:nextRuleId(),field,op,value});
+  if(simple.filename.trim())add('filename','contains',simple.filename.trim());
+  if(simple.mediaType)add('mediaType','is',simple.mediaType);
+  if(simple.favorite)add('favorite','is',simple.favorite==='Favorite'?'true':'false');
+  if(simple.archived)add('archived','is',simple.archived==='Archived'?'true':'false');
+  const advanced=simple.advanced;
+  if(splitAssetIds(advanced.albumIds).length)add('album','is',splitAssetIds(advanced.albumIds).join(','));
+  if(splitAssetIds(advanced.tagIds).length)add('tag','is',splitAssetIds(advanced.tagIds).join(','));
+  if(advanced.noAlbum)add('album','hasNone','');
+  if(advanced.noTag)add('tag','hasNone','');
+  if(advanced.takenAfter)add('takenDate','gte',advanced.takenAfter);
+  if(advanced.takenBefore)add('takenDate','lte',advanced.takenBefore);
+  for(const [key,field,op] of [['minWidth','width','gte'],['maxWidth','width','lte'],['minHeight','height','gte'],['maxHeight','height','lte'],['minAspectRatio','aspectRatio','gte'],['maxAspectRatio','aspectRatio','lte']] as const){const value=advanced[key];if(value)add(field,op,value)}
+  return{rules,groups:[],logic:'AND',negated:false};
+}
 
 const criteriaGroup=(group:AssetGroup):AssetSearchGroup=>({logic:group.logic,negated:group.negated,rules:group.rules.map(({field,op,value})=>({field,op,value})),groups:(group.groups??[]).map(criteriaGroup)});
 

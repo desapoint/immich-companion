@@ -32,6 +32,13 @@ describe('live V2 asset repository',()=>{
     ]});
   });
 
+  it('serializes value-free expert relationship filters',()=>{
+    expect(assetSearchExpression({mode:'expert',sort:{field:'filename',direction:'asc'},logic:'AND',negated:false,rules:[{field:'album',op:'hasNone',value:''},{field:'tag',op:'hasNone',value:''}],groups:[]})).toMatchObject({children:[
+      {kind:'condition',field:'album',operator:'has_none',value:[]},
+      {kind:'condition',field:'tag',operator:'has_none',value:[]},
+    ]});
+  });
+
   it('combines live Immich details with companion album context',async()=>{
     const detail={id,owner_id:'owner-1',library_id:'library-1',type:'IMAGE',original_file_name:'renamed.heic',original_path:'/external/renamed.heic',original_mime_type:'image/heic',width:4032,height:3024,duration:null,taken_at:'2026-08-03T12:00:00Z',file_modified_at:'2026-08-04T12:00:00Z',created_at:'2026-08-03T12:00:00Z',updated_at:'2026-08-04T12:00:00Z',is_favorite:false,is_archived:true,is_trashed:false,is_offline:false,is_edited:true,visibility:'timeline',live_photo_video_id:null,exif_info:{fileSizeInByte:8_388_608},tags:[{id:'tag-live',name:'Live tag',value:'live/tag',color:'#ABCDEF'}],stack:null};
     const fetcher=vi.fn<AssetApiFetcher>(async(input)=>String(input).endsWith('/summary')?response(summary):response(detail));

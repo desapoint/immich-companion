@@ -68,6 +68,7 @@ function splitValues(value:string):string[]{return value.split(',').map((item)=>
 function condition(field:string,operator:string,value:unknown):SearchNode{return{kind:'condition',field,operator,value}}
 
 function ruleNode(rule:{field:string;op:string;value:string}):SearchNode|null{
+  if((rule.field==='album'||rule.field==='tag')&&rule.op==='hasNone')return condition(rule.field,'has_none',[]);
   const raw=rule.value.trim();if(!raw)return null;
   const field={mediaType:'type',takenDate:'taken_at',aspectRatio:'aspect_ratio'}[rule.field]??rule.field;
   if(field==='album'||field==='tag'){
