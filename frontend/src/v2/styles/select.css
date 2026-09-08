@@ -32,6 +32,7 @@
 }
 
 .v2-select-option-list{
+  overflow-y:auto;
   scrollbar-gutter:stable both-edges;
   scrollbar-width:thin;
   scrollbar-color:#475970 transparent;
@@ -54,5 +55,5 @@
 }
 
 .v2-select-option-list button{
-  padding:7px 8px;
+  padding:7px 6px;
 }
