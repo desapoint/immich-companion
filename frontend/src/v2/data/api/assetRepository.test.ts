@@ -32,6 +32,16 @@ describe('live V2 asset repository',()=>{
     ]});
   });
 
+  it('serializes recursive expert groups without flattening them',()=>{
+    const expression=assetSearchExpression({mode:'expert',sort:{field:'filename',direction:'asc'},logic:'AND',negated:false,rules:[],groups:[{logic:'OR',negated:false,rules:[{field:'favorite',op:'is',value:'true'}],groups:[{logic:'AND',negated:true,rules:[{field:'filename',op:'contains',value:'copy'}],groups:[]}]}]});
+    expect(expression).toEqual({kind:'group',operator:'and',negate:false,children:[{
+      kind:'group',operator:'or',negate:false,children:[
+        {kind:'condition',field:'favorite',operator:'equals',value:true},
+        {kind:'group',operator:'and',negate:true,children:[{kind:'condition',field:'filename',operator:'contains',value:'copy'}]},
+      ],
+    }]});
+  });
+
   it('uses capabilities and the existing plan-execute action flow',async()=>{
     const calls:string[]=[];
     const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{const path=String(input);calls.push(path);if(path.endsWith('/capabilities'))return response({count:2,all_favorite:false,all_archived:true,has_tags:true,has_albums:true,has_stack_members:false,can_stack:true,single_asset_id:null,can_set_stack_primary:false,can_remove_complete_stack:false});if(path.endsWith('/plan')){const body=JSON.parse(String(init?.body));expect(body).toMatchObject({action:'remove_tag',relation_ids:[]});return response({id:'plan-1',applicable_count:2,skipped_count:0,missing_ids:[]})}return response({applied_ids:[id,secondId],failed_ids:[]})});

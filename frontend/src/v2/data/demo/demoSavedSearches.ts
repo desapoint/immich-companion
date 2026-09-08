@@ -39,7 +39,7 @@ function seedRecords(): SavedSearchRecord[] {
       ], groups: [{ logic: 'OR', negated: false, rules: [
         { field: 'album', op: 'contains', value: 'Family' },
         { field: 'tag', op: 'contains', value: 'Vacation' },
-      ] }] },
+      ], groups: [] }] },
       createdAt: now,
       updatedAt: now,
     },

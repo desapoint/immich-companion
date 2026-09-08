@@ -9,6 +9,7 @@ import type {
   AssetRecord,
   AssetRepository,
   AssetSearchCriteria,
+  AssetSearchGroup,
   AssetSearchQuery,
   AssetSelectionCapabilities,
   AssetSelectionTarget,
@@ -76,6 +77,12 @@ function ruleNode(rule:{field:string;op:string;value:string}):SearchNode|null{
   return condition(field,operator,value);
 }
 
+function searchGroupNode(group:AssetSearchGroup):SearchExpression{
+  const children=group.rules.map(ruleNode).filter((node):node is SearchNode=>Boolean(node));
+  children.push(...(group.groups??[]).map(searchGroupNode));
+  return{kind:'group',operator:group.logic.toLowerCase() as 'and'|'or',negate:group.negated,children};
+}
+
 export function assetSearchExpression(criteria:AssetSearchCriteria):SearchExpression{
   if(criteria.mode==='simple'){
     const f=criteria.filters,children:SearchNode[]=[];
@@ -93,7 +100,7 @@ export function assetSearchExpression(criteria:AssetSearchCriteria):SearchExpres
     return{kind:'group',operator:'and',negate:false,children};
   }
   const children=criteria.rules.map(ruleNode).filter((node):node is SearchNode=>Boolean(node));
-  children.push(...criteria.groups.map((group)=>({kind:'group' as const,operator:group.logic.toLowerCase() as 'and'|'or',negate:group.negated,children:group.rules.map(ruleNode).filter((node):node is SearchNode=>Boolean(node))})));
+  children.push(...criteria.groups.map(searchGroupNode));
   return{kind:'group',operator:criteria.logic.toLowerCase() as 'and'|'or',negate:criteria.negated,children};
 }
 
