@@ -1,4 +1,4 @@
-import type { DependencyStatus, StatusSnapshot } from '../../features/status/types/status';
+import type { DependencyStatus, StatusSnapshot } from '../../lib/types/status';
 
 export type V2Tone = 'default' | 'ok' | 'warn' | 'bad';
 
