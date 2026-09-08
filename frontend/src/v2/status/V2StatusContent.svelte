@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { StatusLoadState } from '../../features/status/types/status';
+  import type { StatusLoadState } from '../../lib/types/status';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
