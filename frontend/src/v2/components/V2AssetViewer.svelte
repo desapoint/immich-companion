@@ -20,7 +20,7 @@
 
   type RelationDialog='album'|'tags'|null;
 
-  let { open=false, assetId=null, assetIds=[], onclose }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void }=$props();
+  let { open=false, assetId=null, assetIds=[], onclose, onnavigate }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void> }=$props();
   const camera=new ViewerViewportController();
   const relations=new AssetRelationOptionsController();
   const mutations=new AssetMutationController(()=>reload(),()=>{});
@@ -60,7 +60,8 @@
       navigation=nextNavigation;
       media=nextAsset?libraryData.media.view(nextAsset):null;
       mediaAttempt+=1;
-      if(!nextAsset)assetError='This asset is no longer available in the current data source.';
+      if(nextAsset)void onnavigate?.(id,nextNavigation);
+      else assetError='This asset is no longer available in the current data source.';
     }catch(error){if(request===loadRequest){asset=undefined;media=null;assetError=errorMessage(error,'The asset could not be loaded.')}}
     finally{if(request===loadRequest){loading=false;navigationLoading=false}}
   }
