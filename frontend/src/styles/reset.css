@@ -25,3 +25,8 @@ button {
   -webkit-user-select: none;
   user-select: none;
 }
+
+:where(input, textarea, select):disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}

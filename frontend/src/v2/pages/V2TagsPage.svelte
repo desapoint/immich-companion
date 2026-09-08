@@ -59,6 +59,8 @@
   function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}
   function setSort(value:string){sort=value;page=1;void refresh(true)}
   function setPage(next:number){page=next;void refresh(true)}
+  function submitSearch(){if(loading||mutating)return;page=1;void refresh(true)}
+  function handleSearchKeydown(event:KeyboardEvent){if(event.key!=='Enter'||event.isComposing)return;event.preventDefault();submitSearch()}
   async function loadMore(){if(resultMode!=='Infinite'||!nextCursor||loading)return;await refresh(false)}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function toggleVisible(){selectedIds=toggleVisibleSelection(selectedIds,visibleIds)}
@@ -80,7 +82,7 @@
 
 <V2PageLayout title="Tags" description="Search and manage hierarchical tags through the active data source.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={selectedIds.length===0||mutating} onclick={deleteSelected}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" disabled={mutating} onclick={()=>void openCreate()}>Create tag</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search tags…" oninput={(event)=>query=event.currentTarget.value}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>{includeHierarchy=checked;page=1;void refresh(true)}}/><V2Button variant="primary" disabled={loading||mutating} onclick={()=>{page=1;void refresh(true)}}>Search</V2Button><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and canonical parent paths.':'Matches tag names only.'}</p></V2Stack></V2Section><V2Section title="Hierarchy"><V2Card><V2Stack gap="xs"><b>{resultTotal} matching hierarchy rows</b><span class="v2-small v2-muted">Hierarchy construction, descendant IDs and aggregate counts come from the data provider.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search tags…" oninput={(event)=>query=event.currentTarget.value} onkeydown={handleSearchKeydown}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>{includeHierarchy=checked;page=1;void refresh(true)}}/><V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and canonical parent paths.':'Matches tag names only.'}</p></V2Stack></V2Section><V2Section title="Hierarchy"><V2Card><V2Stack gap="xs"><b>{resultTotal} matching hierarchy rows</b><span class="v2-small v2-muted">Hierarchy construction, descendant IDs and aggregate counts come from the data provider.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Tag operation unavailable" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     <V2OperationFeedback {feedback} retryLabel={retryDeleteIds.length?'Retry failed':''} onretry={retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>

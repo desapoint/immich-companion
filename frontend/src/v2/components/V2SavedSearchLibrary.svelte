@@ -57,12 +57,12 @@
     <V2Badge text={controller.loading?'Loading…':controller.busy?'Saving…':'Ready'}/>
     {#snippet actions()}<V2Button variant="primary" disabled={controller.busy} onclick={openCreate}><Save size={17}/> Save current search</V2Button>{/snippet}
   </V2Toolbar>
-  <V2Field label="Find saved searches" value={query} placeholder="Search by name or description…" onchange={(value)=>{query=value;void controller.refresh(value)}}/>
+  <V2Field label="Find saved searches" value={query} placeholder="Search by name or description…" onchange={(value)=>{query=value;void controller.refresh(value)}} onenter={(value)=>{query=value;void controller.refresh(value)}}/>
   {#if controller.records.length===0}
     <V2Card><span class="v2-muted">{controller.loading?'Loading saved searches…':'No saved searches match this view.'}</span></V2Card>
   {:else}
     <V2Stack gap="sm">
-      {#each controller.records as record}
+      {#each controller.records as record (record.id)}
         <V2Card>
           <V2Inline justify="between" align="start" wrap>
             <V2Stack gap="xs"><b>{record.name}</b>{#if record.description}<span class="v2-small v2-muted">{record.description}</span>{/if}<span class="v2-small v2-muted">{record.criteria.mode==='expert'?'Expert':'Simple'} · updated {new Date(record.updatedAt).toLocaleString()}</span></V2Stack>

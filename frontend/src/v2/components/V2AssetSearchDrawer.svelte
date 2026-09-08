@@ -17,6 +17,7 @@
   function removeRule(id:number,group?:AssetGroup){if(group)group.rules=group.rules.filter((rule)=>rule.id!==id);else rules=rules.filter((rule)=>rule.id!==id)}
   function addGroup(){groups=[...groups,{id:++seq,logic:'AND',negated:false,rules:[{id:++seq,field:'tag',op:'is',value:''}]}]}
   function reset(){rules=[];groups=[];logic='AND';negated=false}
+  function handleSearchKeydown(event:KeyboardEvent){if(event.key!=='Enter'||event.isComposing)return;event.preventDefault();onapply()}
 </script>
 
 <button type="button" class="v2-drawer-backdrop" aria-label="Close expert search editor" onclick={onclose}></button>
@@ -25,11 +26,11 @@
   <div class="v2-drawer-body">
     <V2Section title="Expression structure"><V2Stack gap="md">
       <V2Card><V2Stack gap="sm"><V2Inline justify="between" wrap><V2Inline gap="sm"><V2Badge text="Root group"/><V2Segmented items={['AND','OR']} active={logic} onselect={(value)=>logic=value as 'AND'|'OR'} ariaLabel="Root group logic"/><V2Checkbox label="NOT group" checked={negated} onchange={(checked)=>negated=checked}/></V2Inline></V2Inline>
-        {#each rules as rule}<div class="v2-expert-rule"><SelectField id={`expert-root-field-${rule.id}`} value={rule.field} options={assetFieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-root-op-${rule.id}`} value={rule.op} options={assetOperatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value} placeholder="Value…"><V2Button onclick={()=>removeRule(rule.id)}>✕</V2Button></div>{/each}
+        {#each rules as rule (rule.id)}<div class="v2-expert-rule"><SelectField id={`expert-root-field-${rule.id}`} value={rule.field} options={assetFieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-root-op-${rule.id}`} value={rule.op} options={assetOperatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value} placeholder="Value…" onkeydown={handleSearchKeydown}><V2Button onclick={()=>removeRule(rule.id)}>✕</V2Button></div>{/each}
         <V2Inline gap="sm"><V2Button onclick={()=>addRule()}>+ Rule</V2Button><V2Button onclick={addGroup}>+ Nested group</V2Button></V2Inline>
       </V2Stack></V2Card>
-      {#each groups as group}<V2Card><V2Stack gap="sm"><V2Inline justify="between"><V2Inline gap="sm"><V2Badge text="Nested group"/><V2Segmented items={['AND','OR']} active={group.logic} onselect={(value)=>group.logic=value as 'AND'|'OR'} ariaLabel="Nested group logic"/><V2Checkbox label="NOT group" checked={group.negated} onchange={(checked)=>group.negated=checked}/></V2Inline><V2Button onclick={()=>groups=groups.filter((item)=>item.id!==group.id)}>Remove group</V2Button></V2Inline>
-        {#each group.rules as rule}<div class="v2-expert-rule"><SelectField id={`expert-group-${group.id}-field-${rule.id}`} value={rule.field} options={assetFieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-group-${group.id}-op-${rule.id}`} value={rule.op} options={assetOperatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value}><V2Button onclick={()=>removeRule(rule.id,group)}>✕</V2Button></div>{/each}<V2Button onclick={()=>addRule(group)}>+ Rule</V2Button>
+      {#each groups as group (group.id)}<V2Card><V2Stack gap="sm"><V2Inline justify="between"><V2Inline gap="sm"><V2Badge text="Nested group"/><V2Segmented items={['AND','OR']} active={group.logic} onselect={(value)=>group.logic=value as 'AND'|'OR'} ariaLabel="Nested group logic"/><V2Checkbox label="NOT group" checked={group.negated} onchange={(checked)=>group.negated=checked}/></V2Inline><V2Button onclick={()=>groups=groups.filter((item)=>item.id!==group.id)}>Remove group</V2Button></V2Inline>
+        {#each group.rules as rule (rule.id)}<div class="v2-expert-rule"><SelectField id={`expert-group-${group.id}-field-${rule.id}`} value={rule.field} options={assetFieldSelectOptions} onchange={(value)=>rule.field=value}/><SelectField id={`expert-group-${group.id}-op-${rule.id}`} value={rule.op} options={assetOperatorSelectOptions} onchange={(value)=>rule.op=value}/><input bind:value={rule.value} onkeydown={handleSearchKeydown}><V2Button onclick={()=>removeRule(rule.id,group)}>✕</V2Button></div>{/each}<V2Button onclick={()=>addRule(group)}>+ Rule</V2Button>
       </V2Stack></V2Card>{/each}
     </V2Stack></V2Section>
     <V2Section title="Expression preview"><div class="v2-expression">{expression}</div></V2Section>

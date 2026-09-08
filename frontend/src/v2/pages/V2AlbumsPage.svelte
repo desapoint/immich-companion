@@ -57,6 +57,8 @@
   function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}
   function setSort(value:string){sort=value;page=1;void refresh(true)}
   function setPage(next:number){page=next;void refresh(true)}
+  function submitSearch(){if(loading||mutating)return;page=1;void refresh(true)}
+  function handleSearchKeydown(event:KeyboardEvent){if(event.key!=='Enter'||event.isComposing)return;event.preventDefault();submitSearch()}
   async function loadMore(){if(resultMode!=='Infinite'||!nextCursor||loading)return;await refresh(false)}
   function toggleSelection(id:string,checked:boolean){selectedIds=checked?[...new Set([...selectedIds,id])]:selectedIds.filter((value)=>value!==id)}
   function toggleVisible(){selectedIds=toggleVisibleSelection(selectedIds,visibleIds)}
@@ -76,7 +78,7 @@
 
 <V2PageLayout title="Albums" description="Search, sort, create, edit, delete and use albums to filter the current asset workspace.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!selectedIds.length||mutating} onclick={deleteSelected}>Delete selected{selectedIds.length?` (${selectedIds.length})`:''}</V2Button><V2Button variant="primary" disabled={mutating} onclick={openCreate}>Create album</V2Button></V2Inline>{/snippet}
-  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value}><V2Button variant="primary" disabled={loading||mutating} onclick={()=>{page=1;void refresh(true)}}>Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
+  {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search albums…" oninput={(event)=>query=event.currentTarget.value} onkeydown={handleSearchKeydown}><V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Album operation unavailable" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     <V2OperationFeedback {feedback} retryLabel={retryDeleteIds.length?'Retry failed':''} onretry={retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
