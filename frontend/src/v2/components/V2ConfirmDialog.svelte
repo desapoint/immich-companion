@@ -14,8 +14,7 @@
     icon = 'check',
     children,
     detail,
-    busy = false,
-    loading = false,
+    pending = false,
     confirmDisabled = false,
     destructive = false,
     onconfirm,
@@ -27,8 +26,7 @@
     icon?: IconName;
     children?: Snippet;
     detail?: Snippet;
-    busy?: boolean;
-    loading?: boolean;
+    pending?: boolean;
     confirmDisabled?: boolean;
     destructive?: boolean;
     onconfirm: () => void;
@@ -37,7 +35,7 @@
   const dialogId = $props.id();
 
   function requestClose(): void {
-    if (!busy) onclose();
+    if (!pending) onclose();
   }
 </script>
 
@@ -45,7 +43,7 @@
   id={dialogId}
   {title}
   size="sm"
-  dismissOnBackdrop={!busy}
+  dismissOnBackdrop={!pending}
   onclose={requestClose}
 >
   <div class="v2-confirmation" data-destructive={destructive || undefined}>
@@ -58,13 +56,13 @@
   </div>
 
   {#snippet footer()}
-    <V2Button disabled={busy} onclick={requestClose}>Cancel</V2Button>
+    <V2Button disabled={pending} onclick={requestClose}>Cancel</V2Button>
     <V2Button
       variant={destructive ? 'danger' : 'primary'}
-      disabled={busy || confirmDisabled}
+      disabled={pending || confirmDisabled}
       onclick={onconfirm}
     >
-      {#if busy && loading}
+      {#if pending}
         <span class="v2-confirmation-loading" aria-live="polite">
           <LoadingSpinner size="14px" thickness="2px" />
           <span>Applying…</span>
