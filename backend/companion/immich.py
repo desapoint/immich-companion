@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from json import JSONDecodeError, JSONDecoder
@@ -1049,11 +1049,8 @@ class ImmichApiClient:
         response = await self._request("POST", "/api/tags", operation="create tag", json=payload)
         return ImmichTag.model_validate(response.json())
 
-    async def update_tag(self, tag_id: UUID, *, name: str | None = None,
-                         color: str | None = None) -> ImmichTag:
+    async def update_tag(self, tag_id: UUID, *, color: str | None = None) -> ImmichTag:
         payload: dict[str, Any] = {}
-        if name is not None:
-            payload["name"] = name
         if color is not None:
             payload["color"] = color
         response = await self._request(
@@ -1063,56 +1060,6 @@ class ImmichApiClient:
 
     async def delete_tag(self, tag_id: UUID) -> None:
         await self._request("DELETE", f"/api/tags/{tag_id}", operation="delete tag")
-
-    async def reparent_tag(
-        self,
-        tag_id: UUID,
-        *,
-        name: str,
-        color: str | None,
-        parent_id: UUID | None,
-        catalog: list[ImmichTag],
-    ) -> ImmichTag:
-        """Recreate a tag subtree under a new parent while preserving memberships."""
-
-        by_parent: dict[UUID, list[ImmichTag]] = {}
-        by_id = {tag.id: tag for tag in catalog}
-        for tag in catalog:
-            if tag.parent_id is not None:
-                by_parent.setdefault(tag.parent_id, []).append(tag)
-        source = by_id[tag_id]
-        subtree: list[ImmichTag] = []
-
-        def visit(tag: ImmichTag) -> None:
-            subtree.append(tag)
-            for child in by_parent.get(tag.id, []):
-                visit(child)
-
-        visit(source)
-        replacements: dict[UUID, ImmichTag] = {}
-        try:
-            for old in subtree:
-                replacement = await self.create_tag(
-                    name if old.id == tag_id else old.name,
-                    color if old.id == tag_id else old.color,
-                    parent_id if old.id == tag_id else replacements[old.parent_id].id,
-                )
-                replacements[old.id] = replacement
-                asset_ids: list[UUID] = []
-                async for page_ids in self.iter_tag_asset_ids(old.id):
-                    asset_ids.extend(page_ids)
-                for start in range(0, len(asset_ids), 1000):
-                    await self.add_assets_to_tag(replacement.id, asset_ids[start : start + 1000])
-                if await self.count_tag_asset_ids(replacement.id) != len(set(asset_ids)):
-                    raise ImmichApiError("tag membership verification")
-            for old in reversed(subtree):
-                await self.delete_tag(old.id)
-        except Exception:
-            for replacement in reversed(list(replacements.values())):
-                with suppress(ImmichApiError):
-                    await self.delete_tag(replacement.id)
-            raise
-        return replacements[tag_id]
 
     async def iter_tag_asset_ids(
         self,

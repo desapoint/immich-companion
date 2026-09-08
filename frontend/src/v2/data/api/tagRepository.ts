@@ -216,14 +216,10 @@ export function createTagRepository(fetcher: TagApiFetcher = globalThis.fetch): 
     },
     async update(id, update) {
       try {
-        const body: { name?: string; color?: string | null; parent_id?: string | null } = {};
-        if (update.name !== undefined) body.name = update.name;
-        if (update.color !== undefined) body.color = update.color;
-        if (update.parentPath !== undefined) body.parent_id = await resolveParentId(update.parentPath);
         await requestJson<TagManagementItem>(fetcher, `/api/tags/manage/${encodeURIComponent(id)}`, {
           method: 'PATCH',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
+          body: JSON.stringify({ color: update.color }),
         });
         return { affectedIds: [id], failed: [] };
       } catch (error) {

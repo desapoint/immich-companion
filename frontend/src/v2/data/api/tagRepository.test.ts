@@ -105,7 +105,7 @@ describe('live V2 tag repository', () => {
     ]);
   });
 
-  it('resolves canonical parent paths for create and reparent operations', async () => {
+  it('resolves canonical parent paths for creation and only sends color on update', async () => {
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
     const fetcher = vi.fn<TagApiFetcher>(async (input, init) => {
       const path = String(input);
@@ -123,7 +123,7 @@ describe('live V2 tag repository', () => {
       id: child.id,
       tag_name: 'Places / Montréal',
     });
-    expect(await repository.update(child.id, { parentPath: '', name: 'Montreal' })).toEqual({
+    expect(await repository.update(child.id, { color: '#334455' })).toEqual({
       affectedIds: [child.id],
       failed: [],
     });
@@ -136,7 +136,7 @@ describe('live V2 tag repository', () => {
       {
         path: `/api/tags/manage/${child.id}`,
         method: 'PATCH',
-        body: { name: 'Montreal', parent_id: null },
+        body: { color: '#334455' },
       },
     ]);
   });
@@ -166,13 +166,13 @@ describe('live V2 tag repository', () => {
     });
   });
 
-  it('returns an update failure when a selected parent disappeared', async () => {
-    const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse(page([parent])));
+  it('retains the upstream reason when a color update fails', async () => {
+    const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({ detail: 'Tag update rejected.' }, 409));
     const repository = createTagRepository(fetcher);
 
-    expect(await repository.update(child.id, { parentPath: 'Missing' })).toEqual({
+    expect(await repository.update(child.id, { color: '#334455' })).toEqual({
       affectedIds: [],
-      failed: [{ id: child.id, reason: 'Parent tag “Missing” no longer exists.' }],
+      failed: [{ id: child.id, reason: 'Tag update rejected.' }],
     });
   });
 });

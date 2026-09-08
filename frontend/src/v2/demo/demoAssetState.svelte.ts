@@ -457,16 +457,12 @@ export function createDemoTag(name: string, color: string | null = null, parentP
   demoAssetState.tags = [...demoAssetState.tags, tag]; persist(); return tag;
 }
 
-export function updateDemoTag(id: string, patch: { name?: string; color?: string | null; parentPath?: string }): void {
+export function updateDemoTag(id: string, patch: { color?: string | null }): void {
   const target = demoAssetState.tags.find((tag) => tag.id === id); if (!target) return;
-  const oldPath = target.tag_name, oldParts = oldPath.split(' / '), leaf = patch.name?.trim() || oldParts.at(-1) || oldPath;
-  const currentParent = oldParts.slice(0, -1).join(' / '), parent = patch.parentPath === undefined ? currentParent : patch.parentPath.trim();
-  const nextPath = parent ? `${parent} / ${leaf}` : leaf, now = new Date().toISOString();
-  demoAssetState.tags = demoAssetState.tags.map((tag) => {
-    if (tag.id === id) return { ...tag, tag_name: nextPath, tag_value: tagValueForPath(nextPath), color: patch.color === undefined ? tag.color : patch.color, synced_at: now };
-    if (tag.tag_name.startsWith(`${oldPath} / `)) { const moved = `${nextPath}${tag.tag_name.slice(oldPath.length)}`; return { ...tag, tag_name: moved, tag_value: tagValueForPath(moved), synced_at: now }; }
-    return tag;
-  });
+  const now = new Date().toISOString();
+  demoAssetState.tags = demoAssetState.tags.map((tag) => tag.id === id
+    ? { ...tag, color: patch.color === undefined ? tag.color : patch.color, synced_at: now }
+    : tag);
   refreshRelationshipSummaries(); persist();
 }
 

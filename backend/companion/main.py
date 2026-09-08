@@ -1143,36 +1143,7 @@ def create_app(
     @app.patch("/api/tags/manage/{tag_id}", response_model=TagManagementItem)
     async def update_managed_tag(tag_id: UUID, request: TagUpdateRequest):
         client = require_immich()
-        catalog = await client.list_tag_catalog()
-        current = next((item for item in catalog if item.id == tag_id), None)
-        if current is None:
-            raise HTTPException(status_code=404, detail="Tag not found.")
-        parent_id = current.parent_id
-        if "parent_id" in request.model_fields_set:
-            parent_id = request.parent_id
-            if parent_id == tag_id:
-                raise HTTPException(status_code=400, detail="A tag cannot be its own parent.")
-            by_id = {item.id: item for item in catalog}
-            visited: set[UUID] = set()
-            ancestor = parent_id
-            while ancestor is not None and ancestor not in visited:
-                if ancestor == tag_id:
-                    raise HTTPException(
-                        status_code=400, detail="A tag cannot be moved below its own child."
-                    )
-                visited.add(ancestor)
-                parent = by_id.get(ancestor)
-                ancestor = parent.parent_id if parent is not None else None
-        if parent_id != current.parent_id:
-            tag = await client.reparent_tag(
-                tag_id,
-                name=request.name if request.name is not None else current.name,
-                color=request.color if request.color is not None else current.color,
-                parent_id=parent_id,
-                catalog=catalog,
-            )
-        else:
-            tag = await client.update_tag(tag_id, name=request.name, color=request.color)
+        tag = await client.update_tag(tag_id, color=request.color)
         return TagManagementItem(id=tag.id, name=tag.name, color=tag.color, parent_id=tag.parent_id,
                                  asset_count=tag.asset_count)
 

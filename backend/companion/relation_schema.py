@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AlbumManagementItem(BaseModel):
@@ -54,9 +54,9 @@ class TagCreateRequest(BaseModel):
 
 
 class TagUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=255)
+    model_config = ConfigDict(extra="forbid")
+
     color: str | None = Field(default=None, max_length=32)
-    parent_id: UUID | None = None
 
 
 class RelationBatchDeleteRequest(BaseModel):
