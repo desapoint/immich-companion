@@ -59,7 +59,7 @@ export function taskReconnectDelayMs(attempt: number, random = Math.random): num
   const boundedAttempt = Math.max(0, Math.floor(attempt));
   const base = Math.min(RECONNECT_BASE_MS * 2 ** boundedAttempt, RECONNECT_MAX_MS);
   const factor = 1 - RECONNECT_JITTER + random() * RECONNECT_JITTER * 2;
-  return Math.round(base * factor);
+  return Math.min(RECONNECT_MAX_MS, Math.round(base * factor));
 }
 
 function normalizeTask(task: ApiTask): TaskRecord {
