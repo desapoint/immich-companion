@@ -27,6 +27,5 @@ describe('V2SortableHeader', () => {
 
     expect(body).toContain('aria-sort="none"');
     expect(body).toContain('title="Sort Assets ascending"');
-    expect(body).not.toContain('v2-sortable-header-icon');
   });
 });

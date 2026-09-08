@@ -28,15 +28,13 @@
 <th class={className} aria-sort={active ? (direction === 'asc' ? 'ascending' : 'descending') : 'none'}>
   <button type="button" title={`Sort ${label} ${nextDirectionLabel}`} onclick={toggleSort}>
     <span>{label}</span>
-    {#if active}
-      <span class="v2-sortable-header-icon" aria-hidden="true">
-        {#if direction === 'desc'}
-          <ArrowUp size={14} />
-        {:else}
-          <ArrowDown size={14} />
-        {/if}
-      </span>
-    {/if}
+    <span class="v2-sortable-header-icon" data-active={active || undefined} aria-hidden="true">
+      {#if active && direction === 'desc'}
+        <ArrowUp size={14} />
+      {:else}
+        <ArrowDown size={14} />
+      {/if}
+    </span>
   </button>
 </th>
 
@@ -69,5 +67,10 @@
 
   .v2-sortable-header-icon {
     display: inline-flex;
+    opacity: 0;
+  }
+
+  .v2-sortable-header-icon[data-active='true'] {
+    opacity: 1;
   }
 </style>
