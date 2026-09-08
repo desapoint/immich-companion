@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
 
   import Icon from '../../lib/components/ui/Icon.svelte';
+  import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
   import type { IconName } from '../../lib/types/ui';
   import V2Button from './V2Button.svelte';
   import V2Modal from './V2Modal.svelte';
@@ -65,7 +66,7 @@
     >
       {#if busy && loading}
         <span class="v2-confirmation-loading" aria-live="polite">
-          <span class="v2-confirmation-spinner" aria-hidden="true"></span>
+          <LoadingSpinner size="14px" thickness="2px" trackColor="currentColor" accentColor="transparent" />
           <span>Applying…</span>
         </span>
       {:else}
@@ -103,14 +104,4 @@
   .v2-confirmation-detail { margin-top: 10px; color: var(--v2-muted); font-size: 12px; }
   .v2-confirmation-form { min-width: 0; margin-top: 12px; }
   .v2-confirmation-loading { display: inline-flex; align-items: center; gap: 8px; }
-  .v2-confirmation-spinner {
-    width: 14px;
-    height: 14px;
-    border: 2px solid currentColor;
-    border-right-color: transparent;
-    border-radius: 999px;
-    animation: v2-confirmation-spin .7s linear infinite;
-  }
-
-  @keyframes v2-confirmation-spin { to { transform: rotate(360deg); } }
 </style>
