@@ -27,42 +27,47 @@
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage, mutationFeedback, type OperationFeedback } from '../data/mutationFeedback';
+  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
   import type { TagHierarchyRow } from '../data/contracts';
   import { normalizeHex } from '../state/color';
-  import { LatestRequestController } from '../state/latestRequest';
+  import { CollectionRequestController } from '../state/collectionRequest.svelte';
+  import { OperationController } from '../state/operationController.svelte';
 
   let { onfilterassets }: { onfilterassets: (tagIds: string[]) => void } = $props();
 
   type TagModal={id:number;mode:'create'|'edit';tagId:string;name:string;color:string|null;parent:string;parentOptions:Array<{value:string;label:string;subtitle:string}>};
-  let query=$state(''),includeHierarchy=$state(false),selectedIds=$state<string[]>([]),page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),sort=$state('name:asc'),rows=$state<TagHierarchyRow[]>([]),resultTotal=$state(0),nextCursor=$state<string|null>(null),loading=$state(false),mutating=$state(false),preparingCreate=$state(false),loadError=$state(''),operationError=$state(''),feedback=$state<OperationFeedback|null>(null),retryDeleteIds=$state<string[]>([]),pendingDeleteIds=$state<string[]>([]),deleteDialogOpen=$state(false);
+  let query=$state(''),includeHierarchy=$state(false),selectedIds=$state<string[]>([]),page=$state(1),pageSize=$state(24),resultMode=$state<ResultMode>('Pagination'),sort=$state('name:asc'),rows=$state<TagHierarchyRow[]>([]),resultTotal=$state(0),nextCursor=$state<string|null>(null),preparingCreate=$state(false),retryDeleteIds=$state<string[]>([]),pendingDeleteIds=$state<string[]>([]),deleteDialogOpen=$state(false);
   let modalSequence=0,modals=$state<TagModal[]>([]);
-  const requests=new LatestRequestController();
+  const collectionRequests=new CollectionRequestController();
+  const operations=new OperationController();
+  const loading=$derived(collectionRequests.loading),loadError=$derived(collectionRequests.error),mutating=$derived(operations.busy),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
   const visibleIds=$derived(rows.map((tag)=>tag.id));
   const visibleSelection=$derived(visibleSelectionState(selectedIds,visibleIds));
   const colorsInView=$derived.by(()=>{const counts=new Map<string,number>();for(const tag of rows){if(tag.synthetic||!tag.color)continue;const color=normalizeHex(tag.color);if(color)counts.set(color,(counts.get(color)??0)+1)}return[...counts].map(([color,count])=>({color,count})).sort((a,b)=>b.count-a.count)});
 
   function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(['path','assets','children'].includes(fieldRaw)?fieldRaw:'name') as 'name'|'path'|'assets'|'children',direction:(directionRaw==='desc'?'desc':'asc') as 'asc'|'desc'}}
-  async function refresh(reset=true):Promise<void>{
-    if(loading&&!reset)return;
+  async function refresh(reset=true):Promise<boolean>{
+    if(loading&&!reset)return false;
     const mode=resultMode,requestedPage=page,requestedPageSize=pageSize,requestedQuery=query,requestedHierarchy=includeHierarchy,requestedSort=parseSort(),cursor=reset?null:nextCursor;
-    const request=requests.begin();
-    loading=true;
     if(reset)nextCursor=null;
-    try{
-      const result=await libraryData.tags.search(mode==='Pagination'
-        ?{page:requestedPage,pageSize:requestedPageSize,query:requestedQuery,includeHierarchy:requestedHierarchy,sort:requestedSort,signal:request.signal}
-        :{pageSize:requestedPageSize,query:requestedQuery,includeHierarchy:requestedHierarchy,sort:requestedSort,cursor,signal:request.signal});
-      if(!requests.isCurrent(request))return;
-      rows=mode==='Infinite'&&!reset?[...rows,...result.items]:result.items;
-      resultTotal=result.total;
-      nextCursor=result.nextCursor;
-      loadError='';
-      const lastPage=Math.max(1,Math.ceil(resultTotal/requestedPageSize));
-      if(mode==='Pagination'&&requestedPage>lastPage){page=lastPage;await refresh(true)}
-    }catch(error){if(requests.isCurrent(request))loadError=errorMessage(error,'Tags could not be loaded.')}
-    finally{if(requests.finish(request))loading=false}
+    const result=await collectionRequests.run((signal)=>libraryData.tags.search(mode==='Pagination'
+      ?{page:requestedPage,pageSize:requestedPageSize,query:requestedQuery,includeHierarchy:requestedHierarchy,sort:requestedSort,signal}
+      :{pageSize:requestedPageSize,query:requestedQuery,includeHierarchy:requestedHierarchy,sort:requestedSort,cursor,signal}),{
+        fallbackError:'Tags could not be loaded.',
+        mode:mode==='Infinite'&&!reset?'append':'replace',
+        apply:(response,loadMode)=>{
+          rows=loadMode==='append'?[...rows,...response.items]:response.items;
+          resultTotal=response.total;
+          nextCursor=response.nextCursor;
+        },
+      });
+    if(!result)return false;
+    const lastPage=Math.max(1,Math.ceil(resultTotal/requestedPageSize));
+    if(mode==='Pagination'&&requestedPage>lastPage){page=lastPage;return refresh(true)}
+    return true;
   }
+  async function reconcile(action:string):Promise<void>{if(!await refresh(true))throw new Error(collectionRequests.error||`${action} was applied, but tags could not be refreshed.`)}
+  function pending(action:string){return(phase:'applying'|'reconciling')=>pendingOperationFeedback(action,phase==='applying'?'applying':'refreshing')}
   function setPageSize(next:number){pageSize=next;page=1;void refresh(true)}
   function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}
   function setSort(value:string){sort=value;page=1;void refresh(true)}
@@ -75,17 +80,49 @@
   function realTagIdsFor(row:TagHierarchyRow){return row.realTagIds}
   function selectedRealTagIds(){const ids:string[]=[];for(const id of selectedIds){const row=rows.find((tag)=>tag.id===id);if(row)for(const realId of row.realTagIds)if(!ids.includes(realId))ids.push(realId)}return ids}
   function requestDelete(ids:string[]){if(!ids.length||mutating)return;pendingDeleteIds=[...ids];deleteDialogOpen=true}
-  async function deleteIds(ids:string[]){if(!ids.length||mutating)return;mutating=true;operationError='';try{const result=await libraryData.tags.delete(ids);feedback=mutationFeedback('Delete tags',result);retryDeleteIds=result.failed.map((failure)=>failure.id);selectedIds=selectedIds.filter((id)=>{const row=rows.find((tag)=>tag.id===id);return row?.realTagIds.some((realId)=>retryDeleteIds.includes(realId))??false});await refresh(true)}catch(error){feedback=null;retryDeleteIds=[];operationError=errorMessage(error,'Tags could not be deleted.')}finally{mutating=false}}
+  async function deleteIds(ids:string[]){
+    if(!ids.length||mutating)return;
+    operations.clearOutcome();
+    const result=await operations.run('Delete tags',()=>libraryData.tags.delete(ids),{
+      pending:pending('Delete tags'),
+      outcome:(value)=>mutationFeedback('Delete tags',value),
+      reconcile:()=>reconcile('Delete tags'),
+      reconcileError:'Tags were deleted, but the latest tag list could not be loaded.',
+    });
+    if(!result)return;
+    retryDeleteIds=result.failed.map((failure)=>failure.id);
+    selectedIds=selectedIds.filter((id)=>{const row=rows.find((tag)=>tag.id===id);return row?.realTagIds.some((realId)=>retryDeleteIds.includes(realId))??false});
+  }
   async function confirmDelete(){const ids=[...pendingDeleteIds];if(!ids.length||mutating)return;await deleteIds(ids);deleteDialogOpen=false;pendingDeleteIds=[]}
   function deleteSelected(){requestDelete(selectedRealTagIds())}
-  async function openCreate(){if(mutating||preparingCreate)return;preparingCreate=true;operationError='';try{const parentOptions=await libraryData.tags.parentOptions();modals=[...modals,{id:++modalSequence,mode:'create',tagId:'',name:'',color:'#9A78FF',parent:'',parentOptions}]}catch(error){operationError=errorMessage(error,'Parent tag options could not be loaded.')}finally{preparingCreate=false}}
+  async function openCreate(){if(mutating||preparingCreate)return;preparingCreate=true;operations.clearError();try{const parentOptions=await libraryData.tags.parentOptions();modals=[...modals,{id:++modalSequence,mode:'create',tagId:'',name:'',color:'#9A78FF',parent:'',parentOptions}]}catch(error){operations.setError(error,'Parent tag options could not be loaded.')}finally{preparingCreate=false}}
   function openEdit(tag:TagHierarchyRow){if(tag.synthetic||mutating)return;modals=[...modals,{id:++modalSequence,mode:'edit',tagId:tag.id,name:tag.name,color:tag.color,parent:tag.parent,parentOptions:[]}]}
   function closeModal(id:number){modals=modals.filter((modal)=>modal.id!==id)}
   function updateModal(id:number,patch:Partial<TagModal>){modals=modals.map((modal)=>modal.id===id?{...modal,...patch}:modal)}
-  async function saveModal(modal:TagModal){if((modal.mode==='create'&&!modal.name.trim())||mutating)return;mutating=true;operationError='';try{if(modal.mode==='create'){const created=await libraryData.tags.create(modal.name,modal.color,modal.parent);if(!created)throw new Error('The tag was not created.');feedback={tone:'ok',title:'Tag created',detail:`${created.tag_name} was created.`,failures:[]}}else{const result=await libraryData.tags.update(modal.tagId,{color:modal.color});feedback=mutationFeedback('Update tag color',result);if(result.failed.length)return}closeModal(modal.id);await refresh(true)}catch(error){feedback=null;operationError=errorMessage(error,'The tag could not be saved.')}finally{mutating=false}}
+  async function saveModal(modal:TagModal){
+    if((modal.mode==='create'&&!modal.name.trim())||mutating)return;
+    operations.clearOutcome();
+    if(modal.mode==='create'){
+      const created=await operations.run('Create tag',async()=>{const value=await libraryData.tags.create(modal.name,modal.color,modal.parent);if(!value)throw new Error('The tag was not created.');return value},{
+        pending:pending('Create tag'),
+        outcome:(value)=>({tone:'ok',title:'Tag created',detail:`${value.tag_name} was created.`,failures:[]}),
+        reconcile:()=>reconcile('Create tag'),
+        reconcileError:'The tag was created, but the latest tag list could not be loaded.',
+      });
+      if(created)closeModal(modal.id);
+      return;
+    }
+    const result=await operations.run('Update tag color',()=>libraryData.tags.update(modal.tagId,{color:modal.color}),{
+      pending:pending('Update tag color'),
+      outcome:(value)=>mutationFeedback('Update tag color',value),
+      reconcile:()=>reconcile('Update tag color'),
+      reconcileError:'The tag was updated, but the latest tag list could not be loaded.',
+    });
+    if(result&&!result.failed.length)closeModal(modal.id);
+  }
   function deleteRow(tag:TagHierarchyRow){requestDelete(realTagIdsFor(tag))}
   function filterAssets(tag:TagHierarchyRow){onfilterassets(realTagIdsFor(tag))}
-  onMount(()=>{let mounted=true;void(async()=>{try{await libraryData.initialize();if(mounted)await refresh(true)}catch(error){if(mounted)loadError=errorMessage(error,'The tag data source could not be initialized.')}})();return()=>{mounted=false;requests.cancel()}});
+  onMount(()=>{let mounted=true;void(async()=>{try{await libraryData.initialize();if(mounted)await refresh(true)}catch(error){if(mounted)collectionRequests.setError(errorMessage(error,'The tag data source could not be initialized.'))}})();return()=>{mounted=false;collectionRequests.cancel()}});
 </script>
 
 <V2PageLayout title="Tags" description="Search and manage hierarchical tags through the active data source.">
@@ -95,12 +132,12 @@
     {#if loadError}<V2ErrorState title="Tags could not be loaded" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     {#if operationError}<V2ErrorState title="Tag operation failed" message={operationError}/>{/if}
     <V2OperationFeedback {feedback} retryLabel={retryDeleteIds.length?'Retry failed':''} onretry={retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
-    <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${resultTotal} matches`}/><V2Badge text={includeHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text={preparingCreate?'Preparing tag…':mutating?'Applying change…':loading?'Loading…':'Ready'}/></V2Inline>{#snippet actions()}<V2CollectionControls id="tag-results" {sort} sortFields={[{value:'name',label:'Tag'},{value:'path',label:'Path'},{value:'assets',label:'Assets'},{value:'children',label:'Children'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
+    <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${resultTotal} matches`}/><V2Badge text={includeHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text={preparingCreate?'Preparing tag…':mutating?(operations.phase==='reconciling'?'Refreshing…':'Applying change…'):loading?'Loading…':'Ready'}/></V2Inline>{#snippet actions()}<V2CollectionControls id="tag-results" {sort} sortFields={[{value:'name',label:'Tag'},{value:'path',label:'Path'},{value:'assets',label:'Assets'},{value:'children',label:'Children'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
     <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><V2RoundCheckbox size="sm" checked={visibleSelection==='all'} indeterminate={visibleSelection==='some'} disabled={!rows.length||mutating} ariaLabel={visibleSelection==='all'?'Unselect all visible tags':'Select all visible tags'} onclick={toggleVisible}/></th><V2SortableHeader field="name" label="Tag" {sort} onsort={setSort}/><V2SortableHeader field="path" label="Path" {sort} class="v2-tag-path-column" onsort={setSort}/><V2SortableHeader field="assets" label="Assets" {sort} class="v2-collection-count-column" onsort={setSort}/><V2SortableHeader field="children" label="Children" {sort} class="v2-tag-children-column" onsort={setSort}/><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each rows as tag (tag.id)}<tr><td class="v2-tag-check-column"><V2RoundCheckbox size="sm" checked={selectedIds.includes(tag.id)} disabled={mutating} ariaLabel={`${selectedIds.includes(tag.id)?'Unselect':'Select'} ${tag.name}`} onclick={()=>toggleSelection(tag.id,!selectedIds.includes(tag.id))}/></td><td><span class="v2-tag-name"><V2ColorSwatch color={tag.color} size="sm"/><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent||'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.path}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button disabled={mutating} onclick={()=>filterAssets(tag)}>Filter assets</V2Button><V2Button disabled={mutating||tag.synthetic} title={tag.synthetic?'Generated parent node':'Edit tag color'} onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger" disabled={mutating} onclick={()=>deleteRow(tag)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">{loading?'Loading tags…':loadError?'Tags could not be loaded.':'No tags match this search mode.'}</td></tr>{/each}</tbody></V2Table></V2Card>
     {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} total={resultTotal} onpage={setPage}/>{:else}<V2InfiniteFooter loaded={rows.length} total={resultTotal} batchSize={pageSize} noun="tags" onloadmore={loadMore}/>{/if}
   </V2Zone>
 </V2PageLayout>
-{#each modals as modal (modal.id)}<V2Modal id={`tag-modal-${modal.id}`} title={modal.mode==='create'?'Create tag':`Edit ${modal.name}`} description={modal.mode==='create'?'Create a tag with an optional parent.':'Immich only supports changing a tag’s color. Its name and parent hierarchy are read-only.'} size="md" onclose={()=>closeModal(modal.id)}><V2Stack gap="md"><V2Field label="Name" value={modal.name} disabled={modal.mode==='edit'} onvalueinput={(value)=>updateModal(modal.id,{name:value})}/><V2ColorField id={`tag-color-${modal.id}`} label="Color" value={modal.color} usedColors={colorsInView} usedColorsLabel="Colors in view" onchange={(color)=>updateModal(modal.id,{color})}/>{#if modal.mode==='create'}<SelectField id={`tag-parent-modal-${modal.id}`} label="Parent" value={modal.parent} options={modal.parentOptions} allowEmpty={true} searchable={true} searchPlaceholder="Search parent tags or paths…" placeholder="No parent — root tag" onchange={(value)=>updateModal(modal.id,{parent:value})}/><V2Section title="Hierarchy preview"><V2Card><span class="v2-tag-preview"><V2ColorSwatch color={modal.color} size="sm"/><span class="v2-small">{modal.parent?`${modal.parent} / ${modal.name||'New tag'}`:modal.name||'Root tag'}</span></span></V2Card></V2Section>{:else}<V2Section title="Current hierarchy"><V2Card><V2Stack gap="xs"><span class="v2-tag-preview"><V2ColorSwatch color={modal.color} size="sm"/><span class="v2-small">{modal.parent?`${modal.parent} / ${modal.name}`:modal.name}</span></span><span class="v2-small v2-muted">Immich does not support moving an existing tag to another parent.</span></V2Stack></V2Card></V2Section>{/if}</V2Stack>{#snippet footer()}<V2Button disabled={mutating} onclick={()=>closeModal(modal.id)}>Cancel</V2Button><V2Button variant="primary" disabled={mutating||(modal.mode==='create'&&!modal.name.trim())} onclick={()=>void saveModal(modal)}>{mutating?'Saving…':modal.mode==='create'?'Create tag':'Save color'}</V2Button>{/snippet}</V2Modal>{/each}
+{#each modals as modal (modal.id)}<V2Modal id={`tag-modal-${modal.id}`} title={modal.mode==='create'?'Create tag':`Edit ${modal.name}`} description={modal.mode==='create'?'Create a tag with an optional parent.':'Immich only supports changing a tag’s color. Its name and parent hierarchy are read-only.'} size="md" onclose={()=>{if(!mutating)closeModal(modal.id)}}><V2Stack gap="md"><V2Field label="Name" value={modal.name} disabled={modal.mode==='edit'} onvalueinput={(value)=>updateModal(modal.id,{name:value})}/><V2ColorField id={`tag-color-${modal.id}`} label="Color" value={modal.color} usedColors={colorsInView} usedColorsLabel="Colors in view" onchange={(color)=>updateModal(modal.id,{color})}/>{#if modal.mode==='create'}<SelectField id={`tag-parent-modal-${modal.id}`} label="Parent" value={modal.parent} options={modal.parentOptions} allowEmpty={true} searchable={true} searchPlaceholder="Search parent tags or paths…" placeholder="No parent — root tag" onchange={(value)=>updateModal(modal.id,{parent:value})}/><V2Section title="Hierarchy preview"><V2Card><span class="v2-tag-preview"><V2ColorSwatch color={modal.color} size="sm"/><span class="v2-small">{modal.parent?`${modal.parent} / ${modal.name||'New tag'}`:modal.name||'Root tag'}</span></span></V2Card></V2Section>{:else}<V2Section title="Current hierarchy"><V2Card><V2Stack gap="xs"><span class="v2-tag-preview"><V2ColorSwatch color={modal.color} size="sm"/><span class="v2-small">{modal.parent?`${modal.parent} / ${modal.name}`:modal.name}</span></span><span class="v2-small v2-muted">Immich does not support moving an existing tag to another parent.</span></V2Stack></V2Card></V2Section>{/if}</V2Stack>{#snippet footer()}<V2Button disabled={mutating} onclick={()=>closeModal(modal.id)}>Cancel</V2Button><V2Button variant="primary" disabled={mutating||(modal.mode==='create'&&!modal.name.trim())} onclick={()=>void saveModal(modal)}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Saving…'):modal.mode==='create'?'Create tag':'Save color'}</V2Button>{/snippet}</V2Modal>{/each}
 
 <style>.v2-tag-preview{display:inline-flex;align-items:center;gap:8px;min-width:0}.v2-tag-create-pending{display:inline-flex;align-items:center;gap:8px}</style>
 {#if deleteDialogOpen}<ConfirmDialog title={pendingDeleteIds.length===1?'Delete tag?':'Delete tags?'} message={pendingDeleteIds.length===1?'This tag will be deleted from the current data source.':`Delete ${pendingDeleteIds.length} tags? This can affect hierarchical tag relationships.`} confirmLabel={pendingDeleteIds.length===1?'Delete tag':`Delete ${pendingDeleteIds.length} tags`} icon="trash" destructive={true} pending={mutating} onconfirm={()=>void confirmDelete()} onclose={()=>{if(!mutating){deleteDialogOpen=false;pendingDeleteIds=[]}}}/>{/if}
