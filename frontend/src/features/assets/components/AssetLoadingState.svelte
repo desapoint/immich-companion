@@ -1,8 +1,9 @@
 <script lang="ts">
+  import LoadingSpinner from '../../../lib/components/ui/LoadingSpinner.svelte';
 </script>
 
 <div class="loading-state" role="status" aria-live="polite">
-  <span class="spinner" aria-hidden="true"></span>
+  <LoadingSpinner />
   <div>
     <strong>Loading asset index</strong>
     <p>Searching synchronized Immich metadata…</p>
@@ -22,15 +23,6 @@
     background: var(--color-surface-raised);
   }
 
-  .spinner {
-    width: 1.4rem;
-    height: 1.4rem;
-    border: 0.16rem solid var(--color-border-strong);
-    border-top-color: var(--color-accent-strong);
-    border-radius: 50%;
-    animation: spin 800ms linear infinite;
-  }
-
   strong,
   p {
     display: block;
@@ -45,13 +37,5 @@
     margin-top: 0.2rem;
     color: var(--color-ink-muted);
     font-size: 0.72rem;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .spinner { animation: none; }
   }
 </style>
