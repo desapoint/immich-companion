@@ -268,9 +268,9 @@
 
   async function favorite(){if(!asset)return;const next=!asset.is_favorite;await runAction(next?'Favorite':'Unfavorite',(id)=>libraryData.assets.setFavorite(target(id),next))}
   async function archive(){if(!asset)return;const next=!asset.is_archived;await runAction(next?'Archive':'Unarchive',(id)=>libraryData.assets.setArchived(target(id),next))}
-  async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id))}
-  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id))}
-  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id))}
+  async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id)))}
+  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id)))}
+  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id)))}
 
   async function removeFromStack(){
     if(!asset)return;const id=asset.id,result=await runAction('Remove this asset from stack',(assetId)=>libraryData.assets.unstack(target(assetId)));
@@ -357,7 +357,6 @@
     </V2Inline>
     <V2Inline gap="sm">{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
   {/snippet}
-
   <div class="v2-viewer-workarea">
     <div class="v2-viewer-stage">
       <div class="v2-image-stage">{#if loading}<span class="v2-muted">Loading asset…</span>{:else if assetError}<V2ErrorState title="Asset unavailable" message={assetError} onretry={()=>currentId&&void loadCurrent(currentId)}/>{:else if mediaError}<V2ErrorState title={asset?.is_offline?'Source offline':'Media unavailable'} message={mediaError} retryLabel={mediaRefreshing?'Refreshing…':'Retry media'} onretry={()=>void retryMedia()}/>{:else if asset&&media}{#key mediaAttempt}<V2MediaViewport resource={media} assetType={asset.asset_type} alt={asset.original_file_name} controller={camera} onerror={markMediaFailed}/>{/key}{/if}</div>
