@@ -67,7 +67,7 @@ describe('live V2 asset repository',()=>{
     expect(result).toEqual({
       id,type:'IMAGE',original_file_name:'renamed.heic',original_mime_type:'image/heic',width:4032,height:3024,duration:null,
       taken_at:'2026-08-03T12:00:00Z',file_modified_at:'2026-08-04T12:00:00Z',is_favorite:false,is_archived:true,
-      restore_path:'/external/renamed.heic',
+      restore_path:'/external/renamed.heic',file_size_bytes:8_388_608,library_id:'library-1',is_offline:false,
     });
   });
 

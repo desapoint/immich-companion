@@ -12,6 +12,7 @@
   import V2Section from './V2Section.svelte';
   import V2StackFilmstrip from './V2StackFilmstrip.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
+  import V2ViewerAssetFacts from './V2ViewerAssetFacts.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
   import { AssetMutationController } from '../state/assetMutations.svelte';
@@ -64,7 +65,6 @@
   const canPrevious=$derived(stackActive?stackIndex>0:Boolean(sessionIndex>0||navigation.previousId));
   const canNext=$derived(stackActive?stackIndex>=0&&stackIndex<stackMembers.length-1:Boolean((sessionIndex>=0&&sessionIndex<sessionIds.length-1)||navigation.nextId));
   const positionLabel=$derived(sessionPosition!==null?`${sessionPosition} / ${sessionTotal||collectionTotal||navigation.total}`:sessionIndex>=0?`Viewer session · ${sessionIndex+1} / ${Math.max(sessionIds.length,1)}`:'—');
-  const sizeLabel=$derived(formatFileSize(asset?.file_size_bytes));
   const isStackPrimary=$derived(Boolean(currentId&&stackPrimaryId===currentId));
 
   function stableMerge(previous:string[],live:string[]):string[]{const seen=new Set(previous);return[...previous,...live.filter((id)=>!seen.has(id))]}
@@ -133,7 +133,6 @@
     if(stackActive&&media){stackDetailCache={...stackDetailCache,[next.id]:next};stackMediaCache={...stackMediaCache,[next.id]:media}}
   }
 
-  function formatFileSize(bytes:number|null|undefined):string{if(bytes===null||bytes===undefined)return'Unknown size';if(bytes<1024)return`${bytes} B`;const units=['KB','MB','GB','TB'];let value=bytes/1024,index=0;while(value>=1024&&index<units.length-1){value/=1024;index+=1}return`${value.toFixed(value>=10?1:2)} ${units[index]}`}
   async function preloadImage(url:string):Promise<void>{if(!url)return;const image=new Image();image.decoding='async';image.src=url;try{await image.decode()}catch{await new Promise<void>((resolve)=>{image.onload=()=>resolve();image.onerror=()=>resolve()})}}
 
   async function preloadStackMember(member:AssetRecord,generation=stackGeneration,expectedStackId=stackId):Promise<boolean>{
@@ -288,8 +287,7 @@
       <aside class="v2-viewer-info">
         {#if navigationError&&!stackActive}<V2Section title="Navigation"><V2Card><span class="v2-small v2-muted">{navigationError} Session navigation remains available when possible.</span></V2Card></V2Section>{/if}
         {#if asset}
-          <V2Section title="Details"><V2Card><b>{asset.original_file_name}</b><p class="v2-small v2-muted">{asset.width??'—'} × {asset.height??'—'} · {asset.original_mime_type??'Unknown type'} · {sizeLabel}</p>{#if asset.original_path}<p class="viewer-path v2-small v2-muted" title={asset.original_path}>{asset.original_path}</p>{/if}{#if asset.is_offline}<p class="v2-small v2-muted">The original source is currently offline. A cached or generated derivative may still be viewable.</p>{/if}{#if needsVideoProxy}<p class="v2-small v2-muted">Original format is preserved in metadata; playback uses a browser-compatible derivative.</p>{:else if needsDecodedImage}<p class="v2-small v2-muted">Original format is preserved; viewing uses a decoded browser-compatible derivative.</p>{/if}</V2Card></V2Section>
-          <V2Section title="Metadata"><V2Card><dl class="viewer-facts"><div><dt>Taken</dt><dd>{new Date(asset.file_created_at).toLocaleString()}</dd></div><div><dt>Source</dt><dd>{asset.library_id?`External library · ${asset.library_id}`:'Immich upload'}</dd></div><div><dt>File size</dt><dd>{sizeLabel}</dd></div></dl></V2Card></V2Section>
+          <V2ViewerAssetFacts filename={asset.original_file_name} width={asset.width} height={asset.height} mimeType={asset.original_mime_type} fileSizeBytes={asset.file_size_bytes} path={asset.original_path} offline={asset.is_offline} takenAt={asset.file_created_at} libraryId={asset.library_id} delivery={media?.delivery}/>
           <V2Section title="Relationships"><V2Card><div class="viewer-relations">
             <div class="viewer-relation"><b>Albums</b><div class="viewer-pills">{#each asset.albums as album (album.id)}<V2Badge text={album.name} title={`Search assets in ${album.name}`} onclick={()=>filterRelationship('album',album.id)}/>{:else}<span class="v2-small v2-muted">No albums</span>{/each}</div></div>
             <div class="viewer-relation"><b>Tags</b><div class="viewer-pills">{#each asset.tags as tag (tag.id)}<V2Badge text={tag.name} title={`Search assets tagged ${tag.name}`} onclick={()=>filterRelationship('tag',tag.id)}/>{:else}<span class="v2-small v2-muted">No tags</span>{/each}</div></div>
@@ -326,5 +324,5 @@
 
 <style>
   .v2-viewer-workarea{position:relative;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto}.v2-viewer-operation-feedback{position:absolute;z-index:4;top:10px;left:50%;width:min(440px,calc(100% - 24px));transform:translateX(-50%);pointer-events:none}.v2-stack-inspection-bar{display:grid;gap:8px;padding:9px 12px 7px;border-top:1px solid var(--v2-line);background:#0d131b;min-width:0}.v2-stack-inspection-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
-  .viewer-path{overflow-wrap:anywhere;word-break:break-word}.viewer-facts{display:grid;gap:.5rem;margin:0}.viewer-facts div{display:grid;grid-template-columns:4.5rem minmax(0,1fr);gap:.65rem}.viewer-facts dt,.viewer-relation>b,.viewer-status-grid b{color:var(--v2-muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.05em}.viewer-facts dd{margin:0;font-size:.75rem;overflow-wrap:anywhere}.viewer-relations{display:grid;gap:.85rem}.viewer-relation{display:grid;gap:.4rem}.viewer-pills{display:flex;flex-wrap:wrap;gap:.35rem}.viewer-pills :global(.v2-badge){font-size:8px}.viewer-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.viewer-status-grid div{display:grid;gap:.25rem}
+  .viewer-relation>b,.viewer-status-grid b{color:var(--v2-muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.05em}.viewer-relations{display:grid;gap:.85rem}.viewer-relation{display:grid;gap:.4rem}.viewer-pills{display:flex;flex-wrap:wrap;gap:.35rem}.viewer-pills :global(.v2-badge){font-size:8px}.viewer-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.viewer-status-grid div{display:grid;gap:.25rem}
 </style>
