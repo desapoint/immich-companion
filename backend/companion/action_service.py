@@ -427,17 +427,20 @@ class AssetActionService:
                     )
                 )
                 covered_by_global_sync = False
-                if relation == "album":
-                    coverage = getattr(self._sync, "album_reconciliation_will_cover", None)
-                    if coverage is not None:
-                        covered_by_global_sync = await coverage(successful_relations)
+                coverage = getattr(
+                    self._sync,
+                    f"{relation}_reconciliation_will_cover",
+                    None,
+                )
+                if coverage is not None:
+                    covered_by_global_sync = await coverage(successful_relations)
 
                 if covered_by_global_sync:
-                    present = operation == "add_album"
+                    present = operation in {"add_album", "add_tag"}
                     for relation_id in successful_relations:
                         for asset_id in initial[relation_id][0]:
                             await self._assets.apply_membership_event(
-                                "album",
+                                relation,
                                 relation_id,
                                 asset_id,
                                 present,
