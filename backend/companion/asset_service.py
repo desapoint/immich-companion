@@ -45,6 +45,45 @@ class _LegacyPacedCatalogSyncStep(CatalogSyncStep):
 class AssetSyncService(_LegacyAssetSyncService):
     """Live V2 staged sync with extracted steps replacing legacy stages incrementally."""
 
+    async def album_reconciliation_will_cover(self, album_ids: list[UUID]) -> bool:
+        """Return whether the active global sync will still traverse every target album."""
+
+        unique_album_ids = list(dict.fromkeys(album_ids))
+        if not unique_album_ids:
+            return False
+
+        status = await self.status()
+        active = status.active
+        if active is None:
+            return False
+
+        if active.phase in {"catalogs", "assets", "stacks"}:
+            return True
+        if active.phase != "relationships":
+            return False
+        if not active.cursor:
+            return True
+
+        cursor_parts = active.cursor.split(":", 2)
+        if len(cursor_parts) < 2 or cursor_parts[0] != "albums":
+            return False
+        try:
+            current_album_index = int(cursor_parts[1])
+        except ValueError:
+            return False
+
+        # The relationship stage traverses albums in the same catalog order. Only
+        # albums strictly after the checkpoint are guaranteed to receive a future
+        # authoritative traversal. The current album may already have passed the
+        # changed asset's page, so it is deliberately not considered covered.
+        catalog = await self._immich.list_album_catalog()
+        positions = {album.id: index for index, album in enumerate(catalog, start=1)}
+        return all(
+            (position := positions.get(album_id)) is not None
+            and position > current_album_index
+            for album_id in unique_album_ids
+        )
+
     async def reconcile_targets(
         self,
         asset_ids: list[UUID],
