@@ -172,7 +172,7 @@
       const index=stackMembers.findIndex((member)=>member.id===source.id),priority:AssetRecord[]=[];
       for(const candidate of [source,stackMembers[index-1],stackMembers[index+1],...stackMembers])if(candidate&&!priority.some((member)=>member.id===candidate.id))priority.push(candidate);
       for(const member of priority)void preloadStackMember(member,generation,expectedStackId);
-    }catch(error){if(currentStackGeneration(generation,expectedStackId)){assetError=errorMessage(error,'Stack members could not be loaded.');stackActive=false;stackGeneration+=1}}
+    }catch(error){if(currentStackGeneration(generation,expectedStackId)){assetError=errorMessage(error,'Stack members could not be loaded.');stackLoading=false;stackActive=false;stackGeneration+=1}}
     finally{if(generation===stackGeneration)stackLoading=false}
   }
 
