@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import V2Shell from './components/V2Shell.svelte';
   import V2ToastViewport from './components/V2ToastViewport.svelte';
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
@@ -58,6 +58,10 @@
   let activeKey = $state<V2PageKey>(keyFromLocation());
   const toasts = provideV2Toasts(new V2ToastController());
   onDestroy(() => toasts.destroy());
+  onMount(() => {
+    document.body.classList.add('v2-active');
+    return () => document.body.classList.remove('v2-active');
+  });
 
   function navigate(key: string): void {
     const nextKey = key as V2PageKey;
