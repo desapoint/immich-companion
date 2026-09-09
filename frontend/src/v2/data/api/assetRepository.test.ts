@@ -4,6 +4,7 @@ import { assetSearchExpression,createAssetApiProfile,type AssetApiFetcher } from
 const id='11111111-1111-4111-8111-111111111111';
 const secondId='22222222-2222-4222-8222-222222222222';
 const summary={id,type:'IMAGE',original_file_name:'photo.heic',original_mime_type:'image/heic',width:4032,height:3024,duration:null,taken_at:'2026-08-01T12:00:00Z',file_modified_at:'2026-08-02T12:00:00Z',is_favorite:true,is_archived:false,is_trashed:false,is_offline:false,is_edited:false,visibility:'timeline',has_metadata:true,live_photo_video_id:null,file_size_bytes:42,tags:[{id:'tag-1',name:'Vacation',color:'#fff'}],albums:[{id:'album-1',name:'Summer'}],stack:{id:'stack-1',primary_asset_id:id,asset_count:2,assets:[{id},{id:secondId}]},source:{kind:'external',library_id:'library-1',original_path:'/external/photo.heic'}};
+const detail={id,owner_id:'owner-1',library_id:'library-1',type:'IMAGE',original_file_name:'renamed.heic',original_path:'/external/renamed.heic',original_mime_type:'image/heic',width:4032,height:3024,duration:null,taken_at:'2026-08-03T12:00:00Z',file_modified_at:'2026-08-04T12:00:00Z',created_at:'2026-08-03T12:00:00Z',updated_at:'2026-08-04T12:00:00Z',is_favorite:false,is_archived:true,is_trashed:true,is_offline:false,is_edited:true,visibility:'timeline',live_photo_video_id:null,exif_info:{fileSizeInByte:8_388_608},people:[],tags:[{id:'tag-live',name:'Live tag',value:'live/tag',color:'#ABCDEF'}],stack:null,immich_url:null};
 const response=(body:unknown,status=200)=>new Response(status===204?null:JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
 
 describe('live V2 asset repository',()=>{
@@ -50,13 +51,23 @@ describe('live V2 asset repository',()=>{
   });
 
   it('combines live Immich details with companion album context',async()=>{
-    const detail={id,owner_id:'owner-1',library_id:'library-1',type:'IMAGE',original_file_name:'renamed.heic',original_path:'/external/renamed.heic',original_mime_type:'image/heic',width:4032,height:3024,duration:null,taken_at:'2026-08-03T12:00:00Z',file_modified_at:'2026-08-04T12:00:00Z',created_at:'2026-08-03T12:00:00Z',updated_at:'2026-08-04T12:00:00Z',is_favorite:false,is_archived:true,is_trashed:false,is_offline:false,is_edited:true,visibility:'timeline',live_photo_video_id:null,exif_info:{fileSizeInByte:8_388_608},tags:[{id:'tag-live',name:'Live tag',value:'live/tag',color:'#ABCDEF'}],stack:null};
     const fetcher=vi.fn<AssetApiFetcher>(async(input)=>String(input).endsWith('/summary')?response(summary):response(detail));
     const result=await createAssetApiProfile(fetcher).assets.details(id);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       id,owner_id:'owner-1',original_file_name:'renamed.heic',file_size_bytes:8_388_608,is_favorite:false,is_archived:true,
       albums:[{id:'album-1',name:'Summer'}],tags:[{id:'tag-live',name:'Live tag',value:'live/tag',color:'#ABCDEF'}],
+    });
+  });
+
+  it('maps the API-only restore detail without requiring a local asset summary',async()=>{
+    const fetcher=vi.fn<AssetApiFetcher>(async()=>response(detail));
+    const result=await createAssetApiProfile(fetcher).assets.getTrashById(id);
+    expect(fetcher).toHaveBeenCalledWith(`/api/restore/${id}`,expect.anything());
+    expect(result).toEqual({
+      id,type:'IMAGE',original_file_name:'renamed.heic',original_mime_type:'image/heic',width:4032,height:3024,duration:null,
+      taken_at:'2026-08-03T12:00:00Z',file_modified_at:'2026-08-04T12:00:00Z',is_favorite:false,is_archived:true,
+      restore_path:'/external/renamed.heic',
     });
   });
 
