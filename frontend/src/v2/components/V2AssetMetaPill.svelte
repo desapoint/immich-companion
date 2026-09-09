@@ -139,7 +139,7 @@
   .v2-asset-meta-popover{position:fixed;z-index:10020;display:grid;gap:7px;overflow:hidden;padding:8px;border:1px solid var(--v2-line,#2a3544);border-radius:9px;background:var(--v2-surface-2,#17202b);color:var(--v2-text,#eef3f8);box-shadow:0 14px 32px rgba(0,0,0,.4);font-family:var(--font-sans,Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif);font-size:11px;font-weight:400;line-height:1.35}
   .v2-asset-meta-popover strong{font-size:11px;font-weight:700;color:var(--v2-text,#eef3f8)}
   .v2-asset-meta-popover-summary{color:var(--v2-muted,#91a1b4)}
-  .v2-asset-meta-popover-list{display:flex;flex-wrap:wrap;align-content:flex-start;gap:5px;overflow-y:auto;max-height:inherit;padding:1px 0;scrollbar-gutter:stable both-edges;scrollbar-width:thin;scrollbar-color:#475970 transparent}
+  .v2-asset-meta-popover-list{display:flex;flex-wrap:wrap;align-content:flex-start;gap:5px;overflow-y:auto;max-height:inherit;padding:1px 0;scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:#475970 transparent}
   .v2-asset-meta-popover-list::-webkit-scrollbar{width:6px;height:6px}
   .v2-asset-meta-popover-list::-webkit-scrollbar-track{background:transparent}
   .v2-asset-meta-popover-list::-webkit-scrollbar-thumb{border:1px solid var(--v2-surface-2,#17202b);border-radius:999px;background:#475970}
