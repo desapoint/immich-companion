@@ -151,11 +151,11 @@ async def test_album_reconciliation_is_covered_before_relationship_stage(phase: 
 
 
 @pytest.mark.asyncio
-async def test_relationship_start_still_covers_all_albums() -> None:
+async def test_relationship_cursor_without_position_is_not_assumed_to_cover_album() -> None:
     instance, _, _ = service(10)
     await set_active_sync(instance, "relationships", None)
 
-    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is True
+    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is False
 
 
 @pytest.mark.asyncio
