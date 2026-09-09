@@ -86,19 +86,24 @@ class AssetSyncService(_LegacyAssetSyncService):
         )
 
     async def tag_reconciliation_will_cover(self, tag_ids: list[UUID]) -> bool:
-        """Return whether global tag reconciliation is definitely still upcoming.
+        """Return whether a full global sync definitely has tag work still ahead.
 
-        Once the relationships stage starts, the current implementation can move
-        from album traversal into asset-oriented tag reconciliation without first
-        advancing its durable cursor. Treat that entire phase as ambiguous rather
-        than claiming coverage that may already have passed a changed asset.
+        Incremental runs may choose asset-oriented tag reconciliation over only
+        the generation's bounded asset window, so they cannot guarantee coverage
+        for a user mutation made after that window was established. Once any
+        relationship work begins, tag progress is also intentionally treated as
+        ambiguous until the sync exposes a durable tag-specific boundary.
         """
 
         if not list(dict.fromkeys(tag_ids)):
             return False
         status = await self.status()
         active = status.active
-        return active is not None and active.phase in {"catalogs", "assets", "stacks"}
+        return (
+            active is not None
+            and getattr(active, "mode", None) == "full"
+            and active.phase in {"catalogs", "assets", "stacks"}
+        )
 
     async def _repair_tags_from_asset_details(self, asset_ids: list[UUID]) -> bool:
         """Repair a bounded changed set directly from authoritative asset details."""
