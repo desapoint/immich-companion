@@ -1,5 +1,6 @@
 """Regression coverage for adaptive album relation repair selection."""
 
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -9,6 +10,7 @@ from companion.config import Settings
 from companion.immich import ImmichAlbum
 
 ALBUM_ID = UUID("44444444-4444-4444-8444-444444444444")
+ALBUM_TWO = UUID("55555555-5555-4555-8555-555555555555")
 ASSET_IDS = [
     UUID("11111111-1111-4111-8111-111111111111"),
     UUID("22222222-2222-4222-8222-222222222222"),
@@ -16,9 +18,9 @@ ASSET_IDS = [
 ]
 
 
-def album(asset_count: int) -> ImmichAlbum:
+def album(asset_count: int, album_id: UUID = ALBUM_ID) -> ImmichAlbum:
     return ImmichAlbum(
-        id=ALBUM_ID,
+        id=album_id,
         albumName="Test album",
         assetCount=asset_count,
         createdAt="2026-09-09T12:00:00Z",
@@ -29,13 +31,14 @@ def album(asset_count: int) -> ImmichAlbum:
 class FakeImmich:
     def __init__(self, asset_count: int) -> None:
         self.current_album = album(asset_count)
+        self.catalog = [self.current_album]
         self.catalog_calls = 0
         self.asset_album_calls: list[UUID] = []
         self.album_page_calls = 0
 
     async def list_album_catalog(self):
         self.catalog_calls += 1
-        return [self.current_album]
+        return self.catalog
 
     async def list_albums_for_asset(self, asset_id: UUID):
         self.asset_album_calls.append(asset_id)
@@ -86,6 +89,13 @@ def service(asset_count: int) -> tuple[AssetSyncService, FakeImmich, FakeAssets]
     return instance, immich, assets
 
 
+async def set_active_sync(instance: AssetSyncService, phase: str, cursor: str | None) -> None:
+    async def status():
+        return SimpleNamespace(active=SimpleNamespace(phase=phase, cursor=cursor))
+
+    instance.status = status  # type: ignore[method-assign]
+
+
 @pytest.mark.asyncio
 async def test_single_asset_uses_asset_oriented_repair_for_large_album() -> None:
     instance, immich, assets = service(16_569)
@@ -129,3 +139,40 @@ async def test_equal_call_count_favors_asset_oriented_repair() -> None:
     assert immich.album_page_calls == 0
     assert assets.asset_repairs == ASSET_IDS[:2]
     assert assets.album_repairs == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["catalogs", "assets", "stacks"])
+async def test_album_reconciliation_is_covered_before_relationship_stage(phase: str) -> None:
+    instance, _, _ = service(10)
+    await set_active_sync(instance, phase, None)
+
+    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is True
+
+
+@pytest.mark.asyncio
+async def test_relationship_start_still_covers_all_albums() -> None:
+    instance, _, _ = service(10)
+    await set_active_sync(instance, "relationships", None)
+
+    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is True
+
+
+@pytest.mark.asyncio
+async def test_current_album_is_not_treated_as_future_validation() -> None:
+    instance, immich, _ = service(10)
+    immich.catalog = [album(10, ALBUM_ID), album(10, ALBUM_TWO)]
+    await set_active_sync(instance, "relationships", "albums:1:2")
+
+    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is False
+    assert await instance.album_reconciliation_will_cover([ALBUM_TWO]) is True
+
+
+@pytest.mark.asyncio
+async def test_tag_or_finalizing_stage_means_album_reconciliation_has_passed() -> None:
+    instance, _, _ = service(10)
+    await set_active_sync(instance, "relationships", "tags:20:0")
+    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is False
+
+    await set_active_sync(instance, "finalizing", None)
+    assert await instance.album_reconciliation_will_cover([ALBUM_ID]) is False
