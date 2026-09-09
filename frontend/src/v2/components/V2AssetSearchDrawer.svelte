@@ -40,7 +40,7 @@
 </script>
 
 <button type="button" class="v2-drawer-backdrop" aria-label="Close expert search editor" tabindex="-1" onclick={onclose}></button>
-<aside bind:this={drawer} class="v2-drawer" role="dialog" aria-modal="true" aria-label="Expert asset search editor" onkeydown={handleKeydown}>
+<div bind:this={drawer} class="v2-drawer" role="dialog" aria-modal="true" aria-label="Expert asset search editor" tabindex="-1" onkeydown={handleKeydown}>
   <div class="v2-drawer-head"><div><h2>Build asset search expression</h2><p class="v2-muted">Edit the draft here. Results change only when you apply/search.</p></div><V2Button onclick={onclose}>✕</V2Button></div>
   <div class="v2-drawer-body">
     <V2Section title="Expression structure"><V2Stack gap="md">
@@ -58,7 +58,7 @@
     </V2Section>
   </div>
   <div class="v2-drawer-foot"><V2Badge text={`${ruleCount} search token${ruleCount===1?'':'s'} · ${groupCount} group${groupCount===1?'':'s'}`}/><V2Inline gap="sm"><V2Button onclick={reset}>Reset</V2Button><V2Button onclick={onclose}>Cancel</V2Button>{#if onsave}<V2Button variant="positive" onclick={onsave}>Save search</V2Button>{/if}<V2Button variant="primary" onclick={onapply}>Apply & Search</V2Button></V2Inline></div>
-</aside>
+</div>
 
 <style>
   :global(.v2-drawer .v2-button[data-variant="positive"]){border-color:#2f8f5b;background:rgba(47,143,91,.14);color:#8be0ad}

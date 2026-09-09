@@ -16,7 +16,7 @@
   } = $props();
 
   let open = $state(false);
-  let anchor = $state<HTMLSpanElement>();
+  let anchor = $state<HTMLButtonElement | HTMLSpanElement>();
   let popup = $state<HTMLDivElement>();
   let popupTop = $state(0);
   let popupBottom = $state<number|null>(null);
@@ -79,11 +79,6 @@
     onclick();
   }
 
-  function handleKeydown(event: KeyboardEvent) {
-    if (!onclick || (event.key !== 'Enter' && event.key !== ' ')) return;
-    activate(event);
-  }
-
   $effect(() => {
     if (!open) return;
     const reposition = () => positionPopup();
@@ -101,23 +96,34 @@
   });
 </script>
 
-<span
-  bind:this={anchor}
-  class="v2-asset-meta-pill"
-  class:interactive={Boolean(onclick)}
-  data-kind={kind}
-  role={onclick ? 'button' : 'group'}
-  tabindex={onclick ? 0 : undefined}
-  aria-label={ariaLabel}
-  onpointerenter={show}
-  onpointerleave={scheduleClose}
-  onclick={activate}
-  onkeydown={handleKeydown}
-  onpointerdown={(event)=>onclick&&event.stopPropagation()}
->
+{#snippet content()}
   {#if kind === 'albums'}<Folder size={12} aria-hidden="true"/>{:else if kind === 'tags'}<Tags size={12} aria-hidden="true"/>{:else}<Layers3 size={12} aria-hidden="true"/>{/if}
   <span>{count}</span>
-</span>
+{/snippet}
+
+{#if onclick}
+  <button
+    bind:this={anchor}
+    type="button"
+    class="v2-asset-meta-pill interactive"
+    data-kind={kind}
+    aria-label={ariaLabel}
+    onpointerenter={show}
+    onpointerleave={scheduleClose}
+    onclick={activate}
+    onpointerdown={(event)=>event.stopPropagation()}
+  >{@render content()}</button>
+{:else}
+  <span
+    bind:this={anchor}
+    class="v2-asset-meta-pill"
+    data-kind={kind}
+    role="group"
+    aria-label={ariaLabel}
+    onpointerenter={show}
+    onpointerleave={scheduleClose}
+  >{@render content()}</span>
+{/if}
 
 {#if open}
   <div
