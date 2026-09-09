@@ -913,7 +913,7 @@ class AssetSyncService:
         assets = await asyncio.gather(
             *(self._immich.get_asset(identifier) for identifier in asset_ids)
         )
-        stack_payload_by_asset: dict[UUID, dict[str, object] | None] = {}
+        stack_payload_by_asset: dict[UUID, dict[str, object]] = {}
         if include_stacks:
             for stack in await self._immich.list_stacks():
                 payload, member_ids = self._stack_payload(stack)
@@ -945,6 +945,11 @@ class AssetSyncService:
                             break
                 await self._assets.replace_asset_tag_memberships(asset.id, present)
                 metrics["tag_links_resolved"] += len(present)
+        if include_stacks:
+            await self._assets.replace_asset_stack_snapshots(
+                asset_ids,
+                stack_payload_by_asset,
+            )
         return metrics
 
     async def _repair_relations_now(self, relations: list[tuple[str, UUID]]) -> dict[str, int]:

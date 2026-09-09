@@ -58,7 +58,7 @@ def stack_asset(asset_id: UUID, filename: str) -> ImmichStackAsset:
 
 
 class FakeImmich:
-    def __init__(self, assets: list[ImmichAsset], stack: ImmichStack) -> None:
+    def __init__(self, assets: list[ImmichAsset], stack: ImmichStack | None) -> None:
         self.assets = assets
         self.stack = stack
         self.calls: list[str] = []
@@ -111,11 +111,12 @@ class FakeImmich:
 
     async def list_stacks(self) -> list[ImmichStack]:
         self.calls.append("stacks")
-        return [self.stack]
+        return [self.stack] if self.stack is not None else []
 
     async def iter_stacks(self):
         self.calls.append("stacks")
-        yield self.stack
+        if self.stack is not None:
+            yield self.stack
 
     async def iter_album_asset_ids(self, _album_id: UUID, **_kwargs):
         self.calls.append("album_memberships")
@@ -221,6 +222,11 @@ class FakeAssetRepository:
     async def refresh_asset(self, asset):
         self.calls.append("refresh_asset")
         self.assets.append(asset)
+
+    async def replace_asset_stack_snapshots(self, asset_ids, stack_payload_by_asset):
+        self.calls.append("replace_asset_stacks")
+        self.repaired_stack_ids = list(asset_ids)
+        self.repaired_stack_payloads = dict(stack_payload_by_asset)
 
 
 class IncrementalFakeAssetRepository(FakeAssetRepository):
@@ -721,6 +727,52 @@ async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traver
 
     assert counters == {"albums": 1, "tags": 1, "memberships": 2}
     assert assets.calls[-2:] == ["replace_album", "replace_tag"]
+
+
+@pytest.mark.asyncio
+async def test_targeted_asset_repair_persists_authoritative_stack_snapshots() -> None:
+    members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "member.png")]
+    stack = ImmichStack(
+        id=STACK_ID,
+        primaryAssetId=ASSET_TWO,
+        assets=[
+            stack_asset(ASSET_ONE, "primary.png"),
+            stack_asset(ASSET_TWO, "member.png"),
+        ],
+    )
+    immich = FakeImmich(members, stack)
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+
+    await service._repair_targets_now([ASSET_ONE, ASSET_TWO], include_stacks=True)
+
+    assert assets.repaired_stack_ids == [ASSET_ONE, ASSET_TWO]
+    assert assets.repaired_stack_payloads[ASSET_ONE]["primaryAssetId"] == str(ASSET_TWO)
+    assert assets.repaired_stack_payloads[ASSET_TWO]["primaryAssetId"] == str(ASSET_TWO)
+    assert assets.calls[-1] == "replace_asset_stacks"
+
+
+@pytest.mark.asyncio
+async def test_targeted_asset_repair_clears_removed_stack_snapshots() -> None:
+    immich = FakeImmich([asset(ASSET_ONE, "detached.png")], None)
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+
+    await service._repair_targets_now([ASSET_ONE], include_stacks=True)
+
+    assert assets.repaired_stack_ids == [ASSET_ONE]
+    assert assets.repaired_stack_payloads == {}
+    assert assets.calls[-1] == "replace_asset_stacks"
 
 
 @pytest.mark.asyncio

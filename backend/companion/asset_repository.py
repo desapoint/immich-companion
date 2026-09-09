@@ -512,6 +512,24 @@ class AssetRepository:
                 )
             )
 
+    async def replace_asset_stack_snapshots(
+        self,
+        asset_ids: list[UUID],
+        stack_payload_by_asset: dict[UUID, dict[str, object]],
+    ) -> None:
+        """Persist authoritative stack state for one targeted repair set."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if not unique_ids:
+            return
+        async with self._database.sessions() as session, session.begin():
+            for asset_id in unique_ids:
+                await session.execute(
+                    update(AssetRecord)
+                    .where(AssetRecord.id == asset_id)
+                    .values(stack=stack_payload_by_asset.get(asset_id))
+                )
+
     async def stack_asset_ids(self, asset_id: UUID) -> list[UUID]:
         """Return the locally synchronized members of an asset's stack."""
 
@@ -1757,6 +1775,7 @@ class AssetRepository:
             statement = select(AssetRecord.id).where(
                 AssetRecord.id.in_(target_ids),
                 AssetRecord.stack.is_not(None),
+                func.json_typeof(AssetRecord.stack) != "null",
             )
         elif operation == "set_stack_primary":
             async with self._database.sessions() as session:
@@ -1765,6 +1784,7 @@ class AssetRepository:
                         select(AssetRecord.id, AssetRecord.stack).where(
                             AssetRecord.id.in_(target_ids),
                             AssetRecord.stack.is_not(None),
+                            func.json_typeof(AssetRecord.stack) != "null",
                         )
                     )
                 ).all()

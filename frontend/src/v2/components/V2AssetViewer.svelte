@@ -41,7 +41,7 @@
     {keys:'−',description:'Zoom out'},{keys:'0',description:'Reset zoom / fit image'},{keys:'1',description:'Actual pixel size (1:1)'},
   ];
 
-  let currentId=$state<string|null>(assetId),asset=$state<AssetDetailRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
+  let currentId=$state<string|null>(null),asset=$state<AssetDetailRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
   let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),loadRequest=0;
   let relationDialog=$state<RelationDialog>(null),relationAlbum=$state(''),relationTags=$state<string[]>([]);
   let sessionInitialized=$state(false),sessionPage=$state(1),sessionPosition=$state<number|null>(null),sessionTotal=$state(0),sessionPages=$state<Record<number,string[]>>({}),sessionInfinite=$state<string[]>([]);
