@@ -1208,7 +1208,9 @@ def create_app(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Select-all materialization requires an all-matching expression.",
             )
-        return await repository.list_matching_asset_ids(selection.expression)
+        return await repository.list_matching_asset_ids(
+            selection.expression, selection.excluded_ids
+        )
 
     def selection_view(record) -> SelectionSetView:
         if record.expires_at <= datetime.now(record.expires_at.tzinfo):

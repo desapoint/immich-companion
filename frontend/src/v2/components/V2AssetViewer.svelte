@@ -22,6 +22,7 @@
   import { useOptionalV2Toasts } from '../state/toasts.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
+  import { isViewerSelectionShortcut } from './viewerSelection';
   import type { AssetDetailRecord, AssetRecord, AssetSelectionTarget, MediaResource, MutationResult, ViewerNavigationWindow } from '../data/contracts';
 
   type RelationDialog='album'|'tags'|null;
@@ -29,10 +30,10 @@
   type ResultMode='Pagination'|'Infinite';
 
   let {
-    open=false,assetId=null,assetIds=[],resultMode='Pagination',collectionPage=1,collectionPageSize=24,collectionTotal=0,startStack=false,onclose,onnavigate,onmutated,onfilterrelation,
+    open=false,assetId=null,assetIds=[],resultMode='Pagination',collectionPage=1,collectionPageSize=24,collectionTotal=0,startStack=false,onclose,onnavigate,onmutated,onfilterrelation,isselected,ontoggleselection,
   }: {
     open?:boolean;assetId?:string|null;assetIds?:string[];resultMode?:ResultMode;collectionPage?:number;collectionPageSize?:number;collectionTotal?:number;startStack?:boolean;
-    onclose:()=>void;onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>;onmutated?:()=>void|Promise<void>;onfilterrelation?:(kind:'album'|'tag',id:string)=>void|Promise<void>;
+    onclose:()=>void;onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>;onmutated?:()=>void|Promise<void>;onfilterrelation?:(kind:'album'|'tag',id:string)=>void|Promise<void>;isselected?:(assetId:string)=>boolean;ontoggleselection?:(assetId:string)=>void;
   }=$props();
 
   const camera=new ViewerViewportController();
@@ -42,6 +43,7 @@
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
     {keys:'Esc',description:'Close viewer'},{keys:'←',description:'Previous asset / stack member'},{keys:'→',description:'Next asset / stack member'},
+    {keys:'Space',description:'Toggle selection on shown asset'},
     {keys:'F',description:'Toggle favorite on shown asset'},{keys:'A',description:'Toggle archive on shown asset'},{keys:['+','='],description:'Zoom in'},
     {keys:'−',description:'Zoom out'},{keys:'0',description:'Reset zoom / fit image'},{keys:'1',description:'Actual pixel size (1:1)'},
   ];
@@ -70,6 +72,8 @@
   const canNext=$derived(stackActive?stackIndex>=0&&stackIndex<stackMembers.length-1:Boolean((sessionIndex>=0&&sessionIndex<sessionIds.length-1)||navigation.nextId));
   const positionLabel=$derived(sessionPosition!==null?`${sessionPosition} / ${sessionTotal||collectionTotal||navigation.total}`:sessionIndex>=0?`Viewer session · ${sessionIndex+1} / ${Math.max(sessionIds.length,1)}`:'—');
   const isStackPrimary=$derived(Boolean(currentId&&stackPrimaryId===currentId));
+  const selectionEnabled=$derived(Boolean(isselected&&ontoggleselection));
+  const currentSelected=$derived(Boolean(currentId&&isselected?.(currentId)));
   onDestroy(()=>{relations.destroy();removableRelations.destroy()});
 
   function stableMerge(previous:string[],live:string[]):string[]{const seen=new Set(previous);return[...previous,...live.filter((id)=>!seen.has(id))]}
@@ -271,8 +275,9 @@
   function openRelationDialog(kind:RelationDialog){if(!kind||!asset||actionBusy)return;relationDialog=kind;relationAlbum='';relationTags=[];mutations.clearError();if(kind==='album')void searchAlbumOptions('');if(kind==='tags')void searchTagOptions('')}
   async function applyRelationDialog(){if(!asset||!relationDialog||actionBusy)return;const kind=relationDialog,id=asset.id;let result:MutationResult|null=null;if(kind==='album'&&relationAlbum){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),relationAlbum),target(id));publishMutation('Add to album')}if(kind==='tags'&&relationTags.length){result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),relationTags),target(id));publishMutation('Add tags')}await reconcilePage(result);if(result)relationDialog=null}
   async function applyCreatedRelation(kind:'album'|'tag',value:string){if(!asset||actionBusy)return;const id=asset.id;let result:MutationResult|null=null;if(kind==='album'){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),value),target(id));publishMutation('Add to album')}else{result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),[value]),target(id));publishMutation('Add tags')}await reconcilePage(result)}
-  function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
-  function handleShortcut(event:KeyboardEvent){if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||editableTarget(event.target))return;if(event.key==='ArrowLeft'&&canPrevious&&!navigationLoading&&!actionBusy){event.preventDefault();previous();return}if(event.key==='ArrowRight'&&canNext&&!navigationLoading&&!actionBusy){event.preventDefault();next();return}if((event.key==='f'||event.key==='F')&&asset&&!loading&&!actionBusy){event.preventDefault();void favorite();return}if((event.key==='a'||event.key==='A')&&asset&&!loading&&!actionBusy){event.preventDefault();void archive();return}if(isVideo)return;if(event.key==='+'||event.key==='='){event.preventDefault();camera.setZoom(camera.zoom*1.25);return}if(event.key==='-'||event.key==='−'){event.preventDefault();camera.setZoom(camera.zoom/1.25);return}if(event.key==='0'){event.preventDefault();camera.fit();return}if(event.key==='1'){event.preventDefault();camera.actual()}}
+  function interactiveTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('button,a[href],input,textarea,select,[contenteditable="true"],[role="button"]'))}
+  function toggleCurrentSelection(){if(currentId&&ontoggleselection)ontoggleselection(currentId)}
+  function handleShortcut(event:KeyboardEvent){const onInteractiveControl=interactiveTarget(event.target);if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||onInteractiveControl)return;if(isViewerSelectionShortcut(event,onInteractiveControl)&&currentId&&ontoggleselection){event.preventDefault();toggleCurrentSelection();return}if(event.key==='ArrowLeft'&&canPrevious&&!navigationLoading&&!actionBusy){event.preventDefault();previous();return}if(event.key==='ArrowRight'&&canNext&&!navigationLoading&&!actionBusy){event.preventDefault();next();return}if((event.key==='f'||event.key==='F')&&asset&&!loading&&!actionBusy){event.preventDefault();void favorite();return}if((event.key==='a'||event.key==='A')&&asset&&!loading&&!actionBusy){event.preventDefault();void archive();return}if(isVideo)return;if(event.key==='+'||event.key==='='){event.preventDefault();camera.setZoom(camera.zoom*1.25);return}if(event.key==='-'||event.key==='−'){event.preventDefault();camera.setZoom(camera.zoom/1.25);return}if(event.key==='0'){event.preventDefault();camera.fit();return}if(event.key==='1'){event.preventDefault();camera.actual()}}
 </script>
 
 <svelte:window onkeydown={handleShortcut}/>
@@ -285,7 +290,7 @@
       {#if currentRemovedFromStack}<V2Badge tone="warn" text="Removed from stack"/>{/if}
       {#if actionStatus}<V2Badge text={actionStatus}/>{/if}{#if asset?.is_offline}<V2Badge text="Source offline"/>{/if}{#if needsVideoProxy}<V2Badge text="Transcoded playback"/>{:else if needsDecodedImage}<V2Badge text="Decoded preview"/>{/if}
     </V2Inline>
-    <V2Inline gap="sm">{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
+    <V2Inline gap="sm">{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
   {/snippet}
   <div class="v2-viewer-workarea">
     {#if actionFeedback?.tone==='pending'}<div class="v2-viewer-operation-feedback"><V2OperationFeedback feedback={actionFeedback}/></div>{/if}

@@ -299,3 +299,40 @@ async def test_selection_relationships_return_union_with_mixed_applicability_cou
     assert "album_assets" in album_sql
     assert "tag_assets" in tag_sql
     assert "assets.is_trashed IS false" in album_sql
+
+
+@pytest.mark.asyncio
+async def test_materialized_selection_excludes_deselected_asset_ids() -> None:
+    included_id = UUID("11111111-1111-4111-8111-111111111111")
+    excluded_id = UUID("22222222-2222-4222-8222-222222222222")
+
+    class Result:
+        def all(self):
+            return [included_id]
+
+    class Session:
+        def __init__(self):
+            self.statement = None
+
+        async def scalars(self, statement):
+            self.statement = statement
+            return Result()
+
+    session = Session()
+
+    class Database:
+        @asynccontextmanager
+        async def sessions(self):
+            yield session
+
+    repository = AssetRepository(Database())  # type: ignore[arg-type]
+    ids = await repository.list_matching_asset_ids(SearchGroup(), [excluded_id])
+
+    assert ids == [included_id]
+    sql = str(session.statement.compile(dialect=postgresql.dialect()))
+    assert "assets.id NOT IN" in sql
+    assert str(excluded_id) in str(
+        session.statement.compile(
+            dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}
+        )
+    )

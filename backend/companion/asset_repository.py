@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
@@ -1691,17 +1692,20 @@ class AssetRepository:
                 ).all()
             )
 
-    async def list_matching_asset_ids(self, expression: SearchGroup) -> list[UUID]:
+    async def list_matching_asset_ids(
+        self, expression: SearchGroup, excluded_ids: Sequence[UUID] = ()
+    ) -> list[UUID]:
         """Materialize a search result as explicit IDs at selection time."""
 
         predicate = self._compile_group(expression)
+        statement = select(AssetRecord.id).where(AssetRecord.is_trashed.is_(False), predicate)
+        if excluded_ids:
+            statement = statement.where(AssetRecord.id.not_in(excluded_ids))
         async with self._database.sessions() as session:
             return list(
                 (
                     await session.scalars(
-                        select(AssetRecord.id)
-                        .where(AssetRecord.is_trashed.is_(False), predicate)
-                        .order_by(AssetRecord.id)
+                        statement.order_by(AssetRecord.id)
                     )
                 ).all()
             )

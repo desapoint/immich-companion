@@ -90,6 +90,13 @@ describe('live V2 asset repository',()=>{
     expect(calls).toEqual(['/api/assets/selection/capabilities','/api/assets/actions/plan','/api/assets/actions/execute']);
   });
 
+  it('materializes an all-matching selection through backend resolution with exclusions',async()=>{
+    const fetcher=vi.fn<AssetApiFetcher>(async(_input,init)=>{expect(JSON.parse(String(init?.body))).toMatchObject({mode:'all_matching',excluded_ids:[secondId]});return response([id])});
+    const target={kind:'query' as const,criteria:{mode:'simple' as const,filters:{favorite:'Favorite' as const},sort:{field:'takenDate' as const,direction:'desc' as const}},excludedIds:[secondId]};
+    await expect(createAssetApiProfile(fetcher).assets.materializeSelection(target)).resolves.toEqual([id]);
+    expect(fetcher).toHaveBeenCalledWith('/api/assets/selection/ids',expect.objectContaining({method:'POST'}));
+  });
+
   it('loads removable relationship options for the complete selection',async()=>{
     const fetcher=vi.fn<AssetApiFetcher>(async(_input,init)=>{expect(JSON.parse(String(init?.body))).toEqual({mode:'explicit',ids:[id,secondId],excluded_ids:[]});return response({albums:[{id:'album-1',name:'Summer',selected_asset_count:1}],tags:[{id:'tag-1',name:'Vacation',selected_asset_count:2}]})});
     await expect(createAssetApiProfile(fetcher).assets.removableRelationships({kind:'ids',ids:[id,secondId]})).resolves.toEqual({

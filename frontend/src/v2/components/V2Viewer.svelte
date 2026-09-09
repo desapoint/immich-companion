@@ -19,6 +19,8 @@
     onmutated,
     onrestore,
     onfilterrelation,
+    isselected,
+    ontoggleselection,
   }: {
     open?: boolean;
     title?: string;
@@ -36,11 +38,13 @@
     onmutated?: () => void | Promise<void>;
     onrestore?: (assetId: string) => boolean | Promise<boolean>;
     onfilterrelation?: (kind: 'album' | 'tag', id: string) => void | Promise<void>;
+    isselected?: (assetId: string) => boolean;
+    ontoggleselection?: (assetId: string) => void;
   } = $props();
 </script>
 
 {#if mode === 'restore'}
   <V2RestoreViewer {open} {assetId} {assetIds} {restoreBusy} {onclose} {onnavigate} {onrestore} />
 {:else}
-  <V2AssetViewer {open} {assetId} {assetIds} {resultMode} {collectionPage} {collectionPageSize} {collectionTotal} {startStack} {onclose} {onnavigate} {onmutated} {onfilterrelation} />
+  <V2AssetViewer {open} {assetId} {assetIds} {resultMode} {collectionPage} {collectionPageSize} {collectionTotal} {startStack} {onclose} {onnavigate} {onmutated} {onfilterrelation} {isselected} {ontoggleselection} />
 {/if}
