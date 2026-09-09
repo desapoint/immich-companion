@@ -49,20 +49,22 @@
   });
 </script>
 
-<div class="v2-asset-tile" class:selected class:selection-mode={selectionMode} class:has-pills={hasPills} data-variant={visualVariant} data-asset-id={String(assetId)}>
+<div class="v2-asset-tile" class:selected class:selection-mode={selectionMode} data-variant={visualVariant} data-asset-id={String(assetId)}>
   <button class="v2-asset-main" type="button" aria-label={selectionMode ? `${selected ? 'Deselect' : 'Select'} ${label}` : `Preview ${label}`} aria-pressed={selectionMode ? selected : undefined} onclick={onactivate} onpointerdown={onpointerdown} ondragstart={(event) => event.preventDefault()}>
     <V2LazyAssetMedia {cacheKey} resolve={resolveImage} alt=""/>
-    <span class="v2-asset-meta"><b>{label}</b>{#if sublabel}<small>{sublabel}</small>{/if}</span>
+    <span class="v2-asset-meta">
+      {#if hasPills}
+        <span class="v2-asset-pill-row" aria-label="Asset metadata">
+          {#if favorite}<span class="v2-asset-favorite-pill" aria-label="Favorite"><Heart size={12} fill="currentColor" aria-hidden="true"/></span>{/if}
+          {#if albums.length}<V2AssetMetaPill kind="albums" count={albums.length} items={albums}/>{/if}
+          {#if tags.length}<V2AssetMetaPill kind="tags" count={tags.length} items={tags}/>{/if}
+          {#if stackCount>0}<V2AssetMetaPill kind="stack" count={stackCount}/>{/if}
+        </span>
+      {/if}
+      <b>{label}</b>
+      {#if sublabel}<small>{sublabel}</small>{/if}
+    </span>
   </button>
-
-  {#if hasPills}
-    <div class="v2-asset-pill-row" aria-label="Asset metadata">
-      {#if favorite}<span class="v2-asset-favorite-pill" aria-label="Favorite"><Heart size={12} fill="currentColor" aria-hidden="true"/></span>{/if}
-      {#if albums.length}<V2AssetMetaPill kind="albums" count={albums.length} items={albums}/>{/if}
-      {#if tags.length}<V2AssetMetaPill kind="tags" count={tags.length} items={tags}/>{/if}
-      {#if stackCount>0}<V2AssetMetaPill kind="stack" count={stackCount}/>{/if}
-    </div>
-  {/if}
 
   <span class="v2-asset-checkbox-zone"><V2RoundCheckbox checked={selected} ariaLabel={`${selected ? 'Deselect' : 'Select'} ${label}`} onclick={onselect}/></span>
   <button class="v2-asset-preview-zone" class:visible={selectionMode} type="button" aria-label={`Preview ${label}`} title="Preview" tabindex={selectionMode ? 0 : -1} disabled={!selectionMode} onclick={(event) => {event.stopPropagation();onpreview?.();}} onpointerdown={(event) => event.stopPropagation()}>
