@@ -25,7 +25,7 @@
   import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
-  import type { TrashAssetRecord, TrashSelectionTarget, ViewerNavigationWindow } from '../data/contracts';
+  import type { MutationResult, TrashAssetRecord, TrashSelectionTarget, ViewerNavigationWindow } from '../data/contracts';
 
   const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionRestoreResultMode'});
   let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null),confirmRestoreAll=$state(false);
@@ -43,7 +43,9 @@
   async function refresh(reset=true):Promise<boolean>{
     if(loading&&!reset)return false;
     if(reset)nextCursor=null;
-    const query=collection.resultMode==='Pagination'?{page:collection.page,pageSize:collection.pageSize,sort:parseSort()}:{pageSize:collection.pageSize,cursor:reset?null:nextCursor,sort:parseSort()};
+    const requestedPage=collection.page;
+    const query=collection.resultMode==='Pagination'?{page:requestedPage,pageSize:collection.pageSize,sort:parseSort()}:{pageSize:collection.pageSize,cursor:reset?null:nextCursor,sort:parseSort()};
+    let clampedPage=requestedPage;
     const result=await collectionRequests.run((signal)=>libraryData.assets.searchTrash({...query,signal}),{
       fallbackError:'Trash could not be loaded.',
       mode:collection.resultMode==='Infinite'&&!reset?'append':'replace',
@@ -52,8 +54,10 @@
         total=response.total;
         nextCursor=response.nextCursor;
         collection.clampPage(total);
+        clampedPage=collection.page;
       },
     });
+    if(result!==null&&collection.resultMode==='Pagination'&&reset&&clampedPage!==requestedPage)return refresh(true);
     return result!==null;
   }
   async function reconcile():Promise<void>{if(!await refresh(true))throw new Error(collectionRequests.error||'Restore was applied, but trash could not be refreshed.')}
@@ -84,8 +88,8 @@
   function setPageSize(value:number){collection.setPageSize(value,total);void refresh(true)}
   function setMode(value:ResultMode){collection.setMode(value);collection.reset();void refresh(true)}
   function setPage(value:number){collection.setPage(value);void refresh(true)}
-  async function runRestore(nextTarget:TrashSelectionTarget){
-    if(mutating)return;
+  async function runRestore(nextTarget:TrashSelectionTarget):Promise<MutationResult|null>{
+    if(mutating)return null;
     operations.clearOutcome();
     const result=await operations.run('Restore',()=>libraryData.assets.restore(nextTarget),{
       pending:restorePending,
@@ -93,12 +97,15 @@
       reconcile,
       reconcileError:'Restore was applied, but the latest trash state could not be loaded.',
     });
-    if(!result)return;
-    retryTarget=result.failed.length?{kind:'ids',ids:result.failed.map((failure)=>failure.id)}:null;
-    clearSelection();
+    if(!result)return null;
+    const failedIds=result.failed.map((failure)=>failure.id);
+    retryTarget=failedIds.length?{kind:'ids',ids:failedIds}:null;
+    selection=failedIds.length?selectVisibleAssets(failedIds):emptyAssetSelection<string>();
+    return result;
   }
   async function restoreSelected(){await runRestore(target())}
-  async function restoreAll(){if(mutating)return;await runRestore({kind:'all',excludedIds:[]});collection.reset();confirmRestoreAll=false}
+  async function restoreVisible(id:string):Promise<boolean>{const result=await runRestore({kind:'ids',ids:[id]});return Boolean(result&&result.affectedIds.includes(id)&&!result.failed.some((failure)=>failure.id===id))}
+  async function restoreAll(){if(mutating)return;collection.reset();const result=await runRestore({kind:'all',excludedIds:[]});if(result)confirmRestoreAll=false}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await refresh(true)}catch(error){collectionRequests.setError(errorMessage(error,'The trash data source could not be initialized.'))}})();return()=>{collectionRequests.cancel();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
@@ -114,5 +121,5 @@
     {#if total===0}<p class="v2-muted">{loading?'Loading trash…':loadError?'Trash could not be loaded.':'Trash is empty.'}</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={items.length} noun="trash assets" onpage={setPage} onloadmore={loadMore}/>{/if}
   </V2Zone>
 </V2PageLayout>
-<V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} onclose={closeViewer} onnavigate={handleViewerNavigate}/>
+<V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} restoreBusy={mutating} onclose={closeViewer} onnavigate={handleViewerNavigate} onrestore={restoreVisible}/>
 {#if confirmRestoreAll}<ConfirmDialog title="Restore all trash assets?" message={`Restore all ${total.toLocaleString()} assets currently in trash?`} confirmLabel="Restore all" icon="check" pending={mutating} onconfirm={()=>void restoreAll()} onclose={()=>{if(!mutating)confirmRestoreAll=false}}/>{/if}
