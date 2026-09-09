@@ -34,6 +34,7 @@ from companion.action_schema import (
     AssetActionResult,
     AssetActionTaskStart,
     AssetSelectionCapabilities,
+    AssetSelectionRelationships,
     AssetSelectionRequest,
     AssetSelectionResolution,
     SelectionSetMembershipRequest,
@@ -1183,6 +1184,19 @@ def create_app(
         repository = require_asset_repository()
         try:
             return await repository.selection_capabilities(selection)
+        except ValueError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/selection/relationships",
+        response_model=AssetSelectionRelationships,
+    )
+    async def asset_selection_relationships(
+        selection: AssetSelectionRequest,
+    ) -> AssetSelectionRelationships:
+        repository = require_asset_repository()
+        try:
+            return await repository.selection_relationships(selection)
         except ValueError as error:
             raise map_action_error(error) from error
 

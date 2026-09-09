@@ -147,6 +147,21 @@ class AssetSelectionCapabilities(BaseModel):
     can_remove_complete_stack: bool
 
 
+class AssetSelectionRelationship(BaseModel):
+    """One relationship present on at least one asset in a selection."""
+
+    id: UUID
+    name: str
+    selected_asset_count: int
+
+
+class AssetSelectionRelationships(BaseModel):
+    """Union of removable relationships across a backend-resolved selection."""
+
+    albums: list[AssetSelectionRelationship]
+    tags: list[AssetSelectionRelationship]
+
+
 class AssetActionPlanRequest(BaseModel):
     """Request a reviewable action plan for a resolved selection."""
 

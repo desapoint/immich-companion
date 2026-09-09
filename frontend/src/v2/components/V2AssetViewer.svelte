@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   import V2AssetRelationModal from './V2AssetRelationModal.svelte';
+  import V2AssetRelationRemoveModal from './V2AssetRelationRemoveModal.svelte';
   import V2Badge from './V2Badge.svelte';
   import V2Button from './V2Button.svelte';
   import V2Card from './V2Card.svelte';
@@ -17,12 +18,14 @@
   import { ViewerViewportController } from './viewerViewport.svelte';
   import { AssetMutationController } from '../state/assetMutations.svelte';
   import { AssetRelationOptionsController } from '../state/assetRelationOptions.svelte';
+  import { AssetRemovableRelationshipsController } from '../state/assetRemovableRelationships.svelte';
   import { useOptionalV2Toasts } from '../state/toasts.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { AssetDetailRecord, AssetRecord, AssetSelectionTarget, MediaResource, MutationResult, ViewerNavigationWindow } from '../data/contracts';
 
   type RelationDialog='album'|'tags'|null;
+  type RemoveRelationDialog='album'|'tags'|null;
   type ResultMode='Pagination'|'Infinite';
 
   let {
@@ -34,6 +37,7 @@
 
   const camera=new ViewerViewportController();
   const relations=new AssetRelationOptionsController();
+  const removableRelations=new AssetRemovableRelationshipsController();
   const toasts=useOptionalV2Toasts();
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
@@ -44,7 +48,7 @@
 
   let currentId=$state<string|null>(null),asset=$state<AssetDetailRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
   let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),loadRequest=0;
-  let relationDialog=$state<RelationDialog>(null),relationAlbum=$state(''),relationTags=$state<string[]>([]);
+  let relationDialog=$state<RelationDialog>(null),removeRelationDialog=$state<RemoveRelationDialog>(null),removeRelationValues=$state<string[]>([]),relationAlbum=$state(''),relationTags=$state<string[]>([]);
   let sessionInitialized=$state(false),sessionPage=$state(1),sessionPosition=$state<number|null>(null),sessionTotal=$state(0),sessionPages=$state<Record<number,string[]>>({}),sessionInfinite=$state<string[]>([]);
 
   let stackActive=$state(false),stackLoading=$state(false),stackAutoEntered=$state(false),stackId=$state<string|null>(null),stackPrimaryId=$state<string|null>(null),stackLiveIds=$state<string[]>([]),stackMembers=$state<AssetRecord[]>([]),stackRemovedIds=$state<Set<string>>(new Set()),stackReadyIds=$state<Set<string>>(new Set()),stackDetailCache=$state<Record<string,AssetDetailRecord>>({}),stackMediaCache=$state<Record<string,MediaResource>>({}),stackPendingId=$state<string|null>(null),stackExists=$state(true);
@@ -66,6 +70,7 @@
   const canNext=$derived(stackActive?stackIndex>=0&&stackIndex<stackMembers.length-1:Boolean((sessionIndex>=0&&sessionIndex<sessionIds.length-1)||navigation.nextId));
   const positionLabel=$derived(sessionPosition!==null?`${sessionPosition} / ${sessionTotal||collectionTotal||navigation.total}`:sessionIndex>=0?`Viewer session · ${sessionIndex+1} / ${Math.max(sessionIds.length,1)}`:'—');
   const isStackPrimary=$derived(Boolean(currentId&&stackPrimaryId===currentId));
+  onDestroy(()=>{relations.destroy();removableRelations.destroy()});
 
   function stableMerge(previous:string[],live:string[]):string[]{const seen=new Set(previous);return[...previous,...live.filter((id)=>!seen.has(id))]}
   function detailFromRecord(record:AssetRecord):AssetDetailRecord{return{...record,albums:record.albums??[]}}
@@ -110,7 +115,7 @@
 
   async function loadCurrent(id:string){
     if(stackActive&&stackDetailCache[id]&&stackMediaCache[id]){asset=stackDetailCache[id];media=stackMediaCache[id];mediaAttempt+=1;loading=false;navigationLoading=false;assetError='';mediaError='';relationDialog=null;return}
-    const request=++loadRequest;loading=true;assetError='';mediaError='';navigationError='';navigationLoading=true;relationDialog=null;
+    const request=++loadRequest;loading=true;assetError='';mediaError='';navigationError='';navigationLoading=true;relationDialog=null;removeRelationDialog=null;removableRelations.cancel();
     try{
       const [nextAsset,nextNavigation]=await Promise.all([
         libraryData.assets.details(id),libraryData.navigation.asset(id).catch((error)=>{if(request===loadRequest)navigationError=errorMessage(error,'Navigation could not be loaded.');return emptyNavigation()}),
@@ -230,8 +235,10 @@
   async function favorite(){if(!asset)return;const next=!asset.is_favorite;await runAction(next?'Favorite':'Unfavorite',(id)=>libraryData.assets.setFavorite(target(id),next))}
   async function archive(){if(!asset)return;const next=!asset.is_archived;await runAction(next?'Archive':'Unarchive',(id)=>libraryData.assets.setArchived(target(id),next))}
   async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id)))}
-  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id)))}
-  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id)))}
+  async function removeAllTags(){await runAction('Remove all tags',(id)=>libraryData.assets.removeTags(target(id)))}
+  async function removeAllAlbums(){await runAction('Remove all albums',(id)=>libraryData.assets.removeFromAlbums(target(id)))}
+  function openRemoveRelationDialog(kind:Exclude<RemoveRelationDialog,null>){if(!asset)return;removeRelationDialog=kind;removeRelationValues=[];void removableRelations.load(target(asset.id))}
+  async function applyRemoveRelationDialog(){if(!asset||!removeRelationDialog||!removeRelationValues.length)return;const kind=removeRelationDialog,ids=[...removeRelationValues],result=kind==='album'?await runAction('Remove selected albums',(id)=>libraryData.assets.removeFromAlbums(target(id),ids)):await runAction('Remove selected tags',(id)=>libraryData.assets.removeTags(target(id),ids));if(result)removeRelationDialog=null}
 
   async function removeFromStack(){if(!asset)return;const id=asset.id,result=await runAction('Remove this asset from stack',(assetId)=>libraryData.assets.unstack(target(assetId)));if(!result?.affectedIds.includes(id))return;stackRemovedIds=new Set([...stackRemovedIds,id]);stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);await refreshLiveStack()}
   async function setStackPrimary(){if(!asset)return;const id=asset.id,result=await runAction('Set stack primary',(assetId)=>libraryData.assets.setStackPrimary(assetId));if(!result?.affectedIds.includes(id))return;await refreshLiveStack(id)}
@@ -313,13 +320,16 @@
 
   {#snippet footer()}
     <V2Button disabled={!canPrevious||navigationLoading||actionBusy} onclick={previous}>← Previous</V2Button>
-    <V2Inline gap="sm" wrap={true}><V2Button disabled={!asset||loading||actionBusy} onclick={favorite}>{asset?.is_favorite?'Unfavorite':'Favorite'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={archive}>{asset?.is_archived?'Unarchive':'Archive'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('album')}>Album</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('tags')}>Tags</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={sync}>Sync</V2Button>{#if asset?.tags.length}<V2Button disabled={actionBusy} onclick={removeTags}>Remove tags</V2Button>{/if}<V2Button disabled={!asset||loading||actionBusy} onclick={removeAlbums}>Remove from albums</V2Button><V2Button variant="danger" disabled={!asset||loading||actionBusy} onclick={trash}>Trash</V2Button></V2Inline>
+    <V2Inline gap="sm" wrap={true}><V2Button disabled={!asset||loading||actionBusy} onclick={favorite}>{asset?.is_favorite?'Unfavorite':'Favorite'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={archive}>{asset?.is_archived?'Unarchive':'Archive'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('album')}>Album</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('tags')}>Tags</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={sync}>Sync</V2Button>{#if asset?.tags.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('tags')}>Remove tags…</V2Button><V2Button disabled={actionBusy} onclick={removeAllTags}>Remove all tags</V2Button>{/if}{#if asset?.albums.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('album')}>Remove from albums…</V2Button><V2Button disabled={actionBusy} onclick={removeAllAlbums}>Remove all albums</V2Button>{/if}<V2Button variant="danger" disabled={!asset||loading||actionBusy} onclick={trash}>Trash</V2Button></V2Inline>
     <V2Button disabled={!canNext||navigationLoading||actionBusy} onclick={next}>Next →</V2Button>
   {/snippet}
 </V2ViewerShell>
 
 {#if relationDialog}
   <V2AssetRelationModal kind={relationDialog} selectedCount={1} albumValue={relationAlbum} tagValues={relationTags} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} busy={actionBusy} onalbumchange={(value)=>relationAlbum=value} ontagschange={(values)=>relationTags=values} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} oncreatealbum={(input)=>relations.createAlbum(input)} oncreatetag={(input)=>relations.createTag(input)} oncreated={async(kind,option)=>applyCreatedRelation(kind,option.value)} onclose={()=>{if(!actionBusy)relationDialog=null}} onapply={()=>void applyRelationDialog()}/>
+{/if}
+{#if removeRelationDialog}
+  <V2AssetRelationRemoveModal kind={removeRelationDialog} selectedCount={1} values={removeRelationValues} options={removeRelationDialog==='album'?removableRelations.albums:removableRelations.tags} loading={removableRelations.loading} error={removableRelations.error} busy={actionBusy} onvalueschange={(values)=>removeRelationValues=values} onclose={()=>{if(!actionBusy)removeRelationDialog=null}} onapply={()=>void applyRemoveRelationDialog()}/>
 {/if}
 
 <style>

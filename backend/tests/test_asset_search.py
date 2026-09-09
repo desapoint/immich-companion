@@ -1,5 +1,6 @@
 """Structured search validation and SQL compilation coverage."""
 
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 import pytest
@@ -7,6 +8,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.dialects import postgresql
 
+from companion.action_schema import AssetSelectionRequest
 from companion.asset_repository import ASPECT_RATIO_RELATIVE_TOLERANCE, AssetRepository
 from companion.asset_schema import SearchCondition, SearchGroup, StructuredAssetSearchQuery
 from companion.models import AssetRecord
@@ -246,3 +248,54 @@ def test_structured_sort_defaults_and_invalid_values() -> None:
         StructuredAssetSearchQuery(sort_field="checksum")
     with pytest.raises(ValidationError):
         StructuredAssetSearchQuery(sort_direction="random")
+
+
+@pytest.mark.asyncio
+async def test_selection_relationships_return_union_with_mixed_applicability_counts() -> None:
+    album_id = UUID("44444444-4444-4444-8444-444444444444")
+    tag_id = UUID("55555555-5555-4555-8555-555555555555")
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def all(self):
+            return self.rows
+
+    class Session:
+        def __init__(self):
+            self.statements = []
+            self.results = [
+                Result([(album_id, "Shared album", 1)]),
+                Result([(tag_id, "Shared tag", 2)]),
+            ]
+
+        async def execute(self, statement):
+            self.statements.append(statement)
+            return self.results.pop(0)
+
+    session = Session()
+
+    class Database:
+        @asynccontextmanager
+        async def sessions(self):
+            yield session
+
+    repository = AssetRepository(Database())  # type: ignore[arg-type]
+    relationships = await repository.selection_relationships(
+        AssetSelectionRequest(
+            mode="explicit",
+            ids=[
+                UUID("11111111-1111-4111-8111-111111111111"),
+                UUID("22222222-2222-4222-8222-222222222222"),
+            ],
+        )
+    )
+
+    assert relationships.albums[0].selected_asset_count == 1
+    assert relationships.tags[0].selected_asset_count == 2
+    album_sql = str(session.statements[0].compile(dialect=postgresql.dialect()))
+    tag_sql = str(session.statements[1].compile(dialect=postgresql.dialect()))
+    assert "album_assets" in album_sql
+    assert "tag_assets" in tag_sql
+    assert "assets.is_trashed IS false" in album_sql

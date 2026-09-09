@@ -90,6 +90,27 @@ describe('live V2 asset repository',()=>{
     expect(calls).toEqual(['/api/assets/selection/capabilities','/api/assets/actions/plan','/api/assets/actions/execute']);
   });
 
+  it('loads removable relationship options for the complete selection',async()=>{
+    const fetcher=vi.fn<AssetApiFetcher>(async(_input,init)=>{expect(JSON.parse(String(init?.body))).toEqual({mode:'explicit',ids:[id,secondId],excluded_ids:[]});return response({albums:[{id:'album-1',name:'Summer',selected_asset_count:1}],tags:[{id:'tag-1',name:'Vacation',selected_asset_count:2}]})});
+    await expect(createAssetApiProfile(fetcher).assets.removableRelationships({kind:'ids',ids:[id,secondId]})).resolves.toEqual({
+      albums:[{value:'album-1',label:'Summer',subtitle:'Linked to 1 selected asset',selectedAssetCount:1}],
+      tags:[{value:'tag-1',label:'Vacation',subtitle:'Linked to 2 selected assets',selectedAssetCount:2}],
+    });
+    expect(fetcher).toHaveBeenCalledWith('/api/assets/selection/relationships',expect.objectContaining({method:'POST'}));
+  });
+
+  it('sends chosen relationship ids while preserving empty ids for remove all',async()=>{
+    const plans:unknown[]=[];
+    const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{const path=String(input);if(path.endsWith('/plan')){plans.push(JSON.parse(String(init?.body)));return response({id:`plan-${plans.length}`,applicable_count:1,skipped_count:1,missing_ids:[]})}return response({applied_ids:[id],failed_ids:[]})});
+    const assets=createAssetApiProfile(fetcher).assets,target={kind:'ids' as const,ids:[id,secondId]};
+    await assets.removeTags(target,['tag-1','tag-2']);
+    await assets.removeFromAlbums(target);
+    expect(plans).toEqual([
+      expect.objectContaining({action:'remove_tag',relation_ids:['tag-1','tag-2']}),
+      expect.objectContaining({action:'remove_album',relation_ids:[]}),
+    ]);
+  });
+
   it('always resolves and sends a stack primary',async()=>{
     const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{const path=String(input);if(path.endsWith('/resolve'))return response({ids:[secondId,id],missing_ids:[]});if(path.endsWith('/plan')){expect(JSON.parse(String(init?.body))).toMatchObject({action:'stack',stack_resolution:'move_selected',stack_primary_asset_id:secondId});return response({id:'plan-2',applicable_count:2,skipped_count:0,missing_ids:[]})}return response({applied_ids:[secondId,id],failed_ids:[]})});
     await createAssetApiProfile(fetcher).assets.stack({kind:'ids',ids:[secondId,id]});

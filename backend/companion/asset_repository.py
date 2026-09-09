@@ -31,6 +31,8 @@ from sqlalchemy.dialects.postgresql import insert
 from companion.action_schema import (
     AssetActionOperation,
     AssetSelectionCapabilities,
+    AssetSelectionRelationship,
+    AssetSelectionRelationships,
     AssetSelectionRequest,
     AssetSelectionResolution,
     AssetSelectionSummary,
@@ -1602,6 +1604,68 @@ class AssetRepository:
                 and str(stack.get("primaryAssetId")) != str(single.id)
             ),
             can_remove_complete_stack=bool(stack),
+        )
+
+    async def selection_relationships(
+        self, selection: AssetSelectionRequest
+    ) -> AssetSelectionRelationships:
+        """Return relationship options attached to any active selected asset."""
+
+        if selection.selection_id is not None:
+            selected_ids = select(SelectionSetMemberRecord.asset_id).where(
+                SelectionSetMemberRecord.selection_id == selection.selection_id
+            )
+            predicate = AssetRecord.id.in_(selected_ids)
+        elif selection.mode == "explicit":
+            predicate = AssetRecord.id.in_(selection.ids)
+        else:
+            assert selection.expression is not None
+            predicate = self._compile_group(selection.expression)
+            if selection.excluded_ids:
+                predicate = and_(predicate, AssetRecord.id.not_in(selection.excluded_ids))
+
+        active = and_(AssetRecord.is_trashed.is_(False), predicate)
+        album_statement = (
+            select(
+                AlbumRecord.id,
+                AlbumRecord.album_name,
+                func.count(AlbumAssetRecord.asset_id),
+            )
+            .join(AlbumAssetRecord, AlbumAssetRecord.album_id == AlbumRecord.id)
+            .join(AssetRecord, AssetRecord.id == AlbumAssetRecord.asset_id)
+            .where(active)
+            .group_by(AlbumRecord.id, AlbumRecord.album_name)
+            .order_by(func.lower(AlbumRecord.album_name), AlbumRecord.id)
+        )
+        tag_statement = (
+            select(TagRecord.id, TagRecord.tag_name, func.count(TagAssetRecord.asset_id))
+            .join(TagAssetRecord, TagAssetRecord.tag_id == TagRecord.id)
+            .join(AssetRecord, AssetRecord.id == TagAssetRecord.asset_id)
+            .where(active)
+            .group_by(TagRecord.id, TagRecord.tag_name)
+            .order_by(func.lower(TagRecord.tag_name), TagRecord.id)
+        )
+        async with self._database.sessions() as session:
+            album_rows = (await session.execute(album_statement)).all()
+            tag_rows = (await session.execute(tag_statement)).all()
+
+        return AssetSelectionRelationships(
+            albums=[
+                AssetSelectionRelationship(
+                    id=relation_id,
+                    name=name,
+                    selected_asset_count=count,
+                )
+                for relation_id, name, count in album_rows
+            ],
+            tags=[
+                AssetSelectionRelationship(
+                    id=relation_id,
+                    name=name,
+                    selected_asset_count=count,
+                )
+                for relation_id, name, count in tag_rows
+            ],
         )
 
     async def relation_ids_for_assets(

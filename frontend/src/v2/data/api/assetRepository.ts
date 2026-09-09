@@ -44,6 +44,7 @@ type ApiAssetDetail={
 };
 type ApiAssetPage={items:ApiAssetSummary[];total:number;page:number;page_size:number;pages:number};
 type ApiSelectionCapabilities={count:number;all_favorite:boolean;all_archived:boolean;has_tags:boolean;has_albums:boolean;has_stack_members:boolean;can_stack:boolean;single_asset_id:string|null;can_set_stack_primary:boolean;can_remove_complete_stack:boolean};
+type ApiSelectionRelationships={albums:Array<{id:string;name:string;selected_asset_count:number}>;tags:Array<{id:string;name:string;selected_asset_count:number}>};
 type ApiActionPlan={id:string;applicable_count:number;skipped_count:number;missing_ids:string[]};
 type ApiActionResult={applied_ids:string[];failed_ids:string[]};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
@@ -142,6 +143,7 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
     search:fetchAssets,
     async searchTrash(query){const page=pageNumber(query),params=new URLSearchParams({page:String(page),page_size:String(query.pageSize)});const response=await requestJson<ApiAssetPage>(fetcher,`/api/restore?${params}`,{signal:query.signal}),items=response.items.map(normalizeTrash);lastTrashQuery=query;lastTrashTotal=response.total;trashPages.set(page,items);return{items,total:response.total,pageSize:response.page_size,page:response.page,nextCursor:response.page<response.pages?String(response.page+1):null}},
     async selectionCapabilities(target,signal){const value=await requestJson<ApiSelectionCapabilities>(fetcher,'/api/assets/selection/capabilities',{...json(selectionBody(target)),signal});return{count:value.count,allFavorite:value.all_favorite,allArchived:value.all_archived,hasTags:value.has_tags,hasAlbums:value.has_albums,hasStackMembers:value.has_stack_members,canStack:value.can_stack,singleAssetId:value.single_asset_id,canSetStackPrimary:value.can_set_stack_primary,canRemoveCompleteStack:value.can_remove_complete_stack}},
+    async removableRelationships(target,signal){const value=await requestJson<ApiSelectionRelationships>(fetcher,'/api/assets/selection/relationships',{...json(selectionBody(target)),signal});const map=(item:{id:string;name:string;selected_asset_count:number})=>({value:item.id,label:item.name,subtitle:`Linked to ${item.selected_asset_count.toLocaleString()} selected asset${item.selected_asset_count===1?'':'s'}`,selectedAssetCount:item.selected_asset_count});return{albums:value.albums.map(map),tags:value.tags.map(map)}},
     setFavorite:(target)=>action(target,'favorite_toggle'),setArchived:(target)=>action(target,'archive_toggle'),
     async sync(target){const resolution=await resolve(target);await requestJson(fetcher,'/api/assets/sync/selection',json(selectionBody(target)));return{affectedIds:resolution.ids,failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))}},
     trash:(target)=>action(target,'trash'),
