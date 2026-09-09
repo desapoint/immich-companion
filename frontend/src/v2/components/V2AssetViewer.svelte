@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import V2AssetRelationModal from './V2AssetRelationModal.svelte';
   import V2Badge from './V2Badge.svelte';
   import V2Button from './V2Button.svelte';
@@ -122,10 +123,11 @@
   });
 
   $effect(()=>{
-    const id=currentId;stackActive;
+    const id=currentId;
+    stackActive;
     if(!open)return;
     if(!id){asset=undefined;media=null;navigation=emptyNavigation();return}
-    void loadCurrent(id);
+    untrack(()=>{void loadCurrent(id)});
   });
 
   $effect(()=>{if(open&&!isVideo&&!mediaError)requestAnimationFrame(()=>camera.fit())});
