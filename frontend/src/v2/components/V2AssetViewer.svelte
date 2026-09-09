@@ -25,31 +25,10 @@
   type ResultMode='Pagination'|'Infinite';
 
   let {
-    open=false,
-    assetId=null,
-    assetIds=[],
-    resultMode='Pagination',
-    collectionPage=1,
-    collectionPageSize=24,
-    collectionTotal=0,
-    startStack=false,
-    onclose,
-    onnavigate,
-    onmutated,
-    onfilterrelation,
+    open=false,assetId=null,assetIds=[],resultMode='Pagination',collectionPage=1,collectionPageSize=24,collectionTotal=0,startStack=false,onclose,onnavigate,onmutated,onfilterrelation,
   }: {
-    open?:boolean;
-    assetId?:string|null;
-    assetIds?:string[];
-    resultMode?:ResultMode;
-    collectionPage?:number;
-    collectionPageSize?:number;
-    collectionTotal?:number;
-    startStack?:boolean;
-    onclose:()=>void;
-    onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>;
-    onmutated?:()=>void|Promise<void>;
-    onfilterrelation?:(kind:'album'|'tag',id:string)=>void|Promise<void>;
+    open?:boolean;assetId?:string|null;assetIds?:string[];resultMode?:ResultMode;collectionPage?:number;collectionPageSize?:number;collectionTotal?:number;startStack?:boolean;
+    onclose:()=>void;onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>;onmutated?:()=>void|Promise<void>;onfilterrelation?:(kind:'album'|'tag',id:string)=>void|Promise<void>;
   }=$props();
 
   const camera=new ViewerViewportController();
@@ -57,15 +36,9 @@
   const toasts=useOptionalV2Toasts();
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
-    {keys:'Esc',description:'Close viewer'},
-    {keys:'←',description:'Previous asset / stack member'},
-    {keys:'→',description:'Next asset / stack member'},
-    {keys:'F',description:'Toggle favorite on shown asset'},
-    {keys:'A',description:'Toggle archive on shown asset'},
-    {keys:['+','='],description:'Zoom in'},
-    {keys:'−',description:'Zoom out'},
-    {keys:'0',description:'Reset zoom / fit image'},
-    {keys:'1',description:'Actual pixel size (1:1)'},
+    {keys:'Esc',description:'Close viewer'},{keys:'←',description:'Previous asset / stack member'},{keys:'→',description:'Next asset / stack member'},
+    {keys:'F',description:'Toggle favorite on shown asset'},{keys:'A',description:'Toggle archive on shown asset'},{keys:['+','='],description:'Zoom in'},
+    {keys:'−',description:'Zoom out'},{keys:'0',description:'Reset zoom / fit image'},{keys:'1',description:'Actual pixel size (1:1)'},
   ];
 
   let currentId=$state<string|null>(assetId),asset=$state<AssetDetailRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
@@ -75,6 +48,7 @@
 
   let stackActive=$state(false),stackLoading=$state(false),stackAutoEntered=$state(false),stackId=$state<string|null>(null),stackPrimaryId=$state<string|null>(null),stackLiveIds=$state<string[]>([]),stackMembers=$state<AssetRecord[]>([]),stackRemovedIds=$state<Set<string>>(new Set()),stackReadyIds=$state<Set<string>>(new Set()),stackDetailCache=$state<Record<string,AssetDetailRecord>>({}),stackMediaCache=$state<Record<string,MediaResource>>({}),stackPendingId=$state<string|null>(null),stackExists=$state(true);
   let stackOriginPage=$state(1),stackOriginPosition=$state<number|null>(null),stackOriginNavigation=$state<ViewerNavigationWindow>(emptyNavigation());
+  let stackGeneration=0;
 
   const mutations=new AssetMutationController(()=>reloadActive(),()=>{});
   const actionBusy=$derived(mutations.busy),actionStatus=$derived(mutations.phase==='applying'?'Applying change…':mutations.phase==='refreshing'?'Refreshing asset…':'');
@@ -85,7 +59,7 @@
   const stackIndex=$derived(currentId?stackMembers.findIndex((member)=>member.id===currentId):-1);
   const currentMatchesLive=$derived(Boolean(currentId&&assetIds.includes(currentId)&&(resultMode!=='Pagination'||collectionPage===sessionPage)));
   const currentRemovedFromStack=$derived(Boolean(currentId&&stackRemovedIds.has(currentId)));
-  const liveStackCount=$derived(stackLiveIds.filter((id)=>!stackRemovedIds.has(id)).length);
+  const liveStackCount=$derived(stackLiveIds.length);
   const stackPositionLabel=$derived(stackActive&&stackIndex>=0?`${stackIndex+1} / ${stackMembers.length}`:'');
   const canPrevious=$derived(stackActive?stackIndex>0:Boolean(sessionIndex>0||navigation.previousId));
   const canNext=$derived(stackActive?stackIndex>=0&&stackIndex<stackMembers.length-1:Boolean((sessionIndex>=0&&sessionIndex<sessionIds.length-1)||navigation.nextId));
@@ -95,8 +69,10 @@
 
   function stableMerge(previous:string[],live:string[]):string[]{const seen=new Set(previous);return[...previous,...live.filter((id)=>!seen.has(id))]}
   function detailFromRecord(record:AssetRecord):AssetDetailRecord{return{...record,albums:record.albums??[]}}
+  function currentStackGeneration(generation:number,expectedStackId:string|null=stackId):boolean{return generation===stackGeneration&&stackActive&&stackId===expectedStackId}
 
   function resetStackSession(){
+    stackGeneration+=1;
     stackActive=false;stackLoading=false;stackAutoEntered=false;stackId=null;stackPrimaryId=null;stackLiveIds=[];stackMembers=[];stackRemovedIds=new Set();stackReadyIds=new Set();stackDetailCache={};stackMediaCache={};stackPendingId=null;stackExists=true;
   }
 
@@ -115,8 +91,7 @@
     const live=[...assetIds];
     if(collectionTotal>sessionTotal)sessionTotal=collectionTotal;
     if(resultMode==='Pagination'){
-      const existing=sessionPages[collectionPage]??[];
-      const merged=stableMerge(existing,live);
+      const existing=sessionPages[collectionPage]??[],merged=stableMerge(existing,live);
       if(merged.length!==existing.length||merged.some((id,index)=>id!==existing[index]))sessionPages={...sessionPages,[collectionPage]:merged};
     }else{
       const merged=stableMerge(sessionInfinite,live);
@@ -125,8 +100,7 @@
   });
 
   $effect(()=>{
-    const id=currentId;
-    stackActive;
+    const id=currentId;stackActive;
     if(!open)return;
     if(!id){asset=undefined;media=null;navigation=emptyNavigation();return}
     untrack(()=>{void loadCurrent(id)});
@@ -135,182 +109,136 @@
   $effect(()=>{if(open&&!isVideo&&!mediaError)requestAnimationFrame(()=>camera.fit())});
 
   async function loadCurrent(id:string){
-    if(stackActive&&stackDetailCache[id]&&stackMediaCache[id]){
-      asset=stackDetailCache[id];media=stackMediaCache[id];mediaAttempt+=1;loading=false;navigationLoading=false;assetError='';mediaError='';relationDialog=null;return;
-    }
+    if(stackActive&&stackDetailCache[id]&&stackMediaCache[id]){asset=stackDetailCache[id];media=stackMediaCache[id];mediaAttempt+=1;loading=false;navigationLoading=false;assetError='';mediaError='';relationDialog=null;return}
     const request=++loadRequest;loading=true;assetError='';mediaError='';navigationError='';navigationLoading=true;relationDialog=null;
     try{
       const [nextAsset,nextNavigation]=await Promise.all([
-        libraryData.assets.details(id),
-        libraryData.navigation.asset(id).catch((error)=>{if(request===loadRequest)navigationError=errorMessage(error,'Navigation could not be loaded.');return emptyNavigation()}),
+        libraryData.assets.details(id),libraryData.navigation.asset(id).catch((error)=>{if(request===loadRequest)navigationError=errorMessage(error,'Navigation could not be loaded.');return emptyNavigation()}),
       ]);
       if(request!==loadRequest)return;
       asset=nextAsset;navigation=nextNavigation;media=nextAsset?libraryData.media.view(nextAsset):null;mediaAttempt+=1;
       if(nextNavigation.position!==null){sessionPosition=nextNavigation.position;sessionTotal=Math.max(sessionTotal,nextNavigation.total);sessionPage=resultMode==='Pagination'?Math.max(1,Math.ceil(nextNavigation.position/collectionPageSize)):sessionPage}
-      if(nextAsset){
-        void onnavigate?.(id,nextNavigation);
-        if(startStack&&!stackAutoEntered&&nextAsset.stack){stackAutoEntered=true;void enterStack(nextAsset)}
-      }else assetError='This asset is no longer available in the current data source.';
+      if(nextAsset){void onnavigate?.(id,nextNavigation);if(startStack&&!stackAutoEntered&&nextAsset.stack){stackAutoEntered=true;void enterStack(nextAsset)}}
+      else assetError='This asset is no longer available in the current data source.';
     }catch(error){if(request===loadRequest){asset=undefined;media=null;assetError=errorMessage(error,'The asset could not be loaded.')}}
     finally{if(request===loadRequest){loading=false;navigationLoading=false}}
   }
 
   async function reloadActive(){
     if(!currentId)return;
-    const next=await libraryData.assets.details(currentId);
+    const id=currentId,next=await libraryData.assets.details(id);
+    if(id!==currentId)return;
     if(!next){if(!stackActive)assetError='This asset is no longer available in the current data source.';return}
     asset=next;media=libraryData.media.view(next);mediaAttempt+=1;mediaError='';assetError='';
     if(stackActive&&media){stackDetailCache={...stackDetailCache,[next.id]:next};stackMediaCache={...stackMediaCache,[next.id]:media}}
   }
 
-  function formatFileSize(bytes:number|null|undefined):string{
-    if(bytes===null||bytes===undefined)return'Unknown size';
-    if(bytes<1024)return`${bytes} B`;
-    const units=['KB','MB','GB','TB'];let value=bytes/1024,index=0;
-    while(value>=1024&&index<units.length-1){value/=1024;index+=1}
-    return`${value.toFixed(value>=10?1:2)} ${units[index]}`;
-  }
+  function formatFileSize(bytes:number|null|undefined):string{if(bytes===null||bytes===undefined)return'Unknown size';if(bytes<1024)return`${bytes} B`;const units=['KB','MB','GB','TB'];let value=bytes/1024,index=0;while(value>=1024&&index<units.length-1){value/=1024;index+=1}return`${value.toFixed(value>=10?1:2)} ${units[index]}`}
+  async function preloadImage(url:string):Promise<void>{if(!url)return;const image=new Image();image.decoding='async';image.src=url;try{await image.decode()}catch{await new Promise<void>((resolve)=>{image.onload=()=>resolve();image.onerror=()=>resolve()})}}
 
-  async function preloadImage(url:string):Promise<void>{
-    if(!url)return;
-    const image=new Image();image.decoding='async';image.src=url;
-    try{await image.decode()}catch{await new Promise<void>((resolve)=>{image.onload=()=>resolve();image.onerror=()=>resolve()})}
-  }
-
-  async function preloadStackMember(member:AssetRecord):Promise<void>{
+  async function preloadStackMember(member:AssetRecord,generation=stackGeneration,expectedStackId=stackId):Promise<boolean>{
+    if(!currentStackGeneration(generation,expectedStackId))return false;
     const detail=stackDetailCache[member.id]??detailFromRecord(member),resource=stackMediaCache[member.id]??libraryData.media.view(member);
     stackDetailCache={...stackDetailCache,[member.id]:detail};stackMediaCache={...stackMediaCache,[member.id]:resource};
-    if(member.asset_type==='VIDEO'){
-      if(resource.posterUrl)await preloadImage(resource.posterUrl);
-    }else await preloadImage(resource.url);
+    if(member.asset_type==='VIDEO'){if(resource.posterUrl)await preloadImage(resource.posterUrl)}else await preloadImage(resource.url);
+    if(!currentStackGeneration(generation,expectedStackId))return false;
     stackReadyIds=new Set([...stackReadyIds,member.id]);
-    if(stackPendingId===member.id){stackPendingId=null;activateStackMember(member.id)}
+    if(stackPendingId===member.id){stackPendingId=null;activateStackMember(member.id,generation,expectedStackId)}
+    return true;
   }
 
-  async function ensureStackMembers(ids:string[]):Promise<void>{
+  async function ensureStackMembers(ids:string[],generation=stackGeneration,expectedStackId=stackId):Promise<void>{
+    if(!currentStackGeneration(generation,expectedStackId))return;
     const missing=ids.filter((id)=>!stackMembers.some((member)=>member.id===id));
     if(!missing.length)return;
-    const loaded=await libraryData.assets.getMany(missing),map=new Map(loaded.map((member)=>[member.id,member]));
-    const allIds=[...new Set([...stackMembers.map((member)=>member.id),...ids])];
+    const loaded=await libraryData.assets.getMany(missing);
+    if(!currentStackGeneration(generation,expectedStackId))return;
+    const map=new Map(loaded.map((member)=>[member.id,member])),allIds=[...new Set([...stackMembers.map((member)=>member.id),...ids])];
     stackMembers=allIds.map((id)=>stackMembers.find((member)=>member.id===id)??map.get(id)).filter((member):member is AssetRecord=>Boolean(member));
-    for(const member of loaded)void preloadStackMember(member);
+    for(const member of loaded)void preloadStackMember(member,generation,expectedStackId);
   }
 
   async function enterStack(source=asset){
     if(!source?.stack||stackLoading)return;
-    stackLoading=true;stackActive=true;stackId=source.stack.id;stackPrimaryId=source.stack.primaryAssetId;stackLiveIds=[...new Set(source.stack.assets.length?source.stack.assets:[source.id])];stackRemovedIds=new Set();stackExists=true;
+    const generation=++stackGeneration,expectedStackId=source.stack.id,liveIds=[...new Set(source.stack.assets.length?source.stack.assets:[source.id])];
+    stackLoading=true;stackActive=true;stackId=expectedStackId;stackPrimaryId=source.stack.primaryAssetId;stackLiveIds=liveIds;stackRemovedIds=new Set();stackExists=true;stackPendingId=null;
     stackOriginPage=sessionPage;stackOriginPosition=sessionPosition;stackOriginNavigation={...navigation};
     try{
-      const loaded=await libraryData.assets.getMany(stackLiveIds),byId=new Map(loaded.map((member)=>[member.id,member]));
-      if(!byId.has(source.id))byId.set(source.id,source);
-      stackMembers=stackLiveIds.map((id)=>byId.get(id)).filter((member):member is AssetRecord=>Boolean(member));
-      if(!stackMembers.some((member)=>member.id===source.id))stackMembers=[source,...stackMembers];
-      stackDetailCache={...stackDetailCache,[source.id]:source};
-      if(media)stackMediaCache={...stackMediaCache,[source.id]:media};
-      stackReadyIds=new Set(media?[source.id]:[]);
+      const loaded=await libraryData.assets.getMany(liveIds);
+      if(!currentStackGeneration(generation,expectedStackId))return;
+      const byId=new Map(loaded.map((member)=>[member.id,member]));if(!byId.has(source.id))byId.set(source.id,source);
+      stackMembers=liveIds.map((id)=>byId.get(id)).filter((member):member is AssetRecord=>Boolean(member));if(!stackMembers.some((member)=>member.id===source.id))stackMembers=[source,...stackMembers];
+      stackDetailCache={...stackDetailCache,[source.id]:source};if(media)stackMediaCache={...stackMediaCache,[source.id]:media};stackReadyIds=new Set(media?[source.id]:[]);
       const index=stackMembers.findIndex((member)=>member.id===source.id),priority:AssetRecord[]=[];
       for(const candidate of [source,stackMembers[index-1],stackMembers[index+1],...stackMembers])if(candidate&&!priority.some((member)=>member.id===candidate.id))priority.push(candidate);
-      for(const member of priority)void preloadStackMember(member);
-    }catch(error){assetError=errorMessage(error,'Stack members could not be loaded.');stackActive=false}
-    finally{stackLoading=false}
+      for(const member of priority)void preloadStackMember(member,generation,expectedStackId);
+    }catch(error){if(currentStackGeneration(generation,expectedStackId)){assetError=errorMessage(error,'Stack members could not be loaded.');stackActive=false;stackGeneration+=1}}
+    finally{if(generation===stackGeneration)stackLoading=false}
   }
 
-  function activateStackMember(id:string){
-    const detail=stackDetailCache[id],resource=stackMediaCache[id];
-    if(!detail||!resource)return;
-    currentId=id;asset=detail;media=resource;mediaAttempt+=1;assetError='';mediaError='';loading=false;
+  function activateStackMember(id:string,generation=stackGeneration,expectedStackId=stackId):boolean{
+    if(!currentStackGeneration(generation,expectedStackId))return false;
+    const detail=stackDetailCache[id],resource=stackMediaCache[id];if(!detail||!resource)return false;
+    currentId=id;asset=detail;media=resource;mediaAttempt+=1;assetError='';mediaError='';loading=false;return true;
+  }
+
+  async function activateStackMemberEnsured(id:string,generation=stackGeneration,expectedStackId=stackId):Promise<boolean>{
+    if(!currentStackGeneration(generation,expectedStackId))return false;
+    const member=stackMembers.find((item)=>item.id===id);if(!member)return false;
+    if(!stackDetailCache[id]||!stackMediaCache[id]||(member.asset_type!=='VIDEO'&&!stackReadyIds.has(id))){stackPendingId=id;await preloadStackMember(member,generation,expectedStackId)}
+    if(!currentStackGeneration(generation,expectedStackId))return false;
+    if(stackPendingId===id)stackPendingId=null;
+    return currentId===id||activateStackMember(id,generation,expectedStackId);
   }
 
   function selectStackMember(id:string){
     if(actionBusy||id===currentId)return;
     const member=stackMembers.find((item)=>item.id===id);if(!member)return;
-    if(member.asset_type!=='VIDEO'&&!stackReadyIds.has(id)){stackPendingId=id;void preloadStackMember(member);return}
-    activateStackMember(id);
+    const generation=stackGeneration,expectedStackId=stackId;
+    if(member.asset_type!=='VIDEO'&&!stackReadyIds.has(id)){stackPendingId=id;void preloadStackMember(member,generation,expectedStackId);return}
+    activateStackMember(id,generation,expectedStackId);
   }
 
   function exitStack(){
     if(!stackActive)return;
-    const id=currentId;stackActive=false;stackPendingId=null;sessionPage=stackOriginPage;sessionPosition=stackOriginPosition;navigation={...stackOriginNavigation};
+    const id=currentId;stackGeneration+=1;stackActive=false;stackLoading=false;stackPendingId=null;sessionPage=stackOriginPage;sessionPosition=stackOriginPosition;navigation={...stackOriginNavigation};
     if(id){
-      if(resultMode==='Pagination'){
-        const pageIds=sessionPages[stackOriginPage]??[];
-        if(!pageIds.includes(id)){
-          const originIndex=Math.max(0,pageIds.indexOf(assetId??''));const next=[...pageIds];next.splice(originIndex+1,0,id);sessionPages={...sessionPages,[stackOriginPage]:next};
-        }
-      }else if(!sessionInfinite.includes(id)){
-        const originIndex=Math.max(0,sessionInfinite.indexOf(assetId??''));const next=[...sessionInfinite];next.splice(originIndex+1,0,id);sessionInfinite=next;
-      }
+      if(resultMode==='Pagination'){const pageIds=sessionPages[stackOriginPage]??[];if(!pageIds.includes(id)){const originIndex=Math.max(0,pageIds.indexOf(assetId??'')),next=[...pageIds];next.splice(originIndex+1,0,id);sessionPages={...sessionPages,[stackOriginPage]:next}}}
+      else if(!sessionInfinite.includes(id)){const originIndex=Math.max(0,sessionInfinite.indexOf(assetId??'')),next=[...sessionInfinite];next.splice(originIndex+1,0,id);sessionInfinite=next}
     }
   }
 
   async function refreshLiveStack(expectedPrimaryId:string|null=null){
-    if(!stackId)return;
-    const probeId=stackLiveIds.find((id)=>!stackRemovedIds.has(id));
-    if(!probeId){stackExists=false;stackLiveIds=[];return}
+    if(!stackId||!stackActive)return;
+    const generation=stackGeneration,expectedStackId=stackId,probeId=stackLiveIds.find((id)=>!stackRemovedIds.has(id))??stackMembers.find((member)=>!stackRemovedIds.has(member.id))?.id;
+    if(!probeId){if(currentStackGeneration(generation,expectedStackId)){stackExists=false;stackLiveIds=[]}return}
     const probe=await libraryData.assets.getById(probeId);
-    if(!probe?.stack||probe.stack.id!==stackId){stackExists=false;stackLiveIds=[];return}
-    stackExists=true;
-    if(!expectedPrimaryId||probe.stack.primaryAssetId===expectedPrimaryId)stackPrimaryId=probe.stack.primaryAssetId;
-    else stackPrimaryId=expectedPrimaryId;
-    stackLiveIds=[...probe.stack.assets];await ensureStackMembers(stackLiveIds);
+    if(!currentStackGeneration(generation,expectedStackId))return;
+    if(!probe?.stack||probe.stack.id!==expectedStackId){stackExists=false;stackLiveIds=[];stackRemovedIds=new Set(stackMembers.map((member)=>member.id));return}
+    const nextLiveIds=[...probe.stack.assets],nextLiveSet=new Set(nextLiveIds),removedSinceRefresh=stackLiveIds.filter((id)=>!nextLiveSet.has(id));
+    stackExists=true;stackPrimaryId=probe.stack.primaryAssetId;stackRemovedIds=new Set([...stackRemovedIds,...removedSinceRefresh].filter((id)=>!nextLiveSet.has(id)));stackLiveIds=nextLiveIds;
+    await ensureStackMembers(nextLiveIds,generation,expectedStackId);
+    if(expectedPrimaryId&&currentStackGeneration(generation,expectedStackId)&&stackPrimaryId!==expectedPrimaryId){
+      // Keep the backend response authoritative. A later refresh can observe eventual consistency without lying in the UI.
+    }
   }
 
   function filterRelationship(kind:'album'|'tag',id:string){void onfilterrelation?.(kind,id)}
-  function publishMutation(label:string):void{
-    if(!toasts)return;
-    const retry=mutations.retry;
-    const action=retry?{label:'Retry failed',run:async()=>{await retry();publishMutation(label)}}:undefined;
-    if(mutations.error){toasts.push({tone:mutations.feedback?'warning':'error',title:mutations.feedback?`${label} needs attention`:`${label} failed`,message:mutations.error,action});return}
-    const feedback=mutations.feedback;if(!feedback||feedback.tone==='pending')return;
-    toasts.push({tone:feedback.tone==='ok'?'success':feedback.tone==='warn'?'warning':'error',title:feedback.title,message:[feedback.detail,feedback.failures[0]?.reason].filter(Boolean).join(' '),action});
-  }
-
+  function publishMutation(label:string):void{if(!toasts)return;const retry=mutations.retry,action=retry?{label:'Retry failed',run:async()=>{await retry();publishMutation(label)}}:undefined;if(mutations.error){toasts.push({tone:mutations.feedback?'warning':'error',title:mutations.feedback?`${label} needs attention`:`${label} failed`,message:mutations.error,action});return}const feedback=mutations.feedback;if(!feedback||feedback.tone==='pending')return;toasts.push({tone:feedback.tone==='ok'?'success':feedback.tone==='warn'?'warning':'error',title:feedback.title,message:[feedback.detail,feedback.failures[0]?.reason].filter(Boolean).join(' '),action})}
   async function reconcilePage(result:MutationResult|null){if(result?.affectedIds.length)await onmutated?.()}
   function target(id:string):AssetSelectionTarget{return{kind:'ids',ids:[id]}}
-
-  async function runAction(label:string,action:(id:string)=>Promise<MutationResult>){
-    if(!asset||actionBusy)return null;
-    const id=asset.id,result=await mutations.run(label,()=>action(id),target(id));publishMutation(label);await reconcilePage(result);return result;
-  }
-
+  async function runAction(label:string,action:(id:string)=>Promise<MutationResult>){if(!asset||actionBusy)return null;const id=asset.id,result=await mutations.run(label,()=>action(id),target(id));publishMutation(label);await reconcilePage(result);return result}
   async function favorite(){if(!asset)return;const next=!asset.is_favorite;await runAction(next?'Favorite':'Unfavorite',(id)=>libraryData.assets.setFavorite(target(id),next))}
   async function archive(){if(!asset)return;const next=!asset.is_archived;await runAction(next?'Archive':'Unarchive',(id)=>libraryData.assets.setArchived(target(id),next))}
-  async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id)))}
-  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id)))}
-  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id)))}
+  async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id))}
+  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id))}
+  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id))}
 
-  async function removeFromStack(){
-    if(!asset)return;const id=asset.id,result=await runAction('Remove this asset from stack',(assetId)=>libraryData.assets.unstack(target(assetId)));
-    if(!result?.affectedIds.includes(id))return;
-    stackRemovedIds=new Set([...stackRemovedIds,id]);stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);await refreshLiveStack();
-  }
-  async function setStackPrimary(){
-    if(!asset)return;
-    const id=asset.id,result=await runAction('Set stack primary',(assetId)=>libraryData.assets.setStackPrimary(assetId));
-    if(!result?.affectedIds.includes(id))return;
-    stackPrimaryId=id;
-    await refreshLiveStack(id);
-  }
-  async function removeCompleteStack(){
-    if(!asset)return;const result=await runAction('Remove complete stack',(id)=>libraryData.assets.removeCompleteStack(id));if(!result?.affectedIds.length)return;
-    stackRemovedIds=new Set(stackMembers.map((member)=>member.id));stackLiveIds=[];stackExists=false;
-  }
+  async function removeFromStack(){if(!asset)return;const id=asset.id,result=await runAction('Remove this asset from stack',(assetId)=>libraryData.assets.unstack(target(assetId)));if(!result?.affectedIds.includes(id))return;stackRemovedIds=new Set([...stackRemovedIds,id]);stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);await refreshLiveStack()}
+  async function setStackPrimary(){if(!asset)return;const id=asset.id,result=await runAction('Set stack primary',(assetId)=>libraryData.assets.setStackPrimary(assetId));if(!result?.affectedIds.includes(id))return;await refreshLiveStack(id)}
+  async function removeCompleteStack(){if(!asset)return;const result=await runAction('Remove complete stack',(id)=>libraryData.assets.removeCompleteStack(id));if(!result?.affectedIds.length)return;stackRemovedIds=new Set(stackMembers.map((member)=>member.id));stackLiveIds=[];stackExists=false;stackPrimaryId=null}
 
-  async function moveNormal(delta:-1|1){
-    const index=sessionIndex,targetIndex=index+delta;
-    if(index>=0&&targetIndex>=0&&targetIndex<sessionIds.length){
-      if(resultMode==='Pagination')sessionPosition=(sessionPage-1)*collectionPageSize+targetIndex+1;
-      else if(sessionPosition!==null)sessionPosition+=delta;
-      currentId=sessionIds[targetIndex];return;
-    }
-    const id=delta<0?navigation.previousId:navigation.nextId;if(!id)return;
-    const expected=navigation.position!==null?navigation.position+delta:sessionPosition!==null?sessionPosition+delta:null;
-    if(expected!==null){
-      sessionPosition=expected;if(resultMode==='Pagination')sessionPage=Math.max(1,Math.ceil(expected/collectionPageSize));
-      try{await onnavigate?.(id,{previousId:null,nextId:null,position:expected,total:navigation.total||sessionTotal})}catch{/* Keep the inspection session usable if collection preloading fails. */}
-    }
-    currentId=id;
-  }
+  async function moveNormal(delta:-1|1){const index=sessionIndex,targetIndex=index+delta;if(index>=0&&targetIndex>=0&&targetIndex<sessionIds.length){if(resultMode==='Pagination')sessionPosition=(sessionPage-1)*collectionPageSize+targetIndex+1;else if(sessionPosition!==null)sessionPosition+=delta;currentId=sessionIds[targetIndex];return}const id=delta<0?navigation.previousId:navigation.nextId;if(!id)return;const expected=navigation.position!==null?navigation.position+delta:sessionPosition!==null?sessionPosition+delta:null;if(expected!==null){sessionPosition=expected;if(resultMode==='Pagination')sessionPage=Math.max(1,Math.ceil(expected/collectionPageSize));try{await onnavigate?.(id,{previousId:null,nextId:null,position:expected,total:navigation.total||sessionTotal})}catch{/* Keep the inspection session usable if collection preloading fails. */}}currentId=id}
   function previous(){if(stackActive){if(stackIndex>0)selectStackMember(stackMembers[stackIndex-1].id);return}void moveNormal(-1)}
   function next(){if(stackActive){if(stackIndex>=0&&stackIndex<stackMembers.length-1)selectStackMember(stackMembers[stackIndex+1].id);return}void moveNormal(1)}
 
@@ -320,42 +248,25 @@
   async function trash(){
     if(!asset||actionBusy)return;const id=asset.id;
     if(stackActive){
-      const index=stackIndex,result=await mutations.run('Move to trash',()=>libraryData.assets.trash(target(id)),target(id),{refresh:async()=>{}});publishMutation('Move to trash');await reconcilePage(result);
-      if(result?.affectedIds.includes(id)){
-        const remaining=stackMembers.filter((member)=>member.id!==id);stackMembers=remaining;stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);stackRemovedIds=new Set([...stackRemovedIds].filter((memberId)=>memberId!==id));delete stackDetailCache[id];delete stackMediaCache[id];
-        if(remaining.length){const replacement=remaining[Math.min(index,remaining.length-1)];activateStackMember(replacement.id);await refreshLiveStack()}else onclose();
+      const generation=stackGeneration,expectedStackId=stackId,index=stackIndex,result=await mutations.run('Move to trash',()=>libraryData.assets.trash(target(id)),target(id),{refresh:async()=>{}});publishMutation('Move to trash');await reconcilePage(result);
+      if(result?.affectedIds.includes(id)&&currentStackGeneration(generation,expectedStackId)){
+        const remaining=stackMembers.filter((member)=>member.id!==id);stackMembers=remaining;stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);stackRemovedIds=new Set([...stackRemovedIds].filter((memberId)=>memberId!==id));
+        const nextDetails={...stackDetailCache},nextMedia={...stackMediaCache};delete nextDetails[id];delete nextMedia[id];stackDetailCache=nextDetails;stackMediaCache=nextMedia;
+        if(remaining.length){const replacement=remaining[Math.min(Math.max(index,0),remaining.length-1)];await activateStackMemberEnsured(replacement.id,generation,expectedStackId);await refreshLiveStack()}else onclose();
       }
       return;
     }
     const fallback=sessionIndex>=0?(sessionIds[sessionIndex+1]??sessionIds[sessionIndex-1]??navigation.nextId??navigation.previousId):navigation.nextId??navigation.previousId;
-    const result=await mutations.run('Move to trash',()=>libraryData.assets.trash(target(id)),target(id),{refresh:async()=>{},refreshError:'The asset was moved to trash, but the viewer could not move to the next asset.'});publishMutation('Move to trash');await reconcilePage(result);
-    if(result?.affectedIds.includes(id)){if(fallback&&await libraryData.assets.getById(fallback))currentId=fallback;else onclose()}
+    const result=await mutations.run('Move to trash',()=>libraryData.assets.trash(target(id)),target(id),{refresh:async()=>{},refreshError:'The asset was moved to trash, but the viewer could not move to the next asset.'});publishMutation('Move to trash');await reconcilePage(result);if(result?.affectedIds.includes(id)){if(fallback&&await libraryData.assets.getById(fallback))currentId=fallback;else onclose()}
   }
 
   function selectedOptionValues(kind:'album'|'tag'){return kind==='album'?[relationAlbum].filter(Boolean):[...relationTags]}
-  const searchAlbumOptions=(query:string,append=false)=>relations.searchAlbums(query,selectedOptionValues('album'),append);
-  const searchTagOptions=(query:string,append=false)=>relations.searchTags(query,selectedOptionValues('tag'),append);
+  const searchAlbumOptions=(query:string,append=false)=>relations.searchAlbums(query,selectedOptionValues('album'),append),searchTagOptions=(query:string,append=false)=>relations.searchTags(query,selectedOptionValues('tag'),append);
   function openRelationDialog(kind:RelationDialog){if(!kind||!asset||actionBusy)return;relationDialog=kind;relationAlbum='';relationTags=[];mutations.clearError();if(kind==='album')void searchAlbumOptions('');if(kind==='tags')void searchTagOptions('')}
-  async function applyRelationDialog(){
-    if(!asset||!relationDialog||actionBusy)return;const kind=relationDialog,id=asset.id;let result:MutationResult|null=null;
-    if(kind==='album'&&relationAlbum){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),relationAlbum),target(id));publishMutation('Add to album')}
-    if(kind==='tags'&&relationTags.length){result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),relationTags),target(id));publishMutation('Add tags')}
-    await reconcilePage(result);if(result)relationDialog=null;
-  }
+  async function applyRelationDialog(){if(!asset||!relationDialog||actionBusy)return;const kind=relationDialog,id=asset.id;let result:MutationResult|null=null;if(kind==='album'&&relationAlbum){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),relationAlbum),target(id));publishMutation('Add to album')}if(kind==='tags'&&relationTags.length){result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),relationTags),target(id));publishMutation('Add tags')}await reconcilePage(result);if(result)relationDialog=null}
   async function applyCreatedRelation(kind:'album'|'tag',value:string){if(!asset||actionBusy)return;const id=asset.id;let result:MutationResult|null=null;if(kind==='album'){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),value),target(id));publishMutation('Add to album')}else{result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),[value]),target(id));publishMutation('Add tags')}await reconcilePage(result)}
   function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
-  function handleShortcut(event:KeyboardEvent){
-    if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||editableTarget(event.target))return;
-    if(event.key==='ArrowLeft'&&canPrevious&&!navigationLoading&&!actionBusy){event.preventDefault();previous();return}
-    if(event.key==='ArrowRight'&&canNext&&!navigationLoading&&!actionBusy){event.preventDefault();next();return}
-    if((event.key==='f'||event.key==='F')&&asset&&!loading&&!actionBusy){event.preventDefault();void favorite();return}
-    if((event.key==='a'||event.key==='A')&&asset&&!loading&&!actionBusy){event.preventDefault();void archive();return}
-    if(isVideo)return;
-    if(event.key==='+'||event.key==='='){event.preventDefault();camera.setZoom(camera.zoom*1.25);return}
-    if(event.key==='-'||event.key==='−'){event.preventDefault();camera.setZoom(camera.zoom/1.25);return}
-    if(event.key==='0'){event.preventDefault();camera.fit();return}
-    if(event.key==='1'){event.preventDefault();camera.actual()}
-  }
+  function handleShortcut(event:KeyboardEvent){if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||editableTarget(event.target))return;if(event.key==='ArrowLeft'&&canPrevious&&!navigationLoading&&!actionBusy){event.preventDefault();previous();return}if(event.key==='ArrowRight'&&canNext&&!navigationLoading&&!actionBusy){event.preventDefault();next();return}if((event.key==='f'||event.key==='F')&&asset&&!loading&&!actionBusy){event.preventDefault();void favorite();return}if((event.key==='a'||event.key==='A')&&asset&&!loading&&!actionBusy){event.preventDefault();void archive();return}if(isVideo)return;if(event.key==='+'||event.key==='='){event.preventDefault();camera.setZoom(camera.zoom*1.25);return}if(event.key==='-'||event.key==='−'){event.preventDefault();camera.setZoom(camera.zoom/1.25);return}if(event.key==='0'){event.preventDefault();camera.fit();return}if(event.key==='1'){event.preventDefault();camera.actual()}}
 </script>
 
 <svelte:window onkeydown={handleShortcut}/>
@@ -383,11 +294,8 @@
             <div class="viewer-relation"><b>Albums</b><div class="viewer-pills">{#each asset.albums as album (album.id)}<V2Badge text={album.name} title={`Search assets in ${album.name}`} onclick={()=>filterRelationship('album',album.id)}/>{:else}<span class="v2-small v2-muted">No albums</span>{/each}</div></div>
             <div class="viewer-relation"><b>Tags</b><div class="viewer-pills">{#each asset.tags as tag (tag.id)}<V2Badge text={tag.name} title={`Search assets tagged ${tag.name}`} onclick={()=>filterRelationship('tag',tag.id)}/>{:else}<span class="v2-small v2-muted">No tags</span>{/each}</div></div>
             <div class="viewer-status-grid"><div><b>Favorite</b><span class="v2-small">{asset.is_favorite?'Yes':'No'}</span></div><div><b>Archived</b><span class="v2-small">{asset.is_archived?'Yes':'No'}</span></div></div>
-            {#if stackActive}
-              <div class="viewer-relation"><b>Stack</b><span class="v2-small">{stackExists?`${liveStackCount} live member${liveStackCount===1?'':'s'}`:'Stack no longer exists'} · viewing {stackMembers.length}{currentRemovedFromStack?' · this asset was removed':''}</span></div>
-            {:else if asset.stack}
-              <div class="viewer-relation"><b>Stack</b><span class="v2-small">{asset.stack.assetCount} assets · {asset.stack.primaryAssetId===asset.id?'Primary asset':'Stack member'}</span><V2Inline gap="sm" wrap><V2Button onclick={()=>void enterStack(asset)}>View stack</V2Button>{#if asset.stack.primaryAssetId!==asset.id}<V2Button onclick={()=>void setStackPrimary()}>Set as primary</V2Button>{/if}<V2Button onclick={()=>void removeFromStack()}>Remove this asset</V2Button><V2Button variant="danger" onclick={()=>void removeCompleteStack()}>Remove complete stack</V2Button></V2Inline></div>
-            {/if}
+            {#if stackActive}<div class="viewer-relation"><b>Stack</b><span class="v2-small">{stackExists?`${liveStackCount} live member${liveStackCount===1?'':'s'}`:'Stack no longer exists'} · viewing {stackMembers.length}{currentRemovedFromStack?' · this asset was removed':''}</span></div>
+            {:else if asset.stack}<div class="viewer-relation"><b>Stack</b><span class="v2-small">{asset.stack.assetCount} assets · {asset.stack.primaryAssetId===asset.id?'Primary asset':'Stack member'}</span><V2Inline gap="sm" wrap><V2Button onclick={()=>void enterStack(asset)}>View stack</V2Button>{#if asset.stack.primaryAssetId!==asset.id}<V2Button onclick={()=>void setStackPrimary()}>Set as primary</V2Button>{/if}<V2Button onclick={()=>void removeFromStack()}>Remove this asset</V2Button><V2Button variant="danger" onclick={()=>void removeCompleteStack()}>Remove complete stack</V2Button></V2Inline></div>{/if}
           </div></V2Card></V2Section>
         {:else}<V2Section title="Asset"><V2Card><span class="v2-muted">This asset is no longer available in the current data source.</span></V2Card></V2Section>{/if}
       </aside>
@@ -413,30 +321,7 @@
 </V2ViewerShell>
 
 {#if relationDialog}
-  <V2AssetRelationModal
-    kind={relationDialog}
-    selectedCount={1}
-    albumValue={relationAlbum}
-    tagValues={relationTags}
-    albumOptions={relations.albumOptions}
-    tagOptions={relations.tagOptions}
-    albumLoading={relations.albumLoading}
-    tagLoading={relations.tagLoading}
-    albumHasMore={Boolean(relations.albumCursor)}
-    tagHasMore={Boolean(relations.tagCursor)}
-    busy={actionBusy}
-    onalbumchange={(value)=>relationAlbum=value}
-    ontagschange={(values)=>relationTags=values}
-    onalbumsearch={(value)=>void searchAlbumOptions(value)}
-    ontagsearch={(value)=>void searchTagOptions(value)}
-    onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)}
-    ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)}
-    oncreatealbum={(input)=>relations.createAlbum(input)}
-    oncreatetag={(input)=>relations.createTag(input)}
-    oncreated={async(kind,option)=>applyCreatedRelation(kind,option.value)}
-    onclose={()=>{if(!actionBusy)relationDialog=null}}
-    onapply={()=>void applyRelationDialog()}
-  />
+  <V2AssetRelationModal kind={relationDialog} selectedCount={1} albumValue={relationAlbum} tagValues={relationTags} albumOptions={relations.albumOptions} tagOptions={relations.tagOptions} albumLoading={relations.albumLoading} tagLoading={relations.tagLoading} albumHasMore={Boolean(relations.albumCursor)} tagHasMore={Boolean(relations.tagCursor)} busy={actionBusy} onalbumchange={(value)=>relationAlbum=value} ontagschange={(values)=>relationTags=values} onalbumsearch={(value)=>void searchAlbumOptions(value)} ontagsearch={(value)=>void searchTagOptions(value)} onalbumloadmore={()=>void searchAlbumOptions(relations.albumQuery,true)} ontagloadmore={()=>void searchTagOptions(relations.tagQuery,true)} oncreatealbum={(input)=>relations.createAlbum(input)} oncreatetag={(input)=>relations.createTag(input)} oncreated={async(kind,option)=>applyCreatedRelation(kind,option.value)} onclose={()=>{if(!actionBusy)relationDialog=null}} onapply={()=>void applyRelationDialog()}/>
 {/if}
 
 <style>
