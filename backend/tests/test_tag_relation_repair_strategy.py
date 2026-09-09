@@ -85,9 +85,15 @@ def service() -> tuple[AssetSyncService, FakeImmich, FakeAssets]:
     return instance, immich, assets
 
 
-async def set_active_sync(instance: AssetSyncService, phase: str, cursor: str | None) -> None:
+async def set_active_sync(
+    instance: AssetSyncService,
+    phase: str,
+    cursor: str | None,
+    *,
+    mode: str = "full",
+) -> None:
     async def status():
-        return SimpleNamespace(active=SimpleNamespace(phase=phase, cursor=cursor))
+        return SimpleNamespace(active=SimpleNamespace(phase=phase, cursor=cursor, mode=mode))
 
     instance.status = status  # type: ignore[method-assign]
 
@@ -143,17 +149,26 @@ async def test_large_tag_change_does_not_launch_per_asset_detail_burst() -> None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["catalogs", "assets", "stacks"])
-async def test_tag_reconciliation_is_covered_only_before_relationship_stage(phase: str) -> None:
+async def test_full_tag_reconciliation_is_covered_before_relationship_stage(phase: str) -> None:
     instance, _, _ = service()
-    await set_active_sync(instance, phase, None)
+    await set_active_sync(instance, phase, None, mode="full")
 
     assert await instance.tag_reconciliation_will_cover([TAG_ID]) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["catalogs", "assets", "stacks"])
+async def test_incremental_tag_sync_is_not_assumed_to_cover_new_mutation(phase: str) -> None:
+    instance, _, _ = service()
+    await set_active_sync(instance, phase, None, mode="incremental")
+
+    assert await instance.tag_reconciliation_will_cover([TAG_ID]) is False
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cursor", [None, "albums:1:1", "tags:10:0"])
 async def test_relationship_stage_is_not_assumed_to_cover_tag_change(cursor: str | None) -> None:
     instance, _, _ = service()
-    await set_active_sync(instance, "relationships", cursor)
+    await set_active_sync(instance, "relationships", cursor, mode="full")
 
     assert await instance.tag_reconciliation_will_cover([TAG_ID]) is False
