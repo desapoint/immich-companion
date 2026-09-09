@@ -8,8 +8,14 @@
     mode = 'assets',
     assetId = null,
     assetIds = [],
+    resultMode = 'Pagination',
+    collectionPage = 1,
+    collectionPageSize = 24,
+    collectionTotal = 0,
+    startStack = false,
     onclose,
     onnavigate,
+    onmutated,
     onfilterrelation,
   }: {
     open?: boolean;
@@ -17,8 +23,14 @@
     mode?: 'assets' | 'restore' | 'duplicates';
     assetId?: string | null;
     assetIds?: string[];
+    resultMode?: 'Pagination' | 'Infinite';
+    collectionPage?: number;
+    collectionPageSize?: number;
+    collectionTotal?: number;
+    startStack?: boolean;
     onclose: () => void;
     onnavigate?: (assetId: string, navigation: ViewerNavigationWindow) => void | Promise<void>;
+    onmutated?: () => void | Promise<void>;
     onfilterrelation?: (kind: 'album' | 'tag', id: string) => void | Promise<void>;
   } = $props();
 </script>
@@ -26,5 +38,5 @@
 {#if mode === 'restore'}
   <V2RestoreViewer {open} {assetId} {assetIds} {onclose} {onnavigate} />
 {:else}
-  <V2AssetViewer {open} {assetId} {assetIds} {onclose} {onnavigate} {onfilterrelation} />
+  <V2AssetViewer {open} {assetId} {assetIds} {resultMode} {collectionPage} {collectionPageSize} {collectionTotal} {startStack} {onclose} {onnavigate} {onmutated} {onfilterrelation} />
 {/if}
