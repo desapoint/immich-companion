@@ -65,6 +65,24 @@
       options={[{value:'true',label:'Yes'},{value:'false',label:'No'}]}
       onchange={(value)=>update({value})}
     />
+  {:else if rule.field==='stackMembership'}
+    <SelectField
+      id={`${idPrefix}-value-${rule.id}`}
+      value={rule.value}
+      allowEmpty
+      placeholder="Choose stack state…"
+      options={[{value:'true',label:'In a stack'},{value:'false',label:'Not in a stack'}]}
+      onchange={(value)=>update({value})}
+    />
+  {:else if rule.field==='stackRole'}
+    <SelectField
+      id={`${idPrefix}-value-${rule.id}`}
+      value={rule.value}
+      allowEmpty
+      placeholder="Choose stack role…"
+      options={[{value:'true',label:'Primary asset'},{value:'false',label:'Secondary member'}]}
+      onchange={(value)=>update({value})}
+    />
   {:else if rule.field==='takenDate'}
     <DateTimePickerField id={`${idPrefix}-value-${rule.id}`} value={rule.value} onchange={(value)=>update({value})}/>
   {:else if rule.field==='aspectRatio'}

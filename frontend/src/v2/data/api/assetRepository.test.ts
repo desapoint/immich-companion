@@ -32,6 +32,16 @@ describe('live V2 asset repository',()=>{
     ]});
   });
 
+  it('maps stack membership and role without relying on client-side filtering',()=>{
+    expect(assetSearchExpression({mode:'expert',sort:{field:'filename',direction:'asc'},logic:'AND',negated:false,rules:[
+      {field:'stackMembership',op:'is',value:'true'},
+      {field:'stackRole',op:'is',value:'false'},
+    ],groups:[]})).toMatchObject({children:[
+      {kind:'condition',field:'stack',operator:'equals',value:true},
+      {kind:'condition',field:'stack_primary',operator:'equals',value:false},
+    ]});
+  });
+
   it('serializes value-free expert relationship filters',()=>{
     expect(assetSearchExpression({mode:'expert',sort:{field:'filename',direction:'asc'},logic:'AND',negated:false,rules:[{field:'album',op:'hasNone',value:''},{field:'tag',op:'hasNone',value:''}],groups:[]})).toMatchObject({children:[
       {kind:'condition',field:'album',operator:'has_none',value:[]},

@@ -33,7 +33,9 @@
     tagOptionsLoading = false,
     albumOptionsHasMore = false,
     tagOptionsHasMore = false,
+    busy = false,
     onchange,
+    onapply,
     onalbumsearch,
     ontagsearch,
     onalbumloadmore,
@@ -46,7 +48,9 @@
     tagOptionsLoading?: boolean;
     albumOptionsHasMore?: boolean;
     tagOptionsHasMore?: boolean;
+    busy?: boolean;
     onchange: (filters: SimpleAdvancedFilters) => void;
+    onapply: () => void;
     onalbumsearch?: (query: string) => void;
     ontagsearch?: (query: string) => void;
     onalbumloadmore?: () => void;
@@ -78,7 +82,7 @@
 
   function show(): void { draft = { ...filters }; onalbumsearch?.(''); ontagsearch?.(''); open = true; }
   function cancel(): void { draft = { ...filters }; open = false; }
-  function apply(): void { onchange({ ...draft }); open = false; }
+  function apply(): void { onchange({ ...draft }); open = false; onapply(); }
   function update<K extends keyof SimpleAdvancedFilters>(key: K, value: SimpleAdvancedFilters[K]): void { draft = { ...draft, [key]: value }; }
 </script>
 
@@ -99,7 +103,7 @@
       <V2Section title="Dimensions"><div class="v2-advanced-grid"><V2Field label="Minimum width" type="number" min={1} step={1} value={draft.minWidth} placeholder="1280" onchange={(value)=>update('minWidth',value)}/><V2Field label="Maximum width" type="number" min={1} step={1} value={draft.maxWidth} placeholder="4096" onchange={(value)=>update('maxWidth',value)}/><V2Field label="Minimum height" type="number" min={1} step={1} value={draft.minHeight} placeholder="720" onchange={(value)=>update('minHeight',value)}/><V2Field label="Maximum height" type="number" min={1} step={1} value={draft.maxHeight} placeholder="2160" onchange={(value)=>update('maxHeight',value)}/></div></V2Section>
       <V2Section title="Aspect ratio"><div class="v2-advanced-grid"><V2AspectRatioField id="asset-min-aspect-ratio" label="Minimum aspect ratio" value={draft.minAspectRatio} onchange={(value)=>update('minAspectRatio',value)}/><V2AspectRatioField id="asset-max-aspect-ratio" label="Maximum aspect ratio" value={draft.maxAspectRatio} onchange={(value)=>update('maxAspectRatio',value)}/></div></V2Section>
     </V2Stack></div>
-    <div class="v2-drawer-foot"><V2Badge text={draftActiveCount > 0 ? `${draftActiveCount} active` : 'No advanced filters'}/><V2Inline gap="sm"><V2Button onclick={()=>draft=emptyFilters()}>Reset</V2Button><V2Button onclick={cancel}>Cancel</V2Button><V2Button variant="primary" onclick={apply}>Apply</V2Button></V2Inline></div>
+    <div class="v2-drawer-foot"><V2Badge text={draftActiveCount > 0 ? `${draftActiveCount} active` : 'No advanced filters'}/><V2Inline gap="sm"><V2Button disabled={busy} onclick={()=>draft=emptyFilters()}>Reset</V2Button><V2Button disabled={busy} onclick={cancel}>Cancel</V2Button><V2Button variant="primary" disabled={busy} onclick={apply}>Apply &amp; Search</V2Button></V2Inline></div>
   </aside>
 {/if}
 

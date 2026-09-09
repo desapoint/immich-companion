@@ -1,5 +1,5 @@
 import { describe,expect,it } from 'vitest';
-import { assetExpressionText,assetOperatorOptionsForField,assetRulesInGroups,assetSearchCounts,buildAssetCriteria,cloneAssetGroups,emptyAssetSimple,hydrateAssetGroups,simpleAssetSearchToExpert,type AssetGroup } from './assetSearch';
+import { assetExpressionText,assetFieldSelectOptions,assetOperatorOptionsForField,assetRulesInGroups,assetSearchCounts,buildAssetCriteria,cloneAssetGroups,emptyAssetSimple,hydrateAssetGroups,simpleAssetSearchToExpert,type AssetGroup } from './assetSearch';
 
 const groups:AssetGroup[]=[{
   id:2,logic:'OR',negated:false,rules:[{id:3,field:'favorite',op:'is',value:'true'}],groups:[{
@@ -63,5 +63,28 @@ describe('recursive asset search state',()=>{
     expect(assetOperatorOptionsForField('tag').map((option)=>option.value)).toContain('hasNone');
     expect(assetOperatorOptionsForField('album').map((option)=>option.value)).toContain('hasNone');
     expect(assetOperatorOptionsForField('filename').map((option)=>option.value)).not.toContain('hasNone');
+  });
+
+  it('offers explicit stack membership and stack role fields',()=>{
+    expect(assetFieldSelectOptions).toEqual(expect.arrayContaining([
+      {value:'stackMembership',label:'Stack membership'},
+      {value:'stackRole',label:'Stack role'},
+    ]));
+    expect(assetOperatorOptionsForField('stackMembership')).toEqual([{value:'is',label:'is'}]);
+    expect(assetOperatorOptionsForField('stackRole')).toEqual([{value:'is',label:'is'}]);
+  });
+
+  it('preserves stack predicates inside recursive expert groups',()=>{
+    const criteria=buildAssetCriteria({
+      sort:'takenDate:desc',mode:'Expert',simple:emptyAssetSimple(),rules:[],logic:'AND',negated:false,
+      groups:[{id:20,logic:'OR',negated:false,rules:[
+        {id:21,field:'stackMembership',op:'is',value:'true'},
+        {id:22,field:'stackRole',op:'is',value:'false'},
+      ],groups:[]}],
+    });
+    expect(criteria).toMatchObject({mode:'expert',groups:[{rules:[
+      {field:'stackMembership',op:'is',value:'true'},
+      {field:'stackRole',op:'is',value:'false'},
+    ]}]});
   });
 });

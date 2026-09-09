@@ -11,6 +11,7 @@ from uuid import UUID
 
 from sqlalchemy import (
     Float,
+    String,
     and_,
     case,
     cast,
@@ -1197,6 +1198,18 @@ class AssetRepository:
                 "trashed": AssetRecord.is_trashed,
             }[condition.field]
             return column == bool(value)
+        if condition.field in {"stack", "stack_primary"}:
+            stack_present = and_(
+                AssetRecord.stack.is_not(None),
+                func.json_typeof(AssetRecord.stack) == "object",
+            )
+            if condition.field == "stack":
+                return stack_present if bool(value) else not_(stack_present)
+            is_primary = (
+                AssetRecord.stack["primaryAssetId"].as_string()
+                == cast(AssetRecord.id, String)
+            )
+            return and_(stack_present, is_primary if bool(value) else not_(is_primary))
         if condition.field in {"album", "tag"}:
             membership_model = AlbumAssetRecord if condition.field == "album" else TagAssetRecord
             relation_column = (

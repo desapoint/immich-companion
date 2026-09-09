@@ -70,12 +70,12 @@ function condition(field:string,operator:string,value:unknown):SearchNode{return
 function ruleNode(rule:{field:string;op:string;value:string}):SearchNode|null{
   if((rule.field==='album'||rule.field==='tag')&&rule.op==='hasNone')return condition(rule.field,'has_none',[]);
   const raw=rule.value.trim();if(!raw)return null;
-  const field={mediaType:'type',takenDate:'taken_at',aspectRatio:'aspect_ratio'}[rule.field]??rule.field;
+  const field={mediaType:'type',takenDate:'taken_at',aspectRatio:'aspect_ratio',stackMembership:'stack',stackRole:'stack_primary'}[rule.field]??rule.field;
   if(field==='album'||field==='tag'){
     const values=splitValues(raw);if(!values.length)return null;
     return condition(field,rule.op==='isNot'||rule.op==='notContains'?'not_in_any':'in_any',values);
   }
-  if(field==='favorite'||field==='archived'){
+  if(field==='favorite'||field==='archived'||field==='stack'||field==='stack_primary'){
     const expected=['true','favorite','archived'].includes(raw.toLowerCase());
     return condition(field,'equals',rule.op==='isNot'?!expected:expected);
   }

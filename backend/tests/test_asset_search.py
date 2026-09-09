@@ -121,6 +121,40 @@ def test_dimensions_aspect_ratio_and_states_compile() -> None:
     assert "assets.is_trashed = false" in sql
 
 
+def test_stack_membership_and_role_compile() -> None:
+    expression = SearchGroup(
+        children=[
+            SearchCondition(field="stack", operator="equals", value=True),
+            SearchCondition(field="stack_primary", operator="equals", value=False),
+        ]
+    )
+
+    sql = compiled_sql(expression)
+
+    assert "json_typeof(assets.stack) = 'object'" in sql
+    assert "assets.stack ->> 'primaryAssetId'" in sql
+    assert "CAST(assets.id AS VARCHAR)" in sql
+    assert "!=" in sql
+
+
+def test_stack_primary_and_secondary_both_require_stack_membership() -> None:
+    primary_sql = compiled_sql(
+        SearchGroup(
+            children=[SearchCondition(field="stack_primary", operator="equals", value=True)]
+        )
+    )
+    secondary_sql = compiled_sql(
+        SearchGroup(
+            children=[SearchCondition(field="stack_primary", operator="equals", value=False)]
+        )
+    )
+
+    assert "json_typeof(assets.stack) = 'object'" in primary_sql
+    assert "json_typeof(assets.stack) = 'object'" in secondary_sql
+    assert "assets.stack ->> 'primaryAssetId'" in primary_sql
+    assert "assets.stack ->> 'primaryAssetId'" in secondary_sql
+
+
 def test_strict_dimension_and_aspect_ratio_comparisons_compile() -> None:
     expression = SearchGroup(
         children=[
@@ -156,6 +190,10 @@ def test_invalid_field_operator_and_values_are_rejected() -> None:
         SearchCondition(field="tag", operator="in_all", value=["not-a-uuid"])
     with pytest.raises(ValidationError):
         SearchCondition(field="album", operator="has_none", value=[str(UUID(int=1))])
+    with pytest.raises(ValidationError):
+        SearchCondition(field="stack", operator="not_equals", value=True)
+    with pytest.raises(ValidationError):
+        SearchCondition(field="stack_primary", operator="equals", value="true")
     for value in ["0", "-1", "16/0", "16/9/2", "wide"]:
         with pytest.raises(ValidationError):
             SearchCondition(field="aspect_ratio", operator="equals", value=value)

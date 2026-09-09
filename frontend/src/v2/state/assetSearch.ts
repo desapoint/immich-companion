@@ -6,7 +6,7 @@ export type AssetRule={id:number;field:string;op:string;value:string};
 export type AssetGroup={id:number;logic:'AND'|'OR';negated:boolean;rules:AssetRule[];groups:AssetGroup[]};
 export type AssetSimpleSnapshot={filename:string;mediaType:string;favorite:string;archived:string;advanced:SimpleAdvancedFilters};
 
-export const assetFieldOptions=[['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
+export const assetFieldOptions=[['filename','Filename'],['mediaType','Media type'],['favorite','Favorite'],['archived','Archived'],['stackMembership','Stack membership'],['stackRole','Stack role'],['album','Album'],['tag','Tag'],['takenDate','Taken date'],['width','Width'],['height','Height'],['aspectRatio','Aspect ratio']] as const;
 export const assetOperatorOptions=[['is','is'],['all','matches all selected'],['isNot','is not'],['hasNone','has none'],['contains','contains'],['notContains','does not contain'],['gt','greater than'],['gte','at least'],['lt','less than'],['lte','at most']] as const;
 export const assetFieldSelectOptions=assetFieldOptions.map(([value,label])=>({value,label}));
 export const assetOperatorSelectOptions=assetOperatorOptions.map(([value,label])=>({value,label}));
@@ -27,6 +27,7 @@ export function assetOperatorOptionsForField(field:string){
     {value:'is',label:'is'},
     {value:'isNot',label:'is not'},
   ];
+  if(field==='stackMembership'||field==='stackRole')return[{value:'is',label:'is'}];
   if(field==='takenDate')return[
     {value:'gte',label:'is on or after'},
     {value:'lte',label:'is on or before'},
