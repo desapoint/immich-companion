@@ -15,7 +15,7 @@
   import V2Field from '../components/V2Field.svelte';
   import V2Inline from '../components/V2Inline.svelte';
   import V2LazyAssetMedia from '../components/V2LazyAssetMedia.svelte';
-  import V2OperationFeedback from '../components/V2OperationFeedback.svelte';
+  import V2OperationToast from '../components/V2OperationToast.svelte';
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2Section from '../components/V2Section.svelte';
   import V2Stack from '../components/V2Stack.svelte';
@@ -184,8 +184,7 @@
   <V2Zone>
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
     {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
-    {#if operationError}<V2ErrorState title="Duplicate operation failed" message={operationError}/>{/if}
-    <V2OperationFeedback {feedback} retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll(retryResolution!):undefined}/>
+    <V2OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll(retryResolution!):undefined}/>
     {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24]} resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={mutating} onclick={()=>{decisions={};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[];interactionError=''}}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item}
       {@const groupStacks=stacksForGroup(stackWorkspace,item.id)}

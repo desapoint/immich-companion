@@ -7,7 +7,7 @@
   import V2ErrorState from './V2ErrorState.svelte';
   import V2Field from './V2Field.svelte';
   import V2Inline from './V2Inline.svelte';
-  import V2OperationFeedback from './V2OperationFeedback.svelte';
+  import V2OperationToast from './V2OperationToast.svelte';
   import V2SavedSearchModal from './V2SavedSearchModal.svelte';
   import V2Stack from './V2Stack.svelte';
   import V2Toolbar from './V2Toolbar.svelte';
@@ -51,7 +51,7 @@
 
 <V2Stack gap="md">
   {#if controller.error}<V2ErrorState title="Saved searches unavailable" message={controller.error} onretry={()=>void controller.refresh(query)}/>{/if}
-  <V2OperationFeedback feedback={controller.feedback}/>
+  <V2OperationToast feedback={controller.feedback}/>
   <V2Toolbar sticky={false}>
     <V2Badge text={`${controller.records.length.toLocaleString()} saved searches`}/>
     <V2Badge text={controller.loading?'Loading…':controller.busy?'Saving…':'Ready'}/>
