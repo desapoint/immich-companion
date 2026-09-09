@@ -20,6 +20,7 @@
     onactivate,
     onselect,
     onpreview,
+    onstackview,
     onpointerdown,
     image,
   }: {
@@ -36,6 +37,7 @@
     onactivate?: (event: MouseEvent) => void;
     onselect?: (event: MouseEvent) => void;
     onpreview?: () => void;
+    onstackview?: () => void;
     onpointerdown?: (event: PointerEvent) => void;
     image?: ThumbnailSource | (() => ThumbnailSource);
   } = $props();
@@ -58,7 +60,7 @@
           {#if favorite}<span class="v2-asset-favorite-pill" aria-label="Favorite"><Heart size={12} fill="currentColor" aria-hidden="true"/></span>{/if}
           {#if albums.length}<V2AssetMetaPill kind="albums" count={albums.length} items={albums}/>{/if}
           {#if tags.length}<V2AssetMetaPill kind="tags" count={tags.length} items={tags}/>{/if}
-          {#if stackCount>0}<V2AssetMetaPill kind="stack" count={stackCount}/>{/if}
+          {#if stackCount>0}<V2AssetMetaPill kind="stack" count={stackCount} onclick={selectionMode?undefined:onstackview}/>{/if}
         </span>
       {/if}
       <b>{label}</b>
