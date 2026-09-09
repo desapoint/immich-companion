@@ -14,7 +14,7 @@
   import { errorMessage } from '../data/mutationFeedback';
   import type { MediaResource, TrashAssetRecord, ViewerNavigationWindow } from '../data/contracts';
 
-  let { open=false, assetId=null, assetIds=[], onclose, onnavigate }: { open?:boolean; assetId?:string|null; assetIds?:string[]; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void> }=$props();
+  let { open=false, assetId=null, assetIds=[], restoreBusy=false, onclose, onnavigate, onrestore }: { open?:boolean; assetId?:string|null; assetIds?:string[]; restoreBusy?:boolean; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>; onrestore?:(assetId:string)=>boolean|Promise<boolean> }=$props();
   const camera=new ViewerViewportController();
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
@@ -61,7 +61,14 @@
   function next(){const id=navigation.nextId??(fallbackIndex>=0&&fallbackIndex<assetIds.length-1?assetIds[fallbackIndex+1]:null);if(id)void moveTo(id,1)}
   async function retryMedia(){if(!asset||mediaRefreshing)return;mediaRefreshing=true;mediaError='';try{media=await libraryData.media.refresh(asset,'view');mediaAttempt+=1}catch(error){mediaError=errorMessage(error,'Media could not be refreshed.')}finally{mediaRefreshing=false}}
   function markMediaFailed(){mediaError='The media resource could not be loaded. It may be unavailable or the access URL may have expired.'}
-  async function restore(){if(!asset)return;const fallback=navigation.nextId??navigation.previousId??(fallbackIndex>=0?(assetIds[fallbackIndex+1]??assetIds[fallbackIndex-1]??null):null);await libraryData.assets.restore({kind:'ids',ids:[asset.id]});if(fallback&&await libraryData.assets.getTrashById(fallback))currentId=fallback;else onclose()}
+  async function restore(){
+    if(!asset||restoreBusy)return;
+    const restoringId=asset.id;
+    const fallback=navigation.nextId??navigation.previousId??(fallbackIndex>=0?(assetIds[fallbackIndex+1]??assetIds[fallbackIndex-1]??null):null);
+    const restored=onrestore?await onrestore(restoringId):(await libraryData.assets.restore({kind:'ids',ids:[restoringId]})).failed.every((failure)=>failure.id!==restoringId);
+    if(!restored)return;
+    if(fallback&&await libraryData.assets.getTrashById(fallback))currentId=fallback;else onclose();
+  }
   function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
   function handleShortcut(event:KeyboardEvent){
     if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||editableTarget(event.target))return;
@@ -78,5 +85,5 @@
 <V2ViewerShell {open} title="Restore Viewer" {onclose}>
   {#snippet header()}<V2Inline gap="sm"><V2Button onclick={onclose}>✕</V2Button><b>Restore Viewer</b><V2Badge text={navigationLoading?'Locating…':positionLabel}/>{#if media?.delivery==='transcoded'}<V2Badge text="Transcoded playback"/>{:else if media?.delivery==='decoded'}<V2Badge text="Decoded preview"/>{/if}</V2Inline><V2Inline gap="sm">{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>{/snippet}
   <div class="v2-viewer-stage"><div class="v2-image-stage">{#if loading}<span class="v2-muted">Loading trash asset…</span>{:else if assetError}<V2ErrorState title="Asset unavailable" message={assetError} onretry={()=>currentId&&void loadCurrent(currentId)}/>{:else if mediaError}<V2ErrorState title="Media unavailable" message={mediaError} retryLabel={mediaRefreshing?'Refreshing…':'Retry media'} onretry={()=>void retryMedia()}/>{:else if asset&&media}{#key mediaAttempt}<V2MediaViewport resource={media} assetType={asset.type} alt={asset.original_file_name} controller={camera} onerror={markMediaFailed}/>{/key}{/if}</div><aside class="v2-viewer-info">{#if navigationError}<V2Section title="Navigation"><V2Card><span class="v2-small v2-muted">{navigationError} Loaded-page navigation remains available when possible.</span></V2Card></V2Section>{/if}{#if asset}<V2Section title="Details"><V2Card><b>{asset.original_file_name}</b><p class="v2-small v2-muted">{asset.width??'—'} × {asset.height??'—'} · {asset.original_mime_type??'Unknown type'}</p></V2Card></V2Section><V2Section title="Metadata"><V2Card><span class="v2-small">Taken {new Date(asset.taken_at).toLocaleString()}<br>Modified {new Date(asset.file_modified_at).toLocaleString()}<br>{asset.restore_path??'No restore path'}</span></V2Card></V2Section><V2Section title="Restore boundary"><V2Card><span class="v2-small">Restoring this item lets the active data source restore related album, tag and stack state when available.</span></V2Card></V2Section>{:else}<V2Section title="Asset"><V2Card><span class="v2-muted">This item is no longer in trash.</span></V2Card></V2Section>{/if}</aside></div>
-  {#snippet footer()}<V2Button disabled={!canPrevious||navigationLoading} onclick={previous}>← Previous</V2Button><V2Inline gap="sm"><V2Button variant="primary" disabled={!asset||loading} onclick={restore}>Restore visible</V2Button></V2Inline><V2Button disabled={!canNext||navigationLoading} onclick={next}>Next →</V2Button>{/snippet}
+  {#snippet footer()}<V2Button disabled={!canPrevious||navigationLoading||restoreBusy} onclick={previous}>← Previous</V2Button><V2Inline gap="sm"><V2Button variant="primary" disabled={!asset||loading||restoreBusy} onclick={restore}>{restoreBusy?'Restoring…':'Restore visible'}</V2Button></V2Inline><V2Button disabled={!canNext||navigationLoading||restoreBusy} onclick={next}>Next →</V2Button>{/snippet}
 </V2ViewerShell>
