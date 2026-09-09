@@ -18,6 +18,7 @@ type SyncStatusSource = {
 };
 
 const TERMINAL_TASK_STATES = new Set<TaskRecord['status']>(['completed', 'failed', 'cancelled']);
+const ACTIVE_TASK_STATES = new Set<TaskRecord['status']>(['running', 'retrying', 'recovering']);
 
 function syncRunState(task: TaskRecord, fallback: SyncRunState): SyncRunState {
   switch (task.status) {
@@ -33,22 +34,26 @@ function syncRunState(task: TaskRecord, fallback: SyncRunState): SyncRunState {
   }
 }
 
-function progressString(progress: Record<string, unknown>, key: string): string | null {
+function progressString(progress: Record<string, unknown>, key: string, fallback: string | null): string | null {
+  if (!(key in progress)) return fallback;
   const value = progress[key];
-  return typeof value === 'string' && value.trim() ? value : null;
+  if (value === null) return null;
+  return typeof value === 'string' ? value : fallback;
 }
 
-function progressNumber(progress: Record<string, unknown>, key: string): number | null {
+function progressNumber(progress: Record<string, unknown>, key: string, fallback: number | null): number | null {
+  if (!(key in progress)) return fallback;
   const value = progress[key];
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
 function applyTaskToRun(run: SyncRun, task: TaskRecord): SyncRun {
-  const phase = progressString(task.progress, 'phase') ?? run.phase;
-  const completed = progressNumber(task.progress, 'completed') ?? run.progress.completed;
-  const total = progressNumber(task.progress, 'total') ?? run.progress.total;
-  const percent = progressNumber(task.progress, 'percent') ?? run.progress.percent;
-  const detail = progressString(task.progress, 'detail') ?? run.progress.detail;
+  const phase = progressString(task.progress, 'phase', run.phase) ?? run.phase;
+  const completed = progressNumber(task.progress, 'completed', run.progress.completed) ?? run.progress.completed;
+  const total = progressNumber(task.progress, 'total', run.progress.total);
+  const percent = progressNumber(task.progress, 'percent', run.progress.percent);
+  const detail = progressString(task.progress, 'detail', run.progress.detail);
   const checkpointCursor = task.checkpoint.cursor;
 
   return {
@@ -56,7 +61,7 @@ function applyTaskToRun(run: SyncRun, task: TaskRecord): SyncRun {
     status: syncRunState(task, run.status),
     phase,
     cursor: typeof checkpointCursor === 'string' ? checkpointCursor : run.cursor,
-    counters: task.counters ?? run.counters,
+    counters: task.counters,
     attempts: task.attempt,
     error: task.error?.message ?? null,
     startedAt: task.startedAt ?? run.startedAt,
@@ -146,10 +151,18 @@ export class SyncStatusController {
       active = applyTaskToRun(active, task);
       matched = true;
     }
+
     if (pending?.taskId === task.id) {
-      pending = applyTaskToRun(pending, task);
+      const updated = applyTaskToRun(pending, task);
+      if (ACTIVE_TASK_STATES.has(task.status)) {
+        active = updated;
+        pending = null;
+      } else {
+        pending = updated;
+      }
       matched = true;
     }
+
     if (!matched) return false;
 
     this.status = { ...this.status, active, pending };
