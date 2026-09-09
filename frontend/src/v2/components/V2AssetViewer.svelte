@@ -8,6 +8,7 @@
   import V2MediaViewport from './V2MediaViewport.svelte';
   import V2Inline from './V2Inline.svelte';
   import V2KeyboardShortcuts, { type KeyboardShortcut } from './V2KeyboardShortcuts.svelte';
+  import V2OperationFeedback from './V2OperationFeedback.svelte';
   import V2Section from './V2Section.svelte';
   import V2StackFilmstrip from './V2StackFilmstrip.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
@@ -77,6 +78,7 @@
 
   const mutations=new AssetMutationController(()=>reloadActive(),()=>{});
   const actionBusy=$derived(mutations.busy),actionStatus=$derived(mutations.phase==='applying'?'Applying change…':mutations.phase==='refreshing'?'Refreshing asset…':'');
+  const actionFeedback=$derived(mutations.feedback);
   const isVideo=$derived(asset?.asset_type==='VIDEO'),needsDecodedImage=$derived(media?.delivery==='decoded'),needsVideoProxy=$derived(media?.delivery==='transcoded');
   const sessionIds=$derived(resultMode==='Pagination'?(sessionPages[sessionPage]??[]):sessionInfinite);
   const sessionIndex=$derived(currentId?sessionIds.indexOf(currentId):-1);
@@ -241,13 +243,16 @@
     }
   }
 
-  async function refreshLiveStack(){
+  async function refreshLiveStack(expectedPrimaryId:string|null=null){
     if(!stackId)return;
     const probeId=stackLiveIds.find((id)=>!stackRemovedIds.has(id));
     if(!probeId){stackExists=false;stackLiveIds=[];return}
     const probe=await libraryData.assets.getById(probeId);
     if(!probe?.stack||probe.stack.id!==stackId){stackExists=false;stackLiveIds=[];return}
-    stackExists=true;stackPrimaryId=probe.stack.primaryAssetId;stackLiveIds=[...probe.stack.assets];await ensureStackMembers(stackLiveIds);
+    stackExists=true;
+    if(!expectedPrimaryId||probe.stack.primaryAssetId===expectedPrimaryId)stackPrimaryId=probe.stack.primaryAssetId;
+    else stackPrimaryId=expectedPrimaryId;
+    stackLiveIds=[...probe.stack.assets];await ensureStackMembers(stackLiveIds);
   }
 
   function filterRelationship(kind:'album'|'tag',id:string){void onfilterrelation?.(kind,id)}
@@ -279,7 +284,13 @@
     if(!result?.affectedIds.includes(id))return;
     stackRemovedIds=new Set([...stackRemovedIds,id]);stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);await refreshLiveStack();
   }
-  async function setStackPrimary(){if(!asset)return;const id=asset.id,result=await runAction('Set stack primary',(assetId)=>libraryData.assets.setStackPrimary(assetId));if(result?.affectedIds.includes(id)){stackPrimaryId=id;await refreshLiveStack()}}
+  async function setStackPrimary(){
+    if(!asset)return;
+    const id=asset.id,result=await runAction('Set stack primary',(assetId)=>libraryData.assets.setStackPrimary(assetId));
+    if(!result?.affectedIds.includes(id))return;
+    stackPrimaryId=id;
+    await refreshLiveStack(id);
+  }
   async function removeCompleteStack(){
     if(!asset)return;const result=await runAction('Remove complete stack',(id)=>libraryData.assets.removeCompleteStack(id));if(!result?.affectedIds.length)return;
     stackRemovedIds=new Set(stackMembers.map((member)=>member.id));stackLiveIds=[];stackExists=false;
@@ -360,6 +371,7 @@
     <V2Inline gap="sm">{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
   {/snippet}
   <div class="v2-viewer-workarea">
+    {#if actionFeedback?.tone==='pending'}<div class="v2-viewer-operation-feedback"><V2OperationFeedback feedback={actionFeedback}/></div>{/if}
     <div class="v2-viewer-stage">
       <div class="v2-image-stage">{#if loading}<span class="v2-muted">Loading asset…</span>{:else if assetError}<V2ErrorState title="Asset unavailable" message={assetError} onretry={()=>currentId&&void loadCurrent(currentId)}/>{:else if mediaError}<V2ErrorState title={asset?.is_offline?'Source offline':'Media unavailable'} message={mediaError} retryLabel={mediaRefreshing?'Refreshing…':'Retry media'} onretry={()=>void retryMedia()}/>{:else if asset&&media}{#key mediaAttempt}<V2MediaViewport resource={media} assetType={asset.asset_type} alt={asset.original_file_name} controller={camera} onerror={markMediaFailed}/>{/key}{/if}</div>
       <aside class="v2-viewer-info">
@@ -428,6 +440,6 @@
 {/if}
 
 <style>
-  .v2-viewer-workarea{min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto}.v2-stack-inspection-bar{display:grid;gap:8px;padding:9px 12px 7px;border-top:1px solid var(--v2-line);background:#0d131b;min-width:0}.v2-stack-inspection-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+  .v2-viewer-workarea{position:relative;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto}.v2-viewer-operation-feedback{position:absolute;z-index:4;top:10px;left:50%;width:min(440px,calc(100% - 24px));transform:translateX(-50%);pointer-events:none}.v2-stack-inspection-bar{display:grid;gap:8px;padding:9px 12px 7px;border-top:1px solid var(--v2-line);background:#0d131b;min-width:0}.v2-stack-inspection-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
   .viewer-path{overflow-wrap:anywhere;word-break:break-word}.viewer-facts{display:grid;gap:.5rem;margin:0}.viewer-facts div{display:grid;grid-template-columns:4.5rem minmax(0,1fr);gap:.65rem}.viewer-facts dt,.viewer-relation>b,.viewer-status-grid b{color:var(--v2-muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.05em}.viewer-facts dd{margin:0;font-size:.75rem;overflow-wrap:anywhere}.viewer-relations{display:grid;gap:.85rem}.viewer-relation{display:grid;gap:.4rem}.viewer-pills{display:flex;flex-wrap:wrap;gap:.35rem}.viewer-pills :global(.v2-badge){font-size:8px}.viewer-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.viewer-status-grid div{display:grid;gap:.25rem}
 </style>
