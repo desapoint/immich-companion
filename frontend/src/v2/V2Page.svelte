@@ -6,6 +6,7 @@
   import V2AlbumsPage from './pages/V2AlbumsPage.svelte';
   import V2AssetsPage from './pages/V2AssetsPage.svelte';
   import V2PlaygroundPage from './pages/V2PlaygroundPage.svelte';
+  import V2RestorePage from './pages/V2RestorePage.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
   import V2StatusPage from './pages/V2StatusPage.svelte';
   import V2TagsPage from './pages/V2TagsPage.svelte';
@@ -90,6 +91,8 @@
     <V2StatusPage />
   {:else if activeKey === 'assets'}
     <V2AssetsPage />
+  {:else if activeKey === 'restore'}
+    <V2RestorePage />
   {:else if activeKey === 'albums'}
     <V2AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
   {:else if activeKey === 'tags'}
