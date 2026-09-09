@@ -110,7 +110,7 @@
   $effect(()=>{
     if(!open)return;
     const live=[...assetIds];
-    sessionTotal=collectionTotal;
+    sessionTotal=Math.max(sessionTotal,collectionTotal);
     if(resultMode==='Pagination'){
       const existing=sessionPages[collectionPage]??[];
       const merged=stableMerge(existing,live);
@@ -142,7 +142,7 @@
       ]);
       if(request!==loadRequest)return;
       asset=nextAsset;navigation=nextNavigation;media=nextAsset?libraryData.media.view(nextAsset):null;mediaAttempt+=1;
-      if(nextNavigation.position!==null){sessionPosition=nextNavigation.position;sessionTotal=nextNavigation.total||sessionTotal;sessionPage=resultMode==='Pagination'?Math.max(1,Math.ceil(nextNavigation.position/collectionPageSize)):sessionPage}
+      if(nextNavigation.position!==null){sessionPosition=nextNavigation.position;sessionTotal=Math.max(sessionTotal,nextNavigation.total);sessionPage=resultMode==='Pagination'?Math.max(1,Math.ceil(nextNavigation.position/collectionPageSize)):sessionPage}
       if(nextAsset){
         void onnavigate?.(id,nextNavigation);
         if(startStack&&!stackAutoEntered&&nextAsset.stack){stackAutoEntered=true;void enterStack(nextAsset)}
@@ -156,7 +156,7 @@
     const next=await libraryData.assets.details(currentId);
     if(!next){if(!stackActive)assetError='This asset is no longer available in the current data source.';return}
     asset=next;media=libraryData.media.view(next);mediaAttempt+=1;mediaError='';assetError='';
-    if(stackActive){stackDetailCache={...stackDetailCache,[next.id]:next};stackMediaCache={...stackMediaCache,[next.id]:media}}
+    if(stackActive&&media){stackDetailCache={...stackDetailCache,[next.id]:next};stackMediaCache={...stackMediaCache,[next.id]:media}}
   }
 
   function formatFileSize(bytes:number|null|undefined):string{
@@ -204,7 +204,8 @@
       stackDetailCache={...stackDetailCache,[source.id]:source};
       if(media)stackMediaCache={...stackMediaCache,[source.id]:media};
       stackReadyIds=new Set(media?[source.id]:[]);
-      const index=stackMembers.findIndex((member)=>member.id===source.id),priority=[source,stackMembers[index-1],stackMembers[index+1],...stackMembers].filter((member,index,array):member is AssetRecord=>Boolean(member)&&array.findIndex((entry)=>entry?.id===member.id)===index);
+      const index=stackMembers.findIndex((member)=>member.id===source.id),priority:AssetRecord[]=[];
+      for(const candidate of [source,stackMembers[index-1],stackMembers[index+1],...stackMembers])if(candidate&&!priority.some((member)=>member.id===candidate.id))priority.push(candidate);
       for(const member of priority)void preloadStackMember(member);
     }catch(error){assetError=errorMessage(error,'Stack members could not be loaded.');stackActive=false}
     finally{stackLoading=false}
@@ -284,7 +285,11 @@
 
   async function moveNormal(delta:-1|1){
     const index=sessionIndex,targetIndex=index+delta;
-    if(index>=0&&targetIndex>=0&&targetIndex<sessionIds.length){currentId=sessionIds[targetIndex];return}
+    if(index>=0&&targetIndex>=0&&targetIndex<sessionIds.length){
+      if(resultMode==='Pagination')sessionPosition=(sessionPage-1)*collectionPageSize+targetIndex+1;
+      else if(sessionPosition!==null)sessionPosition+=delta;
+      currentId=sessionIds[targetIndex];return;
+    }
     const id=delta<0?navigation.previousId:navigation.nextId;if(!id)return;
     const expected=navigation.position!==null?navigation.position+delta:sessionPosition!==null?sessionPosition+delta:null;
     if(expected!==null){
@@ -296,7 +301,7 @@
   function previous(){if(stackActive){if(stackIndex>0)selectStackMember(stackMembers[stackIndex-1].id);return}void moveNormal(-1)}
   function next(){if(stackActive){if(stackIndex>=0&&stackIndex<stackMembers.length-1)selectStackMember(stackMembers[stackIndex+1].id);return}void moveNormal(1)}
 
-  async function retryMedia(){if(!asset||mediaRefreshing)return;mediaRefreshing=true;mediaError='';try{media=await libraryData.media.refresh(asset,'view');mediaAttempt+=1;if(stackActive&&currentId)stackMediaCache={...stackMediaCache,[currentId]:media}}catch(error){mediaError=errorMessage(error,'Media could not be refreshed.')}finally{mediaRefreshing=false}}
+  async function retryMedia(){if(!asset||mediaRefreshing)return;mediaRefreshing=true;mediaError='';try{media=await libraryData.media.refresh(asset,'view');mediaAttempt+=1;if(stackActive&&currentId&&media)stackMediaCache={...stackMediaCache,[currentId]:media}}catch(error){mediaError=errorMessage(error,'Media could not be refreshed.')}finally{mediaRefreshing=false}}
   function markMediaFailed(){mediaError=asset?.is_offline?'The original source is offline and no usable cached preview is currently available.':'The media resource could not be loaded. It may be unavailable or the access URL may have expired.'}
 
   async function trash(){
