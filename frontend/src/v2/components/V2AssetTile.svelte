@@ -3,6 +3,7 @@
   import V2AssetMetaPill from './V2AssetMetaPill.svelte';
   import V2LazyAssetMedia from './V2LazyAssetMedia.svelte';
   import V2RoundCheckbox from './V2RoundCheckbox.svelte';
+  import V2StackPrimaryControl from './V2StackPrimaryControl.svelte';
   import type { MediaResource } from '../data/contracts';
   import type { ThumbnailSource } from '../data/mediaThumbnailCache';
 
@@ -17,10 +18,12 @@
     stackCount = 0,
     selected = false,
     selectionMode = false,
+    stackPrimary = false,
     onactivate,
     onselect,
     onpreview,
     onstackview,
+    onstackprimary,
     onpointerdown,
     image,
   }: {
@@ -34,10 +37,12 @@
     stackCount?: number;
     selected?: boolean;
     selectionMode?: boolean;
+    stackPrimary?: boolean;
     onactivate?: (event: MouseEvent) => void;
     onselect?: (event: MouseEvent) => void;
     onpreview?: () => void;
     onstackview?: () => void;
+    onstackprimary?: () => void;
     onpointerdown?: (event: PointerEvent) => void;
     image?: ThumbnailSource | (() => ThumbnailSource);
   } = $props();
@@ -45,10 +50,10 @@
   const visualVariant = $derived(String(index % 3));
   const cacheKey = $derived(`asset-thumbnail:${String(assetId)}`);
   const hasPills = $derived(favorite || tags.length > 0 || albums.length > 0 || stackCount > 0);
-  const resolveImage = $derived((): ThumbnailSource => {
+  function resolveImage(): ThumbnailSource {
     if (typeof image === 'function') return image();
     return image ?? ({ url:'', fallbackUrls:[], mimeType:null, posterUrl:null, delivery:'thumbnail', originalMimeType:null, expiresAt:null } satisfies MediaResource);
-  });
+  }
 </script>
 
 <div class="v2-asset-tile" class:selected class:selection-mode={selectionMode} data-variant={visualVariant} data-asset-id={String(assetId)}>
@@ -69,6 +74,9 @@
   </button>
 
   <span class="v2-asset-checkbox-zone"><V2RoundCheckbox checked={selected} ariaLabel={`${selected ? 'Deselect' : 'Select'} ${label}`} onclick={onselect}/></span>
+  {#if selectionMode && selected}
+    <span class="v2-asset-stack-primary-zone"><V2StackPrimaryControl selected={stackPrimary} onclick={onstackprimary}/></span>
+  {/if}
   <button class="v2-asset-preview-zone" class:visible={selectionMode} type="button" aria-label={`Preview ${label}`} title="Preview" tabindex={selectionMode ? 0 : -1} disabled={!selectionMode} onclick={(event) => {event.stopPropagation();onpreview?.();}} onpointerdown={(event) => event.stopPropagation()}>
     <Eye size={17} aria-hidden="true" />
   </button>

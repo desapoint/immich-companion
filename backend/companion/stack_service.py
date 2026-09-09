@@ -133,13 +133,14 @@ class StackService:
                         final_ids.append(identifier)
                 await self._immich.delete_stack(stack.id)
                 continue
-            if len(selected_members) == len(member_ids):
+            remaining_members = [
+                identifier for identifier in member_ids if identifier not in selected
+            ]
+            if len(remaining_members) < 2:
                 await self._immich.delete_stack(stack.id)
             else:
                 if stack.primary_asset_id in selected:
-                    replacement_primary = next(
-                        identifier for identifier in member_ids if identifier not in selected
-                    )
+                    replacement_primary = remaining_members[0]
                     await self._immich.update_stack_primary(stack.id, replacement_primary)
                 for identifier in selected_members:
                     await self._immich.remove_asset_from_stack(stack.id, identifier)
@@ -158,6 +159,31 @@ class StackService:
             primary_asset_id=primary_asset_id,
         )
 
+    async def remove_members(self, asset_ids: list[UUID]) -> list[UUID]:
+        """Remove members while preserving the invariant that stacks have at least two assets."""
+
+        selected = set(asset_ids)
+        affected_ids: list[UUID] = []
+        for stack in await self._immich.list_stacks():
+            member_ids = [member.id for member in stack.assets]
+            selected_members = [identifier for identifier in member_ids if identifier in selected]
+            if not selected_members:
+                continue
+            for identifier in member_ids:
+                if identifier not in affected_ids:
+                    affected_ids.append(identifier)
+            remaining_members = [
+                identifier for identifier in member_ids if identifier not in selected
+            ]
+            if len(remaining_members) < 2:
+                await self._immich.delete_stack(stack.id)
+                continue
+            if stack.primary_asset_id in selected:
+                await self._immich.update_stack_primary(stack.id, remaining_members[0])
+            for identifier in selected_members:
+                await self._immich.remove_asset_from_stack(stack.id, identifier)
+        return affected_ids
+
     async def execute(self, preparation: StackPreparation) -> bool:
         """Create, repair, and verify one prepared stack through Immich APIs."""
 
@@ -166,14 +192,20 @@ class StackService:
         return await self._creation_visible(preparation.primary_asset_id)
 
     async def repair_ids(self, asset_ids: list[UUID]) -> list[UUID]:
-        """Snapshot every member whose stack metadata can change."""
+        """Snapshot every affected member from Immich's authoritative topology."""
 
+        selected = set(asset_ids)
         repair_ids: list[UUID] = []
-        for asset_id in asset_ids:
-            members = await self._assets.stack_asset_ids(asset_id)
-            for member_id in members or [asset_id]:
+        for stack in await self._immich.list_stacks():
+            member_ids = [member.id for member in stack.assets]
+            if not selected.intersection(member_ids):
+                continue
+            for member_id in member_ids:
                 if member_id not in repair_ids:
                     repair_ids.append(member_id)
+        for asset_id in asset_ids:
+            if asset_id not in repair_ids:
+                repair_ids.append(asset_id)
         return repair_ids
 
     async def _repair_targets(self, asset_ids: list[UUID]) -> None:

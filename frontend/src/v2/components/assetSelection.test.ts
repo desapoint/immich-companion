@@ -6,6 +6,7 @@ import {
   getAssetSelectionCount,
   invertAssetSelection,
   isAssetSelected,
+  resolveAssetSelectionPrimary,
   selectAllMatchingAssets,
   selectVisibleAssets,
   toggleAssetSelected,
@@ -69,5 +70,12 @@ describe('assetSelection', () => {
     const snapshot = selectVisibleAssets(ids);
     const state = applyAssetRangeFromSnapshot(snapshot, ids, 11, 14, 'remove');
     expect(ids.filter((id) => isAssetSelected(state, id))).toEqual([10, 15]);
+  });
+
+  it('keeps a valid stack primary and otherwise uses the first selected asset', () => {
+    const state = selectVisibleAssets([12, 10, 11]);
+    expect(resolveAssetSelectionPrimary(state, ids, null)).toBe(12);
+    expect(resolveAssetSelectionPrimary(state, ids, 11, 12)).toBe(11);
+    expect(resolveAssetSelectionPrimary(state, ids, 14, 12)).toBe(12);
   });
 });

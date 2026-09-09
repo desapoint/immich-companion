@@ -80,3 +80,15 @@ export function applyShiftAssetRange<T extends AssetSelectionId>(state: AssetSel
   next.anchor = state.anchor;
   return next;
 }
+
+export function resolveAssetSelectionPrimary<T extends AssetSelectionId>(
+  state: AssetSelectionState<T>,
+  visibleIds: readonly T[],
+  current: T | null,
+  preferred: T | null = null,
+): T | null {
+  if (current !== null && isAssetSelected(state, current)) return current;
+  if (preferred !== null && isAssetSelected(state, preferred)) return preferred;
+  if (!state.allMatchingSelected) return state.selectedIds.values().next().value ?? null;
+  return visibleIds.find((id) => isAssetSelected(state, id)) ?? null;
+}

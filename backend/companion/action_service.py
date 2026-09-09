@@ -326,21 +326,7 @@ class AssetActionService:
                 for asset_id in (member.id for member in stack.assets if member.id in selected):
                     await self._immich.update_stack_primary(stack.id, asset_id)
         elif operation == "remove_from_stack":
-            selected = set(ids)
-            for stack in await self._immich.list_stacks():
-                selected_members = [member.id for member in stack.assets if member.id in selected]
-                if not selected_members:
-                    continue
-                if len(selected_members) == len(stack.assets):
-                    await self._immich.delete_stack(stack.id)
-                    continue
-                if stack.primary_asset_id in selected:
-                    replacement = next(
-                        member.id for member in stack.assets if member.id not in selected
-                    )
-                    await self._immich.update_stack_primary(stack.id, replacement)
-                for asset_id in selected_members:
-                    await self._immich.remove_asset_from_stack(stack.id, asset_id)
+            await self._stacks.remove_members(ids)
         elif operation == "remove_stack":
             selected = set(ids)
             for stack in await self._immich.list_stacks():
@@ -534,6 +520,7 @@ class AssetActionService:
             applied_ids=applied_ids,
             skipped_ids=skipped_ids,
             failed_ids=failed_ids,
+            affected_ids=applied_ids,
             relation_results=relation_results,
             verified=failed_count == 0,
             status="completed" if failed_count == 0 else "failed",
@@ -738,6 +725,13 @@ class AssetActionService:
             applied_ids=applied_ids,
             skipped_ids=skipped_ids,
             failed_ids=failed_ids,
+            affected_ids=(
+                repair_ids
+                if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}
+                else stack_preparation.affected_ids
+                if operation == "stack" and stack_preparation is not None
+                else applied_ids
+            ),
             verified=not failed_ids,
             status=status,
         )

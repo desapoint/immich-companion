@@ -18,6 +18,8 @@ import type {
   MediaRepository,
   MutationResult,
   PageResult,
+  StackActionPlan,
+  StackResolution,
   TrashAssetRecord,
   ViewerNavigationRepository,
 } from '../contracts';
@@ -45,8 +47,8 @@ type ApiAssetDetail={
 type ApiAssetPage={items:ApiAssetSummary[];total:number;page:number;page_size:number;pages:number};
 type ApiSelectionCapabilities={count:number;all_favorite:boolean;all_archived:boolean;has_tags:boolean;has_albums:boolean;has_stack_members:boolean;can_stack:boolean;single_asset_id:string|null;can_set_stack_primary:boolean;can_remove_complete_stack:boolean};
 type ApiSelectionRelationships={albums:Array<{id:string;name:string;selected_asset_count:number}>;tags:Array<{id:string;name:string;selected_asset_count:number}>};
-type ApiActionPlan={id:string;applicable_count:number;skipped_count:number;missing_ids:string[]};
-type ApiActionResult={applied_ids:string[];failed_ids:string[]};
+type ApiActionPlan={id:string;target_count:number;applicable_count:number;skipped_count:number;missing_ids:string[];stack_conflicts?:Array<{stack_id:string;selected_count:number;member_count:number;includes_unselected:boolean}>;stack_primary_asset_id?:string|null};
+type ApiActionResult={applied_ids:string[];failed_ids:string[];affected_ids?:string[]};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
 type SearchNode={kind:'condition';field:string;operator:string;value:unknown}|SearchExpression;
 type SearchExpression={kind:'group';operator:'and'|'or';negate:boolean;children:SearchNode[]};
@@ -127,7 +129,7 @@ function normalizeDetail(detail:ApiAssetDetail,summary:ApiAssetSummary|null):Ass
 }
 function normalizeTrash(asset:ApiAssetSummary):TrashAssetRecord{return{id:asset.id,type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as TrashAssetRecord['type'],original_file_name:asset.original_file_name,original_mime_type:asset.original_mime_type,width:asset.width,height:asset.height,duration:asset.duration,taken_at:asset.taken_at,file_modified_at:asset.file_modified_at,is_favorite:asset.is_favorite,is_archived:asset.is_archived,restore_path:asset.restore_path??asset.source.original_path,file_size_bytes:asset.file_size_bytes,library_id:asset.source.library_id,is_offline:asset.is_offline}}
 function normalizeTrashDetail(asset:ApiAssetDetail):TrashAssetRecord{const exifSize=asset.exif_info?.fileSizeInByte;return{id:asset.id,type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as TrashAssetRecord['type'],original_file_name:asset.original_file_name,original_mime_type:asset.original_mime_type,width:asset.width,height:asset.height,duration:asset.duration,taken_at:asset.taken_at,file_modified_at:asset.file_modified_at,is_favorite:asset.is_favorite,is_archived:asset.is_archived,restore_path:asset.original_path,file_size_bytes:typeof exifSize==='number'&&exifSize>=0?exifSize:null,library_id:asset.library_id,is_offline:asset.is_offline}}
-function resultFromAction(result:ApiActionResult):MutationResult{return{affectedIds:result.applied_ids,failed:result.failed_ids.map((id)=>({id,reason:'Immich could not apply this action.'}))}}
+function resultFromAction(result:ApiActionResult):MutationResult{return{affectedIds:result.affected_ids??result.applied_ids,failed:result.failed_ids.map((id)=>({id,reason:'Immich could not apply this action.'}))}}
 
 export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):{assets:AssetRepository;navigation:ViewerNavigationRepository;media:MediaRepository}{
   let lastKey='',lastQuery:AssetSearchQuery|null=null;const pages=new Map<number,AssetRecord[]>();let lastTotal=0;
@@ -135,6 +137,8 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
   async function fetchAssets(query:AssetSearchQuery,remember=true):Promise<PageResult<AssetRecord>>{const page=pageNumber(query);const response=await requestJson<ApiAssetPage>(fetcher,'/api/assets/search',{...json(searchBody(query,page)),signal:query.signal});const items=response.items.map(normalizeAsset);if(remember){const key=JSON.stringify({...query,page:undefined,cursor:undefined,signal:undefined});if(key!==lastKey){pages.clear();lastKey=key}lastQuery=query;lastTotal=response.total;pages.set(page,items)}return{items,total:response.total,pageSize:response.page_size,page:response.page,nextCursor:response.page<response.pages?String(response.page+1):null}}
   async function resolve(target:AssetSelectionTarget){return requestJson<ApiSelectionResolution>(fetcher,'/api/assets/selection/resolve',json(selectionBody(target)))}
   async function action(target:AssetSelectionTarget,intent:string,relationIds:string[]=[],primary?:string):Promise<MutationResult>{const plan=await requestJson<ApiActionPlan>(fetcher,'/api/assets/actions/plan',json({selection:selectionBody(target),action:intent,relation_ids:relationIds,...(intent==='stack'?{stack_resolution:'move_selected',stack_primary_asset_id:primary}:{} )}));const executed=await requestJson<ApiActionResult>(fetcher,'/api/assets/actions/execute',json({plan_id:plan.id,confirm:true}));return resultFromAction(executed)}
+  async function planStack(target:AssetSelectionTarget,primaryAssetId:string,resolution?:StackResolution):Promise<StackActionPlan>{const plan=await requestJson<ApiActionPlan>(fetcher,'/api/assets/actions/plan',json({selection:selectionBody(target),action:'stack',relation_ids:[],stack_primary_asset_id:primaryAssetId,...(resolution?{stack_resolution:resolution}:{})}));return{id:plan.id,targetCount:plan.target_count??plan.applicable_count,primaryAssetId:plan.stack_primary_asset_id??primaryAssetId,conflicts:(plan.stack_conflicts??[]).map((conflict)=>({stackId:conflict.stack_id,selectedCount:conflict.selected_count,memberCount:conflict.member_count,includesUnselected:conflict.includes_unselected}))}}
+  async function executeStack(planId:string):Promise<MutationResult>{return resultFromAction(await requestJson<ApiActionResult>(fetcher,'/api/assets/actions/execute',json({plan_id:planId,confirm:true})))}
   const assets:AssetRepository={
     async getById(id){try{const item=await requestJson<ApiAssetSummary|null>(fetcher,`/api/assets/${encodeURIComponent(id)}/summary`);return item?normalizeAsset(item):undefined}catch(error){if(error instanceof AssetApiError&&error.status===404)return undefined;throw error}},
     async details(id){try{const encoded=encodeURIComponent(id);const [detail,summary]=await Promise.all([requestJson<ApiAssetDetail>(fetcher,`/api/assets/${encoded}`),requestJson<ApiAssetSummary|null>(fetcher,`/api/assets/${encoded}/summary`).catch((error)=>{if(error instanceof AssetApiError&&error.status===404)return null;throw error})]);return normalizeDetail(detail,summary)}catch(error){if(error instanceof AssetApiError&&error.status===404)return undefined;throw error}},
@@ -150,7 +154,8 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
     async restore(target){if(target.kind==='all'&&target.excludedIds.length)throw new Error('Restore all with exclusions is not available yet.');const body=target.kind==='ids'?{ids:target.ids}:{all:true};await requestJson(fetcher,'/api/restore',json(body));return{affectedIds:target.kind==='ids'?[...target.ids]:[],failed:[]}},
     addToAlbum:(target,albumId)=>action(target,'add_album',[albumId]),removeFromAlbums:(target,albumIds=[])=>action(target,'remove_album',[...albumIds]),
     addTags:(target,tagIds)=>action(target,'add_tag',[...tagIds]),removeTags:(target,tagIds=[])=>action(target,'remove_tag',[...tagIds]),
-    async stack(target){const resolution=await resolve(target);const primary=resolution.ids[0];if(!primary)return{affectedIds:[],failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))};return action(target,'stack',[],primary)},
+    planStack,executeStack,
+    async stack(target){const resolution=await resolve(target);const primary=resolution.ids[0];if(!primary)return{affectedIds:[],failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))};const plan=await planStack(target,primary,'move_selected');return executeStack(plan.id)},
     unstack:(target)=>action(target,'remove_from_stack'),setStackPrimary:(id)=>action({kind:'ids',ids:[id]},'set_stack_primary'),removeCompleteStack:(id)=>action({kind:'ids',ids:[id]},'remove_stack'),
   };
   async function adjacent(currentId:string){

@@ -13,7 +13,7 @@ import type {
   AssetSelectionCapabilities, AssetSelectionTarget, CollectionRequest, DuplicateDecision, DuplicateDiscoveryOptions,
   DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateSearchQuery, LibraryDataSource, MutationResult, OptionSearchQuery,
   OptionSearchResult, PageResult, RelationOption, TagHierarchyRow, TagRecord, TagSearchQuery, TrashAssetRecord,
-  TrashSearchQuery, TrashSelectionTarget,
+  TrashSearchQuery, TrashSelectionTarget, StackActionPlan, StackResolution,
 } from '../contracts';
 
 const DUPLICATE_STORAGE_KEY='immichCompanionV2DemoDuplicateState.v2';
@@ -64,7 +64,39 @@ function searchDuplicateGroups(query:DuplicateSearchQuery){return materializeDup
 function recordHistory(groupId:number,summary:string){duplicateState.history.unshift({id:`history-${Date.now()}-${groupId}`,occurredAt:new Date().toISOString(),groupLabel:`Group ${groupId}`,summary});persistDuplicates()}
 function fixturePath(asset:Pick<AssetRecord,'id'|'asset_type'>|TrashAssetRecord,full=false){const suffix=asset.id.slice(-12);const type='asset_type'in asset?asset.asset_type:asset.type;if(suffix==='000000000001'&&type==='VIDEO')return full?'/demo-fixtures/clip.mp4':'/demo-fixtures/video-poster.svg';if(suffix==='000000000002'&&type==='IMAGE')return'/demo-fixtures/photo-cottage.jpg';if(suffix==='000000000003'&&type==='IMAGE')return'/demo-fixtures/photo-waterfront.jpg';return null}
 
-export function createDemoLibraryDataSource():LibraryDataSource{return{
+export function createDemoLibraryDataSource():LibraryDataSource{
+  const stackPlans=new Map<string,{target:AssetSelectionTarget;primaryAssetId:string;resolution:StackResolution|null}>();
+  let stackPlanSequence=0;
+  async function planStack(target:AssetSelectionTarget,primaryAssetId:string,resolution?:StackResolution):Promise<StackActionPlan>{
+    await delay();
+    const selected=resolveAssetTarget(target),selectedIds=new Set(selected.map((asset)=>asset.id));
+    if(!selectedIds.has(primaryAssetId))throw new Error('The chosen stack primary is not selected.');
+    const stacks=new Map<string,NonNullable<AssetRecord['stack']>>();
+    for(const asset of selected)if(asset.stack)stacks.set(asset.stack.id,asset.stack);
+    const conflicts=[...stacks.values()].map((stack)=>{const selectedCount=stack.assets.filter((id)=>selectedIds.has(id)).length;return{stackId:stack.id,selectedCount,memberCount:stack.assets.length,includesUnselected:selectedCount<stack.assets.length}});
+    const id=`demo-stack-plan-${++stackPlanSequence}`;
+    stackPlans.set(id,{target,primaryAssetId,resolution:resolution??null});
+    return{id,targetCount:selected.length,primaryAssetId,conflicts:resolution?[]:conflicts};
+  }
+  async function executeStack(planId:string):Promise<MutationResult>{
+    await delay();
+    const plan=stackPlans.get(planId);stackPlans.delete(planId);
+    if(!plan)throw new Error('The reviewed stack plan is no longer available.');
+    const selected=resolveAssetTarget(plan.target),selectedIds=selected.map((asset)=>asset.id),affected=new Set(selectedIds);
+    const oldStacks=new Map<string,NonNullable<AssetRecord['stack']>>();
+    for(const asset of selected)if(asset.stack)oldStacks.set(asset.stack.id,asset.stack);
+    for(const stack of oldStacks.values())stack.assets.forEach((id)=>affected.add(id));
+    let finalIds=[...selectedIds];
+    if(plan.resolution==='keep_existing')finalIds=selected.filter((asset)=>!asset.stack).map((asset)=>asset.id);
+    else if(plan.resolution==='include_existing')for(const stack of oldStacks.values())for(const id of stack.assets)if(!finalIds.includes(id))finalIds.push(id);
+    else removeDemoAssetsFromStacks(selectedIds);
+    if(!finalIds.includes(plan.primaryAssetId))return result([],selectedIds.map((id)=>({id,reason:'The chosen stack primary is unavailable with this conflict resolution'})));
+    if(finalIds.length<2)return result([],selectedIds.map((id)=>({id,reason:'Fewer than two assets remain for a stack'})));
+    finalIds=[plan.primaryAssetId,...finalIds.filter((id)=>id!==plan.primaryAssetId)];
+    stackDemoAssets(finalIds);normalizeDemoStacks();finalIds.forEach((id)=>affected.add(id));
+    return result([...affected]);
+  }
+  return{
   kind:'demo',
   async initialize(){initializeDemoAssetState();normalizeDemoStacks();initializeDuplicates();await delay()},
   assets:{
@@ -85,7 +117,8 @@ export function createDemoLibraryDataSource():LibraryDataSource{return{
     async removeFromAlbums(target,albumIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromAlbums(affected,albumIds);return result(affected)},
     async addTags(target,tagIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);addDemoTagsToAssets(affected,tagIds);return result(affected)},
     async removeTags(target,tagIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoTagsFromAssets(affected,tagIds);return result(affected)},
-    async stack(target){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(affected.length<2)return result([],affected.map((id)=>({id,reason:'At least two assets are required'})));stackDemoAssets(affected);normalizeDemoStacks();return result(affected)},
+    planStack,executeStack,
+    async stack(target){const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(affected.length<2)return result([],affected.map((id)=>({id,reason:'At least two assets are required'})));const plan=await planStack(target,affected[0],'move_selected');return executeStack(plan.id)},
     async unstack(target){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromStacks(affected);normalizeDemoStacks();return result(affected)},
     async setStackPrimary(assetId){await delay();const asset=demoAssetById(assetId);if(!asset?.stack)return result([],[{id:assetId,reason:'Asset is not stacked'}]);const affected=[...asset.stack.assets];setDemoStackPrimary(assetId);return result(affected)},
     async removeCompleteStack(assetId){await delay();const asset=demoAssetById(assetId);if(!asset?.stack)return result([],[{id:assetId,reason:'Asset is not stacked'}]);const affected=[...asset.stack.assets];removeDemoCompleteStack(assetId);normalizeDemoStacks();return result(affected)},

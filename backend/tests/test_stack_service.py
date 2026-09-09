@@ -10,16 +10,18 @@ from companion.stack_service import StackSelectionError, StackService
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
 ASSET_THREE = UUID("33333333-3333-4333-8333-333333333333")
+ASSET_FOUR = UUID("55555555-5555-4555-8555-555555555555")
 STACK_ID = UUID("44444444-4444-4444-8444-444444444444")
+STACK_TWO_ID = UUID("66666666-6666-4666-8666-666666666666")
 
 
 def member(asset_id: UUID):
     return SimpleNamespace(id=asset_id)
 
 
-def stack(*asset_ids: UUID, primary: UUID = ASSET_ONE):
+def stack(*asset_ids: UUID, primary: UUID = ASSET_ONE, stack_id: UUID = STACK_ID):
     return SimpleNamespace(
-        id=STACK_ID,
+        id=stack_id,
         primary_asset_id=primary,
         assets=[member(asset_id) for asset_id in asset_ids],
     )
@@ -97,6 +99,23 @@ async def test_one_stack_snapshot_can_serve_multiple_group_filters() -> None:
 
 @pytest.mark.asyncio
 async def test_move_selected_preserves_unselected_stack_with_new_primary() -> None:
+    immich = FakeImmich(
+        [stack(ASSET_ONE, ASSET_THREE, ASSET_FOUR, primary=ASSET_ONE)]
+    )
+    workflow = service(immich)
+
+    preparation = await workflow.prepare([ASSET_ONE, ASSET_TWO], "move_selected")
+
+    assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO]
+    assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]
+    assert immich.calls == [
+        ("primary", STACK_ID, [ASSET_THREE]),
+        ("remove", STACK_ID, [ASSET_ONE]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_move_selected_dissolves_an_old_stack_that_would_become_singleton() -> None:
     immich = FakeImmich([stack(ASSET_ONE, ASSET_THREE, primary=ASSET_ONE)])
     workflow = service(immich)
 
@@ -104,10 +123,51 @@ async def test_move_selected_preserves_unselected_stack_with_new_primary() -> No
 
     assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO]
     assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
+    assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("removed", [ASSET_ONE, ASSET_TWO])
+async def test_removing_either_member_of_a_two_asset_stack_dissolves_it(
+    removed: UUID,
+) -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_TWO, primary=ASSET_ONE)])
+    workflow = service(immich)
+
+    affected = await workflow.remove_members([removed])
+
+    assert affected == [ASSET_ONE, ASSET_TWO]
+    assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_removing_primary_from_larger_stack_promotes_remaining_member_first() -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_TWO, ASSET_THREE, primary=ASSET_ONE)])
+    workflow = service(immich)
+
+    affected = await workflow.remove_members([ASSET_ONE])
+
+    assert affected == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
     assert immich.calls == [
-        ("primary", STACK_ID, [ASSET_THREE]),
+        ("primary", STACK_ID, [ASSET_TWO]),
         ("remove", STACK_ID, [ASSET_ONE]),
     ]
+
+
+@pytest.mark.asyncio
+async def test_repair_ids_uses_authoritative_members_from_every_affected_stack() -> None:
+    workflow = service(
+        FakeImmich(
+            [
+                stack(ASSET_ONE, ASSET_THREE),
+                stack(ASSET_TWO, ASSET_FOUR, primary=ASSET_TWO, stack_id=STACK_TWO_ID),
+            ]
+        )
+    )
+
+    repair_ids = await workflow.repair_ids([ASSET_ONE, ASSET_TWO])
+
+    assert repair_ids == [ASSET_ONE, ASSET_THREE, ASSET_TWO, ASSET_FOUR]
 
 
 @pytest.mark.asyncio
@@ -119,6 +179,28 @@ async def test_include_existing_expands_and_removes_old_stack() -> None:
 
     assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
     assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_include_existing_merges_members_from_different_stacks() -> None:
+    immich = FakeImmich(
+        [
+            stack(ASSET_ONE, ASSET_THREE),
+            stack(ASSET_TWO, ASSET_FOUR, primary=ASSET_TWO, stack_id=STACK_TWO_ID),
+        ]
+    )
+    workflow = service(immich)
+
+    preparation = await workflow.prepare(
+        [ASSET_ONE, ASSET_TWO], "include_existing", ASSET_TWO
+    )
+
+    assert preparation.asset_ids == [ASSET_TWO, ASSET_ONE, ASSET_THREE, ASSET_FOUR]
+    assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]
+    assert immich.calls == [
+        ("delete", STACK_ID, []),
+        ("delete", STACK_TWO_ID, []),
+    ]
 
 
 @pytest.mark.asyncio

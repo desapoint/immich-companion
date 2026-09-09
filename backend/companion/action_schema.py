@@ -263,6 +263,7 @@ class AssetActionResult(BaseModel):
     applied_ids: list[UUID]
     skipped_ids: list[UUID]
     failed_ids: list[UUID]
+    affected_ids: list[UUID] = Field(default_factory=list)
     relation_results: list[AssetActionRelationResult] = Field(default_factory=list)
     verified: bool
     status: ActionPlanStatus

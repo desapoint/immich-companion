@@ -116,6 +116,20 @@ describe('live V2 asset repository',()=>{
     await createAssetApiProfile(fetcher).assets.stack({kind:'ids',ids:[secondId,id]});
   });
 
+  it('exposes stack conflicts for review and sends the chosen resolution',async()=>{
+    const plans:unknown[]=[];
+    const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{const path=String(input);if(path.endsWith('/plan')){const body=JSON.parse(String(init?.body));plans.push(body);return response({id:`plan-${plans.length}`,target_count:2,applicable_count:2,skipped_count:0,missing_ids:[],stack_primary_asset_id:id,stack_conflicts:plans.length===1?[{stack_id:'stack-1',selected_count:1,member_count:3,includes_unselected:true}]:[]})}return response({applied_ids:[id,secondId],affected_ids:[id,secondId,'33333333-3333-4333-8333-333333333333'],failed_ids:[]})});
+    const assets=createAssetApiProfile(fetcher).assets,target={kind:'ids' as const,ids:[id,secondId]};
+    await expect(assets.planStack(target,id)).resolves.toEqual({id:'plan-1',targetCount:2,primaryAssetId:id,conflicts:[{stackId:'stack-1',selectedCount:1,memberCount:3,includesUnselected:true}]});
+    const reviewed=await assets.planStack(target,id,'include_existing');
+    await expect(assets.executeStack(reviewed.id)).resolves.toEqual({affectedIds:[id,secondId,'33333333-3333-4333-8333-333333333333'],failed:[]});
+    expect(plans).toEqual([
+      expect.objectContaining({action:'stack',stack_primary_asset_id:id}),
+      expect.objectContaining({action:'stack',stack_primary_asset_id:id,stack_resolution:'include_existing'}),
+    ]);
+    expect(plans[0]).not.toHaveProperty('stack_resolution');
+  });
+
   it('exposes companion media proxies for tiles and the viewer',()=>{
     const {media}=createAssetApiProfile(vi.fn());const asset={...summary,asset_type:'IMAGE'} as never;
     expect(media.thumbnail(asset).url).toBe(`/api/assets/${id}/thumbnail?size=thumbnail`);

@@ -234,6 +234,7 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
 
     assert result.status == "completed"
     assert result.applied_ids == [ASSET_TWO, ASSET_ONE]
+    assert result.affected_ids == [ASSET_TWO, ASSET_ONE]
     assert stack_immich.calls[0] == ("stack", None, [ASSET_TWO, ASSET_ONE])
     assert actions.finished is not None
     assert actions.finished[0] == "completed"
@@ -405,6 +406,7 @@ async def test_remove_stack_keeps_original_selection_digest_after_expansion() ->
     result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert result.verified is True
+    assert result.affected_ids == [ASSET_ONE, ASSET_TWO]
     assert actions.finished is not None
     assert sync.calls == 1
     assert actions.finished[0] == "completed"
