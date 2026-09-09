@@ -11,6 +11,8 @@
   import V2StatusPage from './pages/V2StatusPage.svelte';
   import V2TagsPage from './pages/V2TagsPage.svelte';
   import { provideV2Toasts, V2ToastController } from './state/toasts.svelte';
+  import { AssetSelectionWorkspaceController } from './state/assetSelectionWorkspace.svelte';
+  import { libraryData } from './data/currentDataSource.svelte';
   import {
     storeV2AssetFilterHandoff,
     v2PageFromLegacyHash,
@@ -57,6 +59,7 @@
   }
 
   let activeKey = $state<V2PageKey>(keyFromLocation());
+  const assetSelection = new AssetSelectionWorkspaceController(libraryData.assets);
   const toasts = provideV2Toasts(new V2ToastController());
   onDestroy(() => toasts.destroy());
   onMount(() => {
@@ -90,7 +93,7 @@
   {#if activeKey === 'status'}
     <V2StatusPage />
   {:else if activeKey === 'assets'}
-    <V2AssetsPage />
+    <V2AssetsPage selectionWorkspace={assetSelection} />
   {:else if activeKey === 'restore'}
     <V2RestorePage />
   {:else if activeKey === 'albums'}

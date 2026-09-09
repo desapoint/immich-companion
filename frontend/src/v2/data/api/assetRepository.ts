@@ -13,7 +13,9 @@ import type {
   AssetSearchGroup,
   AssetSearchQuery,
   AssetSelectionCapabilities,
+  AssetSelectionMembership,
   AssetSelectionTarget,
+  AssetSelectionWorkspace,
   MediaAsset,
   MediaRepository,
   MutationResult,
@@ -50,6 +52,8 @@ type ApiSelectionRelationships={albums:Array<{id:string;name:string;selected_ass
 type ApiActionPlan={id:string;target_count:number;applicable_count:number;skipped_count:number;missing_ids:string[];stack_conflicts?:Array<{stack_id:string;selected_count:number;member_count:number;includes_unselected:boolean}>;stack_primary_asset_id?:string|null};
 type ApiActionResult={applied_ids:string[];failed_ids:string[];affected_ids?:string[]};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
+type ApiSelectionWorkspace={id:string;revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
+type ApiSelectionMembership={selection:ApiSelectionWorkspace;selected_ids:string[]};
 type SearchNode={kind:'condition';field:string;operator:string;value:unknown}|SearchExpression;
 type SearchExpression={kind:'group';operator:'and'|'or';negate:boolean;children:SearchNode[]};
 
@@ -117,7 +121,8 @@ export function assetSearchExpression(criteria:AssetSearchCriteria):SearchExpres
 }
 
 function searchBody(query:AssetSearchQuery,page:number){return{expression:assetSearchExpression(query),sort_field:query.sort.field==='filename'?'filename':'taken_at',sort_direction:query.sort.direction,page,page_size:query.pageSize}}
-function selectionBody(target:AssetSelectionTarget){return target.kind==='ids'?{mode:'explicit',ids:[...new Set(target.ids)],excluded_ids:[]}:{mode:'all_matching',ids:[],expression:assetSearchExpression(target.criteria),excluded_ids:[...new Set(target.excludedIds)]}}
+function selectionBody(target:AssetSelectionTarget){if(target.kind==='selection')return{mode:'explicit',selection_id:target.selectionId,ids:[],excluded_ids:[]};return target.kind==='ids'?{mode:'explicit',ids:[...new Set(target.ids)],excluded_ids:[]}:{mode:'all_matching',ids:[],expression:assetSearchExpression(target.criteria),excluded_ids:[...new Set(target.excludedIds)]}}
+function normalizeSelection(value:ApiSelectionWorkspace):AssetSelectionWorkspace{return{id:value.id,revision:value.revision,selectedCount:value.selected_count,status:value.status,expiresAt:value.expires_at}}
 function normalizeAsset(asset:ApiAssetSummary):AssetRecord{return{id:asset.id,owner_id:null,library_id:asset.source.library_id,asset_type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as AssetRecord['asset_type'],original_file_name:asset.original_file_name,original_path:asset.source.original_path,original_mime_type:asset.original_mime_type,checksum:null,file_size_bytes:asset.file_size_bytes,width:asset.width,height:asset.height,duration:asset.duration,file_created_at:asset.taken_at,file_modified_at:asset.file_modified_at,local_date_time:null,immich_created_at:null,immich_updated_at:null,is_favorite:asset.is_favorite,is_archived:asset.is_archived,is_offline:asset.is_offline,is_edited:asset.is_edited,has_metadata:asset.has_metadata,visibility:asset.visibility,live_photo_video_id:asset.live_photo_video_id,tags:asset.tags.map((tag)=>({...tag,value:tag.name})),albums:asset.albums,stack:asset.stack?{id:asset.stack.id,primaryAssetId:asset.stack.primary_asset_id,assetCount:asset.stack.asset_count,assets:asset.stack.assets.map((member)=>member.id)}:null,synced_at:asset.file_modified_at}}
 function detailString(value:unknown):string|null{return typeof value==='string'&&value?value:null}
 function normalizeDetail(detail:ApiAssetDetail,summary:ApiAssetSummary|null):AssetDetailRecord{
@@ -146,6 +151,10 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
     async getTrashById(id){try{const item=await requestJson<ApiAssetDetail>(fetcher,`/api/restore/${encodeURIComponent(id)}`);return normalizeTrashDetail(item)}catch(error){if(error instanceof AssetApiError&&error.status===404)return undefined;throw error}},
     search:fetchAssets,
     async searchTrash(query){const page=pageNumber(query),params=new URLSearchParams({page:String(page),page_size:String(query.pageSize)});const response=await requestJson<ApiAssetPage>(fetcher,`/api/restore?${params}`,{signal:query.signal}),items=response.items.map(normalizeTrash);lastTrashQuery=query;lastTrashTotal=response.total;trashPages.set(page,items);return{items,total:response.total,pageSize:response.page_size,page:response.page,nextCursor:response.page<response.pages?String(response.page+1):null}},
+    async createSelection(){return normalizeSelection(await requestJson<ApiSelectionWorkspace>(fetcher,'/api/assets/selections',json({})))},
+    async selectAllIntoSelection(selectionId,criteria){return normalizeSelection(await requestJson<ApiSelectionWorkspace>(fetcher,`/api/assets/selections/${encodeURIComponent(selectionId)}/select-all`,json({expression:assetSearchExpression(criteria)})))},
+    async updateSelectionMembers(selectionId,assetIds,selected,revision){return normalizeSelection(await requestJson<ApiSelectionWorkspace>(fetcher,`/api/assets/selections/${encodeURIComponent(selectionId)}/members`,json({asset_ids:[...new Set(assetIds)],selected,revision})))},
+    async selectionMembership(selectionId,assetIds):Promise<AssetSelectionMembership|null>{try{const value=await requestJson<ApiSelectionMembership>(fetcher,`/api/assets/selections/${encodeURIComponent(selectionId)}/membership`,json({asset_ids:[...new Set(assetIds)]}));return{selection:normalizeSelection(value.selection),selectedIds:value.selected_ids}}catch(error){if(error instanceof AssetApiError&&error.status===404)return null;throw error}},
     async materializeSelection(target){if(target.kind==='ids')return[...new Set(target.ids)];return requestJson<string[]>(fetcher,'/api/assets/selection/ids',json(selectionBody(target)))},
     async selectionCapabilities(target,signal){const value=await requestJson<ApiSelectionCapabilities>(fetcher,'/api/assets/selection/capabilities',{...json(selectionBody(target)),signal});return{count:value.count,allFavorite:value.all_favorite,allArchived:value.all_archived,hasTags:value.has_tags,hasAlbums:value.has_albums,hasStackMembers:value.has_stack_members,canStack:value.can_stack,singleAssetId:value.single_asset_id,canSetStackPrimary:value.can_set_stack_primary,canRemoveCompleteStack:value.can_remove_complete_stack}},
     async removableRelationships(target,signal){const value=await requestJson<ApiSelectionRelationships>(fetcher,'/api/assets/selection/relationships',{...json(selectionBody(target)),signal});const map=(item:{id:string;name:string;selected_asset_count:number})=>({value:item.id,label:item.name,subtitle:`Linked to ${item.selected_asset_count.toLocaleString()} selected asset${item.selected_asset_count===1?'':'s'}`,selectedAssetCount:item.selected_asset_count});return{albums:value.albums.map(map),tags:value.tags.map(map)}},

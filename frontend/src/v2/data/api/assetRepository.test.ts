@@ -97,6 +97,16 @@ describe('live V2 asset repository',()=>{
     expect(fetcher).toHaveBeenCalledWith('/api/assets/selection/ids',expect.objectContaining({method:'POST'}));
   });
 
+  it('uses the server selection workspace endpoints and selection-id action target',async()=>{
+    const calls:Array<{path:string;body:unknown}>=[];
+    const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{const path=String(input),body=JSON.parse(String(init?.body??'{}'));calls.push({path,body});if(path==='/api/assets/selections')return response({id:'selection-1',revision:0,selected_count:0,status:'active',expires_at:'2099-01-01T00:00:00Z'});if(path.endsWith('/members'))return response({id:'selection-1',revision:1,selected_count:2,status:'active',expires_at:'2099-01-01T00:00:00Z'});if(path.endsWith('/membership'))return response({selection:{id:'selection-1',revision:1,selected_count:2,status:'active',expires_at:'2099-01-01T00:00:00Z'},selected_ids:[id]});return response({count:2,all_favorite:false,all_archived:false,has_tags:false,has_albums:false,has_stack_members:false,can_stack:true,single_asset_id:null,can_set_stack_primary:false,can_remove_complete_stack:false})});
+    const assets=createAssetApiProfile(fetcher).assets,created=await assets.createSelection();
+    await assets.updateSelectionMembers(created.id,[id,secondId],true,created.revision);
+    await expect(assets.selectionMembership(created.id,[id,secondId])).resolves.toMatchObject({selectedIds:[id],selection:{selectedCount:2}});
+    await assets.selectionCapabilities({kind:'selection',selectionId:created.id});
+    expect(calls.at(-1)?.body).toEqual({mode:'explicit',selection_id:'selection-1',ids:[],excluded_ids:[]});
+  });
+
   it('loads removable relationship options for the complete selection',async()=>{
     const fetcher=vi.fn<AssetApiFetcher>(async(_input,init)=>{expect(JSON.parse(String(init?.body))).toEqual({mode:'explicit',ids:[id,secondId],excluded_ids:[]});return response({albums:[{id:'album-1',name:'Summer',selected_asset_count:1}],tags:[{id:'tag-1',name:'Vacation',selected_asset_count:2}]})});
     await expect(createAssetApiProfile(fetcher).assets.removableRelationships({kind:'ids',ids:[id,secondId]})).resolves.toEqual({
