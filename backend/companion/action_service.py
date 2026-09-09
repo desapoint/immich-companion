@@ -419,10 +419,36 @@ class AssetActionService:
         if successful_relations and has_successful_changes:
             try:
                 relation = "album" if operation in {"add_album", "remove_album"} else "tag"
-                await self._repair_targets(
-                    target_ids,
-                    relations=[(relation, relation_id) for relation_id in successful_relations],
+                changed_asset_ids = list(
+                    dict.fromkeys(
+                        identifier
+                        for relation_id in successful_relations
+                        for identifier in initial[relation_id][0]
+                    )
                 )
+                covered_by_global_sync = False
+                if relation == "album":
+                    coverage = getattr(self._sync, "album_reconciliation_will_cover", None)
+                    if coverage is not None:
+                        covered_by_global_sync = await coverage(successful_relations)
+
+                if covered_by_global_sync:
+                    present = operation == "add_album"
+                    for relation_id in successful_relations:
+                        for asset_id in initial[relation_id][0]:
+                            await self._assets.apply_membership_event(
+                                "album",
+                                relation_id,
+                                asset_id,
+                                present,
+                            )
+                else:
+                    await self._repair_targets(
+                        changed_asset_ids,
+                        relations=[
+                            (relation, relation_id) for relation_id in successful_relations
+                        ],
+                    )
             except Exception as error:
                 relation_results = [
                     AssetActionRelationResult(
