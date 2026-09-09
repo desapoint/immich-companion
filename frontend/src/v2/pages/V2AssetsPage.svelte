@@ -72,7 +72,8 @@
   const savedSearchOptions=$derived(savedSearches.records.map((record)=>({value:record.id,label:record.name,subtitle:record.description||`${record.criteria.mode} search`})));
   const selectedCount=$derived(getAssetSelectionCount(selection,total)),selectionActive=$derived(selectedCount>0),allMatchingSelected=$derived(selection.allMatchingSelected),allVisibleSelected=$derived(isAllVisibleSelected(selection,ids));
   const favoriteActionLabel=$derived(selectionCapabilities.allFavorite?'Unfavorite':'Favorite'),archiveActionLabel=$derived(selectionCapabilities.allArchived?'Unarchive':'Archive');
-  const hasRemovableTags=$derived(selectionCapabilities.hasTags),hasRemovableAlbums=$derived(selectionCapabilities.hasAlbums),hasStackMembers=$derived(selectionCapabilities.hasStackMembers);
+  const visibleSelectionHasTags=$derived(items.some((asset)=>isAssetSelected(selection,asset.id)&&asset.tags.length>0)),visibleSelectionHasAlbums=$derived(items.some((asset)=>isAssetSelected(selection,asset.id)&&(asset.albums?.length??0)>0));
+  const hasRemovableTags=$derived(selectionCapabilities.hasTags||visibleSelectionHasTags),hasRemovableAlbums=$derived(selectionCapabilities.hasAlbums||visibleSelectionHasAlbums),hasStackMembers=$derived(selectionCapabilities.hasStackMembers);
   const canSetStackPrimary=$derived(selectionCapabilities.canSetStackPrimary),canRemoveCompleteStack=$derived(selectionCapabilities.canRemoveCompleteStack),singleSelectedId=$derived(selectionCapabilities.singleAssetId);
   const interaction=createAssetGridSelectionInteraction<string>({getItems:()=>ids,getSelection:()=>selection,setSelection:(next)=>selection=next,parseAssetId:(value)=>value});
   function criteria():AssetSearchCriteria{return buildAssetCriteria({sort,mode:appliedSearchMode,simple:appliedSimple,rules:appliedRules,groups:appliedGroups,logic:appliedLogic,negated:appliedNegated})}

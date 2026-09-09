@@ -40,18 +40,24 @@
   {onclose}
 >
   <V2Stack gap="md">
-    <SelectField
-      id={`asset-remove-${kind}-options`}
-      label={kind === 'album' ? 'Albums linked to selection' : 'Tags linked to selection'}
-      multiple
-      {values}
-      {options}
-      searchable
-      allowEmpty
-      placeholder={loading ? `Loading linked ${noun}…` : `Choose ${noun}…`}
-      disabled={loading || options.length === 0}
-      {onvalueschange}
-    />
+    <div class="relation-remove-field-row">
+      <SelectField
+        id={`asset-remove-${kind}-options`}
+        label={kind === 'album' ? 'Albums linked to selection' : 'Tags linked to selection'}
+        multiple
+        {values}
+        {options}
+        searchable
+        allowEmpty
+        placeholder={loading ? `Loading linked ${noun}…` : `Choose ${noun}…`}
+        disabled={loading || options.length === 0}
+        {onvalueschange}
+      />
+      <V2Button
+        disabled={busy || loading || options.length === 0 || values.length === options.length}
+        onclick={() => onvalueschange(options.map((option) => option.value))}
+      >Select all</V2Button>
+    </div>
     {#if error}<p class="v2-small relation-remove-error">{error}</p>
     {:else if !loading && options.length === 0}<p class="v2-small v2-muted">No linked {noun} are available for this selection.</p>{/if}
   </V2Stack>
@@ -61,4 +67,8 @@
   {/snippet}
 </V2Modal>
 
-<style>.relation-remove-error{color:var(--v2-danger,#e05a5a);margin:0}</style>
+<style>
+  .relation-remove-field-row{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:8px}
+  .relation-remove-error{color:var(--v2-danger,#e05a5a);margin:0}
+  @media(max-width:34rem){.relation-remove-field-row{grid-template-columns:1fr}.relation-remove-field-row :global(.v2-button){width:100%}}
+</style>

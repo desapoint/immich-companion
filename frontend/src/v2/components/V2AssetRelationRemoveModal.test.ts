@@ -20,6 +20,27 @@ describe('V2AssetRelationRemoveModal', () => {
     expect(body).toContain('Remove tags');
     expect(body).toContain('Assets without a chosen relationship are skipped.');
     expect(body).toContain('Vacation');
+    expect(body).toContain('Select all');
     expect(body).toContain('disabled');
+  });
+
+  it('enables Select all when linked options remain unselected', () => {
+    const { body } = render(V2AssetRelationRemoveModal, {
+      props: {
+        kind: 'album',
+        selectedCount: 2,
+        values: ['album-1'],
+        options: [
+          { value: 'album-1', label: 'First', subtitle: '', selectedAssetCount: 1 },
+          { value: 'album-2', label: 'Second', subtitle: '', selectedAssetCount: 1 },
+        ],
+        onvalueschange: () => {},
+        onclose: () => {},
+        onapply: () => {},
+      },
+    });
+
+    expect(body).toContain('Select all');
+    expect(body).toContain('Second');
   });
 });
