@@ -1,6 +1,6 @@
 <script lang="ts">
   let { variant = 'default', active = false, block = false, iconOnly = false, disabled = false, type = 'button', title, ariaLabel, onclick, children }: {
-    variant?: 'default' | 'primary' | 'danger'; active?: boolean; block?: boolean; iconOnly?: boolean; disabled?: boolean;
+    variant?: 'default' | 'primary' | 'positive' | 'danger'; active?: boolean; block?: boolean; iconOnly?: boolean; disabled?: boolean;
     type?: 'button' | 'submit' | 'reset'; title?: string; ariaLabel?: string; onclick?: (event: MouseEvent) => void; children: import('svelte').Snippet;
   } = $props();
 </script>
