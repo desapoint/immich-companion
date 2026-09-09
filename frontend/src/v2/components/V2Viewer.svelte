@@ -13,9 +13,11 @@
     collectionPageSize = 24,
     collectionTotal = 0,
     startStack = false,
+    restoreBusy = false,
     onclose,
     onnavigate,
     onmutated,
+    onrestore,
     onfilterrelation,
   }: {
     open?: boolean;
@@ -28,15 +30,17 @@
     collectionPageSize?: number;
     collectionTotal?: number;
     startStack?: boolean;
+    restoreBusy?: boolean;
     onclose: () => void;
     onnavigate?: (assetId: string, navigation: ViewerNavigationWindow) => void | Promise<void>;
     onmutated?: () => void | Promise<void>;
+    onrestore?: (assetId: string) => boolean | Promise<boolean>;
     onfilterrelation?: (kind: 'album' | 'tag', id: string) => void | Promise<void>;
   } = $props();
 </script>
 
 {#if mode === 'restore'}
-  <V2RestoreViewer {open} {assetId} {assetIds} {onclose} {onnavigate} />
+  <V2RestoreViewer {open} {assetId} {assetIds} {restoreBusy} {onclose} {onnavigate} {onrestore} />
 {:else}
   <V2AssetViewer {open} {assetId} {assetIds} {resultMode} {collectionPage} {collectionPageSize} {collectionTotal} {startStack} {onclose} {onnavigate} {onmutated} {onfilterrelation} />
 {/if}
