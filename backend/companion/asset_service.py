@@ -8,10 +8,11 @@ implementation used by the live V2 synchronization flow.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from companion.immich import ImmichAlbum, ImmichTag
+from companion.immich import ImmichAlbum, ImmichApiError, ImmichTag
 from companion.sync_schema import SyncProgress, SyncRunStatus
 from companion.v2.legacy_asset_service import *  # noqa: F403
 from companion.v2.legacy_asset_service import AssetSyncService as _LegacyAssetSyncService
@@ -62,7 +63,7 @@ class AssetSyncService(_LegacyAssetSyncService):
         if active.phase != "relationships":
             return False
         if not active.cursor:
-            return True
+            return False
 
         cursor_parts = active.cursor.split(":", 2)
         if len(cursor_parts) < 2 or cursor_parts[0] != "albums":
@@ -84,13 +85,69 @@ class AssetSyncService(_LegacyAssetSyncService):
             for album_id in unique_album_ids
         )
 
+    async def tag_reconciliation_will_cover(self, tag_ids: list[UUID]) -> bool:
+        """Return whether global tag reconciliation is definitely still upcoming.
+
+        Once the relationships stage starts, the current implementation can move
+        from album traversal into asset-oriented tag reconciliation without first
+        advancing its durable cursor. Treat that entire phase as ambiguous rather
+        than claiming coverage that may already have passed a changed asset.
+        """
+
+        if not list(dict.fromkeys(tag_ids)):
+            return False
+        status = await self.status()
+        active = status.active
+        return active is not None and active.phase in {"catalogs", "assets", "stacks"}
+
+    async def _repair_tags_from_asset_details(self, asset_ids: list[UUID]) -> bool:
+        """Repair a bounded changed set directly from authoritative asset details."""
+
+        unique_asset_ids = list(dict.fromkeys(asset_ids))
+        if not unique_asset_ids:
+            return True
+
+        runtime = await self._runtime_sync_settings.get()
+        if len(unique_asset_ids) > runtime.full_batch_size:
+            return False
+
+        concurrency = max(1, runtime.tag_association_concurrency)
+        details = []
+
+        async def fetch(identifier: UUID):
+            try:
+                return await self._immich.get_asset(identifier)
+            except ImmichApiError as error:
+                if error.status_code == 404:
+                    return None
+                raise
+
+        for start in range(0, len(unique_asset_ids), concurrency):
+            wave = unique_asset_ids[start : start + concurrency]
+            details.extend(await asyncio.gather(*(fetch(identifier) for identifier in wave)))
+
+        # An omitted tags relationship is not equivalent to an empty tag set.
+        # Fall back to the existing relation-oriented authoritative traversal.
+        if any(detail is None or not detail.includes_tags for detail in details):
+            return False
+
+        for detail in details:
+            assert detail is not None
+            tag_ids = [UUID(str(tag["id"])) for tag in detail.tags if tag.get("id")]
+            await self._assets.replace_asset_tag_memberships(detail.id, tag_ids)
+        return True
+
     async def reconcile_targets(
         self,
         asset_ids: list[UUID],
         relations: list[tuple[str, UUID]] | None = None,
         include_stacks: bool = False,
     ) -> None:
-        """Choose the cheaper album repair traversal before using the legacy repair flow."""
+        """Choose bounded targeted relation repair before using the legacy flow."""
+
+        if relations and asset_ids and all(kind == "tag" for kind, _ in relations):
+            if await self._repair_tags_from_asset_details(asset_ids):
+                return
 
         if relations and asset_ids and all(kind == "album" for kind, _ in relations):
             unique_asset_ids = list(dict.fromkeys(asset_ids))
