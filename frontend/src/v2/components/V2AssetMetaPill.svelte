@@ -120,15 +120,15 @@
 {/if}
 
 <style>
-  .v2-asset-meta-pill{display:inline-flex;align-items:center;gap:3px;min-height:18px;padding:1px 5px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(10,15,21,.72);color:#f4f7fb;font-size:10px;font-weight:700;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.2);pointer-events:auto}
+  .v2-asset-meta-pill{display:inline-flex;align-items:center;gap:3px;min-height:18px;padding:1px 5px;border:1px solid rgba(255,255,255,.24);border-radius:999px;background:rgba(10,15,21,.78);color:#f4f7fb;font-size:10px;font-weight:700;line-height:1;box-shadow:0 1px 3px rgba(0,0,0,.2);pointer-events:auto}
   .v2-asset-meta-pill svg{flex:0 0 auto}
-  .v2-asset-meta-popover{position:fixed;z-index:220;display:grid;gap:7px;overflow:hidden;padding:8px;border:1px solid var(--v2-line);border-radius:9px;background:var(--v2-surface-2);color:var(--v2-text);box-shadow:0 14px 32px rgba(0,0,0,.34);font:inherit;font-size:11px;line-height:1.35}
-  .v2-asset-meta-popover strong{font-size:11px}
-  .v2-asset-meta-popover-summary{color:var(--v2-muted)}
+  .v2-asset-meta-popover{position:fixed;z-index:10020;display:grid;gap:7px;overflow:hidden;padding:8px;border:1px solid var(--v2-line,#2a3544);border-radius:9px;background:var(--v2-surface-2,#17202b);color:var(--v2-text,#eef3f8);box-shadow:0 14px 32px rgba(0,0,0,.4);font-family:var(--font-sans,Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif);font-size:11px;font-weight:400;line-height:1.35}
+  .v2-asset-meta-popover strong{font-size:11px;font-weight:700;color:var(--v2-text,#eef3f8)}
+  .v2-asset-meta-popover-summary{color:var(--v2-muted,#91a1b4)}
   .v2-asset-meta-popover-list{display:grid;gap:2px;overflow-y:auto;max-height:inherit;padding:1px 0;scrollbar-gutter:stable both-edges;scrollbar-width:thin;scrollbar-color:#475970 transparent}
   .v2-asset-meta-popover-list::-webkit-scrollbar{width:6px;height:6px}
   .v2-asset-meta-popover-list::-webkit-scrollbar-track{background:transparent}
-  .v2-asset-meta-popover-list::-webkit-scrollbar-thumb{border:1px solid var(--v2-surface-2);border-radius:999px;background:#475970}
-  .v2-asset-meta-popover-list span{padding:4px 5px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .v2-asset-meta-popover-list::-webkit-scrollbar-thumb{border:1px solid var(--v2-surface-2,#17202b);border-radius:999px;background:#475970}
+  .v2-asset-meta-popover-list span{padding:4px 5px;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--v2-text,#eef3f8)}
   .v2-asset-meta-popover-list span:hover{background:#172231}
 </style>
