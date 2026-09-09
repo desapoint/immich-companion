@@ -24,6 +24,9 @@ from companion.v2.sync_steps import (
 )
 
 
+ALBUM_MEMBERSHIP_PAGE_SIZE = 1000
+
+
 class _LegacyPacedCatalogSyncStep(CatalogSyncStep):
     """Use the V2 step contract while preserving the staged sync's pacing semantics."""
 
@@ -41,6 +44,60 @@ class _LegacyPacedCatalogSyncStep(CatalogSyncStep):
 
 class AssetSyncService(_LegacyAssetSyncService):
     """Live V2 staged sync with extracted steps replacing legacy stages incrementally."""
+
+    async def reconcile_targets(
+        self,
+        asset_ids: list[UUID],
+        relations: list[tuple[str, UUID]] | None = None,
+        include_stacks: bool = False,
+    ) -> None:
+        """Choose the cheaper album repair traversal before using the legacy repair flow."""
+
+        if relations and asset_ids and all(kind == "album" for kind, _ in relations):
+            unique_asset_ids = list(dict.fromkeys(asset_ids))
+            unique_relation_ids = list(
+                dict.fromkeys(relation_id for _, relation_id in relations)
+            )
+            catalog = await self._immich.list_album_catalog()
+            albums_by_id = {album.id: album for album in catalog}
+            affected_albums = [
+                albums_by_id[relation_id]
+                for relation_id in unique_relation_ids
+                if relation_id in albums_by_id
+            ]
+
+            # Preserve the legacy authoritative error path when an affected album
+            # is unexpectedly absent from the live catalog.
+            if len(affected_albums) == len(unique_relation_ids):
+                album_calls = sum(
+                    max(
+                        1,
+                        (album.asset_count + ALBUM_MEMBERSHIP_PAGE_SIZE - 1)
+                        // ALBUM_MEMBERSHIP_PAGE_SIZE,
+                    )
+                    for album in affected_albums
+                )
+                asset_calls = len(unique_asset_ids)
+
+                # Ties intentionally favor the asset-oriented path because each
+                # response is smaller and avoids rebuilding a full album snapshot.
+                if album_calls >= asset_calls:
+                    upsert_album_catalog = getattr(self._assets, "upsert_album_catalog", None)
+                    if upsert_album_catalog is not None:
+                        await upsert_album_catalog(affected_albums, 0)
+                    for asset_id in unique_asset_ids:
+                        albums = await self._immich.list_albums_for_asset(asset_id)
+                        await self._assets.replace_asset_album_memberships(
+                            asset_id,
+                            [album.id for album in albums],
+                        )
+                    return
+
+        await super().reconcile_targets(
+            asset_ids,
+            relations=relations,
+            include_stacks=include_stacks,
+        )
 
     async def _sync_catalogs(
         self,
