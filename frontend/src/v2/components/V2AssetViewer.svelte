@@ -230,9 +230,9 @@
   async function runAction(label:string,action:(id:string)=>Promise<MutationResult>){if(!asset||actionBusy)return null;const id=asset.id,result=await mutations.run(label,()=>action(id),target(id));publishMutation(label);await reconcilePage(result);return result}
   async function favorite(){if(!asset)return;const next=!asset.is_favorite;await runAction(next?'Favorite':'Unfavorite',(id)=>libraryData.assets.setFavorite(target(id),next))}
   async function archive(){if(!asset)return;const next=!asset.is_archived;await runAction(next?'Archive':'Unarchive',(id)=>libraryData.assets.setArchived(target(id),next))}
-  async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id))}
-  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id))}
-  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id))}
+  async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id)))}
+  async function removeTags(){await runAction('Remove tags',(id)=>libraryData.assets.removeTags(target(id)))}
+  async function removeAlbums(){await runAction('Remove from albums',(id)=>libraryData.assets.removeFromAlbums(target(id)))}
 
   async function removeFromStack(){if(!asset)return;const id=asset.id,result=await runAction('Remove this asset from stack',(assetId)=>libraryData.assets.unstack(target(assetId)));if(!result?.affectedIds.includes(id))return;stackRemovedIds=new Set([...stackRemovedIds,id]);stackLiveIds=stackLiveIds.filter((memberId)=>memberId!==id);await refreshLiveStack()}
   async function setStackPrimary(){if(!asset)return;const id=asset.id,result=await runAction('Set stack primary',(assetId)=>libraryData.assets.setStackPrimary(assetId));if(!result?.affectedIds.includes(id))return;await refreshLiveStack(id)}
