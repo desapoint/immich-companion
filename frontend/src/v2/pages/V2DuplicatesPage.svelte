@@ -40,6 +40,7 @@
     stacksForGroup,
   } from '../state/duplicateStackResolution';
   import { libraryData } from '../data/currentDataSource.svelte';
+  import { duplicateGroupTitle, duplicateKindLabel } from '../data/duplicatePresentation';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
   import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateState } from '../data/contracts';
 
@@ -142,16 +143,17 @@
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection()}
   function currentResolution(nextDecisions=decisions):DuplicateResolutionPlan{return{decisions:{...nextDecisions},stacks:resolutionStacks(stackWorkspace).filter((stack)=>stack.assetIds.every((id)=>nextDecisions[id]==='stack'))}}
   function groupResolution(item:DuplicateGroupRecord):DuplicateResolutionPlan{const ids=new Set(item.members.map((entry)=>entry.asset.id));const groupDecisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>ids.has(id))) as Record<string,DuplicateDecision>;return{decisions:groupDecisions,stacks:resolutionStacks(stackWorkspace).filter((stack)=>stack.groupId===item.id&&stack.assetIds.every((id)=>groupDecisions[id]==='stack'))}}
+  function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
   function groupComplete(item:DuplicateGroupRecord){return item.members.length>0&&item.members.every((entry)=>Boolean(decisions[entry.asset.id]))}
   function groupHasInvalidStack(item:DuplicateGroupRecord){return stacksForGroup(stackWorkspace,item.id).some((stack)=>stack.assetIds.length===1)}
   async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{const plan=await libraryData.duplicates.prepareDecisions(resolution);pendingReview={scope,groupId,plan}}catch(error){interactionError=errorMessage(error,'Duplicate actions could not be prepared.')}finally{planPreparing=false}}
   function requestReviewAll(resolution=currentResolution()){interactionError='';const selected=groups.filter((item)=>selectedGroups.includes(item.id));if(!selected.length||selected.some((item)=>!groupComplete(item))){interactionError='Every selected duplicate group needs a decision for every image.';return}if(invalidStackCount){interactionError=`${invalidStackCount} pending stack${invalidStackCount===1?' has':'s have'} only one asset. Add another asset or choose Keep/Delete before applying.`;return}const selectedResolution={decisions:Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>selected.some((item)=>item.members.some((member)=>member.asset.id===id)))) as Record<string,DuplicateDecision>,stacks:resolution.stacks.filter((stack)=>selectedGroups.includes(stack.groupId))};void prepareReview('all',null,selectedResolution)}
-  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';if(!groupComplete(item)){interactionError=`Group ${item.id} still has assets without a decision.`;return}if(groupHasInvalidStack(item)){interactionError=`Group ${item.id} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(item))}
-  async function refillAfterGroupReview(groupId:string):Promise<void>{
+  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';const label=duplicateGroupTitle(item);if(!groupComplete(item)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(item))}
+  async function refillAfterGroupReview(groupId:string,label:string):Promise<void>{
     const remaining=groups.filter((item)=>item.id!==groupId);
     const query=collection.resultMode==='Pagination'?{state:reviewFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,pageSize:collection.pageSize,cursor:null};
     const result=await groupRequests.run((signal)=>libraryData.duplicates.search({...query,signal}),{
-      fallbackError:`Group ${groupId} was reviewed, but duplicate groups could not be refreshed.`,
+      fallbackError:`${label} was reviewed, but duplicate groups could not be refreshed.`,
       apply:(response)=>{
         const preserved=new Map(remaining.map((item)=>[item.id,item]));
         if(collection.resultMode==='Pagination')groups=response.items.map((item)=>preserved.get(item.id)??item);
@@ -159,7 +161,7 @@
         total=response.total;nextCursor=response.nextCursor;collection.clampPage(total);
       },
     });
-    if(!result)throw new Error(groupRequests.error||`Group ${groupId} was reviewed, but duplicate groups could not be refreshed.`);
+    if(!result)throw new Error(groupRequests.error||`${label} was reviewed, but duplicate groups could not be refreshed.`);
   }
   function clearAppliedGroupState(item:DuplicateGroupRecord){const ids=new Set(item.members.map((entry)=>entry.asset.id));decisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>!ids.has(id))) as Record<string,DuplicateDecision>;stackWorkspace=clearGroupStacks(stackWorkspace,item.id);selectedGroups=selectedGroups.filter((id)=>id!==item.id)}
   async function applyDecisionSet(plan:DuplicatePreparedPlan){
@@ -177,13 +179,14 @@
     const resolution=plan.resolution;
     if(!capabilities.canApplyDecisions||mutating)return;
     const item=groups.find((entry)=>entry.id===groupId);if(!item)return;
+    const label=duplicateGroupTitle(item);
     operations.clearOutcome();interactionError='';
-    await operations.run(`Review group ${groupId}`,()=>libraryData.duplicates.executePlan(plan),{
-      pending:pending(`Review group ${groupId}`),
-      outcome:(result)=>mutationFeedback(`Review group ${groupId}`,result),
+    await operations.run(`Review ${label}`,()=>libraryData.duplicates.executePlan(plan),{
+      pending:pending(`Review ${label}`),
+      outcome:(result)=>mutationFeedback(`Review ${label}`,result),
       onOutcome:(_feedback,result)=>{const failedIds=new Set(result.failed.map((failure)=>failure.id));if(result.failed.length){const failedDecisions=Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>failedIds.has(id))) as Record<string,DuplicateDecision>;retryResolution={decisions:failedDecisions,stacks:resolution.stacks.filter((stack)=>stack.assetIds.some((id)=>failedIds.has(id)))};return}retryResolution=null;clearAppliedGroupState(item);if(compare&&group===groupId)compare=false},
-      reconcile:async(result)=>{if(!result.failed.length)await refillAfterGroupReview(groupId)},
-      reconcileError:`Group ${groupId} was reviewed, but the latest groups could not be loaded.`,
+      reconcile:async(result)=>{if(!result.failed.length)await refillAfterGroupReview(groupId,label)},
+      reconcileError:`${label} was reviewed, but the latest groups could not be loaded.`,
     });
   }
   async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);pendingReview=null}
@@ -222,7 +225,7 @@
     {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24]} resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={mutating} onclick={()=>{for(const item of groups)clearGroupChoices(item);decisions={};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[];interactionError=''}}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item (item.id)}
       {@const groupStacks=stacksForGroup(stackWorkspace,item.id)}
-      <V2Card class="v2-duplicate-group"><V2Stack gap="md"><V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><input type="checkbox" disabled={mutating} checked={selectedGroups.includes(item.id)} onchange={(event)=>toggleGroup(item.id,event.currentTarget.checked)}><b>Group {item.id}</b><V2Badge text={`${item.members.length} assets`}/><V2Badge text={item.kind}/><V2Badge tone={item.state==='Actionable'?'ok':item.state==='Blocked'?'bad':'warn'} text={item.state}/></V2Inline><V2Inline gap="sm" wrap={true}>{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'keep')}>Keep all</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'delete')}>Delete all</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'stack')}>Stack all</V2Button>{/if}<V2Button disabled={mutating} onclick={()=>clearGroupChoices(item)}>Clear choices</V2Button><V2Button disabled={mutating} onclick={()=>openCompare(item.id,0)}>Compare</V2Button><V2Button variant="primary" disabled={mutating||!capabilities.canApplyDecisions||!groupComplete(item)||groupHasInvalidStack(item)} title={!groupComplete(item)?'Choose an action for every asset first':groupHasInvalidStack(item)?'Complete the pending stack first':'Review only this group'} onclick={()=>requestReviewGroup(item)}>Review group</V2Button></V2Inline></V2Inline>
+      <V2Card class="v2-duplicate-group"><V2Stack gap="md"><V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><input type="checkbox" disabled={mutating} checked={selectedGroups.includes(item.id)} onchange={(event)=>toggleGroup(item.id,event.currentTarget.checked)}><b class="v2-duplicate-group-title" title={duplicateGroupTitle(item)}>{duplicateGroupTitle(item)}</b><V2Badge text={`${item.members.length} assets`}/><V2Badge text={duplicateKindLabel(item.kind)}/><V2Badge tone={item.state==='Actionable'?'ok':item.state==='Blocked'?'bad':'warn'} text={item.state}/></V2Inline><V2Inline gap="sm" wrap={true}>{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'keep')}>Keep all</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'delete')}>Delete all</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'stack')}>Stack all</V2Button>{/if}<V2Button disabled={mutating} onclick={()=>clearGroupChoices(item)}>Clear choices</V2Button><V2Button disabled={mutating} onclick={()=>openCompare(item.id,0)}>Compare</V2Button><V2Button variant="primary" disabled={mutating||!capabilities.canApplyDecisions||!groupComplete(item)||groupHasInvalidStack(item)} title={!groupComplete(item)?'Choose an action for every asset first':groupHasInvalidStack(item)?'Complete the pending stack first':'Review only this group'} onclick={()=>requestReviewGroup(item)}>Review group</V2Button></V2Inline></V2Inline>
       {#if capabilities.decisions.includes('stack')}<V2DuplicateStackControls stacks={groupStacks} activeStackId={stackWorkspace.activeByGroup[item.id]??null} disabled={mutating} onselect={(stackId)=>chooseStack(item.id,stackId)} oncreate={()=>newStack(item.id)}/>{/if}
       <div class="v2-duplicate-members">
       {#each item.members as member,index (member.asset.id)}
@@ -236,9 +239,10 @@
   </V2Zone>
 </V2PageLayout>
 
-<V2DuplicateCompareViewer open={compare} {group} assetIds={activeAssetIds} similarities={activeSimilarities} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} onreferencechange={switchReference} onclose={()=>{compare=false;persistSelection()}}/>
-{#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review group ${pendingReview.groupId}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The action plan is ready. Execute the current ${Object.keys(pendingReview.plan.resolution.decisions).length} duplicate decisions?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
+<V2DuplicateCompareViewer open={compare} groupId={group} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} assetIds={activeAssetIds} similarities={activeSimilarities} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} onreferencechange={switchReference} onclose={()=>{compare=false;persistSelection()}}/>
+{#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The action plan is ready. Execute the current ${Object.keys(pendingReview.plan.resolution.decisions).length} duplicate decisions?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
 
 <style>
   .v2-stack-primary-badge{position:absolute;z-index:3;top:8px;right:8px;display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border:1px solid rgba(255,255,255,.36);border-radius:999px;background:rgba(8,13,19,.86);color:#fff;font-size:10px;font-weight:700;line-height:1;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .v2-duplicate-group-title{display:block;min-width:0;max-width:min(34rem,60vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 </style>
