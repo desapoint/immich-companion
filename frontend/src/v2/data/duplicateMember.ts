@@ -19,7 +19,7 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
 }
 
-export async function comparisonMemberData(assetId: string, group: number, index: number): Promise<ComparisonMemberData> {
+export async function comparisonMemberData(assetId: string, similarityPercent: number): Promise<ComparisonMemberData> {
   const asset = await libraryData.assets.getById(assetId);
   const sizeNum = (asset?.file_size_bytes ?? 0) / 1_048_576;
   const library = asset?.library_id ? 'External library' : 'Default library';
@@ -33,6 +33,6 @@ export async function comparisonMemberData(assetId: string, group: number, index
     codec: asset?.original_mime_type ?? 'Unknown type',
     library,
     uploaded: formatDate(asset?.immich_created_at),
-    similarity: (99.4 - ((group * 0.37 + index * 0.65) % 8)).toFixed(1),
+    similarity: similarityPercent.toFixed(1),
   };
 }

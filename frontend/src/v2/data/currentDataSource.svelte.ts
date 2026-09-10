@@ -34,11 +34,11 @@ function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source:
 
   const guardedDuplicates = new Proxy(source.duplicates, {
     get(target, property, receiver) {
-      if (property !== 'applyDecisions') return Reflect.get(target, property, receiver);
-      return async (...args: Parameters<typeof source.duplicates.applyDecisions>) => {
-        const [resolution] = args;
-        if (Object.values(resolution.decisions).includes('delete')) await requireDestructiveActions();
-        return source.duplicates.applyDecisions(...args);
+      if (property !== 'executePlan') return Reflect.get(target, property, receiver);
+      return async (...args: Parameters<typeof source.duplicates.executePlan>) => {
+        const [plan] = args;
+        if (Object.values(plan.resolution.decisions).includes('delete')) await requireDestructiveActions();
+        return source.duplicates.executePlan(...args);
       };
     },
   });

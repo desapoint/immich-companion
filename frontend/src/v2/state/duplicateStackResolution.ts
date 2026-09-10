@@ -1,8 +1,8 @@
 import type { DuplicateGroupRecord, DuplicatePendingStack } from '../data/contracts';
 
 export type DuplicateStackWorkspace = {
-  activeByGroup: Record<number, string>;
-  nextOrdinalByGroup: Record<number, number>;
+  activeByGroup: Record<string, string>;
+  nextOrdinalByGroup: Record<string, number>;
   assetToStack: Record<string, string>;
   stacks: Record<string, DuplicatePendingStack>;
 };
@@ -11,11 +11,11 @@ export function createDuplicateStackWorkspace(): DuplicateStackWorkspace {
   return { activeByGroup: {}, nextOrdinalByGroup: {}, assetToStack: {}, stacks: {} };
 }
 
-function stackId(groupId: number, ordinal: number): string {
+function stackId(groupId: string, ordinal: number): string {
   return `group-${groupId}-stack-${ordinal}`;
 }
 
-export function createPendingStack(workspace: DuplicateStackWorkspace, groupId: number): DuplicateStackWorkspace {
+export function createPendingStack(workspace: DuplicateStackWorkspace, groupId: string): DuplicateStackWorkspace {
   const ordinal = workspace.nextOrdinalByGroup[groupId] ?? 1;
   const id = stackId(groupId, ordinal);
   return {
@@ -29,19 +29,19 @@ export function createPendingStack(workspace: DuplicateStackWorkspace, groupId: 
   };
 }
 
-export function ensurePendingStack(workspace: DuplicateStackWorkspace, groupId: number): DuplicateStackWorkspace {
+export function ensurePendingStack(workspace: DuplicateStackWorkspace, groupId: string): DuplicateStackWorkspace {
   const active = workspace.activeByGroup[groupId];
   if (active && workspace.stacks[active]) return workspace;
   return createPendingStack(workspace, groupId);
 }
 
-export function selectPendingStack(workspace: DuplicateStackWorkspace, groupId: number, id: string): DuplicateStackWorkspace {
+export function selectPendingStack(workspace: DuplicateStackWorkspace, groupId: string, id: string): DuplicateStackWorkspace {
   const stack = workspace.stacks[id];
   if (!stack || stack.groupId !== groupId) return workspace;
   return { ...workspace, activeByGroup: { ...workspace.activeByGroup, [groupId]: id } };
 }
 
-export function assignAssetToActiveStack(workspace: DuplicateStackWorkspace, groupId: number, assetId: string): DuplicateStackWorkspace {
+export function assignAssetToActiveStack(workspace: DuplicateStackWorkspace, groupId: string, assetId: string): DuplicateStackWorkspace {
   let next = ensurePendingStack(workspace, groupId);
   const targetId = next.activeByGroup[groupId];
   if (!targetId) return next;
@@ -94,7 +94,7 @@ export function stackForAsset(workspace: DuplicateStackWorkspace, assetId: strin
   return id ? workspace.stacks[id] ?? null : null;
 }
 
-export function stacksForGroup(workspace: DuplicateStackWorkspace, groupId: number): DuplicatePendingStack[] {
+export function stacksForGroup(workspace: DuplicateStackWorkspace, groupId: string): DuplicatePendingStack[] {
   return Object.values(workspace.stacks)
     .filter((stack) => stack.groupId === groupId)
     .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
@@ -110,7 +110,7 @@ export function invalidPendingStacks(workspace: DuplicateStackWorkspace): Duplic
   return Object.values(workspace.stacks).filter((stack) => stack.assetIds.length === 1);
 }
 
-export function clearGroupStacks(workspace: DuplicateStackWorkspace, groupId: number): DuplicateStackWorkspace {
+export function clearGroupStacks(workspace: DuplicateStackWorkspace, groupId: string): DuplicateStackWorkspace {
   const groupStackIds = new Set(stacksForGroup(workspace, groupId).map((stack) => stack.id));
   const stacks = Object.fromEntries(Object.entries(workspace.stacks).filter(([id]) => !groupStackIds.has(id)));
   const assetToStack = Object.fromEntries(Object.entries(workspace.assetToStack).filter(([, id]) => !groupStackIds.has(id)));
