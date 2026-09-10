@@ -1677,9 +1677,41 @@ class CrossSourceDuplicateService:
         if existing.destructive and not self._settings.allow_destructive_actions:
             raise PermanentTaskError("Duplicate resolution is disabled in safe mode")
 
-        raw_groups = [
-            _normalize_plan_group(item) for item in existing.relation_work.get("groups", [])
-        ]
+        persisted_groups = existing.relation_work.get("groups", [])
+        target_digest = getattr(existing, "target_digest", None)
+        if target_digest is not None and (
+            not isinstance(persisted_groups, list)
+            or _plan_digest(persisted_groups) != target_digest
+        ):
+            result = {
+                "error": "plan_fingerprint_mismatch",
+                "group_count": 0,
+                "processed_group_count": 0,
+                "resolved_group_count": 0,
+                "kept_all_group_count": 0,
+                "zero_survivor_group_count": 0,
+                "stacked_group_count": 0,
+                "failed_group_ids": [],
+                "drifted_group_ids": [],
+                "follow_up_pending_group_ids": [],
+                "trashed_asset_count": 0,
+                "verified": False,
+            }
+            await self._actions.finish_plan(plan_id, "drifted", result)
+            return TaskResult(
+                status="failed",
+                summary=result,
+                counters={
+                    "groups_processed": 0,
+                    "groups_resolved": 0,
+                    "groups_kept_all": 0,
+                    "groups_zero_survivor": 0,
+                    "groups_stacked": 0,
+                    "groups_failed": 0,
+                    "assets_trashed": 0,
+                },
+            )
+        raw_groups = [_normalize_plan_group(item) for item in persisted_groups]
         options = DuplicateAnalysisOptions.model_validate(existing.relation_work.get("options", {}))
         stored_execution = dict(
             (getattr(existing, "result", None) or {}).get("group_execution") or {}

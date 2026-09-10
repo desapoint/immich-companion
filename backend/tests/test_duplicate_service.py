@@ -650,6 +650,7 @@ def created_plan_record(actions: FakeActions, *, destructive: bool):
         status="planned",
         destructive=destructive,
         expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        target_digest=actions.created["target_digest"],
         relation_work={
             "groups": actions.created["groups"],
             "options": actions.created["options"],
@@ -887,12 +888,20 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
         similarity=similarity,
     )
 
+    original = (await service.result()).groups[0]
     result = await service.similarity_reference(
         PUBLIC_GROUP_ID,
         DuplicateSimilarityReferenceRequest(reference_asset_id=EXTERNAL_1),
     )
 
-    assert similarity.calls[0][0] == [[EXTERNAL_1, UPLOAD_1]]
+    assert similarity.calls[-1][0] == [[EXTERNAL_1, UPLOAD_1]]
+    assert result.group_id == original.group_id
+    assert result.member_fingerprint == original.member_fingerprint
+    assert result.recommended_action == original.recommended_action
+    assert result.recommended_primary_asset_id == original.recommended_primary_asset_id
+    assert [member.id for member in result.members] == [
+        member.id for member in original.members
+    ]
     assert result.members[0].similarity is not None
     assert result.members[0].similarity.similarity_percent == 93.0
     assert result.members[1].similarity is not None
@@ -1675,6 +1684,95 @@ async def test_metadata_relation_drift_blocks_only_that_group_before_resolution(
         "state": "drifted",
         "error": "metadata_input_drift",
     }
+
+
+@pytest.mark.asyncio
+async def test_changed_group_members_are_rejected_before_resolution() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    actions = FakeActions()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+        FakeReviews(),
+    )
+    current = (await service.result()).groups[0]
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="delete"),
+            ],
+        )
+    )
+    await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
+    actions.record = created_plan_record(actions, destructive=True)
+    candidate_group.assets.append(
+        asset(UPLOAD_2, external=False, checksum=immich_sha1(content), filename="three.jpg")
+    )
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "failed"
+    assert outcome.summary["drifted_group_ids"] == [PUBLIC_GROUP_ID]
+    assert immich.events == []
+    assert actions.record.result["group_execution"][PUBLIC_GROUP_ID] == {
+        "state": "drifted",
+        "error": "group_drift",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tampered_plan_fingerprint_is_rejected_before_resolution() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    actions = FakeActions()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+        FakeReviews(),
+    )
+    current = (await service.result()).groups[0]
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="delete"),
+            ],
+        )
+    )
+    await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
+    actions.record = created_plan_record(actions, destructive=True)
+    actions.record.relation_work["groups"][0]["trash_asset_ids"] = []
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "failed"
+    assert outcome.summary["error"] == "plan_fingerprint_mismatch"
+    assert actions.record.status == "drifted"
+    assert immich.events == []
 
 
 @pytest.mark.asyncio

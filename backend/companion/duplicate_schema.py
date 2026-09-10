@@ -285,14 +285,56 @@ class DuplicateResolutionPlanGroup(BaseModel):
         members = set(self.member_asset_ids)
         keep = set(self.keep_asset_ids)
         trash = set(self.trash_asset_ids)
+        decision_ids = [decision.asset_id for decision in self.members]
+        decision_by_id = {decision.asset_id: decision for decision in self.members}
         if keep & trash or keep | trash != members:
             raise ValueError("Duplicate resolution must classify every frozen member exactly once")
         if len(keep) != len(self.keep_asset_ids) or len(trash) != len(self.trash_asset_ids):
             raise ValueError("Duplicate resolution member lists must not contain duplicates")
+        if len(decision_ids) != len(set(decision_ids)) or set(decision_ids) != members:
+            raise ValueError("Duplicate resolution must include one decision per frozen member")
+        if any(
+            (decision.disposition == "delete") != (asset_id in trash)
+            or decision.disposition == "no_change"
+            for asset_id, decision in decision_by_id.items()
+        ):
+            raise ValueError(
+                "Duplicate member decisions must match the frozen resolution partition"
+            )
+        dispositions = [decision.disposition for decision in self.members]
+        disposition_set = set(dispositions)
+        derived_action = (
+            "keep_all"
+            if disposition_set == {"keep"}
+            else "stack_all"
+            if disposition_set == {"stack"}
+            else "resolve"
+            if dispositions.count("keep") == 1
+            and dispositions.count("delete") == len(dispositions) - 1
+            else "mixed"
+        )
+        if self.action != derived_action:
+            raise ValueError("Duplicate group action must match its member decisions")
         if self.action == "stack_all" and self.follow_up is None:
             raise ValueError("Stack all requires an explicit stack follow-up")
         if self.action not in {"stack_all", "mixed"} and self.follow_up is not None:
             raise ValueError("Only plans with Stack dispositions may include a stack follow-up")
+        stack_ids = {
+            asset_id
+            for asset_id, decision in decision_by_id.items()
+            if decision.disposition == "stack"
+        }
+        if self.follow_up is None:
+            if stack_ids:
+                raise ValueError("Stack decisions require an explicit stack follow-up")
+        else:
+            follow_up_ids = self.follow_up.member_asset_ids
+            if (
+                len(follow_up_ids) != len(set(follow_up_ids))
+                or set(follow_up_ids) != stack_ids
+                or self.follow_up.primary_asset_id not in stack_ids
+            ):
+                raise ValueError("Stack follow-up must exactly match the frozen Stack decisions")
         return self
 
 
