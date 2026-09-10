@@ -1,6 +1,6 @@
 import { jsonRequest, requestJson } from '../../../lib/api/http';
 import type {
-  AssetRepository,
+  AssetRecord,
   DuplicateDecision,
   DuplicateDiscoveryOptions,
   DuplicateGroupRecord,
@@ -25,8 +25,20 @@ type AnalysisOptions = {
 };
 type ApiDuplicateMember = {
   id: string;
+  source_kind: 'upload' | 'external';
+  library_id: string | null;
+  original_file_name: string;
+  original_mime_type: string | null;
+  file_size_bytes: number | null;
+  file_modified_at: string;
+  uploaded_at: string | null;
   is_offline: boolean;
+  is_stacked: boolean;
   verification: 'matching' | 'mismatch' | 'unverified';
+  evidence: {
+    decoded_width?: number | null;
+    decoded_height?: number | null;
+  };
   similarity: { state: 'reference' | 'current' | 'pending' | 'unavailable'; similarity_percent: number | null } | null;
 };
 type ApiDuplicateGroup = {
@@ -82,6 +94,46 @@ function pageNumber(query: DuplicateSearchQuery): number {
 function similarity(member: ApiDuplicateMember): number {
   if (member.similarity?.state === 'reference') return 100;
   return member.similarity?.similarity_percent ?? (member.verification === 'matching' ? 100 : 0);
+}
+
+function assetType(mimeType: string | null): AssetRecord['asset_type'] {
+  if (mimeType?.startsWith('video/')) return 'VIDEO';
+  if (mimeType?.startsWith('audio/')) return 'AUDIO';
+  if (mimeType?.startsWith('image/')) return 'IMAGE';
+  return 'OTHER';
+}
+
+function assetFromMember(member: ApiDuplicateMember): AssetRecord {
+  return {
+    id: member.id,
+    owner_id: null,
+    library_id: member.library_id,
+    asset_type: assetType(member.original_mime_type),
+    original_file_name: member.original_file_name,
+    original_path: null,
+    original_mime_type: member.original_mime_type,
+    checksum: null,
+    file_size_bytes: member.file_size_bytes,
+    width: member.evidence.decoded_width ?? null,
+    height: member.evidence.decoded_height ?? null,
+    duration: null,
+    file_created_at: member.uploaded_at ?? member.file_modified_at,
+    file_modified_at: member.file_modified_at,
+    local_date_time: null,
+    immich_created_at: member.uploaded_at,
+    immich_updated_at: null,
+    is_favorite: false,
+    is_archived: false,
+    is_offline: member.is_offline,
+    is_edited: false,
+    has_metadata: false,
+    visibility: null,
+    live_photo_video_id: null,
+    tags: [],
+    albums: [],
+    stack: null,
+    synced_at: member.file_modified_at,
+  };
 }
 
 function savedDecisions(draft: ApiDuplicateDraft | undefined): Record<string, DuplicateDecision> {
@@ -142,7 +194,7 @@ async function waitForTask(tasks: TaskRepository, taskId: string): Promise<TaskR
   }
 }
 
-export function createDuplicateRepository(assets: AssetRepository, tasks: TaskRepository): DuplicateRepository {
+export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepository {
   let rawGroups = new Map<string, ApiDuplicateGroup>();
   let visibleGroupIds = new Set<string>();
   let workspace: ApiDuplicateWorkspace = { initialized: false, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
@@ -150,9 +202,7 @@ export function createDuplicateRepository(assets: AssetRepository, tasks: TaskRe
 
   const draftFor = (groupId: string): ApiDuplicateDraft | undefined => workspace.drafts.find((draft) => draft.group_id === groupId && !draft.stale);
 
-  const materialize = async (group: ApiDuplicateGroup): Promise<DuplicateGroupRecord> => {
-    const records = await assets.getMany(group.members.map((member) => member.id));
-    const byId = new Map(records.map((asset) => [asset.id, asset]));
+  const materialize = (group: ApiDuplicateGroup): DuplicateGroupRecord => {
     const draft = draftFor(group.group_id);
     return {
       id: group.group_id,
@@ -164,10 +214,7 @@ export function createDuplicateRepository(assets: AssetRepository, tasks: TaskRe
       savedDecisions: savedDecisions(draft),
       stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
       stackResolution: draft?.stack_resolution ?? 'move_selected',
-      members: group.members.flatMap((member) => {
-        const asset = byId.get(member.id);
-        return asset ? [{ asset, similarity: similarity(member) }] : [];
-      }),
+      members: group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member) })),
     };
   };
 
@@ -234,7 +281,7 @@ export function createDuplicateRepository(assets: AssetRepository, tasks: TaskRe
       });
       const page = pageNumber(query);
       const start = (page - 1) * query.pageSize;
-      const items = await Promise.all(filtered.slice(start, start + query.pageSize).map(materialize));
+      const items = filtered.slice(start, start + query.pageSize).map(materialize);
       visibleGroupIds = new Set(items.map((group) => group.id));
       return { items, total: filtered.length, pageSize: query.pageSize, page, nextCursor: start + query.pageSize < filtered.length ? String(page + 1) : null };
     },

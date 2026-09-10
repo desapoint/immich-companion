@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { AssetRecord, AssetRepository } from '../contracts';
 import type { TaskRepository } from '../syncContracts';
 import { createDuplicateRepository } from './duplicateRepository';
 
@@ -77,11 +76,6 @@ function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-function assets(): AssetRepository {
-  const records = ASSET_IDS.map((id, index) => ({ id, original_file_name: `asset-${index}.jpg`, asset_type: 'IMAGE', library_id: index ? 'library-1' : null }) as AssetRecord);
-  return { getMany: vi.fn(async (ids: readonly string[]) => records.filter((asset) => ids.includes(asset.id))) } as unknown as AssetRepository;
-}
-
 function tasks(): TaskRepository {
   return { get: vi.fn(async () => ({ status: 'completed', result: { summary: { failed_group_ids: [] } } })) } as unknown as TaskRepository;
 }
@@ -89,7 +83,7 @@ function tasks(): TaskRepository {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('live V2 duplicate repository', () => {
-  it('loads stable provider groups, persisted decisions, and only hydrates visible assets', async () => {
+  it('loads stable provider groups and persisted decisions without per-member summary requests', async () => {
     const selectedWorkspace = {
       ...emptyWorkspace,
       selected_group_ids: [group.group_id],
@@ -106,8 +100,8 @@ describe('live V2 duplicate repository', () => {
       }],
     };
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(selectedWorkspace) : response(duplicateResult)));
-    const assetRepository = assets();
-    const repository = createDuplicateRepository(assetRepository, tasks());
+    const fetcher = vi.mocked(fetch);
+    const repository = createDuplicateRepository(tasks());
 
     const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
 
@@ -116,9 +110,13 @@ describe('live V2 duplicate repository', () => {
       state: 'Needs decisions',
       selected: true,
       savedDecisions: { [ASSET_IDS[0]]: 'keep' },
-      members: [{ similarity: 100 }, { similarity: 98.5 }],
+      members: [
+        { similarity: 100, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
+        { similarity: 98.5, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
+      ],
     });
-    expect(assetRepository.getMany).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/summary'))).toBe(false);
   });
 
   it('persists complete per-image choices before planning and executing them', async () => {
@@ -135,7 +133,7 @@ describe('live V2 duplicate repository', () => {
       if (path.endsWith('/cross-source/execute')) return response({ task_id: 'task-1' }, 202);
       throw new Error(`Unexpected request: ${path}`);
     }));
-    const repository = createDuplicateRepository(assets(), tasks());
+    const repository = createDuplicateRepository(tasks());
     await repository.search({ page: 1, pageSize: 10 });
 
     const plan = await repository.prepareDecisions({
@@ -168,7 +166,7 @@ describe('live V2 duplicate repository', () => {
   it('rejects incomplete groups before creating an action plan', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(duplicateResult));
     vi.stubGlobal('fetch', fetcher);
-    const repository = createDuplicateRepository(assets(), tasks());
+    const repository = createDuplicateRepository(tasks());
     await repository.search({ page: 1, pageSize: 10 });
 
     await expect(repository.prepareDecisions({ decisions: { [ASSET_IDS[0]]: 'keep' }, stacks: [] })).rejects.toThrow('images without a decision');

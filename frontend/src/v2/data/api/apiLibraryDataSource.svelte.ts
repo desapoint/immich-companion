@@ -23,7 +23,7 @@ export function createApiLibraryDataSource(): LiveLibraryDataSource {
     albums: createAlbumRepository(),
     tags: createTagRepository(),
     savedSearches: createLocalSavedSearchRepository(),
-    duplicates: createDuplicateRepository(assetProfile.assets, tasks),
+    duplicates: createDuplicateRepository(tasks),
     media: assetProfile.media,
     navigation: assetProfile.navigation,
     sync: createSyncRepository(),
