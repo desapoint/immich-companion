@@ -25,6 +25,7 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Stack 1');
     expect(body).toContain('Stack primary');
     expect(body).toContain('Clear selection');
+    expect(body.indexOf('data-decision="stack"')).toBeLessThan(body.indexOf('Clear selection'));
     expect(body).not.toContain('Technical group ID');
   });
 });
