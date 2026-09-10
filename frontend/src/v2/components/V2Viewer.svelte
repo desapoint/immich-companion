@@ -44,7 +44,7 @@
 </script>
 
 {#if mode === 'restore'}
-  <V2RestoreViewer {open} {assetId} {assetIds} {restoreBusy} {onclose} {onnavigate} {onrestore} />
+  <V2RestoreViewer {open} {assetId} {assetIds} {restoreBusy} {onclose} {onnavigate} {onrestore} {isselected} {ontoggleselection} />
 {:else}
   <V2AssetViewer {open} {assetId} {assetIds} {resultMode} {collectionPage} {collectionPageSize} {collectionTotal} {startStack} {onclose} {onnavigate} {onmutated} {onfilterrelation} {isselected} {ontoggleselection} />
 {/if}

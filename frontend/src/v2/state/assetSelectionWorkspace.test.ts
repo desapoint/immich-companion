@@ -139,4 +139,66 @@ describe('V2 database-backed asset selection workspace', () => {
     expect(controller.selectionId).toBeNull();
     expect(controller.selectedCount).toBe(0);
   });
+
+  it('abandons a stored selection that expires before a bulk action', async () => {
+    const { repository, selected, storage } = fixture();
+    selected.add('a');
+    storage.setItem('immich-companion:v2:asset-selection', 'selection-1');
+    const controller = new AssetSelectionWorkspaceController(repository, storage);
+    await controller.refreshVisible(['a']);
+    repository.selectionMembership = vi.fn(async () => null);
+
+    await expect(controller.target()).rejects.toThrow('saved selection expired');
+    expect(controller.selectionId).toBeNull();
+    expect(controller.selectedCount).toBe(0);
+  });
+
+  it('recovers a revision conflict from authoritative membership and retries once', async () => {
+    const { repository, selected, storage } = fixture();
+    let revision = 1;
+    storage.setItem('immich-companion:v2:asset-selection', 'selection-1');
+    repository.selectionMembership = vi.fn(async (_id: string, ids: readonly string[]) => ({
+      selection: active(revision, selected.size),
+      selectedIds: ids.filter((id) => selected.has(id)),
+    }));
+    repository.updateSelectionMembers = vi.fn(async (_id: string, ids: readonly string[], value: boolean, expectedRevision: number) => {
+      if (expectedRevision === 0) throw new Error('Selection revision conflict');
+      expect(expectedRevision).toBe(1);
+      ids.forEach((id) => value ? selected.add(id) : selected.delete(id));
+      revision += 1;
+      return active(revision, selected.size);
+    });
+    const controller = new AssetSelectionWorkspaceController(repository, storage);
+    await controller.refreshVisible(['a']);
+    controller.revision = 0;
+    controller.setMembers(['a'], true);
+
+    await controller.flush();
+
+    expect(repository.updateSelectionMembers).toHaveBeenCalledTimes(2);
+    expect(controller.selectedCount).toBe(1);
+    expect(controller.error).toBe('');
+  });
+
+  it('does not repeat a write whose response was lost after the server applied it', async () => {
+    const { repository, selected, storage } = fixture();
+    let revision = 0;
+    repository.updateSelectionMembers = vi.fn(async (_id: string, ids: readonly string[], value: boolean) => {
+      ids.forEach((id) => value ? selected.add(id) : selected.delete(id));
+      revision += 1;
+      throw new Error('Connection closed after write');
+    });
+    repository.selectionMembership = vi.fn(async (_id: string, ids: readonly string[]) => ({
+      selection: active(revision, selected.size),
+      selectedIds: ids.filter((id) => selected.has(id)),
+    }));
+    const controller = new AssetSelectionWorkspaceController(repository, storage);
+    controller.setMembers(['a'], true);
+
+    await controller.flush();
+
+    expect(repository.updateSelectionMembers).toHaveBeenCalledTimes(1);
+    expect(controller.selectedCount).toBe(1);
+    await expect(controller.target()).resolves.toEqual({ kind: 'selection', selectionId: 'selection-1' });
+  });
 });

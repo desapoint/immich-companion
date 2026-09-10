@@ -25,6 +25,7 @@ export class AssetSelectionWorkspaceController {
   error = $state('');
 
   private readonly serverVisibleIds = new Set<string>();
+  private readonly visibleAssetIds = new Set<string>();
   private readonly pending = new Map<string, boolean>();
   private pendingVersion = $state(0);
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -79,6 +80,7 @@ export class AssetSelectionWorkspaceController {
   setMembers(assetIds: readonly string[], selected: boolean, anchor: string | null = this.anchor): void {
     const next = new Set(this.visibleSelectedIds);
     for (const id of assetIds) {
+      this.visibleAssetIds.add(id);
       if (next.has(id) === selected) continue;
       if (selected) next.add(id); else next.delete(id);
       this.stageMember(id, selected);
@@ -92,6 +94,8 @@ export class AssetSelectionWorkspaceController {
 
   async refreshVisible(assetIds: readonly string[]): Promise<void> {
     await this.flush();
+    this.visibleAssetIds.clear();
+    assetIds.forEach((id) => this.visibleAssetIds.add(id));
     if (!this.selectionId) {
       this.applyEmptyVisible();
       return;
@@ -163,7 +167,15 @@ export class AssetSelectionWorkspaceController {
   async target(): Promise<AssetSelectionTarget> {
     await this.flush();
     if (!this.selectionId || this.serverSelectedCount === 0) throw new Error('No assets are selected.');
-    return { kind: 'selection', selectionId: this.selectionId };
+    const selectionId = this.selectionId;
+    const membership = await this.repository.selectionMembership(selectionId, []);
+    if (!membership || membership.selection.status !== 'active') {
+      this.abandon();
+      throw new Error('The saved selection expired. Select the assets again.');
+    }
+    this.applyWorkspace(membership.selection);
+    if (membership.selection.selectedCount === 0) throw new Error('No assets are selected.');
+    return { kind: 'selection', selectionId };
   }
 
   clear(): void { this.abandon(); }
@@ -182,6 +194,7 @@ export class AssetSelectionWorkspaceController {
 
   private applyEmptyVisible(): void {
     this.serverVisibleIds.clear();
+    this.visibleAssetIds.clear();
     this.visibleSelectedIds = new Set();
     this.anchor = null;
     this.allMatchingSelected = false;
@@ -232,7 +245,7 @@ export class AssetSelectionWorkspaceController {
     this.timer = null;
   }
 
-  private async drainPending(): Promise<void> {
+  private async drainPending(allowRecovery = true): Promise<void> {
     while (this.pending.size) {
       const first = this.pending.entries().next().value as [string, boolean] | undefined;
       if (!first) return;
@@ -253,8 +266,9 @@ export class AssetSelectionWorkspaceController {
         if (selected) this.serverVisibleIds.add(id); else this.serverVisibleIds.delete(id);
       }
       this.serverSelectedCount = Math.max(0, this.serverSelectedCount + optimisticCountDelta);
+      let workspace: AssetSelectionWorkspace | null = null;
       try {
-        const workspace = await this.ensureWorkspace();
+        workspace = await this.ensureWorkspace();
         const updated = await this.repository.updateSelectionMembers(workspace.id, batch.map(([id]) => id), selected, workspace.revision);
         if (generation !== this.generation) return;
         this.applyWorkspace(updated);
@@ -266,8 +280,50 @@ export class AssetSelectionWorkspaceController {
           if (!this.pending.has(id)) this.pending.set(id, selected);
         }
         this.pendingVersion += 1;
+        if (allowRecovery && workspace && await this.recoverAfterWriteFailure(workspace.id)) {
+          await this.drainPending(false);
+          return;
+        }
         throw error;
       }
+    }
+  }
+
+  private async recoverAfterWriteFailure(selectionId: string): Promise<boolean> {
+    try {
+      const assetIds = [...this.visibleAssetIds];
+      const selectedIds: string[] = [];
+      let workspace: AssetSelectionWorkspace | null = null;
+      const batches = assetIds.length
+        ? Array.from({ length: Math.ceil(assetIds.length / MEMBER_BATCH_SIZE) }, (_, index) => assetIds.slice(index * MEMBER_BATCH_SIZE, (index + 1) * MEMBER_BATCH_SIZE))
+        : [[]];
+      for (const batch of batches) {
+        const membership = await this.repository.selectionMembership(selectionId, batch);
+        if (!membership || membership.selection.status !== 'active') {
+          this.abandon();
+          throw new Error('The saved selection expired. Select the assets again.');
+        }
+        workspace = membership.selection;
+        selectedIds.push(...membership.selectedIds);
+      }
+      if (!workspace || this.selectionId !== selectionId) return false;
+      this.applyWorkspace(workspace);
+      this.serverVisibleIds.clear();
+      selectedIds.forEach((id) => this.serverVisibleIds.add(id));
+      for (const [id, desired] of [...this.pending]) {
+        if (this.serverVisibleIds.has(id) === desired) this.pending.delete(id);
+      }
+      const visible = new Set(this.serverVisibleIds);
+      for (const [id, desired] of this.pending) {
+        if (desired) visible.add(id); else visible.delete(id);
+      }
+      this.visibleSelectedIds = visible;
+      this.anchor = visible.has(this.anchor ?? '') ? this.anchor : visible.values().next().value ?? null;
+      this.pendingVersion += 1;
+      return true;
+    } catch (error) {
+      if (!this.selectionId) throw error;
+      return false;
     }
   }
 }

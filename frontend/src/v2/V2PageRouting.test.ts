@@ -6,7 +6,7 @@ describe('V2 page composition', () => {
   it('routes the live restore page instead of the implementation placeholder', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/v2/V2Page.svelte'), 'utf8');
     expect(source).toContain("activeKey === 'restore'");
-    expect(source).toContain('<V2RestorePage />');
+    expect(source).toContain('<V2RestorePage selectionController={restoreSelection} />');
   });
 
   it('routes the static playground instead of the implementation placeholder', () => {

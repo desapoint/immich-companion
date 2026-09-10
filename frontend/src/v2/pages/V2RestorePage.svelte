@@ -18,25 +18,28 @@
   import V2Zone from '../components/V2Zone.svelte';
   import { createGridViewportAnchor } from '../components/gridViewportAnchor';
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
-  import { applyShiftAssetRange,emptyAssetSelection,getAssetSelectionCount,invertAssetSelection,isAllVisibleSelected,isAssetSelected,selectAllMatchingAssets,selectVisibleAssets,toggleAssetSelected,type AssetSelectionState } from '../components/assetSelection';
+  import { applyShiftAssetRange,getAssetSelectionCount,isAllVisibleSelected,isAssetSelected,selectAllMatchingAssets,selectVisibleAssets,setAssetSelected,toggleAssetSelected } from '../components/assetSelection';
   import { createCollectionView } from '../state/collectionView.svelte';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { OperationController } from '../state/operationController.svelte';
+  import { TransientAssetSelectionController } from '../state/transientAssetSelection.svelte';
   import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
   import type { MutationResult, TrashAssetRecord, TrashSelectionTarget, ViewerNavigationWindow } from '../data/contracts';
 
+  let { selectionController }: { selectionController: TransientAssetSelectionController } = $props();
   const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionRestoreResultMode'});
-  let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),selection=$state<AssetSelectionState<string>>(emptyAssetSelection<string>()),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null),confirmRestoreAll=$state(false);
+  let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null),confirmRestoreAll=$state(false);
   let viewerLastId:string|null=null,viewerLastPosition:number|null=null,viewerCollectionSync:Promise<void>=Promise.resolve();
   const collectionRequests=new CollectionRequestController();
   const operations=new OperationController();
   const loading=$derived(collectionRequests.loading),loadError=$derived(collectionRequests.error),mutating=$derived(operations.busy),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
+  const selection=$derived(selectionController.snapshot());
   const itemIds=$derived(items.map((asset)=>asset.id));
   const selectedCount=$derived(getAssetSelectionCount(selection,total)),selectionActive=$derived(selectedCount>0),allMatchingSelected=$derived(selection.allMatchingSelected),allVisibleSelected=$derived(isAllVisibleSelected(selection,itemIds));
-  const interaction=createAssetGridSelectionInteraction<string>({getItems:()=>itemIds,getSelection:()=>selection,setSelection:(next)=>selection=next,parseAssetId:(value)=>value});
+  const interaction=createAssetGridSelectionInteraction<string>({getItems:()=>itemIds,getSelection:()=>selectionController.snapshot(),setSelection:(next)=>selectionController.replace(next),parseAssetId:(value)=>value});
 
   function parseSort(){const[fieldRaw,directionRaw]=sort.split(':');return{field:(fieldRaw==='takenAt'||fieldRaw==='name'?fieldRaw:'deletedAt') as 'deletedAt'|'takenAt'|'name',direction:(directionRaw==='asc'?'asc':'desc') as 'asc'|'desc'}}
   function target():TrashSelectionTarget{return selection.allMatchingSelected?{kind:'all',excludedIds:[...selection.excludedIds]}:{kind:'ids',ids:[...selection.selectedIds]}}
@@ -65,9 +68,12 @@
   async function loadMore(){if(collection.resultMode!=='Infinite'||!nextCursor||loading)return;collection.loadMore(total);await refresh(false)}
   function setAssetColumns(next:number|string){collection.setColumns(next);gridViewportAnchor.adjust()}
   function isSelected(id:string){return isAssetSelected(selection,id)}
-  function clearSelection(){selection=emptyAssetSelection<string>()}
-  function selectVisible(){selection=selectVisibleAssets(itemIds)}function selectAllMatching(){selection=selectAllMatchingAssets(itemIds[0]??null)}function invertSelection(){selection=invertAssetSelection(selection)}
-  function handleSelectionClick(id:string,event:MouseEvent){selection=event.shiftKey?applyShiftAssetRange(selection,itemIds,id):toggleAssetSelected(selection,id)}
+  function clearSelection(){selectionController.clear()}
+  function selectVisible(){let next=selectionController.snapshot();for(const id of itemIds)next=setAssetSelected(next,id,true);selectionController.replace(next)}
+  function selectAllMatching(){selectionController.replace(selectAllMatchingAssets(itemIds[0]??null))}
+  function invertSelection(){let next=selectionController.snapshot();for(const id of itemIds)next=toggleAssetSelected(next,id);selectionController.replace(next)}
+  function toggleSelection(id:string){selectionController.replace(toggleAssetSelected(selectionController.snapshot(),id))}
+  function handleSelectionClick(id:string,event:MouseEvent){selectionController.replace(event.shiftKey?applyShiftAssetRange(selectionController.snapshot(),itemIds,id):toggleAssetSelected(selectionController.snapshot(),id))}
   function openViewer(id:string){const index=items.findIndex((item)=>item.id===id);viewerAssetId=id;viewerLastId=id;viewerLastPosition=index<0?null:collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index+1:index+1;viewer=true}
   async function synchronizeViewerCollection(id:string,navigation:ViewerNavigationWindow):Promise<void>{
     viewerLastId=id;
@@ -88,7 +94,7 @@
   function setPageSize(value:number){collection.setPageSize(value,total);void refresh(true)}
   function setMode(value:ResultMode){collection.setMode(value);collection.reset();void refresh(true)}
   function setPage(value:number){collection.setPage(value);void refresh(true)}
-  async function runRestore(nextTarget:TrashSelectionTarget):Promise<MutationResult|null>{
+  async function runRestore(nextTarget:TrashSelectionTarget,reconcileSelection:'target'|'single'='target'):Promise<MutationResult|null>{
     if(mutating)return null;
     operations.clearOutcome();
     const result=await operations.run('Restore',()=>libraryData.assets.restore(nextTarget),{
@@ -100,11 +106,16 @@
     if(!result)return null;
     const failedIds=result.failed.map((failure)=>failure.id);
     retryTarget=failedIds.length?{kind:'ids',ids:failedIds}:null;
-    selection=failedIds.length?selectVisibleAssets(failedIds):emptyAssetSelection<string>();
+    if(reconcileSelection==='target')selectionController.replace(failedIds.length?selectVisibleAssets(failedIds):selectVisibleAssets([]));
+    else if(nextTarget.kind==='ids'){
+      let next=selectionController.snapshot();
+      for(const id of nextTarget.ids){if(!failedIds.includes(id))next=setAssetSelected(next,id,false)}
+      selectionController.replace(next);
+    }
     return result;
   }
   async function restoreSelected(){await runRestore(target())}
-  async function restoreVisible(id:string):Promise<boolean>{const result=await runRestore({kind:'ids',ids:[id]});return Boolean(result&&result.affectedIds.includes(id)&&!result.failed.some((failure)=>failure.id===id))}
+  async function restoreVisible(id:string):Promise<boolean>{const result=await runRestore({kind:'ids',ids:[id]},'single');return Boolean(result&&result.affectedIds.includes(id)&&!result.failed.some((failure)=>failure.id===id))}
   async function restoreAll(){if(mutating)return;collection.reset();const result=await runRestore({kind:'all',excludedIds:[]});if(result)confirmRestoreAll=false}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await refresh(true)}catch(error){collectionRequests.setError(errorMessage(error,'The trash data source could not be initialized.'))}})();return()=>{collectionRequests.cancel();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
@@ -120,5 +131,5 @@
     {#if total===0}<p class="v2-muted">{loading?'Loading trash…':loadError?'Trash could not be loaded.':'Trash is empty.'}</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={items.length} noun="trash assets" onpage={setPage} onloadmore={loadMore}/>{/if}
   </V2Zone>
 </V2PageLayout>
-<V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} restoreBusy={mutating} onclose={closeViewer} onnavigate={handleViewerNavigate} onrestore={restoreVisible}/>
+<V2Viewer open={viewer} mode="restore" assetId={viewerAssetId} assetIds={itemIds} restoreBusy={mutating} onclose={closeViewer} onnavigate={handleViewerNavigate} onrestore={restoreVisible} isselected={isSelected} ontoggleselection={toggleSelection}/>
 {#if confirmRestoreAll}<ConfirmDialog title="Restore all trash assets?" message={`Restore all ${total.toLocaleString()} assets currently in trash?`} confirmLabel="Restore all" icon="check" pending={mutating} onconfirm={()=>void restoreAll()} onclose={()=>{if(!mutating)confirmRestoreAll=false}}/>{/if}
