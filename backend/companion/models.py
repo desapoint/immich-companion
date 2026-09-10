@@ -565,6 +565,8 @@ class DuplicateGroupReviewRecord(Base):
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     discovery_source: Mapped[str] = mapped_column(String(32), nullable=False)
     provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    stable_group_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    member_set_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     manual_action: Mapped[str | None] = mapped_column(String(24), nullable=True)
     manual_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
@@ -588,9 +590,8 @@ class DuplicateGroupReviewRecord(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "discovery_source",
-            "provider_group_id",
-            name="uq_duplicate_group_reviews_provider",
+            "stable_group_key",
+            name="uq_duplicate_group_reviews_stable_key",
         ),
         Index("ix_duplicate_group_reviews_status", review_status),
     )

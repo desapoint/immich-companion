@@ -144,6 +144,8 @@ class DuplicateMember(BaseModel):
 
 class ExactDuplicateGroup(BaseModel):
     group_id: str
+    stable_group_key: str
+    member_set_key: str
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
     discovery_metadata: dict[str, str] = Field(default_factory=dict)
@@ -267,6 +269,8 @@ class DuplicatePlanMetadataWork(BaseModel):
 
 class DuplicateResolutionPlanGroup(BaseModel):
     group_id: str
+    stable_group_key: str
+    member_set_key: str
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
     action: Literal["resolve", "keep_all", "stack_all", "mixed"] = "resolve"
@@ -394,6 +398,8 @@ class DuplicateWorkspaceGroupReference(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
     member_fingerprint: str
+    stable_group_key: str | None = None
+    member_set_key: str | None = None
 
 
 class DuplicateWorkspaceSelectionUpdate(BaseModel):

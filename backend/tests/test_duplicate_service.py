@@ -50,6 +50,7 @@ EXTERNAL_1 = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 EXTERNAL_2 = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 LIBRARY_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 GROUP_ID = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+REDISCOVERED_GROUP_ID = UUID("abababab-abab-4bab-8bab-abababababab")
 ALBUM_ID = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 TAG_ID = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
 OTHER_ALBUM_ID = UUID("99999999-9999-4999-8999-999999999999")
@@ -95,8 +96,11 @@ def asset(
     )
 
 
-def group(*assets: ImmichAsset) -> ImmichDuplicateGroup:
-    return ImmichDuplicateGroup(duplicate_id=GROUP_ID, assets=list(assets))
+def group(
+    *assets: ImmichAsset,
+    duplicate_id: UUID = GROUP_ID,
+) -> ImmichDuplicateGroup:
+    return ImmichDuplicateGroup(duplicate_id=duplicate_id, assets=list(assets))
 
 
 def report(
@@ -506,10 +510,10 @@ class FakeReviews:
         self.saved = None
         self.workspace_record = None
 
-    async def get_many(self, _source, provider_group_ids):
-        if self.record is None or self.record.provider_group_id not in provider_group_ids:
+    async def get_many(self, _source, stable_group_keys):
+        if self.record is None or self.record.stable_group_key not in stable_group_keys:
             return {}
-        return {self.record.provider_group_id: self.record}
+        return {self.record.stable_group_key: self.record}
 
     async def save(self, **values):
         self.saved = values
@@ -527,8 +531,8 @@ class FakeReviews:
         )
         return self.record
 
-    async def clear_decisions(self, _source, provider_group_ids):
-        if self.record is None or self.record.provider_group_id not in provider_group_ids:
+    async def clear_decisions(self, _source, stable_group_keys):
+        if self.record is None or self.record.stable_group_key not in stable_group_keys:
             return
         self.record.manual_action = None
         self.record.manual_primary_asset_id = None
@@ -539,10 +543,10 @@ class FakeReviews:
         self.record.draft_status = "pending"
         self.record.review_status = "pending"
 
-    async def complete_draft(self, _source, provider_group_id, member_fingerprint):
+    async def complete_draft(self, _source, stable_group_key, member_fingerprint):
         if (
             self.record is None
-            or self.record.provider_group_id != provider_group_id
+            or self.record.stable_group_key != stable_group_key
             or self.record.member_fingerprint != member_fingerprint
         ):
             return
@@ -552,18 +556,25 @@ class FakeReviews:
         ]
         self.record.draft_status = "completed"
 
-    async def consume_workspace_groups(self, group_ids):
+    async def consume_workspace_groups(self, stable_group_keys, legacy_group_ids=None):
         if self.workspace_record is None:
             return
-        consumed = set(group_ids)
+        consumed_keys = set(stable_group_keys)
+        consumed_legacy_ids = set(legacy_group_ids or [])
         self.workspace_record.selected_groups = [
             item
             for item in self.workspace_record.selected_groups
-            if item["group_id"] not in consumed
+            if item.get("stable_group_key") not in consumed_keys
+            and item["group_id"] not in consumed_legacy_ids
         ]
         if (
             self.workspace_record.active_group
-            and self.workspace_record.active_group["group_id"] in consumed
+            and (
+                self.workspace_record.active_group.get("stable_group_key")
+                in consumed_keys
+                or self.workspace_record.active_group["group_id"]
+                in consumed_legacy_ids
+            )
         ):
             self.workspace_record.active_group = None
 
@@ -1296,9 +1307,10 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
+    immich = FakeImmich(candidate_group)
     service = CrossSourceDuplicateService(
         SimpleNamespace(action_plan_ttl_seconds=900),
-        FakeImmich(candidate_group),
+        immich,
         FakeAssets(),
         FakeReports([report(EXTERNAL_1, content)]),
         FakeActions(),
@@ -1318,11 +1330,53 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
     assert saved.manual_action == "keep_all"
     assert saved.effective_action == "keep_all"
     assert saved.review_status == "manually_configured"
-    assert reviews.saved["provider_group_id"] == PUBLIC_GROUP_ID
+    assert reviews.saved["provider_group_id"] == str(GROUP_ID)
+    assert reviews.saved["stable_group_key"] == saved.stable_group_key
+    assert reviews.saved["member_set_key"] == saved.member_set_key
     reviews.record.member_fingerprint = "different-membership"
     drifted = await service.result()
     assert drifted.groups[0].manual_action is None
     assert drifted.groups[0].review_status == "drifted"
+
+
+@pytest.mark.asyncio
+async def test_manual_review_survives_a_changed_provider_group_id() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+    immich = FakeImmich(candidate_group)
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+    original = await service.save_review(
+        DuplicateReviewUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            manual_action="keep_all",
+            manual_primary_asset_id=None,
+        )
+    )
+
+    immich.candidate_group = group(
+        *candidate_group.assets,
+        duplicate_id=REDISCOVERED_GROUP_ID,
+    )
+    rediscovered = (await service.result()).groups[0]
+
+    assert rediscovered.group_id == f"immich:{REDISCOVERED_GROUP_ID}"
+    assert rediscovered.stable_group_key == original.stable_group_key
+    assert rediscovered.member_set_key == original.member_set_key
+    assert rediscovered.manual_action == "keep_all"
+    assert rediscovered.review_status == "manually_configured"
 
 
 @pytest.mark.asyncio
@@ -1333,9 +1387,10 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
+    immich = FakeImmich(candidate_group)
     service = CrossSourceDuplicateService(
         SimpleNamespace(action_plan_ttl_seconds=900),
-        FakeImmich(candidate_group),
+        immich,
         FakeAssets(),
         FakeReports([report(EXTERNAL_1, content)]),
         FakeActions(),
@@ -1365,15 +1420,21 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
         )
     )
 
+    immich.candidate_group = group(
+        *candidate_group.assets,
+        duplicate_id=REDISCOVERED_GROUP_ID,
+    )
     restored = await service.workspace()
+    rediscovered_group_id = f"immich:{REDISCOVERED_GROUP_ID}"
 
-    assert restored.selected_group_ids == [PUBLIC_GROUP_ID]
+    assert restored.selected_group_ids == [rediscovered_group_id]
     assert restored.initialized is True
-    assert restored.active_group_id == PUBLIC_GROUP_ID
+    assert restored.active_group_id == rediscovered_group_id
     assert restored.stale_selected_groups == []
     assert restored.drafts[0].stack_primary_asset_id == UPLOAD_1
     assert restored.drafts[0].stack_resolution == "include_existing"
     assert restored.drafts[0].metadata_keeper_asset_id is None
+    assert restored.drafts[0].group_id == rediscovered_group_id
     assert [decision.disposition for decision in restored.drafts[0].decisions] == [
         "stack",
         "keep",
@@ -1734,6 +1795,42 @@ async def test_changed_group_members_are_rejected_before_resolution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rediscovered_group_uses_current_provider_id_during_execution() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    actions = FakeActions()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        actions,
+        FakeTasks(),
+        FakeRuntimeSettings(),
+    )
+    await service.plan(
+        DuplicateResolutionPlanRequest(
+            group_ids=[PUBLIC_GROUP_ID],
+            keeper_overrides={PUBLIC_GROUP_ID: UPLOAD_1},
+        )
+    )
+    actions.record = created_plan_record(actions, destructive=True)
+    immich.candidate_group = group(
+        *candidate_group.assets,
+        duplicate_id=REDISCOVERED_GROUP_ID,
+    )
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "completed"
+    assert immich.resolutions[0].duplicate_id == REDISCOVERED_GROUP_ID
+
+
+@pytest.mark.asyncio
 async def test_tampered_plan_fingerprint_is_rejected_before_resolution() -> None:
     content = b"same"
     candidate_group = group(
@@ -1974,7 +2071,9 @@ async def test_apply_rules_never_overwrites_manual_member_decisions() -> None:
     )
     current = (await service.result()).groups[0]
     reviews.record = SimpleNamespace(
-        provider_group_id=PUBLIC_GROUP_ID,
+        provider_group_id=str(GROUP_ID),
+        stable_group_key=current.stable_group_key,
+        member_set_key=current.member_set_key,
         member_fingerprint=current.member_fingerprint,
         member_decisions=[
             {
@@ -2005,7 +2104,7 @@ async def test_apply_rules_never_overwrites_manual_member_decisions() -> None:
 
 
 @pytest.mark.asyncio
-async def test_workspace_preserves_but_does_not_reselect_drifted_state() -> None:
+async def test_workspace_does_not_apply_saved_state_to_changed_membership() -> None:
     content = b"same"
     candidate_group = group(
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
@@ -2043,8 +2142,7 @@ async def test_workspace_preserves_but_does_not_reselect_drifted_state() -> None
 
     assert restored.selected_group_ids == []
     assert [item.group_id for item in restored.stale_selected_groups] == [PUBLIC_GROUP_ID]
-    assert restored.drafts[0].stale is True
-    assert restored.drafts[0].decisions[0].asset_id == UPLOAD_1
+    assert restored.drafts == []
 
 
 @pytest.mark.asyncio

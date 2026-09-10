@@ -16,6 +16,8 @@ D = UUID("44444444-4444-4444-8444-444444444444")
 def mixed_plan_group() -> dict[str, object]:
     return {
         "group_id": "immich:test",
+        "stable_group_key": "immich_duplicate:frozen-members",
+        "member_set_key": "frozen-members",
         "discovery_source": "immich_duplicate",
         "provider_group_id": "55555555-5555-4555-8555-555555555555",
         "action": "mixed",
