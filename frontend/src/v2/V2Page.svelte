@@ -5,6 +5,7 @@
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
   import V2AlbumsPage from './pages/V2AlbumsPage.svelte';
   import V2AssetsPage from './pages/V2AssetsPage.svelte';
+  import V2DuplicatesPage from './pages/V2DuplicatesPage.svelte';
   import V2PlaygroundPage from './pages/V2PlaygroundPage.svelte';
   import V2RestorePage from './pages/V2RestorePage.svelte';
   import V2SettingsPage from './pages/V2SettingsPage.svelte';
@@ -98,6 +99,8 @@
     <V2AssetsPage selectionWorkspace={assetSelection} />
   {:else if activeKey === 'restore'}
     <V2RestorePage selectionController={restoreSelection} />
+  {:else if activeKey === 'duplicates'}
+    <V2DuplicatesPage />
   {:else if activeKey === 'albums'}
     <V2AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
   {:else if activeKey === 'tags'}
