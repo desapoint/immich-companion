@@ -287,6 +287,20 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     },
     saveDraft,
     saveSelection,
+    async clearDecisions() {
+      const groupIds = [...rawGroups.keys()];
+      await Promise.all(
+        groupIds.flatMap((groupId) => {
+          const pending = draftQueues.get(groupId);
+          return pending ? [pending] : [];
+        }),
+      );
+      workspace = await requestJson<ApiDuplicateWorkspace>(
+        '/api/assets/duplicates/workspace/reset',
+        jsonRequest('POST', { options: ANALYSIS_OPTIONS, group_ids: groupIds }),
+      );
+      return groupIds.length;
+    },
     async switchReference(groupId, referenceAssetId) {
       const group = await requestJson<ApiDuplicateGroup>(`/api/assets/duplicates/cross-source/${encodeURIComponent(groupId)}/similarity-reference`, jsonRequest('POST', { reference_asset_id: referenceAssetId }));
       rawGroups.set(groupId, group);

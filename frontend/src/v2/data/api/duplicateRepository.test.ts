@@ -172,4 +172,27 @@ describe('live V2 duplicate repository', () => {
     await expect(repository.prepareDecisions({ decisions: { [ASSET_IDS[0]]: 'keep' }, stacks: [] })).rejects.toThrow('images without a decision');
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
+
+  it('clears every discovered group through one durable workspace reset', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace/reset')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
+
+    const cleared = await repository.clearDecisions();
+
+    expect(cleared).toBe(1);
+    expect(calls.at(-1)).toEqual({
+      path: '/api/assets/duplicates/workspace/reset',
+      body: expect.objectContaining({ group_ids: [group.group_id] }),
+    });
+  });
 });

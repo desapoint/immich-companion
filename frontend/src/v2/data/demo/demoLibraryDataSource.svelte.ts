@@ -145,6 +145,7 @@ export function createDemoLibraryDataSource():LibraryDataSource{
     async search(query){await delay();return collectionPage(searchDuplicateGroups(query),query)},
     async saveDraft(){await delay()},
     async saveSelection(){await delay()},
+    async clearDecisions(){await delay();return materializeDuplicateGroups().length},
     async switchReference(groupId){await delay();const group=materializeDuplicateGroups().find((candidate)=>candidate.id===groupId);if(!group)throw new Error(`Duplicate group ${groupId} was not found.`);return group},
     async runDiscovery(options){await delay('sync');duplicateState.groups=seedDuplicateGroups(options);duplicateState.lastDiscovery={...options};persistDuplicates();const candidateCount=duplicateState.groups.reduce((sum,group)=>sum+group.assetIds.length,0);return{groupCount:duplicateState.groups.length,candidateCount}},
     async prepareDecisions(resolution){await delay();return{id:`demo-plan-${Date.now()}`,resolution,groupIds:materializeDuplicateGroups().filter((group)=>group.members.some((member)=>resolution.decisions[member.asset.id])).map((group)=>group.id)}},

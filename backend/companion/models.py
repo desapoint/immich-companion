@@ -564,7 +564,7 @@ class DuplicateGroupReviewRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     discovery_source: Mapped[str] = mapped_column(String(32), nullable=False)
-    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_group_id: Mapped[str] = mapped_column(Text, nullable=False)
     stable_group_key: Mapped[str] = mapped_column(String(128), nullable=False)
     member_set_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
