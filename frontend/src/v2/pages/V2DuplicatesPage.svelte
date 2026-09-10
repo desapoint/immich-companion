@@ -57,7 +57,7 @@
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
   const loading=$derived(groupRequests.loading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
-  const activeGroup=$derived(groups.find((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),decisionCount=$derived(Object.keys(decisions).length);
+  const activeGroup=$derived(groups.find((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),activeCompareStack=$derived(stackForAsset(stackWorkspace,activeAssetIds[member]??'')),decisionCount=$derived(Object.keys(decisions).length);
   const activeSimilarities=$derived(Object.fromEntries(activeGroup?.members.map((item)=>[item.asset.id,item.similarity])??[]));
   const reviewFilterOptions=$derived(capabilities.reviewFilters.map(String));
   const invalidStackCount=$derived(invalidPendingStacks(stackWorkspace).length);
@@ -239,7 +239,7 @@
   </V2Zone>
 </V2PageLayout>
 
-<V2DuplicateCompareViewer open={compare} groupId={group} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} assetIds={activeAssetIds} similarities={activeSimilarities} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} onreferencechange={switchReference} onclose={()=>{compare=false;persistSelection()}}/>
+<V2DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} assetIds={activeAssetIds} similarities={activeSimilarities} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} disabled={mutating} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onclose={()=>{compare=false;persistSelection()}}/>
 {#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The action plan is ready. Execute the current ${Object.keys(pendingReview.plan.resolution.decisions).length} duplicate decisions?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
 
 <style>
