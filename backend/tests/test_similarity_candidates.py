@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from companion.discovery import bounded_similarity_candidates
+from companion.discovery import SimilarityCandidateStats, bounded_similarity_candidates
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,25 @@ def test_bounds_total_neighbor_degree_and_is_deterministic() -> None:
         counts[pair.asset_id_low] += 1
         counts[pair.asset_id_high] += 1
     assert max(counts.values()) <= 2
+
+
+def test_identical_hash_capacity_stays_degree_bounded() -> None:
+    asset_count = 10_000
+    maximum_neighbors = 8
+    stats = SimilarityCandidateStats()
+
+    pairs = bounded_similarity_candidates(
+        [feature(number, 0) for number in range(1, asset_count + 1)],
+        maximum_perceptual_distance=0,
+        maximum_neighbors_per_asset=maximum_neighbors,
+        stats=stats,
+    )
+
+    assert len(pairs) <= asset_count * maximum_neighbors // 2
+    assert stats.pairs_emitted == len(pairs)
+    assert stats.raw_neighbor_matches == len(pairs)
+    assert stats.peak_query_matches <= maximum_neighbors
+    assert stats.peak_active_index_assets <= maximum_neighbors
 
 
 @pytest.mark.parametrize(

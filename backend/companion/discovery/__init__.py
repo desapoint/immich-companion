@@ -6,6 +6,7 @@ from companion.discovery.immich_duplicates import ImmichDuplicateProvider
 from companion.discovery.similarity_candidates import (
     SimilarityCandidateFeature,
     SimilarityCandidatePair,
+    SimilarityCandidateStats,
     bounded_similarity_candidates,
 )
 from companion.discovery.similarity_duplicates import SimilarityDuplicateProvider
@@ -18,5 +19,6 @@ __all__ = [
     "SimilarityDuplicateProvider",
     "SimilarityCandidateFeature",
     "SimilarityCandidatePair",
+    "SimilarityCandidateStats",
     "bounded_similarity_candidates",
 ]

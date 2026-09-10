@@ -6,9 +6,10 @@ import asyncio
 import heapq
 import json
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 
-from companion.discovery import bounded_similarity_candidates
+from companion.discovery import SimilarityCandidateStats, bounded_similarity_candidates
 from companion.duplicate_schema import (
     SimilarityScanRequest,
     SimilarityScanSummary,
@@ -16,6 +17,7 @@ from companion.duplicate_schema import (
 )
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_service import INTEGRITY_TASK_TYPE
+from companion.runtime_metrics import process_memory_snapshot
 from companion.similarity_features import SIMILARITY_FEATURE_VERSION, SIMILARITY_MODEL_VERSION
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
 from companion.similarity_scan_repository import (
@@ -105,6 +107,7 @@ class SimilarityScanTaskHandler:
         self._scans = scans
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
+        started = perf_counter()
         request = SimilarityScanRequest.model_validate(payload)
         parameters = SimilarityScanParameters(
             model_version=SIMILARITY_MODEL_VERSION,
@@ -118,13 +121,33 @@ class SimilarityScanTaskHandler:
             maximum_matches=request.maximum_matches,
         )
         scan_id = await self._scans.create(parameters)
+        candidate_stats = SimilarityCandidateStats()
+
+        def telemetry(**values: int) -> dict[str, int]:
+            memory = process_memory_snapshot()
+            return {
+                **values,
+                "candidate_index_nodes_visited": candidate_stats.index_nodes_visited,
+                "candidate_raw_neighbor_matches": candidate_stats.raw_neighbor_matches,
+                "candidate_peak_query_matches": candidate_stats.peak_query_matches,
+                "candidate_peak_active_index_assets": candidate_stats.peak_active_index_assets,
+                "rss_bytes": memory.rss_bytes,
+                "rss_peak_bytes": memory.peak_rss_bytes,
+                "elapsed_milliseconds": round((perf_counter() - started) * 1000),
+            }
+
         try:
             await context.ensure_active()
             features = await self._features.list_current_similarity_features()
             feature_by_id = {feature.asset_id: feature for feature in features}
             await context.checkpoint(
                 checkpoint={"phase": "candidate_index", "scan_id": str(scan_id)},
-                counters={"assets_with_current_features": len(features)},
+                counters=telemetry(
+                    assets_with_current_features=len(features),
+                    candidate_pair_limit=(
+                        len(features) * request.maximum_neighbors_per_asset // 2
+                    ),
+                ),
                 progress={
                     "phase": "similarity_candidates",
                     "completed": 0,
@@ -139,18 +162,23 @@ class SimilarityScanTaskHandler:
                 maximum_perceptual_distance=request.maximum_perceptual_distance,
                 maximum_aspect_difference=request.maximum_aspect_difference,
                 maximum_neighbors_per_asset=request.maximum_neighbors_per_asset,
+                stats=candidate_stats,
             )
+            await context.ensure_active()
             total = len(candidates)
             accepted: list[tuple[float, int, int, SimilarityScanPair]] = []
             processed = 0
             await context.checkpoint(
                 checkpoint={"phase": "scoring", "scan_id": str(scan_id)},
-                counters={
-                    "assets_with_current_features": len(features),
-                    "candidate_pairs": total,
-                    "pairs_scored": 0,
-                    "matches_retained": 0,
-                },
+                counters=telemetry(
+                    assets_with_current_features=len(features),
+                    candidate_pairs=total,
+                    candidate_pair_limit=(
+                        len(features) * request.maximum_neighbors_per_asset // 2
+                    ),
+                    pairs_scored=0,
+                    matches_retained=0,
+                ),
                 progress={
                     "phase": "similarity_scoring",
                     "completed": 0,
@@ -199,12 +227,15 @@ class SimilarityScanTaskHandler:
                         "scan_id": str(scan_id),
                         "pairs_scored": processed,
                     },
-                    counters={
-                        "assets_with_current_features": len(features),
-                        "candidate_pairs": total,
-                        "pairs_scored": processed,
-                        "matches_retained": len(accepted),
-                    },
+                    counters=telemetry(
+                        assets_with_current_features=len(features),
+                        candidate_pairs=total,
+                        candidate_pair_limit=(
+                            len(features) * request.maximum_neighbors_per_asset // 2
+                        ),
+                        pairs_scored=processed,
+                        matches_retained=len(accepted),
+                    ),
                     progress={
                         "phase": "similarity_scoring",
                         "completed": processed,
@@ -229,12 +260,15 @@ class SimilarityScanTaskHandler:
 
         await context.checkpoint(
             checkpoint={"phase": "complete", "scan_id": str(scan_id)},
-            counters={
-                "assets_with_current_features": len(features),
-                "candidate_pairs": total,
-                "pairs_scored": total,
-                "matches_retained": len(matches),
-            },
+            counters=telemetry(
+                assets_with_current_features=len(features),
+                candidate_pairs=total,
+                candidate_pair_limit=(
+                    len(features) * request.maximum_neighbors_per_asset // 2
+                ),
+                pairs_scored=total,
+                matches_retained=len(matches),
+            ),
             progress={
                 "phase": "complete",
                 "completed": total,
@@ -250,10 +284,13 @@ class SimilarityScanTaskHandler:
                 "scope": request.scope,
                 "result_limit_reached": len(matches) == request.maximum_matches,
             },
-            counters={
-                "assets_with_current_features": len(features),
-                "candidate_pairs": total,
-                "pairs_scored": total,
-                "matches_retained": len(matches),
-            },
+            counters=telemetry(
+                assets_with_current_features=len(features),
+                candidate_pairs=total,
+                candidate_pair_limit=(
+                    len(features) * request.maximum_neighbors_per_asset // 2
+                ),
+                pairs_scored=total,
+                matches_retained=len(matches),
+            ),
         )

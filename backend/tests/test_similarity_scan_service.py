@@ -115,6 +115,10 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
     assert scans.completed[1]["pairs"][0].asset_id_high == UUID(int=2)
     assert result.counters["pairs_scored"] == 3
     assert result.counters["matches_retained"] == 1
+    assert result.counters["candidate_pair_limit"] == 12
+    assert result.counters["candidate_raw_neighbor_matches"] == 3
+    assert result.counters["rss_bytes"] >= 0
+    assert result.counters["elapsed_milliseconds"] >= 0
     percents = [checkpoint["progress"]["percent"] for checkpoint in context.checkpoints]
     assert percents == sorted(percents)
     scoring = [
@@ -152,6 +156,30 @@ async def test_cancelled_scan_is_not_failed_or_completed() -> None:
     assert scans.cancelled == SCAN_ID
     assert scans.failed is None
     assert scans.completed is None
+
+
+@pytest.mark.asyncio
+async def test_scan_observes_cancellation_after_candidate_indexing() -> None:
+    scans = FakeScans()
+    similarity = FakeSimilarity()
+    handler = SimilarityScanTaskHandler(FakeFeatures(), similarity, scans)
+
+    class CancelledAfterIndexContext(FakeContext):
+        checks = 0
+
+        async def ensure_active(self):
+            self.checks += 1
+            if self.checks == 2:
+                raise TaskCancelledError("cancelled after candidate indexing")
+
+    with pytest.raises(TaskCancelledError, match="after candidate indexing"):
+        await handler.execute(
+            CancelledAfterIndexContext(),
+            SimilarityScanRequest().model_dump(mode="json"),
+        )
+
+    assert scans.cancelled == SCAN_ID
+    assert similarity.calls == []
 
 
 @pytest.mark.asyncio
