@@ -10,8 +10,10 @@ import {
   loadLatestSimilarityScan,
   loadDuplicateWorkspace,
   loadSimilarityScanTasks,
+  pauseDuplicateTask,
   planDuplicateResolution,
   resetDuplicateWorkspaceDecisions,
+  resumeDuplicateTask,
   saveDuplicateReview,
   saveDuplicateGroupDraft,
   saveDuplicateWorkspaceSelection,
@@ -268,19 +270,25 @@ describe('duplicate API', () => {
     );
   });
 
-  it('loads scan provenance and cancels through the shared task API', async () => {
+  it('loads scan provenance and controls scans through the shared task API', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ scan_id: 'scan-1' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify([{ id: 'task-1' }]), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'task-1', status: 'paused' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'task-1', status: 'recovering' }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ id: 'task-1', status: 'cancelled' }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     await loadLatestSimilarityScan();
     await loadSimilarityScanTasks();
+    await pauseDuplicateTask('task/1');
+    await resumeDuplicateTask('task/1');
     await cancelDuplicateTask('task/1');
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, '/api/assets/duplicates/similarity-scan/latest', expect.any(Object));
     expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/tasks?task_type=similarity_scan&limit=1', expect.any(Object));
-    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/tasks/task%2F1/cancel', expect.objectContaining({ method: 'POST' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(3, '/api/tasks/task%2F1/pause', expect.objectContaining({ method: 'POST' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(4, '/api/tasks/task%2F1/resume', expect.objectContaining({ method: 'POST' }));
+    expect(fetchMock).toHaveBeenNthCalledWith(5, '/api/tasks/task%2F1/cancel', expect.objectContaining({ method: 'POST' }));
   });
 });

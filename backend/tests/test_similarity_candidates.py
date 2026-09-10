@@ -5,7 +5,11 @@ from uuid import UUID
 
 import pytest
 
-from companion.discovery import SimilarityCandidateStats, bounded_similarity_candidates
+from companion.discovery import (
+    BoundedSimilarityCandidateIndex,
+    SimilarityCandidateStats,
+    bounded_similarity_candidates,
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +78,17 @@ def test_bounds_total_neighbor_degree_and_is_deterministic() -> None:
         counts[pair.asset_id_low] += 1
         counts[pair.asset_id_high] += 1
     assert max(counts.values()) <= 2
+
+
+def test_incremental_batches_match_single_pass_output() -> None:
+    features = [feature(number, number // 4) for number in range(1, 28)]
+    expected = bounded_similarity_candidates(features, maximum_neighbors_per_asset=3)
+    index = BoundedSimilarityCandidateIndex(features, maximum_neighbors_per_asset=3)
+
+    while index.processed < len(index.ordered_features):
+        index.process_next(5)
+
+    assert index.pairs == expected
 
 
 def test_identical_hash_capacity_stays_degree_bounded() -> None:

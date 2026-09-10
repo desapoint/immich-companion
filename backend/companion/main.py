@@ -767,6 +767,41 @@ def create_app(
             )
         return task
 
+    @app.post("/api/tasks/{task_id}/pause", response_model=TaskStatusView)
+    async def pause_task(task_id: UUID) -> TaskStatusView:
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        try:
+            task = await task_coordinator.pause(task_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
+            )
+        return task
+
+    @app.post("/api/tasks/{task_id}/resume", response_model=TaskStatusView)
+    async def resume_task(task_id: UUID) -> TaskStatusView:
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        try:
+            task = await task_coordinator.resume(task_id)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        if task is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
+            )
+        await task_coordinator.start()
+        return task
+
     @app.get("/api/assets", response_model=AssetSearchResponse)
     async def search_assets(
         query: str | None = Query(default=None, max_length=500),

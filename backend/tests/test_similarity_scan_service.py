@@ -12,7 +12,7 @@ from companion.similarity_scan_service import (
     SimilarityScanService,
     SimilarityScanTaskHandler,
 )
-from companion.task_coordinator import TaskCancelledError
+from companion.task_coordinator import TaskCancelledError, TaskPausedError
 
 SCAN_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
@@ -44,8 +44,11 @@ def evidence(score: float) -> PairSimilarityEvidence:
 
 
 class FakeFeatures:
+    def __init__(self, values=None):
+        self.values = values or [feature(1, 0), feature(2, 0), feature(3, 1)]
+
     async def list_current_similarity_features(self):
-        return [feature(1, 0), feature(2, 0), feature(3, 1)]
+        return self.values
 
 
 class FakeSimilarity:
@@ -69,13 +72,20 @@ class FakeScans:
         self.completed = None
         self.failed = None
         self.cancelled = None
+        self.prepared = []
+        self.already_completed = None
 
-    async def create(self, parameters):
+    async def prepare(self, parameters, *, scan_id=None):
         self.parameters = parameters
-        return SCAN_ID
+        resolved = scan_id or SCAN_ID
+        self.prepared.append(resolved)
+        return resolved
 
     async def complete(self, scan_id, **values):
         self.completed = (scan_id, values)
+
+    async def completed_summary(self, _scan_id):
+        return self.already_completed
 
     async def fail(self, scan_id, error):
         self.failed = (scan_id, error)
@@ -85,8 +95,9 @@ class FakeScans:
 
 
 class FakeContext:
-    def __init__(self):
+    def __init__(self, *, checkpoint=None, status="running"):
         self.checkpoints = []
+        self.task = SimpleNamespace(id=SCAN_ID, checkpoint=checkpoint or {}, status=status)
 
     async def ensure_active(self):
         return None
@@ -153,7 +164,7 @@ async def test_cancelled_scan_is_not_failed_or_completed() -> None:
     with pytest.raises(TaskCancelledError):
         await handler.execute(CancelledContext(), SimilarityScanRequest().model_dump(mode="json"))
 
-    assert scans.cancelled == SCAN_ID
+    assert scans.cancelled is None
     assert scans.failed is None
     assert scans.completed is None
 
@@ -169,7 +180,7 @@ async def test_scan_observes_cancellation_after_candidate_indexing() -> None:
 
         async def ensure_active(self):
             self.checks += 1
-            if self.checks == 2:
+            if self.checks == 3:
                 raise TaskCancelledError("cancelled after candidate indexing")
 
     with pytest.raises(TaskCancelledError, match="after candidate indexing"):
@@ -180,6 +191,116 @@ async def test_scan_observes_cancellation_after_candidate_indexing() -> None:
 
     assert scans.cancelled == SCAN_ID
     assert similarity.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scan_pauses_inside_candidate_index_and_resumes_from_durable_cursor() -> None:
+    values = [feature(number, 0) for number in range(1, 1_502)]
+    features = FakeFeatures(values)
+    scans = FakeScans()
+    similarity = FakeSimilarity()
+    handler = SimilarityScanTaskHandler(features, similarity, scans)
+    request = SimilarityScanRequest(
+        maximum_perceptual_distance=0,
+        maximum_neighbors_per_asset=1,
+        maximum_matches=1_000,
+    )
+
+    class PausedAfterFirstBatch(FakeContext):
+        checks = 0
+
+        async def ensure_active(self):
+            self.checks += 1
+            if self.checks == 3:
+                raise TaskPausedError("paused during candidate indexing")
+
+    paused = PausedAfterFirstBatch()
+    with pytest.raises(TaskPausedError, match="during candidate indexing"):
+        await handler.execute(paused, request.model_dump(mode="json"))
+
+    saved = paused.checkpoints[-1]["checkpoint"]
+    assert saved["phase"] == "candidate_index"
+    assert saved["candidate_assets_processed"] == 1_000
+    assert scans.failed is None
+    assert scans.cancelled is None
+
+    recovered = FakeContext(checkpoint=saved, status="recovering")
+    result = await handler.execute(recovered, request.model_dump(mode="json"))
+
+    candidate_progress = [
+        item["checkpoint"]["candidate_assets_processed"]
+        for item in recovered.checkpoints
+        if item["checkpoint"]["phase"] == "candidate_index"
+    ]
+    assert min(candidate_progress) >= 1_000
+    assert scans.prepared == [SCAN_ID, SCAN_ID]
+    assert scans.completed is not None
+    assert result.counters["pairs_scored"] == scans.completed[1]["candidate_count"]
+
+
+@pytest.mark.asyncio
+async def test_recovery_reuses_scan_committed_before_task_completion() -> None:
+    scans = FakeScans()
+    scans.already_completed = SimpleNamespace(
+        asset_count=1_500,
+        candidate_count=4_000,
+        match_count=20,
+    )
+    similarity = FakeSimilarity()
+    handler = SimilarityScanTaskHandler(FakeFeatures(), similarity, scans)
+
+    result = await handler.execute(
+        FakeContext(status="recovering"),
+        SimilarityScanRequest(maximum_matches=20).model_dump(mode="json"),
+    )
+
+    assert result.summary["recovered_completed_scan"] is True
+    assert result.counters["pairs_scored"] == 4_000
+    assert result.counters["matches_retained"] == 20
+    assert similarity.calls == []
+
+
+@pytest.mark.asyncio
+async def test_scan_resumes_scoring_without_regressing_its_durable_cursor() -> None:
+    values = [feature(number, 0) for number in range(1, 1_502)]
+    scans = FakeScans()
+    handler = SimilarityScanTaskHandler(FakeFeatures(values), FakeSimilarity(), scans)
+    request = SimilarityScanRequest(
+        maximum_perceptual_distance=0,
+        maximum_neighbors_per_asset=1,
+        maximum_matches=1_000,
+    )
+
+    class PausedDuringScoring(FakeContext):
+        checks = 0
+
+        async def ensure_active(self):
+            self.checks += 1
+            if self.checks == 5:
+                raise TaskPausedError("paused during scoring")
+
+    paused = PausedDuringScoring()
+    with pytest.raises(TaskPausedError, match="during scoring"):
+        await handler.execute(paused, request.model_dump(mode="json"))
+
+    saved = paused.checkpoints[-1]["checkpoint"]
+    assert saved["phase"] == "scoring"
+    assert saved["pairs_scored"] == 500
+
+    recovered = FakeContext(checkpoint=saved, status="recovering")
+    result = await handler.execute(recovered, request.model_dump(mode="json"))
+    scoring_progress = [
+        item["checkpoint"]["pairs_scored"]
+        for item in recovered.checkpoints
+        if item["checkpoint"]["phase"] == "scoring"
+    ]
+    assert min(scoring_progress) >= 500
+    assert all(
+        item["checkpoint"]["phase"] != "candidate_index"
+        for item in recovered.checkpoints
+    )
+    assert scans.completed is not None
+    assert result.counters["pairs_scored"] == scans.completed[1]["candidate_count"]
 
 
 @pytest.mark.asyncio

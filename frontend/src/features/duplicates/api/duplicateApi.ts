@@ -135,6 +135,14 @@ export function cancelDuplicateTask(taskId: string): Promise<DuplicateTaskStatus
   return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
 }
 
+export function pauseDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
+  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/pause`, { method: 'POST' });
+}
+
+export function resumeDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
+  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST' });
+}
+
 export async function loadDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
   const loaded = await requestJson<DuplicateTaskStatus>(`/api/tasks/${encodeURIComponent(taskId)}`);
   if (loaded.task_type === 'cross_source_duplicates' && loaded.status === 'completed') {

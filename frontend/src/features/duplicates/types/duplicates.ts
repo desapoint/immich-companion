@@ -193,7 +193,7 @@ export interface DuplicateResult {
 export interface DuplicateTaskStatus {
   id: string;
   task_type: string;
-  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'pause_requested' | 'paused' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
   progress: {
     percent?: number | null;
     detail?: string | null;

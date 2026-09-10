@@ -95,6 +95,7 @@ describe('V2 TaskRepository live stream', () => {
 describe('task stream validation helpers', () => {
   it('accepts the minimum valid task shape', () => {
     expect(isApiTask({ id: 'task-1', task_type: 'asset_sync', status: 'running' })).toBe(true);
+    expect(isApiTask({ id: 'task-1', task_type: 'similarity_scan', status: 'paused' })).toBe(true);
   });
 
   it('bounds reconnect delay and applies jitter', () => {

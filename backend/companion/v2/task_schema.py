@@ -13,6 +13,8 @@ TaskStatus = Literal[
     "running",
     "retrying",
     "recovering",
+    "pause_requested",
+    "paused",
     "cancel_requested",
     "cancelled",
     "completed",

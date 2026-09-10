@@ -57,7 +57,7 @@ export interface SyncSchedule {
   priority: number;
 }
 
-export type TaskState = 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
+export type TaskState = 'queued' | 'running' | 'retrying' | 'recovering' | 'pause_requested' | 'paused' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
 export type TaskConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
 export interface TaskRecord {
@@ -83,6 +83,8 @@ export interface TaskSubscription {
 
 export interface TaskRepository {
   get(taskId: string, signal?: AbortSignal): Promise<TaskRecord>;
+  pause(taskId: string): Promise<TaskRecord>;
+  resume(taskId: string): Promise<TaskRecord>;
   cancel(taskId: string): Promise<TaskRecord>;
   list(taskType: string, limit?: number, signal?: AbortSignal): Promise<TaskRecord[]>;
   subscribe(handlers: {

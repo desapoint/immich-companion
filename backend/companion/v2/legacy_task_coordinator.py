@@ -150,7 +150,15 @@ class TaskRepository:
                         TaskRecord.task_type == task_type,
                         TaskRecord.deduplication_key == deduplication_key,
                         TaskRecord.status.in_(
-                            ("queued", "running", "retrying", "recovering", "cancel_requested")
+                            (
+                                "queued",
+                                "running",
+                                "retrying",
+                                "recovering",
+                                "pause_requested",
+                                "paused",
+                                "cancel_requested",
+                            )
                         ),
                     )
                     .with_for_update()
@@ -205,7 +213,9 @@ class TaskRepository:
                 active = await session.scalar(
                     select(func.count(TaskRecord.id)).where(
                         TaskRecord.lane_key == record.lane_key,
-                        TaskRecord.status.in_(("running", "recovering", "cancel_requested")),
+                        TaskRecord.status.in_(
+                            ("running", "recovering", "pause_requested", "cancel_requested")
+                        ),
                         TaskRecord.lease_expires_at > now,
                     )
                 )
@@ -306,6 +316,17 @@ class TaskRepository:
             now = datetime.now(UTC)
             record.status = "failed" if result.status == "failed" else "completed"
             record.result = result.model_dump(mode="json")
+            if record.status == "completed":
+                progress = dict(record.progress or {})
+                total = progress.get("total")
+                if isinstance(total, (int, float)) and not isinstance(total, bool):
+                    progress["completed"] = total
+                progress.update(
+                    phase="complete",
+                    percent=100.0,
+                    detail="Complete.",
+                )
+                record.progress = progress
             record.error = (
                 {"type": "task_result", "message": "One or more task items failed"}
                 if result.status == "failed"
@@ -403,10 +424,10 @@ class TaskRepository:
             )
             if record is None:
                 return None
-            if record.status in ("queued", "retrying", "recovering"):
+            if record.status in ("queued", "retrying", "recovering", "paused"):
                 record.status = "cancelled"
                 record.completed_at = datetime.now(UTC)
-            elif record.status == "running":
+            elif record.status in ("running", "pause_requested"):
                 record.status = "cancel_requested"
             session.add(
                 TaskEventRecord(
@@ -433,7 +454,15 @@ class TaskRepository:
                     TaskRecord.task_type == task_type,
                     TaskRecord.deduplication_key == deduplication_key,
                     TaskRecord.status.in_(
-                        ("queued", "running", "retrying", "recovering", "cancel_requested")
+                        (
+                            "queued",
+                            "running",
+                            "retrying",
+                            "recovering",
+                            "pause_requested",
+                            "paused",
+                            "cancel_requested",
+                        )
                     ),
                 )
                 .order_by(TaskRecord.created_at)
@@ -449,7 +478,15 @@ class TaskRepository:
                 .where(
                     TaskRecord.task_type == task_type,
                     TaskRecord.status.in_(
-                        ("queued", "running", "retrying", "recovering", "cancel_requested")
+                        (
+                            "queued",
+                            "running",
+                            "retrying",
+                            "recovering",
+                            "pause_requested",
+                            "paused",
+                            "cancel_requested",
+                        )
                     ),
                 )
                 .order_by(TaskRecord.created_at)
@@ -586,7 +623,15 @@ class TaskRepository:
                 .where(
                     TaskRecord.task_type == task_type,
                     TaskRecord.status.in_(
-                        ("queued", "running", "retrying", "recovering", "cancel_requested")
+                        (
+                            "queued",
+                            "running",
+                            "retrying",
+                            "recovering",
+                            "pause_requested",
+                            "paused",
+                            "cancel_requested",
+                        )
                     ),
                 )
                 .with_for_update()

@@ -32,6 +32,8 @@ const TASK_STATES = new Set<TaskState>([
   'running',
   'retrying',
   'recovering',
+  'pause_requested',
+  'paused',
   'cancel_requested',
   'cancelled',
   'completed',
@@ -153,6 +155,8 @@ export function createTaskRepository(): TaskRepository {
 
   return {
     get: async (taskId, signal) => validatedTask(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}`, { signal })),
+    pause: async (taskId) => validatedTask(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/pause`, { method: 'POST' })),
+    resume: async (taskId) => validatedTask(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST' })),
     cancel: async (taskId) => validatedTask(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' })),
     list: async (taskType, limit = 10, signal) => {
       const values = await requestJson<unknown>(`/api/tasks?task_type=${encodeURIComponent(taskType)}&limit=${limit}`, { signal });

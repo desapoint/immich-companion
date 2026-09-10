@@ -101,8 +101,31 @@ class SimilarityScanRepository:
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
 
-    async def create(self, parameters: SimilarityScanParameters) -> UUID:
+    async def prepare(
+        self,
+        parameters: SimilarityScanParameters,
+        *,
+        scan_id: UUID | None = None,
+    ) -> UUID:
+        """Create a scan or reopen its deterministic task-owned run after recovery."""
+
+        if scan_id is not None:
+            async with self._database.sessions() as session, session.begin():
+                existing = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
+                if existing is not None:
+                    if self._parameters(existing) != parameters:
+                        raise ValueError("Recovered similarity scan parameters changed")
+                    if existing.status == "completed":
+                        return existing.id
+                    if existing.status == "cancelled":
+                        raise ValueError("Similarity scan is already cancelled")
+                    existing.status = "running"
+                    existing.error = None
+                    existing.completed_at = None
+                    return existing.id
+
         record = SimilarityScanRecord(
+            id=scan_id,
             status="running",
             model_version=parameters.model_version,
             feature_version=parameters.feature_version,
@@ -121,6 +144,11 @@ class SimilarityScanRepository:
             session.add(record)
             await session.flush()
         return record.id
+
+    async def create(self, parameters: SimilarityScanParameters) -> UUID:
+        """Compatibility wrapper for callers that do not own a durable task ID."""
+
+        return await self.prepare(parameters)
 
     async def complete(
         self,
@@ -221,6 +249,20 @@ class SimilarityScanRepository:
         async with self._database.sessions() as session:
             record = await session.scalar(statement)
         if record is None or record.completed_at is None:
+            return None
+        return SimilarityScanRunSummary(
+            id=record.id,
+            parameters=self._parameters(record),
+            asset_count=record.asset_count,
+            candidate_count=record.candidate_count,
+            match_count=record.match_count,
+            completed_at=record.completed_at,
+        )
+
+    async def completed_summary(self, scan_id: UUID) -> SimilarityScanRunSummary | None:
+        async with self._database.sessions() as session:
+            record = await session.get(SimilarityScanRecord, scan_id)
+        if record is None or record.status != "completed" or record.completed_at is None:
             return None
         return SimilarityScanRunSummary(
             id=record.id,

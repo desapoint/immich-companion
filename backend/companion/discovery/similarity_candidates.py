@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
@@ -129,6 +130,117 @@ def _aspect_difference(
     return abs(left_ratio - right_ratio) / max(left_ratio, right_ratio)
 
 
+class BoundedSimilarityCandidateIndex:
+    """Incremental deterministic candidate index with bounded neighbor degree."""
+
+    def __init__(
+        self,
+        features: Iterable[SimilarityCandidateFeature],
+        *,
+        maximum_perceptual_distance: int = 12,
+        maximum_aspect_difference: float = 0.05,
+        maximum_neighbors_per_asset: int = 8,
+        stats: SimilarityCandidateStats | None = None,
+    ) -> None:
+        if not 0 <= maximum_perceptual_distance <= 64:
+            raise ValueError("maximum_perceptual_distance must be between 0 and 64")
+        if not 0 <= maximum_aspect_difference <= 1:
+            raise ValueError("maximum_aspect_difference must be between 0 and 1")
+        if maximum_neighbors_per_asset < 1:
+            raise ValueError("maximum_neighbors_per_asset must be positive")
+
+        received = list(features)
+        self.ordered_features = sorted(
+            {feature.asset_id: feature for feature in received}.values(),
+            key=lambda feature: feature.asset_id.int,
+        )
+        self._by_id = {feature.asset_id: feature for feature in self.ordered_features}
+        self._maximum_perceptual_distance = maximum_perceptual_distance
+        self._maximum_aspect_difference = maximum_aspect_difference
+        self._maximum_neighbors_per_asset = maximum_neighbors_per_asset
+        self._stats = stats
+        self._trees: dict[tuple[str, int], _HammingBkTree] = {}
+        self._neighbor_counts: dict[UUID, int] = {}
+        self._pairs: list[SimilarityCandidatePair] = []
+        self._processed = 0
+        self._active_index_assets = 0
+        if stats is not None:
+            stats.assets_received = len(received)
+
+    @property
+    def processed(self) -> int:
+        return self._processed
+
+    @property
+    def pairs(self) -> list[SimilarityCandidatePair]:
+        return self._pairs
+
+    def process_next(self, count: int) -> list[SimilarityCandidatePair]:
+        """Process at most ``count`` inputs and return only newly emitted pairs."""
+
+        if count < 1:
+            raise ValueError("count must be positive")
+        start_pair = len(self._pairs)
+        stop = min(len(self.ordered_features), self._processed + count)
+        for feature in self.ordered_features[self._processed : stop]:
+            self._process_feature(feature)
+        self._processed = stop
+        if self._stats is not None:
+            self._stats.pairs_emitted = len(self._pairs)
+        return self._pairs[start_pair:]
+
+    def _process_feature(self, feature: SimilarityCandidateFeature) -> None:
+        stats = self._stats
+        if feature.width <= 0 or feature.height <= 0:
+            if stats is not None:
+                stats.invalid_features += 1
+            return
+        try:
+            hash_value = int(feature.perceptual_hash, 16)
+        except ValueError:
+            if stats is not None:
+                stats.invalid_features += 1
+            return
+        version = (feature.model_version, feature.feature_version)
+        tree = self._trees.setdefault(version, _HammingBkTree())
+        matches = sorted(
+            tree.find(hash_value, self._maximum_perceptual_distance, stats),
+            key=lambda item: (item[0], item[1].int),
+        )
+        for distance, candidate_id in matches:
+            if self._neighbor_counts.get(feature.asset_id, 0) >= self._maximum_neighbors_per_asset:
+                break
+            if self._neighbor_counts.get(candidate_id, 0) >= self._maximum_neighbors_per_asset:
+                continue
+            candidate = self._by_id[candidate_id]
+            if _aspect_difference(feature, candidate) > self._maximum_aspect_difference:
+                continue
+            low, high = sorted((feature.asset_id, candidate_id), key=lambda value: value.int)
+            self._pairs.append(
+                SimilarityCandidatePair(
+                    asset_id_low=low,
+                    asset_id_high=high,
+                    perceptual_distance=distance,
+                )
+            )
+            self._neighbor_counts[feature.asset_id] = (
+                self._neighbor_counts.get(feature.asset_id, 0) + 1
+            )
+            self._neighbor_counts[candidate_id] = self._neighbor_counts.get(candidate_id, 0) + 1
+            if self._neighbor_counts[candidate_id] >= self._maximum_neighbors_per_asset:
+                tree.remove(candidate_id)
+                self._active_index_assets -= 1
+        if self._neighbor_counts.get(feature.asset_id, 0) < self._maximum_neighbors_per_asset:
+            tree.add(hash_value, feature.asset_id)
+            self._active_index_assets += 1
+            if stats is not None:
+                stats.assets_indexed += 1
+                stats.peak_active_index_assets = max(
+                    stats.peak_active_index_assets,
+                    self._active_index_assets,
+                )
+
+
 def bounded_similarity_candidates(
     features: list[SimilarityCandidateFeature],
     *,
@@ -139,71 +251,12 @@ def bounded_similarity_candidates(
 ) -> list[SimilarityCandidatePair]:
     """Return deterministic plausible pairs without constructing an all-pairs matrix."""
 
-    if not 0 <= maximum_perceptual_distance <= 64:
-        raise ValueError("maximum_perceptual_distance must be between 0 and 64")
-    if not 0 <= maximum_aspect_difference <= 1:
-        raise ValueError("maximum_aspect_difference must be between 0 and 1")
-    if maximum_neighbors_per_asset < 1:
-        raise ValueError("maximum_neighbors_per_asset must be positive")
-
-    if stats is not None:
-        stats.assets_received = len(features)
-    by_id = {feature.asset_id: feature for feature in features}
-    ordered = sorted(by_id.values(), key=lambda feature: feature.asset_id.int)
-    trees: dict[tuple[str, int], _HammingBkTree] = {}
-    neighbor_counts: dict[UUID, int] = {}
-    pairs: list[SimilarityCandidatePair] = []
-    active_index_assets = 0
-
-    for feature in ordered:
-        if feature.width <= 0 or feature.height <= 0:
-            if stats is not None:
-                stats.invalid_features += 1
-            continue
-        try:
-            hash_value = int(feature.perceptual_hash, 16)
-        except ValueError:
-            if stats is not None:
-                stats.invalid_features += 1
-            continue
-        version = (feature.model_version, feature.feature_version)
-        tree = trees.setdefault(version, _HammingBkTree())
-        matches = sorted(
-            tree.find(hash_value, maximum_perceptual_distance, stats),
-            key=lambda item: (item[0], item[1].int),
-        )
-        for distance, candidate_id in matches:
-            if neighbor_counts.get(feature.asset_id, 0) >= maximum_neighbors_per_asset:
-                break
-            if neighbor_counts.get(candidate_id, 0) >= maximum_neighbors_per_asset:
-                continue
-            candidate = by_id[candidate_id]
-            if _aspect_difference(feature, candidate) > maximum_aspect_difference:
-                continue
-            low, high = sorted((feature.asset_id, candidate_id), key=lambda value: value.int)
-            pairs.append(
-                SimilarityCandidatePair(
-                    asset_id_low=low,
-                    asset_id_high=high,
-                    perceptual_distance=distance,
-                )
-            )
-            neighbor_counts[feature.asset_id] = neighbor_counts.get(feature.asset_id, 0) + 1
-            neighbor_counts[candidate_id] = neighbor_counts.get(candidate_id, 0) + 1
-            if neighbor_counts[candidate_id] >= maximum_neighbors_per_asset:
-                tree.remove(candidate_id)
-                active_index_assets -= 1
-        if neighbor_counts.get(feature.asset_id, 0) < maximum_neighbors_per_asset:
-            tree.add(hash_value, feature.asset_id)
-            active_index_assets += 1
-            if stats is not None:
-                stats.assets_indexed += 1
-                stats.peak_active_index_assets = max(
-                    stats.peak_active_index_assets,
-                    active_index_assets,
-                )
-
-    if stats is not None:
-        stats.pairs_emitted = len(pairs)
-
-    return pairs
+    index = BoundedSimilarityCandidateIndex(
+        features,
+        maximum_perceptual_distance=maximum_perceptual_distance,
+        maximum_aspect_difference=maximum_aspect_difference,
+        maximum_neighbors_per_asset=maximum_neighbors_per_asset,
+        stats=stats,
+    )
+    index.process_next(len(index.ordered_features) or 1)
+    return index.pairs

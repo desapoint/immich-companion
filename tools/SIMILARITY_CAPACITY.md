@@ -43,3 +43,24 @@ The normal and collision runs make zero Immich/API requests and perform no datab
 I/O. This isolates the candidate-index cost. End-to-end image decode, persistent feature scan,
 and future vector-index measurements remain separate stage gates because synthetic metadata
 must not be mistaken for real-media validation.
+
+## Cooperative task control
+
+Production similarity scans process candidate inputs in deterministic 1,000-asset batches and
+persist the processed cursor, feature-snapshot fingerprint, resource counters and progress at
+each boundary. A pause or cancellation request is therefore observed without waiting for the
+whole candidate index to finish.
+
+Pause and resume use the shared durable task API:
+
+```text
+POST /api/tasks/{task_id}/pause
+POST /api/tasks/{task_id}/resume
+```
+
+After a pause or process restart, Companion validates the current feature snapshot and rebuilds
+the in-memory index deterministically up to the durable cursor before continuing. Rebuilding can
+repeat bounded computation, but it cannot duplicate committed scan results: similarity pairs
+are still published atomically only when the complete scan succeeds. If the feature snapshot
+changed while work was stopped, the candidate cursor is discarded and the scan safely restarts
+against the new snapshot.

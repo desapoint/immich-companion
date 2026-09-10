@@ -321,7 +321,7 @@ export interface AssetSelectionSyncResult {
 export interface AssetTaskStatus {
   id: string;
   task_type: string;
-  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'pause_requested' | 'paused' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
   payload: Record<string, unknown>;
   checkpoint: Record<string, unknown>;
   counters: Record<string, number>;
