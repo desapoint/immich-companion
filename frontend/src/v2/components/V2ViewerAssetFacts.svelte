@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { MediaDelivery } from '../data/contracts';
+  import { formatBytes } from '../../lib/utils/fileSize';
   import V2Card from './V2Card.svelte';
   import V2Section from './V2Section.svelte';
 
@@ -27,20 +28,7 @@
     delivery?: MediaDelivery;
   } = $props();
 
-  const sizeLabel = $derived(formatFileSize(fileSizeBytes));
-
-  function formatFileSize(bytes: number | null | undefined): string {
-    if (bytes === null || bytes === undefined) return 'Unknown size';
-    if (bytes < 1024) return `${bytes} B`;
-    const units = ['KB', 'MB', 'GB', 'TB'];
-    let value = bytes / 1024;
-    let index = 0;
-    while (value >= 1024 && index < units.length - 1) {
-      value /= 1024;
-      index += 1;
-    }
-    return `${value.toFixed(value >= 10 ? 1 : 2)} ${units[index]}`;
-  }
+  const sizeLabel = $derived(formatBytes(fileSizeBytes, 'Unknown size'));
 </script>
 
 <V2Section title="Details">

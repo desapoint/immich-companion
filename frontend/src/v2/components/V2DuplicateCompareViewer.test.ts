@@ -11,11 +11,15 @@ describe('V2DuplicateCompareViewer', () => {
         groupTitle: 'IMG_1234.JPG and 2 more',
         groupKind: 'similar',
         groupSimilarity: 96.4,
-        similarityEngine: 'appearance',
-        similarityModelVersion: 'appearance-v1',
-        similarityFeatureVersion: 2,
-        similarityComparisonVersion: 4,
         assetIds: ['asset-1'],
+        similarities: { 'asset-1': 97.2 },
+        similarityEvidence: {
+          'asset-1': {
+            structuralPercent: 98.1,
+            perceptualPercent: 96.9,
+            colorPercent: 92.4,
+          },
+        },
         decisions: { 'asset-1': 'stack' },
         decisionOptions: ['keep', 'delete', 'stack'],
         stackLabel: 'Stack 1',
@@ -29,7 +33,13 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Group similarity');
     expect(body).toContain('96.4%');
     expect(body).toContain('Similarity to reference');
-    expect(body).toContain('appearance · appearance-v1 · features v2 · comparison v4');
+    expect(body).toContain('Structure');
+    expect(body).toContain('98.1%');
+    expect(body).toContain('Perceptual hash');
+    expect(body).toContain('96.9%');
+    expect(body).toContain('Color');
+    expect(body).toContain('92.4%');
+    expect(body).not.toContain('Similarity engine');
     expect(body).toContain('data-decision="stack"');
     expect(body).toContain('Stack 1');
     expect(body).toContain('Stack primary');

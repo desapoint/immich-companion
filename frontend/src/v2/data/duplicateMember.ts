@@ -1,11 +1,12 @@
 import type { AssetRecord } from './contracts';
+import { formatBytes } from '../../lib/utils/fileSize';
 import { duplicateAssetSourceLabel } from './duplicatePresentation';
 
 export type ComparisonMemberData = {
   name: string;
   source: string;
   size: string;
-  sizeNum: number;
+  sizeBytes: number | null;
   dims: string;
   taken: string;
   codec: string;
@@ -35,15 +36,15 @@ export function comparisonMemberData(
   similarityPercent: number | null,
   libraryNames: ReadonlyMap<string, string> = new Map(),
 ): ComparisonMemberData {
-  const sizeNum = (asset?.file_size_bytes ?? 0) / 1_048_576;
+  const sizeBytes = asset?.file_size_bytes ?? null;
   const libraryId = asset?.library_id ?? null;
   const library = libraryId ? (libraryNames.get(libraryId) ?? `Library ${libraryId}`) : 'Immich uploads';
   const folder = assetFolder(asset?.original_path) ?? 'Unavailable';
   return {
     name: asset?.original_file_name ?? 'Unknown asset',
     source: duplicateAssetSourceLabel(libraryId, libraryId ? library : undefined),
-    size: asset?.file_size_bytes ? `${sizeNum.toFixed(1)} MB` : '—',
-    sizeNum,
+    size: formatBytes(sizeBytes),
+    sizeBytes,
     dims: asset?.width && asset?.height ? `${asset.width} × ${asset.height}` : '—',
     taken: formatDate(asset?.file_created_at),
     codec: asset?.original_mime_type ?? 'Unknown type',

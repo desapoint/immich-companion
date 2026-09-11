@@ -21,6 +21,12 @@ describe('duplicate comparison member data', () => {
     expect(comparisonMemberData(asset(), null).similarity).toBe('Not calculated');
   });
 
+  it('uses KB for files smaller than one MB', () => {
+    const data = comparisonMemberData(asset({ file_size_bytes: 128 * 1024 }), 98.25);
+    expect(data.size).toBe('128.0 KB');
+    expect(data.sizeBytes).toBe(128 * 1024);
+  });
+
   it('exposes the folder from upload asset details', () => {
     const data = comparisonMemberData(
       asset({ original_path: '/data/upload/library/user/2026/photo.heic' }),

@@ -40,7 +40,13 @@ type ApiDuplicateMember = {
     decoded_width?: number | null;
     decoded_height?: number | null;
   };
-  similarity: { state: 'reference' | 'current' | 'pending' | 'unavailable'; similarity_percent: number | null } | null;
+  similarity: {
+    state: 'reference' | 'current' | 'pending' | 'unavailable';
+    similarity_percent: number | null;
+    structural_percent: number | null;
+    perceptual_percent: number | null;
+    color_percent: number | null;
+  } | null;
 };
 type ApiDuplicateGroup = {
   group_id: string;
@@ -102,6 +108,15 @@ function similarity(member: ApiDuplicateMember): number | null {
   if (!member.similarity) return null;
   if (member.similarity?.state === 'reference') return 100;
   return member.similarity.similarity_percent;
+}
+
+function similarityEvidence(member: ApiDuplicateMember) {
+  if (!member.similarity) return null;
+  return {
+    structuralPercent: member.similarity.structural_percent,
+    perceptualPercent: member.similarity.perceptual_percent,
+    colorPercent: member.similarity.color_percent,
+  };
 }
 
 function assetType(mimeType: string | null): AssetRecord['asset_type'] {
@@ -261,7 +276,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       savedDecisions: savedDecisions(draft),
       stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
       stackResolution: draft?.stack_resolution ?? 'move_selected',
-      members: group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member) })),
+      members: group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member) })),
     };
   };
 

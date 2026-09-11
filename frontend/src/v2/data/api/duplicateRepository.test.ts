@@ -51,7 +51,9 @@ const group = {
     verification: 'matching',
     content_checksum: 'abc',
     evidence: {},
-    similarity: index ? { state: 'current', reference_asset_id: ASSET_IDS[0], similarity_percent: 98.5 } : { state: 'reference', reference_asset_id: ASSET_IDS[0], similarity_percent: 100 },
+    similarity: index
+      ? { state: 'current', reference_asset_id: ASSET_IDS[0], similarity_percent: 98.5, structural_percent: 99.1, perceptual_percent: 96.9, color_percent: 97.2 }
+      : { state: 'reference', reference_asset_id: ASSET_IDS[0], similarity_percent: 100, structural_percent: 100, perceptual_percent: 100, color_percent: 100 },
     preservation: null,
   })),
 };
@@ -120,8 +122,8 @@ describe('live V2 duplicate repository', () => {
       groupSimilarity: 98.5,
       similarityEngine: 'appearance',
       members: [
-        { similarity: 100, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
-        { similarity: 98.5, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
+        { similarity: 100, similarityEvidence: { structuralPercent: 100, perceptualPercent: 100, colorPercent: 100 }, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
+        { similarity: 98.5, similarityEvidence: { structuralPercent: 99.1, perceptualPercent: 96.9, colorPercent: 97.2 }, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
       ],
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -230,8 +232,8 @@ describe('live V2 duplicate repository', () => {
       members: group.members.map((member, index) => ({
         ...member,
         similarity: index
-          ? { state: 'reference', reference_asset_id: ASSET_IDS[1], similarity_percent: 100 }
-          : { state: 'current', reference_asset_id: ASSET_IDS[1], similarity_percent: 97.1 },
+          ? { ...member.similarity, state: 'reference', reference_asset_id: ASSET_IDS[1], similarity_percent: 100 }
+          : { ...member.similarity, state: 'current', reference_asset_id: ASSET_IDS[1], similarity_percent: 97.1 },
       })),
     };
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {

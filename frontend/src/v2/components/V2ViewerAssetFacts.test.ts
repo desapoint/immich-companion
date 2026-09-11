@@ -26,4 +26,11 @@ describe('V2ViewerAssetFacts', () => {
     expect(body).toContain('decoded browser-compatible derivative');
     expect(body).not.toContain('Relationships');
   });
+
+  it('uses KB for small files', () => {
+    const { body } = render(V2ViewerAssetFacts, {
+      props: { filename: 'small.jpg', takenAt: '2026-01-01T00:00:00Z', fileSizeBytes: 128 * 1024 },
+    });
+    expect(body).toContain('128.0 KB');
+  });
 });
