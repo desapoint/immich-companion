@@ -10,7 +10,6 @@
   import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
   import V2DuplicateCompareViewer from '../components/V2DuplicateCompareViewer.svelte';
   import V2DuplicateDecisionControls from '../components/V2DuplicateDecisionControls.svelte';
-  import V2DuplicateScanProgress from '../components/V2DuplicateScanProgress.svelte';
   import V2DuplicateStackControls from '../components/V2DuplicateStackControls.svelte';
   import V2ErrorState from '../components/V2ErrorState.svelte';
   import V2Field from '../components/V2Field.svelte';
@@ -25,6 +24,7 @@
   import V2Toolbar from '../components/V2Toolbar.svelte';
   import V2Zone from '../components/V2Zone.svelte';
   import { createCollectionView } from '../state/collectionView.svelte';
+  import { backgroundTaskStatus } from '../state/backgroundTaskStatus.svelte';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { OperationController } from '../state/operationController.svelte';
   import {
@@ -44,7 +44,7 @@
   import { libraryData } from '../data/currentDataSource.svelte';
   import { duplicateGroupTitle, duplicateKindLabel } from '../data/duplicatePresentation';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
-  import type { DuplicateCapabilities, DuplicateDecision, DuplicateDiscoveryProgress, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateState } from '../data/contracts';
+  import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateState } from '../data/contracts';
 
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
   type PendingReview={scope:'all'|'group';groupId:string|null;plan:DuplicatePreparedPlan};
@@ -54,7 +54,6 @@
   let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null),interactionError=$state('');
   let capabilities=$state<DuplicateCapabilities>({canRunDiscovery:false,canApplyDecisions:false,canViewHistory:false,reviewFilters:['All groups'],decisions:[]});
   let similarityThreshold=$state('82'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('20'),discoverySummary=$state('');
-  let scanProgress=$state<DuplicateDiscoveryProgress|null>(null);
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]);
   let planPreparing=$state(false);
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
@@ -206,16 +205,16 @@
   async function runDiscovery(){
     if(!capabilities.canRunDiscovery||mutating)return;
     operations.clearOutcome();interactionError='';
-    scanProgress={phase:'Preparing duplicate scan',completed:0,total:null,percent:null,detail:'Submitting background analysis…',candidatePairs:null,matchesFound:null};
+    backgroundTaskStatus.startDuplicateDiscovery();
     try{
-      await operations.run('Duplicate discovery',()=>libraryData.duplicates.runDiscovery({similarityThreshold:Number(similarityThreshold)||0,includeSimilar,includeExact,maxCandidates:Math.max(1,Number(maxCandidates)||20)},(progress)=>scanProgress=progress),{
+      await operations.run('Duplicate discovery',()=>libraryData.duplicates.runDiscovery({similarityThreshold:Number(similarityThreshold)||0,includeSimilar,includeExact,maxCandidates:Math.max(1,Number(maxCandidates)||20)},(progress)=>backgroundTaskStatus.updateDuplicateDiscovery(progress)),{
         pending:pending('Duplicate discovery'),
         outcome:(result)=>({tone:'ok',title:'Discovery completed',detail:`${result.groupCount} groups · ${result.candidateCount} candidates`,failures:[]}),
         onOutcome:(outcome)=>{discoverySummary=outcome.detail;stackWorkspace=createDuplicateStackWorkspace()},
-        reconcile:()=>reconcileGroups('Duplicate discovery'),
+        reconcile:()=>{backgroundTaskStatus.updateDuplicateDiscovery({label:'Duplicate discovery · Refreshing results',detail:'Loading the newly completed duplicate groups…',completed:1,total:1,percent:99});return reconcileGroups('Duplicate discovery')},
         reconcileError:'Duplicate discovery completed, but the latest groups could not be loaded.',
       });
-    }finally{scanProgress=null}
+    }finally{backgroundTaskStatus.finishDuplicateDiscovery()}
   }
   async function refreshHistory():Promise<boolean>{
     if(!capabilities.canViewHistory){history=[];return true}
@@ -238,7 +237,6 @@
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
     {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
     <V2OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll(retryResolution!):undefined}/>
-    {#if scanProgress}<V2DuplicateScanProgress progress={scanProgress}/>{/if}
     {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24]} resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={mutating} onclick={()=>void clearAllDecisions()}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item (item.id)}
       {@const groupStacks=stacksForGroup(stackWorkspace,item.id)}

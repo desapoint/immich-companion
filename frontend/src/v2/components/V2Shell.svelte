@@ -2,6 +2,7 @@
   import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import type { SyncRun } from '../data/syncContracts';
+  import { backgroundTaskPresentation, backgroundTaskStatus } from '../state/backgroundTaskStatus.svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import { syncStatus } from '../state/syncStatus.svelte';
   import V2Button from './V2Button.svelte';
@@ -36,7 +37,9 @@
   ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??`/v2/${mobileItem.key}` })));
   const currentRun=$derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
-  const taskOverlayVisible=$derived(taskExpanded || currentRun !== null);
+  const backgroundTasks=$derived(backgroundTaskStatus.workflow?[backgroundTaskStatus.workflow]:backgroundTaskStatus.tasks.map((task)=>({id:task.id,presentation:backgroundTaskPresentation(task)})));
+  const activeTaskCount=$derived((currentRun?1:0)+backgroundTasks.length);
+  const taskOverlayVisible=$derived(taskExpanded || activeTaskCount>0);
 
   function setDensity(next:V2Density){density=next;writeV2Density(next)}
   function setTaskExpanded(expanded:boolean){taskExpanded=expanded;writeTaskExpanded(expanded)}
@@ -72,6 +75,7 @@
   onMount(()=>{
     density=readV2Density();
     const releaseSyncStatus=syncStatus.acquire();
+    const releaseBackgroundTasks=backgroundTaskStatus.acquire();
     const onDensity=(event:Event)=>density=(event as CustomEvent<V2Density>).detail;
     const observer=new ResizeObserver(syncTaskBounds);
     if(root) observer.observe(root);
@@ -80,6 +84,7 @@
     void tick().then(syncTaskBounds);
     return()=>{
       releaseSyncStatus();
+      releaseBackgroundTasks();
       observer.disconnect();
       window.removeEventListener(V2_DENSITY_EVENT,onDensity);
       window.removeEventListener('resize',syncTaskBounds);
@@ -123,12 +128,12 @@
       <div class="v2-tasktray-head">
         <div class="v2-task-summary">
           <span class="v2-task-status-dot" aria-hidden="true"></span>
-          <div><b>Synchronization</b><small class="v2-muted">{runLabel(currentRun)}</small></div>
+          <div><b>Background tasks</b><small class="v2-muted">{activeTaskCount ? `${activeTaskCount} active` : 'No active work'}</small></div>
         </div>
         <small class="v2-task-overview v2-muted">
-          {#if currentRun}
-            {progressKnown ? 'Live determinate progress' : 'Live progress · total pending'}
-          {:else if syncStatus.error}
+          {#if activeTaskCount}
+            Live task progress
+          {:else if syncStatus.error || backgroundTaskStatus.error}
             Status temporarily unavailable
           {:else}
             Idle
@@ -154,22 +159,36 @@
             </div>
             <span class="v2-task-stat">{progressKnown ? `${currentRun.progress.percent}%` : '—'}</span>
           </div>
-        {:else}
+        {/if}
+        {#each backgroundTasks as item (item.id)}
           <div class="v2-task-row">
-            <div class="v2-task-copy"><span>No synchronization is running</span><small class="v2-muted">Start a global or incremental sync from Settings → Sync.</small></div>
+            <span class="v2-task-runner" aria-hidden="true"></span>
+            <div class="v2-task-copy"><span>{item.presentation.label}</span><small class="v2-muted">{item.presentation.detail}</small></div>
+            <div class="v2-task-progress">
+              <div class="v2-task-progress-meta">
+                <small>{item.presentation.total === null ? `${item.presentation.completed.toLocaleString()} processed` : `${item.presentation.completed.toLocaleString()} of ${item.presentation.total.toLocaleString()} processed`}</small>
+                <small>{item.presentation.total !== null && item.presentation.percent !== null ? `${item.presentation.percent}%` : 'Unknown total'}</small>
+              </div>
+              <V2Progress
+                value={item.presentation.total !== null ? item.presentation.percent ?? undefined : undefined}
+                indeterminate={item.presentation.total === null || item.presentation.percent === null}
+                label={`${item.presentation.label} progress`}
+              />
+            </div>
+            <span class="v2-task-stat">{item.presentation.total !== null && item.presentation.percent !== null ? `${item.presentation.percent}%` : '—'}</span>
+          </div>
+        {/each}
+        {#if activeTaskCount===0}
+          <div class="v2-task-row">
+            <div class="v2-task-copy"><span>No background task is running</span><small class="v2-muted">Synchronization and duplicate scans appear here while active.</small></div>
           </div>
         {/if}
       </div>
     </div>
-  {:else if currentRun}
-    <div class="v2-task-bubbles" aria-label="Collapsed synchronization task">
-      <V2TaskBubble
-        value={progressKnown ? currentRun.progress.percent ?? undefined : undefined}
-        indeterminate={!progressKnown}
-        label={runLabel(currentRun)}
-        detail={progressDetail(currentRun)}
-        onclick={()=>setTaskExpanded(true)}
-      />
+  {:else if activeTaskCount}
+    <div class="v2-task-bubbles" aria-label="Collapsed background tasks">
+      {#if currentRun}<V2TaskBubble value={progressKnown ? currentRun.progress.percent ?? undefined : undefined} indeterminate={!progressKnown} label={runLabel(currentRun)} detail={progressDetail(currentRun)} onclick={()=>setTaskExpanded(true)}/>{/if}
+      {#each backgroundTasks as item (item.id)}<V2TaskBubble value={item.presentation.total!==null?item.presentation.percent??undefined:undefined} indeterminate={item.presentation.total===null||item.presentation.percent===null} label={item.presentation.label} detail={item.presentation.detail} onclick={()=>setTaskExpanded(true)}/>{/each}
     </div>
   {/if}
 

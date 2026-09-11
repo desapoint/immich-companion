@@ -237,45 +237,25 @@ describe('live V2 duplicate repository', () => {
     });
   });
 
-  it('reports live similarity task progress before returning completed groups', async () => {
+  it('maps exact and similarity tasks into one monotonic discovery range', async () => {
     const taskRepository = {
       get: vi.fn()
-        .mockResolvedValueOnce({
-          status: 'running',
-          progress: { phase: 'similarity_scoring', completed: 40, total: 100, percent: 47, detail: 'Scored 40 of 100 candidate pairs' },
-          counters: { candidate_pairs: 100, matches_retained: 6 },
-        })
-        .mockResolvedValueOnce({
-          status: 'completed',
-          progress: { phase: 'similarity_finalizing', completed: 100, total: 100, percent: 100, detail: 'Similarity scan completed' },
-          counters: { candidate_pairs: 100, matches_retained: 8 },
-        }),
+        .mockResolvedValueOnce({status:'completed',progress:{phase:'complete',completed:10,total:10,percent:100,detail:'Exact evidence ready'},counters:{}})
+        .mockResolvedValueOnce({status:'completed',progress:{phase:'similarity_finalizing',completed:50,total:50,percent:100,detail:'Similarity scan ready'},counters:{candidate_pairs:50,matches_retained:8}}),
     } as unknown as TaskRepository;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      if (path.endsWith('/similarity-scan')) return response({ task_id: 'task-1' }, 202);
+      if (path.endsWith('/cross-source/analyze')) return response({task_id:'exact-task'},202);
+      if (path.endsWith('/similarity-scan')) return response({task_id:'similarity-task'},202);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       throw new Error(`Unexpected request: ${path}`);
     }));
-    const progress = vi.fn();
+    const progress: number[] = [];
     const repository = createDuplicateRepository(taskRepository);
 
-    const result = await repository.runDiscovery({ similarityThreshold: 90, includeSimilar: true, includeExact: false, maxCandidates: 20 }, progress);
+    await repository.runDiscovery({similarityThreshold:90,includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
 
-    expect(result.groupCount).toBe(1);
-    expect(progress).toHaveBeenNthCalledWith(1, {
-      phase: 'Comparing candidate pairs',
-      completed: 40,
-      total: 100,
-      percent: 47,
-      detail: 'Scored 40 of 100 candidate pairs',
-      candidatePairs: 100,
-      matchesFound: 6,
-    });
-    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({
-      phase: 'Finalizing duplicate groups',
-      percent: 100,
-      matchesFound: 8,
-    }));
+    expect(progress).toEqual([25,98,99]);
   });
+
 });

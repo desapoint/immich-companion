@@ -194,41 +194,38 @@ function numericProgress(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function discoveryProgress(task: TaskRecord, similarity: boolean): DuplicateDiscoveryProgress {
+function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: number, rangeEnd: number): DuplicateDiscoveryProgress {
   const rawPhase = typeof task.progress.phase === 'string' ? task.progress.phase : '';
-  const labels: Record<string, string> = {
+  const phases: Record<string, string> = {
+    duplicate_fingerprints: 'Verifying file evidence',
     similarity_candidates: 'Indexing similarity candidates',
     similarity_scoring: 'Comparing candidate pairs',
     similarity_finalizing: 'Finalizing duplicate groups',
+    complete: 'Completing analysis',
   };
-  const phase = similarity
-    ? labels[rawPhase] ?? (task.status === 'queued' ? 'Waiting to scan similar assets' : 'Preparing similarity scan')
-    : 'Verifying exact-file candidates';
-  const completed = numericProgress(task.progress.completed) ?? 0;
-  const total = numericProgress(task.progress.total);
-  const percent = similarity ? numericProgress(task.progress.percent) : null;
+  const rawPercent = numericProgress(task.progress.percent);
+  const overallPercent = rawPercent === null
+    ? null
+    : Math.min(rangeEnd, rangeStart + (rangeEnd - rangeStart) * rawPercent / 100);
+  const matches = numericProgress(task.counters.matches_retained);
   const detail = typeof task.progress.detail === 'string'
     ? task.progress.detail
     : task.status === 'queued'
       ? 'Waiting for the background worker…'
-      : similarity
-        ? 'Preparing current Appearance features…'
-        : 'Checking content evidence before the similarity scan…';
+      : 'Preparing duplicate analysis…';
   return {
-    phase,
-    completed,
-    total,
-    percent,
-    detail,
-    candidatePairs: numericProgress(task.counters.candidate_pairs),
-    matchesFound: numericProgress(task.counters.matches_retained),
+    label: `Duplicate discovery · ${phases[rawPhase] ?? (similarity ? 'Preparing similarity scan' : 'Preparing exact matches')}`,
+    detail: matches === null ? detail : `${detail} · ${matches.toLocaleString()} matches retained`,
+    completed: numericProgress(task.progress.completed) ?? 0,
+    total: numericProgress(task.progress.total),
+    percent: overallPercent,
   };
 }
 
-async function waitForTask(tasks: TaskRepository, taskId: string, similarity = false, onprogress?: (progress: DuplicateDiscoveryProgress) => void): Promise<TaskRecord> {
+async function waitForTask(tasks: TaskRepository, taskId: string, similarity = false, rangeStart = 0, rangeEnd = 98, onprogress?: (progress: DuplicateDiscoveryProgress) => void): Promise<TaskRecord> {
   for (;;) {
     const task = await tasks.get(taskId);
-    onprogress?.(discoveryProgress(task, similarity));
+    onprogress?.(discoveryProgress(task, similarity, rangeStart, rangeEnd));
     if (TERMINAL_TASK_STATES.has(task.status)) {
       if (task.status !== 'completed') throw new Error(task.error?.message ?? `Duplicate task ${task.status}.`);
       return task;
@@ -356,9 +353,10 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       return materialize(group);
     },
     async runDiscovery(options: DuplicateDiscoveryOptions, onprogress) {
+      const exactEnd = options.includeSimilar ? 25 : 98;
       if (options.includeExact) {
         const started = await requestJson<TaskStart>('/api/assets/duplicates/cross-source/analyze', jsonRequest('POST', ANALYSIS_OPTIONS));
-        await waitForTask(tasks, started.task_id, false, onprogress);
+        await waitForTask(tasks, started.task_id, false, 0, exactEnd, onprogress);
       }
       if (options.includeSimilar) {
         const started = await requestJson<TaskStart>('/api/assets/duplicates/similarity-scan', jsonRequest('POST', {
@@ -369,9 +367,10 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           maximum_neighbors_per_asset: Math.min(64, Math.max(1, options.maxCandidates)),
           maximum_matches: 5000,
         }));
-        await waitForTask(tasks, started.task_id, true, onprogress);
+        await waitForTask(tasks, started.task_id, true, options.includeExact ? exactEnd : 0, 98, onprogress);
       }
       const result = await requestJson<ApiDuplicateResult>('/api/assets/duplicates/cross-source/search', jsonRequest('POST', ANALYSIS_OPTIONS));
+      onprogress?.({label:'Duplicate discovery · Preparing results',detail:'Preparing the completed duplicate groups for refresh…',completed:1,total:1,percent:99});
       return { groupCount: result.group_count, candidateCount: result.groups.reduce((count, group) => count + group.members.length, 0) };
     },
     async prepareDecisions(resolution: DuplicateResolutionPlan): Promise<DuplicatePreparedPlan> {
