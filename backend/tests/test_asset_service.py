@@ -18,6 +18,7 @@ from companion.immich import (
 )
 from companion.sync_schema import SyncRunStatus
 from companion.task_schema import TaskStatusView
+from companion.v2 import legacy_asset_service as asset_service_module
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -329,6 +330,38 @@ def test_legacy_complete_task_phase_is_reported_as_completed() -> None:
     assert status.phase == "completed"
     assert status.progress is not None
     assert status.progress.phase == "completed"
+
+
+def test_sync_memory_diagnostics_trace_only_during_sync(monkeypatch) -> None:
+    tracing = False
+    calls: list[str] = []
+
+    def start() -> None:
+        nonlocal tracing
+        tracing = True
+        calls.append("start")
+
+    def stop() -> None:
+        nonlocal tracing
+        tracing = False
+        calls.append("stop")
+
+    monkeypatch.setattr(asset_service_module.tracemalloc, "is_tracing", lambda: tracing)
+    monkeypatch.setattr(asset_service_module.tracemalloc, "start", start)
+    monkeypatch.setattr(asset_service_module.tracemalloc, "stop", stop)
+    service = AssetSyncService(
+        FakeImmich([], None),
+        FakeAssetRepository(),
+        FakeSyncRepository(),
+        Settings(sync_memory_diagnostics=True),
+    )
+
+    assert calls == []
+    owned_trace = service._start_sync_memory_diagnostics()
+    assert owned_trace is True
+    assert calls == ["start"]
+    service._stop_sync_memory_diagnostics(owned_trace)
+    assert calls == ["start", "stop"]
 
 
 def asset_counters() -> dict[str, int]:

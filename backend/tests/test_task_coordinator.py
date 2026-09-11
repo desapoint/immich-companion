@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from companion.runtime_metrics import ProcessMemoryReclaim
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -13,6 +14,7 @@ from companion.task_coordinator import (
     TaskPausedError,
 )
 from companion.task_schema import TaskResult, TaskStatusView
+from companion.v2 import task_coordinator as coordinator_module
 
 TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 WORKER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
@@ -115,6 +117,11 @@ class PausedHandler(RetryHandler):
         raise TaskPausedError("paused")
 
 
+class SuccessfulHandler(RetryHandler):
+    async def execute(self, _context, _payload):
+        return TaskResult(counters={"processed": 3})
+
+
 @pytest.mark.asyncio
 async def test_retryable_handler_keeps_task_id_and_persists_backoff() -> None:
     coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
@@ -159,6 +166,37 @@ async def test_paused_handler_releases_its_attempt_without_failure() -> None:
     assert repository.paused == [(TASK_ID, WORKER_ID)]
     assert repository.failures == []
     assert repository.completed == []
+
+
+@pytest.mark.asyncio
+async def test_successful_handler_persists_post_task_memory_cleanup(monkeypatch) -> None:
+    coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
+    repository = FakeRepository()
+    coordinator._repository = repository  # type: ignore[assignment]
+    coordinator.register_handler(SuccessfulHandler())
+    monkeypatch.setattr(
+        coordinator_module,
+        "reclaim_process_memory",
+        lambda: ProcessMemoryReclaim(
+            before_rss_bytes=800,
+            after_rss_bytes=300,
+            peak_rss_bytes=900,
+            collected_objects=17,
+            allocator_trim_attempted=True,
+        ),
+    )
+
+    await coordinator._execute(task(), WORKER_ID)
+
+    assert repository.completed[0].counters == {
+        "processed": 3,
+        "rss_after_task_bytes": 800,
+        "rss_after_cleanup_bytes": 300,
+        "rss_peak_bytes": 900,
+        "memory_released_bytes": 500,
+        "memory_collected_objects": 17,
+        "allocator_trim_attempted": 1,
+    }
 
 
 @pytest.mark.asyncio

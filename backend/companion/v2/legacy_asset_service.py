@@ -212,9 +212,11 @@ class AssetSyncTaskHandler:
         )
         previous = service._syncs
         service._syncs = _CoordinatorSyncRepository(context)  # type: ignore[assignment]
+        owns_memory_trace = service._start_sync_memory_diagnostics()
         try:
             counters = await service._execute(run, context.worker_id)
         finally:
+            service._stop_sync_memory_diagnostics(owns_memory_trace)
             service._syncs = previous
         await service._legacy_metadata.record_success(
             mode=run.mode,
@@ -528,8 +530,6 @@ class AssetSyncService:
         self._assets = assets
         self._syncs = syncs
         self._settings = settings
-        if settings.sync_memory_diagnostics and not tracemalloc.is_tracing():
-            tracemalloc.start()
         self._coordinator = coordinator
         self._runtime_sync_settings = (
             runtime_sync_settings
@@ -540,6 +540,19 @@ class AssetSyncService:
         self._worker: asyncio.Task[None] | None = None
         self._scheduler: asyncio.Task[None] | None = None
         self._last_full_sync = monotonic()
+
+    def _start_sync_memory_diagnostics(self) -> bool:
+        """Start allocation tracing only while a sync is actually executing."""
+
+        if not self._settings.sync_memory_diagnostics or tracemalloc.is_tracing():
+            return False
+        tracemalloc.start()
+        return True
+
+    @staticmethod
+    def _stop_sync_memory_diagnostics(owned_trace: bool) -> None:
+        if owned_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
 
     @staticmethod
     def _status_from_task(task: TaskStatusView) -> SyncRunStatus:
@@ -1010,6 +1023,7 @@ class AssetSyncService:
         return counters
 
     async def _execute_with_heartbeat(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
+        owns_memory_trace = self._start_sync_memory_diagnostics()
         execution = asyncio.create_task(self._execute(run, owner))
         heartbeat = asyncio.create_task(self._heartbeat(run.id, owner))
         try:
@@ -1025,6 +1039,7 @@ class AssetSyncService:
                 if not task.done():
                     task.cancel()
             await asyncio.gather(execution, heartbeat, return_exceptions=True)
+            self._stop_sync_memory_diagnostics(owns_memory_trace)
 
     async def _heartbeat(self, run_id: UUID, owner: UUID) -> None:
         interval = max(1.0, self._settings.sync_lease_seconds / 3)

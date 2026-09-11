@@ -9,6 +9,7 @@ editing the preserved coordinator implementation.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -17,6 +18,7 @@ from sqlalchemy import select, text
 
 from companion.database import DatabaseManager
 from companion.models import TaskAttemptRecord, TaskEventRecord, TaskRecord
+from companion.runtime_metrics import reclaim_process_memory
 from companion.v2.legacy_task_coordinator import (
     TASK_UPDATE_CHANNEL,
     PermanentTaskError,
@@ -30,6 +32,8 @@ from companion.v2.legacy_task_coordinator import TaskContext as _TaskContext
 from companion.v2.legacy_task_coordinator import TaskCoordinator as _TaskCoordinator
 from companion.v2.legacy_task_coordinator import TaskRepository as _TaskRepository
 from companion.v2.task_schema import TaskStatusView
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class TaskPausedError(RuntimeError):
@@ -230,6 +234,7 @@ class TaskCoordinator(_TaskCoordinator):
             notify=lambda: self._publish(task.id),
         )
         heartbeat = asyncio.create_task(self._heartbeat(context), name=f"heartbeat-{task.id}")
+        memory_reclaimed = False
         try:
             result = await handler.execute(context, task.payload)
         except TaskPausedError:
@@ -278,9 +283,55 @@ class TaskCoordinator(_TaskCoordinator):
             )
             await self._publish(task.id)
         else:
+            reclaim = reclaim_process_memory()
+            memory_reclaimed = True
+            if reclaim is not None:
+                result = result.model_copy(
+                    update={
+                        "counters": {
+                            **result.counters,
+                            "rss_after_task_bytes": reclaim.before_rss_bytes,
+                            "rss_after_cleanup_bytes": reclaim.after_rss_bytes,
+                            "rss_peak_bytes": reclaim.peak_rss_bytes,
+                            "memory_released_bytes": reclaim.released_bytes,
+                            "memory_collected_objects": reclaim.collected_objects,
+                            "allocator_trim_attempted": int(
+                                reclaim.allocator_trim_attempted
+                            ),
+                        }
+                    }
+                )
+                logger.info(
+                    "Task memory cleanup: task_type=%s task_id=%s before_rss=%s "
+                    "after_rss=%s released=%s peak_rss=%s collected=%s allocator_trim=%s",
+                    task.task_type,
+                    task.id,
+                    reclaim.before_rss_bytes,
+                    reclaim.after_rss_bytes,
+                    reclaim.released_bytes,
+                    reclaim.peak_rss_bytes,
+                    reclaim.collected_objects,
+                    reclaim.allocator_trim_attempted,
+                )
             await self._repository.complete(task.id, worker_id, result)
             await self._publish(task.id)
         finally:
+            if not memory_reclaimed:
+                reclaim = reclaim_process_memory()
+                if reclaim is not None:
+                    logger.info(
+                        "Task memory cleanup after non-success: task_type=%s task_id=%s "
+                        "before_rss=%s after_rss=%s released=%s peak_rss=%s collected=%s "
+                        "allocator_trim=%s",
+                        task.task_type,
+                        task.id,
+                        reclaim.before_rss_bytes,
+                        reclaim.after_rss_bytes,
+                        reclaim.released_bytes,
+                        reclaim.peak_rss_bytes,
+                        reclaim.collected_objects,
+                        reclaim.allocator_trim_attempted,
+                    )
             heartbeat.cancel()
             with suppress(asyncio.CancelledError):
                 await heartbeat
