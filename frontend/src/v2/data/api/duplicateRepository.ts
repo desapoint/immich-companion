@@ -3,6 +3,7 @@ import type {
   AssetRecord,
   DuplicateDecision,
   DuplicateDiscoveryOptions,
+  DuplicateDiscoveryProgress,
   DuplicateGroupRecord,
   DuplicatePreparedPlan,
   DuplicateRepository,
@@ -189,9 +190,45 @@ function failureResult(groups: readonly ApiDuplicateGroup[], failedGroupIds: rea
   };
 }
 
-async function waitForTask(tasks: TaskRepository, taskId: string): Promise<TaskRecord> {
+function numericProgress(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function discoveryProgress(task: TaskRecord, similarity: boolean): DuplicateDiscoveryProgress {
+  const rawPhase = typeof task.progress.phase === 'string' ? task.progress.phase : '';
+  const labels: Record<string, string> = {
+    similarity_candidates: 'Indexing similarity candidates',
+    similarity_scoring: 'Comparing candidate pairs',
+    similarity_finalizing: 'Finalizing duplicate groups',
+  };
+  const phase = similarity
+    ? labels[rawPhase] ?? (task.status === 'queued' ? 'Waiting to scan similar assets' : 'Preparing similarity scan')
+    : 'Verifying exact-file candidates';
+  const completed = numericProgress(task.progress.completed) ?? 0;
+  const total = numericProgress(task.progress.total);
+  const percent = similarity ? numericProgress(task.progress.percent) : null;
+  const detail = typeof task.progress.detail === 'string'
+    ? task.progress.detail
+    : task.status === 'queued'
+      ? 'Waiting for the background worker…'
+      : similarity
+        ? 'Preparing current Appearance features…'
+        : 'Checking content evidence before the similarity scan…';
+  return {
+    phase,
+    completed,
+    total,
+    percent,
+    detail,
+    candidatePairs: numericProgress(task.counters.candidate_pairs),
+    matchesFound: numericProgress(task.counters.matches_retained),
+  };
+}
+
+async function waitForTask(tasks: TaskRepository, taskId: string, similarity = false, onprogress?: (progress: DuplicateDiscoveryProgress) => void): Promise<TaskRecord> {
   for (;;) {
     const task = await tasks.get(taskId);
+    onprogress?.(discoveryProgress(task, similarity));
     if (TERMINAL_TASK_STATES.has(task.status)) {
       if (task.status !== 'completed') throw new Error(task.error?.message ?? `Duplicate task ${task.status}.`);
       return task;
@@ -318,10 +355,10 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       rawGroups.set(groupId, group);
       return materialize(group);
     },
-    async runDiscovery(options: DuplicateDiscoveryOptions) {
+    async runDiscovery(options: DuplicateDiscoveryOptions, onprogress) {
       if (options.includeExact) {
         const started = await requestJson<TaskStart>('/api/assets/duplicates/cross-source/analyze', jsonRequest('POST', ANALYSIS_OPTIONS));
-        await waitForTask(tasks, started.task_id);
+        await waitForTask(tasks, started.task_id, false, onprogress);
       }
       if (options.includeSimilar) {
         const started = await requestJson<TaskStart>('/api/assets/duplicates/similarity-scan', jsonRequest('POST', {
@@ -332,7 +369,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           maximum_neighbors_per_asset: Math.min(64, Math.max(1, options.maxCandidates)),
           maximum_matches: 5000,
         }));
-        await waitForTask(tasks, started.task_id);
+        await waitForTask(tasks, started.task_id, true, onprogress);
       }
       const result = await requestJson<ApiDuplicateResult>('/api/assets/duplicates/cross-source/search', jsonRequest('POST', ANALYSIS_OPTIONS));
       return { groupCount: result.group_count, candidateCount: result.groups.reduce((count, group) => count + group.members.length, 0) };

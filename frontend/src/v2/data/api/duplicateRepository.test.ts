@@ -236,4 +236,46 @@ describe('live V2 duplicate repository', () => {
       members: [{ similarity: 97.1 }, { similarity: 100 }],
     });
   });
+
+  it('reports live similarity task progress before returning completed groups', async () => {
+    const taskRepository = {
+      get: vi.fn()
+        .mockResolvedValueOnce({
+          status: 'running',
+          progress: { phase: 'similarity_scoring', completed: 40, total: 100, percent: 47, detail: 'Scored 40 of 100 candidate pairs' },
+          counters: { candidate_pairs: 100, matches_retained: 6 },
+        })
+        .mockResolvedValueOnce({
+          status: 'completed',
+          progress: { phase: 'similarity_finalizing', completed: 100, total: 100, percent: 100, detail: 'Similarity scan completed' },
+          counters: { candidate_pairs: 100, matches_retained: 8 },
+        }),
+    } as unknown as TaskRepository;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith('/similarity-scan')) return response({ task_id: 'task-1' }, 202);
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const progress = vi.fn();
+    const repository = createDuplicateRepository(taskRepository);
+
+    const result = await repository.runDiscovery({ similarityThreshold: 90, includeSimilar: true, includeExact: false, maxCandidates: 20 }, progress);
+
+    expect(result.groupCount).toBe(1);
+    expect(progress).toHaveBeenNthCalledWith(1, {
+      phase: 'Comparing candidate pairs',
+      completed: 40,
+      total: 100,
+      percent: 47,
+      detail: 'Scored 40 of 100 candidate pairs',
+      candidatePairs: 100,
+      matchesFound: 6,
+    });
+    expect(progress).toHaveBeenLastCalledWith(expect.objectContaining({
+      phase: 'Finalizing duplicate groups',
+      percent: 100,
+      matchesFound: 8,
+    }));
+  });
 });
