@@ -91,9 +91,9 @@ function pageNumber(query: DuplicateSearchQuery): number {
   return Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 1;
 }
 
-function similarity(member: ApiDuplicateMember): number {
+function similarity(member: ApiDuplicateMember): number | null {
   if (member.similarity?.state === 'reference') return 100;
-  return member.similarity?.similarity_percent ?? (member.verification === 'matching' ? 100 : 0);
+  return member.similarity?.similarity_percent ?? (member.verification === 'matching' ? 100 : null);
 }
 
 function assetType(mimeType: string | null): AssetRecord['asset_type'] {

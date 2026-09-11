@@ -1,4 +1,5 @@
 import type { DifferenceOptions, MediaResource } from './contracts';
+import { mediaResourceSources } from './mediaSources';
 
 const MAX_DIMENSION = 1200;
 const imageCache = new Map<string, Promise<HTMLImageElement>>();
@@ -19,7 +20,7 @@ function loadImage(url: string): Promise<HTMLImageElement> {
 }
 
 async function loadResourceImage(resource: MediaResource): Promise<HTMLImageElement> {
-  const urls = [...new Set([resource.url, ...resource.fallbackUrls].filter(Boolean))];
+  const urls = mediaResourceSources(resource);
   for (const url of urls) {
     try {
       return await loadImage(url);

@@ -1,11 +1,6 @@
-<script module lang="ts">
-  export function nextMediaSourceIndex(current: number, count: number): number | null {
-    return current + 1 < count ? current + 1 : null;
-  }
-</script>
-
 <script lang="ts">
   import type { AssetRecord, MediaResource } from '../data/contracts';
+  import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
   import V2ImageViewport from './V2ImageViewport.svelte';
   import V2VideoPlayer from './V2VideoPlayer.svelte';
   import { ViewerViewportController } from './viewerViewport.svelte';
@@ -25,7 +20,7 @@
   } = $props();
 
   let sourceSelection = $state({ key: '', index: 0 });
-  const sources = $derived([...new Set([resource.url, ...resource.fallbackUrls].filter(Boolean))]);
+  const sources = $derived(mediaResourceSources(resource));
   const sourceKey = $derived(sources.join('\u0000'));
   const sourceIndex = $derived(sourceSelection.key === sourceKey ? sourceSelection.index : 0);
   const source = $derived(sources[sourceIndex] ?? '');

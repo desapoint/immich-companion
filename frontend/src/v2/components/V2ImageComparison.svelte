@@ -6,13 +6,15 @@
   import V2CompareTransparency from './V2CompareTransparency.svelte';
   import V2Segmented from './V2Segmented.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
+  import type { MediaResource } from '../data/contracts';
+  import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
   import { ViewerViewportController } from './viewerViewport.svelte';
 
   export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference';
 
   let {
-    selectedSrc,
-    referenceSrc,
+    selectedResource,
+    referenceResource,
     selectedLabel = 'Selected image',
     referenceLabel = 'Reference / keeper candidate',
     mode = $bindable<ComparisonMode>('Side by side'),
@@ -23,8 +25,8 @@
     diffBinary = $bindable(true),
     diffTolerance = $bindable(8),
   }: {
-    selectedSrc: string;
-    referenceSrc: string;
+    selectedResource: MediaResource;
+    referenceResource: MediaResource;
     selectedLabel?: string;
     referenceLabel?: string;
     mode?: ComparisonMode;
@@ -43,6 +45,26 @@
   let lastY = $state(0);
   let selectedNatural = $state({ width: 0, height: 0 });
   let referenceNatural = $state({ width: 0, height: 0 });
+  let selectedSelection = $state({ key: '', index: 0 });
+  let referenceSelection = $state({ key: '', index: 0 });
+  const selectedSources = $derived(mediaResourceSources(selectedResource));
+  const referenceSources = $derived(mediaResourceSources(referenceResource));
+  const selectedKey = $derived(selectedSources.join('\u0000'));
+  const referenceKey = $derived(referenceSources.join('\u0000'));
+  const selectedIndex = $derived(selectedSelection.key === selectedKey ? selectedSelection.index : 0);
+  const referenceIndex = $derived(referenceSelection.key === referenceKey ? referenceSelection.index : 0);
+  const selectedSrc = $derived(selectedSources[selectedIndex] ?? '');
+  const referenceSrc = $derived(referenceSources[referenceIndex] ?? '');
+
+  function selectedFailed(): void {
+    const next = nextMediaSourceIndex(selectedIndex, selectedSources.length);
+    if (next !== null) selectedSelection = { key: selectedKey, index: next };
+  }
+
+  function referenceFailed(): void {
+    const next = nextMediaSourceIndex(referenceIndex, referenceSources.length);
+    if (next !== null) referenceSelection = { key: referenceKey, index: next };
+  }
 
   function syncNaturalSize(): void {
     camera.setNaturalSize(
@@ -159,6 +181,8 @@
         transform={camera.transform}
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
+        onselectederror={selectedFailed}
+        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {:else if mode === 'Swipe'}
@@ -171,6 +195,8 @@
         bind:split
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
+        onselectederror={selectedFailed}
+        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {:else if mode === 'Transparency'}
@@ -183,6 +209,8 @@
         bind:opacity
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
+        onselectederror={selectedFailed}
+        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {:else}
@@ -198,6 +226,8 @@
         bind:diffTolerance
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
+        onselectederror={selectedFailed}
+        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {/if}

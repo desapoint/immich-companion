@@ -2,7 +2,8 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
 import type { MediaResource } from '../data/contracts';
-import V2MediaViewport, { nextMediaSourceIndex } from './V2MediaViewport.svelte';
+import V2MediaViewport from './V2MediaViewport.svelte';
+import { nextMediaSourceIndex } from '../data/mediaSources';
 
 const imageResource: MediaResource = {
   url: '/original',

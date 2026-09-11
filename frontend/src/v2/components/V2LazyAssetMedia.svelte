@@ -2,6 +2,7 @@
   import { Image as ImageIcon, ImageOff } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { cachedThumbnail, type ThumbnailSource } from '../data/mediaThumbnailCache';
+  import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
 
   let {
     cacheKey,
@@ -22,11 +23,15 @@
   let host = $state<HTMLSpanElement | null>(null);
   let source = $state<ThumbnailSource | null>(null);
   let failed = $state(false);
+  let sourceSelection = $state({ key: '', index: 0 });
   let scheduled = false;
   let idleHandle: number | null = null;
   let timerHandle: ReturnType<typeof setTimeout> | null = null;
 
-  const url = $derived(typeof source === 'string' ? source : source?.url ?? '');
+  const urls = $derived(source === null ? [] : typeof source === 'string' ? [source] : mediaResourceSources(source));
+  const sourceKey = $derived(urls.join('\u0000'));
+  const sourceIndex = $derived(sourceSelection.key === sourceKey ? sourceSelection.index : 0);
+  const url = $derived(urls[sourceIndex] ?? '');
   const videoSource = $derived(Boolean(url && /\.(mp4|webm)(?:$|\?)/i.test(url)));
 
   function resolveSource(): void {
@@ -51,6 +56,11 @@
   }
 
   function mediaError(): void {
+    const next = nextMediaSourceIndex(sourceIndex, urls.length);
+    if (next !== null) {
+      sourceSelection = { key: sourceKey, index: next };
+      return;
+    }
     failed = true;
     onerror?.();
   }

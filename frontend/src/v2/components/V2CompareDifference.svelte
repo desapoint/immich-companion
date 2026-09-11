@@ -14,6 +14,8 @@
     diffTolerance = $bindable(8),
     onselectedload,
     onreferenceload,
+    onselectederror,
+    onreferenceerror,
     onviewport,
   }: {
     selectedSrc: string;
@@ -27,6 +29,8 @@
     diffTolerance?: number;
     onselectedload?: (event: Event) => void;
     onreferenceload?: (event: Event) => void;
+    onselectederror?: () => void;
+    onreferenceerror?: () => void;
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
@@ -222,8 +226,8 @@
   onfocusout={hideControlsSoon}
 >
   <canvas bind:this={canvas} class="v2-difference-canvas" aria-hidden="true"></canvas>
-  <img bind:this={referenceImage} class="v2-difference-source" src={referenceSrc} alt={referenceLabel} onload={referenceLoaded}>
-  <img bind:this={selectedImage} class="v2-difference-source" src={selectedSrc} alt={selectedLabel} onload={selectedLoaded}>
+  <img bind:this={referenceImage} class="v2-difference-source" src={referenceSrc} alt={referenceLabel} onload={referenceLoaded} onerror={onreferenceerror}>
+  <img bind:this={selectedImage} class="v2-difference-source" src={selectedSrc} alt={selectedLabel} onload={selectedLoaded} onerror={onselectederror}>
 
   <div class="v2-compare-floating-controls v2-difference-controls">
     <V2RangeSlider
