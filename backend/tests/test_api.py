@@ -325,7 +325,7 @@ def test_managed_tag_update_only_forwards_color_to_immich() -> None:
     requests: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.method == "PUT"
+        assert request.method == "PATCH"
         assert request.url.path == f"/api/tags/{tag_id}"
         requests.append(json.loads(request.read()))
         return httpx.Response(

@@ -13,15 +13,15 @@ from typing import Any, Literal
 from uuid import UUID
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from companion.config import Settings
 from companion.sync_schema import SyncCapabilities, SyncEvent
 
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 SUPPORTED_IMMICH_MAJOR = 3
-SUPPORTED_IMMICH_MINOR = 1
-SUPPORTED_IMMICH_API_VERSION = f"{SUPPORTED_IMMICH_MAJOR}.{SUPPORTED_IMMICH_MINOR}.x"
+SUPPORTED_IMMICH_MINORS = frozenset({1, 2})
+SUPPORTED_IMMICH_API_VERSION = "3.1.x–3.2.x"
 TRASH_SEARCH_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -83,7 +83,7 @@ class ImmichServerVersion(ImmichModel):
 
         return (
             self.major == SUPPORTED_IMMICH_MAJOR
-            and self.minor == SUPPORTED_IMMICH_MINOR
+            and self.minor in SUPPORTED_IMMICH_MINORS
             and self.prerelease is None
         )
 
@@ -163,6 +163,13 @@ class ImmichAlbum(ImmichModel):
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
     asset_ids: list[UUID] = Field(default_factory=list, exclude=True)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_null_description(cls, value: object) -> object:
+        """Normalize the nullable wire value to Companion's string domain."""
+
+        return "" if value is None else value
 
 
 class ImmichStackAsset(BaseModel):
@@ -443,14 +450,17 @@ class ImmichApiClient:
             return ImmichCompatibilityReport(
                 status="compatible",
                 server_version=server_version,
-                detail=f"Immich {server_version.label} matches the supported API line.",
+                detail=(
+                    f"Immich {server_version.label} is within the supported "
+                    f"{SUPPORTED_IMMICH_API_VERSION} API range."
+                ),
             )
         return ImmichCompatibilityReport(
             status="incompatible",
             server_version=server_version,
             detail=(
                 f"Immich {server_version.label} is outside the supported "
-                f"{SUPPORTED_IMMICH_API_VERSION} API line."
+                f"{SUPPORTED_IMMICH_API_VERSION} API range."
             ),
         )
 
@@ -966,7 +976,7 @@ class ImmichApiClient:
         if description is not None:
             payload["description"] = description
         response = await self._request(
-            "PUT", f"/api/albums/{album_id}", operation="update album", json=payload,
+            "PATCH", f"/api/albums/{album_id}", operation="update album", json=payload,
         )
         return ImmichAlbum.model_validate(response.json())
 
@@ -1119,7 +1129,7 @@ class ImmichApiClient:
         if color is not None:
             payload["color"] = color
         response = await self._request(
-            "PUT", f"/api/tags/{tag_id}", operation="update tag", json=payload,
+            "PATCH", f"/api/tags/{tag_id}", operation="update tag", json=payload,
         )
         return ImmichTag.model_validate(response.json())
 
