@@ -142,11 +142,19 @@ class DuplicateMember(BaseModel):
     recommendation_reason_codes: list[str] = Field(default_factory=list)
 
 
+class DuplicateDiscoveryEvidence(BaseModel):
+    discovery_source: DuplicateDiscoverySource
+    provider_group_id: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
 class ExactDuplicateGroup(BaseModel):
     group_id: str
     stable_group_key: str
     member_set_key: str
     discovery_source: DuplicateDiscoverySource
+    discovery_sources: list[DuplicateDiscoverySource] = Field(default_factory=list)
+    discovery_evidence: list[DuplicateDiscoveryEvidence] = Field(default_factory=list)
     provider_group_id: str | None = None
     discovery_metadata: dict[str, str] = Field(default_factory=dict)
     classification: DuplicateClassification
@@ -180,6 +188,8 @@ class ExactDuplicateGroup(BaseModel):
             and len(self.members) >= 2
             and all(not member.is_offline for member in self.members)
         )
+        if not self.discovery_sources:
+            self.discovery_sources = [self.discovery_source]
         return self
 
 

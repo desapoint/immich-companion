@@ -1,6 +1,6 @@
 """Duplicate discovery provider contracts and built-in adapters."""
 
-from companion.discovery.base import DiscoveredGroup, GroupDiscoveryProvider
+from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence, GroupDiscoveryProvider
 from companion.discovery.composite import CompositeGroupDiscoveryProvider
 from companion.discovery.immich_duplicates import ImmichDuplicateProvider
 from companion.discovery.similarity_candidates import (
@@ -15,6 +15,7 @@ from companion.discovery.similarity_duplicates import SimilarityDuplicateProvide
 __all__ = [
     "BoundedSimilarityCandidateIndex",
     "DiscoveredGroup",
+    "DiscoveryEvidence",
     "CompositeGroupDiscoveryProvider",
     "GroupDiscoveryProvider",
     "ImmichDuplicateProvider",

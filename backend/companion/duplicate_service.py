@@ -945,6 +945,17 @@ class CrossSourceDuplicateService:
                     stable_group_key=group_key,
                     member_set_key=members_key,
                     discovery_source=candidate.discovery_source.value,
+                    discovery_sources=[
+                        evidence.discovery_source.value for evidence in group.evidence
+                    ],
+                    discovery_evidence=[
+                        {
+                            "discovery_source": evidence.discovery_source.value,
+                            "provider_group_id": evidence.provider_group_id,
+                            "metadata": dict(evidence.metadata),
+                        }
+                        for evidence in group.evidence
+                    ],
                     provider_group_id=group.provider_group_id,
                     discovery_metadata=dict(group.provider_metadata),
                     classification=candidate.classification.value,

@@ -12,7 +12,7 @@ from companion.action_service import (
     ActionPlanConflictError,
     DestructiveActionsDisabledError,
 )
-from companion.discovery import DiscoveredGroup
+from companion.discovery import DiscoveredGroup, DiscoveryEvidence
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateGroupDraftUpdate,
@@ -218,6 +218,58 @@ def test_same_file_across_sources_is_exact_with_different_names() -> None:
     assert result.groups[0].members[0].recommendation_reason_codes == [
         "recommended_keeper"
     ]
+
+
+def test_coalesced_group_exposes_both_discovery_sources_and_evidence() -> None:
+    content = b"same"
+    candidate = group(
+        asset(
+            UPLOAD_1,
+            external=False,
+            checksum=immich_sha1(content),
+            filename="upload.jpg",
+        ),
+        asset(
+            EXTERNAL_1,
+            external=True,
+            checksum="sha1-path",
+            filename="external.jpg",
+        ),
+    )
+    discovered = DiscoveredGroup(
+        group_id=PUBLIC_GROUP_ID,
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id=str(GROUP_ID),
+        assets=tuple(candidate.assets),
+        discovery_evidence=(
+            DiscoveryEvidence(
+                DiscoverySource.IMMICH_DUPLICATE,
+                str(GROUP_ID),
+                {"endpoint": "/api/duplicates"},
+            ),
+            DiscoveryEvidence(
+                DiscoverySource.COMPANION_SIMILARITY,
+                "scan:pair",
+                {"similarity_percent": "99.2"},
+            ),
+        ),
+    )
+
+    result = CrossSourceDuplicateService.assemble(
+        [discovered],
+        {EXTERNAL_1: report(EXTERNAL_1, content)},
+        DuplicateAnalysisOptions(),
+    )
+
+    assert result.groups[0].discovery_sources == [
+        "immich_duplicate",
+        "companion_similarity",
+    ]
+    assert result.groups[0].discovery_evidence[1].provider_group_id == "scan:pair"
+    assert result.groups[0].discovery_evidence[1].metadata == {
+        "similarity_percent": "99.2"
+    }
+    assert result.groups[0].eligible is True
 
 
 @pytest.mark.parametrize("same_filename", [True, False])

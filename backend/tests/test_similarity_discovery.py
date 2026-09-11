@@ -199,13 +199,13 @@ async def test_composite_provider_keeps_registration_order_and_rejects_collision
         group_id="first",
         discovery_source=DiscoverySource.IMMICH_DUPLICATE,
         provider_group_id="one",
-        assets=(),
+        assets=(asset(LOW), asset(HIGH)),
     )
     second_group = DiscoveredGroup(
         group_id="second",
         discovery_source=DiscoverySource.COMPANION_SIMILARITY,
         provider_group_id="two",
-        assets=(),
+        assets=(asset(HIGH), asset(THIRD)),
     )
 
     class Provider:
@@ -221,3 +221,87 @@ async def test_composite_provider_keeps_registration_order_and_rejects_collision
     collision = CompositeGroupDiscoveryProvider(Provider([first_group]), Provider([first_group]))
     with pytest.raises(ValueError, match="Duplicate discovery group ID"):
         await collision.discover()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_composite_provider_coalesces_only_exact_cross_provider_member_sets(
+    reverse: bool,
+) -> None:
+    immich = DiscoveredGroup(
+        group_id="immich-group",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="immich-provider-id",
+        assets=(asset(HIGH), asset(LOW)),
+        provider_metadata={"endpoint": "/api/duplicates"},
+    )
+    similar = DiscoveredGroup(
+        group_id="similar-group",
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id="scan-id:pair",
+        assets=(asset(LOW), asset(HIGH)),
+        provider_metadata={"similarity_percent": "98.5"},
+    )
+
+    class Provider:
+        def __init__(self, group: DiscoveredGroup) -> None:
+            self.group = group
+
+        async def discover(self) -> list[DiscoveredGroup]:
+            return [self.group]
+
+    providers = [Provider(immich), Provider(similar)]
+    if reverse:
+        providers.reverse()
+    groups = await CompositeGroupDiscoveryProvider(*providers).discover()
+
+    assert len(groups) == 1
+    assert groups[0].group_id == "immich-group"
+    assert groups[0].provider_group_id == "immich-provider-id"
+    assert groups[0].discovery_source is DiscoverySource.IMMICH_DUPLICATE
+    assert [item.discovery_source for item in groups[0].evidence] == [
+        DiscoverySource.IMMICH_DUPLICATE,
+        DiscoverySource.COMPANION_SIMILARITY,
+    ]
+    assert groups[0].evidence[1].metadata["similarity_percent"] == "98.5"
+
+
+@pytest.mark.asyncio
+async def test_composite_provider_does_not_merge_partial_or_transitive_overlap() -> None:
+    groups = [
+        DiscoveredGroup(
+            group_id="immich-ab",
+            discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+            provider_group_id="one",
+            assets=(asset(LOW), asset(HIGH)),
+        ),
+        DiscoveredGroup(
+            group_id="similar-abc",
+            discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+            provider_group_id="two",
+            assets=(asset(LOW), asset(HIGH), asset(THIRD)),
+        ),
+        DiscoveredGroup(
+            group_id="similar-bc",
+            discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+            provider_group_id="three",
+            assets=(asset(HIGH), asset(THIRD)),
+        ),
+    ]
+
+    class Provider:
+        def __init__(self, group: DiscoveredGroup) -> None:
+            self.group = group
+
+        async def discover(self) -> list[DiscoveredGroup]:
+            return [self.group]
+
+    discovered = await CompositeGroupDiscoveryProvider(
+        *(Provider(group) for group in groups)
+    ).discover()
+
+    assert [group.group_id for group in discovered] == [
+        "immich-ab",
+        "similar-abc",
+        "similar-bc",
+    ]
