@@ -37,7 +37,7 @@ export function comparisonMemberData(
   const sizeNum = (asset?.file_size_bytes ?? 0) / 1_048_576;
   const libraryId = asset?.library_id ?? null;
   const library = libraryId ? (libraryNames.get(libraryId) ?? `Library ${libraryId}`) : 'Immich uploads';
-  const folder = libraryId ? (assetFolder(asset?.original_path) ?? 'Unavailable') : 'Not applicable';
+  const folder = assetFolder(asset?.original_path) ?? 'Unavailable';
   return {
     name: asset?.original_file_name ?? 'Unknown asset',
     source: libraryId ? `External · ${library}` : 'Immich upload',

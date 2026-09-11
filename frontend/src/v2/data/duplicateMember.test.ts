@@ -21,6 +21,15 @@ describe('duplicate comparison member data', () => {
     expect(comparisonMemberData(asset(), null).similarity).toBe('Not calculated');
   });
 
+  it('exposes the folder from upload asset details', () => {
+    const data = comparisonMemberData(
+      asset({ original_path: '/data/upload/library/user/2026/photo.heic' }),
+      98.25,
+    );
+
+    expect(data.folder).toBe('/data/upload/library/user/2026');
+  });
+
   it('identifies an external library by name and exposes its folder', () => {
     const data = comparisonMemberData(
       asset({ library_id: 'library-1', original_path: '/photos/trips/photo.heic' }),

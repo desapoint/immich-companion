@@ -60,6 +60,16 @@ describe('live V2 asset repository',()=>{
     });
   });
 
+  it('keeps an upload path from the detail endpoint for folder comparison',async()=>{
+    const uploadDetail={...detail,library_id:null,original_path:'/data/upload/library/user/2026/photo.heic'};
+    const uploadSummary={...summary,source:{kind:'upload' as const,library_id:null,original_path:null}};
+    const fetcher=vi.fn<AssetApiFetcher>(async(input)=>String(input).endsWith('/summary')?response(uploadSummary):response(uploadDetail));
+
+    const result=await createAssetApiProfile(fetcher).assets.details(id);
+
+    expect(result?.original_path).toBe('/data/upload/library/user/2026/photo.heic');
+  });
+
   it('maps the API-only restore detail without requiring a local asset summary',async()=>{
     const fetcher=vi.fn<AssetApiFetcher>(async()=>response(detail));
     const result=await createAssetApiProfile(fetcher).assets.getTrashById(id);
