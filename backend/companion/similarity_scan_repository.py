@@ -11,6 +11,10 @@ from sqlalchemy import delete, func, insert, or_, select, update
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
 from companion.similarity_features import SIMILARITY_CONFIG_FINGERPRINT
+from companion.similarity_grouping import (
+    SIMILARITY_GROUPING_VERSION,
+    SimilarityValidationMode,
+)
 from companion.similarity_repository import PairSimilarityEvidence
 
 
@@ -25,6 +29,9 @@ class SimilarityScanParameters:
     maximum_aspect_difference: float
     maximum_neighbors_per_asset: int
     maximum_matches: int
+    grouping_version: int = SIMILARITY_GROUPING_VERSION
+    validation_mode: SimilarityValidationMode = "strict"
+    anchor_asset_id: UUID | None = None
     config_fingerprint: str = SIMILARITY_CONFIG_FINGERPRINT
 
     def __post_init__(self) -> None:
@@ -40,6 +47,8 @@ class SimilarityScanParameters:
             raise ValueError("maximum_matches must be between 1 and 50000")
         if self.scope != "all_eligible_assets":
             raise ValueError("Unsupported similarity scan scope")
+        if self.validation_mode not in {"reference", "linked", "strict"}:
+            raise ValueError("Unsupported similarity validation mode")
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,6 +142,9 @@ class SimilarityScanRepository:
             feature_version=parameters.feature_version,
             comparison_version=parameters.comparison_version,
             config_fingerprint=parameters.config_fingerprint,
+            grouping_version=parameters.grouping_version,
+            validation_mode=parameters.validation_mode,
+            anchor_asset_id=parameters.anchor_asset_id,
             scope=parameters.scope,
             similarity_threshold=parameters.similarity_threshold,
             maximum_perceptual_distance=parameters.maximum_perceptual_distance,
@@ -235,6 +247,9 @@ class SimilarityScanRepository:
             feature_version=record.feature_version,
             comparison_version=record.comparison_version,
             config_fingerprint=record.config_fingerprint,
+            grouping_version=record.grouping_version,
+            validation_mode=record.validation_mode,
+            anchor_asset_id=record.anchor_asset_id,
             scope=record.scope,
             similarity_threshold=record.similarity_threshold,
             maximum_perceptual_distance=record.maximum_perceptual_distance,
@@ -249,6 +264,7 @@ class SimilarityScanRepository:
             .where(
                 SimilarityScanRecord.status == "completed",
                 SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
@@ -276,6 +292,7 @@ class SimilarityScanRepository:
             .where(
                 SimilarityScanRecord.status == "completed",
                 SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
@@ -361,6 +378,7 @@ class SimilarityScanRepository:
             .where(
                 SimilarityScanRecord.status == "completed",
                 SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)

@@ -17,6 +17,8 @@ const group = {
   similarity_model_version: 'appearance-v1',
   similarity_feature_version: 2,
   similarity_comparison_version: 4,
+  similarity_validation_mode: 'linked',
+  similarity_threshold_percent: 95,
   discovery_source: 'immich_duplicate',
   provider_group_id: 'stable-provider-id',
   classification: 'exact_file',
@@ -55,6 +57,17 @@ const group = {
     similarity: index
       ? { state: 'current', reference_asset_id: ASSET_IDS[0], similarity_percent: 98.5, structural_percent: 99.1, perceptual_percent: 96.9, color_percent: 97.2 }
       : { state: 'reference', reference_asset_id: ASSET_IDS[0], similarity_percent: 100, structural_percent: 100, perceptual_percent: 100, color_percent: 100 },
+    admission: {
+      admitted_by_asset_id: index ? ASSET_IDS[0] : null,
+      admission_similarity_percent: index ? 98.5 : null,
+      best_group_match_asset_id: index ? ASSET_IDS[0] : ASSET_IDS[1],
+      best_group_match_similarity_percent: 98.5,
+      link_depth: index ? 1 : 0,
+      model_version: 'appearance-v1',
+      feature_version: 2,
+      comparison_version: 4,
+      config_fingerprint: 'config-v1',
+    },
     preservation: null,
   })),
 };
@@ -122,6 +135,7 @@ describe('live V2 duplicate repository', () => {
       referenceAssetId: ASSET_IDS[0],
       groupSimilarity: 98.5,
       similarityEngine: 'appearance',
+      similarityValidationMode: 'linked',
       members: [
         { similarity: 100, similarityEvidence: { structuralPercent: 100, perceptualPercent: 100, colorPercent: 100 }, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
         { similarity: 98.5, similarityEvidence: { structuralPercent: 99.1, perceptualPercent: 96.9, colorPercent: 97.2 }, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
@@ -308,24 +322,29 @@ describe('live V2 duplicate repository', () => {
   });
 
   it('maps exact and similarity tasks into one monotonic discovery range', async () => {
+    let similarityBody: Record<string, unknown> | null = null;
     const taskRepository = {
       get: vi.fn()
         .mockResolvedValueOnce({status:'completed',progress:{phase:'complete',completed:10,total:10,percent:100,detail:'Exact evidence ready'},counters:{}})
         .mockResolvedValueOnce({status:'completed',progress:{phase:'similarity_finalizing',completed:50,total:50,percent:100,detail:'Similarity scan ready'},counters:{candidate_pairs:50,matches_retained:8}}),
     } as unknown as TaskRepository;
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path.endsWith('/cross-source/analyze')) return response({task_id:'exact-task'},202);
-      if (path.endsWith('/similarity-scan')) return response({task_id:'similarity-task'},202);
+      if (path.endsWith('/similarity-scan')) {
+        similarityBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return response({task_id:'similarity-task'},202);
+      }
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       throw new Error(`Unexpected request: ${path}`);
     }));
     const progress: number[] = [];
     const repository = createDuplicateRepository(taskRepository);
 
-    await repository.runDiscovery({similarityThreshold:90,includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
+    await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
 
     expect(progress).toEqual([25,98,99]);
+    expect(similarityBody).toMatchObject({validation_mode:'linked',anchor_asset_id:ASSET_IDS[1]});
   });
 
   it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{

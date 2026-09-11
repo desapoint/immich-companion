@@ -231,6 +231,9 @@ class SimilarityScanRecord(Base):
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
     comparison_version: Mapped[int] = mapped_column(Integer, nullable=False)
     config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    grouping_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict")
+    anchor_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     scope: Mapped[str] = mapped_column(
         String(32), nullable=False, default="all_eligible_assets"

@@ -31,6 +31,7 @@ from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
+    DuplicateAdmissionEvidence,
     DuplicateAnalysisOptions,
     DuplicateGroupDraft,
     DuplicateGroupDraftUpdate,
@@ -130,6 +131,16 @@ def _metadata_int(metadata: Mapping[str, str], name: str) -> int | None:
         return None
     try:
         return int(value)
+    except ValueError:
+        return None
+
+
+def _metadata_float(metadata: Mapping[str, str], name: str) -> float | None:
+    value = metadata.get(name)
+    if value is None:
+        return None
+    try:
+        return float(value)
     except ValueError:
         return None
 
@@ -536,6 +547,21 @@ class CrossSourceDuplicateService:
                 continue
             reference = source.assets[0]
             source_members = {asset.id: asset for asset in source.assets}
+            similarity_source = next(
+                (
+                    evidence
+                    for evidence in source.evidence
+                    if evidence.discovery_source is DiscoverySource.COMPANION_SIMILARITY
+                ),
+                None,
+            )
+            similarity_metadata = similarity_source.metadata if similarity_source else {}
+            validation = source.similarity_validation
+            admission_by_id = (
+                {item.asset_id: item for item in validation.admission_evidence}
+                if validation is not None
+                else {}
+            )
             members: list[DuplicateMember] = []
             for member in group.members:
                 source_member = source_members[member.id]
@@ -609,10 +635,41 @@ class CrossSourceDuplicateService:
                     if feature is not None
                     else None
                 )
+                admission_source = admission_by_id.get(member.id)
+                admission = (
+                    DuplicateAdmissionEvidence(
+                        admitted_by_asset_id=admission_source.admitted_by_asset_id,
+                        admission_similarity_percent=(
+                            admission_source.admission_similarity_percent
+                        ),
+                        best_group_match_asset_id=(
+                            admission_source.best_group_match_asset_id
+                        ),
+                        best_group_match_similarity_percent=(
+                            admission_source.best_group_match_similarity_percent
+                        ),
+                        link_depth=admission_source.link_depth,
+                        model_version=similarity_metadata.get("model_version", "unknown"),
+                        feature_version=_metadata_int(
+                            similarity_metadata, "feature_version"
+                        )
+                        or 0,
+                        comparison_version=_metadata_int(
+                            similarity_metadata, "comparison_version"
+                        )
+                        or 0,
+                        config_fingerprint=similarity_metadata.get(
+                            "config_fingerprint", "unknown"
+                        ),
+                    )
+                    if admission_source is not None
+                    else None
+                )
                 members.append(
                     member.model_copy(
                         update={
                             "similarity": similarity,
+                            "admission": admission,
                             "preservation": preservation,
                         }
                     )
@@ -627,15 +684,6 @@ class CrossSourceDuplicateService:
                 if member.similarity is not None
                 and member.similarity.state == "current"
             ]
-            similarity_source = next(
-                (
-                    evidence
-                    for evidence in source.evidence
-                    if evidence.discovery_source is DiscoverySource.COMPANION_SIMILARITY
-                ),
-                None,
-            )
-            similarity_metadata = similarity_source.metadata if similarity_source else {}
             if update_group_contract:
                 score_value = similarity_metadata.get("minimum_similarity_percent")
                 try:
@@ -670,6 +718,14 @@ class CrossSourceDuplicateService:
                         "similarity_comparison_version": (
                             _metadata_int(similarity_metadata, "comparison_version")
                             or (representative.comparison_version if representative else None)
+                        ),
+                        "similarity_validation_mode": (
+                            validation.validation_mode if validation is not None else None
+                        ),
+                        "similarity_threshold_percent": (
+                            _metadata_float(
+                                similarity_metadata, "scan_threshold_percent"
+                            )
                         ),
                     }
                 )

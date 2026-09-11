@@ -1,6 +1,7 @@
 """Companion similarity scan discovery publication regressions."""
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 import pytest
@@ -66,6 +67,9 @@ def scan_pair(
 def snapshot(
     scan_id: UUID,
     pairs: tuple[SimilarityScanPair, ...] | None = None,
+    *,
+    validation_mode: Literal["reference", "linked", "strict"] = "strict",
+    anchor_asset_id: UUID | None = None,
 ) -> SimilarityScanSnapshot:
     current_pairs = pairs or (scan_pair(),)
     return SimilarityScanSnapshot(
@@ -80,6 +84,8 @@ def snapshot(
             maximum_aspect_difference=0.05,
             maximum_neighbors_per_asset=8,
             maximum_matches=5000,
+            validation_mode=validation_mode,
+            anchor_asset_id=anchor_asset_id,
         ),
         asset_count=len(
             {
@@ -172,6 +178,10 @@ async def test_similarity_provider_publishes_fully_cohesive_triangle() -> None:
     assert groups[0].provider_metadata["minimum_similarity_percent"] == "96"
     assert groups[0].provider_metadata["maximum_similarity_percent"] == "99"
     assert groups[0].provider_metadata["cohesive_pair_count"] == "3"
+    assert groups[0].provider_metadata["validation_mode"] == "strict"
+    assert groups[0].similarity_validation is not None
+    assert groups[0].similarity_validation.anchor_asset_id == LOW
+    assert groups[0].similarity_validation.admission_evidence[2].admitted_by_asset_id == LOW
 
 
 @pytest.mark.asyncio
@@ -191,6 +201,26 @@ async def test_similarity_provider_does_not_collapse_non_transitive_chain() -> N
         (LOW, HIGH),
         (HIGH, THIRD),
     ]
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_places_explicit_revalidation_anchor_first() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (scan_pair(LOW, HIGH, 98), scan_pair(HIGH, THIRD, 97)),
+        validation_mode="linked",
+        anchor_asset_id=THIRD,
+    )
+    provider = SimilarityDuplicateProvider(
+        FakeScans(current),
+        FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH), THIRD: asset(THIRD)}),
+    )
+
+    group = (await provider.discover())[0]
+
+    assert tuple(member.id for member in group.assets) == (THIRD, LOW, HIGH)
+    assert group.similarity_validation is not None
+    assert group.similarity_validation.anchor_asset_id == THIRD
 
 
 @pytest.mark.asyncio

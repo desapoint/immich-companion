@@ -102,6 +102,18 @@ class DuplicateSimilarityEvidence(BaseModel):
     comparison_version: int | None = None
 
 
+class DuplicateAdmissionEvidence(BaseModel):
+    admitted_by_asset_id: UUID | None = None
+    admission_similarity_percent: float | None = None
+    best_group_match_asset_id: UUID | None = None
+    best_group_match_similarity_percent: float | None = None
+    link_depth: int = Field(ge=0)
+    model_version: str
+    feature_version: int
+    comparison_version: int
+    config_fingerprint: str
+
+
 class DuplicatePreservationEvidence(BaseModel):
     pixel_normalization_version: int
     pixel_sha256: str
@@ -137,6 +149,7 @@ class DuplicateMember(BaseModel):
     content_checksum: str | None = None
     evidence: DuplicateMemberEvidence
     similarity: DuplicateSimilarityEvidence | None = None
+    admission: DuplicateAdmissionEvidence | None = None
     preservation: DuplicatePreservationEvidence | None = None
     recommended_disposition: DuplicateDraftDisposition | None = None
     recommendation_reason_codes: list[str] = Field(default_factory=list)
@@ -163,6 +176,8 @@ class ExactDuplicateGroup(BaseModel):
     similarity_model_version: str | None = None
     similarity_feature_version: int | None = None
     similarity_comparison_version: int | None = None
+    similarity_validation_mode: Literal["reference", "linked", "strict"] | None = None
+    similarity_threshold_percent: float | None = None
     classification: DuplicateClassification
     status: DuplicateGroupStatus
     reason: str | None = None
@@ -219,6 +234,8 @@ class CrossSourceDuplicateTaskStart(BaseModel):
 
 class SimilarityScanRequest(BaseModel):
     similarity_threshold: float = Field(default=95.0, ge=50, le=100)
+    validation_mode: Literal["reference", "linked", "strict"] = "strict"
+    anchor_asset_id: UUID | None = None
     scope: Literal["all_eligible_assets"] = "all_eligible_assets"
     maximum_perceptual_distance: int = Field(default=12, ge=0, le=64)
     maximum_aspect_difference: float = Field(default=0.05, ge=0, le=1)
@@ -233,11 +250,14 @@ class SimilarityScanTaskStart(BaseModel):
 class SimilarityScanSummary(BaseModel):
     scan_id: UUID
     similarity_threshold: float
+    validation_mode: Literal["reference", "linked", "strict"]
+    anchor_asset_id: UUID | None = None
     scope: Literal["all_eligible_assets"]
     model_version: str
     feature_version: int
     comparison_version: int
     config_fingerprint: str
+    grouping_version: int
     asset_count: int
     candidate_count: int
     match_count: int

@@ -49,6 +49,17 @@ type ApiDuplicateMember = {
     perceptual_percent: number | null;
     color_percent: number | null;
   } | null;
+  admission: {
+    admitted_by_asset_id: string | null;
+    admission_similarity_percent: number | null;
+    best_group_match_asset_id: string | null;
+    best_group_match_similarity_percent: number | null;
+    link_depth: number;
+    model_version: string;
+    feature_version: number;
+    comparison_version: number;
+    config_fingerprint: string;
+  } | null;
 };
 type ApiDuplicateGroup = {
   group_id: string;
@@ -58,6 +69,8 @@ type ApiDuplicateGroup = {
   similarity_model_version: string | null;
   similarity_feature_version: number | null;
   similarity_comparison_version: number | null;
+  similarity_validation_mode: 'reference' | 'linked' | 'strict' | null;
+  similarity_threshold_percent: number | null;
   classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';
   status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
   reason: string | null;
@@ -128,6 +141,21 @@ function similarityEvidence(member: ApiDuplicateMember) {
     structuralPercent: member.similarity.structural_percent,
     perceptualPercent: member.similarity.perceptual_percent,
     colorPercent: member.similarity.color_percent,
+  };
+}
+
+function admissionEvidence(member: ApiDuplicateMember) {
+  if (!member.admission) return null;
+  return {
+    admittedByAssetId: member.admission.admitted_by_asset_id,
+    admissionSimilarityPercent: member.admission.admission_similarity_percent,
+    bestGroupMatchAssetId: member.admission.best_group_match_asset_id,
+    bestGroupMatchSimilarityPercent: member.admission.best_group_match_similarity_percent,
+    linkDepth: member.admission.link_depth,
+    modelVersion: member.admission.model_version,
+    featureVersion: member.admission.feature_version,
+    comparisonVersion: member.admission.comparison_version,
+    configFingerprint: member.admission.config_fingerprint,
   };
 }
 
@@ -283,13 +311,15 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       similarityModelVersion: group.similarity_model_version ?? null,
       similarityFeatureVersion: group.similarity_feature_version ?? null,
       similarityComparisonVersion: group.similarity_comparison_version ?? null,
+      similarityValidationMode: group.similarity_validation_mode ?? null,
+      similarityThresholdPercent: group.similarity_threshold_percent ?? null,
       memberFingerprint: group.member_fingerprint,
       selected: workspace.selected_group_ids.includes(group.group_id),
       savedDecisions: savedDecisions(draft),
       stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
       stackResolution: draft?.stack_resolution ?? 'move_selected',
       members: referenceFirstDuplicateMembers(
-        group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member) })),
+        group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member), admission: admissionEvidence(member) })),
         group.reference_asset_id,
       ),
     };
@@ -400,6 +430,8 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       if (options.includeSimilar) {
         const started = await requestJson<TaskStart>('/api/assets/duplicates/similarity-scan', jsonRequest('POST', {
           similarity_threshold: options.similarityThreshold,
+          validation_mode: options.validationMode,
+          anchor_asset_id: options.anchorAssetId,
           scope: 'all_eligible_assets',
           maximum_perceptual_distance: 12,
           maximum_aspect_difference: 0.05,

@@ -37,6 +37,10 @@ from companion.similarity_features import (
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
 )
+from companion.similarity_grouping import (
+    SimilarityAdmissionEvidence,
+    ValidatedSimilarityGroup,
+)
 from companion.similarity_repository import (
     SIMILARITY_COMPARISON_VERSION,
     PairSimilarityEvidence,
@@ -877,7 +881,35 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
             "model_version": SIMILARITY_MODEL_VERSION,
             "feature_version": str(SIMILARITY_FEATURE_VERSION),
             "comparison_version": str(SIMILARITY_COMPARISON_VERSION),
+            "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
+            "validation_mode": "linked",
         },
+        similarity_validation=ValidatedSimilarityGroup(
+            asset_ids=(UPLOAD_1, EXTERNAL_1),
+            anchor_asset_id=UPLOAD_1,
+            validation_mode="linked",
+            minimum_similarity_percent=99.2,
+            maximum_similarity_percent=99.2,
+            pair_count=1,
+            admission_evidence=(
+                SimilarityAdmissionEvidence(
+                    asset_id=UPLOAD_1,
+                    admitted_by_asset_id=None,
+                    admission_similarity_percent=None,
+                    best_group_match_asset_id=EXTERNAL_1,
+                    best_group_match_similarity_percent=99.2,
+                    link_depth=0,
+                ),
+                SimilarityAdmissionEvidence(
+                    asset_id=EXTERNAL_1,
+                    admitted_by_asset_id=UPLOAD_1,
+                    admission_similarity_percent=99.2,
+                    best_group_match_asset_id=UPLOAD_1,
+                    best_group_match_similarity_percent=99.2,
+                    link_depth=1,
+                ),
+            ),
+        ),
     )
 
     class Discovery:
@@ -906,7 +938,12 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
         FakeActions(),
         FakeTasks(),
         SimpleNamespace(),
-        similarity=FakeSimilarity({(UPLOAD_1, EXTERNAL_1): pair}),
+        similarity=FakeSimilarity(
+            {
+                (UPLOAD_1, EXTERNAL_1): pair,
+                (EXTERNAL_1, UPLOAD_1): pair,
+            }
+        ),
         discovery=Discovery(),
     )
 
@@ -921,6 +958,12 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
     assert found.similarity_model_version == SIMILARITY_MODEL_VERSION
     assert found.similarity_feature_version == SIMILARITY_FEATURE_VERSION
     assert found.similarity_comparison_version == SIMILARITY_COMPARISON_VERSION
+    assert found.similarity_validation_mode == "linked"
+    assert found.similarity_threshold_percent == 95
+    assert found.members[1].admission is not None
+    assert found.members[1].admission.admitted_by_asset_id == UPLOAD_1
+    assert found.members[1].admission.admission_similarity_percent == 99.2
+    assert found.members[1].admission.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT
     assert found.classification == "likely_same"
     assert found.status == "exact"
     assert found.eligible is False
@@ -928,6 +971,16 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
     assert found.recommended_action == "none"
     assert found.effective_action == "none"
     assert "99.2% visual match" in (found.reason or "")
+
+    switched = await service.similarity_reference(
+        found.group_id,
+        DuplicateSimilarityReferenceRequest(reference_asset_id=EXTERNAL_1),
+    )
+    assert switched.member_fingerprint == found.member_fingerprint
+    assert switched.similarity_validation_mode == found.similarity_validation_mode
+    assert {member.id: member.admission for member in switched.members} == {
+        member.id: member.admission for member in found.members
+    }
 
 
 @pytest.mark.asyncio

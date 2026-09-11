@@ -23,6 +23,7 @@ from companion.similarity_features import (
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
 )
+from companion.similarity_grouping import SIMILARITY_GROUPING_VERSION
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
 from companion.similarity_scan_repository import (
     SimilarityScanPair,
@@ -102,11 +103,14 @@ class SimilarityScanService:
         return SimilarityScanSummary(
             scan_id=run.id,
             similarity_threshold=run.parameters.similarity_threshold,
+            validation_mode=run.parameters.validation_mode,
+            anchor_asset_id=run.parameters.anchor_asset_id,
             scope=run.parameters.scope,
             model_version=run.parameters.model_version,
             feature_version=run.parameters.feature_version,
             comparison_version=run.parameters.comparison_version,
             config_fingerprint=run.parameters.config_fingerprint,
+            grouping_version=run.parameters.grouping_version,
             asset_count=run.asset_count,
             candidate_count=run.candidate_count,
             match_count=run.match_count,
@@ -140,6 +144,9 @@ class SimilarityScanTaskHandler:
             feature_version=SIMILARITY_FEATURE_VERSION,
             comparison_version=SIMILARITY_COMPARISON_VERSION,
             config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+            grouping_version=SIMILARITY_GROUPING_VERSION,
+            validation_mode=request.validation_mode,
+            anchor_asset_id=request.anchor_asset_id,
             scope=request.scope,
             similarity_threshold=request.similarity_threshold,
             maximum_perceptual_distance=request.maximum_perceptual_distance,
@@ -174,6 +181,10 @@ class SimilarityScanTaskHandler:
                     summary={
                         "scan_id": str(scan_id),
                         "similarity_threshold": request.similarity_threshold,
+                        "validation_mode": request.validation_mode,
+                        "anchor_asset_id": (
+                            str(request.anchor_asset_id) if request.anchor_asset_id else None
+                        ),
                         "scope": request.scope,
                         "result_limit_reached": completed.match_count == request.maximum_matches,
                         "recovered_completed_scan": True,
@@ -411,6 +422,10 @@ class SimilarityScanTaskHandler:
             summary={
                 "scan_id": str(scan_id),
                 "similarity_threshold": request.similarity_threshold,
+                "validation_mode": request.validation_mode,
+                "anchor_asset_id": (
+                    str(request.anchor_asset_id) if request.anchor_asset_id else None
+                ),
                 "scope": request.scope,
                 "result_limit_reached": len(matches) == request.maximum_matches,
             },

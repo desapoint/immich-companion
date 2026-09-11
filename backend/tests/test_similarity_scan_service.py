@@ -112,12 +112,19 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
     scans = FakeScans()
     context = FakeContext()
     handler = SimilarityScanTaskHandler(FakeFeatures(), similarity, scans)
-    request = SimilarityScanRequest(similarity_threshold=95, maximum_matches=1)
+    request = SimilarityScanRequest(
+        similarity_threshold=95,
+        validation_mode="linked",
+        anchor_asset_id=UUID(int=2),
+        maximum_matches=1,
+    )
 
     result = await handler.execute(context, request.model_dump(mode="json"))
 
     assert scans.failed is None
     assert scans.completed is not None
+    assert scans.parameters.validation_mode == "linked"
+    assert scans.parameters.anchor_asset_id == UUID(int=2)
     assert scans.completed[0] == SCAN_ID
     assert scans.completed[1]["asset_count"] == 3
     assert scans.completed[1]["candidate_count"] == 3

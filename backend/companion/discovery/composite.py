@@ -53,6 +53,7 @@ def _coalesce(left: DiscoveredGroup, right: DiscoveredGroup) -> DiscoveredGroup:
         assets=primary.assets,
         provider_metadata=metadata,
         discovery_evidence=evidence,
+        similarity_validation=left.similarity_validation or right.similarity_validation,
     )
 
 

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
+from companion.similarity_grouping import ValidatedSimilarityGroup
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +30,7 @@ class DiscoveredGroup:
     assets: tuple[ImmichAsset, ...]
     provider_metadata: Mapping[str, str] = field(default_factory=dict)
     discovery_evidence: tuple[DiscoveryEvidence, ...] = ()
+    similarity_validation: ValidatedSimilarityGroup | None = None
 
     @property
     def evidence(self) -> tuple[DiscoveryEvidence, ...]:

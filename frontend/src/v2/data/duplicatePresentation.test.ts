@@ -15,6 +15,8 @@ function group(names: string[], kind = 'similar'): DuplicateGroupRecord {
     similarityModelVersion: null,
     similarityFeatureVersion: null,
     similarityComparisonVersion: null,
+    similarityValidationMode: null,
+    similarityThresholdPercent: null,
     memberFingerprint: 'fingerprint',
     selected: false,
     savedDecisions: {},
@@ -23,6 +25,7 @@ function group(names: string[], kind = 'similar'): DuplicateGroupRecord {
     members: names.map((name, index) => ({
       similarity: 100 - index,
       similarityEvidence: null,
+      admission: null,
       asset: { id: `asset-${index}`, original_file_name: name } as DuplicateGroupRecord['members'][number]['asset'],
     })),
   };

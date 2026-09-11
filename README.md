@@ -180,6 +180,12 @@ a separately bounded disposable disk LRU, while active decode work and the
 in-process hot-group cache have independent limits. The Duplicates page reports
 cache usage, hit rates, eviction/cleanup health, and reference-switch latency;
 clearing disposable caches never removes durable review state or features.
+Similarity discovery supports reference-only, linked-group, and strict
+all-pairs validation. The selected strategy, stable anchor, threshold, grouping
+version, and admitting relationships are retained with the immutable scan
+evidence. Changing the comparison reference only changes displayed pair scores;
+the explicit revalidation action starts a new scan when membership should be
+rebuilt from that reference.
 
 Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather
