@@ -99,8 +99,9 @@ function pageNumber(query: DuplicateSearchQuery): number {
 }
 
 function similarity(member: ApiDuplicateMember): number | null {
+  if (!member.similarity) return null;
   if (member.similarity?.state === 'reference') return 100;
-  return member.similarity?.similarity_percent ?? (member.verification === 'matching' ? 100 : null);
+  return member.similarity.similarity_percent;
 }
 
 function assetType(mimeType: string | null): AssetRecord['asset_type'] {

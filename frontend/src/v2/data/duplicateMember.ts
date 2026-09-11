@@ -1,4 +1,5 @@
 import type { AssetRecord } from './contracts';
+import { duplicateAssetSourceLabel } from './duplicatePresentation';
 
 export type ComparisonMemberData = {
   name: string;
@@ -40,7 +41,7 @@ export function comparisonMemberData(
   const folder = assetFolder(asset?.original_path) ?? 'Unavailable';
   return {
     name: asset?.original_file_name ?? 'Unknown asset',
-    source: libraryId ? `External · ${library}` : 'Immich upload',
+    source: duplicateAssetSourceLabel(libraryId, libraryId ? library : undefined),
     size: asset?.file_size_bytes ? `${sizeNum.toFixed(1)} MB` : '—',
     sizeNum,
     dims: asset?.width && asset?.height ? `${asset.width} × ${asset.height}` : '—',

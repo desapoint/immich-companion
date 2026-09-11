@@ -128,6 +128,24 @@ describe('live V2 duplicate repository', () => {
     expect(fetcher.mock.calls.some(([input]) => String(input).includes('/summary'))).toBe(false);
   });
 
+  it('does not present verified content hashes as visual similarity scores', async () => {
+    const exactOnly = {
+      ...duplicateResult,
+      groups: [{
+        ...group,
+        group_similarity_percent: null,
+        similarity_engine: null,
+        members: group.members.map((member) => ({ ...member, similarity: null })),
+      }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(exactOnly)));
+    const repository = createDuplicateRepository(tasks());
+
+    const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
+
+    expect(result.items[0]?.members.map((member) => member.similarity)).toEqual([null, null]);
+  });
+
   it('persists complete per-image choices before planning and executing them', async () => {
     const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

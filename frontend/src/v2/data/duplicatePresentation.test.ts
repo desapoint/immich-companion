@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DuplicateGroupRecord } from './contracts';
-import { duplicateGroupTitle, duplicateKindLabel } from './duplicatePresentation';
+import { duplicateAssetSourceLabel, duplicateGroupTitle, duplicateKindLabel } from './duplicatePresentation';
 
 function group(names: string[], kind = 'similar'): DuplicateGroupRecord {
   return {
@@ -41,5 +41,11 @@ describe('duplicate presentation', () => {
     expect(duplicateKindLabel('exact_file')).toBe('Byte-perfect match');
     expect(duplicateKindLabel('similar')).toBe('Appearance match');
     expect(duplicateKindLabel('custom grouping')).toBe('Custom grouping');
+  });
+
+  it('uses consistent, unambiguous asset source labels', () => {
+    expect(duplicateAssetSourceLabel(null)).toBe('Immich upload');
+    expect(duplicateAssetSourceLabel('library-1')).toBe('External library');
+    expect(duplicateAssetSourceLabel('library-1', 'Family archive')).toBe('External · Family archive');
   });
 });

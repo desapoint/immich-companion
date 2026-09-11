@@ -24,3 +24,8 @@ export function duplicateKindLabel(kind: string): string {
   if (!normalized) return 'Duplicate match';
   return KIND_LABELS[normalized.toLowerCase()] ?? normalized[0].toUpperCase() + normalized.slice(1);
 }
+
+export function duplicateAssetSourceLabel(libraryId: string | null, libraryName?: string): string {
+  if (!libraryId) return 'Immich upload';
+  return libraryName ? `External · ${libraryName}` : 'External library';
+}
