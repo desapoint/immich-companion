@@ -300,7 +300,10 @@ describe('live V2 duplicate repository', () => {
       groupSimilarity: 98.5,
       similarityEngine: 'appearance',
       kind: 'exact file',
-      members: [{ similarity: 97.1 }, { similarity: 100 }],
+      members: [
+        { similarity: 100, asset: { id: ASSET_IDS[1] } },
+        { similarity: 97.1, asset: { id: ASSET_IDS[0] } },
+      ],
     });
   });
 

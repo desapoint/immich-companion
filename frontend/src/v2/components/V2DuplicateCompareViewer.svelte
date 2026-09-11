@@ -53,7 +53,7 @@
   function setDecision(decision:DuplicateDecision){if(decisionKey&&decisionOptions.includes(decision)){decisions={...decisions,[decisionKey]:decision};ondecisionchange?.(decisionKey,decision)}}
   function clearDecision(){if(decisionKey&&decisions[decisionKey])ondecisionclear?.(decisionKey)}
   function setStackPrimary(){if(decisionKey)onstackprimary?.(decisionKey)}
-  async function setReference(){if(!selectedAsset)return;await onreferencechange?.(selectedAsset.id);reference=member}
+  async function setReference(){if(!selectedAsset)return;if(onreferencechange){await onreferencechange(selectedAsset.id);return}reference=member}
   function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
   function handleShortcut(event:KeyboardEvent){
     if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||editableTarget(event.target))return;

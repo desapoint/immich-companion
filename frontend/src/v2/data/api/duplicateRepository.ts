@@ -14,6 +14,7 @@ import type {
   PageResult,
 } from '../contracts';
 import type { TaskRecord, TaskRepository } from '../syncContracts';
+import { referenceFirstDuplicateMembers } from '../duplicatePresentation';
 
 type AnalysisOptions = {
   keeper_policy: 'prefer_upload';
@@ -276,7 +277,10 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       savedDecisions: savedDecisions(draft),
       stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
       stackResolution: draft?.stack_resolution ?? 'move_selected',
-      members: group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member) })),
+      members: referenceFirstDuplicateMembers(
+        group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member) })),
+        group.reference_asset_id,
+      ),
     };
   };
 

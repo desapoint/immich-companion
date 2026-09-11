@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { DuplicateGroupRecord } from './contracts';
-import { duplicateAssetSourceLabel, duplicateGroupTitle, duplicateKindLabel } from './duplicatePresentation';
+import { duplicateAssetSourceLabel, duplicateGroupTitle, duplicateKindLabel, referenceFirstDuplicateMembers } from './duplicatePresentation';
 
 function group(names: string[], kind = 'similar'): DuplicateGroupRecord {
   return {
@@ -48,5 +48,21 @@ describe('duplicate presentation', () => {
     expect(duplicateAssetSourceLabel(null)).toBe('Immich upload');
     expect(duplicateAssetSourceLabel('library-1')).toBe('External library');
     expect(duplicateAssetSourceLabel('library-1', 'Family archive')).toBe('External · Family archive');
+  });
+
+  it('places the reference first without mutating the source members', () => {
+    const source = group(['first.jpg', 'reference.jpg', 'last.jpg']).members;
+
+    const ordered = referenceFirstDuplicateMembers(source, 'asset-1');
+
+    expect(ordered.map((member) => member.asset.id)).toEqual(['asset-1', 'asset-0', 'asset-2']);
+    expect(source.map((member) => member.asset.id)).toEqual(['asset-0', 'asset-1', 'asset-2']);
+  });
+
+  it('preserves member order when no valid reference is available', () => {
+    const source = group(['first.jpg', 'second.jpg']).members;
+
+    expect(referenceFirstDuplicateMembers(source, null).map((member) => member.asset.id)).toEqual(['asset-0', 'asset-1']);
+    expect(referenceFirstDuplicateMembers(source, 'missing').map((member) => member.asset.id)).toEqual(['asset-0', 'asset-1']);
   });
 });

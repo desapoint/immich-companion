@@ -2,6 +2,18 @@ import type { DuplicateGroupRecord } from './contracts';
 
 type DuplicateGroupPresentation = Pick<DuplicateGroupRecord, 'kind' | 'members'>;
 
+export function referenceFirstDuplicateMembers(
+  members: ReadonlyArray<DuplicateGroupRecord['members'][number]>,
+  referenceAssetId: string | null,
+): DuplicateGroupRecord['members'] {
+  const ordered = [...members];
+  if (!referenceAssetId) return ordered;
+  const referenceIndex = ordered.findIndex((member) => member.asset.id === referenceAssetId);
+  if (referenceIndex <= 0) return ordered;
+  const [reference] = ordered.splice(referenceIndex, 1);
+  return [reference, ...ordered];
+}
+
 const KIND_LABELS: Record<string, string> = {
   'exact file': 'Byte-perfect match',
   'exact pixels': 'Pixel-perfect match',
