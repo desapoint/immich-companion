@@ -541,6 +541,7 @@ class AssetSyncService:
         payload = task.payload
         checkpoint = task.checkpoint
         phase = str(checkpoint.get("phase", "queued"))
+        phase = "completed" if phase == "complete" else phase
         phase = (
             phase
             if phase

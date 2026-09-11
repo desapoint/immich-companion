@@ -17,6 +17,7 @@ from companion.immich import (
     ImmichTag,
 )
 from companion.sync_schema import SyncRunStatus
+from companion.task_schema import TaskStatusView
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -294,6 +295,38 @@ def run_status() -> SyncRunStatus:
         heartbeat_at=now,
         completed_at=None,
     )
+
+
+def test_legacy_complete_task_phase_is_reported_as_completed() -> None:
+    now = datetime.now(UTC)
+    task = TaskStatusView(
+        id=RUN_ID,
+        task_type="asset_sync",
+        status="completed",
+        priority=0,
+        deduplication_key=None,
+        lane_key="sync",
+        payload={"mode": "full", "generation": 3, "window_end": now.isoformat()},
+        checkpoint={"phase": "complete"},
+        counters={"assets_seen": 12},
+        progress={"phase": "complete", "completed": 12, "total": 12, "percent": 100},
+        result=None,
+        error=None,
+        attempt=1,
+        next_attempt_at=None,
+        lease_owner=None,
+        lease_expires_at=None,
+        created_at=now,
+        started_at=now,
+        heartbeat_at=now,
+        completed_at=now,
+    )
+
+    status = AssetSyncService._status_from_task(task)
+
+    assert status.phase == "completed"
+    assert status.progress is not None
+    assert status.progress.phase == "completed"
 
 
 def asset_counters() -> dict[str, int]:
