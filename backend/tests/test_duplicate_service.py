@@ -871,6 +871,10 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
             "scan_id": str(GROUP_ID),
             "scan_threshold_percent": "95.0",
             "similarity_percent": "99.2",
+            "minimum_similarity_percent": "99.2",
+            "model_version": SIMILARITY_MODEL_VERSION,
+            "feature_version": str(SIMILARITY_FEATURE_VERSION),
+            "comparison_version": str(SIMILARITY_COMPARISON_VERSION),
         },
     )
 
@@ -909,6 +913,12 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
 
     assert found.discovery_source == "companion_similarity"
     assert found.discovery_metadata["scan_id"] == str(GROUP_ID)
+    assert found.reference_asset_id == UPLOAD_1
+    assert found.group_similarity_percent == 99.2
+    assert found.similarity_engine == "appearance"
+    assert found.similarity_model_version == SIMILARITY_MODEL_VERSION
+    assert found.similarity_feature_version == SIMILARITY_FEATURE_VERSION
+    assert found.similarity_comparison_version == SIMILARITY_COMPARISON_VERSION
     assert found.classification == "likely_same"
     assert found.status == "exact"
     assert found.eligible is False
@@ -925,7 +935,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
-    pair = PairSimilarityEvidence(
+    switched_pair = PairSimilarityEvidence(
         similarity_percent=93.0,
         structural_percent=94.0,
         perceptual_percent=92.0,
@@ -936,7 +946,23 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
         feature_version=SIMILARITY_FEATURE_VERSION,
         comparison_version=1,
     )
-    similarity = FakeSimilarity({(EXTERNAL_1, UPLOAD_1): pair})
+    stable_pair = PairSimilarityEvidence(
+        similarity_percent=99.2,
+        structural_percent=99.0,
+        perceptual_percent=99.5,
+        color_percent=98.0,
+        exact_thumbnail_match=False,
+        exact_pixel_match=False,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        comparison_version=1,
+    )
+    similarity = FakeSimilarity(
+        {
+            (UPLOAD_1, EXTERNAL_1): stable_pair,
+            (EXTERNAL_1, UPLOAD_1): switched_pair,
+        }
+    )
     service = CrossSourceDuplicateService(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
@@ -960,8 +986,23 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
     assert similarity.calls[-1][0] == [[EXTERNAL_1, UPLOAD_1]]
     assert result.group_id == original.group_id
     assert result.member_fingerprint == original.member_fingerprint
+    assert result.reference_asset_id == EXTERNAL_1
+    assert original.reference_asset_id == UPLOAD_1
+    assert result.group_similarity_percent == original.group_similarity_percent == 99.2
+    assert result.similarity_engine == original.similarity_engine == "appearance"
+    assert result.similarity_model_version == original.similarity_model_version
+    assert result.similarity_feature_version == original.similarity_feature_version
+    assert result.similarity_comparison_version == original.similarity_comparison_version
+    assert result.classification == original.classification
+    assert result.status == original.status
+    assert result.reason == original.reason
     assert result.recommended_action == original.recommended_action
     assert result.recommended_primary_asset_id == original.recommended_primary_asset_id
+    assert result.keeper_asset_id == original.keeper_asset_id
+    assert result.auto_selected == original.auto_selected
+    assert result.auto_resolvable == original.auto_resolvable
+    assert result.effective_action == original.effective_action
+    assert result.effective_primary_asset_id == original.effective_primary_asset_id
     assert [member.id for member in result.members] == [
         member.id for member in original.members
     ]

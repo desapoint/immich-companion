@@ -43,6 +43,12 @@ type ApiDuplicateMember = {
 };
 type ApiDuplicateGroup = {
   group_id: string;
+  reference_asset_id: string | null;
+  group_similarity_percent: number | null;
+  similarity_engine: string | null;
+  similarity_model_version: string | null;
+  similarity_feature_version: number | null;
+  similarity_comparison_version: number | null;
   classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';
   status: 'exact' | 'unverified' | 'mismatch' | 'ineligible';
   reason: string | null;
@@ -209,6 +215,12 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       state: groupState(group, draft),
       kind: group.classification.replaceAll('_', ' '),
       reason: group.reason,
+      referenceAssetId: group.reference_asset_id ?? null,
+      groupSimilarity: group.group_similarity_percent ?? null,
+      similarityEngine: group.similarity_engine ?? null,
+      similarityModelVersion: group.similarity_model_version ?? null,
+      similarityFeatureVersion: group.similarity_feature_version ?? null,
+      similarityComparisonVersion: group.similarity_comparison_version ?? null,
       memberFingerprint: group.member_fingerprint,
       selected: workspace.selected_group_ids.includes(group.group_id),
       savedDecisions: savedDecisions(draft),

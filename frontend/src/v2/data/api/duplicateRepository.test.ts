@@ -10,6 +10,12 @@ const ASSET_IDS = [
 
 const group = {
   group_id: 'immich-group:stable-provider-id',
+  reference_asset_id: ASSET_IDS[0],
+  group_similarity_percent: 98.5,
+  similarity_engine: 'appearance',
+  similarity_model_version: 'appearance-v1',
+  similarity_feature_version: 2,
+  similarity_comparison_version: 4,
   discovery_source: 'immich_duplicate',
   provider_group_id: 'stable-provider-id',
   classification: 'exact_file',
@@ -110,6 +116,9 @@ describe('live V2 duplicate repository', () => {
       state: 'Needs decisions',
       selected: true,
       savedDecisions: { [ASSET_IDS[0]]: 'keep' },
+      referenceAssetId: ASSET_IDS[0],
+      groupSimilarity: 98.5,
+      similarityEngine: 'appearance',
       members: [
         { similarity: 100, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
         { similarity: 98.5, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
@@ -193,6 +202,38 @@ describe('live V2 duplicate repository', () => {
     expect(calls.at(-1)).toEqual({
       path: '/api/assets/duplicates/workspace/reset',
       body: expect.objectContaining({ group_ids: [group.group_id] }),
+    });
+  });
+
+  it('switches only the display reference contract returned by the backend', async () => {
+    const switched = {
+      ...group,
+      reference_asset_id: ASSET_IDS[1],
+      members: group.members.map((member, index) => ({
+        ...member,
+        similarity: index
+          ? { state: 'reference', reference_asset_id: ASSET_IDS[1], similarity_percent: 100 }
+          : { state: 'current', reference_asset_id: ASSET_IDS[1], similarity_percent: 97.1 },
+      })),
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.includes('/similarity-reference')) return response(switched);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    const result = await repository.switchReference(group.group_id, ASSET_IDS[1]);
+
+    expect(result).toMatchObject({
+      referenceAssetId: ASSET_IDS[1],
+      groupSimilarity: 98.5,
+      similarityEngine: 'appearance',
+      kind: 'exact file',
+      members: [{ similarity: 97.1 }, { similarity: 100 }],
     });
   });
 });

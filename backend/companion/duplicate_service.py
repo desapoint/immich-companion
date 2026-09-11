@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -117,6 +118,16 @@ def _source_fingerprint(assets: list[Any]) -> str:
             for asset in sorted(assets, key=lambda item: str(item.id))
         ]
     )
+
+
+def _metadata_int(metadata: Mapping[str, str], name: str) -> int | None:
+    value = metadata.get(name)
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return None
 
 
 def _member_fingerprint(asset_ids: list[UUID]) -> str:
@@ -412,11 +423,18 @@ class CrossSourceDuplicateService:
         }
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
+            similarity_groups = [
+                replace(
+                    group,
+                    assets=tuple(sorted(group.assets, key=lambda asset: asset.id.int)),
+                )
+                for group in groups
+            ]
             edges = await self._similarity.reference_edges(
-                [[asset.id for asset in group.assets] for group in groups],
+                [[asset.id for asset in group.assets] for group in similarity_groups],
                 features,
             )
-            result = self._apply_similarity(result, groups, edges, features)
+            result = self._apply_similarity(result, similarity_groups, edges, features)
         if self._reviews is not None:
             result = await self._apply_review_states(result)
         return groups, reports, features, result
@@ -468,8 +486,19 @@ class CrossSourceDuplicateService:
             request.reference_asset_id,
             *(asset.id for asset in source.assets if asset.id != request.reference_asset_id),
         ]
-        edges = await self._similarity.reference_edges([ordered_ids], features)
         result = self.assemble([source], reports, options, self._immich)
+        stable_source = replace(
+            source,
+            assets=tuple(sorted(source.assets, key=lambda asset: asset.id.int)),
+        )
+        stable_ids = [asset.id for asset in stable_source.assets]
+        stable_edges = await self._similarity.reference_edges([stable_ids], features)
+        result = self._apply_similarity(result, [stable_source], stable_edges, features)
+        if ordered_ids == stable_ids:
+            if self._reviews is not None:
+                result = await self._apply_review_states(result)
+            return result.groups[0]
+        edges = await self._similarity.reference_edges([ordered_ids], features)
         reordered_source = replace(
             source,
             assets=tuple(members[asset_id] for asset_id in ordered_ids),
@@ -479,6 +508,7 @@ class CrossSourceDuplicateService:
             [reordered_source],
             edges,
             features,
+            update_group_contract=False,
         )
         if self._reviews is not None:
             result = await self._apply_review_states(result)
@@ -490,6 +520,8 @@ class CrossSourceDuplicateService:
         source_groups: list[DiscoveredGroup],
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
         features: dict[UUID, AssetSimilarityFeatureRecord],
+        *,
+        update_group_contract: bool = True,
     ) -> CrossSourceDuplicateResult:
         source_by_id = {group.group_id: group for group in source_groups}
         updated_groups: list[ExactDuplicateGroup] = []
@@ -581,25 +613,75 @@ class CrossSourceDuplicateService:
                         }
                     )
                 )
-            group_update: dict[str, object] = {"members": members}
-            if source.discovery_source is DiscoverySource.COMPANION_SIMILARITY:
-                pair_evidence = next(
-                    (
-                        member.similarity
-                        for member in members
-                        if member.similarity is not None
-                        and member.similarity.state == "current"
-                    ),
-                    None,
+            group_update: dict[str, object] = {
+                "members": members,
+                "reference_asset_id": reference.id,
+            }
+            pair_evidence = [
+                member.similarity
+                for member in members
+                if member.similarity is not None
+                and member.similarity.state == "current"
+            ]
+            similarity_source = next(
+                (
+                    evidence
+                    for evidence in source.evidence
+                    if evidence.discovery_source is DiscoverySource.COMPANION_SIMILARITY
+                ),
+                None,
+            )
+            similarity_metadata = similarity_source.metadata if similarity_source else {}
+            if update_group_contract:
+                score_value = similarity_metadata.get("minimum_similarity_percent")
+                try:
+                    stable_score = float(score_value) if score_value is not None else None
+                except ValueError:
+                    stable_score = None
+                if stable_score is None:
+                    scores = [
+                        evidence.similarity_percent
+                        for evidence in pair_evidence
+                        if evidence.similarity_percent is not None
+                    ]
+                    stable_score = min(scores) if scores else None
+                representative = pair_evidence[0] if pair_evidence else None
+
+                group_update.update(
+                    {
+                        "group_similarity_percent": stable_score,
+                        "similarity_engine": (
+                            "appearance"
+                            if stable_score is not None or representative is not None
+                            else None
+                        ),
+                        "similarity_model_version": (
+                            similarity_metadata.get("model_version")
+                            or (representative.model_version if representative else None)
+                        ),
+                        "similarity_feature_version": (
+                            _metadata_int(similarity_metadata, "feature_version")
+                            or (representative.feature_version if representative else None)
+                        ),
+                        "similarity_comparison_version": (
+                            _metadata_int(similarity_metadata, "comparison_version")
+                            or (representative.comparison_version if representative else None)
+                        ),
+                    }
                 )
-                threshold = source.provider_metadata.get("scan_threshold_percent")
-                if pair_evidence is not None:
-                    score = pair_evidence.similarity_percent
+            if (
+                update_group_contract
+                and source.discovery_source is DiscoverySource.COMPANION_SIMILARITY
+            ):
+                threshold = similarity_metadata.get("scan_threshold_percent")
+                score = group_update.get("group_similarity_percent")
+                if isinstance(score, int | float):
                     classification = (
                         GroupClassification.EXACT_PIXELS.value
-                        if pair_evidence.exact_pixel_match
+                        if pair_evidence
+                        and all(evidence.exact_pixel_match for evidence in pair_evidence)
                         else GroupClassification.LIKELY_SAME.value
-                        if score is not None and score >= 98
+                        if score >= 98
                         else GroupClassification.SIMILAR.value
                     )
                     threshold_detail = f" at a {threshold}% scan threshold" if threshold else ""
@@ -609,11 +691,6 @@ class CrossSourceDuplicateService:
                             "reason": (
                                 f"Companion found a {score:.1f}% visual match"
                                 f"{threshold_detail}. Review it manually before acting."
-                                if score is not None
-                                else (
-                                    "Companion found a visual match. Review it manually "
-                                    "before acting."
-                                )
                             ),
                         }
                     )

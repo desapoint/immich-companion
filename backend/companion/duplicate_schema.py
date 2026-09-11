@@ -157,6 +157,12 @@ class ExactDuplicateGroup(BaseModel):
     discovery_evidence: list[DuplicateDiscoveryEvidence] = Field(default_factory=list)
     provider_group_id: str | None = None
     discovery_metadata: dict[str, str] = Field(default_factory=dict)
+    reference_asset_id: UUID | None = None
+    group_similarity_percent: float | None = None
+    similarity_engine: str | None = None
+    similarity_model_version: str | None = None
+    similarity_feature_version: int | None = None
+    similarity_comparison_version: int | None = None
     classification: DuplicateClassification
     status: DuplicateGroupStatus
     reason: str | None = None
