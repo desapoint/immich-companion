@@ -7,6 +7,7 @@ const ASSET_IDS = [
   '11111111-1111-4111-8111-111111111111',
   '22222222-2222-4222-8222-222222222222',
 ];
+const OVERLAP_ASSET_ID = '33333333-3333-4333-8333-333333333333';
 
 const group = {
   group_id: 'immich-group:stable-provider-id',
@@ -168,7 +169,7 @@ describe('live V2 duplicate repository', () => {
     const plan = await repository.prepareDecisions({
       decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
       stacks: [],
-    });
+    }, [group.group_id]);
     expect(calls.at(-1)?.path).toBe('/api/assets/duplicates/cross-source/plan');
 
     const result = await repository.executePlan(plan);
@@ -198,8 +199,54 @@ describe('live V2 duplicate repository', () => {
     const repository = createDuplicateRepository(tasks());
     await repository.search({ page: 1, pageSize: 10 });
 
-    await expect(repository.prepareDecisions({ decisions: { [ASSET_IDS[0]]: 'keep' }, stacks: [] })).rejects.toThrow('images without a decision');
+    await expect(repository.prepareDecisions({ decisions: { [ASSET_IDS[0]]: 'keep' }, stacks: [] }, [group.group_id])).rejects.toThrow('images without a decision');
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('prepares only the requested group when similarity groups share an asset', async () => {
+    const overlappingGroup = {
+      ...group,
+      group_id: 'companion:appearance-v1:overlap',
+      provider_group_id: null,
+      member_fingerprint: 'fingerprint-overlap',
+      members: [
+        group.members[0],
+        {
+          ...group.members[1],
+          id: OVERLAP_ASSET_ID,
+          original_file_name: 'overlap.jpg',
+        },
+      ],
+    };
+    const resultWithOverlap = {
+      ...duplicateResult,
+      group_count: 2,
+      groups: [group, overlappingGroup],
+    };
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response(resultWithOverlap);
+      if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
+      if (path.endsWith('/workspace/selection')) return response({ ...emptyWorkspace, selected_group_ids: body.selected_group_ids, active_group_id: body.active_group_id });
+      if (path.endsWith('/cross-source/plan')) return response({ id: 'plan-overlap' });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    const plan = await repository.prepareDecisions({
+      decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
+      stacks: [],
+    }, [group.group_id]);
+
+    expect(plan.groupIds).toEqual([group.group_id]);
+    expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
+      group_ids: [group.group_id],
+    });
   });
 
   it('clears every discovered group through one durable workspace reset', async () => {

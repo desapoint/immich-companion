@@ -389,8 +389,13 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       onprogress?.({label:'Duplicate discovery · Preparing results',detail:'Preparing the completed duplicate groups for refresh…',completed:1,total:1,percent:99});
       return { groupCount: result.group_count, candidateCount: result.groups.reduce((count, group) => count + group.members.length, 0) };
     },
-    async prepareDecisions(resolution: DuplicateResolutionPlan): Promise<DuplicatePreparedPlan> {
-      const groups = [...rawGroups.values()].filter((group) => group.members.some((member) => resolution.decisions[member.id]));
+    async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
+      const uniqueGroupIds = [...new Set(groupIds)];
+      const groups = uniqueGroupIds.flatMap((groupId) => {
+        const group = rawGroups.get(groupId);
+        return group ? [group] : [];
+      });
+      if (groups.length !== uniqueGroupIds.length) throw new Error('A selected duplicate group is no longer available. Refresh the list and try again.');
       if (!groups.length) throw new Error('Choose at least one complete duplicate group before review.');
       for (const group of groups) {
         const scoped = groupResolution(resolution, group);
