@@ -78,10 +78,14 @@ type ApiDuplicateDraft = {
 };
 type ApiDuplicateWorkspace = {
   initialized: boolean;
+  revision?: number;
+  selected_count?: number;
   selected_group_ids: string[];
   active_group_id: string | null;
   stale_selected_groups: Array<{ group_id: string }>;
   drafts: ApiDuplicateDraft[];
+  last_applied_group_ids?: string[];
+  last_skipped_group_ids?: string[];
 };
 
 const ANALYSIS_OPTIONS: AnalysisOptions = {
@@ -254,7 +258,7 @@ async function waitForTask(tasks: TaskRepository, taskId: string, similarity = f
 export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepository {
   let rawGroups = new Map<string, ApiDuplicateGroup>();
   let visibleGroupIds = new Set<string>();
-  let workspace: ApiDuplicateWorkspace = { initialized: false, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
+  let workspace: ApiDuplicateWorkspace = { initialized: false, revision: 0, selected_count: 0, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
   const draftQueues = new Map<string, Promise<void>>();
 
   const draftFor = (groupId: string): ApiDuplicateDraft | undefined => workspace.drafts.find((draft) => draft.group_id === groupId && !draft.stale);
@@ -327,6 +331,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       options: ANALYSIS_OPTIONS,
       selected_group_ids: [...new Set(selectedGroupIds)],
       active_group_id: activeGroupId,
+      revision: workspace.revision,
     }));
   };
 
@@ -353,6 +358,11 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     },
     saveDraft,
     saveSelection,
+    async applyPreset(disposition,scope,groupIds){
+      await Promise.all([...draftQueues.values()]);
+      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],disposition}));
+      return{appliedGroupIds:workspace.last_applied_group_ids??[],skippedGroupIds:workspace.last_skipped_group_ids??[]};
+    },
     async clearDecisions() {
       const groupIds = [...rawGroups.keys()];
       await Promise.all(
@@ -416,6 +426,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         options: ANALYSIS_OPTIONS,
         group_ids: groups.map((group) => group.group_id),
         all_eligible: false,
+        workspace_selected: true,
         keeper_overrides,
         action_overrides,
       }));

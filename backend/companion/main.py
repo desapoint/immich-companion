@@ -6,7 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -88,7 +88,11 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspaceMembership,
+    DuplicateWorkspaceMembershipRequest,
+    DuplicateWorkspacePresetRequest,
     DuplicateWorkspaceResetRequest,
+    DuplicateWorkspaceSelectionDelta,
     DuplicateWorkspaceSelectionUpdate,
     DuplicateWorkspaceState,
     ExactDuplicateGroup,
@@ -125,12 +129,20 @@ from companion.relation_schema import (
     AlbumCreateRequest,
     AlbumManagementItem,
     AlbumUpdateRequest,
+    CollectionDeleteExecuteRequest,
+    CollectionDeleteItemResult,
+    CollectionDeletePlan,
+    CollectionDeletePlanRequest,
     RelationBatchDeleteRequest,
     RelationPage,
+    RelationSelectAllRequest,
+    RelationSelectionMembershipRequest,
+    RelationSelectionMembersRequest,
     TagCreateRequest,
     TagManagementItem,
     TagUpdateRequest,
 )
+from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
 from companion.similarity_maintenance import (
     SimilarityMaintenanceRepository,
     SimilarityMaintenanceService,
@@ -179,6 +191,9 @@ def create_app(
         SimilarityMaintenanceRepository(database) if database is not None else None
     )
     action_repository = ActionRepository(database) if database is not None else None
+    relation_selection_repository = (
+        RelationSelectionRepository(database) if database is not None else None
+    )
     duplicate_review_repository = (
         DuplicateReviewRepository(database) if database is not None else None
     )
@@ -277,10 +292,7 @@ def create_app(
         if asset_repository is not None and integrity_repository is not None
         else None
     )
-    if (
-        task_coordinator is not None
-        and integrity_handler is not None
-    ):
+    if task_coordinator is not None and integrity_handler is not None:
         task_coordinator.register_handler(integrity_handler)
     duplicate_service = (
         CrossSourceDuplicateService(
@@ -411,9 +423,7 @@ def create_app(
     async def immich_error_handler(_request, error: ImmichApiError) -> Response:
         """Keep relation-management failures safe and consistent with API actions."""
         code = (
-            status.HTTP_404_NOT_FOUND
-            if error.status_code == 404
-            else status.HTTP_502_BAD_GATEWAY
+            status.HTTP_404_NOT_FOUND if error.status_code == 404 else status.HTTP_502_BAD_GATEWAY
         )
         detail = (
             "The Immich relation was not found."
@@ -963,10 +973,13 @@ def create_app(
         )
 
     @app.get("/api/albums/manage", response_model=RelationPage[AlbumManagementItem])
-    async def manage_albums(page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
-                            search: str | None = Query(None, max_length=255),
-                            sort: Literal["name", "asset_count", "description"] = "name",
-                            direction: Literal["asc", "desc"] = "asc"):
+    async def manage_albums(
+        page: int = Query(1, ge=1),
+        page_size: int = Query(25, ge=1, le=200),
+        search: str | None = Query(None, max_length=255),
+        sort: Literal["name", "asset_count", "description"] = "name",
+        direction: Literal["asc", "desc"] = "asc",
+    ):
         albums = await require_immich().list_album_catalog()
         counts = await require_asset_repository().album_asset_counts()
         if search:
@@ -974,8 +987,7 @@ def create_app(
             albums = [
                 album
                 for album in albums
-                if needle in album.album_name.casefold()
-                or needle in album.description.casefold()
+                if needle in album.album_name.casefold() or needle in album.description.casefold()
             ]
         albums.sort(
             key=lambda album: (
@@ -1042,14 +1054,15 @@ def create_app(
         return await repository.list_tags()
 
     @app.get("/api/tags/manage", response_model=RelationPage[TagManagementItem])
-    async def manage_tags(page: int = Query(1, ge=1), page_size: int = Query(25, ge=1, le=200),
-                          search: str | None = Query(None, max_length=255),
-                          sort: Literal[
-                              "name", "asset_count", "path", "child_count"
-                          ] = "name",
-                          direction: Literal["asc", "desc"] = "asc",
-                          flat: bool = False,
-                          include_hierarchy: bool = False):
+    async def manage_tags(
+        page: int = Query(1, ge=1),
+        page_size: int = Query(25, ge=1, le=200),
+        search: str | None = Query(None, max_length=255),
+        sort: Literal["name", "asset_count", "path", "child_count"] = "name",
+        direction: Literal["asc", "desc"] = "asc",
+        flat: bool = False,
+        include_hierarchy: bool = False,
+    ):
         catalog = await require_immich().list_tag_catalog()
         counts = await require_asset_repository().tag_asset_counts()
         tags_by_id = {tag.id: tag for tag in catalog}
@@ -1115,19 +1128,14 @@ def create_app(
             total = len(matching_tags)
             start = (page - 1) * page_size
             return RelationPage(
-                items=[
-                    management_item(tag)
-                    for tag in matching_tags[start : start + page_size]
-                ],
+                items=[management_item(tag) for tag in matching_tags[start : start + page_size]],
                 total=total,
                 page=page,
                 page_size=page_size,
                 pages=(total + page_size - 1) // page_size,
             )
 
-        matching_ids = {
-            tag.id for tag in catalog if not needle or needle in tag.name.casefold()
-        }
+        matching_ids = {tag.id for tag in catalog if not needle or needle in tag.name.casefold()}
         included_ids = set(matching_ids)
         for tag in catalog:
             if tag.id not in matching_ids:
@@ -1198,8 +1206,13 @@ def create_app(
     @app.post("/api/tags/manage", response_model=TagManagementItem)
     async def create_managed_tag(request: TagCreateRequest):
         tag = await require_immich().create_tag(request.name, request.color, request.parent_id)
-        return TagManagementItem(id=tag.id, name=tag.name, color=tag.color, parent_id=tag.parent_id,
-                                 asset_count=tag.asset_count)
+        return TagManagementItem(
+            id=tag.id,
+            name=tag.name,
+            color=tag.color,
+            parent_id=tag.parent_id,
+            asset_count=tag.asset_count,
+        )
 
     @app.post("/api/tags/manage/batch-delete")
     async def batch_delete_tags(request: RelationBatchDeleteRequest):
@@ -1223,8 +1236,13 @@ def create_app(
     async def update_managed_tag(tag_id: UUID, request: TagUpdateRequest):
         client = require_immich()
         tag = await client.update_tag(tag_id, color=request.color)
-        return TagManagementItem(id=tag.id, name=tag.name, color=tag.color, parent_id=tag.parent_id,
-                                 asset_count=tag.asset_count)
+        return TagManagementItem(
+            id=tag.id,
+            name=tag.name,
+            color=tag.color,
+            parent_id=tag.parent_id,
+            asset_count=tag.asset_count,
+        )
 
     @app.delete("/api/tags/manage/{tag_id}", status_code=204)
     async def delete_managed_tag(tag_id: UUID) -> Response:
@@ -1235,6 +1253,227 @@ def create_app(
             )
         await client.delete_tag(tag_id)
         return Response(status_code=204)
+
+    def require_relation_selections() -> RelationSelectionRepository:
+        if relation_selection_repository is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        return relation_selection_repository
+
+    async def matching_relation_ids(
+        kind: RelationEntityKind, request: RelationSelectAllRequest
+    ) -> list[UUID]:
+        needle = request.query.strip().casefold()
+        if kind == "album":
+            catalog = await require_immich().list_album_catalog()
+            return [
+                album.id
+                for album in catalog
+                if not needle
+                or needle in album.album_name.casefold()
+                or needle in album.description.casefold()
+            ]
+        catalog = await require_immich().list_tag_catalog()
+        if not needle:
+            return [tag.id for tag in catalog]
+        by_id = {tag.id: tag for tag in catalog}
+
+        def path(tag: ImmichTag) -> str:
+            names = [tag.name]
+            parent_id = tag.parent_id
+            visited = {tag.id}
+            while parent_id is not None and parent_id not in visited:
+                parent = by_id.get(parent_id)
+                if parent is None:
+                    break
+                names.append(parent.name)
+                visited.add(parent.id)
+                parent_id = parent.parent_id
+            return " / ".join(reversed(names))
+
+        return [
+            tag.id
+            for tag in catalog
+            if needle
+            in (path(tag) if request.include_hierarchy else tag.name).casefold()
+        ]
+
+    @app.post("/api/{kind}s/selections", response_model=SelectionSetView)
+    async def create_relation_selection(kind: RelationEntityKind) -> SelectionSetView:
+        record = await require_relation_selections().create(
+            kind, runtime_settings.action_plan_ttl_seconds
+        )
+        return selection_view(record)
+
+    @app.post("/api/{kind}s/selections/{selection_id}/members", response_model=SelectionSetView)
+    async def update_relation_selection(
+        kind: RelationEntityKind,
+        selection_id: UUID,
+        request: RelationSelectionMembersRequest,
+    ) -> SelectionSetView:
+        try:
+            record = await require_relation_selections().update(
+                selection_id,
+                kind,
+                request.ids,
+                selected=request.selected,
+                revision=request.revision,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return selection_view(record)
+
+    @app.post(
+        "/api/{kind}s/selections/{selection_id}/membership",
+        response_model=SelectionSetMembershipResponse,
+    )
+    async def relation_selection_membership(
+        kind: RelationEntityKind,
+        selection_id: UUID,
+        request: RelationSelectionMembershipRequest,
+    ) -> SelectionSetMembershipResponse:
+        repository = require_relation_selections()
+        record = await repository.get(selection_id, kind)
+        if record is None:
+            raise HTTPException(status_code=404, detail="Selection set was not found.")
+        return SelectionSetMembershipResponse(
+            selection=selection_view(record),
+            selected_ids=await repository.membership(selection_id, kind, request.ids),
+        )
+
+    @app.post("/api/{kind}s/selections/{selection_id}/select-all", response_model=SelectionSetView)
+    async def select_all_relations(
+        kind: RelationEntityKind,
+        selection_id: UUID,
+        request: RelationSelectAllRequest,
+    ) -> SelectionSetView:
+        try:
+            ids = await matching_relation_ids(kind, request)
+            record = await require_relation_selections().replace(selection_id, kind, ids)
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return selection_view(record)
+
+    def collection_plan_view(record) -> CollectionDeletePlan:
+        work = record.relation_work or {}
+        results = (record.result or {}).get("items", [])
+        status_value = record.status
+        if status_value == "planned" and record.expires_at <= datetime.now(UTC):
+            status_value = "expired"
+        return CollectionDeletePlan(
+            id=record.id,
+            entity_kind=work["entity_kind"],
+            selection_id=UUID(work["selection_id"]),
+            target_digest=record.target_digest,
+            target_count=len(record.target_ids),
+            applicable_count=len(record.applicable_ids),
+            skipped_count=len(record.skipped_ids),
+            status=status_value,
+            expires_at=record.expires_at,
+            results=[CollectionDeleteItemResult.model_validate(item) for item in results],
+        )
+
+    @app.post("/api/{kind}s/actions/delete/plan", response_model=CollectionDeletePlan)
+    async def plan_relation_delete(
+        kind: RelationEntityKind, request: CollectionDeletePlanRequest
+    ) -> CollectionDeletePlan:
+        repository = require_relation_selections()
+        if action_repository is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        try:
+            target_ids = await repository.ids(request.selection_id, kind)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        if not target_ids:
+            raise HTTPException(status_code=400, detail="No relations are selected.")
+        if kind == "album":
+            existing = {item.id for item in await require_immich().list_album_catalog()}
+            blocked: set[UUID] = set()
+        else:
+            tags = await require_immich().list_tag_catalog()
+            existing = {item.id for item in tags}
+            blocked = {item.parent_id for item in tags if item.parent_id is not None}
+        applicable = [
+            identifier
+            for identifier in target_ids
+            if identifier in existing and identifier not in blocked
+        ]
+        skipped = [identifier for identifier in target_ids if identifier not in applicable]
+        record = await action_repository.create_collection_delete_plan(
+            entity_kind=kind,
+            selection_id=request.selection_id,
+            target_ids=target_ids,
+            applicable_ids=applicable,
+            skipped_ids=skipped,
+            target_digest=selection_digest(target_ids),
+            expires_at=datetime.now(UTC)
+            + timedelta(seconds=runtime_settings.action_plan_ttl_seconds),
+        )
+        return collection_plan_view(record)
+
+    @app.post("/api/{kind}s/actions/delete/execute", response_model=CollectionDeletePlan)
+    async def execute_relation_delete(
+        kind: RelationEntityKind, request: CollectionDeleteExecuteRequest
+    ) -> CollectionDeletePlan:
+        if action_repository is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        existing = await action_repository.get_plan(request.plan_id)
+        if existing is None or existing.action != f"delete_{kind}s":
+            raise HTTPException(status_code=404, detail="Delete plan was not found.")
+        if existing.status in {"completed", "failed"}:
+            return collection_plan_view(existing)
+        if existing.expires_at <= datetime.now(UTC):
+            raise HTTPException(status_code=409, detail="Delete plan has expired.")
+        if not runtime_settings.allow_destructive_actions:
+            raise HTTPException(
+                status_code=403, detail="Relation deletion is disabled in safe mode."
+            )
+        record = await action_repository.claim_plan(request.plan_id)
+        if record is None:
+            raise HTTPException(status_code=409, detail="Delete plan is already executing.")
+        results: list[dict[str, str | None]] = [
+            {
+                "id": identifier,
+                "status": "skipped",
+                "reason": "Not applicable when the plan was created.",
+            }
+            for identifier in record.skipped_ids
+        ]
+        completed: list[UUID] = []
+        failed = False
+        for raw_id in record.applicable_ids:
+            identifier = UUID(raw_id)
+            try:
+                if kind == "album":
+                    await require_immich().delete_album(identifier)
+                else:
+                    await require_immich().delete_tag(identifier)
+            except ImmichApiError as error:
+                if error.status_code == 404:
+                    results.append(
+                        {"id": str(identifier), "status": "skipped", "reason": "Already missing."}
+                    )
+                    completed.append(identifier)
+                else:
+                    results.append(
+                        {
+                            "id": str(identifier),
+                            "status": "failed",
+                            "reason": "Immich could not delete this relation.",
+                        }
+                    )
+                    failed = True
+            else:
+                results.append({"id": str(identifier), "status": "completed", "reason": None})
+                completed.append(identifier)
+        await require_relation_selections().remove(
+            UUID(record.relation_work["selection_id"]), completed
+        )
+        await action_repository.finish_plan(
+            record.id, "failed" if failed else "completed", {"items": results}
+        )
+        refreshed = await action_repository.get_plan(record.id)
+        assert refreshed is not None
+        return collection_plan_view(refreshed)
 
     @app.post("/api/assets/selection/resolve", response_model=AssetSelectionResolution)
     async def resolve_asset_selection(
@@ -1292,6 +1531,7 @@ def create_app(
             record.status = "expired"
         return SelectionSetView(
             id=record.id,
+            entity_kind=record.entity_kind,
             revision=record.revision,
             selected_count=record.selected_count,
             status=record.status,
@@ -1352,7 +1592,7 @@ def create_app(
     ) -> SelectionSetMembershipResponse:
         repository = require_asset_repository()
         record = await repository.get_selection(selection_id)
-        if record is None:
+        if record is None or record.entity_kind != "asset":
             raise HTTPException(status_code=404, detail="Selection set was not found.")
         return SelectionSetMembershipResponse(
             selection=selection_view(record),
@@ -1457,9 +1697,7 @@ def create_app(
         request: DuplicateAnalysisOptions | None = None,
     ) -> CrossSourceDuplicateTaskStart:
         try:
-            return await require_duplicate_service().start(
-                request or DuplicateAnalysisOptions()
-            )
+            return await require_duplicate_service().start(request or DuplicateAnalysisOptions())
         except ImmichApiError as error:
             raise map_immich_error(error) from error
 
@@ -1526,6 +1764,34 @@ def create_app(
         except RuntimeError as error:
             raise map_action_error(error) from error
 
+    @app.patch(
+        "/api/assets/duplicates/workspace/selection",
+        response_model=DuplicateWorkspaceState,
+    )
+    async def update_duplicate_workspace_selection(
+        request: DuplicateWorkspaceSelectionDelta,
+    ) -> DuplicateWorkspaceState:
+        try:
+            return await require_duplicate_service().update_workspace_selection(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except (RuntimeError, ValueError) as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/workspace/membership",
+        response_model=DuplicateWorkspaceMembership,
+    )
+    async def duplicate_workspace_membership(
+        request: DuplicateWorkspaceMembershipRequest,
+    ) -> DuplicateWorkspaceMembership:
+        try:
+            return await require_duplicate_service().workspace_membership(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
     @app.put(
         "/api/assets/duplicates/workspace/group",
         response_model=DuplicateGroupDraft,
@@ -1566,6 +1832,20 @@ def create_app(
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/workspace/preset",
+        response_model=DuplicateWorkspaceState,
+    )
+    async def apply_duplicate_workspace_preset(
+        request: DuplicateWorkspacePresetRequest,
+    ) -> DuplicateWorkspaceState:
+        try:
+            return await require_duplicate_service().apply_workspace_preset(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except (RuntimeError, ValueError) as error:
             raise map_action_error(error) from error
 
     @app.post(
@@ -1658,9 +1938,7 @@ def create_app(
         pacing = await sync._runtime_sync_settings.get()
         if request.all:
             try:
-                asset_ids = [
-                    asset.id async for asset in require_immich().iter_trashed_assets()
-                ]
+                asset_ids = [asset.id async for asset in require_immich().iter_trashed_assets()]
             except ImmichApiError as error:
                 raise map_immich_error(error) from error
         else:

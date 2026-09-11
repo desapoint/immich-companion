@@ -19,6 +19,7 @@
   import V2PageLayout from '../components/V2PageLayout.svelte';
   import V2RoundCheckbox from '../components/V2RoundCheckbox.svelte';
   import V2Section from '../components/V2Section.svelte';
+  import V2Segmented from '../components/V2Segmented.svelte';
   import V2Stack from '../components/V2Stack.svelte';
   import V2Tabs from '../components/V2Tabs.svelte';
   import V2Toolbar from '../components/V2Toolbar.svelte';
@@ -49,7 +50,7 @@
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
   type PendingReview={scope:'all'|'group';groupId:string|null;plan:DuplicatePreparedPlan};
   const collection=createCollectionView({pageSize:6,resultModeStorageKey:'immichCompanionDuplicateResultMode'});
-  let tab=$state<DuplicateTab>('Review'),compare=$state(false),group=$state(''),member=$state(0),reference=$state(0);
+  let tab=$state<DuplicateTab>('Review'),compare=$state(false),group=$state(''),member=$state(0),reference=$state(0),selectionScope=$state<'Current page'|'All matching'>(typeof sessionStorage!=='undefined'&&sessionStorage.getItem('immich-companion:v2:duplicate-selection-scope')==='All matching'?'All matching':'Current page'),presetApplying=$state(false);
   let decisions=$state<Record<string,DuplicateDecision>>({}),stackWorkspace=$state(createDuplicateStackWorkspace()),selectedGroups=$state<string[]>([]),reviewFilter=$state<DuplicateState|'All groups'|'Auto-ready'>('All groups');
   let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null),interactionError=$state('');
   let capabilities=$state<DuplicateCapabilities>({canRunDiscovery:false,canApplyDecisions:false,canViewHistory:false,reviewFilters:['All groups'],decisions:[]});
@@ -57,7 +58,7 @@
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]);
   let planPreparing=$state(false);
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
-  const loading=$derived(groupRequests.loading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
+  const loading=$derived(groupRequests.loading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing||presetApplying),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
   const activeGroup=$derived(groups.find((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),activeCompareStack=$derived(stackForAsset(stackWorkspace,activeAssetIds[member]??'')),decisionCount=$derived(Object.keys(decisions).length);
   const activeSimilarities=$derived(Object.fromEntries(activeGroup?.members.map((item)=>[item.asset.id,item.similarity])??[]));
@@ -68,19 +69,26 @@
   const draftTimers=new Map<string,ReturnType<typeof setTimeout>>();
   let selectionSave=Promise.resolve();
   let workspaceHydrated=false;
+  $effect(()=>{if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-selection-scope',selectionScope)});
 
   function hydrateWorkspace(items:DuplicateGroupRecord[],replace:boolean){
-    if(!replace)return;
-    let nextDecisions:Record<string,DuplicateDecision>={};
-    let nextStacks=createDuplicateStackWorkspace();
-    const selected:string[]=[];
+    let nextDecisions:Record<string,DuplicateDecision>=replace?{}:{...decisions};
+    let nextStacks=replace?createDuplicateStackWorkspace():stackWorkspace;
+    const selected:string[]=replace?[]:[...selectedGroups];
     for(const item of items){
       nextDecisions={...nextDecisions,...item.savedDecisions};
-      if(item.selected)selected.push(item.id);
+      if(item.selected&&!selected.includes(item.id))selected.push(item.id);
       const stackIds=item.members.filter((entry)=>item.savedDecisions[entry.asset.id]==='stack').map((entry)=>entry.asset.id);
       if(stackIds.length){nextStacks=createPendingStack(nextStacks,item.id);for(const id of stackIds)nextStacks=assignAssetToActiveStack(nextStacks,item.id,id);if(item.stackPrimaryAssetId)nextStacks=setPendingStackPrimary(nextStacks,item.stackPrimaryAssetId)}
     }
     decisions=nextDecisions;stackWorkspace=nextStacks;selectedGroups=selected;workspaceHydrated=true;
+  }
+
+  async function flushWorkspace():Promise<void>{
+    const writes:Promise<void>[]=[];
+    for(const item of groups){const timer=draftTimers.get(item.id);if(!timer)continue;clearTimeout(timer);draftTimers.delete(item.id);writes.push(libraryData.duplicates.saveDraft(item.id,groupResolution(item)))}
+    await Promise.all(writes);
+    await selectionSave;
   }
 
   function scheduleDraft(item:DuplicateGroupRecord){
@@ -129,7 +137,7 @@
   function setPage(value:number){collection.setPage(value);void refreshGroups()}
   function setPageSize(value:number){collection.setPageSize(value,total);void refreshGroups()}
   function setMode(value:ResultMode){collection.setMode(value);void refreshGroups()}
-  function setReviewFilter(value:string){reviewFilter=value as typeof reviewFilter;collection.reset();selectedGroups=[];interactionError='';void refreshGroups()}
+  function setReviewFilter(value:string){reviewFilter=value as typeof reviewFilter;collection.reset();interactionError='';void refreshGroups()}
   function openCompare(nextGroup:string,index:number){const item=groups.find((candidate)=>candidate.id===nextGroup);group=nextGroup;member=index;reference=Math.max(0,item?.members.findIndex((entry)=>entry.asset.id===item.referenceAssetId)??0);compare=true;persistSelection()}
   async function switchReference(assetId:string){if(!activeGroup)return;const updated=await libraryData.duplicates.switchReference(activeGroup.id,assetId);groups=groups.map((item)=>item.id===updated.id?updated:item);member=Math.max(0,updated.members.findIndex((entry)=>entry.asset.id===assetId));reference=0}
   function setDecision(groupId:string,assetId:string,decision:DuplicateDecision){if(!capabilities.decisions.includes(decision))return;const item=groups.find((entry)=>entry.id===groupId),wasComplete=item?groupComplete(item):false;const next={...decisions,[assetId]:decision};decisions=next;stackWorkspace=decision==='stack'?assignAssetToActiveStack(stackWorkspace,groupId,assetId):removeAssetFromPendingStack(stackWorkspace,assetId);if(item){if(!wasComplete&&groupComplete(item,next)&&!selectedGroups.includes(item.id)){selectedGroups=[...selectedGroups,item.id];persistSelection()}scheduleDraft(item)}}
@@ -153,14 +161,15 @@
     });
     if(cleared===null)for(const item of groups)if(Object.keys(groupResolution(item).decisions).length)scheduleDraft(item);
   }
-  function applyBulkPreset(decision:DuplicateDecision){if(!capabilities.decisions.includes(decision))return;const next={...decisions};let workspace=stackWorkspace;for(const item of groups)if(selectedGroups.includes(item.id)){for(const member of item.members)next[member.asset.id]=decision;workspace=decision==='stack'?assignGroupToSingleStack(workspace,item):clearGroupStacks(workspace,item.id)}decisions=next;stackWorkspace=workspace;for(const item of groups)if(selectedGroups.includes(item.id))scheduleDraft(item)}
+  async function applyBulkPreset(decision:DuplicateDecision){if(!capabilities.decisions.includes(decision)||presetApplying)return;presetApplying=true;interactionError='';try{await flushWorkspace();const scope=selectionScope==='All matching'?'all_matching':'current_page';const result=await libraryData.duplicates.applyPreset(decision,scope,groups.map((item)=>item.id));if(result.skippedGroupIds.length)interactionError=`${result.skippedGroupIds.length} invalid or unavailable duplicate group${result.skippedGroupIds.length===1?' was':'s were'} skipped.`;await refreshGroups()}catch(error){interactionError=errorMessage(error,'The duplicate preset could not be saved.')}finally{presetApplying=false}}
+  const bulkPresetDisabled=$derived(mutating||presetApplying||(selectionScope==='Current page'&&!groups.length));
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection()}
   function currentResolution(nextDecisions=decisions):DuplicateResolutionPlan{return{decisions:{...nextDecisions},stacks:resolutionStacks(stackWorkspace).filter((stack)=>stack.assetIds.every((id)=>nextDecisions[id]==='stack'))}}
   function groupResolution(item:DuplicateGroupRecord):DuplicateResolutionPlan{const ids=new Set(item.members.map((entry)=>entry.asset.id));const groupDecisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>ids.has(id))) as Record<string,DuplicateDecision>;return{decisions:groupDecisions,stacks:resolutionStacks(stackWorkspace).filter((stack)=>stack.groupId===item.id&&stack.assetIds.every((id)=>groupDecisions[id]==='stack'))}}
   function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
   function groupComplete(item:DuplicateGroupRecord,source:Readonly<Record<string,DuplicateDecision>>=decisions){return item.members.length>0&&item.members.every((entry)=>Boolean(source[entry.asset.id]))}
   function groupHasInvalidStack(item:DuplicateGroupRecord){return stacksForGroup(stackWorkspace,item.id).some((stack)=>stack.assetIds.length===1)}
-  async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{const groupIds=scope==='group'&&groupId?[groupId]:[...selectedGroups];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){interactionError=errorMessage(error,'Duplicate actions could not be prepared.')}finally{planPreparing=false}}
+  async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{await flushWorkspace();const groupIds=scope==='group'&&groupId?[groupId]:[...selectedGroups];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){interactionError=errorMessage(error,'Duplicate actions could not be prepared.')}finally{planPreparing=false}}
   function requestReviewAll(resolution=currentResolution()){interactionError='';const selected=groups.filter((item)=>selectedGroups.includes(item.id));if(!selected.length||selected.some((item)=>!groupComplete(item))){interactionError='Every selected duplicate group needs a decision for every image.';return}if(invalidStackCount){interactionError=`${invalidStackCount} pending stack${invalidStackCount===1?' has':'s have'} only one asset. Add another asset or choose Keep/Delete before applying.`;return}const selectedResolution={decisions:Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>selected.some((item)=>item.members.some((member)=>member.asset.id===id)))) as Record<string,DuplicateDecision>,stacks:resolution.stacks.filter((stack)=>selectedGroups.includes(stack.groupId))};void prepareReview('all',null,selectedResolution)}
   function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';const label=duplicateGroupTitle(item);if(!groupComplete(item)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(item))}
   async function refillAfterGroupReview(groupId:string,label:string):Promise<void>{
@@ -234,9 +243,9 @@
 </script>
 
 <V2PageLayout title="Duplicates" description="Review duplicate groups supplied by the active data source, with provider-backed discovery and decisions.">
-  {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!discoveryReady||loading||mutating} onclick={runDiscovery}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Run discovery'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||decisionCount===0||mutating} onclick={()=>requestReviewAll()}>Review actions{decisionCount?` (${decisionCount})`:''}</V2Button></V2Inline>{/snippet}
+  {#snippet headerActions()}<V2Inline gap="sm"><V2Segmented items={['Current page','All matching']} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Duplicate selection scope"/><V2Button disabled={!discoveryReady||loading||mutating} onclick={runDiscovery}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Run discovery'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||decisionCount===0||mutating} onclick={()=>requestReviewAll()}>Review actions{decisionCount?` (${decisionCount})`:''}</V2Button></V2Inline>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} ariaLabel="Duplicate sections" onselect={(value)=>{tab=value as DuplicateTab;if(tab==='Resolution history')void refreshHistory()}}/>{/snippet}
-  {#snippet context()}<V2Zone>{#if tab==='Review'}<V2Section title="Review filter"><V2Stack gap="sm"><SelectField id="duplicate-review-filter" label="Group state" value={reviewFilter} options={reviewFilterOptions} onchange={setReviewFilter}/><V2Button disabled={mutating||!groups.some((item)=>item.state==='Actionable')} onclick={()=>{selectedGroups=groups.filter((item)=>item.state==='Actionable').map((item)=>item.id);persistSelection()}}>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm">{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('keep')}>Keep all copies</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('delete')}>Mark all for deletion</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating||!selectedGroups.length} onclick={()=>applyBulkPreset('stack')}>Stack each group</V2Button>{/if}</V2Stack></V2Section>{:else if tab==='Rules & discovery'}<V2Section title="Large libraries"><V2Stack gap="sm"><span class="v2-small">Start with <b>95%</b> similarity and <b>8</b> candidates per image.</span><span class="v2-small v2-muted">Raise the candidate limit only when expected matches are missing; it has the largest effect on scan work.</span></V2Stack></V2Section>{:else}<V2Section title="History filter"><V2Stack gap="sm"><SelectField id="duplicate-history-range" label="Range" value={historyRange} options={['Last 30 days','Last 90 days','All history']} onchange={(value)=>{historyRange=value as typeof historyRange;void refreshHistory()}}/><V2Button disabled={!capabilities.canViewHistory||mutating} onclick={refreshHistory}>Refresh history</V2Button></V2Stack></V2Section>{/if}</V2Zone>{/snippet}
+  {#snippet context()}<V2Zone>{#if tab==='Review'}<V2Section title="Review filter"><V2Stack gap="sm"><SelectField id="duplicate-review-filter" label="Group state" value={reviewFilter} options={reviewFilterOptions} onchange={setReviewFilter}/><V2Button disabled={mutating||!groups.some((item)=>item.state==='Actionable')} onclick={()=>{selectedGroups=groups.filter((item)=>item.state==='Actionable').map((item)=>item.id);persistSelection()}}>Select auto-ready</V2Button></V2Stack></V2Section><V2Section title="Bulk preset"><V2Stack gap="sm">{#if capabilities.decisions.includes('keep')}<V2Button disabled={bulkPresetDisabled} onclick={()=>applyBulkPreset('keep')}>Keep all copies</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={bulkPresetDisabled} onclick={()=>applyBulkPreset('delete')}>Mark all for deletion</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={bulkPresetDisabled} onclick={()=>applyBulkPreset('stack')}>Stack each group</V2Button>{/if}</V2Stack></V2Section>{:else if tab==='Rules & discovery'}<V2Section title="Large libraries"><V2Stack gap="sm"><span class="v2-small">Start with <b>95%</b> similarity and <b>8</b> candidates per image.</span><span class="v2-small v2-muted">Raise the candidate limit only when expected matches are missing; it has the largest effect on scan work.</span></V2Stack></V2Section>{:else}<V2Section title="History filter"><V2Stack gap="sm"><SelectField id="duplicate-history-range" label="Range" value={historyRange} options={['Last 30 days','Last 90 days','All history']} onchange={(value)=>{historyRange=value as typeof historyRange;void refreshHistory()}}/><V2Button disabled={!capabilities.canViewHistory||mutating} onclick={refreshHistory}>Refresh history</V2Button></V2Stack></V2Section>{/if}</V2Zone>{/snippet}
 
   <V2Zone>
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}

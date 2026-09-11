@@ -5,7 +5,11 @@ from uuid import UUID
 
 import pytest
 
-from companion.duplicate_schema import DuplicateResolutionPlanGroup
+from companion.duplicate_schema import (
+    DuplicateResolutionPlanGroup,
+    DuplicateResolutionPlanRequest,
+    DuplicateWorkspaceSelectionDelta,
+)
 
 A = UUID("11111111-1111-4111-8111-111111111111")
 B = UUID("22222222-2222-4222-8222-222222222222")
@@ -84,3 +88,22 @@ def test_stack_follow_up_must_match_stack_decisions_and_primary() -> None:
     for payload in (missing_member, wrong_primary):
         with pytest.raises(ValueError, match="exactly match the frozen Stack decisions"):
             DuplicateResolutionPlanGroup.model_validate(payload)
+
+
+def test_workspace_backed_plan_request_can_cross_check_expected_groups() -> None:
+    request = DuplicateResolutionPlanRequest(
+        workspace_selected=True,
+        group_ids=["group-a", "group-a"],
+    )
+
+    assert request.workspace_selected is True
+    assert request.group_ids == ["group-a"]
+
+
+def test_duplicate_selection_delta_rejects_overlapping_intent() -> None:
+    with pytest.raises(ValueError, match="both added and removed"):
+        DuplicateWorkspaceSelectionDelta(
+            revision=2,
+            added_group_ids=["group-a"],
+            removed_group_ids=["group-a"],
+        )

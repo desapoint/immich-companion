@@ -52,7 +52,7 @@ type ApiSelectionRelationships={albums:Array<{id:string;name:string;selected_ass
 type ApiActionPlan={id:string;target_count:number;applicable_count:number;skipped_count:number;missing_ids:string[];stack_conflicts?:Array<{stack_id:string;selected_count:number;member_count:number;includes_unselected:boolean}>;stack_primary_asset_id?:string|null};
 type ApiActionResult={applied_ids:string[];failed_ids:string[];affected_ids?:string[]};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
-type ApiSelectionWorkspace={id:string;revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
+type ApiSelectionWorkspace={id:string;entity_kind?:'asset'|'album'|'tag';revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
 type ApiSelectionMembership={selection:ApiSelectionWorkspace;selected_ids:string[]};
 type SearchNode={kind:'condition';field:string;operator:string;value:unknown}|SearchExpression;
 type SearchExpression={kind:'group';operator:'and'|'or';negate:boolean;children:SearchNode[]};
@@ -122,7 +122,7 @@ export function assetSearchExpression(criteria:AssetSearchCriteria):SearchExpres
 
 function searchBody(query:AssetSearchQuery,page:number){return{expression:assetSearchExpression(query),sort_field:query.sort.field==='filename'?'filename':'taken_at',sort_direction:query.sort.direction,page,page_size:query.pageSize}}
 function selectionBody(target:AssetSelectionTarget){if(target.kind==='selection')return{mode:'explicit',selection_id:target.selectionId,ids:[],excluded_ids:[]};return target.kind==='ids'?{mode:'explicit',ids:[...new Set(target.ids)],excluded_ids:[]}:{mode:'all_matching',ids:[],expression:assetSearchExpression(target.criteria),excluded_ids:[...new Set(target.excludedIds)]}}
-function normalizeSelection(value:ApiSelectionWorkspace):AssetSelectionWorkspace{return{id:value.id,revision:value.revision,selectedCount:value.selected_count,status:value.status,expiresAt:value.expires_at}}
+function normalizeSelection(value:ApiSelectionWorkspace):AssetSelectionWorkspace{return{id:value.id,entityKind:value.entity_kind??'asset',revision:value.revision,selectedCount:value.selected_count,status:value.status,expiresAt:value.expires_at}}
 function normalizeAsset(asset:ApiAssetSummary):AssetRecord{return{id:asset.id,owner_id:null,library_id:asset.source.library_id,asset_type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as AssetRecord['asset_type'],original_file_name:asset.original_file_name,original_path:asset.source.original_path,original_mime_type:asset.original_mime_type,checksum:null,file_size_bytes:asset.file_size_bytes,width:asset.width,height:asset.height,duration:asset.duration,file_created_at:asset.taken_at,file_modified_at:asset.file_modified_at,local_date_time:null,immich_created_at:null,immich_updated_at:null,is_favorite:asset.is_favorite,is_archived:asset.is_archived,is_offline:asset.is_offline,is_edited:asset.is_edited,has_metadata:asset.has_metadata,visibility:asset.visibility,live_photo_video_id:asset.live_photo_video_id,tags:asset.tags.map((tag)=>({...tag,value:tag.name})),albums:asset.albums,stack:asset.stack?{id:asset.stack.id,primaryAssetId:asset.stack.primary_asset_id,assetCount:asset.stack.asset_count,assets:asset.stack.assets.map((member)=>member.id)}:null,synced_at:asset.file_modified_at}}
 function detailString(value:unknown):string|null{return typeof value==='string'&&value?value:null}
 function normalizeDetail(detail:ApiAssetDetail,summary:ApiAssetSummary|null):AssetDetailRecord{

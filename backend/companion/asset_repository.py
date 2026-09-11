@@ -1808,11 +1808,15 @@ class AssetRepository:
                 ).all()
             )
 
-    async def create_selection(self, *, ttl_seconds: int) -> SelectionSetRecord:
+    async def create_selection(
+        self, *, ttl_seconds: int, entity_kind: str = "asset"
+    ) -> SelectionSetRecord:
         """Create an empty server-owned selection set."""
 
         now = datetime.now(UTC)
-        record = SelectionSetRecord(expires_at=now + timedelta(seconds=ttl_seconds))
+        record = SelectionSetRecord(
+            entity_kind=entity_kind, expires_at=now + timedelta(seconds=ttl_seconds)
+        )
         async with self._database.sessions() as session, session.begin():
             session.add(record)
             await session.flush()
@@ -1823,6 +1827,9 @@ class AssetRepository:
             return await session.get(SelectionSetRecord, selection_id)
 
     async def selection_ids(self, selection_id: UUID) -> list[UUID]:
+        record = await self.get_selection(selection_id)
+        if record is None or record.entity_kind != "asset":
+            raise ValueError("Selection set was not found")
         async with self._database.sessions() as session:
             return list(
                 (
@@ -1835,6 +1842,11 @@ class AssetRepository:
             )
 
     async def selection_membership(self, selection_id: UUID, asset_ids: list[UUID]) -> list[UUID]:
+        record = await self.get_selection(selection_id)
+        if record is None or record.entity_kind != "asset":
+            raise ValueError("Selection set was not found")
+        if not asset_ids:
+            return []
         async with self._database.sessions() as session:
             return list(
                 (
@@ -1861,6 +1873,8 @@ class AssetRepository:
             )
             if record is None:
                 raise ValueError("Selection set was not found")
+            if record.entity_kind != "asset":
+                raise ValueError("Selection set is not an asset selection")
             if record.status != "active" or record.expires_at <= datetime.now(UTC):
                 raise ValueError("Selection set has expired")
             await session.execute(
@@ -1904,6 +1918,8 @@ class AssetRepository:
             )
             if record is None:
                 raise ValueError("Selection set was not found")
+            if record.entity_kind != "asset":
+                raise ValueError("Selection set is not an asset selection")
             if record.status != "active" or record.expires_at <= datetime.now(UTC):
                 raise ValueError("Selection set has expired")
             if record.revision != revision:

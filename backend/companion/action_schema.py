@@ -81,6 +81,7 @@ class SelectionSetView(BaseModel):
     """Reload-safe server-owned selection metadata."""
 
     id: UUID
+    entity_kind: Literal["asset", "album", "tag"] = "asset"
     revision: int
     selected_count: int
     status: Literal["active", "cancelled", "expired"]

@@ -247,6 +247,7 @@ class DuplicateResolutionPlanRequest(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     group_ids: list[str] = Field(default_factory=list, max_length=10_000)
     all_eligible: bool = False
+    workspace_selected: bool = False
     keeper_overrides: dict[str, UUID] = Field(default_factory=dict)
     action_overrides: dict[
         str,
@@ -256,8 +257,14 @@ class DuplicateResolutionPlanRequest(BaseModel):
     @model_validator(mode="after")
     def validate_selection(self) -> DuplicateResolutionPlanRequest:
         self.group_ids = list(dict.fromkeys(self.group_ids))
-        if self.all_eligible == bool(self.group_ids):
-            raise ValueError("Choose explicit duplicate groups or all eligible groups")
+        if self.all_eligible and (self.group_ids or self.workspace_selected):
+            raise ValueError(
+                "Choose explicit duplicate groups, the workspace selection, or all eligible groups"
+            )
+        if not self.all_eligible and not self.group_ids and not self.workspace_selected:
+            raise ValueError(
+                "Choose explicit duplicate groups, the workspace selection, or all eligible groups"
+            )
         return self
 
 
@@ -422,11 +429,39 @@ class DuplicateWorkspaceSelectionUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     selected_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
     active_group_id: str | None = None
+    revision: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def unique_groups(self) -> DuplicateWorkspaceSelectionUpdate:
         self.selected_group_ids = list(dict.fromkeys(self.selected_group_ids))
         return self
+
+
+class DuplicateWorkspaceSelectionDelta(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    added_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    removed_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    active_group_id: str | None = None
+    revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_delta(self) -> DuplicateWorkspaceSelectionDelta:
+        self.added_group_ids = list(dict.fromkeys(self.added_group_ids))
+        self.removed_group_ids = list(dict.fromkeys(self.removed_group_ids))
+        if set(self.added_group_ids) & set(self.removed_group_ids):
+            raise ValueError("A duplicate group cannot be both added and removed")
+        return self
+
+
+class DuplicateWorkspaceMembershipRequest(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+
+
+class DuplicateWorkspaceMembership(BaseModel):
+    revision: int
+    selected_count: int
+    selected_group_ids: list[str] = Field(default_factory=list)
 
 
 class DuplicateWorkspaceResetRequest(BaseModel):
@@ -436,6 +471,20 @@ class DuplicateWorkspaceResetRequest(BaseModel):
     @model_validator(mode="after")
     def unique_groups(self) -> DuplicateWorkspaceResetRequest:
         self.group_ids = list(dict.fromkeys(self.group_ids))
+        return self
+
+
+class DuplicateWorkspacePresetRequest(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    scope: Literal["current_page", "all_matching"] = "current_page"
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    disposition: DuplicateDraftDisposition
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> DuplicateWorkspacePresetRequest:
+        self.group_ids = list(dict.fromkeys(self.group_ids))
+        if self.scope == "current_page" and not self.group_ids:
+            raise ValueError("Current-page preset requires visible duplicate groups")
         return self
 
 
@@ -453,10 +502,14 @@ class DuplicateGroupDraft(BaseModel):
 
 class DuplicateWorkspaceState(BaseModel):
     initialized: bool = False
+    revision: int = 0
+    selected_count: int = 0
     selected_group_ids: list[str] = Field(default_factory=list)
     active_group_id: str | None = None
     stale_selected_groups: list[DuplicateWorkspaceGroupReference] = Field(default_factory=list)
     drafts: list[DuplicateGroupDraft] = Field(default_factory=list)
+    last_applied_group_ids: list[str] = Field(default_factory=list)
+    last_skipped_group_ids: list[str] = Field(default_factory=list)
 
 
 class DuplicateSimilarityReferenceRequest(BaseModel):

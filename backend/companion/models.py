@@ -616,6 +616,7 @@ class DuplicateReviewWorkspaceRecord(Base):
     __tablename__ = "duplicate_review_workspaces"
 
     workspace_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     selected_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     active_group: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -629,6 +630,9 @@ class SelectionSetRecord(Base):
     __tablename__ = "selection_sets"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    entity_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="asset", server_default="asset", index=True
+    )
     revision: Mapped[int] = mapped_column(Integer, default=0)
     selected_count: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
@@ -648,4 +652,16 @@ class SelectionSetMemberRecord(Base):
     asset_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SelectionSetKeyMemberRecord(Base):
+    """One selected non-asset UUID in a typed server-owned selection set."""
+
+    __tablename__ = "selection_set_key_members"
+
+    selection_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("selection_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    entity_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

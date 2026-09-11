@@ -88,6 +88,39 @@ class ActionRepository:
             session.add(record)
         return record
 
+    async def create_collection_delete_plan(
+        self,
+        *,
+        entity_kind: str,
+        selection_id: UUID,
+        target_ids: list[UUID],
+        applicable_ids: list[UUID],
+        skipped_ids: list[UUID],
+        target_digest: str,
+        expires_at: datetime,
+    ) -> ActionPlanRecord:
+        """Freeze one album/tag deletion preview independently of later selection edits."""
+
+        record = ActionPlanRecord(
+            action=f"delete_{entity_kind}s",
+            operation="delete_relation",
+            relation_ids=[],
+            relation_work={"entity_kind": entity_kind, "selection_id": str(selection_id)},
+            selection={"mode": "selection", "selection_id": str(selection_id)},
+            target_ids=[str(identifier) for identifier in target_ids],
+            target_digest=target_digest,
+            applicable_ids=[str(identifier) for identifier in applicable_ids],
+            skipped_ids=[str(identifier) for identifier in skipped_ids],
+            missing_ids=[],
+            destructive=True,
+            status="planned",
+            expires_at=expires_at,
+        )
+        async with self._database.sessions() as session, session.begin():
+            session.add(record)
+            await session.flush()
+        return record
+
     async def get_plan(self, plan_id: UUID) -> ActionPlanRecord | None:
         """Load one action plan without changing its state."""
 

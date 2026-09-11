@@ -1,5 +1,4 @@
 import type {
-  AssetRepository,
   AssetSearchCriteria,
   AssetSelectionTarget,
   AssetSelectionWorkspace,
@@ -15,7 +14,14 @@ const WRITE_DEBOUNCE_MS = 180;
 
 type SelectionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
-export class AssetSelectionWorkspaceController {
+export interface SelectionWorkspaceRepository<TCriteria> {
+  createSelection(): Promise<AssetSelectionWorkspace>;
+  selectAllIntoSelection(selectionId: string, criteria: TCriteria): Promise<AssetSelectionWorkspace>;
+  updateSelectionMembers(selectionId: string, ids: readonly string[], selected: boolean, revision: number): Promise<AssetSelectionWorkspace>;
+  selectionMembership(selectionId: string, ids: readonly string[]): Promise<import('../data/contracts').AssetSelectionMembership | null>;
+}
+
+export class SelectionWorkspaceController<TCriteria = AssetSearchCriteria> {
   selectionId = $state<string | null>(null);
   revision = $state<number | null>(null);
   serverSelectedCount = $state(0);
@@ -34,10 +40,11 @@ export class AssetSelectionWorkspaceController {
   private generation = 0;
 
   constructor(
-    private readonly repository: AssetRepository,
+    private readonly repository: SelectionWorkspaceRepository<TCriteria>,
     private readonly storage: SelectionStorage | null = typeof sessionStorage === 'undefined' ? null : sessionStorage,
+    private readonly storageKey = STORAGE_KEY,
   ) {
-    this.selectionId = this.storage?.getItem(STORAGE_KEY) || null;
+    this.selectionId = this.storage?.getItem(this.storageKey) || null;
   }
 
   get selectedCount(): number {
@@ -134,7 +141,7 @@ export class AssetSelectionWorkspaceController {
     await operation;
   }
 
-  async selectAll(criteria: AssetSearchCriteria, visibleIds: readonly string[], matchingTotal: number): Promise<void> {
+  async selectAll(criteria: TCriteria, visibleIds: readonly string[], matchingTotal: number): Promise<void> {
     this.cancelTimer();
     this.pending.clear();
     this.visibleSelectedIds = new Set(visibleIds);
@@ -188,7 +195,7 @@ export class AssetSelectionWorkspaceController {
     this.selectionId = null;
     this.revision = null;
     this.serverSelectedCount = 0;
-    this.storage?.removeItem(STORAGE_KEY);
+    this.storage?.removeItem(this.storageKey);
     this.applyEmptyVisible();
   }
 
@@ -205,7 +212,7 @@ export class AssetSelectionWorkspaceController {
     this.selectionId = workspace.id;
     this.revision = workspace.revision;
     this.serverSelectedCount = workspace.selectedCount;
-    this.storage?.setItem(STORAGE_KEY, workspace.id);
+    this.storage?.setItem(this.storageKey, workspace.id);
     this.error = '';
   }
 
@@ -327,6 +334,8 @@ export class AssetSelectionWorkspaceController {
     }
   }
 }
+
+export class AssetSelectionWorkspaceController extends SelectionWorkspaceController<AssetSearchCriteria> {}
 
 export function emptyWorkspaceSelection(): AssetSelectionState<string> {
   return emptyAssetSelection<string>();

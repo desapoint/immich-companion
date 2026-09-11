@@ -2,6 +2,9 @@ import type {
   AlbumRecord,
   AlbumRepository,
   AlbumSearchQuery,
+  AssetSelectionMembership,
+  AssetSelectionWorkspace,
+  CollectionDeletePlan,
   MutationResult,
   OptionSearchQuery,
   PageResult,
@@ -32,6 +35,9 @@ interface AlbumBatchDeleteResponse {
   failed: string[];
   total: number;
 }
+type ApiSelection={id:string;entity_kind:'album';revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
+type ApiMembership={selection:ApiSelection;selected_ids:string[]};
+type ApiDeletePlan={id:string;entity_kind:'album';selection_id:string;target_digest:string;target_count:number;applicable_count:number;skipped_count:number;status:CollectionDeletePlan['status'];expires_at:string;results:Array<{id:string;status:'completed'|'skipped'|'failed';reason:string|null}>};
 
 class AlbumApiError extends Error {
   constructor(public readonly status: number, message: string) {
@@ -94,6 +100,8 @@ function mutationFailure(id: string, error: unknown): MutationResult {
     failed: [{ id, reason: error instanceof Error ? error.message : 'Immich could not update this album.' }],
   };
 }
+function normalizeSelection(value:ApiSelection):AssetSelectionWorkspace{return{id:value.id,entityKind:value.entity_kind,revision:value.revision,selectedCount:value.selected_count,status:value.status,expiresAt:value.expires_at}}
+function normalizePlan(value:ApiDeletePlan):CollectionDeletePlan{return{id:value.id,entityKind:value.entity_kind,selectionId:value.selection_id,targetDigest:value.target_digest,targetCount:value.target_count,applicableCount:value.applicable_count,skippedCount:value.skipped_count,status:value.status,expiresAt:value.expires_at,results:value.results}}
 
 export function createAlbumRepository(fetcher: AlbumApiFetcher = globalThis.fetch): AlbumRepository {
   async function search(query: AlbumSearchQuery): Promise<PageResult<AlbumRecord>> {
@@ -131,6 +139,12 @@ export function createAlbumRepository(fetcher: AlbumApiFetcher = globalThis.fetc
   return {
     search,
     searchOptions,
+    async createSelection(){return normalizeSelection(await requestJson<ApiSelection>(fetcher,'/api/albums/selections',{method:'POST'}))},
+    async selectAllIntoSelection(selectionId,criteria){return normalizeSelection(await requestJson<ApiSelection>(fetcher,`/api/albums/selections/${encodeURIComponent(selectionId)}/select-all`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({query:criteria.query})}))},
+    async updateSelectionMembers(selectionId,ids,selected,revision){return normalizeSelection(await requestJson<ApiSelection>(fetcher,`/api/albums/selections/${encodeURIComponent(selectionId)}/members`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[...new Set(ids)],selected,revision})}))},
+    async selectionMembership(selectionId,ids){try{const value=await requestJson<ApiMembership>(fetcher,`/api/albums/selections/${encodeURIComponent(selectionId)}/membership`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({ids:[...new Set(ids)]})});return{selection:normalizeSelection(value.selection),selectedIds:value.selected_ids} satisfies AssetSelectionMembership}catch(error){if(error instanceof AlbumApiError&&error.status===404)return null;throw error}},
+    async planDelete(selectionId){return normalizePlan(await requestJson<ApiDeletePlan>(fetcher,'/api/albums/actions/delete/plan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({selection_id:selectionId})}))},
+    async executeDelete(planId){return normalizePlan(await requestJson<ApiDeletePlan>(fetcher,'/api/albums/actions/delete/execute',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({plan_id:planId})}))},
     async getById(id) {
       try {
         return normalizeAlbum(await requestJson<AlbumManagementItem>(fetcher, `/api/albums/manage/${encodeURIComponent(id)}`));

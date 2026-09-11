@@ -45,7 +45,11 @@ from companion.duplicate_schema import (
     DuplicateSimilarityEvidence,
     DuplicateSimilarityReferenceRequest,
     DuplicateWorkspaceGroupReference,
+    DuplicateWorkspaceMembership,
+    DuplicateWorkspaceMembershipRequest,
+    DuplicateWorkspacePresetRequest,
     DuplicateWorkspaceResetRequest,
+    DuplicateWorkspaceSelectionDelta,
     DuplicateWorkspaceSelectionUpdate,
     DuplicateWorkspaceState,
     ExactDuplicateGroup,
@@ -1228,6 +1232,8 @@ class CrossSourceDuplicateService:
                 )
         return DuplicateWorkspaceState(
             initialized=workspace is not None,
+            revision=int(getattr(workspace, "revision", 0) or 0),
+            selected_count=len(selected_ids),
             selected_group_ids=selected_ids,
             active_group_id=active_group_id,
             stale_selected_groups=stale_selected,
@@ -1267,8 +1273,44 @@ class CrossSourceDuplicateService:
                 if request.active_group_id is not None
                 else None
             ),
+            revision=request.revision,
         )
         return await self.workspace(request.options)
+
+    async def update_workspace_selection(
+        self, request: DuplicateWorkspaceSelectionDelta
+    ) -> DuplicateWorkspaceState:
+        current = await self.workspace(request.options)
+        if current.revision != request.revision:
+            raise ActionPlanConflictError(
+                "Duplicate workspace changed; reload its membership"
+            )
+        selected = set(current.selected_group_ids)
+        selected.difference_update(request.removed_group_ids)
+        selected.update(request.added_group_ids)
+        return await self.save_workspace_selection(
+            DuplicateWorkspaceSelectionUpdate(
+                options=request.options,
+                selected_group_ids=sorted(selected),
+                active_group_id=request.active_group_id,
+                revision=request.revision,
+            )
+        )
+
+    async def workspace_membership(
+        self, request: DuplicateWorkspaceMembershipRequest
+    ) -> DuplicateWorkspaceMembership:
+        current = await self.workspace(request.options)
+        requested = set(request.group_ids)
+        return DuplicateWorkspaceMembership(
+            revision=current.revision,
+            selected_count=current.selected_count,
+            selected_group_ids=[
+                group_id
+                for group_id in current.selected_group_ids
+                if group_id in requested
+            ],
+        )
 
     async def apply_rules(
         self,
@@ -1388,6 +1430,78 @@ class CrossSourceDuplicateService:
             )
         )
 
+    async def apply_workspace_preset(
+        self, request: DuplicateWorkspacePresetRequest
+    ) -> DuplicateWorkspaceState:
+        """Persist a complete preset for a page or the backend-resolved result set."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        result = await self.result(request.options)
+        requested = set(request.group_ids)
+        targets = [
+            group
+            for group in result.groups
+            if request.scope == "all_matching" or group.group_id in requested
+        ]
+        applied: list[str] = []
+        skipped: list[str] = []
+        for group in targets:
+            invalid = (
+                not group.members
+                or (request.disposition == "delete" and not group.eligible)
+                or (
+                    request.disposition in {"delete", "stack"}
+                    and any(member.is_offline for member in group.members)
+                )
+                or (request.disposition == "stack" and len(group.members) < 2)
+            )
+            if invalid:
+                skipped.append(group.group_id)
+                continue
+            primary = group.effective_primary_asset_id or group.keeper_asset_id
+            member_ids = {member.id for member in group.members}
+            if primary not in member_ids:
+                primary = group.members[0].id
+            await self._reviews.save_draft(
+                discovery_source=group.discovery_source,
+                provider_group_id=group.provider_group_id or group.group_id,
+                stable_group_key=group.stable_group_key,
+                member_set_key=group.member_set_key,
+                member_fingerprint=group.member_fingerprint,
+                member_decisions=[
+                    {
+                        "asset_id": str(member.id),
+                        "disposition": request.disposition,
+                        "source": "manual",
+                        "status": "pending",
+                    }
+                    for member in group.members
+                ],
+                stack_primary_asset_id=primary if request.disposition == "stack" else None,
+                stack_resolution="move_selected",
+                metadata_keeper_asset_id=None,
+                draft_status="completed",
+            )
+            applied.append(group.group_id)
+        workspace = await self.workspace(request.options)
+        updated = await self.save_workspace_selection(
+            DuplicateWorkspaceSelectionUpdate(
+                options=request.options,
+                selected_group_ids=list(
+                    dict.fromkeys([*workspace.selected_group_ids, *applied])
+                ),
+                active_group_id=workspace.active_group_id,
+                revision=workspace.revision,
+            )
+        )
+        return updated.model_copy(
+            update={
+                "last_applied_group_ids": applied,
+                "last_skipped_group_ids": skipped,
+            }
+        )
+
     async def save_group_draft(
         self,
         request: DuplicateGroupDraftUpdate,
@@ -1492,15 +1606,22 @@ class CrossSourceDuplicateService:
 
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
         result = await self.result(request.options)
+        requested_group_ids = request.group_ids
+        if request.workspace_selected:
+            requested_group_ids = (await self.workspace(request.options)).selected_group_ids
+            if request.group_ids and set(request.group_ids) != set(requested_group_ids):
+                raise ActionPlanConflictError(
+                    "The duplicate workspace selection changed before planning"
+                )
         selected = (
             [group for group in result.groups if group.auto_resolvable]
             if request.all_eligible
-            else [group for group in result.groups if group.group_id in request.group_ids]
+            else [group for group in result.groups if group.group_id in requested_group_ids]
         )
         if not selected:
             raise ValueError("No duplicate groups were selected")
         if not request.all_eligible and {group.group_id for group in selected} != set(
-            request.group_ids
+            requested_group_ids
         ):
             raise ActionPlanConflictError("A selected duplicate group is no longer available")
         review_records: dict[tuple[str, str], object] = {}

@@ -207,6 +207,7 @@ class DuplicateReviewRepository:
                 or active_group.get("group_id") in consumed_legacy_ids
             ):
                 record.active_group = None
+            record.revision += 1
             record.updated_at = datetime.now(UTC)
 
     async def get_workspace(self) -> DuplicateReviewWorkspaceRecord | None:
@@ -218,21 +219,30 @@ class DuplicateReviewRepository:
         *,
         selected_groups: list[dict[str, str]],
         active_group: dict[str, str] | None,
+        revision: int | None = None,
     ) -> DuplicateReviewWorkspaceRecord:
-        values = {
-            "workspace_key": WORKSPACE_KEY,
-            "selected_groups": selected_groups,
-            "active_group": active_group,
-            "updated_at": datetime.now(UTC),
-        }
         async with self._database.sessions() as session, session.begin():
-            statement = insert(DuplicateReviewWorkspaceRecord).values(values)
-            await session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[DuplicateReviewWorkspaceRecord.workspace_key],
-                    set_={key: getattr(statement.excluded, key) for key in values},
-                )
+            record = await session.scalar(
+                select(DuplicateReviewWorkspaceRecord)
+                .where(DuplicateReviewWorkspaceRecord.workspace_key == WORKSPACE_KEY)
+                .with_for_update()
             )
-        record = await self.get_workspace()
-        assert record is not None
+            if record is None:
+                if revision not in {None, 0}:
+                    raise ValueError("Duplicate workspace changed; reload its membership")
+                record = DuplicateReviewWorkspaceRecord(
+                    workspace_key=WORKSPACE_KEY,
+                    revision=1,
+                    selected_groups=selected_groups,
+                    active_group=active_group,
+                )
+                session.add(record)
+            else:
+                if revision is not None and record.revision != revision:
+                    raise ValueError("Duplicate workspace changed; reload its membership")
+                record.selected_groups = selected_groups
+                record.active_group = active_group
+                record.revision += 1
+                record.updated_at = datetime.now(UTC)
+            await session.flush()
         return record

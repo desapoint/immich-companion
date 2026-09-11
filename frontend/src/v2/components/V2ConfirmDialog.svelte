@@ -11,6 +11,7 @@
     title,
     message,
     confirmLabel,
+    cancelLabel = 'Cancel',
     icon = 'check',
     children,
     detail,
@@ -23,6 +24,7 @@
     title: string;
     message?: string;
     confirmLabel: string;
+    cancelLabel?: string;
     icon?: IconName;
     children?: Snippet;
     detail?: Snippet;
@@ -56,7 +58,7 @@
   </div>
 
   {#snippet footer()}
-    <V2Button disabled={pending} onclick={requestClose}>Cancel</V2Button>
+    <V2Button disabled={pending} onclick={requestClose}>{cancelLabel}</V2Button>
     <V2Button
       variant={destructive ? 'danger' : 'primary'}
       disabled={pending || confirmDisabled}
