@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import tracemalloc
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -139,8 +139,13 @@ class AssetSyncTaskHandler:
     lane_key = "asset_sync"
     max_concurrency = 1
 
-    def __init__(self, service: AssetSyncService) -> None:
+    def __init__(
+        self,
+        service: AssetSyncService,
+        after_success: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
         self._service = service
+        self._after_success = after_success
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         service = self._service
@@ -216,6 +221,8 @@ class AssetSyncTaskHandler:
             generation=run.generation,
             watermark=run.window_end,
         )
+        if self._after_success is not None:
+            await self._after_success()
         return TaskResult(
             summary={"mode": run.mode, "generation": run.generation}, counters=counters
         )
@@ -1465,7 +1472,9 @@ class AssetSyncService:
             for asset in batch
         ]
         created, updated, unchanged = await self._assets.upsert_asset_batch(
-            lightweight_batch, run.generation
+            lightweight_batch,
+            run.generation,
+            track_similarity_changes=run.mode == "incremental",
         )
         counters["assets_seen"] += created + updated + unchanged
         counters["assets_created"] += created

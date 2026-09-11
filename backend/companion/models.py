@@ -205,6 +205,19 @@ class AssetSimilarityEdgeRecord(Base):
     )
 
 
+class SimilarityAssetChangeRecord(Base):
+    """Coalesced durable similarity work produced by authoritative asset sync."""
+
+    __tablename__ = "similarity_asset_changes"
+
+    asset_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enqueued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class SimilarityScanRecord(Base):
     """One versioned whole-library similarity discovery run."""
 

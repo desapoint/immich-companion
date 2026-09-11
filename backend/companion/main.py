@@ -131,6 +131,11 @@ from companion.relation_schema import (
     TagManagementItem,
     TagUpdateRequest,
 )
+from companion.similarity_maintenance import (
+    SimilarityMaintenanceRepository,
+    SimilarityMaintenanceService,
+    SimilarityMaintenanceTaskHandler,
+)
 from companion.similarity_repository import SimilarityRepository
 from companion.similarity_scan_repository import SimilarityScanRepository
 from companion.similarity_scan_service import (
@@ -169,6 +174,9 @@ def create_app(
     similarity_repository = SimilarityRepository(database) if database is not None else None
     similarity_scan_repository = (
         SimilarityScanRepository(database) if database is not None else None
+    )
+    similarity_maintenance_repository = (
+        SimilarityMaintenanceRepository(database) if database is not None else None
     )
     action_repository = ActionRepository(database) if database is not None else None
     duplicate_review_repository = (
@@ -210,7 +218,6 @@ def create_app(
             AssetSyncTaskHandler,
         )
 
-        task_coordinator.register_handler(AssetSyncTaskHandler(asset_sync))
         task_coordinator.register_handler(AssetRepairTaskHandler(asset_sync))
         task_coordinator.register_handler(AssetSelectionSyncTaskHandler(asset_sync))
         task_coordinator.register_handler(AssetRelationRepairTaskHandler(asset_sync))
@@ -340,6 +347,37 @@ def create_app(
             )
         )
 
+    similarity_maintenance_service = (
+        SimilarityMaintenanceService(task_coordinator, similarity_maintenance_repository)
+        if task_coordinator is not None and similarity_maintenance_repository is not None
+        else None
+    )
+    if (
+        task_coordinator is not None
+        and asset_sync is not None
+        and similarity_maintenance_service is not None
+        and similarity_maintenance_repository is not None
+        and integrity_handler is not None
+        and integrity_repository is not None
+        and similarity_repository is not None
+        and similarity_scan_repository is not None
+    ):
+        task_coordinator.register_handler(
+            SimilarityMaintenanceTaskHandler(
+                similarity_maintenance_repository,
+                integrity_handler,
+                integrity_repository,
+                similarity_repository,
+                similarity_scan_repository,
+            )
+        )
+        task_coordinator.register_handler(
+            AssetSyncTaskHandler(
+                asset_sync,
+                after_success=similarity_maintenance_service.start_if_pending,
+            )
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if database is not None:
@@ -350,6 +388,8 @@ def create_app(
                 reason="Asset sync does not resume automatically on container startup.",
             )
             await task_coordinator.start()
+            if similarity_maintenance_service is not None:
+                await similarity_maintenance_service.start_if_pending()
         try:
             yield
         finally:

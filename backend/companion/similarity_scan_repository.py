@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
@@ -258,6 +258,78 @@ class SimilarityScanRepository:
             match_count=record.match_count,
             completed_at=record.completed_at,
         )
+
+    async def latest_completed_parameters(
+        self,
+    ) -> tuple[UUID, SimilarityScanParameters] | None:
+        """Return the active Appearance generation without loading its pair snapshot."""
+
+        statement = (
+            select(SimilarityScanRecord)
+            .where(SimilarityScanRecord.status == "completed")
+            .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
+            .limit(1)
+        )
+        async with self._database.sessions() as session:
+            record = await session.scalar(statement)
+        if record is None:
+            return None
+        return record.id, self._parameters(record)
+
+    async def replace_asset_pairs(
+        self,
+        scan_id: UUID,
+        asset_id: UUID,
+        pairs: list[SimilarityScanPair],
+        *,
+        asset_count: int,
+    ) -> None:
+        """Replace only pairs incident to one changed asset in the active generation."""
+
+        normalized = normalize_scan_pairs(pairs)
+        values = [
+            {
+                "scan_id": scan_id,
+                "asset_id_low": pair.asset_id_low,
+                "asset_id_high": pair.asset_id_high,
+                "asset_low_source_sha256": pair.asset_low_source_sha256,
+                "asset_high_source_sha256": pair.asset_high_source_sha256,
+                "similarity_percent": pair.evidence.similarity_percent,
+                "structural_percent": pair.evidence.structural_percent,
+                "perceptual_percent": pair.evidence.perceptual_percent,
+                "color_percent": pair.evidence.color_percent,
+                "normalized_luminance_mae": pair.evidence.normalized_luminance_mae,
+                "normalized_luminance_rmse": pair.evidence.normalized_luminance_rmse,
+                "normalized_luminance_ssim": pair.evidence.normalized_luminance_ssim,
+                "aspect_ratio_difference": pair.evidence.aspect_ratio_difference,
+                "dimensions_equal": pair.evidence.dimensions_equal,
+                "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
+                "exact_pixel_match": pair.evidence.exact_pixel_match,
+            }
+            for pair in normalized
+        ]
+        async with self._database.sessions() as session, session.begin():
+            record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
+            if record is None or record.status != "completed":
+                return
+            await session.execute(
+                delete(SimilarityScanPairRecord).where(
+                    SimilarityScanPairRecord.scan_id == scan_id,
+                    or_(
+                        SimilarityScanPairRecord.asset_id_low == asset_id,
+                        SimilarityScanPairRecord.asset_id_high == asset_id,
+                    ),
+                )
+            )
+            if values:
+                await session.execute(insert(SimilarityScanPairRecord), values)
+            match_count = await session.scalar(
+                select(func.count())
+                .select_from(SimilarityScanPairRecord)
+                .where(SimilarityScanPairRecord.scan_id == scan_id)
+            )
+            record.asset_count = asset_count
+            record.match_count = int(match_count or 0)
 
     async def completed_summary(self, scan_id: UUID) -> SimilarityScanRunSummary | None:
         async with self._database.sessions() as session:

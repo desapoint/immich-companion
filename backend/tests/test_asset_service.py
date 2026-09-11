@@ -154,7 +154,9 @@ class FakeAssetRepository:
         self.calls.append("tag_catalog")
         return len(tags), 0
 
-    async def upsert_asset_batch(self, assets, _generation):
+    async def upsert_asset_batch(
+        self, assets, _generation, *, track_similarity_changes=True
+    ):
         self.calls.append("assets")
         self.asset_batch_sizes.append(len(assets))
         self.assets.extend(assets)

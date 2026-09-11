@@ -62,11 +62,36 @@ from companion.models import (
     AssetRecord,
     SelectionSetMemberRecord,
     SelectionSetRecord,
+    SimilarityAssetChangeRecord,
     TagAssetRecord,
     TagRecord,
 )
 
 ASPECT_RATIO_RELATIVE_TOLERANCE = 0.001
+
+
+def similarity_upsert_changes(
+    assets: Sequence[ImmichAsset],
+    existing: dict[UUID, tuple[str | None, int, int | None, datetime]],
+) -> list[tuple[UUID, str, str | None]]:
+    """Return only image changes that can invalidate content-derived evidence."""
+
+    return [
+        (
+            asset.id,
+            "upsert",
+            hashlib.sha256(
+                f"{asset.file_size_bytes}:{asset.file_modified_at.isoformat()}".encode()
+            ).hexdigest(),
+        )
+        for asset in assets
+        if asset.asset_type == "IMAGE"
+        and (
+            asset.id not in existing
+            or existing[asset.id][2] != asset.file_size_bytes
+            or existing[asset.id][3] != asset.file_modified_at
+        )
+    ]
 
 
 class SyncValidationError(RuntimeError):
@@ -78,6 +103,37 @@ class AssetRepository:
 
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
+
+    @staticmethod
+    async def _queue_similarity_changes(
+        session,
+        changes: list[tuple[UUID, str, str | None]],
+    ) -> None:
+        """Coalesce asset changes in the same transaction as synchronized metadata."""
+
+        if not changes:
+            return
+        enqueued_at = datetime.now(UTC)
+        values = [
+            {
+                "asset_id": asset_id,
+                "operation": operation,
+                "source_fingerprint": source_fingerprint,
+                "enqueued_at": enqueued_at,
+            }
+            for asset_id, operation, source_fingerprint in changes
+        ]
+        statement = insert(SimilarityAssetChangeRecord).values(values)
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[SimilarityAssetChangeRecord.asset_id],
+                set_={
+                    "operation": statement.excluded.operation,
+                    "source_fingerprint": statement.excluded.source_fingerprint,
+                    "enqueued_at": statement.excluded.enqueued_at,
+                },
+            )
+        )
 
     @staticmethod
     def _immich_asset(record: AssetRecord) -> ImmichAsset:
@@ -414,6 +470,8 @@ class AssetRepository:
         self,
         assets: list[ImmichAsset],
         generation: int,
+        *,
+        track_similarity_changes: bool = True,
     ) -> tuple[int, int, int]:
         """Commit active assets and evict any trashed API payloads."""
 
@@ -440,13 +498,15 @@ class AssetRepository:
             )
         async with self._database.sessions() as session, session.begin():
             existing = {
-                identifier: (fingerprint, previous_generation)
-                for identifier, fingerprint, previous_generation in (
+                identifier: (fingerprint, previous_generation, file_size, modified_at)
+                for identifier, fingerprint, previous_generation, file_size, modified_at in (
                     await session.execute(
                         select(
                             AssetRecord.id,
                             AssetRecord.sync_fingerprint,
                             AssetRecord.sync_generation,
+                            AssetRecord.file_size_bytes,
+                            AssetRecord.file_modified_at,
                         ).where(AssetRecord.id.in_([asset.id for asset in assets]))
                     )
                 )
@@ -473,6 +533,11 @@ class AssetRepository:
                     set_=update_columns,
                 )
             )
+            if track_similarity_changes:
+                await self._queue_similarity_changes(
+                    session,
+                    similarity_upsert_changes(assets, existing),
+                )
         created = len(rows) - len(existing)
         changed = 0
         unchanged = 0
@@ -507,6 +572,16 @@ class AssetRepository:
         if asset.file_size_bytes is None:
             update_values.pop("file_size_bytes", None)
         async with self._database.sessions() as session, session.begin():
+            previous = (
+                await session.execute(
+                    select(
+                        AssetRecord.sync_fingerprint,
+                        AssetRecord.sync_generation,
+                        AssetRecord.file_size_bytes,
+                        AssetRecord.file_modified_at,
+                    ).where(AssetRecord.id == asset.id)
+                )
+            ).one_or_none()
             await session.execute(
                 insert(AssetRecord)
                 .values(insert_values)
@@ -515,6 +590,15 @@ class AssetRepository:
                     set_=update_values,
                 )
             )
+            changes = similarity_upsert_changes(
+                [asset],
+                {asset.id: tuple(previous)} if previous is not None else {},
+            )
+            if changes:
+                await self._queue_similarity_changes(
+                    session,
+                    changes,
+                )
 
     async def replace_asset_stack_snapshots(
         self,
@@ -582,9 +666,14 @@ class AssetRepository:
         if not asset_ids:
             return 0
 
+        unique_ids = list(dict.fromkeys(asset_ids))
         async with self._database.sessions() as session, session.begin():
+            await self._queue_similarity_changes(
+                session,
+                [(asset_id, "delete", None) for asset_id in unique_ids],
+            )
             result = await session.execute(
-                delete(AssetRecord).where(AssetRecord.id.in_(list(dict.fromkeys(asset_ids))))
+                delete(AssetRecord).where(AssetRecord.id.in_(unique_ids))
             )
             return int(result.rowcount or 0)
 
@@ -1055,6 +1144,10 @@ class AssetRepository:
                 )
                 if not identifiers:
                     return removed
+                await self._queue_similarity_changes(
+                    session,
+                    [(identifier, "delete", None) for identifier in identifiers],
+                )
                 result = await session.execute(
                     delete(AssetRecord).where(AssetRecord.id.in_(identifiers))
                 )
@@ -1106,6 +1199,11 @@ class AssetRepository:
                 )
                 if not identifiers:
                     return removed
+                if model is AssetRecord:
+                    await self._queue_similarity_changes(
+                        session,
+                        [(identifier, "delete", None) for identifier in identifiers],
+                    )
                 result = await session.execute(
                     delete(model).where(identifier_column.in_(identifiers))
                 )

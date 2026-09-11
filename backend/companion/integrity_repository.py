@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
@@ -241,6 +242,70 @@ class IntegrityRepository:
         )
         async with self._database.sessions() as session:
             return list((await session.scalars(statement)).all())
+
+    async def iter_current_similarity_features(
+        self,
+        *,
+        batch_size: int = 1_000,
+    ) -> AsyncIterator[list[AssetSimilarityFeatureRecord]]:
+        """Yield current compact features in bounded keyset pages."""
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        after: UUID | None = None
+        while True:
+            statement = (
+                select(AssetSimilarityFeatureRecord)
+                .join(AssetRecord, AssetRecord.id == AssetSimilarityFeatureRecord.asset_id)
+                .where(
+                    AssetRecord.asset_type == "IMAGE",
+                    AssetRecord.is_trashed.is_(False),
+                    AssetRecord.is_offline.is_(False),
+                    AssetRecord.file_size_bytes.is_not(None),
+                    AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
+                    AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                    AssetSimilarityFeatureRecord.source_file_modified_at
+                    == AssetRecord.file_modified_at,
+                    AssetSimilarityFeatureRecord.source_file_size_bytes
+                    == AssetRecord.file_size_bytes,
+                    *(
+                        [AssetSimilarityFeatureRecord.asset_id > after]
+                        if after is not None
+                        else []
+                    ),
+                )
+                .order_by(AssetSimilarityFeatureRecord.asset_id)
+                .limit(batch_size)
+            )
+            async with self._database.sessions() as session:
+                page = list((await session.scalars(statement)).all())
+            if not page:
+                return
+            yield page
+            after = page[-1].asset_id
+
+    async def count_current_similarity_features(self) -> int:
+        """Count the current active Appearance generation in the database."""
+
+        statement = (
+            select(func.count())
+            .select_from(AssetSimilarityFeatureRecord)
+            .join(AssetRecord, AssetRecord.id == AssetSimilarityFeatureRecord.asset_id)
+            .where(
+                AssetRecord.asset_type == "IMAGE",
+                AssetRecord.is_trashed.is_(False),
+                AssetRecord.is_offline.is_(False),
+                AssetRecord.file_size_bytes.is_not(None),
+                AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
+                AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetSimilarityFeatureRecord.source_file_modified_at
+                == AssetRecord.file_modified_at,
+                AssetSimilarityFeatureRecord.source_file_size_bytes
+                == AssetRecord.file_size_bytes,
+            )
+        )
+        async with self._database.sessions() as session:
+            return int(await session.scalar(statement) or 0)
 
     async def save(
         self,
