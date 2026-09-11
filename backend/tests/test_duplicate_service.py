@@ -33,6 +33,7 @@ from companion.immich import ImmichApiError, ImmichAsset, ImmichDuplicateGroup
 from companion.integrity import ANALYZER_VERSION
 from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
+    SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
 )
@@ -143,6 +144,7 @@ def feature(identifier: UUID, *, digest: str | None = None) -> AssetSimilarityFe
         asset_id=identifier,
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
+        config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
         source_file_modified_at=MODIFIED,
         source_file_size_bytes=4,
         source_sha256=digest or str(identifier).replace("-", "") * 2,

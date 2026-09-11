@@ -237,10 +237,57 @@ class SimilarityScanSummary(BaseModel):
     model_version: str
     feature_version: int
     comparison_version: int
+    config_fingerprint: str
     asset_count: int
     candidate_count: int
     match_count: int
     completed_at: datetime
+
+
+class SimilarityDiskCacheStatus(BaseModel):
+    path: str
+    healthy: bool
+    used_bytes: int
+    max_bytes: int
+    free_bytes: int
+    entry_count: int
+    hits: int
+    misses: int
+    evictions: int
+    cleanup_failures: int
+
+
+class SimilarityCacheStatus(BaseModel):
+    config_fingerprint: str
+    feature_count: int
+    feature_estimated_bytes: int
+    pair_count: int
+    pair_estimated_bytes: int
+    pair_max_bytes: int
+    pair_hits: int
+    pair_misses: int
+    pair_evictions: int
+    hot_count: int
+    hot_estimated_bytes: int
+    hot_max_bytes: int
+    hot_hits: int
+    hot_misses: int
+    hot_evictions: int
+    reference_latency_p50_ms: float | None
+    reference_latency_p95_ms: float | None
+    previews: SimilarityDiskCacheStatus
+    decode: SimilarityDiskCacheStatus
+    generated_at: datetime
+
+
+class SimilarityCacheClearRequest(BaseModel):
+    cache: Literal["previews", "pairs", "decode", "hot"]
+
+
+class SimilarityCacheClearResult(BaseModel):
+    cache: Literal["previews", "pairs", "decode", "hot"]
+    removed_count: int
+    status: SimilarityCacheStatus
 
 
 class DuplicateResolutionPlanRequest(BaseModel):

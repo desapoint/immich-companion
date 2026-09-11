@@ -6,6 +6,7 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlsplit
@@ -96,6 +97,10 @@ from companion.duplicate_schema import (
     DuplicateWorkspaceSelectionUpdate,
     DuplicateWorkspaceState,
     ExactDuplicateGroup,
+    SimilarityCacheClearRequest,
+    SimilarityCacheClearResult,
+    SimilarityCacheStatus,
+    SimilarityDiskCacheStatus,
     SimilarityScanRequest,
     SimilarityScanSummary,
     SimilarityScanTaskStart,
@@ -143,6 +148,7 @@ from companion.relation_schema import (
     TagUpdateRequest,
 )
 from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
+from companion.similarity_cache import CachedPreview, SimilarityCacheManager
 from companion.similarity_maintenance import (
     SimilarityMaintenanceRepository,
     SimilarityMaintenanceService,
@@ -175,6 +181,12 @@ def create_app(
 
     runtime_settings = settings or get_settings()
     immich = ImmichApiClient(runtime_settings, transport=immich_transport)
+    similarity_cache = SimilarityCacheManager(
+        runtime_settings.similarity_cache_dir,
+        preview_max_bytes=runtime_settings.similarity_preview_cache_max_bytes,
+        preview_max_age_seconds=runtime_settings.similarity_preview_cache_max_age_seconds,
+        decode_max_bytes=runtime_settings.similarity_decode_cache_max_bytes,
+    )
     database_health = PostgresHealthClient(runtime_settings)
     database = (
         DatabaseManager(runtime_settings)
@@ -183,7 +195,15 @@ def create_app(
     )
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
-    similarity_repository = SimilarityRepository(database) if database is not None else None
+    similarity_repository = (
+        SimilarityRepository(
+            database,
+            pair_max_bytes=runtime_settings.similarity_pair_cache_max_bytes,
+            hot_max_bytes=runtime_settings.similarity_hot_cache_max_bytes,
+        )
+        if database is not None
+        else None
+    )
     similarity_scan_repository = (
         SimilarityScanRepository(database) if database is not None else None
     )
@@ -288,7 +308,13 @@ def create_app(
         else None
     )
     integrity_handler = (
-        IntegrityTaskHandler(immich, asset_repository, integrity_repository)
+        IntegrityTaskHandler(
+            immich,
+            asset_repository,
+            integrity_repository,
+            decode_cache_path=similarity_cache.decode_path,
+            decode_cache_max_bytes=runtime_settings.similarity_decode_cache_max_bytes,
+        )
         if asset_repository is not None and integrity_repository is not None
         else None
     )
@@ -577,6 +603,23 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return similarity_scan_service
+
+    def require_similarity_repository() -> SimilarityRepository:
+        if similarity_repository is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return similarity_repository
+
+    async def build_similarity_cache_status() -> SimilarityCacheStatus:
+        cache = await require_similarity_repository().cache_status()
+        return SimilarityCacheStatus(
+            **cache,
+            previews=SimilarityDiskCacheStatus(**asdict(similarity_cache.preview.status())),
+            decode=SimilarityDiskCacheStatus(**asdict(similarity_cache.decode_status())),
+            generated_at=datetime.now(UTC),
+        )
 
     def map_action_error(error: RuntimeError) -> HTTPException:
         if isinstance(error, ActionPlanNotFoundError):
@@ -1721,6 +1764,32 @@ def create_app(
     async def latest_similarity_scan() -> SimilarityScanSummary | None:
         return await require_similarity_scan_service().latest()
 
+    @app.get(
+        "/api/assets/duplicates/cache",
+        response_model=SimilarityCacheStatus,
+    )
+    async def similarity_cache_status() -> SimilarityCacheStatus:
+        return await build_similarity_cache_status()
+
+    @app.post(
+        "/api/assets/duplicates/cache/clear",
+        response_model=SimilarityCacheClearResult,
+    )
+    async def clear_similarity_cache(
+        request: SimilarityCacheClearRequest,
+    ) -> SimilarityCacheClearResult:
+        if request.cache == "previews":
+            removed = await asyncio.to_thread(similarity_cache.preview.clear)
+        elif request.cache == "decode":
+            removed = await asyncio.to_thread(similarity_cache.clear_decode)
+        else:
+            removed = await require_similarity_repository().clear_cache(request.cache)
+        return SimilarityCacheClearResult(
+            cache=request.cache,
+            removed_count=removed,
+            status=await build_similarity_cache_status(),
+        )
+
     @app.put(
         "/api/assets/duplicates/cross-source/review",
         response_model=ExactDuplicateGroup,
@@ -2018,13 +2087,49 @@ def create_app(
         asset_id: UUID,
         size: Literal["thumbnail", "preview", "fullsize"] = "thumbnail",
     ) -> Response:
+        cache_key: str | None = None
+        if size != "fullsize" and asset_repository is not None:
+            synchronized = await asset_repository.get_immich_assets([asset_id])
+            source = synchronized.get(asset_id)
+            if source is not None:
+                source_fingerprint = (
+                    f"{source.file_modified_at.isoformat()}:{source.file_size_bytes}"
+                )
+                cache_key = f"{asset_id}:{size}:{source_fingerprint}"
+        if cache_key is not None:
+            cached = await asyncio.to_thread(similarity_cache.preview.get, cache_key)
+            if cached is not None:
+                headers = {
+                    "Cache-Control": cached.cache_control or "private, max-age=300",
+                    "X-Content-Type-Options": "nosniff",
+                    "X-Companion-Cache": "hit",
+                }
+                if cached.etag:
+                    headers["ETag"] = cached.etag
+                return Response(
+                    content=cached.content,
+                    media_type=cached.media_type,
+                    headers=headers,
+                )
         try:
             media = await immich.get_thumbnail(asset_id, size=size)
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+        if cache_key is not None:
+            await asyncio.to_thread(
+                similarity_cache.preview.put,
+                cache_key,
+                CachedPreview(
+                    content=media.content,
+                    media_type=media.media_type,
+                    etag=media.etag,
+                    cache_control=media.cache_control,
+                ),
+            )
         headers = {
             "Cache-Control": media.cache_control or "private, max-age=300",
             "X-Content-Type-Options": "nosniff",
+            "X-Companion-Cache": "miss" if cache_key is not None else "bypass",
         }
         if media.etag:
             headers["ETag"] = media.etag

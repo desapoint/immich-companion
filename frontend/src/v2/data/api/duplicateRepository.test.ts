@@ -328,4 +328,19 @@ describe('live V2 duplicate repository', () => {
     expect(progress).toEqual([25,98,99]);
   });
 
+  it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{
+    const disk={path:'/cache/previews',healthy:true,used_bytes:12,max_bytes:1024,free_bytes:2048,entry_count:2,hits:3,misses:1,evictions:0,cleanup_failures:0};
+    const raw={config_fingerprint:'abcdef0123456789',feature_count:7,feature_estimated_bytes:7168,pair_count:4,pair_estimated_bytes:2048,pair_max_bytes:4096,pair_hits:5,pair_misses:2,pair_evictions:1,hot_count:2,hot_estimated_bytes:2048,hot_max_bytes:8192,hot_hits:3,hot_misses:1,hot_evictions:0,reference_latency_p50_ms:1.2,reference_latency_p95_ms:2.4,previews:disk,decode:{...disk,path:'/cache/decode',entry_count:0},generated_at:'2026-09-11T00:00:00Z'};
+    const calls:Array<{path:string;body:unknown}>=[];
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{const path=String(input);calls.push({path,body:init?.body?JSON.parse(String(init.body)):null});return path.endsWith('/clear')?response({cache:'pairs',removed_count:4,status:raw}):response(raw)}));
+    const repository=createDuplicateRepository(tasks());
+
+    const initial=await repository.cacheStatus();
+    const cleared=await repository.clearCache('pairs');
+
+    expect(initial).toMatchObject({featureCount:7,pairCount:4,previews:{usedBytes:12},referenceLatencyP95Ms:2.4});
+    expect(cleared?.hotCount).toBe(2);
+    expect(calls.at(-1)).toEqual({path:'/api/assets/duplicates/cache/clear',body:{cache:'pairs'}});
+  });
+
 });

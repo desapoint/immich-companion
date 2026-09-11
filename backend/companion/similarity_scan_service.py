@@ -18,7 +18,11 @@ from companion.duplicate_schema import (
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.runtime_metrics import process_memory_snapshot
-from companion.similarity_features import SIMILARITY_FEATURE_VERSION, SIMILARITY_MODEL_VERSION
+from companion.similarity_features import (
+    SIMILARITY_CONFIG_FINGERPRINT,
+    SIMILARITY_FEATURE_VERSION,
+    SIMILARITY_MODEL_VERSION,
+)
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
 from companion.similarity_scan_repository import (
     SimilarityScanPair,
@@ -102,6 +106,7 @@ class SimilarityScanService:
             model_version=run.parameters.model_version,
             feature_version=run.parameters.feature_version,
             comparison_version=run.parameters.comparison_version,
+            config_fingerprint=run.parameters.config_fingerprint,
             asset_count=run.asset_count,
             candidate_count=run.candidate_count,
             match_count=run.match_count,
@@ -134,6 +139,7 @@ class SimilarityScanTaskHandler:
             model_version=SIMILARITY_MODEL_VERSION,
             feature_version=SIMILARITY_FEATURE_VERSION,
             comparison_version=SIMILARITY_COMPARISON_VERSION,
+            config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
             scope=request.scope,
             similarity_threshold=request.similarity_threshold,
             maximum_perceptual_distance=request.maximum_perceptual_distance,

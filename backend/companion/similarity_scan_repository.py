@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, insert, or_, select, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
+from companion.similarity_features import SIMILARITY_CONFIG_FINGERPRINT
 from companion.similarity_repository import PairSimilarityEvidence
 
 
@@ -24,6 +25,7 @@ class SimilarityScanParameters:
     maximum_aspect_difference: float
     maximum_neighbors_per_asset: int
     maximum_matches: int
+    config_fingerprint: str = SIMILARITY_CONFIG_FINGERPRINT
 
     def __post_init__(self) -> None:
         if not 50 <= self.similarity_threshold <= 100:
@@ -130,6 +132,7 @@ class SimilarityScanRepository:
             model_version=parameters.model_version,
             feature_version=parameters.feature_version,
             comparison_version=parameters.comparison_version,
+            config_fingerprint=parameters.config_fingerprint,
             scope=parameters.scope,
             similarity_threshold=parameters.similarity_threshold,
             maximum_perceptual_distance=parameters.maximum_perceptual_distance,
@@ -231,6 +234,7 @@ class SimilarityScanRepository:
             model_version=record.model_version,
             feature_version=record.feature_version,
             comparison_version=record.comparison_version,
+            config_fingerprint=record.config_fingerprint,
             scope=record.scope,
             similarity_threshold=record.similarity_threshold,
             maximum_perceptual_distance=record.maximum_perceptual_distance,
@@ -242,7 +246,10 @@ class SimilarityScanRepository:
     async def latest_completed_summary(self) -> SimilarityScanRunSummary | None:
         statement = (
             select(SimilarityScanRecord)
-            .where(SimilarityScanRecord.status == "completed")
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+            )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
         )
@@ -266,7 +273,10 @@ class SimilarityScanRepository:
 
         statement = (
             select(SimilarityScanRecord)
-            .where(SimilarityScanRecord.status == "completed")
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+            )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
         )
@@ -348,7 +358,10 @@ class SimilarityScanRepository:
     async def latest_completed(self) -> SimilarityScanSnapshot | None:
         statement = (
             select(SimilarityScanRecord)
-            .where(SimilarityScanRecord.status == "completed")
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+            )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
         )

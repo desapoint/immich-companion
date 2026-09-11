@@ -16,6 +16,7 @@ from companion.integrity import ANALYZER_VERSION, FileIntegrityResult
 from companion.integrity_schema import AssetIntegrityReport, IntegrityFreshness
 from companion.models import AssetIntegrityReportRecord, AssetRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
+    SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
     VisualFeatureResult,
@@ -108,15 +109,18 @@ def similarity_feature_freshness(
     if (
         record.model_version != SIMILARITY_MODEL_VERSION
         or record.feature_version != SIMILARITY_FEATURE_VERSION
+        or record.config_fingerprint != SIMILARITY_CONFIG_FINGERPRINT
     ):
         logger.warning(
-            "Similarity evidence pending: asset_id=%s filename=%s reason=feature_version stored_model=%s expected_model=%s stored_feature=%s expected_feature=%s",
+            "Similarity evidence pending: asset_id=%s filename=%s reason=feature_configuration stored_model=%s expected_model=%s stored_feature=%s expected_feature=%s stored_config=%s expected_config=%s",
             asset.id,
             asset.original_file_name,
             record.model_version,
             SIMILARITY_MODEL_VERSION,
             record.feature_version,
             SIMILARITY_FEATURE_VERSION,
+            record.config_fingerprint,
+            SIMILARITY_CONFIG_FINGERPRINT,
         )
         return "stale"
     live_size = source_file_size(asset)
@@ -233,6 +237,8 @@ class IntegrityRepository:
                 AssetRecord.file_size_bytes.is_not(None),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetSimilarityFeatureRecord.config_fingerprint
+                == SIMILARITY_CONFIG_FINGERPRINT,
                 AssetSimilarityFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
                 AssetSimilarityFeatureRecord.source_file_size_bytes
@@ -264,6 +270,8 @@ class IntegrityRepository:
                     AssetRecord.file_size_bytes.is_not(None),
                     AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                     AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                    AssetSimilarityFeatureRecord.config_fingerprint
+                    == SIMILARITY_CONFIG_FINGERPRINT,
                     AssetSimilarityFeatureRecord.source_file_modified_at
                     == AssetRecord.file_modified_at,
                     AssetSimilarityFeatureRecord.source_file_size_bytes
@@ -298,6 +306,8 @@ class IntegrityRepository:
                 AssetRecord.file_size_bytes.is_not(None),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetSimilarityFeatureRecord.config_fingerprint
+                == SIMILARITY_CONFIG_FINGERPRINT,
                 AssetSimilarityFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
                 AssetSimilarityFeatureRecord.source_file_size_bytes
@@ -360,6 +370,7 @@ class IntegrityRepository:
                     "asset_id": asset.id,
                     "model_version": visual_feature.model_version,
                     "feature_version": visual_feature.feature_version,
+                    "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
                     "source_file_modified_at": asset.file_modified_at,
                     "source_file_size_bytes": result.byte_size,
                     "source_sha256": result.sha256_hex,

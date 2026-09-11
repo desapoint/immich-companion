@@ -70,6 +70,7 @@ class SimilarityDuplicateProvider:
                 f"{parameters.model_version}:"
                 f"{parameters.feature_version}:"
                 f"{parameters.comparison_version}:"
+                f"{parameters.config_fingerprint[:12]}:"
             )
             if len(cohesive.asset_ids) == 2:
                 stable_id = f"companion:{version_key}{member_key}"
@@ -103,6 +104,7 @@ class SimilarityDuplicateProvider:
                         "model_version": parameters.model_version,
                         "feature_version": str(parameters.feature_version),
                         "comparison_version": str(parameters.comparison_version),
+                        "config_fingerprint": parameters.config_fingerprint,
                         "completed_at": snapshot.completed_at.isoformat(),
                     },
                 )

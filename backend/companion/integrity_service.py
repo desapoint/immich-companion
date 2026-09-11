@@ -6,13 +6,14 @@ import asyncio
 import logging
 from dataclasses import replace
 from io import BytesIO
+from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from time import monotonic
 from typing import Any
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
-from companion.image_decode import decode_image
+from companion.image_decode import SUPPORTED_FORMATS, ImageDecodeResult, decode_image
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import FileIntegrityAnalyzer
 from companion.integrity_repository import (
@@ -143,10 +144,15 @@ class IntegrityTaskHandler:
         immich: ImmichApiClient,
         assets: AssetRepository,
         reports: IntegrityRepository,
+        *,
+        decode_cache_path: Path | None = None,
+        decode_cache_max_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._reports = reports
+        self._decode_cache_path = decode_cache_path
+        self._decode_cache_max_bytes = decode_cache_max_bytes
 
     async def _active_asset(self, asset_id: UUID) -> ImmichAsset:
         if not await self._assets.has_asset(asset_id):
@@ -253,7 +259,12 @@ class IntegrityTaskHandler:
         else:
             await context.ensure_active()
 
-        with SpooledTemporaryFile(max_size=INTEGRITY_SPOOL_MEMORY_BYTES) as spool:
+        with SpooledTemporaryFile(
+            max_size=INTEGRITY_SPOOL_MEMORY_BYTES,
+            dir=self._decode_cache_path,
+            suffix=".tmp",
+        ) as spool:
+            spool_complete = True
             try:
                 async with self._immich.stream_original(
                     asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
@@ -262,7 +273,12 @@ class IntegrityTaskHandler:
                     last_reported = monotonic()
                     async for chunk in original.chunks:
                         analyzer.update(chunk)
-                        spool.write(chunk)
+                        if spool_complete and analyzer.byte_size <= self._decode_cache_max_bytes:
+                            spool.write(chunk)
+                        elif spool_complete:
+                            spool_complete = False
+                            spool.seek(0)
+                            spool.truncate(0)
                         now = monotonic()
                         if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
                             continue
@@ -301,7 +317,15 @@ class IntegrityTaskHandler:
             )
             await context.ensure_active()
             result = analyzer.finalize()
-            decoded = await asyncio.to_thread(decode_image, spool, result.detected_format)
+            decoded = (
+                await asyncio.to_thread(decode_image, spool, result.detected_format)
+                if spool_complete
+                else ImageDecodeResult(
+                    supported=result.detected_format in SUPPORTED_FORMATS,
+                    valid=None,
+                    issue="image_decode_cache_limit_exceeded",
+                )
+            )
             result = result.with_decode(
                 supported=decoded.supported,
                 valid=decoded.valid,
@@ -318,7 +342,10 @@ class IntegrityTaskHandler:
                     spool,
                     result.detected_format,
                 )
-            elif decoded.issue == "image_decode_limit_exceeded":
+            elif decoded.issue in {
+                "image_decode_limit_exceeded",
+                "image_decode_cache_limit_exceeded",
+            }:
                 visual_feature = await self._oversized_preview_feature(source)
                 if visual_feature is not None:
                     logger.warning(

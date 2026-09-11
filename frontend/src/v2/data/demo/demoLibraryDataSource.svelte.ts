@@ -159,6 +159,8 @@ export function createDemoLibraryDataSource():LibraryDataSource{
     async saveSelection(){await delay()},
     async applyPreset(_disposition,scope,groupIds){await delay();const ids=scope==='all_matching'?materializeDuplicateGroups().map((group)=>group.id):[...groupIds];return{appliedGroupIds:ids,skippedGroupIds:[]}},
     async clearDecisions(){await delay();return materializeDuplicateGroups().length},
+    async cacheStatus(){await delay();return null},
+    async clearCache(){await delay();return null},
     async switchReference(groupId){await delay();const group=materializeDuplicateGroups().find((candidate)=>candidate.id===groupId);if(!group)throw new Error(`Duplicate group ${groupId} was not found.`);return group},
     async runDiscovery(options,onprogress){onprogress?.({label:'Duplicate discovery · Indexing similarity candidates',detail:'Indexing demo visual fingerprints…',completed:0,total:demoAssetState.assets.length,percent:5});await delay('sync');duplicateState.groups=seedDuplicateGroups(options);duplicateState.lastDiscovery={...options};persistDuplicates();const candidateCount=duplicateState.groups.reduce((sum,group)=>sum+group.assetIds.length,0);onprogress?.({label:'Duplicate discovery · Preparing results',detail:`Preparing ${duplicateState.groups.length} completed demo groups…`,completed:candidateCount,total:candidateCount,percent:99});return{groupCount:duplicateState.groups.length,candidateCount}},
     async prepareDecisions(resolution,groupIds){await delay();return{id:`demo-plan-${Date.now()}`,resolution,groupIds:[...groupIds]}},

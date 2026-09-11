@@ -128,6 +128,7 @@ class AssetSimilarityFeatureRecord(Base):
     )
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source_file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -180,6 +181,7 @@ class AssetSimilarityEdgeRecord(Base):
     model_version: Mapped[str] = mapped_column(String(32), primary_key=True)
     feature_version: Mapped[int] = mapped_column(Integer, primary_key=True)
     comparison_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_low_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_high_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     similarity_percent: Mapped[float] = mapped_column(Float, nullable=False)
@@ -228,6 +230,7 @@ class SimilarityScanRecord(Base):
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
     comparison_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     scope: Mapped[str] = mapped_column(
         String(32), nullable=False, default="all_eligible_assets"

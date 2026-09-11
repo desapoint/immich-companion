@@ -9,6 +9,7 @@
   import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
   import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
   import V2DuplicateCompareViewer from '../components/V2DuplicateCompareViewer.svelte';
+  import V2DuplicateCachePanel from '../components/V2DuplicateCachePanel.svelte';
   import V2DuplicateDecisionControls from '../components/V2DuplicateDecisionControls.svelte';
   import V2DuplicateStackControls from '../components/V2DuplicateStackControls.svelte';
   import V2ErrorState from '../components/V2ErrorState.svelte';
@@ -45,7 +46,7 @@
   import { libraryData } from '../data/currentDataSource.svelte';
   import { duplicateAssetSourceLabel, duplicateGroupTitle, duplicateKindLabel } from '../data/duplicatePresentation';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
-  import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateState } from '../data/contracts';
+  import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateState, SimilarityCacheKind, SimilarityCacheStatus } from '../data/contracts';
 
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
   type PendingReview={scope:'all'|'group';groupId:string|null;plan:DuplicatePreparedPlan};
@@ -56,6 +57,7 @@
   let capabilities=$state<DuplicateCapabilities>({canRunDiscovery:false,canApplyDecisions:false,canViewHistory:false,reviewFilters:['All groups'],decisions:[]});
   let similarityThreshold=$state('95'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('8'),discoverySummary=$state('');
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]);
+  let cacheTelemetry=$state.raw<SimilarityCacheStatus|null>(null),cacheLoading=$state(false);
   let planPreparing=$state(false);
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
   const loading=$derived(groupRequests.loading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing||presetApplying),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
@@ -239,7 +241,10 @@
     return result!==null;
   }
 
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';await Promise.all([refreshGroups(),refreshHistory()])}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
+  async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){interactionError=errorMessage(error,'Similarity cache status could not be loaded.')}finally{cacheLoading=false}}
+  async function clearCache(cache:SimilarityCacheKind){if(cacheLoading)return;cacheLoading=true;interactionError='';try{cacheTelemetry=await libraryData.duplicates.clearCache(cache)}catch(error){interactionError=errorMessage(error,'The disposable similarity cache could not be cleared.')}finally{cacheLoading=false}}
+
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';await Promise.all([refreshGroups(),refreshHistory(),refreshCacheStatus()])}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
 </script>
 
 <V2PageLayout title="Duplicates" description="Review duplicate groups supplied by the active data source, with provider-backed discovery and decisions.">
@@ -263,7 +268,7 @@
       {/each}
     </div></V2Stack></V2Card>{/each}
     {#if total>0}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={groups.length} noun="groups" onpage={setPage} onloadmore={loadMore}/>{/if}
-  {:else if tab==='Rules & discovery'}<V2Toolbar sticky={false}><b>Rules & discovery</b><V2Badge text={capabilities.canRunDiscovery?'Available':'Unavailable'}/></V2Toolbar><V2Card title="Duplicate discovery"><V2Stack gap="md"><V2Checkbox label="Verify duplicate groups reported by Immich" checked={includeExact} onchange={(checked)=>includeExact=checked}/><V2Checkbox label="Find visually similar images" checked={includeSimilar} onchange={(checked)=>includeSimilar=checked}/>{#if includeSimilar}<V2Field label="Minimum visual similarity (%)" type="number" min={50} max={100} step={0.1} value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><V2Field label="Comparison candidates per image" type="number" min={1} max={64} step={1} value={maxCandidates} onchange={(value)=>maxCandidates=value}/><span class="v2-small v2-muted">A higher candidate limit can find more matches but increases scan time. Similarity is review evidence, not an automatic deletion decision.</span>{/if}<V2Button variant="primary" disabled={!discoveryReady||mutating} onclick={runDiscovery}>{mutating?(operations.phase==='reconciling'?'Refreshing results…':'Running discovery…'):'Run duplicate discovery'}</V2Button>{#if !includeExact&&!includeSimilar}<span class="v2-small v2-muted">Select at least one discovery method.</span>{/if}{#if discoverySummary}<span class="v2-small v2-muted">{discoverySummary}</span>{/if}</V2Stack></V2Card>
+  {:else if tab==='Rules & discovery'}<V2Toolbar sticky={false}><b>Rules & discovery</b><V2Badge text={capabilities.canRunDiscovery?'Available':'Unavailable'}/></V2Toolbar><V2Card title="Duplicate discovery"><V2Stack gap="md"><V2Checkbox label="Verify duplicate groups reported by Immich" checked={includeExact} onchange={(checked)=>includeExact=checked}/><V2Checkbox label="Find visually similar images" checked={includeSimilar} onchange={(checked)=>includeSimilar=checked}/>{#if includeSimilar}<V2Field label="Minimum visual similarity (%)" type="number" min={50} max={100} step={0.1} value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><V2Field label="Comparison candidates per image" type="number" min={1} max={64} step={1} value={maxCandidates} onchange={(value)=>maxCandidates=value}/><span class="v2-small v2-muted">A higher candidate limit can find more matches but increases scan time. Similarity is review evidence, not an automatic deletion decision.</span>{/if}<V2Button variant="primary" disabled={!discoveryReady||mutating} onclick={runDiscovery}>{mutating?(operations.phase==='reconciling'?'Refreshing results…':'Running discovery…'):'Run duplicate discovery'}</V2Button>{#if !includeExact&&!includeSimilar}<span class="v2-small v2-muted">Select at least one discovery method.</span>{/if}{#if discoverySummary}<span class="v2-small v2-muted">{discoverySummary}</span>{/if}</V2Stack></V2Card><V2DuplicateCachePanel status={cacheTelemetry} loading={cacheLoading} onrefresh={()=>void refreshCacheStatus()} onclear={(cache)=>void clearCache(cache)}/>
   {:else}<V2Toolbar sticky={false}><V2Badge text="Resolution history"/></V2Toolbar><V2Stack gap="sm">{#each history as row (row.id)}<V2Card><V2Inline justify="between" wrap={true}><V2Stack gap="xs"><b>{row.groupLabel}</b><span class="v2-small v2-muted">{new Date(row.occurredAt).toLocaleString()}</span></V2Stack><span>{row.summary}</span></V2Inline></V2Card>{:else}<V2Card><span class="v2-muted">No resolution history in this range.</span></V2Card>{/each}</V2Stack>{/if}
   </V2Zone>
 </V2PageLayout>

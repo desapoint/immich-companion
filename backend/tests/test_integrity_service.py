@@ -23,6 +23,7 @@ from companion.integrity_service import (
 )
 from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
+    SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
     VisualFeatureResult,
@@ -194,6 +195,7 @@ def feature_record(current: ImmichAsset) -> AssetSimilarityFeatureRecord:
         asset_id=current.id,
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
+        config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
         source_file_modified_at=current.file_modified_at,
         source_file_size_bytes=4,
         source_sha256="1" * 64,
@@ -377,6 +379,9 @@ def test_similarity_feature_reuses_only_compatible_source_and_versions() -> None
     assert similarity_feature_freshness(record, current) == "stale"
     record.feature_version = SIMILARITY_FEATURE_VERSION
     record.model_version = "appearance-future"
+    assert similarity_feature_freshness(record, current) == "stale"
+    record.model_version = SIMILARITY_MODEL_VERSION
+    record.config_fingerprint = "legacy"
     assert similarity_feature_freshness(record, current) == "stale"
 
 

@@ -12,6 +12,7 @@ import type {
   DuplicateState,
   MutationResult,
   PageResult,
+  SimilarityCacheStatus,
 } from '../contracts';
 import type { TaskRecord, TaskRepository } from '../syncContracts';
 import { referenceFirstDuplicateMembers } from '../duplicatePresentation';
@@ -102,6 +103,12 @@ const TERMINAL_TASK_STATES = new Set(['completed', 'failed', 'cancelled']);
 
 type TaskStart = { task_id: string };
 type PlanResponse = { id: string };
+type ApiDiskCacheStatus = { path:string;healthy:boolean;used_bytes:number;max_bytes:number;free_bytes:number;entry_count:number;hits:number;misses:number;evictions:number;cleanup_failures:number };
+type ApiSimilarityCacheStatus = { config_fingerprint:string;feature_count:number;feature_estimated_bytes:number;pair_count:number;pair_estimated_bytes:number;pair_max_bytes:number;pair_hits:number;pair_misses:number;pair_evictions:number;hot_count:number;hot_estimated_bytes:number;hot_max_bytes:number;hot_hits:number;hot_misses:number;hot_evictions:number;reference_latency_p50_ms:number|null;reference_latency_p95_ms:number|null;previews:ApiDiskCacheStatus;decode:ApiDiskCacheStatus;generated_at:string };
+type ApiSimilarityCacheClearResult = { status:ApiSimilarityCacheStatus };
+
+function diskCacheStatus(value:ApiDiskCacheStatus){return{path:value.path,healthy:value.healthy,usedBytes:value.used_bytes,maxBytes:value.max_bytes,freeBytes:value.free_bytes,entryCount:value.entry_count,hits:value.hits,misses:value.misses,evictions:value.evictions,cleanupFailures:value.cleanup_failures}}
+function cacheStatus(value:ApiSimilarityCacheStatus):SimilarityCacheStatus{return{configFingerprint:value.config_fingerprint,featureCount:value.feature_count,featureEstimatedBytes:value.feature_estimated_bytes,pairCount:value.pair_count,pairEstimatedBytes:value.pair_estimated_bytes,pairMaxBytes:value.pair_max_bytes,pairHits:value.pair_hits,pairMisses:value.pair_misses,pairEvictions:value.pair_evictions,hotCount:value.hot_count,hotEstimatedBytes:value.hot_estimated_bytes,hotMaxBytes:value.hot_max_bytes,hotHits:value.hot_hits,hotMisses:value.hot_misses,hotEvictions:value.hot_evictions,referenceLatencyP50Ms:value.reference_latency_p50_ms,referenceLatencyP95Ms:value.reference_latency_p95_ms,previews:diskCacheStatus(value.previews),decode:diskCacheStatus(value.decode),generatedAt:value.generated_at}}
 
 function pageNumber(query: DuplicateSearchQuery): number {
   if (query.page) return query.page;
@@ -377,6 +384,8 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       );
       return groupIds.length;
     },
+    async cacheStatus(){return cacheStatus(await requestJson<ApiSimilarityCacheStatus>('/api/assets/duplicates/cache'))},
+    async clearCache(cache){const result=await requestJson<ApiSimilarityCacheClearResult>('/api/assets/duplicates/cache/clear',jsonRequest('POST',{cache}));return cacheStatus(result.status)},
     async switchReference(groupId, referenceAssetId) {
       const group = await requestJson<ApiDuplicateGroup>(`/api/assets/duplicates/cross-source/${encodeURIComponent(groupId)}/similarity-reference`, jsonRequest('POST', { reference_asset_id: referenceAssetId }));
       rawGroups.set(groupId, group);

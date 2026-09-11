@@ -174,6 +174,13 @@ Restore remain independently available when either state applies. Shared typed
 icons, icon-button legends, dialogs, and confirmation dialogs provide the
 reusable UI foundation for these controls.
 
+Duplicate comparison keeps versioned Appearance features and sparse canonical
+pair results in Companion PostgreSQL. Synchronized thumbnails and previews use
+a separately bounded disposable disk LRU, while active decode work and the
+in-process hot-group cache have independent limits. The Duplicates page reports
+cache usage, hit rates, eviction/cleanup health, and reference-switch latency;
+clearing disposable caches never removes durable review state or features.
+
 Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather
 than browser-native select or date-time inputs.

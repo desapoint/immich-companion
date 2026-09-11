@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from time import perf_counter
+from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select, tuple_
+from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
 from companion.models import AssetSimilarityEdgeRecord, AssetSimilarityFeatureRecord
 from companion.similarity_features import (
     PIXEL_NORMALIZATION_VERSION,
+    SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
     VisualFeatureResult,
@@ -20,6 +24,8 @@ from companion.similarity_features import (
 )
 
 SIMILARITY_COMPARISON_VERSION = 4
+PAIR_CACHE_ENTRY_ESTIMATE_BYTES = 512
+HOT_CACHE_ENTRY_ESTIMATE_BYTES = 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,35 +117,98 @@ def _public(record: AssetSimilarityEdgeRecord) -> PairSimilarityEvidence:
 class SimilarityRepository:
     """Read or calculate only requested pair edges, never a dense pair matrix."""
 
-    def __init__(self, database: DatabaseManager) -> None:
+    def __init__(
+        self,
+        database: DatabaseManager,
+        *,
+        pair_max_bytes: int = 256 * 1024 * 1024,
+        hot_max_bytes: int = 96 * 1024 * 1024,
+    ) -> None:
         self._database = database
+        self._pair_max_entries = max(1, pair_max_bytes // PAIR_CACHE_ENTRY_ESTIMATE_BYTES)
+        self._pair_max_bytes = pair_max_bytes
+        self._hot_max_entries = max(1, hot_max_bytes // HOT_CACHE_ENTRY_ESTIMATE_BYTES)
+        self._hot_max_bytes = hot_max_bytes
+        self._hot: OrderedDict[tuple[object, ...], PairSimilarityEvidence] = OrderedDict()
+        self._pair_hits = 0
+        self._pair_misses = 0
+        self._hot_hits = 0
+        self._hot_misses = 0
+        self._pair_evictions = 0
+        self._hot_evictions = 0
+        self._reference_latencies_ms: deque[float] = deque(maxlen=512)
+
+    @staticmethod
+    def _hot_key(
+        low: UUID,
+        high: UUID,
+        low_feature: AssetSimilarityFeatureRecord,
+        high_feature: AssetSimilarityFeatureRecord,
+    ) -> tuple[object, ...]:
+        return (
+            low,
+            high,
+            low_feature.source_sha256,
+            high_feature.source_sha256,
+            SIMILARITY_CONFIG_FINGERPRINT,
+            SIMILARITY_COMPARISON_VERSION,
+        )
+
+    def _hot_get(self, key: tuple[object, ...]) -> PairSimilarityEvidence | None:
+        evidence = self._hot.get(key)
+        if evidence is None:
+            self._hot_misses += 1
+            return None
+        self._hot.move_to_end(key)
+        self._hot_hits += 1
+        return evidence
+
+    def _hot_put(self, key: tuple[object, ...], evidence: PairSimilarityEvidence) -> None:
+        self._hot[key] = evidence
+        self._hot.move_to_end(key)
+        while len(self._hot) > self._hot_max_entries:
+            self._hot.popitem(last=False)
+            self._hot_evictions += 1
 
     async def reference_edges(
         self,
         groups: list[list[UUID]],
         features: dict[UUID, AssetSimilarityFeatureRecord],
     ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
+        started = perf_counter()
         requested = requested_reference_pairs(groups, set(features))
         canonical = list(dict.fromkeys(requested.values()))
         if not canonical:
             return {}
 
+        current: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+        uncached: list[tuple[UUID, UUID]] = []
+        for low, high in canonical:
+            hot = self._hot_get(self._hot_key(low, high, features[low], features[high]))
+            if hot is None:
+                uncached.append((low, high))
+            else:
+                current[(low, high)] = hot
+
         statement = select(AssetSimilarityEdgeRecord).where(
             tuple_(
                 AssetSimilarityEdgeRecord.asset_id_low,
                 AssetSimilarityEdgeRecord.asset_id_high,
-            ).in_(canonical),
+            ).in_(uncached),
             AssetSimilarityEdgeRecord.model_version == SIMILARITY_MODEL_VERSION,
             AssetSimilarityEdgeRecord.feature_version == SIMILARITY_FEATURE_VERSION,
             AssetSimilarityEdgeRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
+            AssetSimilarityEdgeRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
         )
-        async with self._database.sessions() as session:
-            cached = list((await session.scalars(statement)).all())
+        if uncached:
+            async with self._database.sessions() as session:
+                cached = list((await session.scalars(statement)).all())
+        else:
+            cached = []
         records = {(record.asset_id_low, record.asset_id_high): record for record in cached}
 
         values: list[dict[str, object]] = []
-        current: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
-        for low, high in canonical:
+        for low, high in uncached:
             low_feature = features[low]
             high_feature = features[high]
             record = records.get((low, high))
@@ -148,8 +217,12 @@ class SimilarityRepository:
                 and record.asset_low_source_sha256 == low_feature.source_sha256
                 and record.asset_high_source_sha256 == high_feature.source_sha256
             ):
-                current[(low, high)] = _public(record)
+                evidence = _public(record)
+                current[(low, high)] = evidence
+                self._hot_put(self._hot_key(low, high, low_feature, high_feature), evidence)
+                self._pair_hits += 1
                 continue
+            self._pair_misses += 1
             comparison = compare_visual_features(_feature(low_feature), _feature(high_feature))
             evidence = PairSimilarityEvidence(
                 similarity_percent=comparison.similarity_percent,
@@ -174,6 +247,7 @@ class SimilarityRepository:
                 dimensions_equal=comparison.dimensions_equal,
             )
             current[(low, high)] = evidence
+            self._hot_put(self._hot_key(low, high, low_feature, high_feature), evidence)
             values.append(
                 {
                     "asset_id_low": low,
@@ -194,6 +268,7 @@ class SimilarityRepository:
                     "model_version": evidence.model_version,
                     "feature_version": evidence.feature_version,
                     "comparison_version": evidence.comparison_version,
+                    "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
                     "calculated_at": datetime.now(UTC),
                 }
             )
@@ -220,4 +295,106 @@ class SimilarityRepository:
                         set_={key: getattr(statement.excluded, key) for key in update_keys},
                     )
                 )
+            await self._trim_pair_cache()
+        self._reference_latencies_ms.append((perf_counter() - started) * 1000)
         return {original: current[pair] for original, pair in requested.items() if pair in current}
+
+    async def _trim_pair_cache(self) -> None:
+        async with self._database.sessions() as session, session.begin():
+            count = int(
+                await session.scalar(select(func.count()).select_from(AssetSimilarityEdgeRecord))
+                or 0
+            )
+            overflow = count - self._pair_max_entries
+            if overflow <= 0:
+                return
+            doomed = (
+                select(
+                    AssetSimilarityEdgeRecord.asset_id_low,
+                    AssetSimilarityEdgeRecord.asset_id_high,
+                    AssetSimilarityEdgeRecord.model_version,
+                    AssetSimilarityEdgeRecord.feature_version,
+                    AssetSimilarityEdgeRecord.comparison_version,
+                )
+                .order_by(AssetSimilarityEdgeRecord.calculated_at)
+                .limit(overflow)
+            )
+            await session.execute(
+                delete(AssetSimilarityEdgeRecord).where(
+                    tuple_(
+                        AssetSimilarityEdgeRecord.asset_id_low,
+                        AssetSimilarityEdgeRecord.asset_id_high,
+                        AssetSimilarityEdgeRecord.model_version,
+                        AssetSimilarityEdgeRecord.feature_version,
+                        AssetSimilarityEdgeRecord.comparison_version,
+                    ).in_(doomed)
+                )
+            )
+            self._pair_evictions += overflow
+
+    @staticmethod
+    def _percentile(values: list[float], percentile: float) -> float | None:
+        if not values:
+            return None
+        ordered = sorted(values)
+        index = min(len(ordered) - 1, round((len(ordered) - 1) * percentile))
+        return round(ordered[index], 2)
+
+    async def cache_status(self) -> dict[str, object]:
+        async with self._database.sessions() as session:
+            feature_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(AssetSimilarityFeatureRecord)
+                    .where(
+                        AssetSimilarityFeatureRecord.config_fingerprint
+                        == SIMILARITY_CONFIG_FINGERPRINT
+                    )
+                )
+                or 0
+            )
+            pair_count = int(
+                await session.scalar(
+                    select(func.count())
+                    .select_from(AssetSimilarityEdgeRecord)
+                    .where(
+                        AssetSimilarityEdgeRecord.config_fingerprint
+                        == SIMILARITY_CONFIG_FINGERPRINT
+                    )
+                )
+                or 0
+            )
+        latencies = list(self._reference_latencies_ms)
+        return {
+            "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
+            "feature_count": feature_count,
+            "feature_estimated_bytes": feature_count * HOT_CACHE_ENTRY_ESTIMATE_BYTES,
+            "pair_count": pair_count,
+            "pair_estimated_bytes": pair_count * PAIR_CACHE_ENTRY_ESTIMATE_BYTES,
+            "pair_max_bytes": self._pair_max_bytes,
+            "pair_hits": self._pair_hits,
+            "pair_misses": self._pair_misses,
+            "pair_evictions": self._pair_evictions,
+            "hot_count": len(self._hot),
+            "hot_estimated_bytes": len(self._hot) * HOT_CACHE_ENTRY_ESTIMATE_BYTES,
+            "hot_max_bytes": self._hot_max_bytes,
+            "hot_hits": self._hot_hits,
+            "hot_misses": self._hot_misses,
+            "hot_evictions": self._hot_evictions,
+            "reference_latency_p50_ms": self._percentile(latencies, 0.5),
+            "reference_latency_p95_ms": self._percentile(latencies, 0.95),
+        }
+
+    async def clear_cache(self, cache: Literal["pairs", "hot"]) -> int:
+        if cache == "hot":
+            count = len(self._hot)
+            self._hot.clear()
+            return count
+        async with self._database.sessions() as session, session.begin():
+            count = int(
+                await session.scalar(select(func.count()).select_from(AssetSimilarityEdgeRecord))
+                or 0
+            )
+            await session.execute(delete(AssetSimilarityEdgeRecord))
+        self._hot.clear()
+        return count
