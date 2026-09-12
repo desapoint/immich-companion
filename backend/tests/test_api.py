@@ -315,6 +315,7 @@ def test_managed_tag_detail_includes_its_live_hierarchy() -> None:
         "parent_path": ["Places"],
         "asset_count": 5,
         "child_count": 1,
+        "real_tag_ids": [tag_id, child_id],
         "children": [],
     }
 

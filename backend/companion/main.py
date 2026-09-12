@@ -182,6 +182,57 @@ from companion.task_coordinator import TaskCoordinator
 from companion.task_schema import TaskEvent, TaskScheduleUpdate, TaskScheduleView, TaskStatusView
 
 
+def tag_subtree_ids(catalog: list[ImmichTag]) -> dict[UUID, list[UUID]]:
+    """Resolve each real tag and its descendants from the full catalog."""
+
+    by_id = {tag.id: tag for tag in catalog}
+    subtrees = {tag.id: [tag.id] for tag in catalog}
+    for tag in catalog:
+        parent_id = tag.parent_id
+        visited = {tag.id}
+        while parent_id is not None and parent_id in by_id and parent_id not in visited:
+            subtrees[parent_id].append(tag.id)
+            visited.add(parent_id)
+            parent_id = by_id[parent_id].parent_id
+    return subtrees
+
+
+def matching_tag_ids(
+    catalog: list[ImmichTag], query: str, include_hierarchy: bool
+) -> list[UUID]:
+    """Resolve matching hierarchy rows to their real subtree members."""
+
+    needle = query.strip().casefold()
+    if not needle:
+        return [tag.id for tag in catalog]
+    by_id = {tag.id: tag for tag in catalog}
+    subtrees = tag_subtree_ids(catalog)
+
+    def path(tag: ImmichTag) -> str:
+        names = [tag.name]
+        parent_id = tag.parent_id
+        visited = {tag.id}
+        while parent_id is not None and parent_id not in visited:
+            parent = by_id.get(parent_id)
+            if parent is None:
+                break
+            names.append(parent.name)
+            visited.add(parent.id)
+            parent_id = parent.parent_id
+        return " / ".join(reversed(names))
+
+    matching = [
+        tag
+        for tag in catalog
+        if needle in (path(tag) if include_hierarchy else tag.name).casefold()
+    ]
+    return list(dict.fromkeys(
+        descendant_id
+        for tag in matching
+        for descendant_id in subtrees[tag.id]
+    ))
+
+
 def create_app(
     settings: Settings | None = None,
     immich_transport: httpx.AsyncBaseTransport | None = None,
@@ -1152,6 +1203,7 @@ def create_app(
         catalog = await require_immich().list_tag_catalog()
         counts = await require_asset_repository().tag_asset_counts()
         tags_by_id = {tag.id: tag for tag in catalog}
+        subtree_ids = tag_subtree_ids(catalog)
         children_by_parent: dict[UUID, list[ImmichTag]] = {}
         roots: list[ImmichTag] = []
         for tag in catalog:
@@ -1198,6 +1250,7 @@ def create_app(
                 parent_path=parent_paths[tag.id],
                 asset_count=counts.get(tag.id, 0),
                 child_count=len(children_by_parent.get(tag.id, [])),
+                real_tag_ids=subtree_ids[tag.id],
                 children=children or [],
             )
 
@@ -1287,6 +1340,7 @@ def create_app(
             parent_path=list(reversed(path)),
             asset_count=tag.asset_count,
             child_count=sum(item.parent_id == tag.id for item in catalog),
+            real_tag_ids=tag_subtree_ids(catalog)[tag.id],
         )
 
     @app.post("/api/tags/manage", response_model=TagManagementItem)
@@ -1298,6 +1352,7 @@ def create_app(
             color=tag.color,
             parent_id=tag.parent_id,
             asset_count=tag.asset_count,
+            real_tag_ids=[tag.id],
         )
 
     @app.post("/api/tags/manage/batch-delete")
@@ -1359,29 +1414,7 @@ def create_app(
                 or needle in album.description.casefold()
             ]
         catalog = await require_immich().list_tag_catalog()
-        if not needle:
-            return [tag.id for tag in catalog]
-        by_id = {tag.id: tag for tag in catalog}
-
-        def path(tag: ImmichTag) -> str:
-            names = [tag.name]
-            parent_id = tag.parent_id
-            visited = {tag.id}
-            while parent_id is not None and parent_id not in visited:
-                parent = by_id.get(parent_id)
-                if parent is None:
-                    break
-                names.append(parent.name)
-                visited.add(parent.id)
-                parent_id = parent.parent_id
-            return " / ".join(reversed(names))
-
-        return [
-            tag.id
-            for tag in catalog
-            if needle
-            in (path(tag) if request.include_hierarchy else tag.name).casefold()
-        ]
+        return matching_tag_ids(catalog, request.query, request.include_hierarchy)
 
     @app.post("/api/{kind}s/selections", response_model=SelectionSetView)
     async def create_relation_selection(kind: RelationEntityKind) -> SelectionSetView:

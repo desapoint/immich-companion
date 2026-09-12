@@ -35,6 +35,19 @@ function page(items = [parent, child], currentPage = 1, pages = 1) {
 }
 
 describe('live V2 tag repository', () => {
+  it('uses backend-resolved descendant IDs for a real hierarchy row', async () => {
+    const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
+      ...page([parent]), items: [{ ...parent, real_tag_ids: [parent.id, child.id] }],
+    }));
+    const repository = createTagRepository(fetcher);
+
+    const result = await repository.search({
+      pageSize: 24, sort: { field: 'name', direction: 'asc' },
+    });
+
+    expect(result.items[0]?.realTagIds).toEqual([parent.id, child.id]);
+  });
+
   it('sends the applied hierarchy criterion for scoped matching updates', async () => {
     const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
       id: parent.id, entity_kind: 'tag', revision: 2, selected_count: 4,

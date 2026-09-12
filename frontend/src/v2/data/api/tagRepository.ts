@@ -21,6 +21,7 @@ interface TagManagementItem {
   parent_path: string[];
   asset_count: number;
   child_count: number;
+  real_tag_ids?: string[];
   children: TagManagementItem[];
 }
 
@@ -88,7 +89,7 @@ function normalizeRow(item: TagManagementItem): TagHierarchyRow {
     children: item.child_count,
     color: item.color,
     synthetic: false,
-    realTagIds: [item.id],
+    realTagIds: item.real_tag_ids?.length ? [...new Set(item.real_tag_ids)] : [item.id],
   };
 }
 
