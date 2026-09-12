@@ -69,6 +69,12 @@ from companion.asset_schema import (
     TagOption,
 )
 from companion.asset_service import AssetSyncService, batches
+from companion.collection_delete_service import (
+    CollectionDeletePlanBusyError,
+    CollectionDeletePlanError,
+    CollectionDeleteService,
+    tag_delete_targets,
+)
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
 from companion.discovery import (
@@ -1545,17 +1551,11 @@ def create_app(
             raise HTTPException(status_code=400, detail="No relations are selected.")
         if kind == "album":
             existing = {item.id for item in await require_immich().list_album_catalog()}
-            blocked: set[UUID] = set()
+            applicable = [identifier for identifier in target_ids if identifier in existing]
+            skipped = [identifier for identifier in target_ids if identifier not in existing]
         else:
             tags = await require_immich().list_tag_catalog()
-            existing = {item.id for item in tags}
-            blocked = {item.parent_id for item in tags if item.parent_id is not None}
-        applicable = [
-            identifier
-            for identifier in target_ids
-            if identifier in existing and identifier not in blocked
-        ]
-        skipped = [identifier for identifier in target_ids if identifier not in applicable]
+            applicable, skipped = tag_delete_targets(target_ids, tags)
         record = await action_repository.create_collection_delete_plan(
             entity_kind=kind,
             selection_id=request.selection_id,
@@ -1574,64 +1574,19 @@ def create_app(
     ) -> CollectionDeletePlan:
         if action_repository is None:
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        existing = await action_repository.get_plan(request.plan_id)
-        if existing is None or existing.action != f"delete_{kind}s":
-            raise HTTPException(status_code=404, detail="Delete plan was not found.")
-        if existing.status in {"completed", "failed"}:
-            return collection_plan_view(existing)
-        if existing.expires_at <= datetime.now(UTC):
-            raise HTTPException(status_code=409, detail="Delete plan has expired.")
-        if not runtime_settings.allow_destructive_actions:
-            raise HTTPException(
-                status_code=403, detail="Relation deletion is disabled in safe mode."
-            )
-        record = await action_repository.claim_plan(request.plan_id)
-        if record is None:
-            raise HTTPException(status_code=409, detail="Delete plan is already executing.")
-        results: list[dict[str, str | None]] = [
-            {
-                "id": identifier,
-                "status": "skipped",
-                "reason": "Not applicable when the plan was created.",
-            }
-            for identifier in record.skipped_ids
-        ]
-        completed: list[UUID] = []
-        failed = False
-        for raw_id in record.applicable_ids:
-            identifier = UUID(raw_id)
-            try:
-                if kind == "album":
-                    await require_immich().delete_album(identifier)
-                else:
-                    await require_immich().delete_tag(identifier)
-            except ImmichApiError as error:
-                if error.status_code == 404:
-                    results.append(
-                        {"id": str(identifier), "status": "skipped", "reason": "Already missing."}
-                    )
-                    completed.append(identifier)
-                else:
-                    results.append(
-                        {
-                            "id": str(identifier),
-                            "status": "failed",
-                            "reason": "Immich could not delete this relation.",
-                        }
-                    )
-                    failed = True
-            else:
-                results.append({"id": str(identifier), "status": "completed", "reason": None})
-                completed.append(identifier)
-        await require_relation_selections().remove(
-            UUID(record.relation_work["selection_id"]), completed
+        service = CollectionDeleteService(
+            action_repository,
+            require_relation_selections(),
+            require_immich(),
+            allow_destructive_actions=runtime_settings.allow_destructive_actions,
         )
-        await action_repository.finish_plan(
-            record.id, "failed" if failed else "completed", {"items": results}
-        )
-        refreshed = await action_repository.get_plan(record.id)
-        assert refreshed is not None
-        return collection_plan_view(refreshed)
+        try:
+            return collection_plan_view(await service.execute(kind, request.plan_id))
+        except CollectionDeletePlanBusyError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        except CollectionDeletePlanError as error:
+            code = 404 if "not found" in str(error) else 403 if "safe mode" in str(error) else 409
+            raise HTTPException(status_code=code, detail=str(error)) from error
 
     @app.post("/api/assets/selection/resolve", response_model=AssetSelectionResolution)
     async def resolve_asset_selection(

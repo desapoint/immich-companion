@@ -20,6 +20,27 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('live V2 album repository', () => {
+  it('continues bounded delete batches using the same frozen plan ID', async () => {
+    const planId = '99999999-9999-4999-8999-999999999999';
+    let calls = 0;
+    const fetcher = vi.fn<AlbumApiFetcher>(async () => jsonResponse({
+      id: planId, entity_kind: 'album', selection_id: album.id,
+      target_digest: 'digest', target_count: 2, applicable_count: 2, skipped_count: 0,
+      status: ++calls === 1 ? 'partial' : 'completed',
+      expires_at: '2099-01-01T00:00:00Z',
+      results: calls === 1
+        ? [{ id: album.id, status: 'completed', reason: null }]
+        : [{ id: album.id, status: 'completed', reason: null }, { id: planId, status: 'completed', reason: null }],
+    }));
+    const repository = createAlbumRepository(fetcher);
+
+    const result = await repository.executeDelete(planId);
+
+    expect(result.status).toBe('completed');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.every(([, init]) => init?.body === JSON.stringify({ plan_id: planId }))).toBe(true);
+  });
+
   it('sends scoped matching deltas with the workspace revision', async () => {
     const fetcher = vi.fn<AlbumApiFetcher>(async () => jsonResponse({
       id: album.id, entity_kind: 'album', revision: 4, selected_count: 3,

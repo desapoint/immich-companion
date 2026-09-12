@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -114,6 +114,16 @@ class ActionRepository:
             missing_ids=[],
             destructive=True,
             status="planned",
+            result={
+                "items": [
+                    {
+                        "id": str(identifier),
+                        "status": "skipped",
+                        "reason": "Not applicable when the plan was created.",
+                    }
+                    for identifier in skipped_ids
+                ]
+            },
             expires_at=expires_at,
         )
         async with self._database.sessions() as session, session.begin():
@@ -138,6 +148,86 @@ class ActionRepository:
                 return None
             record.status = "running"
         return record
+
+    async def claim_collection_delete_plan(
+        self, plan_id: UUID, *, stale_after: timedelta = timedelta(minutes=5)
+    ) -> ActionPlanRecord | None:
+        """Claim a new, failed, or abandoned collection plan for resumption."""
+
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if record is None or record.operation != "delete_relation":
+                return None
+            if record.status == "running" and record.executed_at is not None:
+                if record.executed_at > now - stale_after:
+                    return None
+            elif record.status not in {"planned", "failed", "partial", "running"}:
+                return None
+            if (
+                record.status == "planned"
+                and record.expires_at <= now
+                and not (record.result or {}).get("work_ids")
+            ):
+                return None
+            record.status = "running"
+            record.executed_at = now
+        return record
+
+    async def start_collection_delete_pass(
+        self, plan_id: UUID, work_ids: list[str]
+    ) -> None:
+        """Freeze the next bounded execution pass over unresolved target IDs."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if record is None or record.operation != "delete_relation":
+                raise ValueError("Delete plan was not found")
+            result = dict(record.result or {})
+            result["work_ids"] = work_ids
+            result["work_index"] = 0
+            record.result = result
+            record.executed_at = datetime.now(UTC)
+
+    async def record_collection_delete_item_result(
+        self, plan_id: UUID, item: dict[str, str | None], *, next_index: int | None = None
+    ) -> None:
+        """Checkpoint one API outcome before moving to the next target."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if record is None or record.operation != "delete_relation":
+                raise ValueError("Delete plan was not found")
+            result = dict(record.result or {})
+            items = [
+                existing
+                for existing in result.get("items", [])
+                if existing["id"] != item["id"]
+            ]
+            items.append(item)
+            result["items"] = items
+            if next_index is not None:
+                result["work_index"] = next_index
+            record.result = result
+            record.executed_at = datetime.now(UTC)
+
+    async def finish_collection_delete_plan(
+        self, plan_id: UUID, status: ActionPlanStatus
+    ) -> None:
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if record is None or record.operation != "delete_relation":
+                raise ValueError("Delete plan was not found")
+            record.status = status
+            record.executed_at = datetime.now(UTC)
 
     async def reopen_duplicate_follow_up(self, plan_id: UUID) -> ActionPlanRecord | None:
         """Reopen a failed plan when durable native or stack work remains."""

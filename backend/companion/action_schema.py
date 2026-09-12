@@ -45,6 +45,7 @@ StackResolution = Literal["keep_existing", "move_selected", "include_existing"]
 ActionPlanStatus = Literal[
     "planned",
     "running",
+    "partial",
     "completed",
     "failed",
     "drifted",

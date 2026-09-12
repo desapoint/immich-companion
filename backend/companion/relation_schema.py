@@ -112,6 +112,6 @@ class CollectionDeletePlan(BaseModel):
     target_count: int
     applicable_count: int
     skipped_count: int
-    status: Literal["planned", "running", "completed", "failed", "expired"]
+    status: Literal["planned", "running", "partial", "completed", "failed", "expired"]
     expires_at: datetime
     results: list[CollectionDeleteItemResult] = Field(default_factory=list)

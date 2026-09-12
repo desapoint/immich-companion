@@ -35,6 +35,25 @@ function page(items = [parent, child], currentPage = 1, pages = 1) {
 }
 
 describe('live V2 tag repository', () => {
+  it('continues bounded tag deletion batches using the same plan ID', async () => {
+    const planId = '99999999-9999-4999-8999-999999999999';
+    let calls = 0;
+    const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
+      id: planId, entity_kind: 'tag', selection_id: parent.id,
+      target_digest: 'digest', target_count: 2, applicable_count: 2, skipped_count: 0,
+      status: ++calls === 1 ? 'partial' : 'completed',
+      expires_at: '2099-01-01T00:00:00Z',
+      results: calls === 1
+        ? [{ id: parent.id, status: 'completed', reason: null }]
+        : [{ id: parent.id, status: 'completed', reason: null }, { id: child.id, status: 'completed', reason: null }],
+    }));
+    const repository = createTagRepository(fetcher);
+
+    expect((await repository.executeDelete(planId)).status).toBe('completed');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.every(([, init]) => init?.body === JSON.stringify({ plan_id: planId }))).toBe(true);
+  });
+
   it('uses backend-resolved descendant IDs for a real hierarchy row', async () => {
     const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
       ...page([parent]), items: [{ ...parent, real_tag_ids: [parent.id, child.id] }],
