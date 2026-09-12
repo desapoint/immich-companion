@@ -13,7 +13,7 @@ from typing import Any
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
-from companion.image_decode import SUPPORTED_FORMATS, ImageDecodeResult, decode_image
+from companion.image_decode import SUPPORTED_FORMATS, ImageDecodeResult
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import FileIntegrityAnalyzer
 from companion.integrity_repository import (
@@ -27,7 +27,7 @@ from companion.integrity_schema import (
     AssetIntegrityReport,
     AssetIntegrityState,
 )
-from companion.similarity_features import extract_visual_features
+from companion.similarity_features import decode_and_extract_features, extract_visual_features
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -321,14 +321,16 @@ class IntegrityTaskHandler:
             )
             await context.ensure_active()
             result = analyzer.finalize()
-            decoded = (
-                await asyncio.to_thread(decode_image, spool, result.detected_format)
+            decoded, visual_feature = (
+                await asyncio.to_thread(
+                    decode_and_extract_features, spool, result.detected_format
+                )
                 if spool_complete
-                else ImageDecodeResult(
+                else (ImageDecodeResult(
                     supported=result.detected_format in SUPPORTED_FORMATS,
                     valid=None,
                     issue="image_decode_cache_limit_exceeded",
-                )
+                ), None)
             )
             result = result.with_decode(
                 supported=decoded.supported,
@@ -339,13 +341,8 @@ class IntegrityTaskHandler:
                 immich_height=source.height,
                 issue=decoded.issue,
             )
-            visual_feature = None
             if decoded.valid is True:
-                visual_feature = await asyncio.to_thread(
-                    extract_visual_features,
-                    spool,
-                    result.detected_format,
-                )
+                pass
             elif decoded.issue in {
                 "image_decode_limit_exceeded",
                 "image_decode_cache_limit_exceeded",

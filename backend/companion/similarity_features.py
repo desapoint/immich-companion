@@ -15,7 +15,12 @@ from typing import BinaryIO
 import rawpy
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
-from companion.image_decode import MAX_DECODED_PIXELS, SUPPORTED_FORMATS
+from companion.image_decode import (
+    MAX_DECODED_PIXELS,
+    SUPPORTED_FORMATS,
+    ImageDecodeResult,
+    decode_image,
+)
 from companion.integrity import DetectedFormat
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
@@ -321,44 +326,67 @@ def _extract_raw_visual_features(
         return None
 
 
-def extract_visual_features(
+def _feature_from_loaded_image(
+    source: Image.Image, *, include_pixel_hash: bool
+) -> VisualFeatureResult:
+    exif = source.getexif()
+    orientation_value = exif.get(274)
+    orientation = orientation_value if isinstance(orientation_value, int) else None
+    return _build_feature(
+        source,
+        bit_depth=_bit_depth(source),
+        channel_count=len(source.getbands()),
+        has_alpha="A" in source.getbands() or "transparency" in source.info,
+        color_space=source.mode,
+        orientation=orientation,
+        icc_profile_present=bool(source.info.get("icc_profile")),
+        has_exif=bool(exif),
+        has_capture_time=any(exif.get(tag) for tag in (306, 36867, 36868)),
+        has_camera_info=bool(exif.get(271) or exif.get(272)),
+        has_gps=bool(exif.get(34853)),
+        has_orientation_metadata=orientation is not None,
+        include_pixel_hash=include_pixel_hash,
+    )
+
+
+def decode_and_extract_features(
     stream: BinaryIO,
     detected_format: DetectedFormat,
     *,
     include_pixel_hash: bool = True,
-) -> VisualFeatureResult | None:
-    """Decode one trusted spool and return fixed-size features, or no feature."""
+) -> tuple[ImageDecodeResult, VisualFeatureResult | None]:
+    """Validate and extract from the same decoded original image."""
 
     if detected_format not in SUPPORTED_FORMATS:
-        return None
+        return ImageDecodeResult(supported=False, valid=None), None
     try:
         stream.seek(0)
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(stream) as source:
                 source.load()
-                exif = source.getexif()
-                orientation_value = exif.get(274)
-                orientation = orientation_value if isinstance(orientation_value, int) else None
-                has_capture_time = any(exif.get(tag) for tag in (306, 36867, 36868))
-                has_camera_info = bool(exif.get(271) or exif.get(272))
-                has_gps = bool(exif.get(34853))
-                has_orientation_metadata = orientation is not None
-                return _build_feature(
-                    source,
-                    bit_depth=_bit_depth(source),
-                    channel_count=len(source.getbands()),
-                    has_alpha="A" in source.getbands() or "transparency" in source.info,
-                    color_space=source.mode,
-                    orientation=orientation,
-                    icc_profile_present=bool(source.info.get("icc_profile")),
-                    has_exif=bool(exif),
-                    has_capture_time=has_capture_time,
-                    has_camera_info=has_camera_info,
-                    has_gps=has_gps,
-                    has_orientation_metadata=has_orientation_metadata,
-                    include_pixel_hash=include_pixel_hash,
+                width, height = source.size
+                try:
+                    orientation = source.getexif().get(274)
+                except (AttributeError, OSError, ValueError):
+                    orientation = None
+                if orientation in {5, 6, 7, 8}:
+                    width, height = height, width
+                decoded = ImageDecodeResult(
+                    supported=True, valid=True, width=width, height=height
                 )
+                try:
+                    feature = _feature_from_loaded_image(
+                        source, include_pixel_hash=include_pixel_hash
+                    )
+                except (OSError, SyntaxError, ValueError) as error:
+                    logger.warning(
+                        "Similarity feature extraction failed after decode: "
+                        "format=%s error_type=%s reason=%s",
+                        detected_format, type(error).__name__, error,
+                    )
+                    feature = None
+                return decoded, feature
     except (
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
@@ -367,21 +395,42 @@ def extract_visual_features(
             "Similarity feature extraction exceeded image safety limit: %s",
             error,
         )
-        return None
+        return ImageDecodeResult(
+            supported=True, valid=None, issue="image_decode_limit_exceeded"
+        ), None
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         if detected_format == "tiff":
-            raw_feature = _extract_raw_visual_features(
+            feature = _extract_raw_visual_features(
                 stream, include_pixel_hash=include_pixel_hash
             )
-            if raw_feature is not None:
-                return raw_feature
+            if feature is not None:
+                return ImageDecodeResult(
+                    supported=True, valid=True, width=feature.width, height=feature.height
+                ), feature
+            return decode_image(stream, detected_format), None
         logger.warning(
             "Similarity feature extraction failed: format=%s error_type=%s reason=%s",
             detected_format,
             type(error).__name__,
             error,
         )
-        return None
+        return ImageDecodeResult(
+            supported=True, valid=False, issue="image_decode_failed"
+        ), None
+
+
+def extract_visual_features(
+    stream: BinaryIO,
+    detected_format: DetectedFormat,
+    *,
+    include_pixel_hash: bool = True,
+) -> VisualFeatureResult | None:
+    """Compatibility wrapper for callers that only need visual evidence."""
+
+    _, feature = decode_and_extract_features(
+        stream, detected_format, include_pixel_hash=include_pixel_hash
+    )
+    return feature
 
 
 def compare_visual_features(

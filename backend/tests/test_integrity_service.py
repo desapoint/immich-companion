@@ -235,10 +235,6 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
     reports = FakeReports()
     context = FakeContext()
     handler = IntegrityTaskHandler(FakeImmich(current), FakeAssets(), reports)
-    monkeypatch.setattr(
-        "companion.integrity_service.decode_image",
-        lambda *_args: ImageDecodeResult(supported=True, valid=True, width=1, height=1),
-    )
     visual_feature = VisualFeatureResult(
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
@@ -264,8 +260,11 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
         metadata_richness=0,
     )
     monkeypatch.setattr(
-        "companion.integrity_service.extract_visual_features",
-        lambda *_args: visual_feature,
+        "companion.integrity_service.decode_and_extract_features",
+        lambda *_args: (
+            ImageDecodeResult(supported=True, valid=True, width=1, height=1),
+            visual_feature,
+        ),
     )
 
     result = await handler.execute(context, {"asset_id": str(ASSET_ID)})
