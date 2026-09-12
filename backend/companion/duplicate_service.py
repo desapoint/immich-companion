@@ -2606,6 +2606,7 @@ class CrossSourceDuplicateTaskHandler:
                     context,
                     asset.id,
                     publish_progress=False,
+                    source=asset,
                 )
             except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
                 unavailable += 1

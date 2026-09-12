@@ -749,10 +749,12 @@ class FakeTasks:
 class FakeIntegrity:
     def __init__(self, *, unavailable: bool = False):
         self.calls: list[UUID] = []
+        self.sources: list[ImmichAsset] = []
         self.unavailable = unavailable
 
-    async def analyze(self, _context, asset_id, *, publish_progress=True):
+    async def analyze(self, _context, asset_id, *, publish_progress=True, source=None):
         self.calls.append(asset_id)
+        self.sources.append(source)
         assert publish_progress is False
         if self.unavailable:
             raise PermanentTaskError("The Immich original was not found.")
@@ -1126,6 +1128,28 @@ async def test_similarity_verification_fetches_only_discovered_candidates() -> N
 
     assert integrity.calls == [UPLOAD_1, EXTERNAL_1]
     assert result.counters["candidate_files"] == 2
+
+
+@pytest.mark.asyncio
+async def test_duplicate_verification_reuses_detailed_candidate_metadata() -> None:
+    candidate = asset(EXTERNAL_1, external=True, checksum="path", filename="candidate.jpg")
+
+    class NoExtraLookupImmich(FakeImmich):
+        async def get_asset(self, asset_id):
+            pytest.fail(f"Redundant live lookup for detailed candidate {asset_id}")
+
+    integrity = FakeIntegrity()
+    handler = CrossSourceDuplicateTaskHandler(
+        NoExtraLookupImmich(group(candidate)),
+        FakeAssets(),
+        FakeReports([]),
+        integrity,
+    )
+
+    await handler.execute(TaskContext(), DuplicateAnalysisOptions().model_dump(mode="json"))
+
+    assert integrity.calls == [EXTERNAL_1]
+    assert integrity.sources == [candidate]
 
 
 @pytest.mark.asyncio

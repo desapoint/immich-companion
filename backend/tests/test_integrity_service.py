@@ -291,6 +291,29 @@ async def test_handler_does_not_save_when_source_changes_during_stream() -> None
 
 
 @pytest.mark.asyncio
+async def test_supplied_candidate_source_uses_one_final_live_check() -> None:
+    reports = FakeReports()
+
+    class CountingImmich(FakeImmich):
+        lookups = 0
+
+        async def get_asset(self, asset_id):
+            self.lookups += 1
+            return await super().get_asset(asset_id)
+
+    immich = CountingImmich(asset(checksum="after"))
+    handler = IntegrityTaskHandler(immich, FakeAssets(), reports)
+
+    with pytest.raises(RetryableTaskError, match="source changed"):
+        await handler.analyze(
+            FakeContext(), ASSET_ID, source=asset(checksum="before"), publish_progress=False
+        )
+
+    assert immich.lookups == 1
+    assert reports.saved == []
+
+
+@pytest.mark.asyncio
 async def test_external_integrity_does_not_compare_immich_path_checksum() -> None:
     external = asset(library_id=UUID("22222222-2222-4222-8222-222222222222"))
     reports = FakeReports()
