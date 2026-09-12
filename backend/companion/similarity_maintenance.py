@@ -21,6 +21,8 @@ from companion.task_schema import TaskResult, TaskStatusView
 SIMILARITY_MAINTENANCE_TASK_TYPE = "similarity_maintenance"
 SIMILARITY_MAINTENANCE_BATCH_SIZE = 25
 SIMILARITY_FEATURE_PAGE_SIZE = 1_000
+# Lower than scheduled incremental sync (10) and user-triggered work.
+SIMILARITY_BACKGROUND_PRIORITY = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,7 +83,7 @@ class SimilarityMaintenanceRepository:
 
 
 class SimilarityMaintenanceService:
-    """Submit at most one normal-priority incremental maintenance worker."""
+    """Submit at most one low-priority incremental maintenance worker."""
 
     def __init__(self, tasks: TaskCoordinator, changes: SimilarityMaintenanceRepository) -> None:
         self._tasks = tasks
@@ -93,7 +95,7 @@ class SimilarityMaintenanceService:
         task = await self._tasks.submit(
             SIMILARITY_MAINTENANCE_TASK_TYPE,
             {},
-            priority=40,
+            priority=SIMILARITY_BACKGROUND_PRIORITY,
             deduplication_key="pending-asset-changes",
             lane_key=INTEGRITY_TASK_TYPE,
         )

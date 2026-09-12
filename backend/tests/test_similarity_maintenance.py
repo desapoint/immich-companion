@@ -8,7 +8,9 @@ import pytest
 
 from companion.asset_repository import similarity_upsert_changes
 from companion.similarity_maintenance import (
+    SIMILARITY_BACKGROUND_PRIORITY,
     SimilarityAssetChange,
+    SimilarityMaintenanceService,
     SimilarityMaintenanceTaskHandler,
 )
 from companion.similarity_scan_repository import SimilarityScanParameters
@@ -108,6 +110,34 @@ class FakeContext:
         self.checkpoints += 1
         if self.interrupt_after == self.checkpoints:
             raise RuntimeError("simulated worker restart")
+
+
+@pytest.mark.asyncio
+async def test_background_maintenance_is_submitted_below_normal_sync_priority():
+    class FakeTasks:
+        submitted = None
+        started = False
+
+        async def submit(self, task_type, payload, **options):
+            self.submitted = (task_type, payload, options)
+            return SimpleNamespace(id=UUID(int=1))
+
+        async def start(self):
+            self.started = True
+
+    tasks = FakeTasks()
+    changes = FakeChanges(
+        [SimilarityAssetChange(UUID(int=1), "upsert", "source-1", datetime.now(UTC))]
+    )
+    service = SimilarityMaintenanceService(tasks, changes)
+
+    await service.start_if_pending()
+
+    assert SIMILARITY_BACKGROUND_PRIORITY < 10
+    assert tasks.submitted[0] == "similarity_maintenance"
+    assert tasks.submitted[2]["priority"] == SIMILARITY_BACKGROUND_PRIORITY
+    assert tasks.submitted[2]["deduplication_key"] == "pending-asset-changes"
+    assert tasks.started is True
 
 
 def test_incremental_detection_excludes_unchanged_overlap_assets():
