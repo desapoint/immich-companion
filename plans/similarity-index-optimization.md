@@ -1,6 +1,13 @@
 # Similarity indexing optimization roadmap
 
-Status: implementation in progress on `feat/v2-shell`.
+Status: steps 1–6 implemented on `feat/v2-shell`; step 7 awaits a representative large-library benchmark.
+
+Implementation checkpoints:
+
+- Preview search evidence and library-wide indexing are separate from original verification. Search previews do not compute normalized-pixel SHA; plausible groups and explicit integrity checks use originals. A valid generated preview indexes an asset even when its declared original MIME is wrong.
+- Original verification reuses one decode and candidate metadata, while retaining a final live-source check. Preview fetch and CPU decode each have configurable bounded slots.
+- Sync changes enqueue durable incremental preview maintenance below normal sync priority. A scan still catches up missing/stale fingerprints, retries unavailable previews once, records per-asset reasons, and proceeds with the current fingerprints.
+- Backend, frontend, and live-dev smoke checks pass on the bundled test fixture. The fixture is not evidence of throughput, error behavior, or readiness on a 25k–60k production library. Do not tune database writes until a representative benchmark shows they matter.
 
 The bottleneck for a first-generation 25k-image library index is creating fingerprints, not bounded candidate generation or cached pair scoring. Keep library-wide, durable, incremental indexing: synchronized images → missing/stale search fingerprints → bounded candidate search and compact scoring → retrieve originals only for plausible groups or explicit exact-pixel/integrity verification. Never read Immich's database or files directly; use its API. A failed image must be logged with its reason where possible, retried once, then excluded without blocking a scan using the remaining current fingerprints.
 
