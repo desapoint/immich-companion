@@ -116,6 +116,40 @@ class AssetIntegrityReportRecord(Base):
     __table_args__ = (Index("ix_asset_integrity_exact_hash", byte_size, sha256_hex),)
 
 
+class AssetSimilaritySearchFeatureRecord(Base):
+    """Preview-derived search evidence, never original-file or exact-pixel proof."""
+
+    __tablename__ = "asset_similarity_search_features"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    preview_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    luminance_vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    perceptual_hash: Mapped[str] = mapped_column(String(16), nullable=False)
+    color_histogram: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    thumbnail_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        Index(
+            "ix_asset_similarity_search_features_version",
+            model_version,
+            feature_version,
+            config_fingerprint,
+        ),
+    )
+
+
 class AssetSimilarityFeatureRecord(Base):
     """Latest compatible compact visual feature for one active asset."""
 

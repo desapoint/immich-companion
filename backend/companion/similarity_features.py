@@ -58,7 +58,7 @@ class VisualFeatureResult:
     color_histogram: bytes
     thumbnail_sha256: str
     pixel_normalization_version: int
-    pixel_sha256: str
+    pixel_sha256: str | None
     bit_depth: int
     channel_count: int
     has_alpha: bool
@@ -227,6 +227,7 @@ def _build_feature(
     has_camera_info: bool,
     has_gps: bool,
     has_orientation_metadata: bool,
+    include_pixel_hash: bool = True,
 ) -> VisualFeatureResult:
     normalized = _srgb_image(image)
     width, height = normalized.size
@@ -257,7 +258,7 @@ def _build_feature(
         color_histogram=_color_histogram(normalized),
         thumbnail_sha256=thumbnail_sha256,
         pixel_normalization_version=PIXEL_NORMALIZATION_VERSION,
-        pixel_sha256=_pixel_sha256(normalized),
+        pixel_sha256=_pixel_sha256(normalized) if include_pixel_hash else None,
         bit_depth=bit_depth,
         channel_count=channel_count,
         has_alpha=has_alpha,
@@ -273,7 +274,9 @@ def _build_feature(
     )
 
 
-def _extract_raw_visual_features(stream: BinaryIO) -> VisualFeatureResult | None:
+def _extract_raw_visual_features(
+    stream: BinaryIO, *, include_pixel_hash: bool = True
+) -> VisualFeatureResult | None:
     """Render a bounded DNG/RAW stream through LibRaw for similarity evidence."""
 
     try:
@@ -307,6 +310,7 @@ def _extract_raw_visual_features(stream: BinaryIO) -> VisualFeatureResult | None
             has_camera_info=False,
             has_gps=False,
             has_orientation_metadata=False,
+            include_pixel_hash=include_pixel_hash,
         )
     except (rawpy.LibRawError, OSError, ValueError) as error:
         logger.warning(
@@ -320,6 +324,8 @@ def _extract_raw_visual_features(stream: BinaryIO) -> VisualFeatureResult | None
 def extract_visual_features(
     stream: BinaryIO,
     detected_format: DetectedFormat,
+    *,
+    include_pixel_hash: bool = True,
 ) -> VisualFeatureResult | None:
     """Decode one trusted spool and return fixed-size features, or no feature."""
 
@@ -351,6 +357,7 @@ def extract_visual_features(
                     has_camera_info=has_camera_info,
                     has_gps=has_gps,
                     has_orientation_metadata=has_orientation_metadata,
+                    include_pixel_hash=include_pixel_hash,
                 )
     except (
         Image.DecompressionBombError,
@@ -363,7 +370,9 @@ def extract_visual_features(
         return None
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         if detected_format == "tiff":
-            raw_feature = _extract_raw_visual_features(stream)
+            raw_feature = _extract_raw_visual_features(
+                stream, include_pixel_hash=include_pixel_hash
+            )
             if raw_feature is not None:
                 return raw_feature
         logger.warning(

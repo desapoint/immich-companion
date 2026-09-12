@@ -736,7 +736,7 @@ class ImmichApiClient:
         self,
         asset_id: UUID,
         *,
-        kind: Literal["original", "video_playback"],
+        kind: Literal["original", "video_playback", "preview"],
         request_headers: Mapping[str, str] | None = None,
         chunk_size: int = 1024 * 1024,
     ) -> AsyncIterator[ImmichMediaStream]:
@@ -744,12 +744,18 @@ class ImmichApiClient:
 
         attempts = self._settings.immich_retry_attempts
         response: httpx.Response | None = None
-        path = (
-            f"/api/assets/{asset_id}/original"
-            if kind == "original"
-            else f"/api/assets/{asset_id}/video/playback"
-        )
-        operation = "stream original asset" if kind == "original" else "stream video playback"
+        paths = {
+            "original": f"/api/assets/{asset_id}/original",
+            "video_playback": f"/api/assets/{asset_id}/video/playback",
+            "preview": f"/api/assets/{asset_id}/thumbnail?size=preview",
+        }
+        operations = {
+            "original": "stream original asset",
+            "video_playback": "stream video playback",
+            "preview": "stream asset preview",
+        }
+        path = paths[kind]
+        operation = operations[kind]
         for attempt in range(attempts):
             try:
                 request = self._client().build_request(
@@ -808,6 +814,25 @@ class ImmichApiClient:
             raise ImmichApiError(operation) from error
         finally:
             await response.aclose()
+
+    async def get_bounded_preview(self, asset_id: UUID, *, max_bytes: int) -> bytes:
+        """Read a generated preview with a hard body limit for background indexing."""
+
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        async with self.stream_asset_media(
+            asset_id, kind="preview", chunk_size=min(max_bytes, 1024 * 1024)
+        ) as preview:
+            if preview.content_length is not None and preview.content_length > max_bytes:
+                raise ImmichApiError("asset preview exceeds similarity size limit")
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in preview.chunks:
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ImmichApiError("asset preview exceeds similarity size limit")
+                chunks.append(chunk)
+            return b"".join(chunks)
 
     @asynccontextmanager
     async def stream_original(
