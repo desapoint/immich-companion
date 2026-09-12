@@ -21,6 +21,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateWorkspacePresetRequest,
     DuplicateWorkspaceResetRequest,
     DuplicateWorkspaceSelectionUpdate,
 )
@@ -2156,6 +2157,45 @@ async def test_plan_rejects_an_incomplete_saved_member_draft() -> None:
                 keeper_overrides={PUBLIC_GROUP_ID: UPLOAD_1},
             )
         )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_preset_resolves_applied_filter_only_for_all_matching() -> None:
+    content = b"same"
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(
+            group(
+                asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+                asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+            )
+        ),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        FakeReviews(),
+    )
+
+    filtered = await service.apply_workspace_preset(
+        DuplicateWorkspacePresetRequest(
+            scope="all_matching", review_filter="Actionable", disposition="keep"
+        )
+    )
+    assert filtered.last_applied_group_ids == []
+    assert filtered.selected_group_ids == []
+
+    page = await service.apply_workspace_preset(
+        DuplicateWorkspacePresetRequest(
+            scope="current_page",
+            group_ids=[PUBLIC_GROUP_ID],
+            review_filter="Actionable",
+            disposition="keep",
+        )
+    )
+    assert page.last_applied_group_ids == [PUBLIC_GROUP_ID]
+    assert page.selected_group_ids == [PUBLIC_GROUP_ID]
 
 
 @pytest.mark.asyncio

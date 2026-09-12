@@ -105,6 +105,25 @@ function tasks(): TaskRepository {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('live V2 duplicate repository', () => {
+  it('sends the applied review filter with backend-resolved all-matching presets', async () => {
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith('/workspace/preset')) {
+        requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return response({ ...emptyWorkspace, last_applied_group_ids: [], last_skipped_group_ids: [] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    await repository.applyPreset('keep', 'all_matching', [], 'Needs review');
+
+    expect(requests[0]).toMatchObject({
+      scope: 'all_matching', review_filter: 'Needs review', group_ids: [], disposition: 'keep',
+    });
+  });
+
   it('loads stable provider groups and persisted decisions without per-member summary requests', async () => {
     const selectedWorkspace = {
       ...emptyWorkspace,

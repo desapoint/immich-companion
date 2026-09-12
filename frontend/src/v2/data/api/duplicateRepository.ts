@@ -412,9 +412,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     saveDraft,
     flushDrafts,
     saveSelection,
-    async applyPreset(disposition,scope,groupIds){
+    async applyPreset(disposition,scope,groupIds,reviewFilter){
       await Promise.all([...draftQueues.values()]);
-      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],disposition}));
+      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],review_filter:reviewFilter??'All groups',disposition}));
       return{appliedGroupIds:workspace.last_applied_group_ids??[],skippedGroupIds:workspace.last_skipped_group_ids??[]};
     },
     async clearDecisions() {

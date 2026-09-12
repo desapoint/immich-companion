@@ -1507,10 +1507,39 @@ class CrossSourceDuplicateService:
             raise RuntimeError("Duplicate review persistence is unavailable")
         result = await self.result(request.options)
         requested = set(request.group_ids)
+        workspace = await self.workspace(request.options)
+        drafts = {draft.group_id: draft for draft in workspace.drafts}
+
+        def matches_filter(group: ExactDuplicateGroup) -> bool:
+            if request.review_filter == "All groups":
+                return True
+            draft = drafts.get(group.group_id)
+            if (
+                not group.eligible
+                or group.status == "ineligible"
+                or any(member.is_offline for member in group.members)
+                or (draft is not None and draft.stale)
+            ):
+                state = "Blocked"
+            elif draft is not None and 0 < len(draft.decisions) < len(group.members):
+                state = "Needs decisions"
+            elif (
+                (draft is not None and len(draft.decisions) == len(group.members))
+                or group.auto_resolvable
+                or group.auto_selected
+            ):
+                state = "Actionable"
+            else:
+                state = "Needs review"
+            return state == (
+                "Actionable" if request.review_filter == "Auto-ready" else request.review_filter
+            )
+
         targets = [
             group
             for group in result.groups
-            if request.scope == "all_matching" or group.group_id in requested
+            if (request.scope == "all_matching" and matches_filter(group))
+            or (request.scope == "current_page" and group.group_id in requested)
         ]
         applied: list[str] = []
         skipped: list[str] = []
