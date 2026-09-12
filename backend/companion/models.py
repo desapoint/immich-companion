@@ -538,6 +538,8 @@ class DuplicatePolicyRecord(Base):
     preselect_safe_groups: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_file_action: Mapped[str] = mapped_column(String(24), nullable=False)
     keeper_policy: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_priority: Mapped[list[str]] = mapped_column(JSON, default=list)
+    keeper_tiebreakers: Mapped[list[str]] = mapped_column(JSON, default=list)
     analyze_automatically: Mapped[bool] = mapped_column(Boolean, nullable=False)
     verify_upload_streams: Mapped[bool] = mapped_column(Boolean, nullable=False)
     external_library_ids: Mapped[list[str]] = mapped_column(JSON, default=list)

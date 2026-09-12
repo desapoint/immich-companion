@@ -23,6 +23,8 @@ import {
 
 const options = {
   keeper_policy: 'prefer_upload' as const,
+  source_priority: [],
+  keeper_tiebreakers: [],
   external_library_ids: ['library-1'],
   verify_upload_streams: false,
   automatic_handling_enabled: true,

@@ -9,7 +9,11 @@ from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
 
 from companion.database import DatabaseManager
-from companion.duplicate_schema import DuplicateAnalysisOptions, DuplicateKeeperPolicy
+from companion.duplicate_schema import (
+    DuplicateAnalysisOptions,
+    DuplicateKeeperPolicy,
+    DuplicateKeeperTiebreaker,
+)
 from companion.models import DuplicatePolicyRecord
 
 ExactFilePolicyAction = Literal["resolve", "keep_all", "stack_all", "review"]
@@ -20,6 +24,21 @@ class DuplicatePolicy(BaseModel):
     preselect_safe_groups: bool = True
     exact_file_action: ExactFilePolicyAction = "resolve"
     keeper_policy: DuplicateKeeperPolicy = "prefer_upload"
+    source_priority: list[str] = Field(
+        default_factory=lambda: ["immich_uploads", "unlisted"],
+        max_length=10_002,
+    )
+    keeper_tiebreakers: list[DuplicateKeeperTiebreaker] = Field(
+        default_factory=lambda: [
+            "favorite",
+            "resolution",
+            "metadata_richness",
+            "file_size",
+            "oldest_capture",
+            "uploaded_at",
+        ],
+        max_length=6,
+    )
     analyze_automatically: bool = True
     verify_upload_streams: bool = False
     external_library_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
@@ -28,11 +47,22 @@ class DuplicatePolicy(BaseModel):
     @model_validator(mode="after")
     def unique_libraries(self) -> DuplicatePolicy:
         self.external_library_ids = list(dict.fromkeys(self.external_library_ids))
+        self.source_priority = list(
+            dict.fromkeys(
+                source
+                if source in {"immich_uploads", "unlisted"}
+                else str(UUID(source))
+                for source in self.source_priority
+            )
+        )
+        self.keeper_tiebreakers = list(dict.fromkeys(self.keeper_tiebreakers))
         return self
 
     def analysis_options(self) -> DuplicateAnalysisOptions:
         return DuplicateAnalysisOptions(
             keeper_policy=self.keeper_policy,
+            source_priority=self.source_priority,
+            keeper_tiebreakers=self.keeper_tiebreakers,
             external_library_ids=self.external_library_ids,
             verify_upload_streams=self.verify_upload_streams,
             automatic_handling_enabled=self.automatic_handling_enabled,
@@ -67,6 +97,8 @@ class DuplicatePolicyRepository:
                     "preselect_safe_groups": record.preselect_safe_groups,
                     "exact_file_action": record.exact_file_action,
                     "keeper_policy": record.keeper_policy,
+                    "source_priority": record.source_priority,
+                    "keeper_tiebreakers": record.keeper_tiebreakers,
                     "analyze_automatically": record.analyze_automatically,
                     "verify_upload_streams": record.verify_upload_streams,
                     "external_library_ids": record.external_library_ids,

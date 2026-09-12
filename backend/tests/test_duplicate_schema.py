@@ -6,10 +6,33 @@ from uuid import UUID
 import pytest
 
 from companion.duplicate_schema import (
+    DuplicateAnalysisOptions,
     DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
     DuplicateWorkspaceSelectionDelta,
 )
+
+
+def test_analysis_options_reject_transient_source_priority_keys() -> None:
+    with pytest.raises(ValueError, match="bad-row-id"):
+        DuplicateAnalysisOptions(source_priority=["bad-row-id"])
+
+
+def test_analysis_options_deduplicates_ordered_policy_entries() -> None:
+    library_id = "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"
+    options = DuplicateAnalysisOptions(
+        source_priority=[
+            "immich_uploads",
+            "immich_uploads",
+            library_id,
+            library_id.lower(),
+            "unlisted",
+        ],
+        keeper_tiebreakers=["favorite", "resolution", "favorite"],
+    )
+
+    assert options.source_priority == ["immich_uploads", library_id.lower(), "unlisted"]
+    assert options.keeper_tiebreakers == ["favorite", "resolution"]
 
 A = UUID("11111111-1111-4111-8111-111111111111")
 B = UUID("22222222-2222-4222-8222-222222222222")

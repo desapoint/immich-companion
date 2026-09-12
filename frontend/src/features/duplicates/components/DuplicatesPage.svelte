@@ -38,7 +38,6 @@
     DuplicateBulkPreset,
     DuplicateDisposition,
     DuplicateGroupDraft,
-    DuplicateKeeperPolicy,
     DuplicatePlanAction,
     DuplicateResolutionPlan,
     DuplicateResult,
@@ -72,12 +71,6 @@
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
   const draftSaveDelayMs = 250;
-  const keeperPolicyOptions: SelectOption[] = [
-    { value: 'most_recent', label: 'Most recently uploaded' },
-    { value: 'prefer_upload', label: 'Prefer uploads' },
-    { value: 'prefer_external', label: 'Prefer external files' },
-    { value: 'first', label: 'First Immich result' },
-  ];
   const exactActionOptions: SelectOption[] = [
     { value: 'resolve', label: 'Resolve exact files' },
     { value: 'keep_all', label: 'Keep all exact copies' },
@@ -96,6 +89,8 @@
   ];
   const defaultOptions: DuplicateAnalysisOptions = {
     keeper_policy: 'prefer_upload',
+    source_priority: [],
+    keeper_tiebreakers: [],
     external_library_ids: [],
     verify_upload_streams: false,
     automatic_handling_enabled: true,
@@ -880,10 +875,6 @@
     }
   }
 
-  function setPolicy(value: string): void {
-    options.keeper_policy = value as DuplicateKeeperPolicy;
-  }
-
   async function persistAutomaticRules(): Promise<void> {
     const restored = await applyDuplicateRules({
       ...appliedOptions,
@@ -904,6 +895,8 @@
         preselect_safe_groups: nextOptions.preselect_safe_groups,
         exact_file_action: nextOptions.exact_file_action,
         keeper_policy: nextOptions.keeper_policy,
+        source_priority: nextOptions.source_priority,
+        keeper_tiebreakers: nextOptions.keeper_tiebreakers,
         analyze_automatically: nextOptions.analyze_automatically,
         verify_upload_streams: nextOptions.verify_upload_streams,
         external_library_ids: nextOptions.external_library_ids,
@@ -1009,14 +1002,6 @@
   </header>
 
   <section class="controls" aria-label="Duplicate rules">
-    <SelectField
-      id="duplicate-keeper-policy"
-      label="Keeper rule"
-      value={options.keeper_policy}
-      options={keeperPolicyOptions}
-      disabled={busy}
-      onchange={setPolicy}
-    />
     <SelectField id="duplicate-exact-policy" label="Exact-file default" value={options.exact_file_action} options={exactActionOptions} disabled={busy} onchange={(value) => options.exact_file_action = value as DuplicateAnalysisOptions['exact_file_action']} />
     <MultiSelectField id="duplicate-library-filter" label="External libraries" values={options.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable disabled={busy} onchange={(values) => options.external_library_ids = values} />
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />

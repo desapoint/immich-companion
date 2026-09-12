@@ -13,6 +13,14 @@ from companion.integrity import DetectedFormat, IntegrityClassification
 from companion.integrity_schema import IntegrityFreshness
 
 DuplicateKeeperPolicy = Literal["most_recent", "prefer_upload", "prefer_external", "first"]
+DuplicateKeeperTiebreaker = Literal[
+    "favorite",
+    "resolution",
+    "metadata_richness",
+    "file_size",
+    "oldest_capture",
+    "uploaded_at",
+]
 DuplicateExactFilePolicyAction = Literal["resolve", "keep_all", "stack_all", "review"]
 DuplicateGroupStatus = Literal["exact", "unverified", "mismatch", "ineligible"]
 DuplicateMemberStatus = Literal["matching", "mismatch", "unverified"]
@@ -57,6 +65,11 @@ class DuplicateAnalysisOptions(BaseModel):
     """Filters and keeper rule shared by analysis, review, and planning."""
 
     keeper_policy: DuplicateKeeperPolicy = "most_recent"
+    source_priority: list[str] = Field(default_factory=list, max_length=10_002)
+    keeper_tiebreakers: list[DuplicateKeeperTiebreaker] = Field(
+        default_factory=list,
+        max_length=6,
+    )
     external_library_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     verify_upload_streams: bool = False
     automatic_handling_enabled: bool = True
@@ -67,6 +80,15 @@ class DuplicateAnalysisOptions(BaseModel):
     @model_validator(mode="after")
     def unique_libraries(self) -> DuplicateAnalysisOptions:
         self.external_library_ids = list(dict.fromkeys(self.external_library_ids))
+        self.source_priority = list(
+            dict.fromkeys(
+                source
+                if source in {"immich_uploads", "unlisted"}
+                else str(UUID(source))
+                for source in self.source_priority
+            )
+        )
+        self.keeper_tiebreakers = list(dict.fromkeys(self.keeper_tiebreakers))
         return self
 
 

@@ -1014,6 +1014,16 @@ class CrossSourceDuplicateService:
                         source_kind=("upload" if asset.library_id is None else "external"),
                         uploaded_at=asset.created_at,
                         available=not asset.is_offline,
+                        library_id=asset.library_id,
+                        is_favorite=asset.is_favorite,
+                        width=asset.width,
+                        height=asset.height,
+                        file_size_bytes=asset.file_size_bytes,
+                        metadata_richness=sum(
+                            value not in (None, "", False, [], {})
+                            for value in (asset.exif_info or {}).values()
+                        ),
+                        captured_at=asset.local_date_time or asset.file_created_at,
                     )
                     for asset in assets
                 ),
@@ -1022,6 +1032,8 @@ class CrossSourceDuplicateService:
                 candidate,
                 ResolutionPolicy(
                     keeper_preference=options.keeper_policy,
+                    source_priority=tuple(options.source_priority),
+                    keeper_tiebreakers=tuple(options.keeper_tiebreakers),
                     automatic_handling=options.automatic_handling_enabled,
                     preselect_safe_groups=options.preselect_safe_groups,
                     exact_file_action=options.exact_file_action,

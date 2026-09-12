@@ -1,4 +1,4 @@
-import type { DuplicateKeeperPolicy, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
+import type { DuplicateKeeperPolicy, DuplicateKeeperTiebreaker, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
 import type { DuplicateDecisionSource, DuplicateDecisionStatus, DuplicateDisposition } from '../../../lib/types/duplicateReview';
 import type { StackResolution } from '../../../lib/types/stack';
 
@@ -11,6 +11,8 @@ export type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
 
 export interface DuplicateAnalysisOptions {
   keeper_policy: DuplicateKeeperPolicy;
+  source_priority: string[];
+  keeper_tiebreakers: DuplicateKeeperTiebreaker[];
   external_library_ids: string[];
   verify_upload_streams: boolean;
   automatic_handling_enabled: boolean;
