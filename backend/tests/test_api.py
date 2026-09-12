@@ -365,10 +365,16 @@ def test_cross_source_duplicate_api_requires_companion_database() -> None:
             "/api/assets/duplicates/similarity-scan",
             json={},
         )
+        similarity_index = client.post("/api/assets/duplicates/similarity-index")
+        similarity_coverage = client.get(
+            "/api/assets/duplicates/similarity-index/coverage"
+        )
 
     assert result.status_code == 503
     assert start.status_code == 503
     assert similarity_scan.status_code == 503
+    assert similarity_index.status_code == 503
+    assert similarity_coverage.status_code == 503
 
 
 def test_restore_listing_is_paged_directly_from_immich() -> None:

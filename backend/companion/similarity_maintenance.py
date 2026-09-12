@@ -206,7 +206,12 @@ class SimilarityMaintenanceTaskHandler:
         while batch := await self._changes.pending(SIMILARITY_MAINTENANCE_BATCH_SIZE):
             for change in batch:
                 await context.ensure_active()
-                if change.operation == "upsert":
+                feature_current = (
+                    await self._features.has_current_similarity_feature(change.asset_id)
+                    if change.operation == "upsert"
+                    else False
+                )
+                if change.operation == "upsert" and not feature_current:
                     await self._integrity_handler.analyze(
                         context,
                         change.asset_id,

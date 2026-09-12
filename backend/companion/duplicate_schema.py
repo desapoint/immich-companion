@@ -269,6 +269,21 @@ class SimilarityScanTaskStart(BaseModel):
     task_id: UUID
 
 
+class SimilarityIndexTaskStart(BaseModel):
+    task_id: UUID
+
+
+class SimilarityIndexCoverage(BaseModel):
+    eligible_count: int = Field(ge=0)
+    current_count: int = Field(ge=0)
+    missing_count: int = Field(ge=0)
+    stale_count: int = Field(ge=0)
+    complete: bool
+    model_version: str
+    feature_version: int
+    config_fingerprint: str
+
+
 class SimilarityScanSummary(BaseModel):
     scan_id: UUID
     similarity_threshold: float

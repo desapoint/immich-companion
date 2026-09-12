@@ -236,10 +236,14 @@ class IntegrityTaskHandler:
         asset_id: UUID,
         *,
         publish_progress: bool = True,
+        source: ImmichAsset | None = None,
+        track_similarity_changes: bool = True,
     ) -> AssetIntegrityReport:
         """Run the shared bounded analyzer for one known synchronized asset."""
 
-        source = await self._active_asset(asset_id)
+        source = source or await self._active_asset(asset_id)
+        if source.id != asset_id or source.is_trashed or not await self._assets.has_asset(asset_id):
+            raise PermanentTaskError("The asset is no longer in the active workspace.")
         immich_content_checksum = source.checksum if source.library_id is None else None
         analyzer = FileIntegrityAnalyzer(source.original_mime_type, immich_content_checksum)
         started = monotonic()
@@ -402,6 +406,12 @@ class IntegrityTaskHandler:
                 source.original_file_name,
             )
             raise RetryableTaskError("The source changed during integrity analysis.")
+        # A lightweight synchronization payload may omit file size. Persist the
+        # verified detailed metadata so this feature becomes current in the
+        # catalog and is not reprocessed on every later library-wide pass.
+        await self._assets.refresh_asset(
+            current, track_similarity_changes=track_similarity_changes
+        )
         return await self._reports.save(current, result, visual_feature)
 
     @staticmethod

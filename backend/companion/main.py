@@ -101,6 +101,8 @@ from companion.duplicate_schema import (
     SimilarityCacheClearResult,
     SimilarityCacheStatus,
     SimilarityDiskCacheStatus,
+    SimilarityIndexCoverage,
+    SimilarityIndexTaskStart,
     SimilarityScanRequest,
     SimilarityScanSummary,
     SimilarityScanTaskStart,
@@ -149,6 +151,11 @@ from companion.relation_schema import (
 )
 from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
 from companion.similarity_cache import CachedPreview, SimilarityCacheManager
+from companion.similarity_index_service import (
+    SimilarityIndexMaintainer,
+    SimilarityIndexService,
+    SimilarityIndexTaskHandler,
+)
 from companion.similarity_maintenance import (
     SimilarityMaintenanceRepository,
     SimilarityMaintenanceService,
@@ -364,6 +371,31 @@ def create_app(
             )
         )
         task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))
+    similarity_index_maintainer = (
+        SimilarityIndexMaintainer(
+            immich,
+            asset_repository,
+            integrity_repository,
+            integrity_handler,
+        )
+        if asset_repository is not None
+        and integrity_repository is not None
+        and integrity_handler is not None
+        else None
+    )
+    similarity_index_service = (
+        SimilarityIndexService(task_coordinator, similarity_index_maintainer)
+        if task_coordinator is not None and similarity_index_maintainer is not None
+        else None
+    )
+    if (
+        task_coordinator is not None
+        and similarity_index_maintainer is not None
+    ):
+        task_coordinator.register_handler(
+            SimilarityIndexTaskHandler(similarity_index_maintainer)
+        )
+
     similarity_scan_service = (
         SimilarityScanService(task_coordinator, similarity_scan_repository)
         if task_coordinator is not None
@@ -382,6 +414,7 @@ def create_app(
                 integrity_repository,
                 similarity_repository,
                 similarity_scan_repository,
+                similarity_index_maintainer,
             )
         )
 
@@ -603,6 +636,14 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return similarity_scan_service
+
+    def require_similarity_index_service() -> SimilarityIndexService:
+        if similarity_index_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return similarity_index_service
 
     def require_similarity_repository() -> SimilarityRepository:
         if similarity_repository is None:
@@ -1756,6 +1797,21 @@ def create_app(
             return await require_similarity_scan_service().start(request)
         except SimilarityScanAlreadyRunningError as error:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
+
+    @app.post(
+        "/api/assets/duplicates/similarity-index",
+        response_model=SimilarityIndexTaskStart,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def start_similarity_index() -> SimilarityIndexTaskStart:
+        return await require_similarity_index_service().start()
+
+    @app.get(
+        "/api/assets/duplicates/similarity-index/coverage",
+        response_model=SimilarityIndexCoverage,
+    )
+    async def similarity_index_coverage() -> SimilarityIndexCoverage:
+        return await require_similarity_index_service().coverage()
 
     @app.get(
         "/api/assets/duplicates/similarity-scan/latest",

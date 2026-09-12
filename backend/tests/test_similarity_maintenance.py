@@ -48,6 +48,11 @@ class FakeIntegrityHandler:
 
 
 class FakeFeatures:
+    current: set[UUID] = set()
+
+    async def has_current_similarity_feature(self, _asset_id: UUID) -> bool:
+        return _asset_id in self.current
+
     async def get_similarity_feature(self, _asset_id: UUID):
         return None
 
@@ -186,3 +191,21 @@ async def test_incremental_pipeline_only_processes_changes_and_resumes_without_d
     assert changes.changes == []
     assert result.summary == {"incremental": True, "full_scan_started": False}
     assert result.counters["assets_pending"] == 0
+
+
+@pytest.mark.asyncio
+async def test_incremental_worker_reuses_fingerprint_committed_by_library_index() -> None:
+    asset_id = UUID(int=500)
+    change = SimilarityAssetChange(asset_id, "upsert", "source-500", datetime.now(UTC))
+    changes = FakeChanges([change])
+    integrity = FakeIntegrityHandler()
+    features = FakeFeatures()
+    features.current = {asset_id}
+    handler = SimilarityMaintenanceTaskHandler(
+        changes, integrity, features, SimpleNamespace(), FakeScans()
+    )
+
+    await handler.execute(FakeContext(), {})
+
+    assert integrity.asset_ids == []
+    assert changes.acknowledged == [asset_id]

@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import and_, delete, func, or_, select
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
@@ -234,7 +234,6 @@ class IntegrityRepository:
                 AssetRecord.asset_type == "IMAGE",
                 AssetRecord.is_trashed.is_(False),
                 AssetRecord.is_offline.is_(False),
-                AssetRecord.file_size_bytes.is_not(None),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
                 AssetSimilarityFeatureRecord.config_fingerprint
@@ -248,6 +247,31 @@ class IntegrityRepository:
         )
         async with self._database.sessions() as session:
             return list((await session.scalars(statement)).all())
+
+    async def has_current_similarity_feature(self, asset_id: UUID) -> bool:
+        """Avoid re-streaming a feature committed by a concurrent index pass."""
+
+        statement = (
+            select(AssetSimilarityFeatureRecord.asset_id)
+            .join(AssetRecord, AssetRecord.id == AssetSimilarityFeatureRecord.asset_id)
+            .where(
+                AssetRecord.id == asset_id,
+                AssetRecord.asset_type == "IMAGE",
+                AssetRecord.is_trashed.is_(False),
+                AssetRecord.is_offline.is_(False),
+                AssetRecord.file_size_bytes.is_not(None),
+                AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
+                AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetSimilarityFeatureRecord.config_fingerprint
+                == SIMILARITY_CONFIG_FINGERPRINT,
+                AssetSimilarityFeatureRecord.source_file_modified_at
+                == AssetRecord.file_modified_at,
+                AssetSimilarityFeatureRecord.source_file_size_bytes
+                == AssetRecord.file_size_bytes,
+            )
+        )
+        async with self._database.sessions() as session:
+            return await session.scalar(statement) is not None
 
     async def iter_current_similarity_features(
         self,
@@ -267,7 +291,6 @@ class IntegrityRepository:
                     AssetRecord.asset_type == "IMAGE",
                     AssetRecord.is_trashed.is_(False),
                     AssetRecord.is_offline.is_(False),
-                    AssetRecord.file_size_bytes.is_not(None),
                     AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                     AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
                     AssetSimilarityFeatureRecord.config_fingerprint
@@ -303,7 +326,6 @@ class IntegrityRepository:
                 AssetRecord.asset_type == "IMAGE",
                 AssetRecord.is_trashed.is_(False),
                 AssetRecord.is_offline.is_(False),
-                AssetRecord.file_size_bytes.is_not(None),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
                 AssetSimilarityFeatureRecord.config_fingerprint
@@ -316,6 +338,87 @@ class IntegrityRepository:
         )
         async with self._database.sessions() as session:
             return int(await session.scalar(statement) or 0)
+
+    async def similarity_feature_coverage(self) -> tuple[int, int, int, int]:
+        """Return eligible, current, missing, and stale Appearance feature counts."""
+
+        eligible_filters = (
+            AssetRecord.asset_type == "IMAGE",
+            AssetRecord.is_trashed.is_(False),
+            AssetRecord.is_offline.is_(False),
+        )
+        current_feature = and_(
+            AssetSimilarityFeatureRecord.asset_id.is_not(None),
+            AssetRecord.file_size_bytes.is_not(None),
+            AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
+            AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+            AssetSimilarityFeatureRecord.config_fingerprint
+            == SIMILARITY_CONFIG_FINGERPRINT,
+            AssetSimilarityFeatureRecord.source_file_modified_at
+            == AssetRecord.file_modified_at,
+            AssetSimilarityFeatureRecord.source_file_size_bytes
+            == AssetRecord.file_size_bytes,
+        )
+        statement = (
+            select(
+                func.count(),
+                func.count().filter(current_feature),
+                func.count().filter(AssetSimilarityFeatureRecord.asset_id.is_(None)),
+            )
+            .select_from(AssetRecord)
+            .outerjoin(
+                AssetSimilarityFeatureRecord,
+                AssetSimilarityFeatureRecord.asset_id == AssetRecord.id,
+            )
+            .where(*eligible_filters)
+        )
+        async with self._database.sessions() as session:
+            eligible, current, missing = (await session.execute(statement)).one()
+        eligible = int(eligible or 0)
+        current = int(current or 0)
+        missing = int(missing or 0)
+        return eligible, current, missing, max(0, eligible - current - missing)
+
+    async def list_similarity_feature_work(
+        self,
+        *,
+        after_asset_id: UUID | None = None,
+        limit: int = 100,
+    ) -> list[UUID]:
+        """Return one stable keyset page of eligible missing or stale image IDs."""
+
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        statement = (
+            select(AssetRecord.id)
+            .outerjoin(
+                AssetSimilarityFeatureRecord,
+                AssetSimilarityFeatureRecord.asset_id == AssetRecord.id,
+            )
+            .where(
+                AssetRecord.asset_type == "IMAGE",
+                AssetRecord.is_trashed.is_(False),
+                AssetRecord.is_offline.is_(False),
+                *([AssetRecord.id > after_asset_id] if after_asset_id is not None else []),
+                or_(
+                    AssetRecord.file_size_bytes.is_(None),
+                    AssetSimilarityFeatureRecord.asset_id.is_(None),
+                    AssetSimilarityFeatureRecord.model_version != SIMILARITY_MODEL_VERSION,
+                    AssetSimilarityFeatureRecord.feature_version != SIMILARITY_FEATURE_VERSION,
+                    AssetSimilarityFeatureRecord.config_fingerprint
+                    != SIMILARITY_CONFIG_FINGERPRINT,
+                    AssetSimilarityFeatureRecord.source_file_modified_at
+                    != AssetRecord.file_modified_at,
+                    AssetSimilarityFeatureRecord.source_file_size_bytes.is_distinct_from(
+                        AssetRecord.file_size_bytes
+                    ),
+                ),
+            )
+            .order_by(AssetRecord.id)
+            .limit(limit)
+        )
+        async with self._database.sessions() as session:
+            return list((await session.scalars(statement)).all())
 
     async def save(
         self,

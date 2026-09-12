@@ -551,7 +551,9 @@ class AssetRepository:
                 changed += 1
         return created, changed, unchanged
 
-    async def refresh_asset(self, asset: ImmichAsset) -> None:
+    async def refresh_asset(
+        self, asset: ImmichAsset, *, track_similarity_changes: bool = True
+    ) -> None:
         """Upsert one active asset or evict it when Immich reports it trashed."""
 
         if asset.is_trashed:
@@ -594,7 +596,7 @@ class AssetRepository:
                 [asset],
                 {asset.id: tuple(previous)} if previous is not None else {},
             )
-            if changes:
+            if changes and track_similarity_changes:
                 await self._queue_similarity_changes(
                     session,
                     changes,

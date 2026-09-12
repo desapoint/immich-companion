@@ -24,6 +24,7 @@ from companion.similarity_features import (
     SIMILARITY_MODEL_VERSION,
 )
 from companion.similarity_grouping import SIMILARITY_GROUPING_VERSION
+from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
 from companion.similarity_scan_repository import (
     SimilarityScanPair,
@@ -31,6 +32,7 @@ from companion.similarity_scan_repository import (
     SimilarityScanRepository,
 )
 from companion.task_coordinator import (
+    PermanentTaskError,
     TaskCancelledError,
     TaskContext,
     TaskCoordinator,
@@ -131,10 +133,12 @@ class SimilarityScanTaskHandler:
         features: IntegrityRepository,
         similarity: SimilarityRepository,
         scans: SimilarityScanRepository,
+        indexer: SimilarityIndexMaintainer | None = None,
     ) -> None:
         self._features = features
         self._similarity = similarity
         self._scans = scans
+        self._indexer = indexer
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         started = perf_counter()
@@ -156,10 +160,12 @@ class SimilarityScanTaskHandler:
         )
         candidate_stats = SimilarityCandidateStats()
         scan_id = None
+        index_counters: dict[str, int] = {}
 
         def telemetry(**values: int) -> dict[str, int]:
             memory = process_memory_snapshot()
             return {
+                **index_counters,
                 **values,
                 "candidate_index_nodes_visited": candidate_stats.index_nodes_visited,
                 "candidate_raw_neighbor_matches": candidate_stats.raw_neighbor_matches,
@@ -196,7 +202,31 @@ class SimilarityScanTaskHandler:
                         matches_retained=completed.match_count,
                     ),
                 )
+            if self._indexer is not None:
+                coverage, indexed, unavailable = await self._indexer.maintain(
+                    context,
+                    progress_ceiling=30,
+                )
+                index_counters = {
+                    "eligible_images": coverage.eligible_count,
+                    "current_fingerprints": coverage.current_count,
+                    "missing_fingerprints": coverage.missing_count,
+                    "stale_fingerprints": coverage.stale_count,
+                    "fingerprints_completed": indexed,
+                    "fingerprints_unavailable": unavailable,
+                }
+                if not coverage.complete:
+                    raise PermanentTaskError(
+                        "Similarity scan coverage is incomplete: "
+                        f"{coverage.missing_count} missing and "
+                        f"{coverage.stale_count} stale fingerprints remain."
+                    )
             features = await self._features.list_current_similarity_features()
+            if self._indexer is not None and len(features) != coverage.eligible_count:
+                raise PermanentTaskError(
+                    "Similarity scan coverage changed during fingerprint snapshot; "
+                    "retry after asset synchronization settles."
+                )
             feature_by_id = {feature.asset_id: feature for feature in features}
             candidate_index = BoundedSimilarityCandidateIndex(
                 features,
@@ -238,7 +268,7 @@ class SimilarityScanTaskHandler:
                         "completed": resume_index,
                         "total": len(ordered_features),
                         "percent": round(
-                            5 + 10 * resume_index / max(1, len(ordered_features)), 1
+                            35 + 10 * resume_index / max(1, len(ordered_features)), 1
                         ),
                         "detail": (
                             f"Resuming candidate index after {resume_index} fingerprints…"
@@ -273,7 +303,7 @@ class SimilarityScanTaskHandler:
                         "completed": processed_assets,
                         "total": len(ordered_features),
                         "percent": round(
-                            5 + 10 * processed_assets / max(1, len(ordered_features)), 1
+                            35 + 10 * processed_assets / max(1, len(ordered_features)), 1
                         ),
                         "detail": (
                             f"Indexed {processed_assets} of {len(ordered_features)} fingerprints"
@@ -306,7 +336,7 @@ class SimilarityScanTaskHandler:
                     "phase": "similarity_scoring",
                     "completed": resume_scored,
                     "total": total,
-                    "percent": round(15 + 80 * resume_scored / max(1, total), 1),
+                    "percent": round(45 + 50 * resume_scored / max(1, total), 1),
                     "detail": (
                         f"Restoring scoring state after {resume_scored} candidate pairs…"
                         if resume_scored
@@ -371,7 +401,7 @@ class SimilarityScanTaskHandler:
                         "phase": "similarity_scoring",
                         "completed": processed,
                         "total": total,
-                        "percent": round(15 + 80 * processed / max(1, total), 1),
+                        "percent": round(45 + 50 * processed / max(1, total), 1),
                         "detail": f"Scored {processed} of {total} candidate pairs",
                     },
                 )

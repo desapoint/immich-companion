@@ -5,14 +5,14 @@ from uuid import UUID
 
 import pytest
 
-from companion.duplicate_schema import SimilarityScanRequest
+from companion.duplicate_schema import SimilarityIndexCoverage, SimilarityScanRequest
 from companion.similarity_repository import PairSimilarityEvidence
 from companion.similarity_scan_service import (
     SimilarityScanAlreadyRunningError,
     SimilarityScanService,
     SimilarityScanTaskHandler,
 )
-from companion.task_coordinator import TaskCancelledError, TaskPausedError
+from companion.task_coordinator import PermanentTaskError, TaskCancelledError, TaskPausedError
 
 SCAN_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
@@ -342,3 +342,75 @@ async def test_service_coalesces_same_scan_and_rejects_incompatible_active_scan(
     tasks.incompatible = active
     with pytest.raises(SimilarityScanAlreadyRunningError):
         await service.start(SimilarityScanRequest(similarity_threshold=90))
+
+
+@pytest.mark.asyncio
+async def test_scan_completes_library_index_before_candidate_search() -> None:
+    events: list[str] = []
+
+    class Indexer:
+        async def maintain(self, _context, *, progress_ceiling):
+            assert progress_ceiling == 30
+            events.append("indexed")
+            return (
+                SimilarityIndexCoverage(
+                    eligible_count=3,
+                    current_count=3,
+                    missing_count=0,
+                    stale_count=0,
+                    complete=True,
+                    model_version="appearance-v1",
+                    feature_version=2,
+                    config_fingerprint="test",
+                ),
+                3,
+                0,
+            )
+
+    class OrderedFeatures(FakeFeatures):
+        async def list_current_similarity_features(self):
+            events.append("searched")
+            return await super().list_current_similarity_features()
+
+    result = await SimilarityScanTaskHandler(
+        OrderedFeatures(),
+        FakeSimilarity(),
+        FakeScans(),
+        Indexer(),  # type: ignore[arg-type]
+    ).execute(FakeContext(), SimilarityScanRequest().model_dump(mode="json"))
+
+    assert events == ["indexed", "searched"]
+    assert result.counters["eligible_images"] == 3
+    assert result.counters["current_fingerprints"] == 3
+
+
+@pytest.mark.asyncio
+async def test_scan_refuses_to_claim_full_library_with_missing_fingerprints() -> None:
+    class IncompleteIndex:
+        async def maintain(self, _context, *, progress_ceiling):
+            return (
+                SimilarityIndexCoverage(
+                    eligible_count=3,
+                    current_count=2,
+                    missing_count=1,
+                    stale_count=0,
+                    complete=False,
+                    model_version="appearance-v1",
+                    feature_version=2,
+                    config_fingerprint="test",
+                ),
+                2,
+                1,
+            )
+
+    class ForbiddenFeatures(FakeFeatures):
+        async def list_current_similarity_features(self):
+            pytest.fail("Candidate search started with incomplete index coverage")
+
+    with pytest.raises(PermanentTaskError, match="1 missing"):
+        await SimilarityScanTaskHandler(
+            ForbiddenFeatures(),
+            FakeSimilarity(),
+            FakeScans(),
+            IncompleteIndex(),  # type: ignore[arg-type]
+        ).execute(FakeContext(), SimilarityScanRequest().model_dump(mode="json"))

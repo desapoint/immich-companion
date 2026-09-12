@@ -57,8 +57,14 @@ def asset(
 
 
 class FakeAssets:
+    def __init__(self):
+        self.refreshed = []
+
     async def has_asset(self, _asset_id):
         return True
+
+    async def refresh_asset(self, current, *, track_similarity_changes=True):
+        self.refreshed.append(current)
 
 
 class FakeReports:
