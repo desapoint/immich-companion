@@ -158,6 +158,7 @@ export function createDemoLibraryDataSource():LibraryDataSource{
     async search(query){await delay();return collectionPage(searchDuplicateGroups(query),query)},
     selectedGroupIds(){return [...demoSelectedDuplicateGroupIds]},
     async saveDraft(){await delay()},
+    async flushDrafts(){await delay()},
     async saveSelection(groupIds){await delay();demoSelectedDuplicateGroupIds=[...groupIds]},
     async applyPreset(_disposition,scope,groupIds){await delay();const ids=scope==='all_matching'?materializeDuplicateGroups().map((group)=>group.id):[...groupIds];return{appliedGroupIds:ids,skippedGroupIds:[]}},
     async clearDecisions(){await delay();return materializeDuplicateGroups().length},

@@ -314,6 +314,32 @@ describe('live V2 duplicate repository', () => {
     expect(calls.some((call) => call.path.endsWith('/workspace/group'))).toBe(false);
   });
 
+  it('waits for an in-flight draft before allowing a page refresh', async () => {
+    let completeWrite: ((value: Response) => void) | undefined;
+    const pendingWrite = new Promise<Response>((resolve) => { completeWrite = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return pendingWrite;
+      throw new Error(`Unexpected request: ${path} ${init?.method ?? ''}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 1 });
+    const draft = repository.saveDraft(group.group_id, {
+      decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
+      stacks: [],
+    });
+    let flushed = false;
+    const flush = repository.flushDrafts().then(() => { flushed = true; });
+
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    completeWrite?.(response({ group_id: group.group_id, member_fingerprint: group.member_fingerprint, decisions: [], stale: false }));
+    await Promise.all([draft, flush]);
+    expect(flushed).toBe(true);
+  });
+
   it('clears every discovered group through one durable workspace reset', async () => {
     const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

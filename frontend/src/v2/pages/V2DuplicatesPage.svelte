@@ -92,6 +92,7 @@
     const writes:Promise<void>[]=[];
     for(const item of groups){const timer=draftTimers.get(item.id);if(!timer)continue;clearTimeout(timer);draftTimers.delete(item.id);writes.push(libraryData.duplicates.saveDraft(item.id,groupResolution(item)))}
     await Promise.all(writes);
+    await libraryData.duplicates.flushDrafts();
     await selectionSave;
   }
 
@@ -120,6 +121,7 @@
 
   async function refreshGroups(reset=true):Promise<boolean>{
     if(groupRequests.loading&&!reset)return false;
+    try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
     if(reset){nextCursor=null;if(collection.resultMode==='Infinite')collection.reset()}
     const query=collection.resultMode==='Pagination'?{state:reviewFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,pageSize:collection.pageSize,cursor:reset?null:nextCursor};
     const result=await groupRequests.run((signal)=>libraryData.duplicates.search({...query,signal}),{

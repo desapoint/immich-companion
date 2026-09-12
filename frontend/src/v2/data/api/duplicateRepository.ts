@@ -303,6 +303,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
   let visibleGroupIds = new Set<string>();
   let workspace: ApiDuplicateWorkspace = { initialized: false, revision: 0, selected_count: 0, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
   const draftQueues = new Map<string, Promise<void>>();
+  const draftErrors = new Map<string, unknown>();
 
   const draftFor = (groupId: string): ApiDuplicateDraft | undefined => workspace.drafts.find((draft) => draft.group_id === groupId && !draft.stale);
 
@@ -361,10 +362,16 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       .then(() => writeDraft(groupId, resolution));
     draftQueues.set(groupId, queued);
     void queued.then(
-      () => { if (draftQueues.get(groupId) === queued) draftQueues.delete(groupId); },
-      () => { if (draftQueues.get(groupId) === queued) draftQueues.delete(groupId); },
+      () => { draftErrors.delete(groupId); if (draftQueues.get(groupId) === queued) draftQueues.delete(groupId); },
+      (error) => { draftErrors.set(groupId, error); if (draftQueues.get(groupId) === queued) draftQueues.delete(groupId); },
     );
     return queued;
+  };
+
+  const flushDrafts = async (): Promise<void> => {
+    await Promise.all([...draftQueues.values()]);
+    const failure = draftErrors.values().next().value;
+    if (failure !== undefined) throw failure;
   };
 
   const saveSelection = async (groupIds: readonly string[], activeGroupId: string | null): Promise<void> => {
@@ -403,6 +410,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       return { items, total: filtered.length, pageSize: query.pageSize, page, nextCursor: start + query.pageSize < filtered.length ? String(page + 1) : null };
     },
     saveDraft,
+    flushDrafts,
     saveSelection,
     async applyPreset(disposition,scope,groupIds){
       await Promise.all([...draftQueues.values()]);
