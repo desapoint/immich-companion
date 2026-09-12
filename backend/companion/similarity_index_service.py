@@ -43,11 +43,33 @@ class SimilarityIndexMaintainer:
         features: SimilaritySearchRepository,
         *,
         batch_size: int = SIMILARITY_FINGERPRINT_BATCH_SIZE,
+        fetch_slots: int = 2,
+        decode_slots: int = 2,
     ) -> None:
+        if batch_size < 1 or fetch_slots < 1 or decode_slots < 1:
+            raise ValueError("Fingerprint batch and pipeline slots must be positive")
         self._immich = immich
         self._assets = assets
         self._features = features
         self._batch_size = batch_size
+        self._fetch_slots = asyncio.Semaphore(fetch_slots)
+        self._decode_slots = asyncio.Semaphore(decode_slots)
+        self._inflight_slots = asyncio.Semaphore(fetch_slots + decode_slots)
+
+    async def _fingerprint_page(
+        self, context: TaskContext, page: list[UUID], *, attempt: str
+    ) -> list[tuple[bool, str | None]]:
+        tasks = [
+            asyncio.create_task(self._fingerprint(context, asset_id, attempt=attempt))
+            for asset_id in page
+        ]
+        try:
+            return await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def coverage(self) -> SimilarityIndexCoverage:
         eligible, current, missing, stale = await self._features.coverage()
@@ -116,9 +138,8 @@ class SimilarityIndexMaintainer:
             )
             if not page:
                 break
-            for asset_id in page:
-                await context.ensure_active()
-                succeeded, _ = await self._fingerprint(context, asset_id, attempt="initial")
+            results = await self._fingerprint_page(context, page, attempt="initial")
+            for succeeded, _ in results:
                 if succeeded:
                     completed += 1
                 else:
@@ -177,10 +198,9 @@ class SimilarityIndexMaintainer:
                 )
                 if not page:
                     break
-                for asset_id in page:
-                    await context.ensure_active()
+                results = await self._fingerprint_page(context, page, attempt="retry")
+                for asset_id, (succeeded, reason) in zip(page, results, strict=True):
                     retry_attempted.add(asset_id)
-                    succeeded, reason = await self._fingerprint(context, asset_id, attempt="retry")
                     if succeeded:
                         retry_completed += 1
                     elif reason is not None:
@@ -218,10 +238,22 @@ class SimilarityIndexMaintainer:
     async def _fingerprint(
         self, context: TaskContext, asset_id: UUID, *, attempt: str
     ) -> tuple[bool, str | None]:
+        async with self._inflight_slots:
+            await context.ensure_active()
+            return await self._fingerprint_unbounded(context, asset_id, attempt=attempt)
+
+    async def _fingerprint_unbounded(
+        self, context: TaskContext, asset_id: UUID, *, attempt: str
+    ) -> tuple[bool, str | None]:
         try:
-            source = await self._immich.get_asset(asset_id)
-            if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
+            async with self._fetch_slots:
+                source = await self._immich.get_asset(asset_id)
                 await self._assets.refresh_asset(source, track_similarity_changes=False)
+                if not (source.is_trashed or source.is_offline or source.asset_type != "IMAGE"):
+                    preview = await self._immich.get_bounded_preview(
+                        asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
+                    )
+            if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
                 reason = (
                     "asset is trashed" if source.is_trashed else
                     "asset is offline" if source.is_offline else
@@ -232,11 +264,8 @@ class SimilarityIndexMaintainer:
                     asset_id, attempt, reason,
                 )
                 return False, reason
-            await self._assets.refresh_asset(source, track_similarity_changes=False)
-            preview = await self._immich.get_bounded_preview(
-                asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
-            )
-            feature = await asyncio.to_thread(extract_search_feature, preview)
+            async with self._decode_slots:
+                feature = await asyncio.to_thread(extract_search_feature, preview)
             if feature is None:
                 reason = "generated preview could not be decoded into search evidence"
                 logger.warning(
@@ -245,6 +274,7 @@ class SimilarityIndexMaintainer:
                 )
                 return False, reason
             preview_digest = sha256(preview, usedforsecurity=False).hexdigest()
+            await context.ensure_active()
             if await self._features.save(source, preview_digest, feature):
                 return True, None
             reason = "synchronized source changed while preview evidence was being generated"

@@ -442,6 +442,8 @@ def create_app(
             immich,
             asset_repository,
             search_feature_repository,
+            fetch_slots=runtime_settings.similarity_preview_fetch_slots,
+            decode_slots=runtime_settings.similarity_preview_decode_slots,
         )
         if asset_repository is not None
         and search_feature_repository is not None

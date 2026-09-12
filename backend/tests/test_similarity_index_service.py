@@ -1,7 +1,10 @@
 """Durable whole-library Appearance fingerprint maintenance regressions."""
 
+import asyncio
+import time
 from datetime import UTC, datetime
 from io import BytesIO
+from threading import Lock
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -14,6 +17,7 @@ from companion.similarity_index_service import (
     SimilarityIndexService,
     SimilarityIndexTaskHandler,
 )
+from companion.similarity_search_features import extract_search_feature
 
 A = UUID(int=1)
 B = UUID(int=2)
@@ -288,6 +292,55 @@ async def test_valid_preview_indexes_original_with_mismatched_declared_mime() ->
     assert (completed, unavailable) == (1, 0)
     assert reasons == {}
     assert immich.previewed == [A]
+
+
+@pytest.mark.asyncio
+async def test_preview_fetch_and_decode_have_independent_bounded_slots(monkeypatch) -> None:
+    features = FakeFeatures([UUID(int=index) for index in range(1, 9)])
+
+    class SlowImmich(FakeImmich):
+        active_fetches = 0
+        peak_fetches = 0
+
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            self.active_fetches += 1
+            self.peak_fetches = max(self.peak_fetches, self.active_fetches)
+            await asyncio.sleep(0.01)
+            self.active_fetches -= 1
+            return await super().get_bounded_preview(asset_id, max_bytes=max_bytes)
+
+    lock = Lock()
+    active_decodes = 0
+    peak_decodes = 0
+
+    def slow_decode(preview):
+        nonlocal active_decodes, peak_decodes
+        with lock:
+            active_decodes += 1
+            peak_decodes = max(peak_decodes, active_decodes)
+        time.sleep(0.01)
+        feature = extract_search_feature(preview)
+        with lock:
+            active_decodes -= 1
+        return feature
+
+    monkeypatch.setattr("companion.similarity_index_service.extract_search_feature", slow_decode)
+    immich = SlowImmich()
+    maintainer = SimilarityIndexMaintainer(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+        batch_size=8,
+        fetch_slots=2,
+        decode_slots=1,
+    )
+
+    coverage, completed, unavailable, _, _ = await maintainer.maintain(FakeContext())
+
+    assert coverage.complete is True
+    assert (completed, unavailable) == (8, 0)
+    assert immich.peak_fetches == 2
+    assert peak_decodes == 1
 
 
 @pytest.mark.asyncio
