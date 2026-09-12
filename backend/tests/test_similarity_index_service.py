@@ -1,27 +1,27 @@
 """Durable whole-library Appearance fingerprint maintenance regressions."""
 
 from datetime import UTC, datetime
+from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
+from PIL import Image
 
-from companion.similarity_features import (
-    SIMILARITY_CONFIG_FINGERPRINT,
-    SIMILARITY_FEATURE_VERSION,
-    SIMILARITY_MODEL_VERSION,
-)
+from companion.immich import ImmichApiError
 from companion.similarity_index_service import (
     SimilarityIndexMaintainer,
     SimilarityIndexService,
     SimilarityIndexTaskHandler,
 )
-from companion.task_coordinator import PermanentTaskError
 
 A = UUID(int=1)
 B = UUID(int=2)
 C = UUID(int=3)
 MODIFIED = datetime(2026, 9, 11, tzinfo=UTC)
+PREVIEW_BUFFER = BytesIO()
+Image.new("RGB", (64, 48), (40, 80, 120)).save(PREVIEW_BUFFER, format="PNG")
+PREVIEW = PREVIEW_BUFFER.getvalue()
 
 
 def source(asset_id: UUID):
@@ -33,6 +33,10 @@ def source(asset_id: UUID):
         is_offline=False,
         file_modified_at=MODIFIED,
         file_size_bytes=asset_id.int * 100,
+        checksum=None,
+        width=4000,
+        height=3000,
+        original_mime_type="image/jpeg",
     )
 
 
@@ -43,12 +47,12 @@ class FakeFeatures:
         self.eligible_count = eligible_count or len(work)
         self.requested_pages: list[tuple[UUID | None, int]] = []
 
-    async def similarity_feature_coverage(self):
+    async def coverage(self):
         missing = len([asset_id for asset_id in self.work if asset_id not in self.current])
         baseline_current = self.eligible_count - len(self.work)
         return self.eligible_count, baseline_current + len(self.current), missing, 0
 
-    async def list_similarity_feature_work(self, *, after_asset_id, limit):
+    async def list_work(self, *, after_asset_id, limit):
         self.requested_pages.append((after_asset_id, limit))
         return [
             asset_id
@@ -57,23 +61,24 @@ class FakeFeatures:
             and (after_asset_id is None or asset_id.int > after_asset_id.int)
         ][:limit]
 
-    async def get_similarity_feature(self, asset_id: UUID):
-        if asset_id not in self.current:
-            return None
-        item = source(asset_id)
-        return SimpleNamespace(
-            asset_id=asset_id,
-            model_version=SIMILARITY_MODEL_VERSION,
-            feature_version=SIMILARITY_FEATURE_VERSION,
-            config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
-            source_file_modified_at=item.file_modified_at,
-            source_file_size_bytes=item.file_size_bytes,
-        )
+    async def save(self, asset, preview_sha256, feature):
+        assert len(preview_sha256) == 64
+        assert feature.pixel_sha256 is None
+        self.current.add(asset.id)
+        return True
 
 
 class FakeImmich:
+    def __init__(self) -> None:
+        self.previewed: list[UUID] = []
+
     async def get_asset(self, asset_id: UUID):
         return source(asset_id)
+
+    async def get_bounded_preview(self, asset_id: UUID, *, max_bytes: int):
+        assert len(PREVIEW) < max_bytes
+        self.previewed.append(asset_id)
+        return PREVIEW
 
 
 class FakeAssets:
@@ -83,21 +88,6 @@ class FakeAssets:
     async def refresh_asset(self, item, *, track_similarity_changes=True) -> None:
         assert track_similarity_changes is False
         self.refreshed.append(item.id)
-
-
-class FakeIntegrity:
-    def __init__(self, features: FakeFeatures) -> None:
-        self.features = features
-        self.analyzed: list[UUID] = []
-
-    async def analyze(
-        self, _context, asset_id, *, publish_progress, source, track_similarity_changes
-    ):
-        assert publish_progress is False
-        assert track_similarity_changes is False
-        assert source.id == asset_id
-        self.analyzed.append(asset_id)
-        self.features.current.add(asset_id)
 
 
 class FakeContext:
@@ -116,20 +106,19 @@ class FakeContext:
 async def test_library_index_fingerprints_assets_independent_of_immich_duplicate_groups() -> None:
     features = FakeFeatures([A, B, C])
     assets = FakeAssets()
-    integrity = FakeIntegrity(features)
+    immich = FakeImmich()
     handler = SimilarityIndexTaskHandler(
         SimilarityIndexMaintainer(
-            FakeImmich(),  # type: ignore[arg-type]
+            immich,  # type: ignore[arg-type]
             assets,  # type: ignore[arg-type]
             features,  # type: ignore[arg-type]
-            integrity,  # type: ignore[arg-type]
             batch_size=2,
         )
     )
 
     result = await handler.execute(FakeContext(), {})
 
-    assert integrity.analyzed == [A, B, C]
+    assert immich.previewed == [A, B, C]
     assert assets.refreshed == [A, B, C]
     assert result.counters["eligible_images"] == 3
     assert result.counters["current_fingerprints"] == 3
@@ -141,18 +130,17 @@ async def test_library_index_fingerprints_assets_independent_of_immich_duplicate
 async def test_library_index_reuses_committed_features_after_restart() -> None:
     features = FakeFeatures([A, B, C])
     features.current.add(A)
-    integrity = FakeIntegrity(features)
+    immich = FakeImmich()
     maintainer = SimilarityIndexMaintainer(
-        FakeImmich(),  # type: ignore[arg-type]
+        immich,  # type: ignore[arg-type]
         FakeAssets(),  # type: ignore[arg-type]
         features,  # type: ignore[arg-type]
-        integrity,  # type: ignore[arg-type]
         batch_size=2,
     )
 
     coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(FakeContext())
 
-    assert integrity.analyzed == [B, C]
+    assert immich.previewed == [B, C]
     assert completed == 2
     assert unavailable == 0
     assert attempted == set()
@@ -164,12 +152,10 @@ async def test_library_index_reuses_committed_features_after_restart() -> None:
 async def test_sixty_thousand_asset_catalog_only_pages_the_120_required_features() -> None:
     required = [UUID(int=index) for index in range(1, 121)]
     features = FakeFeatures(required, eligible_count=60_000)
-    integrity = FakeIntegrity(features)
     maintainer = SimilarityIndexMaintainer(
         FakeImmich(),  # type: ignore[arg-type]
         FakeAssets(),  # type: ignore[arg-type]
         features,  # type: ignore[arg-type]
-        integrity,  # type: ignore[arg-type]
         batch_size=25,
     )
 
@@ -201,7 +187,6 @@ async def test_current_index_preserves_a_resumable_scan_checkpoint() -> None:
         FakeImmich(),  # type: ignore[arg-type]
         FakeAssets(),  # type: ignore[arg-type]
         features,  # type: ignore[arg-type]
-        FakeIntegrity(features),  # type: ignore[arg-type]
     )
 
     coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(
@@ -220,17 +205,16 @@ async def test_eleven_persistent_failures_are_retried_once_and_reported(caplog) 
     failed_ids = [UUID(int=number) for number in range(1, 12)]
     features = FakeFeatures(failed_ids, eligible_count=60_000)
 
-    class FailingIntegrity(FakeIntegrity):
-        async def analyze(self, context, asset_id, **kwargs):
-            self.analyzed.append(asset_id)
-            raise PermanentTaskError("unsupported image")
+    class FailingImmich(FakeImmich):
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            self.previewed.append(asset_id)
+            raise ImmichApiError("generated preview unavailable")
 
-    integrity = FailingIntegrity(features)
+    immich = FailingImmich()
     maintainer = SimilarityIndexMaintainer(
-        FakeImmich(),  # type: ignore[arg-type]
+        immich,  # type: ignore[arg-type]
         FakeAssets(),  # type: ignore[arg-type]
         features,  # type: ignore[arg-type]
-        integrity,  # type: ignore[arg-type]
         batch_size=25,
     )
 
@@ -243,40 +227,67 @@ async def test_eleven_persistent_failures_are_retried_once_and_reported(caplog) 
     assert unavailable == 11
     assert attempted == set(failed_ids)
     assert reasons == {
-        asset_id: "PermanentTaskError: unsupported image" for asset_id in failed_ids
+        asset_id: "ImmichApiError: Immich operation 'generated preview unavailable' failed."
+        for asset_id in failed_ids
     }
-    assert integrity.analyzed == failed_ids * 2
+    assert immich.previewed == failed_ids * 2
     failure_records = [
         record for record in caplog.records if "Library fingerprint unavailable" in record.message
     ]
     assert len(failure_records) == 22
-    assert "attempt=retry reason=PermanentTaskError: unsupported image" in caplog.text
+    assert "attempt=retry reason=ImmichApiError" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_analysis_without_a_feature_logs_its_issue_and_retry_reason(caplog) -> None:
+async def test_undecodable_preview_logs_its_retry_reason(caplog) -> None:
     features = FakeFeatures([A])
 
-    class UnfingerprintableIntegrity(FakeIntegrity):
-        async def analyze(self, context, asset_id, **kwargs):
-            self.analyzed.append(asset_id)
-            return SimpleNamespace(issues=["image_decode_unsupported"])
+    class InvalidPreviewImmich(FakeImmich):
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            self.previewed.append(asset_id)
+            return b"invalid preview"
 
     handler = SimilarityIndexTaskHandler(
         SimilarityIndexMaintainer(
-            FakeImmich(),  # type: ignore[arg-type]
+            InvalidPreviewImmich(),  # type: ignore[arg-type]
             FakeAssets(),  # type: ignore[arg-type]
             features,  # type: ignore[arg-type]
-            UnfingerprintableIntegrity(features),  # type: ignore[arg-type]
         )
     )
 
     result = await handler.execute(FakeContext(), {})
 
     reason = result.summary["unavailable_asset_reasons"][str(A)]
-    assert "freshness=missing" in reason
-    assert "image_decode_unsupported" in reason
+    assert "generated preview could not be decoded" in reason
     assert f"asset_id={A} attempt=retry reason={reason}" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_valid_preview_indexes_original_with_mismatched_declared_mime() -> None:
+    features = FakeFeatures([A])
+
+    class MismatchedMimeImmich(FakeImmich):
+        async def get_asset(self, asset_id):
+            item = source(asset_id)
+            item.original_mime_type = "image/heic"
+            return item
+
+        async def stream_original(self, *args, **kwargs):
+            pytest.fail("Search indexing downloaded an original with mismatched MIME")
+
+    immich = MismatchedMimeImmich()
+    maintainer = SimilarityIndexMaintainer(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+    )
+
+    coverage, completed, unavailable, _, reasons = await maintainer.maintain(FakeContext())
+
+    assert coverage.complete is True
+    assert (completed, unavailable) == (1, 0)
+    assert reasons == {}
+    assert immich.previewed == [A]
 
 
 @pytest.mark.asyncio

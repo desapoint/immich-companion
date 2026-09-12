@@ -10,12 +10,12 @@ from sqlalchemy import delete, func, insert, or_, select, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
-from companion.similarity_features import SIMILARITY_CONFIG_FINGERPRINT
 from companion.similarity_grouping import (
     SIMILARITY_GROUPING_VERSION,
     SimilarityValidationMode,
 )
 from companion.similarity_repository import PairSimilarityEvidence
+from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 
 
 @dataclass(frozen=True, slots=True)
@@ -32,7 +32,7 @@ class SimilarityScanParameters:
     grouping_version: int = SIMILARITY_GROUPING_VERSION
     validation_mode: SimilarityValidationMode = "strict"
     anchor_asset_id: UUID | None = None
-    config_fingerprint: str = SIMILARITY_CONFIG_FINGERPRINT
+    config_fingerprint: str = SEARCH_CONFIG_FINGERPRINT
 
     def __post_init__(self) -> None:
         if not 50 <= self.similarity_threshold <= 100:
@@ -263,7 +263,7 @@ class SimilarityScanRepository:
             select(SimilarityScanRecord)
             .where(
                 SimilarityScanRecord.status == "completed",
-                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
                 SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
@@ -291,7 +291,7 @@ class SimilarityScanRepository:
             select(SimilarityScanRecord)
             .where(
                 SimilarityScanRecord.status == "completed",
-                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
                 SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
@@ -377,7 +377,7 @@ class SimilarityScanRepository:
             select(SimilarityScanRecord)
             .where(
                 SimilarityScanRecord.status == "completed",
-                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
                 SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())

@@ -16,14 +16,8 @@ from companion.duplicate_schema import (
     SimilarityScanSummary,
     SimilarityScanTaskStart,
 )
-from companion.integrity_repository import IntegrityRepository
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.runtime_metrics import process_memory_snapshot
-from companion.similarity_features import (
-    SIMILARITY_CONFIG_FINGERPRINT,
-    SIMILARITY_FEATURE_VERSION,
-    SIMILARITY_MODEL_VERSION,
-)
 from companion.similarity_grouping import SIMILARITY_GROUPING_VERSION
 from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
@@ -32,6 +26,12 @@ from companion.similarity_scan_repository import (
     SimilarityScanParameters,
     SimilarityScanRepository,
 )
+from companion.similarity_search_features import (
+    SEARCH_CONFIG_FINGERPRINT,
+    SEARCH_FEATURE_VERSION,
+    SEARCH_MODEL_VERSION,
+)
+from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.task_coordinator import (
     PermanentTaskError,
     TaskCancelledError,
@@ -63,7 +63,8 @@ def _feature_snapshot_key(features: list[Any]) -> str:
         digest.update(
             (
                 f"{feature.asset_id}:{feature.model_version}:{feature.feature_version}:"
-                f"{feature.width}:{feature.height}:{feature.perceptual_hash}\n"
+                f"{feature.source_identity}:{feature.width}:{feature.height}:"
+                f"{feature.perceptual_hash}\n"
             ).encode()
         )
     return digest.hexdigest()
@@ -131,7 +132,7 @@ class SimilarityScanTaskHandler:
 
     def __init__(
         self,
-        features: IntegrityRepository,
+        features: SimilaritySearchRepository,
         similarity: SimilarityRepository,
         scans: SimilarityScanRepository,
         indexer: SimilarityIndexMaintainer | None = None,
@@ -145,10 +146,10 @@ class SimilarityScanTaskHandler:
         started = perf_counter()
         request = SimilarityScanRequest.model_validate(payload)
         parameters = SimilarityScanParameters(
-            model_version=SIMILARITY_MODEL_VERSION,
-            feature_version=SIMILARITY_FEATURE_VERSION,
+            model_version=SEARCH_MODEL_VERSION,
+            feature_version=SEARCH_FEATURE_VERSION,
             comparison_version=SIMILARITY_COMPARISON_VERSION,
-            config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+            config_fingerprint=SEARCH_CONFIG_FINGERPRINT,
             grouping_version=SIMILARITY_GROUPING_VERSION,
             validation_mode=request.validation_mode,
             anchor_asset_id=request.anchor_asset_id,
@@ -226,7 +227,7 @@ class SimilarityScanTaskHandler:
                     pending: list[UUID] = []
                     after = None
                     while len(pending) <= remaining:
-                        page = await self._features.list_similarity_feature_work(
+                        page = await self._features.list_work(
                             after_asset_id=after,
                             limit=min(1000, remaining + 1 - len(pending)),
                         )
@@ -241,7 +242,7 @@ class SimilarityScanTaskHandler:
                         )
                     excluded_ids = pending
                     index_counters["fingerprints_excluded_after_retry"] = len(pending)
-            features = await self._features.list_current_similarity_features()
+            features = await self._features.list_current()
             if self._indexer is not None and len(features) != coverage.current_count:
                 raise PermanentTaskError(
                     "Similarity scan coverage changed during fingerprint snapshot; "
@@ -387,8 +388,8 @@ class SimilarityScanTaskHandler:
                     match = SimilarityScanPair(
                         asset_id_low=pair.asset_id_low,
                         asset_id_high=pair.asset_id_high,
-                        asset_low_source_sha256=low_feature.source_sha256,
-                        asset_high_source_sha256=high_feature.source_sha256,
+                        asset_low_source_sha256=low_feature.source_identity,
+                        asset_high_source_sha256=high_feature.source_identity,
                         evidence=evidence,
                     )
                     ranked = (

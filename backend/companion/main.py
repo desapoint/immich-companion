@@ -176,6 +176,7 @@ from companion.similarity_scan_service import (
     SimilarityScanService,
     SimilarityScanTaskHandler,
 )
+from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.stack_service import StackService
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
@@ -261,6 +262,9 @@ def create_app(
     )
     asset_repository = AssetRepository(database) if database is not None else None
     integrity_repository = IntegrityRepository(database) if database is not None else None
+    search_feature_repository = (
+        SimilaritySearchRepository(database) if database is not None else None
+    )
     similarity_repository = (
         SimilarityRepository(
             database,
@@ -434,12 +438,10 @@ def create_app(
         SimilarityIndexMaintainer(
             immich,
             asset_repository,
-            integrity_repository,
-            integrity_handler,
+            search_feature_repository,
         )
         if asset_repository is not None
-        and integrity_repository is not None
-        and integrity_handler is not None
+        and search_feature_repository is not None
         else None
     )
     similarity_index_service = (
@@ -458,19 +460,19 @@ def create_app(
     similarity_scan_service = (
         SimilarityScanService(task_coordinator, similarity_scan_repository)
         if task_coordinator is not None
-        and integrity_repository is not None
+        and search_feature_repository is not None
         and similarity_repository is not None
         and similarity_scan_repository is not None
         else None
     )
     if similarity_scan_service is not None:
         assert task_coordinator is not None
-        assert integrity_repository is not None
+        assert search_feature_repository is not None
         assert similarity_repository is not None
         assert similarity_scan_repository is not None
         task_coordinator.register_handler(
             SimilarityScanTaskHandler(
-                integrity_repository,
+                search_feature_repository,
                 similarity_repository,
                 similarity_scan_repository,
                 similarity_index_maintainer,
@@ -487,16 +489,16 @@ def create_app(
         and asset_sync is not None
         and similarity_maintenance_service is not None
         and similarity_maintenance_repository is not None
-        and integrity_handler is not None
-        and integrity_repository is not None
+        and similarity_index_maintainer is not None
+        and search_feature_repository is not None
         and similarity_repository is not None
         and similarity_scan_repository is not None
     ):
         task_coordinator.register_handler(
             SimilarityMaintenanceTaskHandler(
                 similarity_maintenance_repository,
-                integrity_handler,
-                integrity_repository,
+                similarity_index_maintainer,
+                search_feature_repository,
                 similarity_repository,
                 similarity_scan_repository,
             )

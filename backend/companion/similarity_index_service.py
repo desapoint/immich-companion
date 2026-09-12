@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from hashlib import sha256
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
 from companion.duplicate_schema import SimilarityIndexCoverage, SimilarityIndexTaskStart
 from companion.immich import ImmichApiClient, ImmichApiError
-from companion.integrity_repository import (
-    IntegrityRepository,
-    similarity_feature_freshness,
+from companion.integrity_service import INTEGRITY_TASK_TYPE
+from companion.similarity_search_features import (
+    MAX_SEARCH_PREVIEW_BYTES,
+    SEARCH_CONFIG_FINGERPRINT,
+    SEARCH_FEATURE_VERSION,
+    SEARCH_MODEL_VERSION,
+    extract_search_feature,
 )
-from companion.integrity_service import INTEGRITY_TASK_TYPE, IntegrityTaskHandler
-from companion.similarity_features import (
-    SIMILARITY_CONFIG_FINGERPRINT,
-    SIMILARITY_FEATURE_VERSION,
-    SIMILARITY_MODEL_VERSION,
-)
+from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -39,28 +40,26 @@ class SimilarityIndexMaintainer:
         self,
         immich: ImmichApiClient,
         assets: AssetRepository,
-        features: IntegrityRepository,
-        integrity: IntegrityTaskHandler,
+        features: SimilaritySearchRepository,
         *,
         batch_size: int = SIMILARITY_FINGERPRINT_BATCH_SIZE,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._features = features
-        self._integrity = integrity
         self._batch_size = batch_size
 
     async def coverage(self) -> SimilarityIndexCoverage:
-        eligible, current, missing, stale = await self._features.similarity_feature_coverage()
+        eligible, current, missing, stale = await self._features.coverage()
         return SimilarityIndexCoverage(
             eligible_count=eligible,
             current_count=current,
             missing_count=missing,
             stale_count=stale,
             complete=missing == 0 and stale == 0,
-            model_version=SIMILARITY_MODEL_VERSION,
-            feature_version=SIMILARITY_FEATURE_VERSION,
-            config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+            model_version=SEARCH_MODEL_VERSION,
+            feature_version=SEARCH_FEATURE_VERSION,
+            config_fingerprint=SEARCH_CONFIG_FINGERPRINT,
         )
 
     async def maintain(
@@ -111,7 +110,7 @@ class SimilarityIndexMaintainer:
         )
         while True:
             await context.ensure_active()
-            page = await self._features.list_similarity_feature_work(
+            page = await self._features.list_work(
                 after_asset_id=after,
                 limit=self._batch_size,
             )
@@ -172,7 +171,7 @@ class SimilarityIndexMaintainer:
             retry_after: UUID | None = None
             while True:
                 await context.ensure_active()
-                page = await self._features.list_similarity_feature_work(
+                page = await self._features.list_work(
                     after_asset_id=retry_after,
                     limit=self._batch_size,
                 )
@@ -234,22 +233,21 @@ class SimilarityIndexMaintainer:
                 )
                 return False, reason
             await self._assets.refresh_asset(source, track_similarity_changes=False)
-            report = await self._integrity.analyze(
-                context,
-                asset_id,
-                publish_progress=False,
-                source=source,
-                track_similarity_changes=False,
+            preview = await self._immich.get_bounded_preview(
+                asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
             )
-            feature = await self._features.get_similarity_feature(asset_id)
-            freshness = similarity_feature_freshness(feature, source)
-            if freshness == "current":
+            feature = await asyncio.to_thread(extract_search_feature, preview)
+            if feature is None:
+                reason = "generated preview could not be decoded into search evidence"
+                logger.warning(
+                    "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
+                    asset_id, attempt, reason,
+                )
+                return False, reason
+            preview_digest = sha256(preview, usedforsecurity=False).hexdigest()
+            if await self._features.save(source, preview_digest, feature):
                 return True, None
-            details = ", ".join(getattr(report, "issues", [])[:3])
-            reason = f"no current fingerprint persisted (freshness={freshness}"
-            if details:
-                reason += f"; analysis issues={details}"
-            reason += ")"
+            reason = "synchronized source changed while preview evidence was being generated"
             logger.warning(
                 "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
                 asset_id, attempt, reason,
@@ -262,6 +260,16 @@ class SimilarityIndexMaintainer:
                 asset_id, attempt, reason,
             )
             return False, reason
+
+    async def fingerprint_changed_asset(self, context: TaskContext, asset_id: UUID) -> bool:
+        """Best-effort two-attempt update for one synchronized change."""
+
+        for attempt in ("incremental", "incremental_retry"):
+            await context.ensure_active()
+            succeeded, _ = await self._fingerprint(context, asset_id, attempt=attempt)
+            if succeeded:
+                return True
+        return False
 
 
 class SimilarityIndexTaskHandler:
@@ -305,8 +313,8 @@ class SimilarityIndexService:
 
     async def start(self) -> SimilarityIndexTaskStart:
         key = (
-            f"{SIMILARITY_MODEL_VERSION}:{SIMILARITY_FEATURE_VERSION}:"
-            f"{SIMILARITY_CONFIG_FINGERPRINT}"
+            f"{SEARCH_MODEL_VERSION}:{SEARCH_FEATURE_VERSION}:"
+            f"{SEARCH_CONFIG_FINGERPRINT}"
         )
         task = await self._tasks.find_active(SIMILARITY_INDEX_TASK_TYPE, key)
         if task is None:

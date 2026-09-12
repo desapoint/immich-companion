@@ -148,6 +148,37 @@ class SimilaritySearchRepository:
         async with self._database.sessions() as session:
             return await session.get(AssetSimilaritySearchFeatureRecord, asset_id)
 
+    async def get_many(
+        self, asset_ids: list[UUID]
+    ) -> dict[UUID, AssetSimilaritySearchFeatureRecord]:
+        if not asset_ids:
+            return {}
+        statement = select(AssetSimilaritySearchFeatureRecord).where(
+            AssetSimilaritySearchFeatureRecord.asset_id.in_(list(dict.fromkeys(asset_ids)))
+        )
+        async with self._database.sessions() as session:
+            records = list((await session.scalars(statement)).all())
+        return {record.asset_id: record for record in records}
+
+    async def has_current(self, asset_id: UUID) -> bool:
+        statement = (
+            select(AssetSimilaritySearchFeatureRecord.asset_id)
+            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
+            .where(AssetRecord.id == asset_id, *self._eligible(), self._current())
+        )
+        async with self._database.sessions() as session:
+            return await session.scalar(statement) is not None
+
+    async def count_current(self) -> int:
+        statement = (
+            select(func.count())
+            .select_from(AssetSimilaritySearchFeatureRecord)
+            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
+            .where(*self._eligible(), self._current())
+        )
+        async with self._database.sessions() as session:
+            return int(await session.scalar(statement) or 0)
+
     async def list_current(self) -> list[AssetSimilaritySearchFeatureRecord]:
         statement = (
             select(AssetSimilaritySearchFeatureRecord)

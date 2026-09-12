@@ -9,11 +9,12 @@ from uuid import UUID
 from sqlalchemy import delete, func, select
 
 from companion.database import DatabaseManager
-from companion.integrity_repository import IntegrityRepository
-from companion.integrity_service import INTEGRITY_TASK_TYPE, IntegrityTaskHandler
+from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.models import SimilarityAssetChangeRecord
+from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import SimilarityRepository
 from companion.similarity_scan_repository import SimilarityScanPair, SimilarityScanRepository
+from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
@@ -111,19 +112,21 @@ class SimilarityMaintenanceTaskHandler:
     def __init__(
         self,
         changes: SimilarityMaintenanceRepository,
-        integrity_handler: IntegrityTaskHandler,
-        features: IntegrityRepository,
+        indexer: SimilarityIndexMaintainer,
+        features: SimilaritySearchRepository,
         similarity: SimilarityRepository,
         scans: SimilarityScanRepository,
     ) -> None:
         self._changes = changes
-        self._integrity_handler = integrity_handler
+        self._indexer = indexer
         self._features = features
         self._similarity = similarity
         self._scans = scans
 
     async def _candidate_ids(self, asset_id: UUID) -> list[UUID]:
-        target = await self._features.get_similarity_feature(asset_id)
+        if not await self._features.has_current(asset_id):
+            return []
+        target = await self._features.get(asset_id)
         active = await self._scans.latest_completed_parameters()
         if target is None or active is None or target.height <= 0:
             return []
@@ -131,25 +134,22 @@ class SimilarityMaintenanceTaskHandler:
         target_hash = int(target.perceptual_hash, 16)
         target_ratio = target.width / target.height
         ranked: list[tuple[int, int, UUID]] = []
-        async for page in self._features.iter_current_similarity_features(
-            batch_size=SIMILARITY_FEATURE_PAGE_SIZE
-        ):
-            for candidate in page:
-                if candidate.asset_id == asset_id or candidate.height <= 0:
-                    continue
-                try:
-                    distance = (target_hash ^ int(candidate.perceptual_hash, 16)).bit_count()
-                except ValueError:
-                    continue
-                if distance > parameters.maximum_perceptual_distance:
-                    continue
-                ratio = candidate.width / candidate.height
-                aspect_difference = abs(target_ratio - ratio) / max(target_ratio, ratio)
-                if aspect_difference > parameters.maximum_aspect_difference:
-                    continue
-                ranked.append((distance, candidate.asset_id.int, candidate.asset_id))
-                ranked.sort(key=lambda item: (item[0], item[1]))
-                del ranked[parameters.maximum_neighbors_per_asset :]
+        for candidate in await self._features.list_current():
+            if candidate.asset_id == asset_id or candidate.height <= 0:
+                continue
+            try:
+                distance = (target_hash ^ int(candidate.perceptual_hash, 16)).bit_count()
+            except ValueError:
+                continue
+            if distance > parameters.maximum_perceptual_distance:
+                continue
+            ratio = candidate.width / candidate.height
+            aspect_difference = abs(target_ratio - ratio) / max(target_ratio, ratio)
+            if aspect_difference > parameters.maximum_aspect_difference:
+                continue
+            ranked.append((distance, candidate.asset_id.int, candidate.asset_id))
+            ranked.sort(key=lambda item: (item[0], item[1]))
+            del ranked[parameters.maximum_neighbors_per_asset :]
         return [item[2] for item in ranked]
 
     async def _reconcile_asset(self, asset_id: UUID) -> int:
@@ -158,8 +158,8 @@ class SimilarityMaintenanceTaskHandler:
             return 0
         scan_id, parameters = active
         candidate_ids = await self._candidate_ids(asset_id)
-        feature_map = await self._features.get_similarity_features([asset_id, *candidate_ids])
-        target = feature_map.get(asset_id)
+        feature_map = await self._features.get_many([asset_id, *candidate_ids])
+        target = feature_map.get(asset_id) if await self._features.has_current(asset_id) else None
         pairs: list[SimilarityScanPair] = []
         if target is not None and candidate_ids:
             edges = await self._similarity.reference_edges(
@@ -184,8 +184,8 @@ class SimilarityMaintenanceTaskHandler:
                     SimilarityScanPair(
                         asset_id_low=low.asset_id,
                         asset_id_high=high.asset_id,
-                        asset_low_source_sha256=low.source_sha256,
-                        asset_high_source_sha256=high.source_sha256,
+                        asset_low_source_sha256=low.source_identity,
+                        asset_high_source_sha256=high.source_identity,
                         evidence=evidence,
                     )
                 )
@@ -193,7 +193,7 @@ class SimilarityMaintenanceTaskHandler:
             scan_id,
             asset_id,
             pairs,
-            asset_count=await self._features.count_current_similarity_features(),
+            asset_count=await self._features.count_current(),
         )
         return len(pairs)
 
@@ -207,17 +207,13 @@ class SimilarityMaintenanceTaskHandler:
             for change in batch:
                 await context.ensure_active()
                 feature_current = (
-                    await self._features.has_current_similarity_feature(change.asset_id)
+                    await self._features.has_current(change.asset_id)
                     if change.operation == "upsert"
                     else False
                 )
                 if change.operation == "upsert" and not feature_current:
-                    await self._integrity_handler.analyze(
-                        context,
-                        change.asset_id,
-                        publish_progress=False,
-                    )
-                    features_refreshed += 1
+                    if await self._indexer.fingerprint_changed_asset(context, change.asset_id):
+                        features_refreshed += 1
                 else:
                     deletes_reconciled += 1
                 pairs_reconciled += await self._reconcile_asset(change.asset_id)

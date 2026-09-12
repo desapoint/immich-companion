@@ -13,12 +13,14 @@ from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
-from companion.models import AssetSimilarityEdgeRecord, AssetSimilarityFeatureRecord
+from companion.models import (
+    AssetSimilarityEdgeRecord,
+    AssetSimilarityFeatureRecord,
+    AssetSimilaritySearchFeatureRecord,
+)
 from companion.similarity_features import (
     PIXEL_NORMALIZATION_VERSION,
     SIMILARITY_CONFIG_FINGERPRINT,
-    SIMILARITY_FEATURE_VERSION,
-    SIMILARITY_MODEL_VERSION,
     VisualFeatureResult,
     compare_visual_features,
 )
@@ -68,7 +70,20 @@ def requested_reference_pairs(
     }
 
 
-def _feature(record: AssetSimilarityFeatureRecord) -> VisualFeatureResult:
+SimilarityFeatureRecord = AssetSimilarityFeatureRecord | AssetSimilaritySearchFeatureRecord
+
+
+def _source_key(record: SimilarityFeatureRecord) -> str:
+    # Legacy pair-cache columns are named source_sha256. Search records carry
+    # a versioned source/preview identity, not an original-file SHA.
+    return (
+        record.source_identity
+        if isinstance(record, AssetSimilaritySearchFeatureRecord)
+        else record.source_sha256
+    )
+
+
+def _feature(record: SimilarityFeatureRecord) -> VisualFeatureResult:
     return VisualFeatureResult(
         model_version=record.model_version,
         feature_version=record.feature_version,
@@ -78,20 +93,20 @@ def _feature(record: AssetSimilarityFeatureRecord) -> VisualFeatureResult:
         perceptual_hash=record.perceptual_hash,
         color_histogram=record.color_histogram,
         thumbnail_sha256=record.thumbnail_sha256,
-        pixel_normalization_version=record.pixel_normalization_version,
-        pixel_sha256=record.pixel_sha256,
-        bit_depth=record.bit_depth,
-        channel_count=record.channel_count,
-        has_alpha=record.has_alpha,
-        color_space=record.color_space,
-        orientation=record.orientation,
-        icc_profile_present=record.icc_profile_present,
-        has_exif=record.has_exif,
-        has_capture_time=record.has_capture_time,
-        has_camera_info=record.has_camera_info,
-        has_gps=record.has_gps,
-        has_orientation_metadata=record.has_orientation_metadata,
-        metadata_richness=record.metadata_richness,
+        pixel_normalization_version=getattr(record, "pixel_normalization_version", 0),
+        pixel_sha256=getattr(record, "pixel_sha256", None),
+        bit_depth=getattr(record, "bit_depth", 8),
+        channel_count=getattr(record, "channel_count", 3),
+        has_alpha=getattr(record, "has_alpha", False),
+        color_space=getattr(record, "color_space", "preview"),
+        orientation=getattr(record, "orientation", None),
+        icc_profile_present=getattr(record, "icc_profile_present", False),
+        has_exif=getattr(record, "has_exif", False),
+        has_capture_time=getattr(record, "has_capture_time", False),
+        has_camera_info=getattr(record, "has_camera_info", False),
+        has_gps=getattr(record, "has_gps", False),
+        has_orientation_metadata=getattr(record, "has_orientation_metadata", False),
+        metadata_richness=getattr(record, "metadata_richness", 0),
     )
 
 
@@ -142,15 +157,15 @@ class SimilarityRepository:
     def _hot_key(
         low: UUID,
         high: UUID,
-        low_feature: AssetSimilarityFeatureRecord,
-        high_feature: AssetSimilarityFeatureRecord,
+        low_feature: SimilarityFeatureRecord,
+        high_feature: SimilarityFeatureRecord,
     ) -> tuple[object, ...]:
         return (
             low,
             high,
-            low_feature.source_sha256,
-            high_feature.source_sha256,
-            SIMILARITY_CONFIG_FINGERPRINT,
+            _source_key(low_feature),
+            _source_key(high_feature),
+            low_feature.config_fingerprint,
             SIMILARITY_COMPARISON_VERSION,
         )
 
@@ -173,13 +188,21 @@ class SimilarityRepository:
     async def reference_edges(
         self,
         groups: list[list[UUID]],
-        features: dict[UUID, AssetSimilarityFeatureRecord],
+        features: dict[UUID, SimilarityFeatureRecord],
     ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
         started = perf_counter()
         requested = requested_reference_pairs(groups, set(features))
         canonical = list(dict.fromkeys(requested.values()))
         if not canonical:
             return {}
+
+        generation = {
+            (feature.model_version, feature.feature_version, feature.config_fingerprint)
+            for feature in features.values()
+        }
+        if len(generation) != 1:
+            raise ValueError("Similarity comparison requires one compatible feature generation")
+        model_version, feature_version, config_fingerprint = generation.pop()
 
         current: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
         uncached: list[tuple[UUID, UUID]] = []
@@ -195,10 +218,10 @@ class SimilarityRepository:
                 AssetSimilarityEdgeRecord.asset_id_low,
                 AssetSimilarityEdgeRecord.asset_id_high,
             ).in_(uncached),
-            AssetSimilarityEdgeRecord.model_version == SIMILARITY_MODEL_VERSION,
-            AssetSimilarityEdgeRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+            AssetSimilarityEdgeRecord.model_version == model_version,
+            AssetSimilarityEdgeRecord.feature_version == feature_version,
             AssetSimilarityEdgeRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
-            AssetSimilarityEdgeRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+            AssetSimilarityEdgeRecord.config_fingerprint == config_fingerprint,
         )
         if uncached:
             async with self._database.sessions() as session:
@@ -214,8 +237,8 @@ class SimilarityRepository:
             record = records.get((low, high))
             if (
                 record is not None
-                and record.asset_low_source_sha256 == low_feature.source_sha256
-                and record.asset_high_source_sha256 == high_feature.source_sha256
+                and record.asset_low_source_sha256 == _source_key(low_feature)
+                and record.asset_high_source_sha256 == _source_key(high_feature)
             ):
                 evidence = _public(record)
                 current[(low, high)] = evidence
@@ -233,12 +256,15 @@ class SimilarityRepository:
                     low_feature.thumbnail_sha256 == high_feature.thumbnail_sha256
                 ),
                 exact_pixel_match=(
-                    low_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+                    not isinstance(low_feature, AssetSimilaritySearchFeatureRecord)
+                    and not isinstance(high_feature, AssetSimilaritySearchFeatureRecord)
+                    and low_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
                     and high_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+                    and bool(low_feature.pixel_sha256)
                     and low_feature.pixel_sha256 == high_feature.pixel_sha256
                 ),
-                model_version=SIMILARITY_MODEL_VERSION,
-                feature_version=SIMILARITY_FEATURE_VERSION,
+                model_version=model_version,
+                feature_version=feature_version,
                 comparison_version=SIMILARITY_COMPARISON_VERSION,
                 normalized_luminance_mae=comparison.normalized_luminance_mae,
                 normalized_luminance_rmse=comparison.normalized_luminance_rmse,
@@ -252,8 +278,8 @@ class SimilarityRepository:
                 {
                     "asset_id_low": low,
                     "asset_id_high": high,
-                    "asset_low_source_sha256": low_feature.source_sha256,
-                    "asset_high_source_sha256": high_feature.source_sha256,
+                    "asset_low_source_sha256": _source_key(low_feature),
+                    "asset_high_source_sha256": _source_key(high_feature),
                     "similarity_percent": evidence.similarity_percent,
                     "structural_percent": evidence.structural_percent,
                     "perceptual_percent": evidence.perceptual_percent,
@@ -268,7 +294,7 @@ class SimilarityRepository:
                     "model_version": evidence.model_version,
                     "feature_version": evidence.feature_version,
                     "comparison_version": evidence.comparison_version,
-                    "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
+                    "config_fingerprint": config_fingerprint,
                     "calculated_at": datetime.now(UTC),
                 }
             )

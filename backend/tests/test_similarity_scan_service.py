@@ -20,12 +20,12 @@ SCAN_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 def feature(number: int, perceptual_hash: int):
     return SimpleNamespace(
         asset_id=UUID(int=number),
-        model_version="appearance-v1",
-        feature_version=2,
+        model_version="appearance-preview-v1",
+        feature_version=1,
         width=100,
         height=100,
         perceptual_hash=f"{perceptual_hash:016x}",
-        source_sha256=f"{number:064x}",
+        source_identity=f"{number:064x}",
     )
 
 
@@ -37,8 +37,8 @@ def evidence(score: float) -> PairSimilarityEvidence:
         color_percent=score,
         exact_thumbnail_match=False,
         exact_pixel_match=False,
-        model_version="appearance-v1",
-        feature_version=2,
+        model_version="appearance-preview-v1",
+        feature_version=1,
         comparison_version=2,
     )
 
@@ -47,7 +47,7 @@ class FakeFeatures:
     def __init__(self, values=None):
         self.values = values or [feature(1, 0), feature(2, 0), feature(3, 1)]
 
-    async def list_current_similarity_features(self):
+    async def list_current(self):
         return self.values
 
 
@@ -370,9 +370,9 @@ async def test_scan_completes_library_index_before_candidate_search() -> None:
             )
 
     class OrderedFeatures(FakeFeatures):
-        async def list_current_similarity_features(self):
+        async def list_current(self):
             events.append("searched")
-            return await super().list_current_similarity_features()
+            return await super().list_current()
 
     result = await SimilarityScanTaskHandler(
         OrderedFeatures(),
@@ -411,7 +411,7 @@ async def test_scan_proceeds_with_only_the_fingerprints_that_failed_after_retry(
         def __init__(self):
             super().__init__([feature(1, 0), feature(2, 0)])
 
-        async def list_similarity_feature_work(self, *, after_asset_id, limit):
+        async def list_work(self, *, after_asset_id, limit):
             return [UUID(int=3)] if after_asset_id is None else []
 
     scans = FakeScans()
@@ -453,10 +453,10 @@ async def test_scan_stops_if_new_missing_work_appears_after_retry() -> None:
             )
 
     class ChangedFeatures(FakeFeatures):
-        async def list_similarity_feature_work(self, *, after_asset_id, limit):
+        async def list_work(self, *, after_asset_id, limit):
             return [UUID(int=3)] if after_asset_id is None else []
 
-        async def list_current_similarity_features(self):
+        async def list_current(self):
             pytest.fail("Candidate search started after coverage drift")
 
     with pytest.raises(PermanentTaskError, match="coverage changed"):

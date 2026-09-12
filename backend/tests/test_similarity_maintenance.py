@@ -37,34 +37,31 @@ class FakeChanges:
         return len(self.changes)
 
 
-class FakeIntegrityHandler:
+class FakeIndexer:
     def __init__(self) -> None:
         self.asset_ids: list[UUID] = []
 
-    async def analyze(self, _context, asset_id: UUID, *, publish_progress: bool):
-        assert publish_progress is False
+    async def fingerprint_changed_asset(self, _context, asset_id: UUID) -> bool:
         self.asset_ids.append(asset_id)
-        return SimpleNamespace()
+        return True
 
 
 class FakeFeatures:
     current: set[UUID] = set()
 
-    async def has_current_similarity_feature(self, _asset_id: UUID) -> bool:
+    async def has_current(self, _asset_id: UUID) -> bool:
         return _asset_id in self.current
 
-    async def get_similarity_feature(self, _asset_id: UUID):
+    async def get(self, _asset_id: UUID):
         return None
 
-    async def get_similarity_features(self, _asset_ids: list[UUID]):
+    async def get_many(self, _asset_ids: list[UUID]):
         return {}
 
-    async def iter_current_similarity_features(self, *, batch_size: int):
-        assert batch_size == 1_000
-        if False:
-            yield []
+    async def list_current(self):
+        return []
 
-    async def count_current_similarity_features(self) -> int:
+    async def count_current(self) -> int:
         return 120
 
 
@@ -166,11 +163,11 @@ async def test_incremental_pipeline_only_processes_changes_and_resumes_without_d
             for asset_id in deleted
         ]
     )
-    integrity = FakeIntegrityHandler()
+    indexer = FakeIndexer()
     scans = FakeScans()
     handler = SimilarityMaintenanceTaskHandler(
         changes,
-        integrity,
+        indexer,
         FakeFeatures(),
         SimpleNamespace(),
         scans,
@@ -182,8 +179,8 @@ async def test_incremental_pipeline_only_processes_changes_and_resumes_without_d
     assert len(changes.changes) == 65
     result = await handler.execute(FakeContext(), {})
 
-    assert set(integrity.asset_ids) == set([*added, *modified])
-    assert len(integrity.asset_ids) == 120
+    assert set(indexer.asset_ids) == set([*added, *modified])
+    assert len(indexer.asset_ids) == 120
     assert set(scans.reconciled) == set([*added, *modified, *deleted])
     assert len(scans.reconciled) == 130
     assert set(changes.acknowledged) == set([*added, *modified, *deleted])
@@ -198,14 +195,14 @@ async def test_incremental_worker_reuses_fingerprint_committed_by_library_index(
     asset_id = UUID(int=500)
     change = SimilarityAssetChange(asset_id, "upsert", "source-500", datetime.now(UTC))
     changes = FakeChanges([change])
-    integrity = FakeIntegrityHandler()
+    indexer = FakeIndexer()
     features = FakeFeatures()
     features.current = {asset_id}
     handler = SimilarityMaintenanceTaskHandler(
-        changes, integrity, features, SimpleNamespace(), FakeScans()
+        changes, indexer, features, SimpleNamespace(), FakeScans()
     )
 
     await handler.execute(FakeContext(), {})
 
-    assert integrity.asset_ids == []
+    assert indexer.asset_ids == []
     assert changes.acknowledged == [asset_id]
