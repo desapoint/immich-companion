@@ -8,6 +8,7 @@ import json
 from hashlib import sha256
 from time import perf_counter
 from typing import Any
+from uuid import UUID
 
 from companion.discovery import BoundedSimilarityCandidateIndex, SimilarityCandidateStats
 from companion.duplicate_schema import (
@@ -161,6 +162,7 @@ class SimilarityScanTaskHandler:
         candidate_stats = SimilarityCandidateStats()
         scan_id = None
         index_counters: dict[str, int] = {}
+        excluded_ids: list[UUID] = []
 
         def telemetry(**values: int) -> dict[str, int]:
             memory = process_memory_snapshot()
@@ -203,7 +205,7 @@ class SimilarityScanTaskHandler:
                     ),
                 )
             if self._indexer is not None:
-                coverage, indexed, unavailable = await self._indexer.maintain(
+                coverage, indexed, unavailable, retry_attempted = await self._indexer.maintain(
                     context,
                     progress_ceiling=30,
                 )
@@ -216,16 +218,34 @@ class SimilarityScanTaskHandler:
                     "fingerprints_unavailable": unavailable,
                 }
                 if not coverage.complete:
-                    raise PermanentTaskError(
-                        "Similarity scan coverage is incomplete: "
-                        f"{coverage.missing_count} missing and "
-                        f"{coverage.stale_count} stale fingerprints remain."
-                    )
+                    remaining = coverage.missing_count + coverage.stale_count
+                    pending: list[UUID] = []
+                    after = None
+                    while len(pending) <= remaining:
+                        page = await self._features.list_similarity_feature_work(
+                            after_asset_id=after,
+                            limit=min(1000, remaining + 1 - len(pending)),
+                        )
+                        if not page:
+                            break
+                        pending.extend(page)
+                        after = page[-1]
+                    if len(pending) != remaining or not set(pending).issubset(retry_attempted):
+                        raise PermanentTaskError(
+                            "Similarity scan coverage changed during fingerprint retry; "
+                            "retry after asset synchronization settles."
+                        )
+                    excluded_ids = pending
+                    index_counters["fingerprints_excluded_after_retry"] = len(pending)
             features = await self._features.list_current_similarity_features()
-            if self._indexer is not None and len(features) != coverage.eligible_count:
+            if self._indexer is not None and len(features) != coverage.current_count:
                 raise PermanentTaskError(
                     "Similarity scan coverage changed during fingerprint snapshot; "
                     "retry after asset synchronization settles."
+                )
+            if self._indexer is not None and coverage.eligible_count > 0 and not features:
+                raise PermanentTaskError(
+                    "No current library fingerprints are available for candidate search."
                 )
             feature_by_id = {feature.asset_id: feature for feature in features}
             candidate_index = BoundedSimilarityCandidateIndex(
@@ -458,6 +478,9 @@ class SimilarityScanTaskHandler:
                 ),
                 "scope": request.scope,
                 "result_limit_reached": len(matches) == request.maximum_matches,
+                "fingerprints_excluded_after_retry": len(excluded_ids),
+                "excluded_asset_ids": [str(identifier) for identifier in excluded_ids[:100]],
+                "excluded_asset_ids_truncated": len(excluded_ids) > 100,
             },
             counters=telemetry(
                 assets_with_current_features=len(features),

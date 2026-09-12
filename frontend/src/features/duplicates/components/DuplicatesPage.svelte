@@ -117,6 +117,8 @@
   let message = $state<string | null>(null);
   let task = $state.raw<DuplicateTaskStatus | null>(null);
   let latestScan = $state.raw<SimilarityScanSummary | null>(null);
+  const excludedFingerprintCount = $derived(Number(task?.task_type === 'similarity_scan' && task.status === 'completed' ? task.result?.summary?.fingerprints_excluded_after_retry ?? 0 : 0));
+  const excludedFingerprintIds = $derived(task?.task_type === 'similarity_scan' && task.status === 'completed' && Array.isArray(task.result?.summary?.excluded_asset_ids) ? task.result.summary.excluded_asset_ids.filter((value): value is string => typeof value === 'string') : []);
   let similarityThreshold = $state(95);
   let plan = $state.raw<DuplicateResolutionPlan | null>(null);
   let confirmOpen = $state(false);
@@ -267,6 +269,8 @@
         task = activeScan;
         busy = true;
         schedulePoll(activeScan.id, 'similarity');
+      } else if (!task && scanTasks[0]?.status === 'completed') {
+        task = scanTasks[0];
       } else if (
         loaded.analysis_task_id
         && (task?.id !== loaded.analysis_task_id || terminalStatuses.has(task.status))
@@ -303,7 +307,9 @@
         message = kind === 'analysis'
           ? 'Duplicate candidates were verified.'
           : kind === 'similarity'
-            ? 'The visual similarity scan completed and its matches are ready to review.'
+            ? Number(task.result?.summary?.fingerprints_excluded_after_retry ?? 0) > 0
+              ? `The visual similarity scan completed using current fingerprints. ${task.result?.summary?.fingerprints_excluded_after_retry} images still failed after one retry and were excluded; later scans will retry them.`
+              : 'The visual similarity scan completed and its matches are ready to review.'
             : 'The reviewed duplicate batch completed.';
         if (kind === 'analysis') {
           selected.clear();
@@ -1073,6 +1079,13 @@
     {/if}
   {/if}
   {#if message}<p class="notice success" role="status">{message}</p>{/if}
+  {#if excludedFingerprintCount > 0}
+    <details class="notice warning">
+      <summary>{excludedFingerprintCount} images could not be fingerprinted after retry</summary>
+      <p>Candidate search used the current fingerprints. These images were not compared and will be retried on a later scan.</p>
+      {#if excludedFingerprintIds.length}<ul>{#each excludedFingerprintIds as id (id)}<li><code>{id}</code></li>{/each}</ul>{/if}
+    </details>
+  {/if}
 
   {#if result}
     <section class="summary" aria-label="Duplicate summary">
@@ -1265,6 +1278,7 @@
   .resolution-failure-group small { color: var(--color-negative-ink); }
   .resume-resolution { justify-self: end; }
   .notice.success { color: var(--color-positive-ink); border-color: var(--color-positive-border); background: var(--color-positive-surface); }
+  .notice.warning { color: var(--color-warning-ink); border-color: var(--color-warning-border); background: var(--color-warning-surface); }
   .summary { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; }
   .summary div { display: grid; gap: .15rem; padding: .8rem 1rem; border-right: 1px solid var(--color-border-subtle); }
   .summary div:last-child { border: 0; }

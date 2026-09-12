@@ -68,8 +68,8 @@ class SimilarityIndexMaintainer:
         context: TaskContext,
         *,
         progress_ceiling: float = 100.0,
-    ) -> tuple[SimilarityIndexCoverage, int, int]:
-        """Run one resumable keyset pass and return coverage, completed, unavailable."""
+    ) -> tuple[SimilarityIndexCoverage, int, int, set[UUID]]:
+        """Fingerprint missing assets, retry unresolved work once, and report attempted IDs."""
 
         initial = await self.coverage()
         task = getattr(context, "task", None)
@@ -84,7 +84,7 @@ class SimilarityIndexMaintainer:
         unavailable = 0
         if total == 0 and saved.get("phase") in {"candidate_index", "scoring"}:
             # Preserve the scan's resumable candidate/scoring checkpoint.
-            return initial, 0, 0
+            return initial, 0, 0, set()
         await context.checkpoint(
             checkpoint={
                 "phase": "similarity_fingerprinting",
@@ -119,37 +119,10 @@ class SimilarityIndexMaintainer:
                 break
             for asset_id in page:
                 await context.ensure_active()
-                try:
-                    source = await self._immich.get_asset(asset_id)
-                    if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
-                        await self._assets.refresh_asset(
-                            source, track_similarity_changes=False
-                        )
-                        unavailable += 1
-                        continue
-                    await self._assets.refresh_asset(
-                        source, track_similarity_changes=False
-                    )
-                    await self._integrity.analyze(
-                        context,
-                        asset_id,
-                        publish_progress=False,
-                        source=source,
-                        track_similarity_changes=False,
-                    )
-                    feature = await self._features.get_similarity_feature(asset_id)
-                    if similarity_feature_freshness(feature, source) == "current":
-                        completed += 1
-                    else:
-                        unavailable += 1
-                except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
+                if await self._fingerprint(context, asset_id):
+                    completed += 1
+                else:
                     unavailable += 1
-                    logger.warning(
-                        "Library fingerprint unavailable: asset_id=%s error_type=%s reason=%s",
-                        asset_id,
-                        type(error).__name__,
-                        error,
-                    )
             after = page[-1]
             done = min(total, completed + unavailable)
             await context.checkpoint(
@@ -172,7 +145,95 @@ class SimilarityIndexMaintainer:
                     "detail": f"Processed {done} of {total} required library fingerprints.",
                 },
             )
-        return await self.coverage(), completed, unavailable
+        retry_coverage = await self.coverage()
+        retry_total = retry_coverage.missing_count + retry_coverage.stale_count
+        retry_attempted: set[UUID] = set()
+        retry_completed = 0
+        if retry_total:
+            await context.checkpoint(
+                checkpoint={"phase": "similarity_fingerprint_retry"},
+                counters={
+                    "eligible_images": retry_coverage.eligible_count,
+                    "current_fingerprints": retry_coverage.current_count,
+                    "fingerprints_pending": retry_total,
+                    "fingerprints_completed": completed,
+                    "fingerprints_unavailable": retry_total,
+                },
+                progress={
+                    "phase": "similarity_fingerprinting",
+                    "completed": 0,
+                    "total": retry_total,
+                    "percent": progress_ceiling,
+                    "detail": f"Retrying {retry_total} remaining library fingerprints once…",
+                },
+            )
+            retry_after: UUID | None = None
+            while True:
+                await context.ensure_active()
+                page = await self._features.list_similarity_feature_work(
+                    after_asset_id=retry_after,
+                    limit=self._batch_size,
+                )
+                if not page:
+                    break
+                for asset_id in page:
+                    await context.ensure_active()
+                    retry_attempted.add(asset_id)
+                    if await self._fingerprint(context, asset_id):
+                        retry_completed += 1
+                retry_after = page[-1]
+                await context.checkpoint(
+                    checkpoint={
+                        "phase": "similarity_fingerprint_retry",
+                        "cursor": str(retry_after),
+                    },
+                    counters={
+                        "eligible_images": retry_coverage.eligible_count,
+                        "current_fingerprints": retry_coverage.current_count + retry_completed,
+                        "fingerprints_pending": max(0, retry_total - len(retry_attempted)),
+                        "fingerprints_completed": completed + retry_completed,
+                        "fingerprints_unavailable": max(0, len(retry_attempted) - retry_completed),
+                    },
+                    progress={
+                        "phase": "similarity_fingerprinting",
+                        "completed": len(retry_attempted),
+                        "total": retry_total,
+                        "percent": progress_ceiling,
+                        "detail": f"Retried {len(retry_attempted)} of {retry_total} fingerprints.",
+                    },
+                )
+        final = await self.coverage()
+        return (
+            final,
+            completed + retry_completed,
+            final.missing_count + final.stale_count,
+            retry_attempted,
+        )
+
+    async def _fingerprint(self, context: TaskContext, asset_id: UUID) -> bool:
+        try:
+            source = await self._immich.get_asset(asset_id)
+            if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
+                await self._assets.refresh_asset(source, track_similarity_changes=False)
+                return False
+            await self._assets.refresh_asset(source, track_similarity_changes=False)
+            await self._integrity.analyze(
+                context,
+                asset_id,
+                publish_progress=False,
+                source=source,
+                track_similarity_changes=False,
+            )
+            feature = await self._features.get_similarity_feature(asset_id)
+            return similarity_feature_freshness(feature, source) == "current"
+        except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
+            logger.warning(
+                "Library fingerprint unavailable: asset_id=%s error_type=%s reason=%s",
+                asset_id,
+                type(error).__name__,
+                error,
+            )
+            return False
 
 
 class SimilarityIndexTaskHandler:
@@ -187,7 +248,7 @@ class SimilarityIndexTaskHandler:
         self._maintainer = maintainer
 
     async def execute(self, context: TaskContext, _payload: dict[str, object]) -> TaskResult:
-        coverage, completed, unavailable = await self._maintainer.maintain(context)
+        coverage, completed, unavailable, _ = await self._maintainer.maintain(context)
         return TaskResult(
             summary={"coverage": coverage.model_dump(mode="json")},
             counters={

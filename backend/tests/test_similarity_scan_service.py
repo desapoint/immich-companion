@@ -365,6 +365,7 @@ async def test_scan_completes_library_index_before_candidate_search() -> None:
                 ),
                 3,
                 0,
+                set(),
             )
 
     class OrderedFeatures(FakeFeatures):
@@ -385,7 +386,7 @@ async def test_scan_completes_library_index_before_candidate_search() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_refuses_to_claim_full_library_with_missing_fingerprints() -> None:
+async def test_scan_proceeds_with_only_the_fingerprints_that_failed_after_retry() -> None:
     class IncompleteIndex:
         async def maintain(self, _context, *, progress_ceiling):
             return (
@@ -401,16 +402,61 @@ async def test_scan_refuses_to_claim_full_library_with_missing_fingerprints() ->
                 ),
                 2,
                 1,
+                {UUID(int=3)},
             )
 
-    class ForbiddenFeatures(FakeFeatures):
-        async def list_current_similarity_features(self):
-            pytest.fail("Candidate search started with incomplete index coverage")
+    class IndexedFeatures(FakeFeatures):
+        def __init__(self):
+            super().__init__([feature(1, 0), feature(2, 0)])
 
-    with pytest.raises(PermanentTaskError, match="1 missing"):
+        async def list_similarity_feature_work(self, *, after_asset_id, limit):
+            return [UUID(int=3)] if after_asset_id is None else []
+
+    scans = FakeScans()
+    result = await SimilarityScanTaskHandler(
+        IndexedFeatures(),
+        FakeSimilarity(),
+        scans,
+        IncompleteIndex(),  # type: ignore[arg-type]
+    ).execute(FakeContext(), SimilarityScanRequest().model_dump(mode="json"))
+
+    assert scans.completed is not None
+    assert scans.completed[1]["asset_count"] == 2
+    assert result.counters["fingerprints_excluded_after_retry"] == 1
+    assert result.summary["excluded_asset_ids"] == [str(UUID(int=3))]
+
+
+@pytest.mark.asyncio
+async def test_scan_stops_if_new_missing_work_appears_after_retry() -> None:
+    class ChangedIndex:
+        async def maintain(self, _context, *, progress_ceiling):
+            return (
+                SimilarityIndexCoverage(
+                    eligible_count=3,
+                    current_count=2,
+                    missing_count=1,
+                    stale_count=0,
+                    complete=False,
+                    model_version="appearance-v1",
+                    feature_version=2,
+                    config_fingerprint="test",
+                ),
+                2,
+                1,
+                {UUID(int=4)},
+            )
+
+    class ChangedFeatures(FakeFeatures):
+        async def list_similarity_feature_work(self, *, after_asset_id, limit):
+            return [UUID(int=3)] if after_asset_id is None else []
+
+        async def list_current_similarity_features(self):
+            pytest.fail("Candidate search started after coverage drift")
+
+    with pytest.raises(PermanentTaskError, match="coverage changed"):
         await SimilarityScanTaskHandler(
-            ForbiddenFeatures(),
+            ChangedFeatures(),
             FakeSimilarity(),
             FakeScans(),
-            IncompleteIndex(),  # type: ignore[arg-type]
+            ChangedIndex(),  # type: ignore[arg-type]
         ).execute(FakeContext(), SimilarityScanRequest().model_dump(mode="json"))

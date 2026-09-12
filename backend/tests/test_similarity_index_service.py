@@ -16,6 +16,7 @@ from companion.similarity_index_service import (
     SimilarityIndexService,
     SimilarityIndexTaskHandler,
 )
+from companion.task_coordinator import PermanentTaskError
 
 A = UUID(int=1)
 B = UUID(int=2)
@@ -149,11 +150,12 @@ async def test_library_index_reuses_committed_features_after_restart() -> None:
         batch_size=2,
     )
 
-    coverage, completed, unavailable = await maintainer.maintain(FakeContext())
+    coverage, completed, unavailable, attempted = await maintainer.maintain(FakeContext())
 
     assert integrity.analyzed == [B, C]
     assert completed == 2
     assert unavailable == 0
+    assert attempted == set()
     assert coverage.complete is True
 
 
@@ -170,10 +172,11 @@ async def test_sixty_thousand_asset_catalog_only_pages_the_120_required_features
         batch_size=25,
     )
 
-    coverage, completed, unavailable = await maintainer.maintain(FakeContext())
+    coverage, completed, unavailable, attempted = await maintainer.maintain(FakeContext())
 
     assert completed == 120
     assert unavailable == 0
+    assert attempted == set()
     assert coverage.eligible_count == 60_000
     assert coverage.current_count == 60_000
     assert [limit for _, limit in features.requested_pages] == [25] * 6
@@ -199,13 +202,44 @@ async def test_current_index_preserves_a_resumable_scan_checkpoint() -> None:
         FakeIntegrity(features),  # type: ignore[arg-type]
     )
 
-    coverage, completed, unavailable = await maintainer.maintain(
+    coverage, completed, unavailable, attempted = await maintainer.maintain(
         context, progress_ceiling=30
     )
 
     assert coverage.complete is True
     assert (completed, unavailable) == (0, 0)
+    assert attempted == set()
     assert context.checkpoints == []
+
+
+@pytest.mark.asyncio
+async def test_eleven_persistent_failures_are_retried_once_and_reported() -> None:
+    failed_ids = [UUID(int=number) for number in range(1, 12)]
+    features = FakeFeatures(failed_ids, eligible_count=60_000)
+
+    class FailingIntegrity(FakeIntegrity):
+        async def analyze(self, context, asset_id, **kwargs):
+            self.analyzed.append(asset_id)
+            raise PermanentTaskError("unsupported image")
+
+    integrity = FailingIntegrity(features)
+    maintainer = SimilarityIndexMaintainer(
+        FakeImmich(),  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+        integrity,  # type: ignore[arg-type]
+        batch_size=25,
+    )
+
+    coverage, completed, unavailable, attempted = await maintainer.maintain(FakeContext())
+
+    assert coverage.eligible_count == 60_000
+    assert coverage.current_count == 59_989
+    assert coverage.complete is False
+    assert completed == 0
+    assert unavailable == 11
+    assert attempted == set(failed_ids)
+    assert integrity.analyzed == failed_ids * 2
 
 
 @pytest.mark.asyncio
