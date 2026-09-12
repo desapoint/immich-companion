@@ -79,6 +79,16 @@ class RelationSelectAllRequest(BaseModel):
     include_hierarchy: bool = False
 
 
+class RelationMatchingSelectionRequest(RelationSelectAllRequest):
+    selected: bool
+    revision: int = Field(ge=0)
+
+
+class RelationMatchingSelectionState(BaseModel):
+    matching_count: int
+    selected_matching_count: int
+
+
 class CollectionDeletePlanRequest(BaseModel):
     selection_id: UUID
 

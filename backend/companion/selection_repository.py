@@ -67,6 +67,27 @@ class RelationSelectionRepository:
                 ).all()
             )
 
+    async def matching_count(
+        self, selection_id: UUID, kind: RelationEntityKind, entity_ids: list[UUID]
+    ) -> int:
+        self._validate(await self.get(selection_id, kind))
+        unique_ids = list(dict.fromkeys(entity_ids))
+        count = 0
+        async with self._database.sessions() as session:
+            for offset in range(0, len(unique_ids), 1000):
+                batch = unique_ids[offset : offset + 1000]
+                count += int(
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(SelectionSetKeyMemberRecord)
+                        .where(
+                            SelectionSetKeyMemberRecord.selection_id == selection_id,
+                            SelectionSetKeyMemberRecord.entity_id.in_(batch),
+                        )
+                    )
+                )
+        return count
+
     async def update(
         self,
         selection_id: UUID,
@@ -139,6 +160,52 @@ class RelationSelectionRepository:
                     )
                     .on_conflict_do_nothing()
                 )
+            await self._touch(session, record)
+            return record
+
+    async def update_matching(
+        self,
+        selection_id: UUID,
+        kind: RelationEntityKind,
+        entity_ids: list[UUID],
+        *,
+        selected: bool,
+        revision: int,
+    ) -> SelectionSetRecord:
+        """Apply a query-resolved delta without discarding unrelated members."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(SelectionSetRecord)
+                .where(
+                    SelectionSetRecord.id == selection_id,
+                    SelectionSetRecord.entity_kind == kind,
+                )
+                .with_for_update()
+            )
+            self._validate(record, revision)
+            assert record is not None
+            unique_ids = list(dict.fromkeys(entity_ids))
+            for offset in range(0, len(unique_ids), 1000):
+                batch = unique_ids[offset : offset + 1000]
+                if selected:
+                    await session.execute(
+                        insert(SelectionSetKeyMemberRecord)
+                        .values(
+                            [
+                                {"selection_id": selection_id, "entity_id": entity_id}
+                                for entity_id in batch
+                            ]
+                        )
+                        .on_conflict_do_nothing()
+                    )
+                else:
+                    await session.execute(
+                        delete(SelectionSetKeyMemberRecord).where(
+                            SelectionSetKeyMemberRecord.selection_id == selection_id,
+                            SelectionSetKeyMemberRecord.entity_id.in_(batch),
+                        )
+                    )
             await self._touch(session, record)
             return record
 

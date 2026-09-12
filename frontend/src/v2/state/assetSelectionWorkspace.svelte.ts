@@ -17,6 +17,8 @@ type SelectionStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 export interface SelectionWorkspaceRepository<TCriteria> {
   createSelection(): Promise<AssetSelectionWorkspace>;
   selectAllIntoSelection(selectionId: string, criteria: TCriteria): Promise<AssetSelectionWorkspace>;
+  updateMatchingSelection?(selectionId: string, criteria: TCriteria, selected: boolean, revision: number): Promise<AssetSelectionWorkspace>;
+  matchingSelectionState?(selectionId: string, criteria: TCriteria): Promise<{ matchingCount: number; selectedMatchingCount: number }>;
   updateSelectionMembers(selectionId: string, ids: readonly string[], selected: boolean, revision: number): Promise<AssetSelectionWorkspace>;
   selectionMembership(selectionId: string, ids: readonly string[]): Promise<import('../data/contracts').AssetSelectionMembership | null>;
 }
@@ -28,6 +30,8 @@ export class SelectionWorkspaceController<TCriteria = AssetSearchCriteria> {
   visibleSelectedIds = $state<Set<string>>(new Set());
   anchor = $state<string | null>(null);
   allMatchingSelected = $state(false);
+  matchingSelectedCount = $state(0);
+  matchingTotal = $state(0);
   error = $state('');
 
   private readonly serverVisibleIds = new Set<string>();
@@ -164,6 +168,68 @@ export class SelectionWorkspaceController<TCriteria = AssetSearchCriteria> {
     await operation;
   }
 
+  async setMatching(criteria: TCriteria, visibleIds: readonly string[], selected: boolean): Promise<void> {
+    const updateMatching = this.repository.updateMatchingSelection;
+    if (!updateMatching) throw new Error('Matching selection updates are unavailable.');
+    const previousVisible = new Set(this.visibleSelectedIds);
+    const visible = new Set(this.visibleSelectedIds);
+    for (const id of visibleIds) {
+      if (selected) visible.add(id); else visible.delete(id);
+    }
+    this.visibleSelectedIds = visible;
+    this.anchor = selected ? visibleIds[0] ?? this.anchor : null;
+    this.allMatchingSelected = selected;
+    this.matchingSelectedCount = selected ? this.matchingTotal : 0;
+    this.pendingVersion += 1;
+    try {
+      await this.flush();
+      const generation = this.generation;
+      const operation = this.writeChain.then(async () => {
+        if (generation !== this.generation) return;
+        const workspace = await this.ensureWorkspace();
+        if (generation !== this.generation) return;
+        let updated: AssetSelectionWorkspace;
+        try {
+          updated = await updateMatching(workspace.id, criteria, selected, workspace.revision);
+        } catch (error) {
+          const membership = await this.repository.selectionMembership(workspace.id, []);
+          if (!membership || membership.selection.status !== 'active') throw error;
+          this.applyWorkspace(membership.selection);
+          updated = await updateMatching(workspace.id, criteria, selected, membership.selection.revision);
+        }
+        if (generation !== this.generation) return;
+        this.applyWorkspace(updated);
+        for (const id of visibleIds) {
+          if (selected) this.serverVisibleIds.add(id); else this.serverVisibleIds.delete(id);
+        }
+      });
+      this.writeChain = operation.catch(() => {});
+      await operation;
+    } catch (error) {
+      this.visibleSelectedIds = previousVisible;
+      this.allMatchingSelected = false;
+      this.pendingVersion += 1;
+      this.error = error instanceof Error ? error.message : 'Matching selection could not be saved.';
+      throw error;
+    }
+  }
+
+  async refreshMatching(criteria: TCriteria): Promise<void> {
+    if (!this.selectionId || !this.repository.matchingSelectionState) {
+      this.allMatchingSelected = false;
+      this.matchingSelectedCount = 0;
+      this.matchingTotal = 0;
+      return;
+    }
+    const selectionId = this.selectionId;
+    const state = await this.repository.matchingSelectionState(selectionId, criteria);
+    if (this.selectionId !== selectionId) return;
+    this.matchingTotal = state.matchingCount;
+    this.matchingSelectedCount = state.selectedMatchingCount;
+    this.allMatchingSelected = state.matchingCount > 0
+      && state.selectedMatchingCount === state.matchingCount;
+  }
+
   async flush(): Promise<void> {
     this.cancelTimer();
     const operation = this.writeChain.then(() => this.drainPending());
@@ -205,6 +271,8 @@ export class SelectionWorkspaceController<TCriteria = AssetSearchCriteria> {
     this.visibleSelectedIds = new Set();
     this.anchor = null;
     this.allMatchingSelected = false;
+    this.matchingSelectedCount = 0;
+    this.matchingTotal = 0;
     this.pendingVersion += 1;
   }
 

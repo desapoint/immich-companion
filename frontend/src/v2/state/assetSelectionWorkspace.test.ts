@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AssetRepository, AssetSelectionWorkspace } from '../data/contracts';
-import { AssetSelectionWorkspaceController } from './assetSelectionWorkspace.svelte';
+import { AssetSelectionWorkspaceController, SelectionWorkspaceController, type SelectionWorkspaceRepository } from './assetSelectionWorkspace.svelte';
 
 const active = (revision = 0, selectedCount = 0): AssetSelectionWorkspace => ({
   id: 'selection-1', revision, selectedCount, status: 'active', expiresAt: '2099-01-01T00:00:00Z',
@@ -32,6 +32,32 @@ function fixture() {
 afterEach(() => vi.useRealTimers());
 
 describe('V2 database-backed asset selection workspace', () => {
+  it('adds and removes matching relations without dropping an off-filter selection', async () => {
+    const { repository, selected, storage } = fixture();
+    selected.add('outside');
+    storage.setItem('immich-companion:v2:tag-selection', 'selection-1');
+    const updateMatchingSelection = vi.fn(async (_id: string, criteria: { query: string }, value: boolean, revision: number) => {
+      expect(criteria).toEqual({ query: 'inside' });
+      expect(revision).toBeGreaterThanOrEqual(0);
+      for (const id of ['inside-1', 'inside-2']) {
+        if (value) selected.add(id); else selected.delete(id);
+      }
+      return active(revision + 1, selected.size);
+    });
+    const controller = new SelectionWorkspaceController<{ query: string }>(
+      { ...repository, updateMatchingSelection } as unknown as SelectionWorkspaceRepository<{ query: string }>,
+      storage, 'immich-companion:v2:tag-selection',
+    );
+    await controller.refreshVisible(['inside-1']);
+
+    await controller.setMatching({ query: 'inside' }, ['inside-1'], true);
+    expect([...selected].sort()).toEqual(['inside-1', 'inside-2', 'outside']);
+    expect(controller.selectedCount).toBe(3);
+    await controller.setMatching({ query: 'inside' }, ['inside-1'], false);
+    expect([...selected]).toEqual(['outside']);
+    expect(controller.selectedCount).toBe(1);
+  });
+
   it('updates visible state immediately and debounces member writes', async () => {
     vi.useFakeTimers();
     const { repository, storage } = fixture();

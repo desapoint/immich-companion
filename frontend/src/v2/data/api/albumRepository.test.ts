@@ -20,6 +20,22 @@ function jsonResponse(body: unknown, status = 200): Response {
 }
 
 describe('live V2 album repository', () => {
+  it('sends scoped matching deltas with the workspace revision', async () => {
+    const fetcher = vi.fn<AlbumApiFetcher>(async () => jsonResponse({
+      id: album.id, entity_kind: 'album', revision: 4, selected_count: 3,
+      status: 'active', expires_at: '2099-01-01T00:00:00Z',
+    }));
+    const repository = createAlbumRepository(fetcher);
+
+    const updated = await repository.updateMatchingSelection(album.id, { query: 'summer' }, false, 3);
+
+    expect(updated).toMatchObject({ revision: 4, selectedCount: 3 });
+    expect(fetcher.mock.calls[0]).toMatchObject([
+      `/api/albums/selections/${album.id}/matching`,
+      { method: 'POST', body: '{"query":"summer","selected":false,"revision":3}' },
+    ]);
+  });
+
   it('maps paged API albums and supports description sorting', async () => {
     const fetcher = vi.fn<AlbumApiFetcher>(async () => jsonResponse({
       items: [album], total: 100, page: 2, page_size: 48, pages: 3,

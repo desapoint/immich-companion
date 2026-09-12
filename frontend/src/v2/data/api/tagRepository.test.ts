@@ -35,6 +35,21 @@ function page(items = [parent, child], currentPage = 1, pages = 1) {
 }
 
 describe('live V2 tag repository', () => {
+  it('sends the applied hierarchy criterion for scoped matching updates', async () => {
+    const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
+      id: parent.id, entity_kind: 'tag', revision: 2, selected_count: 4,
+      status: 'active', expires_at: '2099-01-01T00:00:00Z',
+    }));
+    const repository = createTagRepository(fetcher);
+
+    await repository.updateMatchingSelection(parent.id, { query: 'Places', includeHierarchy: true }, true, 1);
+
+    expect(fetcher.mock.calls[0]).toMatchObject([
+      `/api/tags/selections/${parent.id}/matching`,
+      { method: 'POST', body: '{"query":"Places","include_hierarchy":true,"selected":true,"revision":1}' },
+    ]);
+  });
+
   it('maps flat hierarchy rows and all demo sort and search modes', async () => {
     const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
       items: [child], total: 42, page: 2, page_size: 48, pages: 3,

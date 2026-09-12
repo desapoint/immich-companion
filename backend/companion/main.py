@@ -141,6 +141,8 @@ from companion.relation_schema import (
     CollectionDeletePlan,
     CollectionDeletePlanRequest,
     RelationBatchDeleteRequest,
+    RelationMatchingSelectionRequest,
+    RelationMatchingSelectionState,
     RelationPage,
     RelationSelectAllRequest,
     RelationSelectionMembershipRequest,
@@ -1436,6 +1438,45 @@ def create_app(
         except ValueError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
         return selection_view(record)
+
+    @app.post("/api/{kind}s/selections/{selection_id}/matching", response_model=SelectionSetView)
+    async def update_matching_relations(
+        kind: RelationEntityKind,
+        selection_id: UUID,
+        request: RelationMatchingSelectionRequest,
+    ) -> SelectionSetView:
+        try:
+            ids = await matching_relation_ids(kind, request)
+            record = await require_relation_selections().update_matching(
+                selection_id,
+                kind,
+                ids,
+                selected=request.selected,
+                revision=request.revision,
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return selection_view(record)
+
+    @app.post(
+        "/api/{kind}s/selections/{selection_id}/matching-status",
+        response_model=RelationMatchingSelectionState,
+    )
+    async def relation_matching_selection_state(
+        kind: RelationEntityKind,
+        selection_id: UUID,
+        request: RelationSelectAllRequest,
+    ) -> RelationMatchingSelectionState:
+        ids = await matching_relation_ids(kind, request)
+        try:
+            selected_count = await require_relation_selections().matching_count(
+                selection_id, kind, ids
+            )
+        except ValueError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        return RelationMatchingSelectionState(
+            matching_count=len(set(ids)), selected_matching_count=selected_count
+        )
 
     def collection_plan_view(record) -> CollectionDeletePlan:
         work = record.relation_work or {}
