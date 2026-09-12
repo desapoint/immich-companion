@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, suppress
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from json import JSONDecodeError, JSONDecoder
@@ -13,15 +13,15 @@ from typing import Any, Literal
 from uuid import UUID
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from companion.config import Settings
 from companion.sync_schema import SyncCapabilities, SyncEvent
 
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 SUPPORTED_IMMICH_MAJOR = 3
-SUPPORTED_IMMICH_MINOR = 1
-SUPPORTED_IMMICH_API_VERSION = f"{SUPPORTED_IMMICH_MAJOR}.{SUPPORTED_IMMICH_MINOR}.x"
+SUPPORTED_IMMICH_MINORS = frozenset({1, 2})
+SUPPORTED_IMMICH_API_VERSION = "3.1.x–3.2.x"
 TRASH_SEARCH_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
@@ -38,13 +38,22 @@ class ImmichApiError(RuntimeError):
 
 
 @dataclass(frozen=True, slots=True)
-class ImmichOriginalStream:
-    """Metadata and bounded chunks for one live original response."""
+class ImmichMediaStream:
+    """Metadata and bounded chunks for one live media response."""
 
     chunks: AsyncIterator[bytes]
+    status_code: int
     media_type: str
     content_length: int | None
     etag: str | None
+    cache_control: str | None
+    content_range: str | None
+    accept_ranges: str | None
+    last_modified: str | None
+
+
+# Backwards-compatible name for integrity-service test doubles and callers.
+ImmichOriginalStream = ImmichMediaStream
 
 
 class ImmichModel(BaseModel):
@@ -74,7 +83,7 @@ class ImmichServerVersion(ImmichModel):
 
         return (
             self.major == SUPPORTED_IMMICH_MAJOR
-            and self.minor == SUPPORTED_IMMICH_MINOR
+            and self.minor in SUPPORTED_IMMICH_MINORS
             and self.prerelease is None
         )
 
@@ -154,6 +163,13 @@ class ImmichAlbum(ImmichModel):
     created_at: datetime = Field(alias="createdAt")
     updated_at: datetime = Field(alias="updatedAt")
     asset_ids: list[UUID] = Field(default_factory=list, exclude=True)
+
+    @field_validator("description", mode="before")
+    @classmethod
+    def normalize_null_description(cls, value: object) -> object:
+        """Normalize the nullable wire value to Companion's string domain."""
+
+        return "" if value is None else value
 
 
 class ImmichStackAsset(BaseModel):
@@ -434,14 +450,17 @@ class ImmichApiClient:
             return ImmichCompatibilityReport(
                 status="compatible",
                 server_version=server_version,
-                detail=f"Immich {server_version.label} matches the supported API line.",
+                detail=(
+                    f"Immich {server_version.label} is within the supported "
+                    f"{SUPPORTED_IMMICH_API_VERSION} API range."
+                ),
             )
         return ImmichCompatibilityReport(
             status="incompatible",
             server_version=server_version,
             detail=(
                 f"Immich {server_version.label} is outside the supported "
-                f"{SUPPORTED_IMMICH_API_VERSION} API line."
+                f"{SUPPORTED_IMMICH_API_VERSION} API range."
             ),
         )
 
@@ -680,7 +699,7 @@ class ImmichApiClient:
         self,
         asset_id: UUID,
         *,
-        size: Literal["thumbnail", "preview"] = "thumbnail",
+        size: Literal["thumbnail", "preview", "fullsize"] = "thumbnail",
     ) -> ImmichMedia:
         """Retrieve safe thumbnail or preview bytes for browser proxying."""
 
@@ -713,47 +732,55 @@ class ImmichApiClient:
         )
 
     @asynccontextmanager
-    async def stream_original(
+    async def stream_asset_media(
         self,
         asset_id: UUID,
         *,
+        kind: Literal["original", "video_playback"],
+        request_headers: Mapping[str, str] | None = None,
         chunk_size: int = 1024 * 1024,
-    ) -> AsyncIterator[ImmichOriginalStream]:
-        """Stream an original through the shared pool without buffering its body."""
+    ) -> AsyncIterator[ImmichMediaStream]:
+        """Stream original or compatible video media through the shared HTTP pool."""
 
         attempts = self._settings.immich_retry_attempts
         response: httpx.Response | None = None
+        path = (
+            f"/api/assets/{asset_id}/original"
+            if kind == "original"
+            else f"/api/assets/{asset_id}/video/playback"
+        )
+        operation = "stream original asset" if kind == "original" else "stream video playback"
         for attempt in range(attempts):
             try:
                 request = self._client().build_request(
-                    "GET", f"/api/assets/{asset_id}/original"
+                    "GET",
+                    path,
+                    headers=dict(request_headers or {}),
                 )
                 response = await self._client().send(request, stream=True)
             except httpx.RequestError as error:
                 if attempt + 1 >= attempts:
-                    raise ImmichApiError("stream original asset") from error
+                    raise ImmichApiError(operation) from error
             else:
                 if response.status_code not in TRANSIENT_STATUS_CODES:
                     try:
                         response.raise_for_status()
                     except httpx.HTTPStatusError as error:
                         await response.aclose()
-                        raise ImmichApiError(
-                            "stream original asset", response.status_code
-                        ) from error
+                        raise ImmichApiError(operation, response.status_code) from error
                     break
                 status_code = response.status_code
                 await response.aclose()
                 response = None
                 if attempt + 1 >= attempts:
-                    raise ImmichApiError("stream original asset", status_code)
+                    raise ImmichApiError(operation, status_code)
 
             backoff = self._settings.immich_retry_backoff_seconds * (2**attempt)
             if backoff:
                 await asyncio.sleep(backoff)
 
         if response is None:
-            raise ImmichApiError("stream original asset")
+            raise ImmichApiError(operation)
 
         content_length: int | None = None
         raw_content_length = response.headers.get("content-length")
@@ -766,16 +793,64 @@ class ImmichApiClient:
                 content_length = parsed_length if parsed_length >= 0 else None
 
         try:
-            yield ImmichOriginalStream(
+            yield ImmichMediaStream(
                 chunks=response.aiter_bytes(chunk_size),
+                status_code=response.status_code,
                 media_type=response.headers.get("content-type", "application/octet-stream"),
                 content_length=content_length,
                 etag=response.headers.get("etag"),
+                cache_control=response.headers.get("cache-control"),
+                content_range=response.headers.get("content-range"),
+                accept_ranges=response.headers.get("accept-ranges"),
+                last_modified=response.headers.get("last-modified"),
             )
         except httpx.RequestError as error:
-            raise ImmichApiError("stream original asset") from error
+            raise ImmichApiError(operation) from error
         finally:
             await response.aclose()
+
+    @asynccontextmanager
+    async def stream_original(
+        self,
+        asset_id: UUID,
+        *,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[ImmichMediaStream]:
+        """Stream an original without buffering it in Companion memory."""
+
+        async with self.stream_asset_media(
+            asset_id,
+            kind="original",
+            chunk_size=chunk_size,
+        ) as media:
+            yield media
+
+    @asynccontextmanager
+    async def stream_video_playback(
+        self,
+        asset_id: UUID,
+        *,
+        range_header: str | None = None,
+        if_range_header: str | None = None,
+        chunk_size: int = 1024 * 1024,
+    ) -> AsyncIterator[ImmichMediaStream]:
+        """Stream Immich's browser-compatible video, preserving safe range headers."""
+
+        headers = {
+            key: value
+            for key, value in {
+                "range": range_header,
+                "if-range": if_range_header,
+            }.items()
+            if value
+        }
+        async with self.stream_asset_media(
+            asset_id,
+            kind="video_playback",
+            request_headers=headers,
+            chunk_size=chunk_size,
+        ) as media:
+            yield media
 
     async def remove_assets_from_album(self, album_id: UUID, asset_ids: list[UUID]) -> None:
         """Remove current members from one album through the supported API."""
@@ -869,6 +944,17 @@ class ImmichApiClient:
         response = await self._request("GET", "/api/albums", operation="list albums")
         return [ImmichAlbum.model_validate(payload) for payload in response.json()]
 
+    async def get_album(self, album_id: UUID) -> ImmichAlbum:
+        """Fetch one album through Immich's supported API."""
+
+        response = await self._request(
+            "GET",
+            f"/api/albums/{album_id}",
+            operation="get album",
+            params={"withoutAssets": True},
+        )
+        return ImmichAlbum.model_validate(response.json())
+
     async def list_libraries(self) -> list[ImmichLibrary]:
         """Fetch libraries through Immich for user-facing policy selection."""
 
@@ -890,7 +976,7 @@ class ImmichApiClient:
         if description is not None:
             payload["description"] = description
         response = await self._request(
-            "PUT", f"/api/albums/{album_id}", operation="update album", json=payload,
+            "PATCH", f"/api/albums/{album_id}", operation="update album", json=payload,
         )
         return ImmichAlbum.model_validate(response.json())
 
@@ -1038,70 +1124,17 @@ class ImmichApiClient:
         response = await self._request("POST", "/api/tags", operation="create tag", json=payload)
         return ImmichTag.model_validate(response.json())
 
-    async def update_tag(self, tag_id: UUID, *, name: str | None = None,
-                         color: str | None = None) -> ImmichTag:
+    async def update_tag(self, tag_id: UUID, *, color: str | None = None) -> ImmichTag:
         payload: dict[str, Any] = {}
-        if name is not None:
-            payload["name"] = name
         if color is not None:
             payload["color"] = color
         response = await self._request(
-            "PUT", f"/api/tags/{tag_id}", operation="update tag", json=payload,
+            "PATCH", f"/api/tags/{tag_id}", operation="update tag", json=payload,
         )
         return ImmichTag.model_validate(response.json())
 
     async def delete_tag(self, tag_id: UUID) -> None:
         await self._request("DELETE", f"/api/tags/{tag_id}", operation="delete tag")
-
-    async def reparent_tag(
-        self,
-        tag_id: UUID,
-        *,
-        name: str,
-        color: str | None,
-        parent_id: UUID | None,
-        catalog: list[ImmichTag],
-    ) -> ImmichTag:
-        """Recreate a tag subtree under a new parent while preserving memberships."""
-
-        by_parent: dict[UUID, list[ImmichTag]] = {}
-        by_id = {tag.id: tag for tag in catalog}
-        for tag in catalog:
-            if tag.parent_id is not None:
-                by_parent.setdefault(tag.parent_id, []).append(tag)
-        source = by_id[tag_id]
-        subtree: list[ImmichTag] = []
-
-        def visit(tag: ImmichTag) -> None:
-            subtree.append(tag)
-            for child in by_parent.get(tag.id, []):
-                visit(child)
-
-        visit(source)
-        replacements: dict[UUID, ImmichTag] = {}
-        try:
-            for old in subtree:
-                replacement = await self.create_tag(
-                    name if old.id == tag_id else old.name,
-                    color if old.id == tag_id else old.color,
-                    parent_id if old.id == tag_id else replacements[old.parent_id].id,
-                )
-                replacements[old.id] = replacement
-                asset_ids: list[UUID] = []
-                async for page_ids in self.iter_tag_asset_ids(old.id):
-                    asset_ids.extend(page_ids)
-                for start in range(0, len(asset_ids), 1000):
-                    await self.add_assets_to_tag(replacement.id, asset_ids[start : start + 1000])
-                if await self.count_tag_asset_ids(replacement.id) != len(set(asset_ids)):
-                    raise ImmichApiError("tag membership verification")
-            for old in reversed(subtree):
-                await self.delete_tag(old.id)
-        except Exception:
-            for replacement in reversed(list(replacements.values())):
-                with suppress(ImmichApiError):
-                    await self.delete_tag(replacement.id)
-            raise
-        return replacements[tag_id]
 
     async def iter_tag_asset_ids(
         self,

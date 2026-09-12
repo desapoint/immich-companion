@@ -1,0 +1,25 @@
+[data-page-title="Assets"] .v2-context .v2-zone-body > .v2-inline {
+  flex-wrap: wrap !important;
+  border-top: 1px solid var(--v2-line);
+  padding-top: var(--v2-space-4);
+  margin-top: 0;
+}
+
+[data-page-title="Assets"] .v2-context .v2-zone-body > .v2-inline > .v2-button:nth-child(1) {
+  flex: 1 1 0;
+  width: auto;
+}
+
+[data-page-title="Assets"] .v2-context .v2-zone-body > .v2-inline > .v2-button:nth-child(2) {
+  flex: 0 0 auto;
+}
+
+[data-page-title="Assets"] .v2-context .v2-zone-body > .v2-inline > .v2-button:nth-child(3) {
+  flex: 1 1 100%;
+  width: auto;
+}
+
+[data-page-title="Albums"] .v2-context .v2-section:first-child > .v2-stack > .v2-button[data-variant="primary"],
+[data-page-title="Tags"] .v2-context .v2-section:first-child > .v2-stack > .v2-button[data-variant="primary"] {
+  width: 100%;
+}

@@ -52,7 +52,7 @@ async def test_full_sync_pacing_uses_the_longer_of_minimum_delay_and_work_time(m
     async def sleep(delay: float) -> None:
         sleeps.append(delay)
 
-    monkeypatch.setattr("companion.asset_service.perf_counter", lambda: 3.0)
+    monkeypatch.setattr("companion.v2.legacy_asset_service.perf_counter", lambda: 3.0)
     monkeypatch.setattr("companion.asset_service.asyncio.sleep", sleep)
 
     await service._pace_full_batch(full_run(), 1.0)

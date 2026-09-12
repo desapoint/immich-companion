@@ -1,0 +1,21 @@
+/* The asset result toolbar does not need to repeat the active search expression beside pagination controls. */
+.v2-toolbar:has(#asset-results) > .v2-toolbar-group:first-child > .v2-badge:nth-child(2) {
+  display:none;
+}
+
+/* Never discard one side of an image comparison merely because the viewport narrows. */
+@media(max-width:1000px) {
+  .v2-compare-stage:not(.single) {
+    grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    grid-template-rows:minmax(0,1fr);
+  }
+  .v2-compare-stage:not(.single) .v2-compare-pane.reference { display:grid; }
+}
+
+@media(max-width:700px) {
+  .v2-compare-stage:not(.single) {
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:repeat(2,minmax(0,1fr));
+  }
+  .v2-compare-stage:not(.single) .v2-compare-pane.reference { display:grid; }
+}

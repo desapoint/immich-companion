@@ -1,0 +1,59 @@
+.v2-select-option-list button[data-active="true"]:not([data-selected="true"]):not(:hover){
+  background:transparent;
+}
+
+.v2-select-option-list button[data-selected="true"]{
+  background:var(--v2-accent-2);
+  color:#eaf1ff;
+  box-shadow:none;
+}
+
+.v2-select-option-list button[data-selected="true"] .v2-select-option-subtitle{
+  color:#c7d5e8;
+}
+
+.v2-select-option-list button[data-selected="true"]:hover:not(:disabled){
+  background:color-mix(in srgb,var(--v2-accent-2) 86%,white);
+  color:#f4f7ff;
+}
+
+.v2-select-option-list button[data-selected="true"]:hover:not(:disabled) .v2-select-option-subtitle{
+  color:#d5e0ef;
+}
+
+.v2-select-options{
+  overflow:hidden;
+  grid-template-rows:minmax(0,1fr);
+  padding:0;
+}
+
+.v2-select-options[data-searchable="true"]{
+  grid-template-rows:auto minmax(0,1fr);
+}
+
+.v2-select-option-list{
+  overflow-y:auto;
+  scrollbar-gutter:stable both-edges;
+  scrollbar-width:thin;
+  scrollbar-color:#475970 transparent;
+  padding:3px 0;
+}
+
+.v2-select-option-list::-webkit-scrollbar{
+  width:6px;
+  height:6px;
+}
+
+.v2-select-option-list::-webkit-scrollbar-track{
+  background:transparent;
+}
+
+.v2-select-option-list::-webkit-scrollbar-thumb{
+  border:1px solid var(--v2-surface-2);
+  border-radius:999px;
+  background:#475970;
+}
+
+.v2-select-option-list button{
+  padding:7px 6px;
+}

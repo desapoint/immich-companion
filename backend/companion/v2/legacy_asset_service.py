@@ -1,0 +1,1808 @@
+"""Persistent, non-overlapping staged synchronization coordinator."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import tracemalloc
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import suppress
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
+from pathlib import Path
+from time import monotonic, perf_counter
+from uuid import UUID
+
+from companion.adaptive_tag_sync import (
+    finalize_incremental_asset_oriented_tags,
+    generation_asset_ids,
+    reconcile_generation_asset_tags,
+)
+from companion.asset_repository import AssetRepository
+from companion.asset_schema import AssetSyncResult
+from companion.config import Settings
+from companion.immich import (
+    ImmichAlbum,
+    ImmichApiClient,
+    ImmichApiError,
+    ImmichAsset,
+    ImmichAssetSearchPage,
+    ImmichStack,
+    ImmichStackAsset,
+    ImmichTag,
+)
+from companion.sync_repository import SyncRepository, new_sync_owner
+from companion.sync_schema import (
+    SyncCoordinatorStatus,
+    SyncEvent,
+    SyncMemorySnapshot,
+    SyncMode,
+    SyncProgress,
+    SyncRunStatus,
+)
+from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
+from companion.task_coordinator import TaskContext, TaskCoordinator
+from companion.task_schema import TaskResult, TaskStatusView
+
+logger = logging.getLogger("uvicorn.error")
+
+
+def _dedupe_digest(parts: list[str]) -> str:
+    """Build a fixed-length key for arbitrarily large repair target sets."""
+
+    return sha256("\n".join(sorted(parts)).encode()).hexdigest()
+
+
+def _repair_metric_defaults() -> dict[str, int]:
+    """Return counters that expose the cost of asset-oriented tag reconciliation."""
+
+    return {
+        "tag_branch_asset_payload": 0,
+        "tag_branch_catalog_fallback": 0,
+        "tag_fallback_catalog_tags": 0,
+        "tag_fallback_pages": 0,
+        "tag_links_resolved": 0,
+    }
+
+
+def batches[T](items: list[T], size: int) -> list[list[T]]:
+    """Split an already compact collection into bounded persistence batches."""
+
+    return [items[index : index + size] for index in range(0, len(items), size)]
+
+
+async def async_batches_with_last[T](
+    items: AsyncIterator[T], size: int
+) -> AsyncIterator[tuple[list[T], bool]]:
+    """Yield bounded async batches and identify the final batch with one-item lookahead."""
+
+    batch: list[T] = []
+    async for item in items:
+        batch.append(item)
+        if len(batch) > size:
+            overflow = batch.pop()
+            yield batch, False
+            batch = [overflow]
+    if batch:
+        yield batch, True
+
+
+async def async_items_with_last[T](
+    items: AsyncIterator[T],
+) -> AsyncIterator[tuple[T, bool]]:
+    """Yield async items with one-item lookahead so final work is not paced."""
+
+    previous: T | None = None
+    has_previous = False
+    async for item in items:
+        if has_previous:
+            assert previous is not None
+            yield previous, False
+        previous = item
+        has_previous = True
+    if has_previous:
+        assert previous is not None
+        yield previous, True
+
+
+async def _enumerate_async[T](
+    items: AsyncIterator[T], start: int = 0
+) -> AsyncIterator[tuple[int, T]]:
+    index = start
+    async for item in items:
+        yield index, item
+        index += 1
+
+
+class _CoordinatorSyncRepository:
+    """Adapt generic task context checkpoints to the legacy sync internals."""
+
+    def __init__(self, context: TaskContext) -> None:
+        self._context = context
+
+    async def checkpoint(
+        self, _run_id, _owner, *, phase, cursor, counters, progress=None, **_kwargs
+    ):
+        await self._context.checkpoint(
+            checkpoint={"phase": phase, "cursor": cursor},
+            counters=counters,
+            progress=(
+                progress.model_dump(mode="json") if progress is not None else {"phase": phase}
+            ),
+        )
+
+
+class AssetSyncTaskHandler:
+    """Run staged synchronization through the generic coordinator."""
+
+    task_type = "asset_sync"
+    lane_key = "asset_sync"
+    max_concurrency = 1
+
+    def __init__(
+        self,
+        service: AssetSyncService,
+        after_success: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
+        self._service = service
+        self._after_success = after_success
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        service = self._service
+        mode = payload.get("mode", "incremental")
+        if "generation" not in payload or "window_end" not in payload:
+            (
+                generation,
+                window_start,
+                window_end,
+            ) = await service._legacy_metadata.next_sync_metadata(
+                mode,
+                overlap=service._overlap,  # type: ignore[arg-type]
+            )
+            if mode == "incremental" and window_start is None:
+                mode = "full"
+            full_batch_payload: dict[str, int] = {}
+            if mode == "full":
+                pacing = await service._runtime_sync_settings.get()
+                full_batch_payload = {"full_batch_size": pacing.full_batch_size}
+            payload = {
+                **payload,
+                "mode": mode,
+                "generation": generation,
+                "window_start": window_start.isoformat() if window_start else None,
+                "window_end": window_end.isoformat(),
+                **full_batch_payload,
+            }
+            await context.update_payload(payload)
+        checkpoint = context.task.checkpoint
+        phase = str(checkpoint.get("phase", "queued"))
+        now = datetime.now(UTC)
+
+        def parse(value: object, fallback: datetime | None = None) -> datetime | None:
+            if isinstance(value, datetime):
+                return value
+            if isinstance(value, str):
+                return datetime.fromisoformat(value)
+            return fallback
+
+        window_end = parse(payload.get("window_end"), now)
+        assert window_end is not None
+        run = SyncRunStatus(
+            id=context.task.id,
+            full_batch_size=(
+                int(payload["full_batch_size"])
+                if mode == "full" and payload.get("full_batch_size") is not None
+                else None
+            ),
+            mode=mode,  # type: ignore[arg-type]
+            status="recovering" if context.task.status == "recovering" else "running",
+            phase=phase,  # type: ignore[arg-type]
+            generation=int(payload.get("generation", 0)),
+            window_start=parse(payload.get("window_start")),
+            window_end=window_end,
+            cursor=checkpoint.get("cursor"),
+            counters=context.task.counters,
+            attempts=context.task.attempt,
+            error=None,
+            created_at=context.task.created_at,
+            started_at=context.task.started_at,
+            heartbeat_at=context.task.heartbeat_at,
+            completed_at=None,
+            progress=SyncProgress.model_validate(context.task.progress or {"phase": phase}),
+        )
+        previous = service._syncs
+        service._syncs = _CoordinatorSyncRepository(context)  # type: ignore[assignment]
+        owns_memory_trace = service._start_sync_memory_diagnostics()
+        try:
+            counters = await service._execute(run, context.worker_id)
+        finally:
+            service._stop_sync_memory_diagnostics(owns_memory_trace)
+            service._syncs = previous
+        await service._legacy_metadata.record_success(
+            mode=run.mode,
+            generation=run.generation,
+            watermark=run.window_end,
+        )
+        if self._after_success is not None:
+            await self._after_success()
+        return TaskResult(
+            summary={"mode": run.mode, "generation": run.generation}, counters=counters
+        )
+
+
+class AssetRepairTaskHandler:
+    """Repair action-affected assets through the same task lifecycle."""
+
+    task_type = "asset_repair"
+    lane_key = "asset_repair"
+    max_concurrency = 4
+
+    def __init__(self, service: AssetSyncService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
+        include_stacks = bool(payload.get("include_stacks", False))
+        processed = int(context.task.checkpoint.get("processed", 0))
+        counters = {
+            "requested": len(asset_ids),
+            "processed": processed,
+            **{key: int(context.task.counters.get(key, 0)) for key in _repair_metric_defaults()},
+        }
+        await context.checkpoint(
+            checkpoint={"phase": "repairing", "processed": processed},
+            counters=counters,
+            progress={
+                "phase": "asset_repair",
+                "completed": processed,
+                "total": len(asset_ids),
+                "percent": round(processed / len(asset_ids) * 100, 1) if asset_ids else 100.0,
+                "detail": "Refreshing affected assets",
+            },
+        )
+        pacing = await self._service._runtime_sync_settings.get()
+        batch_size = pacing.full_batch_size
+        throttle = len(asset_ids) > batch_size
+        batch_started = perf_counter()
+        for index in range(processed, len(asset_ids)):
+            metrics = await self._service._repair_targets_now(
+                [asset_ids[index]],
+                include_stacks=include_stacks,
+            )
+            for key, value in metrics.items():
+                counters[key] = counters.get(key, 0) + value
+            processed = index + 1
+            counters["processed"] = processed
+            await context.checkpoint(
+                checkpoint={"phase": "repairing", "processed": processed},
+                counters=counters,
+                progress={
+                    "phase": "asset_repair",
+                    "completed": processed,
+                    "total": len(asset_ids),
+                    "percent": round(processed / len(asset_ids) * 100, 1) if asset_ids else 100.0,
+                    "detail": f"Refreshed {processed}/{len(asset_ids)} assets",
+                },
+            )
+            if throttle and processed % batch_size == 0 and processed < len(asset_ids):
+                await self._service._pace_runtime_batch(batch_started)
+                batch_started = perf_counter()
+        logger.info(
+            "Sync summary: trigger=asset_repair scope=%s task_id=%s requested=%s "
+            "processed=%s include_stacks=%s duration_seconds=%.3f "
+            "tag_branch_asset_payload=%s tag_branch_catalog_fallback=%s "
+            "tag_fallback_catalog_tags=%s tag_fallback_pages=%s "
+            "tag_links_resolved=%s",
+            "single" if len(asset_ids) == 1 else "bulk",
+            context.task.id,
+            len(asset_ids),
+            processed,
+            include_stacks,
+            max(
+                0.0,
+                (
+                    datetime.now(UTC) - (context.task.started_at or context.task.created_at)
+                ).total_seconds(),
+            ),
+            counters["tag_branch_asset_payload"],
+            counters["tag_branch_catalog_fallback"],
+            counters["tag_fallback_catalog_tags"],
+            counters["tag_fallback_pages"],
+            counters["tag_links_resolved"],
+        )
+        return TaskResult(summary={"repaired": processed}, counters=counters)
+
+
+class AssetSelectionSyncTaskHandler:
+    """Refresh a selected asset set in durable, independently checkpointed batches."""
+
+    task_type = "asset_selection_sync"
+    lane_key = "asset_repair"
+    max_concurrency = 4
+
+    def __init__(self, service: AssetSyncService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        asset_ids = [UUID(str(value)) for value in payload.get("asset_ids", [])]
+        checkpoint = context.task.checkpoint
+        counters = {
+            "requested": len(asset_ids),
+            "processed": int(checkpoint.get("processed", 0)),
+            "synced": int(context.task.counters.get("synced", 0)),
+            "failed": int(context.task.counters.get("failed", 0)),
+            "missing": int(context.task.counters.get("missing", 0)),
+            **{key: int(context.task.counters.get(key, 0)) for key in _repair_metric_defaults()},
+        }
+        failed: dict[str, list[str]] = {}
+        missing: list[str] = []
+        saved_failures = checkpoint.get("failures", {})
+        if isinstance(saved_failures, dict):
+            failed = {
+                str(key): [str(identifier) for identifier in value]
+                for key, value in saved_failures.items()
+                if isinstance(value, list)
+            }
+        saved_missing = checkpoint.get("missing_ids", [])
+        if isinstance(saved_missing, list):
+            missing = [str(identifier) for identifier in saved_missing]
+
+        start = counters["processed"]
+        for index in range(start, len(asset_ids)):
+            identifier = asset_ids[index]
+            last_error: Exception | None = None
+            repair_metrics: dict[str, int] | None = None
+            for item_attempt in range(self._service._settings.sync_max_attempts):
+                try:
+                    repair_metrics = await self._service._repair_targets_now([identifier])
+                except ImmichApiError as error:
+                    last_error = error
+                    if error.status_code == 404:
+                        break
+                except Exception as error:
+                    last_error = error
+                else:
+                    last_error = None
+                    break
+                if item_attempt + 1 < self._service._settings.sync_max_attempts:
+                    await asyncio.sleep(
+                        min(
+                            self._service._settings.sync_retry_backoff_seconds * 2**item_attempt,
+                            300,
+                        )
+                    )
+            if isinstance(last_error, ImmichApiError) and last_error.status_code == 404:
+                missing.append(str(identifier))
+                counters["missing"] += 1
+            elif last_error is not None:
+                reason = (
+                    last_error.operation
+                    if isinstance(last_error, ImmichApiError)
+                    else type(last_error).__name__
+                )
+                failed.setdefault(reason, []).append(str(identifier))
+                counters["failed"] += 1
+            else:
+                counters["synced"] += 1
+                if repair_metrics is not None:
+                    for key, value in repair_metrics.items():
+                        counters[key] = counters.get(key, 0) + value
+            counters["processed"] = index + 1
+            percent = round(counters["processed"] / len(asset_ids) * 100, 1) if asset_ids else 100.0
+            await context.checkpoint(
+                checkpoint={
+                    "index": index + 1,
+                    "processed": counters["processed"],
+                    "failures": failed,
+                    "missing_ids": missing,
+                },
+                counters=counters,
+                progress={
+                    "phase": "selected_assets",
+                    "completed": counters["processed"],
+                    "total": len(asset_ids),
+                    "percent": percent,
+                    "detail": (
+                        f"{counters['synced']} synchronized · "
+                        f"{counters['failed']} failed · {counters['missing']} missing"
+                    ),
+                },
+            )
+
+        has_failures = bool(failed)
+        logger.info(
+            "Sync summary: trigger=asset_selection_sync scope=%s task_id=%s "
+            "requested=%s processed=%s synced=%s failed=%s missing=%s "
+            "duration_seconds=%.3f tag_branch_asset_payload=%s "
+            "tag_branch_catalog_fallback=%s tag_fallback_catalog_tags=%s "
+            "tag_fallback_pages=%s tag_links_resolved=%s",
+            "single" if len(asset_ids) == 1 else "bulk",
+            context.task.id,
+            len(asset_ids),
+            counters["processed"],
+            counters["synced"],
+            counters["failed"],
+            counters["missing"],
+            max(
+                0.0,
+                (
+                    datetime.now(UTC) - (context.task.started_at or context.task.created_at)
+                ).total_seconds(),
+            ),
+            counters["tag_branch_asset_payload"],
+            counters["tag_branch_catalog_fallback"],
+            counters["tag_fallback_catalog_tags"],
+            counters["tag_fallback_pages"],
+            counters["tag_links_resolved"],
+        )
+        return TaskResult(
+            status="failed" if has_failures else "completed",
+            summary={
+                "requested": len(asset_ids),
+                "synced": counters["synced"],
+                "failed_ids": [identifier for values in failed.values() for identifier in values],
+                "missing_ids": missing,
+                "errors": [
+                    {"error": reason, "count": len(identifiers)}
+                    for reason, identifiers in failed.items()
+                ],
+            },
+            counters=counters,
+        )
+
+
+class AssetRelationRepairTaskHandler:
+    """Rebuild affected album/tag snapshots through the serialized sync lane."""
+
+    task_type = "asset_relation_repair"
+    lane_key = "asset_sync"
+    max_concurrency = 1
+
+    def __init__(self, service: AssetSyncService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        relations = [
+            (str(item["kind"]), UUID(str(item["id"])))
+            for item in payload.get("relations", [])
+            if isinstance(item, dict) and item.get("kind") in {"album", "tag"}
+        ]
+        processed = int(context.task.checkpoint.get("processed", 0))
+        total = len(relations)
+        totals = {
+            "albums": int(context.task.counters.get("albums", 0)),
+            "tags": int(context.task.counters.get("tags", 0)),
+            "memberships": int(context.task.counters.get("memberships", 0)),
+        }
+        for index in range(processed, total):
+            result = await self._service._repair_relations_now([relations[index]])
+            for key, value in result.items():
+                totals[key] += value
+            processed = index + 1
+            await context.checkpoint(
+                checkpoint={"phase": "repairing_relations", "processed": processed},
+                counters={"requested": total, "processed": processed, **totals},
+                progress={
+                    "phase": "relation_repair",
+                    "completed": processed,
+                    "total": total,
+                    "percent": round(processed / total * 100, 1) if total else 100.0,
+                    "detail": f"Refreshed {processed}/{total} relationships",
+                },
+            )
+        logger.info(
+            "Sync summary: trigger=asset_relation_repair task_id=%s requested=%s "
+            "processed=%s albums=%s tags=%s memberships=%s duration_seconds=%.3f "
+            "tag_branch_relation_scan=%s",
+            context.task.id,
+            total,
+            processed,
+            totals["albums"],
+            totals["tags"],
+            totals["memberships"],
+            max(
+                0.0,
+                (
+                    datetime.now(UTC) - (context.task.started_at or context.task.created_at)
+                ).total_seconds(),
+            ),
+            totals["tags"],
+        )
+        return TaskResult(
+            summary={"repaired": processed},
+            counters={"requested": total, "processed": processed, **totals},
+        )
+
+
+class AssetSyncService:
+    """Queue and execute catalog-first staged sync runs under one durable lease."""
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        syncs: SyncRepository,
+        settings: Settings,
+        coordinator: TaskCoordinator | None = None,
+        runtime_sync_settings: object | None = None,
+    ) -> None:
+        self._immich = immich
+        self._assets = assets
+        self._syncs = syncs
+        self._settings = settings
+        self._coordinator = coordinator
+        self._runtime_sync_settings = (
+            runtime_sync_settings
+            if runtime_sync_settings is not None
+            else DefaultSyncRuntimeSettingsRepository(settings)
+        )
+        self._legacy_metadata = syncs
+        self._worker: asyncio.Task[None] | None = None
+        self._scheduler: asyncio.Task[None] | None = None
+        self._last_full_sync = monotonic()
+
+    def _start_sync_memory_diagnostics(self) -> bool:
+        """Start allocation tracing only while a sync is actually executing."""
+
+        if not self._settings.sync_memory_diagnostics or tracemalloc.is_tracing():
+            return False
+        tracemalloc.start()
+        return True
+
+    @staticmethod
+    def _stop_sync_memory_diagnostics(owned_trace: bool) -> None:
+        if owned_trace and tracemalloc.is_tracing():
+            tracemalloc.stop()
+
+    @staticmethod
+    def _status_from_task(task: TaskStatusView) -> SyncRunStatus:
+        """Project one generic task into the established sync response."""
+
+        payload = task.payload
+        checkpoint = task.checkpoint
+        phase = str(checkpoint.get("phase", "queued"))
+        phase = "completed" if phase == "complete" else phase
+        phase = (
+            phase
+            if phase
+            in {
+                "queued",
+                "catalogs",
+                "assets",
+                "stacks",
+                "relationships",
+                "finalizing",
+                "completed",
+                "failed",
+            }
+            else "queued"
+        )
+        status = task.status
+        status = "recovering" if status == "cancel_requested" else status
+        status = (
+            status
+            if status in {"queued", "running", "completed", "failed", "recovering", "retrying"}
+            else "queued"
+        )
+
+        def parse_datetime(value: object, fallback: datetime | None = None) -> object:
+            if not isinstance(value, str):
+                return value if value is not None else fallback
+            return datetime.fromisoformat(value)
+
+        window_end = parse_datetime(payload.get("window_end"), task.created_at)
+        assert isinstance(window_end, datetime)
+        window_start = parse_datetime(payload.get("window_start"))
+        return SyncRunStatus(
+            id=task.id,
+            task_id=task.id,
+            full_batch_size=(
+                int(payload["full_batch_size"])
+                if payload.get("mode") == "full" and payload.get("full_batch_size") is not None
+                else None
+            ),
+            mode=payload.get("mode", "incremental"),
+            status=status,
+            phase=phase,
+            generation=int(payload.get("generation", 0)),
+            window_start=window_start if isinstance(window_start, datetime) else None,
+            window_end=window_end,
+            cursor=checkpoint.get("cursor"),
+            counters=task.counters,
+            attempts=task.attempt,
+            error=((task.error or {}).get("message") or (task.error or {}).get("type"))
+            if task.error
+            else None,
+            created_at=task.created_at,
+            started_at=task.started_at,
+            heartbeat_at=task.heartbeat_at,
+            completed_at=task.completed_at,
+            retry_at=task.next_attempt_at,
+            source="full" if payload.get("mode") == "full" else "window",
+            progress=SyncProgress.model_validate(task.progress or {"phase": phase}),
+        )
+
+    @property
+    def _lease_duration(self) -> timedelta:
+        return timedelta(seconds=self._settings.sync_lease_seconds)
+
+    @property
+    def _overlap(self) -> timedelta:
+        return timedelta(seconds=self._settings.sync_overlap_seconds)
+
+    @staticmethod
+    def _full_batch_size(run: SyncRunStatus, settings: Settings) -> int:
+        if run.mode != "full":
+            return settings.sync_batch_size
+        return run.full_batch_size or settings.sync_full_batch_size
+
+    async def _pace_full_batch(self, run: SyncRunStatus, started: float) -> None:
+        if run.mode != "full":
+            return
+        await self._pace_runtime_batch(started)
+
+    async def _pace_full_page(self, run: SyncRunStatus) -> None:
+        if run.mode != "full":
+            return
+        pacing = await self._runtime_sync_settings.get()
+        await asyncio.sleep(pacing.full_min_batch_delay_seconds)
+
+    async def _pace_runtime_batch(self, started: float) -> None:
+        pacing = await self._runtime_sync_settings.get()
+        await asyncio.sleep(max(pacing.full_min_batch_delay_seconds, perf_counter() - started))
+
+    def wake(self) -> None:
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._drain(), name="asset-sync-worker")
+        if self._scheduler is None or self._scheduler.done():
+            self._scheduler = asyncio.create_task(self._schedule(), name="asset-sync-scheduler")
+
+    async def stop(self) -> None:
+        if self._worker is not None and not self._worker.done():
+            self._worker.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._worker
+        if self._scheduler is not None and not self._scheduler.done():
+            self._scheduler.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._scheduler
+
+    async def _schedule(self) -> None:
+        incremental = self._settings.sync_incremental_interval_seconds
+        full = self._settings.sync_full_interval_seconds
+        while True:
+            await asyncio.sleep(min(incremental, 30))
+            elapsed = monotonic() - self._last_full_sync
+            mode: SyncMode = "full" if elapsed >= full else "incremental"
+            if mode == "full":
+                self._last_full_sync = monotonic()
+            await self.start(mode)
+
+    async def start(
+        self, mode: SyncMode = "incremental", *, force_follow_up: bool = False
+    ) -> SyncRunStatus:
+        if self._coordinator is not None:
+            if mode == "incremental":
+                active_tasks = await self._coordinator.list_tasks(task_type="asset_sync", limit=100)
+                if any(
+                    task.status
+                    in {"queued", "running", "retrying", "recovering", "cancel_requested"}
+                    and task.payload.get("mode") == "full"
+                    for task in active_tasks
+                ):
+                    full_task = next(
+                        task
+                        for task in active_tasks
+                        if task.status
+                        in {"queued", "running", "retrying", "recovering", "cancel_requested"}
+                        and task.payload.get("mode") == "full"
+                    )
+                    return self._status_from_task(full_task)
+            requested_key = f"asset-sync:{mode}"
+            existing = await self._coordinator.find_active("asset_sync", requested_key)
+            if existing is not None:
+                return self._status_from_task(existing)
+            generation, window_start, window_end = await self._legacy_metadata.next_sync_metadata(
+                mode, overlap=self._overlap
+            )
+            effective_mode: SyncMode = (
+                "full" if mode == "incremental" and window_start is None else mode
+            )
+            deduplication_key = f"asset-sync:{effective_mode}"
+            if effective_mode != mode:
+                existing = await self._coordinator.find_active("asset_sync", deduplication_key)
+                if existing is not None:
+                    return self._status_from_task(existing)
+            runtime_pacing = (
+                await self._runtime_sync_settings.get() if effective_mode == "full" else None
+            )
+            task = await self._coordinator.submit(
+                "asset_sync",
+                {
+                    "mode": effective_mode,
+                    "generation": generation,
+                    "window_start": window_start.isoformat() if window_start else None,
+                    "window_end": window_end.isoformat(),
+                    **(
+                        {"full_batch_size": runtime_pacing.full_batch_size}
+                        if runtime_pacing is not None
+                        else {}
+                    ),
+                },
+                priority=100 if effective_mode == "full" else 10,
+                deduplication_key=deduplication_key,
+                task_id=None,
+            )
+            await self._coordinator.start()
+            return self._status_from_task(task)
+        run = await self._syncs.enqueue(
+            mode, overlap=self._overlap, force_follow_up=force_follow_up
+        )
+        self.wake()
+        return run
+
+    async def status(self) -> SyncCoordinatorStatus:
+        if self._coordinator is not None:
+            tasks = await self._coordinator.list_tasks(task_type="asset_sync", limit=100)
+            active_states = {"running", "recovering", "retrying", "cancel_requested"}
+            queued_states = {"queued"}
+            active_task = next((task for task in tasks if task.status in active_states), None)
+            pending_task = next((task for task in tasks if task.status in queued_states), None)
+            completed = [task for task in tasks if task.status == "completed"]
+            last_task = completed[0] if completed else None
+            last = self._status_from_task(last_task) if last_task else None
+            failed = [task for task in tasks if task.status == "failed"]
+            last_failed_task = failed[0] if failed else None
+            return SyncCoordinatorStatus(
+                active=self._status_from_task(active_task) if active_task else None,
+                pending=self._status_from_task(pending_task) if pending_task else None,
+                last_success=last,
+                last_failure=self._status_from_task(last_failed_task) if last_failed_task else None,
+                successful_watermark=last.window_end if last else None,
+                authoritative_generation=max(
+                    (
+                        int(task.payload.get("generation", 0))
+                        for task in completed
+                        if task.payload.get("mode") == "full"
+                    ),
+                    default=0,
+                ),
+            )
+        status = await self._syncs.status()
+        if status.active is not None or status.pending is not None:
+            self.wake()
+        return status
+
+    async def run_status(self, run_id: UUID) -> SyncRunStatus | None:
+        if self._coordinator is not None:
+            task = await self._coordinator.get_status(run_id)
+            if task is not None:
+                return self._status_from_task(task)
+            return await self._legacy_metadata.get_run(run_id)
+        return await self._syncs.get_run(run_id)
+
+    async def wait(self, run_id: UUID) -> SyncRunStatus:
+        if self._coordinator is not None:
+            task = await self._coordinator.wait(run_id)
+            result = self._status_from_task(task)
+            if result.status == "failed":
+                raise RuntimeError(f"Staged sync failed during {result.phase}")
+            return result
+        while True:
+            run = await self._syncs.get_run(run_id)
+            if run is None:
+                raise RuntimeError("The staged sync run was not found")
+            if run.status == "completed":
+                return run
+            if run.status == "failed":
+                raise RuntimeError(f"Staged sync failed during {run.phase}")
+            self.wake()
+            await asyncio.sleep(0.25)
+
+    async def synchronize(self, mode: SyncMode = "incremental") -> AssetSyncResult:
+        run = await self.start(mode, force_follow_up=True)
+        completed = await self.wait(run.id)
+        counters = completed.counters
+        return AssetSyncResult(
+            seen=counters.get("assets_seen", 0),
+            created=counters.get("assets_created", 0),
+            updated=counters.get("assets_updated", 0),
+            removed=counters.get("assets_removed", 0),
+            completed_at=completed.completed_at or completed.window_end,
+        )
+
+    async def _drain(self) -> None:
+        owner = new_sync_owner()
+        while True:
+            run = await self._syncs.claim_next(owner, lease_duration=self._lease_duration)
+            if run is None:
+                status = await self._syncs.status()
+                if status.active is None:
+                    return
+                await asyncio.sleep(self._settings.sync_lease_seconds / 2)
+                continue
+            try:
+                counters = await self._execute_with_heartbeat(run, owner)
+                await self._syncs.complete(run.id, owner, counters=counters)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                await self._syncs.fail(run.id, owner, error)
+                transient = not isinstance(error, ImmichApiError) or error.status_code in {
+                    429,
+                    500,
+                    502,
+                    503,
+                    504,
+                }
+                if transient and run.attempts < self._settings.sync_max_attempts:
+                    delay = min(
+                        self._settings.sync_retry_backoff_seconds * (2 ** max(0, run.attempts - 1)),
+                        300,
+                    )
+                    await asyncio.sleep(delay)
+                    await self.start(run.mode)
+
+    async def reconcile_targets(
+        self,
+        asset_ids: list[UUID],
+        relations: list[tuple[str, UUID]] | None = None,
+        include_stacks: bool = False,
+    ) -> None:
+        if relations:
+            unique_relations = sorted(set(relations), key=lambda item: (item[0], str(item[1])))
+            payload = {
+                "relations": [
+                    {"kind": kind, "id": str(relation_id)} for kind, relation_id in unique_relations
+                ]
+            }
+            if self._coordinator is not None:
+                task = await self._coordinator.submit(
+                    "asset_relation_repair",
+                    payload,
+                    priority=95,
+                    deduplication_key="asset-relation-repair:"
+                    + _dedupe_digest(
+                        [f"{kind}:{relation_id}" for kind, relation_id in unique_relations]
+                    ),
+                )
+                await self._coordinator.start()
+                await self._coordinator.wait(task.id)
+                return
+            started = perf_counter()
+            counters = await self._repair_relations_now(unique_relations)
+            logger.info(
+                "Sync summary: trigger=direct_relation_repair requested=%s albums=%s "
+                "tags=%s memberships=%s duration_seconds=%.3f "
+                "tag_branch_relation_scan=%s",
+                len(unique_relations),
+                counters["albums"],
+                counters["tags"],
+                counters["memberships"],
+                perf_counter() - started,
+                counters["tags"],
+            )
+            return
+        if self._coordinator is not None:
+            task = await self._coordinator.submit(
+                "asset_repair",
+                {
+                    "asset_ids": [str(asset_id) for asset_id in asset_ids],
+                    "include_stacks": include_stacks,
+                },
+                priority=90,
+                deduplication_key="asset-repair:"
+                + _dedupe_digest(
+                    [str(asset_id) for asset_id in asset_ids]
+                    + (["stacks"] if include_stacks else [])
+                ),
+            )
+            await self._coordinator.start()
+            await self._coordinator.wait(task.id)
+            return
+        started = perf_counter()
+        counters = await self._repair_targets_now(asset_ids, include_stacks=include_stacks)
+        logger.info(
+            "Sync summary: trigger=direct_asset_repair scope=%s requested=%s "
+            "processed=%s include_stacks=%s duration_seconds=%.3f "
+            "tag_branch_asset_payload=%s tag_branch_catalog_fallback=%s "
+            "tag_fallback_catalog_tags=%s tag_fallback_pages=%s "
+            "tag_links_resolved=%s",
+            "single" if len(asset_ids) == 1 else "bulk",
+            len(asset_ids),
+            len(asset_ids),
+            include_stacks,
+            perf_counter() - started,
+            counters["tag_branch_asset_payload"],
+            counters["tag_branch_catalog_fallback"],
+            counters["tag_fallback_catalog_tags"],
+            counters["tag_fallback_pages"],
+            counters["tag_links_resolved"],
+        )
+
+    async def restore_targets(self, asset_ids: list[UUID]) -> None:
+        await self._immich.restore_assets(asset_ids)
+        await self.reconcile_targets(asset_ids)
+
+    async def _repair_targets_now(
+        self,
+        asset_ids: list[UUID],
+        *,
+        include_stacks: bool = False,
+    ) -> dict[str, int]:
+        metrics = _repair_metric_defaults()
+        assets = await asyncio.gather(
+            *(self._immich.get_asset(identifier) for identifier in asset_ids)
+        )
+        stack_payload_by_asset: dict[UUID, dict[str, object]] = {}
+        if include_stacks:
+            for stack in await self._immich.list_stacks():
+                payload, member_ids = self._stack_payload(stack)
+                for member_id in member_ids:
+                    stack_payload_by_asset[member_id] = payload
+        for asset in assets:
+            if include_stacks:
+                asset = asset.model_copy(update={"stack": stack_payload_by_asset.get(asset.id)})
+            await self._assets.refresh_asset(asset)
+            albums = await self._immich.list_albums_for_asset(asset.id)
+            await self._assets.replace_asset_album_memberships(
+                asset.id, [album.id for album in albums]
+            )
+            if asset.includes_tags:
+                tag_ids = [UUID(str(tag["id"])) for tag in asset.tags if tag.get("id")]
+                await self._assets.replace_asset_tag_memberships(asset.id, tag_ids)
+                metrics["tag_branch_asset_payload"] += 1
+                metrics["tag_links_resolved"] += len(tag_ids)
+            else:
+                metrics["tag_branch_catalog_fallback"] += 1
+                tags = await self._immich.list_tag_catalog()
+                metrics["tag_fallback_catalog_tags"] += len(tags)
+                present: list[UUID] = []
+                for tag in tags:
+                    async for page_ids in self._immich.iter_tag_asset_ids(tag.id):
+                        metrics["tag_fallback_pages"] += 1
+                        if asset.id in page_ids:
+                            present.append(tag.id)
+                            break
+                await self._assets.replace_asset_tag_memberships(asset.id, present)
+                metrics["tag_links_resolved"] += len(present)
+        if include_stacks:
+            await self._assets.replace_asset_stack_snapshots(
+                asset_ids,
+                stack_payload_by_asset,
+            )
+        return metrics
+
+    async def _repair_relations_now(self, relations: list[tuple[str, UUID]]) -> dict[str, int]:
+        counters = {"albums": 0, "tags": 0, "memberships": 0}
+        for kind, relation_id in relations:
+            if kind == "album":
+                album = next(
+                    (
+                        item
+                        for item in await self._immich.list_album_catalog()
+                        if item.id == relation_id
+                    ),
+                    None,
+                )
+                if album is None:
+                    raise ImmichApiError("album catalog")
+                upsert_album_catalog = getattr(self._assets, "upsert_album_catalog", None)
+                if upsert_album_catalog is not None:
+                    await upsert_album_catalog([album], 0)
+            else:
+                tag = next(
+                    (
+                        item
+                        for item in await self._immich.list_tag_catalog()
+                        if item.id == relation_id
+                    ),
+                    None,
+                )
+                if tag is None:
+                    raise ImmichApiError("tag catalog")
+                upsert_tag_catalog = getattr(self._assets, "upsert_tag_catalog", None)
+                if upsert_tag_catalog is not None:
+                    await upsert_tag_catalog([tag], 0)
+        for kind, relation_id in relations:
+            asset_ids: list[UUID] = []
+            iterator = (
+                self._immich.iter_album_asset_ids(relation_id)
+                if kind == "album"
+                else self._immich.iter_tag_asset_ids(relation_id)
+            )
+            async for page_ids in iterator:
+                asset_ids.extend(page_ids)
+            if kind == "album":
+                count = await self._assets.replace_album_memberships(relation_id, asset_ids)
+                counters["albums"] += 1
+            else:
+                count = await self._assets.replace_tag_memberships(relation_id, asset_ids)
+                counters["tags"] += 1
+            counters["memberships"] += count
+        return counters
+
+    async def _execute_with_heartbeat(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
+        owns_memory_trace = self._start_sync_memory_diagnostics()
+        execution = asyncio.create_task(self._execute(run, owner))
+        heartbeat = asyncio.create_task(self._heartbeat(run.id, owner))
+        try:
+            done, _ = await asyncio.wait(
+                {execution, heartbeat}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if heartbeat in done:
+                heartbeat.result()
+                raise RuntimeError("The staged sync heartbeat stopped unexpectedly")
+            return execution.result()
+        finally:
+            for task in (execution, heartbeat):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(execution, heartbeat, return_exceptions=True)
+            self._stop_sync_memory_diagnostics(owns_memory_trace)
+
+    async def _heartbeat(self, run_id: UUID, owner: UUID) -> None:
+        interval = max(1.0, self._settings.sync_lease_seconds / 3)
+        while True:
+            await asyncio.sleep(interval)
+            await self._syncs.heartbeat(run_id, owner, lease_duration=self._lease_duration)
+
+    async def _checkpoint(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        phase: str,
+        cursor: str | None,
+        progress: SyncProgress | None = None,
+    ) -> None:
+        if progress is not None and self._settings.sync_memory_diagnostics:
+            progress = progress.model_copy(update={"memory": self._memory_snapshot(run, cursor)})
+        await self._syncs.checkpoint(
+            run.id,
+            owner,
+            phase=phase,
+            cursor=cursor,
+            counters=counters,
+            progress=progress,
+            lease_duration=self._lease_duration,
+        )
+
+    def _memory_snapshot(self, run: SyncRunStatus, cursor: str | None) -> SyncMemorySnapshot:
+        values: dict[str, int] = {}
+        try:
+            for line in Path("/proc/self/status").read_text(encoding="utf-8").splitlines():
+                name, separator, raw = line.partition(":")
+                if separator and name in {"VmRSS", "VmHWM"}:
+                    values[name] = int(raw.strip().split()[0]) * 1024
+        except (OSError, ValueError, IndexError):
+            pass
+        python_bytes: int | None = None
+        python_peak_bytes: int | None = None
+        if tracemalloc.is_tracing():
+            python_bytes, python_peak_bytes = tracemalloc.get_traced_memory()
+        batch: int | None = None
+        if cursor and ":" in cursor:
+            with suppress(ValueError):
+                batch = int(cursor.rsplit(":", 1)[1])
+        return SyncMemorySnapshot(
+            rss_bytes=values.get("VmRSS", 0),
+            rss_peak_bytes=values.get("VmHWM", values.get("VmRSS", 0)),
+            python_bytes=python_bytes,
+            python_peak_bytes=python_peak_bytes,
+            elapsed_seconds=max(
+                0.0, (datetime.now(UTC) - (run.started_at or run.created_at)).total_seconds()
+            ),
+            batch=batch,
+            batch_size=self._full_batch_size(run, self._settings),
+        )
+
+    @staticmethod
+    def _progress(
+        phase: str, completed: int, total: int | None, detail: str | None = None
+    ) -> SyncProgress:
+        percent = (
+            round(min(100.0, completed / total * 100), 1)
+            if total is not None and total > 0
+            else None
+        )
+        return SyncProgress(
+            phase=phase, completed=max(0, completed), total=total, percent=percent, detail=detail
+        )
+
+    async def _execute(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
+        defaults: dict[str, int] = {
+            "albums_seen": 0,
+            "tags_seen": 0,
+            "assets_seen": 0,
+            "assets_created": 0,
+            "assets_updated": 0,
+            "assets_unchanged": 0,
+            "stacks_seen": 0,
+            "stack_members": 0,
+            "album_memberships": 0,
+            "tag_memberships": 0,
+            "tag_relationships_scanned": 0,
+            "tag_empty_relationships": 0,
+            "tag_cheap_path_eligible_assets": 0,
+            "tag_cheap_path_fallback_assets": 0,
+            "tag_association_concurrency": 0,
+            "tag_strategy_asset_oriented": 0,
+            "tag_strategy_asset_fallback": 0,
+            "tag_asset_detail_payload": 0,
+            "tag_asset_detail_fallback": 0,
+            "assets_removed": 0,
+        }
+        counters = {**defaults, **run.counters}
+        phase_order = {
+            "queued": 0,
+            "catalogs": 0,
+            "assets": 1,
+            "stacks": 2,
+            "relationships": 3,
+            "finalizing": 4,
+        }
+        start_phase = phase_order.get(run.phase, 0)
+        if start_phase <= 0:
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "catalogs",
+                None,
+                self._progress("catalogs", 0, None, "Starting synchronization"),
+            )
+        capabilities = (
+            await self._immich.sync_capabilities()
+            if hasattr(self._immich, "sync_capabilities")
+            else None
+        )
+        if capabilities is not None and capabilities.stream and run.mode == "incremental":
+            await self._sync_events(run, owner, counters)
+        albums, tags = await asyncio.gather(
+            self._immich.list_album_catalog(), self._immich.list_tag_catalog()
+        )
+        asset_total: int | None = None
+        count_assets = getattr(self._immich, "count_assets", None)
+        if count_assets is not None:
+            try:
+                asset_total = await count_assets(
+                    updated_after=run.window_start if run.mode == "incremental" else None,
+                    updated_before=run.window_end if run.mode == "incremental" else None,
+                )
+            except ImmichApiError:
+                asset_total = None
+        if start_phase <= 0:
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "catalogs",
+                run.cursor if run.phase == "catalogs" else None,
+                self._progress(
+                    "catalogs",
+                    0,
+                    len(albums) + len(tags),
+                    f"Preparing {len(albums)} albums and {len(tags)} tags",
+                ),
+            )
+            await self._sync_catalogs(run, owner, albums, tags, counters, asset_total)
+        if start_phase <= 1:
+            await self._sync_assets(run, owner, counters, asset_total)
+        if start_phase <= 2:
+            await self._sync_stacks(run, owner, counters)
+        if start_phase <= 3:
+            await self._sync_relationships(run, owner, albums, tags, counters)
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "finalizing",
+            None,
+            self._progress("finalizing", 0, 1, "Validating synchronized state"),
+        )
+        validated_counts = await self._assets.validate_generation(
+            run.generation,
+            counters,
+            full=run.mode == "full",
+            allow_counter_repair=run.attempts > 1,
+        )
+        counters.update(validated_counts)
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "finalizing",
+            "generation-valid",
+            self._progress("finalizing", 1, 1, "Finalizing synchronized state"),
+        )
+        asset_oriented_incremental = (
+            run.mode == "incremental"
+            and counters["tag_strategy_asset_oriented"] == 1
+            and counters["tag_strategy_asset_fallback"] == 0
+        )
+        if asset_oriented_incremental:
+            removed = await finalize_incremental_asset_oriented_tags(
+                self._assets,
+                run.generation,
+                batch_size=self._settings.sync_batch_size,
+                window_start=run.window_start,
+                window_end=run.window_end,
+            )
+        else:
+            removed = await self._assets.finalize_generation(
+                run.generation,
+                remove_assets=run.mode == "full",
+                batch_size=self._settings.sync_batch_size,
+                window_start=run.window_start if run.mode == "incremental" else None,
+                window_end=run.window_end if run.mode == "incremental" else None,
+            )
+        counters.update(removed)
+        await self._assets.refresh_relation_counts()
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "finalizing",
+            "validated",
+            self._progress("finalizing", 1, 1, "Synchronization complete"),
+        )
+        logger.info(
+            "Sync summary: trigger=staged mode=%s run_id=%s generation=%s "
+            "window_start=%s window_end=%s duration_seconds=%.3f assets_seen=%s "
+            "assets_created=%s assets_updated=%s assets_unchanged=%s assets_removed=%s "
+            "albums_seen=%s tags_seen=%s stacks_seen=%s stack_members=%s "
+            "album_memberships=%s tag_memberships=%s events_seen=%s "
+            "tag_branch_relationship_scan=%s tag_empty_relationships=%s "
+            "tag_cheap_path_eligible_assets=%s tag_cheap_path_fallback_assets=%s "
+            "tag_association_concurrency=%s tag_strategy_asset_oriented=%s "
+            "tag_strategy_asset_fallback=%s tag_asset_detail_payload=%s "
+            "tag_asset_detail_fallback=%s",
+            run.mode,
+            run.id,
+            run.generation,
+            run.window_start,
+            run.window_end,
+            max(0.0, (datetime.now(UTC) - (run.started_at or run.created_at)).total_seconds()),
+            counters["assets_seen"],
+            counters["assets_created"],
+            counters["assets_updated"],
+            counters["assets_unchanged"],
+            counters["assets_removed"],
+            counters["albums_seen"],
+            counters["tags_seen"],
+            counters["stacks_seen"],
+            counters["stack_members"],
+            counters["album_memberships"],
+            counters["tag_memberships"],
+            counters.get("events_seen", 0),
+            counters["tag_relationships_scanned"],
+            counters["tag_empty_relationships"],
+            counters["tag_cheap_path_eligible_assets"],
+            counters["tag_cheap_path_fallback_assets"],
+            counters["tag_association_concurrency"],
+            counters["tag_strategy_asset_oriented"],
+            counters["tag_strategy_asset_fallback"],
+            counters["tag_asset_detail_payload"],
+            counters["tag_asset_detail_fallback"],
+        )
+        return counters
+
+    async def _sync_events(self, run: SyncRunStatus, owner: UUID, counters: dict[str, int]) -> None:
+        cursor = run.cursor if run.phase == "queued" else None
+        async for event in self._immich.iter_sync_events(cursor):
+            await self._apply_event(event)
+            if hasattr(self._immich, "acknowledge_sync_event"):
+                await self._immich.acknowledge_sync_event(event.id)
+            counters["events_seen"] = counters.get("events_seen", 0) + 1
+            await self._checkpoint(run, owner, counters, "catalogs", f"event:{event.id}")
+
+    async def _apply_event(self, event: SyncEvent) -> None:
+        if event.kind == "asset_deleted" and event.entity_id is not None:
+            await self._assets.remove_asset(event.entity_id)
+            return
+        if event.kind == "asset" and event.payload:
+            await self._assets.refresh_asset(ImmichAsset.model_validate(event.payload))
+            return
+        if event.kind in {"album_membership", "tag_membership"}:
+            relation_id = event.payload.get("relationId") or event.payload.get(
+                "albumId" if event.kind == "album_membership" else "tagId"
+            )
+            asset_id = event.payload.get("assetId") or event.entity_id
+            if relation_id is not None and asset_id is not None:
+                present = bool(
+                    event.payload.get("present", event.payload.get("action", "add") != "remove")
+                )
+                await self._assets.apply_membership_event(
+                    "album" if event.kind == "album_membership" else "tag",
+                    UUID(str(relation_id)),
+                    UUID(str(asset_id)),
+                    present,
+                )
+
+    async def _sync_catalogs(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        albums: list[ImmichAlbum],
+        tags: list[ImmichTag],
+        counters: dict[str, int],
+        asset_total: int | None,
+    ) -> None:
+        batch_size = self._full_batch_size(run, self._settings)
+        album_batches = batches(albums, batch_size)
+        tag_batches = batches(tags, batch_size)
+        completed_albums = 0
+        completed_tags = 0
+        if run.phase == "catalogs" and run.cursor:
+            kind, value = run.cursor.split(":", 1)
+            if kind == "albums":
+                completed_albums = int(value)
+            elif kind == "tags":
+                completed_albums = len(album_batches)
+                completed_tags = int(value)
+        for index, album_batch in enumerate(album_batches, start=1):
+            if index <= completed_albums:
+                continue
+            started = perf_counter()
+            created, observed = await self._assets.upsert_album_catalog(album_batch, run.generation)
+            counters["albums_seen"] += created + observed
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "catalogs",
+                f"albums:{index}",
+                self._progress(
+                    "catalogs",
+                    counters["albums_seen"],
+                    len(albums) + len(tags),
+                    f"Albums {min(counters['albums_seen'], len(albums))}/"
+                    f"{len(albums)} · tags 0/{len(tags)}",
+                ),
+            )
+            await self._pace_full_batch(run, started)
+        for index, tag_batch in enumerate(tag_batches, start=1):
+            if index <= completed_tags:
+                continue
+            started = perf_counter()
+            created, observed = await self._assets.upsert_tag_catalog(tag_batch, run.generation)
+            counters["tags_seen"] += created + observed
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "catalogs",
+                f"tags:{index}",
+                self._progress(
+                    "catalogs",
+                    len(albums) + min(counters["tags_seen"], len(tags)),
+                    len(albums) + len(tags),
+                    f"Albums {len(albums)}/{len(albums)} · tags "
+                    f"{min(counters['tags_seen'], len(tags))}/{len(tags)}",
+                ),
+            )
+            await self._pace_full_batch(run, started)
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "assets",
+            None,
+            self._progress(
+                "assets",
+                0,
+                asset_total,
+                f"Preparing {asset_total} media items"
+                if asset_total is not None
+                else "Preparing media traversal",
+            ),
+        )
+
+    async def _sync_assets(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        asset_total: int | None,
+    ) -> None:
+        batch_size = self._full_batch_size(run, self._settings)
+        page_size = self._settings.sync_media_page_size
+        start_page = 1
+        completed_page_batches = 0
+        completed_batches = 0
+        if run.phase == "assets" and run.cursor:
+            cursor_parts = run.cursor.split(":")
+            if len(cursor_parts) == 3:
+                start_page = int(cursor_parts[1])
+                completed_page_batches = int(cursor_parts[2])
+            else:
+                completed_batches = int(cursor_parts[-1])
+                completed_assets = completed_batches * batch_size
+                start_page = completed_assets // page_size + 1
+                completed_page_batches = (completed_assets % page_size) // batch_size
+        iterator = self._immich.iter_asset_pages(
+            page_size=page_size,
+            updated_after=run.window_start if run.mode == "incremental" else None,
+            updated_before=run.window_end if run.mode == "incremental" else None,
+            start_page=start_page,
+        )
+        async for page_number, page in iterator:
+            await self._commit_asset_page(
+                run,
+                owner,
+                counters,
+                page,
+                page_number,
+                completed_page_batches if page_number == start_page else 0,
+                batch_size,
+                asset_total,
+            )
+            if page.next_page is not None:
+                await self._pace_full_page(run)
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "stacks",
+            None,
+            self._progress("stacks", 0, None, "Preparing stack traversal"),
+        )
+
+    async def _commit_asset_page(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        page: ImmichAssetSearchPage,
+        page_number: int,
+        completed_batches: int,
+        batch_size: int,
+        asset_total: int | None,
+    ) -> None:
+        for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
+            if batch_number <= completed_batches:
+                continue
+            await self._commit_asset_batch(
+                run, owner, counters, batch, f"assets:{page_number}:{batch_number}", asset_total
+            )
+
+    async def _commit_asset_batch(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        batch: list[ImmichAsset],
+        cursor: str,
+        asset_total: int | None,
+    ) -> None:
+        counters["tag_cheap_path_eligible_assets"] += sum(
+            1 for asset in batch if asset.includes_tags
+        )
+        counters["tag_cheap_path_fallback_assets"] += sum(
+            1 for asset in batch if not asset.includes_tags
+        )
+        lightweight_batch = [
+            asset.model_copy(update={"exif_info": None, "people": [], "tags": [], "stack": None})
+            for asset in batch
+        ]
+        created, updated, unchanged = await self._assets.upsert_asset_batch(
+            lightweight_batch,
+            run.generation,
+            track_similarity_changes=run.mode == "incremental",
+        )
+        counters["assets_seen"] += created + updated + unchanged
+        counters["assets_created"] += created
+        counters["assets_updated"] += updated
+        counters["assets_unchanged"] += unchanged
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "assets",
+            cursor,
+            self._progress(
+                "assets",
+                counters["assets_seen"],
+                asset_total,
+                f"Media {counters['assets_seen']}/{asset_total}"
+                if asset_total is not None
+                else f"Media {counters['assets_seen']} processed",
+            ),
+        )
+
+    @staticmethod
+    def _stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
+        return AssetSyncService._stack_payload_from_members(
+            stack.id, stack.primary_asset_id, stack.assets
+        )
+
+    @staticmethod
+    def _stack_payload_from_members(
+        stack_id: UUID,
+        primary_asset_id: UUID,
+        assets: list[ImmichAsset] | list[ImmichStackAsset],
+    ) -> tuple[dict[str, object], list[UUID]]:
+        members = [
+            {
+                "id": str(member.id),
+                "type": member.asset_type,
+                "originalFileName": member.original_file_name,
+                "originalMimeType": member.original_mime_type,
+                "width": member.width,
+                "height": member.height,
+                "fileCreatedAt": member.file_created_at.isoformat(),
+            }
+            for member in assets
+            if not member.is_trashed
+        ]
+        return (
+            {
+                "id": str(stack_id),
+                "primaryAssetId": str(primary_asset_id),
+                "assetCount": len(members),
+                "assets": members,
+            },
+            [member.id for member in assets],
+        )
+
+    async def _sync_stacks(self, run: SyncRunStatus, owner: UUID, counters: dict[str, int]) -> None:
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "stacks",
+            run.cursor if run.phase == "stacks" else None,
+            self._progress("stacks", counters["stacks_seen"], None, "Reading stacks"),
+        )
+        completed_batches = 0
+        if run.phase == "stacks" and run.cursor:
+            completed_batches = int(run.cursor.rsplit(":", 1)[1])
+
+        async def iter_stacks() -> AsyncIterator[ImmichStack]:
+            stream = getattr(self._immich, "iter_stacks", None)
+            if stream is not None:
+                async for stack in stream():
+                    yield stack
+                return
+            for stack in await self._immich.list_stacks():
+                yield stack
+
+        stack_size = self._full_batch_size(run, self._settings)
+        async for index, (stack_models, is_last) in _enumerate_async(
+            async_batches_with_last(iter_stacks(), stack_size), start=1
+        ):
+            if index <= completed_batches:
+                continue
+            started = perf_counter()
+            stack_batch = [self._stack_payload(stack) for stack in stack_models]
+            counters["stack_members"] += await self._assets.apply_stack_batch(
+                stack_batch, run.generation
+            )
+            counters["stacks_seen"] += len(stack_batch)
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "stacks",
+                f"stacks:{index}",
+                self._progress(
+                    "stacks",
+                    counters["stacks_seen"],
+                    None,
+                    f"Stacks {counters['stacks_seen']} processed · "
+                    f"{counters['stack_members']} members",
+                ),
+            )
+            if not is_last:
+                await self._pace_full_batch(run, started)
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "relationships",
+            None,
+            self._progress("relationships", 0, None, "Preparing associations"),
+        )
+
+    async def _sync_relationships(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        albums: list[ImmichAlbum],
+        tags: list[ImmichTag],
+        counters: dict[str, int],
+    ) -> None:
+        relation_kind = ""
+        completed_relation = 0
+        completed_page = 0
+        membership_total: int | None = None
+        association_completed = counters.get("album_memberships", 0) + counters.get(
+            "tag_memberships", 0
+        )
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "relationships",
+            run.cursor if run.phase == "relationships" else None,
+            self._progress(
+                "relationships",
+                association_completed,
+                membership_total,
+                f"Preparing {len(albums)} album and {len(tags)} tag associations",
+            ),
+        )
+        if run.phase == "relationships" and run.cursor:
+            relation_kind, relation_text, page_text = run.cursor.split(":", 2)
+            completed_relation = int(relation_text)
+            completed_page = int(page_text)
+        for relation_index, album in enumerate(albums, start=1):
+            if relation_kind == "tags" or relation_index < completed_relation:
+                continue
+            start_page = (
+                completed_page + 1
+                if relation_kind == "albums" and relation_index == completed_relation
+                else 1
+            )
+            page_number = start_page
+            async for asset_ids, is_last_page in async_items_with_last(
+                self._immich.iter_album_asset_ids(
+                    album.id,
+                    page_size=self._settings.sync_relationship_page_size,
+                    start_page=start_page,
+                )
+            ):
+                started = perf_counter()
+                counters["album_memberships"] += await self._assets.upsert_album_memberships(
+                    album.id, asset_ids, run.generation
+                )
+                association_completed += len(asset_ids)
+                await self._checkpoint(
+                    run,
+                    owner,
+                    counters,
+                    "relationships",
+                    f"albums:{relation_index}:{page_number}",
+                    self._progress(
+                        "relationships",
+                        association_completed,
+                        membership_total,
+                        f"Album associations {relation_index}/{len(albums)} · "
+                        f"tag associations 0/{len(tags)}",
+                    ),
+                )
+                if not is_last_page:
+                    await self._pace_full_batch(run, started)
+                page_number += 1
+            if page_number == start_page == 1:
+                await self._checkpoint(
+                    run,
+                    owner,
+                    counters,
+                    "relationships",
+                    f"albums:{relation_index}:0",
+                    self._progress(
+                        "relationships",
+                        association_completed,
+                        membership_total,
+                        f"Album {relation_index}/{len(albums)} · "
+                        f"{association_completed} associations",
+                    ),
+                )
+
+        runtime = await self._runtime_sync_settings.get()
+        concurrency = runtime.tag_association_concurrency
+        counters["tag_association_concurrency"] = concurrency
+        can_choose_asset_oriented = (
+            relation_kind != "tags"
+            and counters["tag_relationships_scanned"] == 0
+            and "assets_seen" in counters
+        )
+        use_asset_oriented = can_choose_asset_oriented and counters[
+            "assets_seen"
+        ] * concurrency <= len(tags)
+        counters["tag_strategy_asset_oriented"] = 1 if use_asset_oriented else 0
+        counters["tag_strategy_asset_fallback"] = 0
+
+        if use_asset_oriented:
+            target_ids = await generation_asset_ids(self._assets, run.generation)
+            links, payload_assets, fallback_assets = await reconcile_generation_asset_tags(
+                self._immich,
+                self._assets,
+                target_ids,
+                generation=run.generation,
+                concurrency=concurrency,
+            )
+            counters["tag_memberships"] += links
+            association_completed += links
+            counters["tag_asset_detail_payload"] += payload_assets
+            counters["tag_asset_detail_fallback"] += fallback_assets
+            if fallback_assets == 0:
+                await self._checkpoint(
+                    run,
+                    owner,
+                    counters,
+                    "relationships",
+                    None,
+                    self._progress(
+                        "relationships",
+                        association_completed,
+                        membership_total,
+                        f"Associations complete · {counters['album_memberships']} "
+                        f"album links · {counters['tag_memberships']} tag links · "
+                        "asset-oriented tags",
+                    ),
+                )
+                return
+            counters["tag_strategy_asset_fallback"] = 1
+
+        skipped_tags = 0
+        tag_start = 0
+        if relation_kind == "tags":
+            tag_start = (
+                completed_relation if completed_page == 0 else max(0, completed_relation - 1)
+            )
+        for wave_start in range(tag_start, len(tags), concurrency):
+            wave = tags[wave_start : wave_start + concurrency]
+            tasks: list[asyncio.Task[tuple[int, int, bool]]] = []
+            async with asyncio.TaskGroup() as group:
+                tasks = [group.create_task(self._sync_tag_relationship(run, tag)) for tag in wave]
+            results = [task.result() for task in tasks]
+            counters["tag_memberships"] += sum(result[0] for result in results)
+            association_completed += sum(result[1] for result in results)
+            empty_tags = sum(result[2] for result in results)
+            skipped_tags += empty_tags
+            counters["tag_relationships_scanned"] += len(wave)
+            counters["tag_empty_relationships"] += empty_tags
+            completed_tags = wave_start + len(wave)
+            await self._checkpoint(
+                run,
+                owner,
+                counters,
+                "relationships",
+                f"tags:{completed_tags}:0",
+                self._progress(
+                    "relationships",
+                    association_completed,
+                    membership_total,
+                    f"Tag associations {completed_tags}/{len(tags)}"
+                    + (f" · skipped {skipped_tags} empty" if skipped_tags else ""),
+                ),
+            )
+        await self._checkpoint(
+            run,
+            owner,
+            counters,
+            "relationships",
+            None,
+            self._progress(
+                "relationships",
+                membership_total if membership_total is not None else association_completed,
+                membership_total,
+                f"Associations complete · {counters['album_memberships']} album links · "
+                f"{counters['tag_memberships']} tag links",
+            ),
+        )
+
+    async def _sync_tag_relationship(
+        self, run: SyncRunStatus, tag: ImmichTag
+    ) -> tuple[int, int, bool]:
+        persisted = 0
+        observed = 0
+        async for asset_ids, is_last_page in async_items_with_last(
+            self._immich.iter_tag_asset_ids(
+                tag.id,
+                page_size=self._settings.sync_relationship_page_size,
+                start_page=1,
+            )
+        ):
+            started = perf_counter()
+            if asset_ids:
+                persisted += await self._assets.upsert_tag_memberships(
+                    tag.id, asset_ids, run.generation
+                )
+            observed += len(asset_ids)
+            if not is_last_page:
+                await self._pace_full_batch(run, started)
+        return persisted, observed, observed == 0

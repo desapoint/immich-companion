@@ -45,6 +45,22 @@ class Settings(BaseSettings):
     sync_max_attempts: int = Field(default=5, ge=1, le=10)
     sync_retry_backoff_seconds: float = Field(default=1.0, ge=0, le=60)
     sync_memory_diagnostics: bool = False
+    similarity_cache_dir: Path = Path("/tmp/immich-companion-cache")
+    similarity_preview_cache_max_bytes: int = Field(
+        default=1536 * 1024 * 1024, ge=1024 * 1024, le=64 * 1024 * 1024 * 1024
+    )
+    similarity_preview_cache_max_age_seconds: int = Field(
+        default=30 * 86400, ge=60, le=365 * 86400
+    )
+    similarity_pair_cache_max_bytes: int = Field(
+        default=256 * 1024 * 1024, ge=1024 * 1024, le=16 * 1024 * 1024 * 1024
+    )
+    similarity_decode_cache_max_bytes: int = Field(
+        default=512 * 1024 * 1024, ge=16 * 1024 * 1024, le=64 * 1024 * 1024 * 1024
+    )
+    similarity_hot_cache_max_bytes: int = Field(
+        default=96 * 1024 * 1024, ge=1024 * 1024, le=1024 * 1024 * 1024
+    )
 
     def resolve_immich_api_key(self) -> str | None:
         """Resolve a direct or file-backed API key without exposing it."""

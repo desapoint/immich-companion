@@ -6,10 +6,15 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, func, insert, or_, select, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
+from companion.similarity_features import SIMILARITY_CONFIG_FINGERPRINT
+from companion.similarity_grouping import (
+    SIMILARITY_GROUPING_VERSION,
+    SimilarityValidationMode,
+)
 from companion.similarity_repository import PairSimilarityEvidence
 
 
@@ -24,6 +29,10 @@ class SimilarityScanParameters:
     maximum_aspect_difference: float
     maximum_neighbors_per_asset: int
     maximum_matches: int
+    grouping_version: int = SIMILARITY_GROUPING_VERSION
+    validation_mode: SimilarityValidationMode = "strict"
+    anchor_asset_id: UUID | None = None
+    config_fingerprint: str = SIMILARITY_CONFIG_FINGERPRINT
 
     def __post_init__(self) -> None:
         if not 50 <= self.similarity_threshold <= 100:
@@ -38,6 +47,8 @@ class SimilarityScanParameters:
             raise ValueError("maximum_matches must be between 1 and 50000")
         if self.scope != "all_eligible_assets":
             raise ValueError("Unsupported similarity scan scope")
+        if self.validation_mode not in {"reference", "linked", "strict"}:
+            raise ValueError("Unsupported similarity validation mode")
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,12 +112,39 @@ class SimilarityScanRepository:
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
 
-    async def create(self, parameters: SimilarityScanParameters) -> UUID:
+    async def prepare(
+        self,
+        parameters: SimilarityScanParameters,
+        *,
+        scan_id: UUID | None = None,
+    ) -> UUID:
+        """Create a scan or reopen its deterministic task-owned run after recovery."""
+
+        if scan_id is not None:
+            async with self._database.sessions() as session, session.begin():
+                existing = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
+                if existing is not None:
+                    if self._parameters(existing) != parameters:
+                        raise ValueError("Recovered similarity scan parameters changed")
+                    if existing.status == "completed":
+                        return existing.id
+                    if existing.status == "cancelled":
+                        raise ValueError("Similarity scan is already cancelled")
+                    existing.status = "running"
+                    existing.error = None
+                    existing.completed_at = None
+                    return existing.id
+
         record = SimilarityScanRecord(
+            id=scan_id,
             status="running",
             model_version=parameters.model_version,
             feature_version=parameters.feature_version,
             comparison_version=parameters.comparison_version,
+            config_fingerprint=parameters.config_fingerprint,
+            grouping_version=parameters.grouping_version,
+            validation_mode=parameters.validation_mode,
+            anchor_asset_id=parameters.anchor_asset_id,
             scope=parameters.scope,
             similarity_threshold=parameters.similarity_threshold,
             maximum_perceptual_distance=parameters.maximum_perceptual_distance,
@@ -121,6 +159,11 @@ class SimilarityScanRepository:
             session.add(record)
             await session.flush()
         return record.id
+
+    async def create(self, parameters: SimilarityScanParameters) -> UUID:
+        """Compatibility wrapper for callers that do not own a durable task ID."""
+
+        return await self.prepare(parameters)
 
     async def complete(
         self,
@@ -203,6 +246,10 @@ class SimilarityScanRepository:
             model_version=record.model_version,
             feature_version=record.feature_version,
             comparison_version=record.comparison_version,
+            config_fingerprint=record.config_fingerprint,
+            grouping_version=record.grouping_version,
+            validation_mode=record.validation_mode,
+            anchor_asset_id=record.anchor_asset_id,
             scope=record.scope,
             similarity_threshold=record.similarity_threshold,
             maximum_perceptual_distance=record.maximum_perceptual_distance,
@@ -214,7 +261,11 @@ class SimilarityScanRepository:
     async def latest_completed_summary(self) -> SimilarityScanRunSummary | None:
         statement = (
             select(SimilarityScanRecord)
-            .where(SimilarityScanRecord.status == "completed")
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
+            )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
         )
@@ -231,10 +282,104 @@ class SimilarityScanRepository:
             completed_at=record.completed_at,
         )
 
+    async def latest_completed_parameters(
+        self,
+    ) -> tuple[UUID, SimilarityScanParameters] | None:
+        """Return the active Appearance generation without loading its pair snapshot."""
+
+        statement = (
+            select(SimilarityScanRecord)
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
+            )
+            .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
+            .limit(1)
+        )
+        async with self._database.sessions() as session:
+            record = await session.scalar(statement)
+        if record is None:
+            return None
+        return record.id, self._parameters(record)
+
+    async def replace_asset_pairs(
+        self,
+        scan_id: UUID,
+        asset_id: UUID,
+        pairs: list[SimilarityScanPair],
+        *,
+        asset_count: int,
+    ) -> None:
+        """Replace only pairs incident to one changed asset in the active generation."""
+
+        normalized = normalize_scan_pairs(pairs)
+        values = [
+            {
+                "scan_id": scan_id,
+                "asset_id_low": pair.asset_id_low,
+                "asset_id_high": pair.asset_id_high,
+                "asset_low_source_sha256": pair.asset_low_source_sha256,
+                "asset_high_source_sha256": pair.asset_high_source_sha256,
+                "similarity_percent": pair.evidence.similarity_percent,
+                "structural_percent": pair.evidence.structural_percent,
+                "perceptual_percent": pair.evidence.perceptual_percent,
+                "color_percent": pair.evidence.color_percent,
+                "normalized_luminance_mae": pair.evidence.normalized_luminance_mae,
+                "normalized_luminance_rmse": pair.evidence.normalized_luminance_rmse,
+                "normalized_luminance_ssim": pair.evidence.normalized_luminance_ssim,
+                "aspect_ratio_difference": pair.evidence.aspect_ratio_difference,
+                "dimensions_equal": pair.evidence.dimensions_equal,
+                "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
+                "exact_pixel_match": pair.evidence.exact_pixel_match,
+            }
+            for pair in normalized
+        ]
+        async with self._database.sessions() as session, session.begin():
+            record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
+            if record is None or record.status != "completed":
+                return
+            await session.execute(
+                delete(SimilarityScanPairRecord).where(
+                    SimilarityScanPairRecord.scan_id == scan_id,
+                    or_(
+                        SimilarityScanPairRecord.asset_id_low == asset_id,
+                        SimilarityScanPairRecord.asset_id_high == asset_id,
+                    ),
+                )
+            )
+            if values:
+                await session.execute(insert(SimilarityScanPairRecord), values)
+            match_count = await session.scalar(
+                select(func.count())
+                .select_from(SimilarityScanPairRecord)
+                .where(SimilarityScanPairRecord.scan_id == scan_id)
+            )
+            record.asset_count = asset_count
+            record.match_count = int(match_count or 0)
+
+    async def completed_summary(self, scan_id: UUID) -> SimilarityScanRunSummary | None:
+        async with self._database.sessions() as session:
+            record = await session.get(SimilarityScanRecord, scan_id)
+        if record is None or record.status != "completed" or record.completed_at is None:
+            return None
+        return SimilarityScanRunSummary(
+            id=record.id,
+            parameters=self._parameters(record),
+            asset_count=record.asset_count,
+            candidate_count=record.candidate_count,
+            match_count=record.match_count,
+            completed_at=record.completed_at,
+        )
+
     async def latest_completed(self) -> SimilarityScanSnapshot | None:
         statement = (
             select(SimilarityScanRecord)
-            .where(SimilarityScanRecord.status == "completed")
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
+            )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
             .limit(1)
         )

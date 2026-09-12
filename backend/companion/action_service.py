@@ -183,6 +183,19 @@ class AssetActionService:
             raise EmptySelectionError("No synchronized assets matched the selection")
         original_target_digest = selection_digest(resolution.ids)
         operation = self._operation_for_request(request, resolution)
+        if operation in {"remove_album", "remove_tag"} and not request.relation_ids:
+            request = request.model_copy(
+                update={
+                    "relation_ids": await self._assets.relation_ids_for_assets(
+                        operation, resolution.ids
+                    )
+                }
+            )
+            if not request.relation_ids:
+                relation = "album" if operation == "remove_album" else "tag"
+                raise EmptySelectionError(
+                    f"The selected assets have no {relation} relationships to remove"
+                )
         stack_conflicts: list[StackConflict] = []
         if operation == "stack":
             primary_asset_id = request.stack_primary_asset_id
@@ -267,13 +280,15 @@ class AssetActionService:
                     "applicable_ids": [str(identifier) for identifier in applicable],
                     "skipped_ids": [str(identifier) for identifier in skipped],
                 }
-        else:
+        elif operation not in {"remove_album", "remove_tag"}:
             applicable_set = await self._assets.applicable_action_ids(
                 operation,
                 resolution.ids,
             )
             applicable_union = applicable_set
             skipped_union = set(resolution.ids) - applicable_set
+        else:
+            skipped_union = set(resolution.ids)
         if operation == "stack":
             applicable_union = set(resolution.ids)
             skipped_union = set()
@@ -311,21 +326,7 @@ class AssetActionService:
                 for asset_id in (member.id for member in stack.assets if member.id in selected):
                     await self._immich.update_stack_primary(stack.id, asset_id)
         elif operation == "remove_from_stack":
-            selected = set(ids)
-            for stack in await self._immich.list_stacks():
-                selected_members = [member.id for member in stack.assets if member.id in selected]
-                if not selected_members:
-                    continue
-                if len(selected_members) == len(stack.assets):
-                    await self._immich.delete_stack(stack.id)
-                    continue
-                if stack.primary_asset_id in selected:
-                    replacement = next(
-                        member.id for member in stack.assets if member.id not in selected
-                    )
-                    await self._immich.update_stack_primary(stack.id, replacement)
-                for asset_id in selected_members:
-                    await self._immich.remove_asset_from_stack(stack.id, asset_id)
+            await self._stacks.remove_members(ids)
         elif operation == "remove_stack":
             selected = set(ids)
             for stack in await self._immich.list_stacks():
@@ -404,10 +405,39 @@ class AssetActionService:
         if successful_relations and has_successful_changes:
             try:
                 relation = "album" if operation in {"add_album", "remove_album"} else "tag"
-                await self._repair_targets(
-                    target_ids,
-                    relations=[(relation, relation_id) for relation_id in successful_relations],
+                changed_asset_ids = list(
+                    dict.fromkeys(
+                        identifier
+                        for relation_id in successful_relations
+                        for identifier in initial[relation_id][0]
+                    )
                 )
+                covered_by_global_sync = False
+                coverage = getattr(
+                    self._sync,
+                    f"{relation}_reconciliation_will_cover",
+                    None,
+                )
+                if coverage is not None:
+                    covered_by_global_sync = await coverage(successful_relations)
+
+                if covered_by_global_sync:
+                    present = operation in {"add_album", "add_tag"}
+                    for relation_id in successful_relations:
+                        for asset_id in initial[relation_id][0]:
+                            await self._assets.apply_membership_event(
+                                relation,
+                                relation_id,
+                                asset_id,
+                                present,
+                            )
+                else:
+                    await self._repair_targets(
+                        changed_asset_ids,
+                        relations=[
+                            (relation, relation_id) for relation_id in successful_relations
+                        ],
+                    )
             except Exception as error:
                 relation_results = [
                     AssetActionRelationResult(
@@ -490,6 +520,7 @@ class AssetActionService:
             applied_ids=applied_ids,
             skipped_ids=skipped_ids,
             failed_ids=failed_ids,
+            affected_ids=applied_ids,
             relation_results=relation_results,
             verified=failed_count == 0,
             status="completed" if failed_count == 0 else "failed",
@@ -694,6 +725,13 @@ class AssetActionService:
             applied_ids=applied_ids,
             skipped_ids=skipped_ids,
             failed_ids=failed_ids,
+            affected_ids=(
+                repair_ids
+                if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}
+                else stack_preparation.affected_ids
+                if operation == "stack" and stack_preparation is not None
+                else applied_ids
+            ),
             verified=not failed_ids,
             status=status,
         )

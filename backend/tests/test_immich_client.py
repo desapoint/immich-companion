@@ -19,6 +19,7 @@ from companion.immich import (
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
+ALBUM_ONE = UUID("44444444-4444-4444-8444-444444444444")
 
 
 def settings(**overrides: object) -> Settings:
@@ -62,6 +63,87 @@ def asset_payload(asset_id: UUID, filename: str) -> dict[str, object]:
         "people": [],
         "tags": [],
     }
+
+
+def album_payload(album_id: UUID = ALBUM_ONE) -> dict[str, object]:
+    return {
+        "id": str(album_id),
+        "albumName": "Family",
+        "description": "Summer archive",
+        "albumThumbnailAssetId": str(ASSET_ONE),
+        "assetCount": 14,
+        "createdAt": "2026-08-20T12:01:00Z",
+        "updatedAt": "2026-08-20T12:02:00Z",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_album_is_typed_and_uses_the_supported_api() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["x-api-key"] == "private-test-key"
+        assert request.url.path == f"/api/albums/{ALBUM_ONE}"
+        assert request.url.params["withoutAssets"] == "true"
+        return httpx.Response(200, json=album_payload())
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    album = await client.get_album(ALBUM_ONE)
+
+    assert album.id == ALBUM_ONE
+    assert album.album_name == "Family"
+    assert album.album_thumbnail_asset_id == ASSET_ONE
+    assert album.asset_count == 14
+
+
+@pytest.mark.asyncio
+async def test_album_null_description_is_normalized_at_immich_boundary() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        payload = album_payload()
+        payload["description"] = None
+        payload["additive32Field"] = {"future": True}
+        return httpx.Response(200, json=payload)
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    album = await client.get_album(ALBUM_ONE)
+
+    assert album.description == ""
+    assert album.model_extra == {"additive32Field": {"future": True}}
+
+
+@pytest.mark.asyncio
+async def test_album_and_tag_updates_use_patch_endpoints() -> None:
+    tag_id = UUID("66666666-6666-4666-8666-666666666666")
+    requests: list[tuple[str, str, dict[str, object]]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        requests.append((request.method, request.url.path, body))
+        if request.url.path.startswith("/api/albums/"):
+            payload = album_payload()
+            payload.update(
+                {
+                    "albumName": body.get("albumName", "Family"),
+                    "description": body.get("description", ""),
+                }
+            )
+            return httpx.Response(200, json=payload)
+        return httpx.Response(
+            200,
+            json={
+                "id": str(tag_id),
+                "name": "Review",
+                "value": "Review",
+                "color": body.get("color"),
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    await client.update_album(ALBUM_ONE, name="Updated", description="Archive")
+    await client.update_tag(tag_id, color="#334455")
+
+    assert requests == [
+        ("PATCH", f"/api/albums/{ALBUM_ONE}", {"albumName": "Updated", "description": "Archive"}),
+        ("PATCH", f"/api/tags/{tag_id}", {"color": "#334455"}),
+    ]
 
 
 @pytest.mark.asyncio
@@ -255,8 +337,9 @@ async def test_optional_sync_stream_is_typed_and_acknowledged() -> None:
     assert requests[1].url.params["cursor"] == "cursor-1"
 
 
+@pytest.mark.parametrize("minor", [1, 2])
 @pytest.mark.asyncio
-async def test_server_version_is_typed_and_reports_supported_api_line() -> None:
+async def test_server_version_is_typed_and_reports_supported_api_line(minor: int) -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -265,27 +348,39 @@ async def test_server_version_is_typed_and_reports_supported_api_line() -> None:
         assert request.url.path == "/api/server/version"
         return httpx.Response(
             200,
-            json={"major": 3, "minor": 1, "patch": 0, "prerelease": None},
+            json={"major": 3, "minor": minor, "patch": 4, "prerelease": None},
         )
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
     version = await client.get_server_version()
     report = await client.compatibility_report()
 
-    assert version.label == "3.1.0"
+    assert version.label == f"3.{minor}.4"
     assert version.is_compatible is True
     assert report.status == "compatible"
     assert report.server_version is not None
-    assert report.server_version.patch == 0
+    assert report.server_version.patch == 4
     assert len(requests) == 2
 
 
+@pytest.mark.parametrize(
+    ("version_payload", "label"),
+    [
+        ({"major": 3, "minor": 3, "patch": 0, "prerelease": None}, "3.3.0"),
+        ({"major": 3, "minor": 1, "patch": 9, "prerelease": 2}, "3.1.9-prerelease.2"),
+        ({"major": 3, "minor": 2, "patch": 0, "prerelease": 1}, "3.2.0-prerelease.1"),
+        ({"major": 4, "minor": 0, "patch": 0, "prerelease": None}, "4.0.0"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_server_version_report_marks_other_api_lines_incompatible() -> None:
+async def test_server_version_report_marks_other_api_lines_incompatible(
+    version_payload: dict[str, int | None],
+    label: str,
+) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
-            json={"major": 4, "minor": 0, "patch": 0, "prerelease": None},
+            json=version_payload,
         )
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
@@ -293,8 +388,8 @@ async def test_server_version_report_marks_other_api_lines_incompatible() -> Non
 
     assert report.status == "incompatible"
     assert report.server_version is not None
-    assert report.server_version.label == "4.0.0"
-    assert report.supported_api_version == "3.1.x"
+    assert report.server_version.label == label
+    assert report.supported_api_version == "3.1.x–3.2.x"
 
 
 @pytest.mark.asyncio
@@ -528,11 +623,51 @@ async def test_original_stream_is_chunked_and_reuses_the_shared_client() -> None
 
     assert b"".join(chunks) == payload
     assert all(len(chunk) <= 4 for chunk in chunks)
+    assert original.status_code == 200
     assert original.content_length == len(payload)
     assert original.media_type == "image/jpeg"
     assert shared_client is not None
     await client.get_asset(ASSET_ONE)
     assert client._http_client is shared_client
+
+
+@pytest.mark.asyncio
+async def test_video_playback_stream_forwards_range_and_preserves_partial_metadata() -> None:
+    payload = b"video-range"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{ASSET_ONE}/video/playback"
+        assert request.headers["range"] == "bytes=10-20"
+        assert request.headers["if-range"] == '"video-etag"'
+        return httpx.Response(
+            206,
+            content=payload,
+            headers={
+                "content-type": "video/mp4",
+                "content-length": str(len(payload)),
+                "content-range": "bytes 10-20/100",
+                "accept-ranges": "bytes",
+                "etag": '"video-etag"',
+                "cache-control": "private, max-age=600",
+            },
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+
+    async with client.stream_video_playback(
+        ASSET_ONE,
+        range_header="bytes=10-20",
+        if_range_header='"video-etag"',
+    ) as media:
+        chunks = [chunk async for chunk in media.chunks]
+
+    assert b"".join(chunks) == payload
+    assert media.status_code == 206
+    assert media.media_type == "video/mp4"
+    assert media.content_range == "bytes 10-20/100"
+    assert media.accept_ranges == "bytes"
+    assert media.etag == '"video-etag"'
+    assert media.cache_control == "private, max-age=600"
 
 
 @pytest.mark.asyncio

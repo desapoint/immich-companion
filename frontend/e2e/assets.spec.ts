@@ -61,7 +61,7 @@ async function mockAssetWorkspace(page: Page): Promise<void> {
   await page.route('**/api/albums', async (route) => {
     await route.fulfill({ json: [] });
   });
-  await page.route('**/api/assets/*', async (route) => {
+  await page.route(/\/api\/assets\/[0-9a-f-]{36}$/, async (route) => {
     const assetId = route.request().url().split('/').at(-1) ?? assets[0].id;
     const asset = assets.find((item) => item.id === assetId) ?? assets[0];
     await route.fulfill({
@@ -124,27 +124,29 @@ test('searches cards and operates the fullscreen asset viewer', async ({ page })
   await expect(cards.first()).toBeVisible();
   await expect(cards).toHaveCount(useLiveApi ? 48 : 2);
 
-  await cards.first().getByRole('button', { name: /Open .* in viewer/ }).click();
+  await cards.first().getByRole('button', { name: /Open .* in viewer/, description: 'Open viewer' }).click();
   const viewer = page.getByRole('dialog', { name: /.+/ });
   await expect(viewer).toBeVisible();
   await expect(viewer.getByText(/1 of \d+ images/)).toBeVisible();
 
   await viewer.getByRole('button', { name: 'Select image' }).click();
-  await expect(viewer.getByRole('button', { name: '✓ Selected' })).toBeVisible();
+  await expect(viewer.getByRole('button', { name: 'Deselect image' })).toBeVisible();
 
   await viewer.getByRole('button', { name: 'Actual size' }).click();
-  await expect(viewer.getByRole('button', { name: 'Fit to screen' })).toBeVisible();
+  await expect(viewer.getByRole('button', { name: 'Fit image to screen' })).toBeVisible();
 
   await viewer.getByRole('button', { name: 'Zoom in' }).click();
-  await expect(viewer.getByTitle('Reset zoom (0)')).toContainText('120%');
+  await expect(viewer.getByRole('button', { name: /Reset zoom to fit/ })).toContainText('120%');
 
-  await viewer.getByRole('button', { name: 'Keyboard' }).click();
-  await expect(viewer.getByText('Keyboard shortcuts')).toBeVisible();
+  await viewer.getByRole('button', { name: 'Show keyboard shortcuts' }).click();
+  await expect(viewer.getByText('Keyboard shortcuts', { exact: true })).toBeVisible();
+  await viewer.getByRole('button', { name: 'Hide keyboard shortcuts' }).click();
 
-  await viewer.getByRole('button', { name: 'More info' }).click();
+  await viewer.getByRole('button', { name: 'Show more info' }).click();
   await expect(viewer.getByText('Immich metadata')).toBeVisible();
+  await viewer.getByRole('button', { name: 'Hide more info' }).click();
 
-  await page.keyboard.press('ArrowRight');
+  await viewer.getByRole('button', { name: 'Next image' }).click();
   await expect(viewer.getByText(/2 of \d+ images/)).toBeVisible();
 
   await page.keyboard.press('Escape');

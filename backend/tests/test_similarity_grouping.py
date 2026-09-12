@@ -6,6 +6,7 @@ from uuid import UUID
 from companion.similarity_grouping import (
     SimilarityGroupingEdge,
     cohesive_similarity_groups,
+    validated_similarity_groups,
 )
 
 A = UUID("11111111-1111-4111-8111-111111111111")
@@ -85,3 +86,45 @@ def test_invalid_or_noncanonical_edges_are_rejected() -> None:
         assert "between 0 and 100" in str(error)
     else:
         raise AssertionError("Expected invalid score rejection")
+
+
+def test_reference_linked_and_strict_validation_retain_admission_evidence() -> None:
+    edges = (
+        edge(A, B, 98),
+        edge(A, C, 94),
+        edge(A, D, 86),
+        edge(B, C, 93),
+        edge(C, D, 96),
+    )
+
+    reference = validated_similarity_groups(edges, mode="reference", threshold=92)
+    linked = validated_similarity_groups(edges, mode="linked", threshold=92)
+    strict = validated_similarity_groups(edges, mode="strict", threshold=92)
+
+    assert reference[0].asset_ids == (A, B, C)
+    assert linked[0].asset_ids == (A, B, C, D)
+    linked_d = next(item for item in linked[0].admission_evidence if item.asset_id == D)
+    assert linked_d.admitted_by_asset_id == C
+    assert linked_d.admission_similarity_percent == 96
+    assert linked_d.best_group_match_asset_id == C
+    assert linked_d.link_depth == 2
+    anchored_strict = next(group for group in strict if group.anchor_asset_id == A)
+    assert anchored_strict.asset_ids == (A, B, C)
+    assert D not in anchored_strict.asset_ids
+
+    rebuilt = validated_similarity_groups(
+        edges,
+        mode="reference",
+        threshold=92,
+        preferred_anchor_asset_id=D,
+    )
+    assert rebuilt[0].anchor_asset_id == D
+    assert rebuilt[0].asset_ids == (C, D)
+
+
+def test_validation_is_deterministic_across_edge_order() -> None:
+    edges = (edge(A, B, 98), edge(A, C, 94), edge(B, C, 93), edge(C, D, 96))
+
+    assert validated_similarity_groups(
+        edges, mode="linked", threshold=92
+    ) == validated_similarity_groups(tuple(reversed(edges)), mode="linked", threshold=92)

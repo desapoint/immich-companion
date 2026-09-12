@@ -128,6 +128,7 @@ class AssetSimilarityFeatureRecord(Base):
     )
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source_file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -180,6 +181,7 @@ class AssetSimilarityEdgeRecord(Base):
     model_version: Mapped[str] = mapped_column(String(32), primary_key=True)
     feature_version: Mapped[int] = mapped_column(Integer, primary_key=True)
     comparison_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_low_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_high_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     similarity_percent: Mapped[float] = mapped_column(Float, nullable=False)
@@ -205,6 +207,19 @@ class AssetSimilarityEdgeRecord(Base):
     )
 
 
+class SimilarityAssetChangeRecord(Base):
+    """Coalesced durable similarity work produced by authoritative asset sync."""
+
+    __tablename__ = "similarity_asset_changes"
+
+    asset_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enqueued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
 class SimilarityScanRecord(Base):
     """One versioned whole-library similarity discovery run."""
 
@@ -215,6 +230,10 @@ class SimilarityScanRecord(Base):
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
     comparison_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    grouping_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict")
+    anchor_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     scope: Mapped[str] = mapped_column(
         String(32), nullable=False, default="all_eligible_assets"
@@ -519,6 +538,8 @@ class DuplicatePolicyRecord(Base):
     preselect_safe_groups: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_file_action: Mapped[str] = mapped_column(String(24), nullable=False)
     keeper_policy: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_priority: Mapped[list[str]] = mapped_column(JSON, default=list)
+    keeper_tiebreakers: Mapped[list[str]] = mapped_column(JSON, default=list)
     analyze_automatically: Mapped[bool] = mapped_column(Boolean, nullable=False)
     verify_upload_streams: Mapped[bool] = mapped_column(Boolean, nullable=False)
     external_library_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -564,12 +585,17 @@ class DuplicateGroupReviewRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     discovery_source: Mapped[str] = mapped_column(String(32), nullable=False)
-    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_group_id: Mapped[str] = mapped_column(Text, nullable=False)
+    stable_group_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    member_set_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     manual_action: Mapped[str | None] = mapped_column(String(24), nullable=True)
     manual_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     member_decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     stack_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    stack_resolution: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="move_selected", server_default="move_selected"
+    )
     metadata_keeper_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     draft_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
@@ -585,9 +611,8 @@ class DuplicateGroupReviewRecord(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "discovery_source",
-            "provider_group_id",
-            name="uq_duplicate_group_reviews_provider",
+            "stable_group_key",
+            name="uq_duplicate_group_reviews_stable_key",
         ),
         Index("ix_duplicate_group_reviews_status", review_status),
     )
@@ -599,6 +624,7 @@ class DuplicateReviewWorkspaceRecord(Base):
     __tablename__ = "duplicate_review_workspaces"
 
     workspace_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     selected_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     active_group: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -612,6 +638,9 @@ class SelectionSetRecord(Base):
     __tablename__ = "selection_sets"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    entity_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="asset", server_default="asset", index=True
+    )
     revision: Mapped[int] = mapped_column(Integer, default=0)
     selected_count: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
@@ -631,4 +660,16 @@ class SelectionSetMemberRecord(Base):
     asset_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SelectionSetKeyMemberRecord(Base):
+    """One selected non-asset UUID in a typed server-owned selection set."""
+
+    __tablename__ = "selection_set_key_members"
+
+    selection_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("selection_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    entity_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

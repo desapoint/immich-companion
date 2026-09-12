@@ -59,12 +59,16 @@ class FakeAssets:
         self.applicability = applicability
         self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
         self.removed_batches: list[list[UUID]] = []
+        self.relation_ids: list[UUID] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
         return self.current
 
     async def applicable_action_ids(self, *_args, **_kwargs):
         return self.applicability.pop(0)
+
+    async def relation_ids_for_assets(self, *_args, **_kwargs):
+        return self.relation_ids
 
     async def stack_asset_ids(self, asset_id):
         return [asset_id]
@@ -230,6 +234,7 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
 
     assert result.status == "completed"
     assert result.applied_ids == [ASSET_TWO, ASSET_ONE]
+    assert result.affected_ids == [ASSET_TWO, ASSET_ONE]
     assert stack_immich.calls[0] == ("stack", None, [ASSET_TWO, ASSET_ONE])
     assert actions.finished is not None
     assert actions.finished[0] == "completed"
@@ -373,6 +378,21 @@ async def test_relation_action_skips_assets_already_in_the_requested_state(
 
 
 @pytest.mark.asyncio
+async def test_remove_all_relations_resolves_current_ids_before_planning() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    instance, actions, _, _ = service(resolution(), [{ASSET_ONE}, {ASSET_TWO}])
+    instance._assets.relation_ids = [RELATION_ID, RELATION_TWO]
+
+    plan = await instance.plan(
+        AssetActionPlanRequest(selection=selection, action="remove_tag")
+    )
+
+    assert plan.relation_ids == [RELATION_ID, RELATION_TWO]
+    assert actions.record is not None
+    assert actions.record.relation_ids == [str(RELATION_ID), str(RELATION_TWO)]
+
+
+@pytest.mark.asyncio
 async def test_remove_stack_keeps_original_selection_digest_after_expansion() -> None:
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
     instance, actions, _, sync = service(
@@ -386,6 +406,7 @@ async def test_remove_stack_keeps_original_selection_digest_after_expansion() ->
     result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert result.verified is True
+    assert result.affected_ids == [ASSET_ONE, ASSET_TWO]
     assert actions.finished is not None
     assert sync.calls == 1
     assert actions.finished[0] == "completed"

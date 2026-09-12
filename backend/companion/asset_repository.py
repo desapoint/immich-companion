@@ -5,11 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import (
     Float,
+    String,
     and_,
     case,
     cast,
@@ -28,6 +31,9 @@ from sqlalchemy.dialects.postgresql import insert
 
 from companion.action_schema import (
     AssetActionOperation,
+    AssetSelectionCapabilities,
+    AssetSelectionRelationship,
+    AssetSelectionRelationships,
     AssetSelectionRequest,
     AssetSelectionResolution,
     AssetSelectionSummary,
@@ -56,11 +62,36 @@ from companion.models import (
     AssetRecord,
     SelectionSetMemberRecord,
     SelectionSetRecord,
+    SimilarityAssetChangeRecord,
     TagAssetRecord,
     TagRecord,
 )
 
 ASPECT_RATIO_RELATIVE_TOLERANCE = 0.001
+
+
+def similarity_upsert_changes(
+    assets: Sequence[ImmichAsset],
+    existing: dict[UUID, tuple[str | None, int, int | None, datetime]],
+) -> list[tuple[UUID, str, str | None]]:
+    """Return only image changes that can invalidate content-derived evidence."""
+
+    return [
+        (
+            asset.id,
+            "upsert",
+            hashlib.sha256(
+                f"{asset.file_size_bytes}:{asset.file_modified_at.isoformat()}".encode()
+            ).hexdigest(),
+        )
+        for asset in assets
+        if asset.asset_type == "IMAGE"
+        and (
+            asset.id not in existing
+            or existing[asset.id][2] != asset.file_size_bytes
+            or existing[asset.id][3] != asset.file_modified_at
+        )
+    ]
 
 
 class SyncValidationError(RuntimeError):
@@ -72,6 +103,37 @@ class AssetRepository:
 
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
+
+    @staticmethod
+    async def _queue_similarity_changes(
+        session,
+        changes: list[tuple[UUID, str, str | None]],
+    ) -> None:
+        """Coalesce asset changes in the same transaction as synchronized metadata."""
+
+        if not changes:
+            return
+        enqueued_at = datetime.now(UTC)
+        values = [
+            {
+                "asset_id": asset_id,
+                "operation": operation,
+                "source_fingerprint": source_fingerprint,
+                "enqueued_at": enqueued_at,
+            }
+            for asset_id, operation, source_fingerprint in changes
+        ]
+        statement = insert(SimilarityAssetChangeRecord).values(values)
+        await session.execute(
+            statement.on_conflict_do_update(
+                index_elements=[SimilarityAssetChangeRecord.asset_id],
+                set_={
+                    "operation": statement.excluded.operation,
+                    "source_fingerprint": statement.excluded.source_fingerprint,
+                    "enqueued_at": statement.excluded.enqueued_at,
+                },
+            )
+        )
 
     @staticmethod
     def _immich_asset(record: AssetRecord) -> ImmichAsset:
@@ -260,7 +322,9 @@ class AssetRepository:
                 tag_rows = []
                 tag_memberships = []
                 for tag in tags:
-                    member_ids = [asset_id for asset_id in tag.asset_ids if asset_id in unique_assets]
+                    member_ids = [
+                        asset_id for asset_id in tag.asset_ids if asset_id in unique_assets
+                    ]
                     tag_rows.append(
                         {
                             "id": tag.id,
@@ -406,6 +470,8 @@ class AssetRepository:
         self,
         assets: list[ImmichAsset],
         generation: int,
+        *,
+        track_similarity_changes: bool = True,
     ) -> tuple[int, int, int]:
         """Commit active assets and evict any trashed API payloads."""
 
@@ -432,13 +498,15 @@ class AssetRepository:
             )
         async with self._database.sessions() as session, session.begin():
             existing = {
-                identifier: (fingerprint, previous_generation)
-                for identifier, fingerprint, previous_generation in (
+                identifier: (fingerprint, previous_generation, file_size, modified_at)
+                for identifier, fingerprint, previous_generation, file_size, modified_at in (
                     await session.execute(
                         select(
                             AssetRecord.id,
                             AssetRecord.sync_fingerprint,
                             AssetRecord.sync_generation,
+                            AssetRecord.file_size_bytes,
+                            AssetRecord.file_modified_at,
                         ).where(AssetRecord.id.in_([asset.id for asset in assets]))
                     )
                 )
@@ -465,6 +533,11 @@ class AssetRepository:
                     set_=update_columns,
                 )
             )
+            if track_similarity_changes:
+                await self._queue_similarity_changes(
+                    session,
+                    similarity_upsert_changes(assets, existing),
+                )
         created = len(rows) - len(existing)
         changed = 0
         unchanged = 0
@@ -478,7 +551,9 @@ class AssetRepository:
                 changed += 1
         return created, changed, unchanged
 
-    async def refresh_asset(self, asset: ImmichAsset) -> None:
+    async def refresh_asset(
+        self, asset: ImmichAsset, *, track_similarity_changes: bool = True
+    ) -> None:
         """Upsert one active asset or evict it when Immich reports it trashed."""
 
         if asset.is_trashed:
@@ -499,6 +574,16 @@ class AssetRepository:
         if asset.file_size_bytes is None:
             update_values.pop("file_size_bytes", None)
         async with self._database.sessions() as session, session.begin():
+            previous = (
+                await session.execute(
+                    select(
+                        AssetRecord.sync_fingerprint,
+                        AssetRecord.sync_generation,
+                        AssetRecord.file_size_bytes,
+                        AssetRecord.file_modified_at,
+                    ).where(AssetRecord.id == asset.id)
+                )
+            ).one_or_none()
             await session.execute(
                 insert(AssetRecord)
                 .values(insert_values)
@@ -507,6 +592,33 @@ class AssetRepository:
                     set_=update_values,
                 )
             )
+            changes = similarity_upsert_changes(
+                [asset],
+                {asset.id: tuple(previous)} if previous is not None else {},
+            )
+            if changes and track_similarity_changes:
+                await self._queue_similarity_changes(
+                    session,
+                    changes,
+                )
+
+    async def replace_asset_stack_snapshots(
+        self,
+        asset_ids: list[UUID],
+        stack_payload_by_asset: dict[UUID, dict[str, object]],
+    ) -> None:
+        """Persist authoritative stack state for one targeted repair set."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if not unique_ids:
+            return
+        async with self._database.sessions() as session, session.begin():
+            for asset_id in unique_ids:
+                await session.execute(
+                    update(AssetRecord)
+                    .where(AssetRecord.id == asset_id)
+                    .values(stack=stack_payload_by_asset.get(asset_id))
+                )
 
     async def stack_asset_ids(self, asset_id: UUID) -> list[UUID]:
         """Return the locally synchronized members of an asset's stack."""
@@ -530,9 +642,7 @@ class AssetRepository:
                 ids.append(member_id)
         return ids
 
-    async def get_asset_stack(
-        self, asset_id: UUID
-    ) -> tuple[UUID, dict[str, object]] | None:
+    async def get_asset_stack(self, asset_id: UUID) -> tuple[UUID, dict[str, object]] | None:
         """Return an asset's synchronized stack ID and payload, if present."""
 
         async with self._database.sessions() as session:
@@ -558,11 +668,14 @@ class AssetRepository:
         if not asset_ids:
             return 0
 
+        unique_ids = list(dict.fromkeys(asset_ids))
         async with self._database.sessions() as session, session.begin():
+            await self._queue_similarity_changes(
+                session,
+                [(asset_id, "delete", None) for asset_id in unique_ids],
+            )
             result = await session.execute(
-                delete(AssetRecord).where(
-                    AssetRecord.id.in_(list(dict.fromkeys(asset_ids)))
-                )
+                delete(AssetRecord).where(AssetRecord.id.in_(unique_ids))
             )
             return int(result.rowcount or 0)
 
@@ -623,10 +736,7 @@ class AssetRepository:
                 await session.execute(
                     insert(AlbumAssetRecord)
                     .values(
-                        [
-                            {"album_id": album_id, "asset_id": asset_id}
-                            for asset_id in unique_ids
-                        ]
+                        [{"album_id": album_id, "asset_id": asset_id} for asset_id in unique_ids]
                     )
                     .on_conflict_do_nothing()
                 )
@@ -660,9 +770,7 @@ class AssetRepository:
                 )
                 await session.execute(
                     insert(TagAssetRecord)
-                    .values(
-                        [{"tag_id": tag_id, "asset_id": asset_id} for asset_id in unique_ids]
-                    )
+                    .values([{"tag_id": tag_id, "asset_id": asset_id} for asset_id in unique_ids])
                     .on_conflict_do_nothing()
                 )
             else:
@@ -673,9 +781,7 @@ class AssetRepository:
                 .where(TagAssetRecord.tag_id == tag_id)
             )
             await session.execute(
-                update(TagRecord)
-                .where(TagRecord.id == tag_id)
-                .values(asset_count=int(count or 0))
+                update(TagRecord).where(TagRecord.id == tag_id).values(asset_count=int(count or 0))
             )
             return int(count or 0)
 
@@ -697,9 +803,7 @@ class AssetRepository:
                     .on_conflict_do_nothing()
                 )
 
-    async def replace_asset_album_memberships(
-        self, asset_id: UUID, album_ids: list[UUID]
-    ) -> None:
+    async def replace_asset_album_memberships(self, asset_id: UUID, album_ids: list[UUID]) -> None:
         """Replace one asset's album memberships after a complete API read."""
 
         unique_ids = list(dict.fromkeys(album_ids))
@@ -714,10 +818,7 @@ class AssetRepository:
                 await session.execute(
                     insert(AlbumAssetRecord)
                     .values(
-                        [
-                            {"album_id": album_id, "asset_id": asset_id}
-                            for album_id in unique_ids
-                        ]
+                        [{"album_id": album_id, "asset_id": asset_id} for album_id in unique_ids]
                     )
                     .on_conflict_do_nothing()
                 )
@@ -1045,6 +1146,10 @@ class AssetRepository:
                 )
                 if not identifiers:
                     return removed
+                await self._queue_similarity_changes(
+                    session,
+                    [(identifier, "delete", None) for identifier in identifiers],
+                )
                 result = await session.execute(
                     delete(AssetRecord).where(AssetRecord.id.in_(identifiers))
                 )
@@ -1096,6 +1201,11 @@ class AssetRepository:
                 )
                 if not identifiers:
                     return removed
+                if model is AssetRecord:
+                    await self._queue_similarity_changes(
+                        session,
+                        [(identifier, "delete", None) for identifier in identifiers],
+                    )
                 result = await session.execute(
                     delete(model).where(identifier_column.in_(identifiers))
                 )
@@ -1167,6 +1277,10 @@ class AssetRepository:
                 return column >= int(value)
             if condition.operator == "at_most":
                 return column <= int(value)
+            if condition.operator == "greater_than":
+                return column > int(value)
+            if condition.operator == "less_than":
+                return column < int(value)
             return column == int(value)
         if condition.field == "aspect_ratio":
             ratio = cast(AssetRecord.width, Float) / cast(AssetRecord.height, Float)
@@ -1175,6 +1289,10 @@ class AssetRepository:
                 return ratio >= numeric
             if condition.operator == "at_most":
                 return ratio <= numeric
+            if condition.operator == "greater_than":
+                return ratio > numeric
+            if condition.operator == "less_than":
+                return ratio < numeric
             return func.abs(ratio - numeric) <= numeric * ASPECT_RATIO_RELATIVE_TOLERANCE
         if condition.field in {"favorite", "archived", "trashed"}:
             column = {
@@ -1183,6 +1301,18 @@ class AssetRepository:
                 "trashed": AssetRecord.is_trashed,
             }[condition.field]
             return column == bool(value)
+        if condition.field in {"stack", "stack_primary"}:
+            stack_present = and_(
+                AssetRecord.stack.is_not(None),
+                func.json_typeof(AssetRecord.stack) == "object",
+            )
+            if condition.field == "stack":
+                return stack_present if bool(value) else not_(stack_present)
+            is_primary = (
+                AssetRecord.stack["primaryAssetId"].as_string()
+                == cast(AssetRecord.id, String)
+            )
+            return and_(stack_present, is_primary if bool(value) else not_(is_primary))
         if condition.field in {"album", "tag"}:
             membership_model = AlbumAssetRecord if condition.field == "album" else TagAssetRecord
             relation_column = (
@@ -1512,26 +1642,183 @@ class AssetRepository:
             summary=summary,
         )
 
-    async def list_matching_asset_ids(self, expression: SearchGroup) -> list[UUID]:
-        """Materialize a search result as explicit IDs at selection time."""
+    async def selection_capabilities(
+        self, selection: AssetSelectionRequest
+    ) -> AssetSelectionCapabilities:
+        """Return toolbar capabilities with database-side aggregate queries."""
 
-        predicate = self._compile_group(expression)
+        if selection.selection_id is not None:
+            target_ids = select(SelectionSetMemberRecord.asset_id).where(
+                SelectionSetMemberRecord.selection_id == selection.selection_id
+            )
+            predicate = AssetRecord.id.in_(target_ids)
+        elif selection.mode == "explicit":
+            predicate = AssetRecord.id.in_(selection.ids)
+        else:
+            assert selection.expression is not None
+            predicate = self._compile_group(selection.expression)
+            if selection.excluded_ids:
+                predicate = and_(predicate, AssetRecord.id.not_in(selection.excluded_ids))
+
+        active = and_(AssetRecord.is_trashed.is_(False), predicate)
+        target_ids = select(AssetRecord.id).where(active)
+        async with self._database.sessions() as session:
+            count, favorite_count, archived_count, stack_count = (
+                await session.execute(
+                    select(
+                        func.count(AssetRecord.id),
+                        func.count().filter(AssetRecord.is_favorite.is_(True)),
+                        func.count().filter(AssetRecord.is_archived.is_(True)),
+                        func.count().filter(func.json_typeof(AssetRecord.stack) == "object"),
+                    ).where(active)
+                )
+            ).one()
+            has_albums = bool(
+                await session.scalar(
+                    select(exists().where(AlbumAssetRecord.asset_id.in_(target_ids)))
+                )
+            )
+            has_tags = bool(
+                await session.scalar(
+                    select(exists().where(TagAssetRecord.asset_id.in_(target_ids)))
+                )
+            )
+            single = (
+                await session.scalar(select(AssetRecord).where(active).limit(1))
+                if count == 1
+                else None
+            )
+
+        stack = single.stack if single is not None and isinstance(single.stack, dict) else None
+        return AssetSelectionCapabilities(
+            count=count,
+            all_favorite=count > 0 and favorite_count == count,
+            all_archived=count > 0 and archived_count == count,
+            has_tags=has_tags,
+            has_albums=has_albums,
+            has_stack_members=stack_count > 0,
+            can_stack=count >= 2,
+            single_asset_id=single.id if single is not None else None,
+            can_set_stack_primary=bool(
+                single is not None
+                and stack
+                and str(stack.get("primaryAssetId")) != str(single.id)
+            ),
+            can_remove_complete_stack=bool(stack),
+        )
+
+    async def selection_relationships(
+        self, selection: AssetSelectionRequest
+    ) -> AssetSelectionRelationships:
+        """Return relationship options attached to any active selected asset."""
+
+        if selection.selection_id is not None:
+            selected_ids = select(SelectionSetMemberRecord.asset_id).where(
+                SelectionSetMemberRecord.selection_id == selection.selection_id
+            )
+            predicate = AssetRecord.id.in_(selected_ids)
+        elif selection.mode == "explicit":
+            predicate = AssetRecord.id.in_(selection.ids)
+        else:
+            assert selection.expression is not None
+            predicate = self._compile_group(selection.expression)
+            if selection.excluded_ids:
+                predicate = and_(predicate, AssetRecord.id.not_in(selection.excluded_ids))
+
+        active = and_(AssetRecord.is_trashed.is_(False), predicate)
+        album_statement = (
+            select(
+                AlbumRecord.id,
+                AlbumRecord.album_name,
+                func.count(AlbumAssetRecord.asset_id),
+            )
+            .join(AlbumAssetRecord, AlbumAssetRecord.album_id == AlbumRecord.id)
+            .join(AssetRecord, AssetRecord.id == AlbumAssetRecord.asset_id)
+            .where(active)
+            .group_by(AlbumRecord.id, AlbumRecord.album_name)
+            .order_by(func.lower(AlbumRecord.album_name), AlbumRecord.id)
+        )
+        tag_statement = (
+            select(TagRecord.id, TagRecord.tag_name, func.count(TagAssetRecord.asset_id))
+            .join(TagAssetRecord, TagAssetRecord.tag_id == TagRecord.id)
+            .join(AssetRecord, AssetRecord.id == TagAssetRecord.asset_id)
+            .where(active)
+            .group_by(TagRecord.id, TagRecord.tag_name)
+            .order_by(func.lower(TagRecord.tag_name), TagRecord.id)
+        )
+        async with self._database.sessions() as session:
+            album_rows = (await session.execute(album_statement)).all()
+            tag_rows = (await session.execute(tag_statement)).all()
+
+        return AssetSelectionRelationships(
+            albums=[
+                AssetSelectionRelationship(
+                    id=relation_id,
+                    name=name,
+                    selected_asset_count=count,
+                )
+                for relation_id, name, count in album_rows
+            ],
+            tags=[
+                AssetSelectionRelationship(
+                    id=relation_id,
+                    name=name,
+                    selected_asset_count=count,
+                )
+                for relation_id, name, count in tag_rows
+            ],
+        )
+
+    async def relation_ids_for_assets(
+        self, operation: Literal["remove_album", "remove_tag"], asset_ids: list[UUID]
+    ) -> list[UUID]:
+        """Resolve every current relation needed by a remove-all action."""
+
+        if not asset_ids:
+            return []
+        model = AlbumAssetRecord if operation == "remove_album" else TagAssetRecord
+        relation_column = (
+            AlbumAssetRecord.album_id if operation == "remove_album" else TagAssetRecord.tag_id
+        )
         async with self._database.sessions() as session:
             return list(
                 (
                     await session.scalars(
-                        select(AssetRecord.id)
-                        .where(AssetRecord.is_trashed.is_(False), predicate)
-                        .order_by(AssetRecord.id)
+                        select(relation_column)
+                        .where(model.asset_id.in_(asset_ids))
+                        .distinct()
+                        .order_by(relation_column)
                     )
                 ).all()
             )
 
-    async def create_selection(self, *, ttl_seconds: int) -> SelectionSetRecord:
+    async def list_matching_asset_ids(
+        self, expression: SearchGroup, excluded_ids: Sequence[UUID] = ()
+    ) -> list[UUID]:
+        """Materialize a search result as explicit IDs at selection time."""
+
+        predicate = self._compile_group(expression)
+        statement = select(AssetRecord.id).where(AssetRecord.is_trashed.is_(False), predicate)
+        if excluded_ids:
+            statement = statement.where(AssetRecord.id.not_in(excluded_ids))
+        async with self._database.sessions() as session:
+            return list(
+                (
+                    await session.scalars(
+                        statement.order_by(AssetRecord.id)
+                    )
+                ).all()
+            )
+
+    async def create_selection(
+        self, *, ttl_seconds: int, entity_kind: str = "asset"
+    ) -> SelectionSetRecord:
         """Create an empty server-owned selection set."""
 
         now = datetime.now(UTC)
-        record = SelectionSetRecord(expires_at=now + timedelta(seconds=ttl_seconds))
+        record = SelectionSetRecord(
+            entity_kind=entity_kind, expires_at=now + timedelta(seconds=ttl_seconds)
+        )
         async with self._database.sessions() as session, session.begin():
             session.add(record)
             await session.flush()
@@ -1542,6 +1829,9 @@ class AssetRepository:
             return await session.get(SelectionSetRecord, selection_id)
 
     async def selection_ids(self, selection_id: UUID) -> list[UUID]:
+        record = await self.get_selection(selection_id)
+        if record is None or record.entity_kind != "asset":
+            raise ValueError("Selection set was not found")
         async with self._database.sessions() as session:
             return list(
                 (
@@ -1553,9 +1843,12 @@ class AssetRepository:
                 ).all()
             )
 
-    async def selection_membership(
-        self, selection_id: UUID, asset_ids: list[UUID]
-    ) -> list[UUID]:
+    async def selection_membership(self, selection_id: UUID, asset_ids: list[UUID]) -> list[UUID]:
+        record = await self.get_selection(selection_id)
+        if record is None or record.entity_kind != "asset":
+            raise ValueError("Selection set was not found")
+        if not asset_ids:
+            return []
         async with self._database.sessions() as session:
             return list(
                 (
@@ -1582,6 +1875,8 @@ class AssetRepository:
             )
             if record is None:
                 raise ValueError("Selection set was not found")
+            if record.entity_kind != "asset":
+                raise ValueError("Selection set is not an asset selection")
             if record.status != "active" or record.expires_at <= datetime.now(UTC):
                 raise ValueError("Selection set has expired")
             await session.execute(
@@ -1593,15 +1888,13 @@ class AssetRepository:
                 literal(selection_id).label("selection_id"), AssetRecord.id.label("asset_id")
             ).where(predicate)
             await session.execute(
-                insert(SelectionSetMemberRecord).from_select(
-                    ["selection_id", "asset_id"], source
-                )
+                insert(SelectionSetMemberRecord).from_select(["selection_id", "asset_id"], source)
             )
             record.selected_count = int(
                 await session.scalar(
-                    select(func.count()).select_from(SelectionSetMemberRecord).where(
-                        SelectionSetMemberRecord.selection_id == selection_id
-                    )
+                    select(func.count())
+                    .select_from(SelectionSetMemberRecord)
+                    .where(SelectionSetMemberRecord.selection_id == selection_id)
                 )
             )
             record.revision += 1
@@ -1627,6 +1920,8 @@ class AssetRepository:
             )
             if record is None:
                 raise ValueError("Selection set was not found")
+            if record.entity_kind != "asset":
+                raise ValueError("Selection set is not an asset selection")
             if record.status != "active" or record.expires_at <= datetime.now(UTC):
                 raise ValueError("Selection set has expired")
             if record.revision != revision:
@@ -1634,10 +1929,12 @@ class AssetRepository:
             if selected:
                 await session.execute(
                     insert(SelectionSetMemberRecord)
-                    .values([
-                        {"selection_id": selection_id, "asset_id": asset_id}
-                        for asset_id in asset_ids
-                    ])
+                    .values(
+                        [
+                            {"selection_id": selection_id, "asset_id": asset_id}
+                            for asset_id in asset_ids
+                        ]
+                    )
                     .on_conflict_do_nothing()
                 )
             else:
@@ -1649,9 +1946,9 @@ class AssetRepository:
                 )
             record.selected_count = int(
                 await session.scalar(
-                    select(func.count()).select_from(SelectionSetMemberRecord).where(
-                        SelectionSetMemberRecord.selection_id == selection_id
-                    )
+                    select(func.count())
+                    .select_from(SelectionSetMemberRecord)
+                    .where(SelectionSetMemberRecord.selection_id == selection_id)
                 )
             )
             record.revision += 1
@@ -1675,6 +1972,7 @@ class AssetRepository:
             statement = select(AssetRecord.id).where(
                 AssetRecord.id.in_(target_ids),
                 AssetRecord.stack.is_not(None),
+                func.json_typeof(AssetRecord.stack) != "null",
             )
         elif operation == "set_stack_primary":
             async with self._database.sessions() as session:
@@ -1683,6 +1981,7 @@ class AssetRepository:
                         select(AssetRecord.id, AssetRecord.stack).where(
                             AssetRecord.id.in_(target_ids),
                             AssetRecord.stack.is_not(None),
+                            func.json_typeof(AssetRecord.stack) != "null",
                         )
                     )
                 ).all()

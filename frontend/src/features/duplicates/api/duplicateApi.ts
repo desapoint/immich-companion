@@ -10,6 +10,7 @@ import type {
   ExactDuplicateGroup,
   SimilarityScanSummary,
 } from '../types/duplicates';
+import type { StackResolution } from '../../../lib/types/stack';
 
 let suppressNextAutomaticDuplicateAnalysis = false;
 
@@ -63,6 +64,7 @@ export function saveDuplicateGroupDraft(request: {
   options: DuplicateAnalysisOptions;
   decisions: DuplicateMemberDraftDecision[];
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
   metadata_keeper_asset_id: string | null;
   status: 'pending' | 'completed';
 }): Promise<DuplicateGroupDraft> {
@@ -131,6 +133,14 @@ export function loadSimilarityScanTasks(): Promise<DuplicateTaskStatus[]> {
 
 export function cancelDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
   return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' });
+}
+
+export function pauseDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
+  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/pause`, { method: 'POST' });
+}
+
+export function resumeDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {
+  return requestJson(`/api/tasks/${encodeURIComponent(taskId)}/resume`, { method: 'POST' });
 }
 
 export async function loadDuplicateTask(taskId: string): Promise<DuplicateTaskStatus> {

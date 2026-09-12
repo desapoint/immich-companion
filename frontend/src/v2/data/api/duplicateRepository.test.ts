@@ -1,0 +1,461 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import type { TaskRepository } from '../syncContracts';
+import { createDuplicateRepository } from './duplicateRepository';
+
+const ASSET_IDS = [
+  '11111111-1111-4111-8111-111111111111',
+  '22222222-2222-4222-8222-222222222222',
+];
+const OVERLAP_ASSET_ID = '33333333-3333-4333-8333-333333333333';
+
+const group = {
+  group_id: 'immich-group:stable-provider-id',
+  reference_asset_id: ASSET_IDS[0],
+  group_similarity_percent: 98.5,
+  similarity_engine: 'appearance',
+  similarity_model_version: 'appearance-v1',
+  similarity_feature_version: 2,
+  similarity_comparison_version: 4,
+  similarity_validation_mode: 'linked',
+  similarity_threshold_percent: 95,
+  discovery_source: 'immich_duplicate',
+  provider_group_id: 'stable-provider-id',
+  classification: 'exact_file',
+  status: 'exact',
+  reason: null,
+  keeper_asset_id: ASSET_IDS[0],
+  recommended_action: 'resolve',
+  recommended_primary_asset_id: ASSET_IDS[0],
+  recommendation_reason_codes: [],
+  auto_resolvable: true,
+  auto_selected: true,
+  action_source: 'automatic',
+  primary_source: 'automatic',
+  manual_action: null,
+  manual_primary_asset_id: null,
+  effective_action: 'resolve',
+  effective_primary_asset_id: ASSET_IDS[0],
+  review_status: 'pending',
+  member_fingerprint: 'fingerprint-v1',
+  eligible: true,
+  members: ASSET_IDS.map((id, index) => ({
+    id,
+    source_kind: index ? 'external' : 'upload',
+    library_id: index ? 'library-1' : null,
+    original_file_name: `asset-${index}.jpg`,
+    original_mime_type: 'image/jpeg',
+    file_size_bytes: 100,
+    file_modified_at: '2026-09-01T00:00:00Z',
+    uploaded_at: null,
+    is_offline: false,
+    is_stacked: false,
+    immich_url: null,
+    verification: 'matching',
+    content_checksum: 'abc',
+    evidence: {},
+    similarity: index
+      ? { state: 'current', reference_asset_id: ASSET_IDS[0], similarity_percent: 98.5, structural_percent: 99.1, perceptual_percent: 96.9, color_percent: 97.2 }
+      : { state: 'reference', reference_asset_id: ASSET_IDS[0], similarity_percent: 100, structural_percent: 100, perceptual_percent: 100, color_percent: 100 },
+    admission: {
+      admitted_by_asset_id: index ? ASSET_IDS[0] : null,
+      admission_similarity_percent: index ? 98.5 : null,
+      best_group_match_asset_id: index ? ASSET_IDS[0] : ASSET_IDS[1],
+      best_group_match_similarity_percent: 98.5,
+      link_depth: index ? 1 : 0,
+      model_version: 'appearance-v1',
+      feature_version: 2,
+      comparison_version: 4,
+      config_fingerprint: 'config-v1',
+    },
+    preservation: null,
+  })),
+};
+
+const duplicateResult = {
+  generated_at: '2026-09-10T00:00:00Z',
+  analysis_task_id: null,
+  analysis_pending_count: 0,
+  analysis_candidate_count: 2,
+  analysis_cached_count: 2,
+  group_count: 1,
+  exact_group_count: 1,
+  unverified_group_count: 0,
+  mismatch_group_count: 0,
+  ineligible_group_count: 0,
+  groups: [group],
+};
+
+const emptyWorkspace = {
+  initialized: true,
+  selected_group_ids: [],
+  active_group_id: null,
+  stale_selected_groups: [],
+  drafts: [],
+};
+
+function response(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
+}
+
+function tasks(): TaskRepository {
+  return { get: vi.fn(async () => ({ status: 'completed', result: { summary: { failed_group_ids: [] } } })) } as unknown as TaskRepository;
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('live V2 duplicate repository', () => {
+  it('sends the applied review filter with backend-resolved all-matching presets', async () => {
+    const requests: Record<string, unknown>[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith('/workspace/preset')) {
+        requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+        return response({ ...emptyWorkspace, last_applied_group_ids: [], last_skipped_group_ids: [] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    await repository.applyPreset('keep', 'all_matching', [], 'Needs review');
+
+    expect(requests[0]).toMatchObject({
+      scope: 'all_matching', review_filter: 'Needs review', group_ids: [], disposition: 'keep',
+    });
+  });
+
+  it('loads stable provider groups and persisted decisions without per-member summary requests', async () => {
+    const selectedWorkspace = {
+      ...emptyWorkspace,
+      selected_group_ids: [group.group_id],
+      drafts: [{
+        group_id: group.group_id,
+        discovery_source: 'immich_duplicate',
+        member_fingerprint: group.member_fingerprint,
+        decisions: [{ asset_id: ASSET_IDS[0], disposition: 'keep', source: 'manual', status: 'pending' }],
+        stack_primary_asset_id: null,
+        stack_resolution: 'move_selected',
+        metadata_keeper_asset_id: null,
+        status: 'pending',
+        stale: false,
+      }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(selectedWorkspace) : response(duplicateResult)));
+    const fetcher = vi.mocked(fetch);
+    const repository = createDuplicateRepository(tasks());
+
+    const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
+
+    expect(result.items[0]).toMatchObject({
+      id: group.group_id,
+      state: 'Needs decisions',
+      selected: true,
+      savedDecisions: { [ASSET_IDS[0]]: 'keep' },
+      referenceAssetId: ASSET_IDS[0],
+      groupSimilarity: 98.5,
+      similarityEngine: 'appearance',
+      similarityValidationMode: 'linked',
+      members: [
+        { similarity: 100, similarityEvidence: { structuralPercent: 100, perceptualPercent: 100, colorPercent: 100 }, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
+        { similarity: 98.5, similarityEvidence: { structuralPercent: 99.1, perceptualPercent: 96.9, colorPercent: 97.2 }, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
+      ],
+    });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher.mock.calls.some(([input]) => String(input).includes('/summary'))).toBe(false);
+  });
+
+  it('does not present verified content hashes as visual similarity scores', async () => {
+    const exactOnly = {
+      ...duplicateResult,
+      groups: [{
+        ...group,
+        group_similarity_percent: null,
+        similarity_engine: null,
+        members: group.members.map((member) => ({ ...member, similarity: null })),
+      }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(exactOnly)));
+    const repository = createDuplicateRepository(tasks());
+
+    const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
+
+    expect(result.items[0]?.members.map((member) => member.similarity)).toEqual([null, null]);
+  });
+
+  it('persists complete per-image choices before planning and executing them', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
+      if (path.endsWith('/workspace/selection')) return response({ ...emptyWorkspace, selected_group_ids: body.selected_group_ids, active_group_id: body.active_group_id });
+      if (path.endsWith('/cross-source/plan')) return response({ id: 'plan-1' });
+      if (path.endsWith('/cross-source/execute')) return response({ task_id: 'task-1' }, 202);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    const plan = await repository.prepareDecisions({
+      decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
+      stacks: [],
+    }, [group.group_id]);
+    expect(calls.at(-1)?.path).toBe('/api/assets/duplicates/cross-source/plan');
+
+    const result = await repository.executePlan(plan);
+
+    expect(result).toEqual({ affectedIds: ASSET_IDS, failed: [] });
+    expect(calls.map((call) => call.path).slice(2)).toEqual([
+      '/api/assets/duplicates/workspace/group',
+      '/api/assets/duplicates/cross-source/plan',
+      '/api/assets/duplicates/cross-source/execute',
+    ]);
+    expect(calls.find((call) => call.path.endsWith('/workspace/group'))?.body).toMatchObject({
+      group_id: group.group_id,
+      member_fingerprint: group.member_fingerprint,
+      status: 'completed',
+    });
+    expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
+      group_ids: [group.group_id],
+      workspace_selected: false,
+      action_overrides: { [group.group_id]: 'resolve' },
+      keeper_overrides: { [group.group_id]: ASSET_IDS[0] },
+    });
+  });
+
+  it('rejects incomplete groups before creating an action plan', async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(duplicateResult));
+    vi.stubGlobal('fetch', fetcher);
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    await expect(repository.prepareDecisions({ decisions: { [ASSET_IDS[0]]: 'keep' }, stacks: [] }, [group.group_id])).rejects.toThrow('images without a decision');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('prepares only the requested group when similarity groups share an asset', async () => {
+    const overlappingGroup = {
+      ...group,
+      group_id: 'companion:appearance-v1:overlap',
+      provider_group_id: null,
+      member_fingerprint: 'fingerprint-overlap',
+      members: [
+        group.members[0],
+        {
+          ...group.members[1],
+          id: OVERLAP_ASSET_ID,
+          original_file_name: 'overlap.jpg',
+        },
+      ],
+    };
+    const resultWithOverlap = {
+      ...duplicateResult,
+      group_count: 2,
+      groups: [group, overlappingGroup],
+    };
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response(resultWithOverlap);
+      if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
+      if (path.endsWith('/workspace/selection')) return response({ ...emptyWorkspace, selected_group_ids: body.selected_group_ids, active_group_id: body.active_group_id });
+      if (path.endsWith('/cross-source/plan')) return response({ id: 'plan-overlap' });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    const plan = await repository.prepareDecisions({
+      decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
+      stacks: [],
+    }, [group.group_id]);
+
+    expect(plan.groupIds).toEqual([group.group_id]);
+    expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
+      group_ids: [group.group_id],
+    });
+  });
+
+  it('plans every persisted selected group even when only another page is loaded', async () => {
+    const secondGroup = {
+      ...group,
+      group_id: 'immich-group:second',
+      provider_group_id: 'second',
+      member_fingerprint: 'fingerprint-second',
+      members: group.members.map((member, index) => ({
+        ...member,
+        id: index ? OVERLAP_ASSET_ID : '44444444-4444-4444-8444-444444444444',
+      })),
+    };
+    const selectedWorkspace = {
+      ...emptyWorkspace,
+      revision: 3,
+      selected_count: 2,
+      selected_group_ids: [group.group_id, secondGroup.group_id],
+    };
+    const planGroups = [group, secondGroup].map((item) => ({
+      group_id: item.group_id,
+      members: item.members.map((member, index) => ({
+        asset_id: member.id,
+        disposition: index ? 'delete' : 'keep',
+      })),
+      follow_up: null,
+    }));
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
+      if (path.endsWith('/workspace')) return response(selectedWorkspace);
+      if (path.endsWith('/cross-source/plan')) return response({ id: 'off-page-plan', groups: planGroups, destructive: true });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    const page = await repository.search({ page: 2, pageSize: 1 });
+    const plan = await repository.prepareDecisions({ decisions: {}, stacks: [] }, []);
+
+    expect(page.items.map((item) => item.id)).toEqual([secondGroup.group_id]);
+    expect(repository.selectedGroupIds()).toEqual([group.group_id, secondGroup.group_id]);
+    expect(plan.groupIds).toEqual([group.group_id, secondGroup.group_id]);
+    expect(plan.resolution.decisions).toMatchObject({ [ASSET_IDS[0]]: 'keep', [OVERLAP_ASSET_ID]: 'delete' });
+    expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
+      group_ids: [],
+      workspace_selected: true,
+    });
+    expect(calls.some((call) => call.path.endsWith('/workspace/group'))).toBe(false);
+  });
+
+  it('waits for an in-flight draft before allowing a page refresh', async () => {
+    let completeWrite: ((value: Response) => void) | undefined;
+    const pendingWrite = new Promise<Response>((resolve) => { completeWrite = resolve; });
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return pendingWrite;
+      throw new Error(`Unexpected request: ${path} ${init?.method ?? ''}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 1 });
+    const draft = repository.saveDraft(group.group_id, {
+      decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
+      stacks: [],
+    });
+    let flushed = false;
+    const flush = repository.flushDrafts().then(() => { flushed = true; });
+
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+    completeWrite?.(response({ group_id: group.group_id, member_fingerprint: group.member_fingerprint, decisions: [], stale: false }));
+    await Promise.all([draft, flush]);
+    expect(flushed).toBe(true);
+  });
+
+  it('clears every discovered group through one durable workspace reset', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace/reset')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
+
+    const cleared = await repository.clearDecisions();
+
+    expect(cleared).toBe(1);
+    expect(calls.at(-1)).toEqual({
+      path: '/api/assets/duplicates/workspace/reset',
+      body: expect.objectContaining({ group_ids: [group.group_id] }),
+    });
+  });
+
+  it('switches only the display reference contract returned by the backend', async () => {
+    const switched = {
+      ...group,
+      reference_asset_id: ASSET_IDS[1],
+      members: group.members.map((member, index) => ({
+        ...member,
+        similarity: index
+          ? { ...member.similarity, state: 'reference', reference_asset_id: ASSET_IDS[1], similarity_percent: 100 }
+          : { ...member.similarity, state: 'current', reference_asset_id: ASSET_IDS[1], similarity_percent: 97.1 },
+      })),
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.includes('/similarity-reference')) return response(switched);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    const result = await repository.switchReference(group.group_id, ASSET_IDS[1]);
+
+    expect(result).toMatchObject({
+      referenceAssetId: ASSET_IDS[1],
+      groupSimilarity: 98.5,
+      similarityEngine: 'appearance',
+      kind: 'exact file',
+      members: [
+        { similarity: 100, asset: { id: ASSET_IDS[1] } },
+        { similarity: 97.1, asset: { id: ASSET_IDS[0] } },
+      ],
+    });
+  });
+
+  it('maps exact and similarity tasks into one monotonic discovery range', async () => {
+    let similarityBody: Record<string, unknown> | null = null;
+    const taskRepository = {
+      get: vi.fn()
+        .mockResolvedValueOnce({status:'completed',progress:{phase:'complete',completed:10,total:10,percent:100,detail:'Exact evidence ready'},counters:{}})
+        .mockResolvedValueOnce({status:'completed',progress:{phase:'similarity_finalizing',completed:50,total:50,percent:100,detail:'Similarity scan ready'},counters:{candidate_pairs:50,matches_retained:8}}),
+    } as unknown as TaskRepository;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.endsWith('/cross-source/analyze')) return response({task_id:'exact-task'},202);
+      if (path.endsWith('/similarity-scan')) {
+        similarityBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        return response({task_id:'similarity-task'},202);
+      }
+      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const progress: number[] = [];
+    const repository = createDuplicateRepository(taskRepository);
+
+    await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
+
+    expect(progress).toEqual([25,98,99]);
+    expect(similarityBody).toMatchObject({validation_mode:'linked',anchor_asset_id:ASSET_IDS[1]});
+  });
+
+  it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{
+    const disk={path:'/cache/previews',healthy:true,used_bytes:12,max_bytes:1024,free_bytes:2048,entry_count:2,hits:3,misses:1,evictions:0,cleanup_failures:0};
+    const raw={config_fingerprint:'abcdef0123456789',feature_count:7,feature_estimated_bytes:7168,pair_count:4,pair_estimated_bytes:2048,pair_max_bytes:4096,pair_hits:5,pair_misses:2,pair_evictions:1,hot_count:2,hot_estimated_bytes:2048,hot_max_bytes:8192,hot_hits:3,hot_misses:1,hot_evictions:0,reference_latency_p50_ms:1.2,reference_latency_p95_ms:2.4,previews:disk,decode:{...disk,path:'/cache/decode',entry_count:0},generated_at:'2026-09-11T00:00:00Z'};
+    const calls:Array<{path:string;body:unknown}>=[];
+    vi.stubGlobal('fetch',vi.fn(async(input:RequestInfo|URL,init?:RequestInit)=>{const path=String(input);calls.push({path,body:init?.body?JSON.parse(String(init.body)):null});return path.endsWith('/clear')?response({cache:'pairs',removed_count:4,status:raw}):response(raw)}));
+    const repository=createDuplicateRepository(tasks());
+
+    const initial=await repository.cacheStatus();
+    const cleared=await repository.clearCache('pairs');
+
+    expect(initial).toMatchObject({featureCount:7,pairCount:4,previews:{usedBytes:12},referenceLatencyP95Ms:2.4});
+    expect(cleared?.hotCount).toBe(2);
+    expect(calls.at(-1)).toEqual({path:'/api/assets/duplicates/cache/clear',body:{cache:'pairs'}});
+  });
+
+});

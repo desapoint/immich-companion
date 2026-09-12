@@ -81,6 +81,7 @@
     TagOption,
     ViewerScaleMode,
   } from '../types/assets';
+  import type { StackResolution } from '../../../lib/types/stack';
   import AssetInfoPanel from './AssetInfoPanel.svelte';
   import AssetIntegrityDialog from './AssetIntegrityDialog.svelte';
   import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
@@ -115,6 +116,8 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatedisposition?: (assetId: string, disposition: 'keep' | 'delete' | 'stack') => void;
     onduplicatestackprimary?: (assetId: string) => void;
+    onduplicatestackresolution?: (resolution: StackResolution) => void;
+    onduplicatemetadatakeeper?: (assetId: string) => void;
     onduplicatesimilarityreference?: (assetId: string) => boolean | void | Promise<boolean | void>;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
@@ -174,6 +177,8 @@
     duplicateContext = null,
     onduplicatedisposition,
     onduplicatestackprimary,
+    onduplicatestackresolution,
+    onduplicatemetadatakeeper,
     onduplicatesimilarityreference,
     onduplicatepreviousgroup,
     onduplicatenextgroup,
@@ -1079,6 +1084,8 @@
         {duplicateContext}
         {onduplicatedisposition}
         {onduplicatestackprimary}
+        {onduplicatestackresolution}
+        {onduplicatemetadatakeeper}
         {onduplicatesimilarityreference}
         {onduplicatepreviousgroup}
         {onduplicatenextgroup}

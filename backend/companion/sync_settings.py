@@ -13,7 +13,7 @@ from companion.models import SyncRuntimeSettingsRecord
 class SyncRuntimeSettings(BaseModel):
     full_batch_size: int = Field(ge=1, le=500)
     full_min_batch_delay_seconds: float = Field(ge=0, le=60)
-    tag_association_concurrency: int = Field(ge=1, le=32)
+    tag_association_concurrency: int = Field(default=4, ge=1, le=32)
 
 
 class SyncRuntimeSettingsUpdate(SyncRuntimeSettings):

@@ -8,10 +8,19 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
+from companion.action_schema import StackResolution
 from companion.integrity import DetectedFormat, IntegrityClassification
 from companion.integrity_schema import IntegrityFreshness
 
 DuplicateKeeperPolicy = Literal["most_recent", "prefer_upload", "prefer_external", "first"]
+DuplicateKeeperTiebreaker = Literal[
+    "favorite",
+    "resolution",
+    "metadata_richness",
+    "file_size",
+    "oldest_capture",
+    "uploaded_at",
+]
 DuplicateExactFilePolicyAction = Literal["resolve", "keep_all", "stack_all", "review"]
 DuplicateGroupStatus = Literal["exact", "unverified", "mismatch", "ineligible"]
 DuplicateMemberStatus = Literal["matching", "mismatch", "unverified"]
@@ -56,6 +65,11 @@ class DuplicateAnalysisOptions(BaseModel):
     """Filters and keeper rule shared by analysis, review, and planning."""
 
     keeper_policy: DuplicateKeeperPolicy = "most_recent"
+    source_priority: list[str] = Field(default_factory=list, max_length=10_002)
+    keeper_tiebreakers: list[DuplicateKeeperTiebreaker] = Field(
+        default_factory=list,
+        max_length=6,
+    )
     external_library_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
     verify_upload_streams: bool = False
     automatic_handling_enabled: bool = True
@@ -66,6 +80,15 @@ class DuplicateAnalysisOptions(BaseModel):
     @model_validator(mode="after")
     def unique_libraries(self) -> DuplicateAnalysisOptions:
         self.external_library_ids = list(dict.fromkeys(self.external_library_ids))
+        self.source_priority = list(
+            dict.fromkeys(
+                source
+                if source in {"immich_uploads", "unlisted"}
+                else str(UUID(source))
+                for source in self.source_priority
+            )
+        )
+        self.keeper_tiebreakers = list(dict.fromkeys(self.keeper_tiebreakers))
         return self
 
 
@@ -99,6 +122,18 @@ class DuplicateSimilarityEvidence(BaseModel):
     model_version: str | None = None
     feature_version: int | None = None
     comparison_version: int | None = None
+
+
+class DuplicateAdmissionEvidence(BaseModel):
+    admitted_by_asset_id: UUID | None = None
+    admission_similarity_percent: float | None = None
+    best_group_match_asset_id: UUID | None = None
+    best_group_match_similarity_percent: float | None = None
+    link_depth: int = Field(ge=0)
+    model_version: str
+    feature_version: int
+    comparison_version: int
+    config_fingerprint: str
 
 
 class DuplicatePreservationEvidence(BaseModel):
@@ -136,16 +171,35 @@ class DuplicateMember(BaseModel):
     content_checksum: str | None = None
     evidence: DuplicateMemberEvidence
     similarity: DuplicateSimilarityEvidence | None = None
+    admission: DuplicateAdmissionEvidence | None = None
     preservation: DuplicatePreservationEvidence | None = None
     recommended_disposition: DuplicateDraftDisposition | None = None
     recommendation_reason_codes: list[str] = Field(default_factory=list)
 
 
-class ExactDuplicateGroup(BaseModel):
-    group_id: str
+class DuplicateDiscoveryEvidence(BaseModel):
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+
+
+class ExactDuplicateGroup(BaseModel):
+    group_id: str
+    stable_group_key: str
+    member_set_key: str
+    discovery_source: DuplicateDiscoverySource
+    discovery_sources: list[DuplicateDiscoverySource] = Field(default_factory=list)
+    discovery_evidence: list[DuplicateDiscoveryEvidence] = Field(default_factory=list)
+    provider_group_id: str | None = None
     discovery_metadata: dict[str, str] = Field(default_factory=dict)
+    reference_asset_id: UUID | None = None
+    group_similarity_percent: float | None = None
+    similarity_engine: str | None = None
+    similarity_model_version: str | None = None
+    similarity_feature_version: int | None = None
+    similarity_comparison_version: int | None = None
+    similarity_validation_mode: Literal["reference", "linked", "strict"] | None = None
+    similarity_threshold_percent: float | None = None
     classification: DuplicateClassification
     status: DuplicateGroupStatus
     reason: str | None = None
@@ -177,6 +231,8 @@ class ExactDuplicateGroup(BaseModel):
             and len(self.members) >= 2
             and all(not member.is_offline for member in self.members)
         )
+        if not self.discovery_sources:
+            self.discovery_sources = [self.discovery_source]
         return self
 
 
@@ -200,6 +256,8 @@ class CrossSourceDuplicateTaskStart(BaseModel):
 
 class SimilarityScanRequest(BaseModel):
     similarity_threshold: float = Field(default=95.0, ge=50, le=100)
+    validation_mode: Literal["reference", "linked", "strict"] = "strict"
+    anchor_asset_id: UUID | None = None
     scope: Literal["all_eligible_assets"] = "all_eligible_assets"
     maximum_perceptual_distance: int = Field(default=12, ge=0, le=64)
     maximum_aspect_difference: float = Field(default=0.05, ge=0, le=1)
@@ -211,23 +269,89 @@ class SimilarityScanTaskStart(BaseModel):
     task_id: UUID
 
 
+class SimilarityIndexTaskStart(BaseModel):
+    task_id: UUID
+
+
+class SimilarityIndexCoverage(BaseModel):
+    eligible_count: int = Field(ge=0)
+    current_count: int = Field(ge=0)
+    missing_count: int = Field(ge=0)
+    stale_count: int = Field(ge=0)
+    complete: bool
+    model_version: str
+    feature_version: int
+    config_fingerprint: str
+
+
 class SimilarityScanSummary(BaseModel):
     scan_id: UUID
     similarity_threshold: float
+    validation_mode: Literal["reference", "linked", "strict"]
+    anchor_asset_id: UUID | None = None
     scope: Literal["all_eligible_assets"]
     model_version: str
     feature_version: int
     comparison_version: int
+    config_fingerprint: str
+    grouping_version: int
     asset_count: int
     candidate_count: int
     match_count: int
     completed_at: datetime
 
 
+class SimilarityDiskCacheStatus(BaseModel):
+    path: str
+    healthy: bool
+    used_bytes: int
+    max_bytes: int
+    free_bytes: int
+    entry_count: int
+    hits: int
+    misses: int
+    evictions: int
+    cleanup_failures: int
+
+
+class SimilarityCacheStatus(BaseModel):
+    config_fingerprint: str
+    feature_count: int
+    feature_estimated_bytes: int
+    pair_count: int
+    pair_estimated_bytes: int
+    pair_max_bytes: int
+    pair_hits: int
+    pair_misses: int
+    pair_evictions: int
+    hot_count: int
+    hot_estimated_bytes: int
+    hot_max_bytes: int
+    hot_hits: int
+    hot_misses: int
+    hot_evictions: int
+    reference_latency_p50_ms: float | None
+    reference_latency_p95_ms: float | None
+    previews: SimilarityDiskCacheStatus
+    decode: SimilarityDiskCacheStatus
+    generated_at: datetime
+
+
+class SimilarityCacheClearRequest(BaseModel):
+    cache: Literal["previews", "pairs", "decode", "hot"]
+
+
+class SimilarityCacheClearResult(BaseModel):
+    cache: Literal["previews", "pairs", "decode", "hot"]
+    removed_count: int
+    status: SimilarityCacheStatus
+
+
 class DuplicateResolutionPlanRequest(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     group_ids: list[str] = Field(default_factory=list, max_length=10_000)
     all_eligible: bool = False
+    workspace_selected: bool = False
     keeper_overrides: dict[str, UUID] = Field(default_factory=dict)
     action_overrides: dict[
         str,
@@ -237,8 +361,14 @@ class DuplicateResolutionPlanRequest(BaseModel):
     @model_validator(mode="after")
     def validate_selection(self) -> DuplicateResolutionPlanRequest:
         self.group_ids = list(dict.fromkeys(self.group_ids))
-        if self.all_eligible == bool(self.group_ids):
-            raise ValueError("Choose explicit duplicate groups or all eligible groups")
+        if self.all_eligible and (self.group_ids or self.workspace_selected):
+            raise ValueError(
+                "Choose explicit duplicate groups, the workspace selection, or all eligible groups"
+            )
+        if not self.all_eligible and not self.group_ids and not self.workspace_selected:
+            raise ValueError(
+                "Choose explicit duplicate groups, the workspace selection, or all eligible groups"
+            )
         return self
 
 
@@ -252,16 +382,22 @@ class DuplicatePlanFollowUp(BaseModel):
     type: Literal["stack"]
     primary_asset_id: UUID
     member_asset_ids: list[UUID]
+    resolution: StackResolution = "move_selected"
+    source_fingerprint: str | None = None
+    conflict_fingerprint: str | None = None
 
 
 class DuplicatePlanMetadataWork(BaseModel):
     keeper_asset_id: UUID
     album_ids: list[UUID] = Field(default_factory=list)
     tag_ids: list[UUID] = Field(default_factory=list)
+    source_fingerprint: str | None = None
 
 
 class DuplicateResolutionPlanGroup(BaseModel):
     group_id: str
+    stable_group_key: str
+    member_set_key: str
     discovery_source: DuplicateDiscoverySource
     provider_group_id: str | None = None
     action: Literal["resolve", "keep_all", "stack_all", "mixed"] = "resolve"
@@ -280,14 +416,56 @@ class DuplicateResolutionPlanGroup(BaseModel):
         members = set(self.member_asset_ids)
         keep = set(self.keep_asset_ids)
         trash = set(self.trash_asset_ids)
+        decision_ids = [decision.asset_id for decision in self.members]
+        decision_by_id = {decision.asset_id: decision for decision in self.members}
         if keep & trash or keep | trash != members:
             raise ValueError("Duplicate resolution must classify every frozen member exactly once")
         if len(keep) != len(self.keep_asset_ids) or len(trash) != len(self.trash_asset_ids):
             raise ValueError("Duplicate resolution member lists must not contain duplicates")
+        if len(decision_ids) != len(set(decision_ids)) or set(decision_ids) != members:
+            raise ValueError("Duplicate resolution must include one decision per frozen member")
+        if any(
+            (decision.disposition == "delete") != (asset_id in trash)
+            or decision.disposition == "no_change"
+            for asset_id, decision in decision_by_id.items()
+        ):
+            raise ValueError(
+                "Duplicate member decisions must match the frozen resolution partition"
+            )
+        dispositions = [decision.disposition for decision in self.members]
+        disposition_set = set(dispositions)
+        derived_action = (
+            "keep_all"
+            if disposition_set == {"keep"}
+            else "stack_all"
+            if disposition_set == {"stack"}
+            else "resolve"
+            if dispositions.count("keep") == 1
+            and dispositions.count("delete") == len(dispositions) - 1
+            else "mixed"
+        )
+        if self.action != derived_action:
+            raise ValueError("Duplicate group action must match its member decisions")
         if self.action == "stack_all" and self.follow_up is None:
             raise ValueError("Stack all requires an explicit stack follow-up")
         if self.action not in {"stack_all", "mixed"} and self.follow_up is not None:
             raise ValueError("Only plans with Stack dispositions may include a stack follow-up")
+        stack_ids = {
+            asset_id
+            for asset_id, decision in decision_by_id.items()
+            if decision.disposition == "stack"
+        }
+        if self.follow_up is None:
+            if stack_ids:
+                raise ValueError("Stack decisions require an explicit stack follow-up")
+        else:
+            follow_up_ids = self.follow_up.member_asset_ids
+            if (
+                len(follow_up_ids) != len(set(follow_up_ids))
+                or set(follow_up_ids) != stack_ids
+                or self.follow_up.primary_asset_id not in stack_ids
+            ):
+                raise ValueError("Stack follow-up must exactly match the frozen Stack decisions")
         return self
 
 
@@ -331,6 +509,7 @@ class DuplicateGroupDraftUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     decisions: list[DuplicateMemberDraftDecision] = Field(default_factory=list)
     stack_primary_asset_id: UUID | None = None
+    stack_resolution: StackResolution = "move_selected"
     metadata_keeper_asset_id: UUID | None = None
     status: DuplicateDraftStatus = "pending"
 
@@ -346,17 +525,47 @@ class DuplicateWorkspaceGroupReference(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
     member_fingerprint: str
+    stable_group_key: str | None = None
+    member_set_key: str | None = None
 
 
 class DuplicateWorkspaceSelectionUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     selected_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
     active_group_id: str | None = None
+    revision: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
     def unique_groups(self) -> DuplicateWorkspaceSelectionUpdate:
         self.selected_group_ids = list(dict.fromkeys(self.selected_group_ids))
         return self
+
+
+class DuplicateWorkspaceSelectionDelta(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    added_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    removed_group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    active_group_id: str | None = None
+    revision: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_delta(self) -> DuplicateWorkspaceSelectionDelta:
+        self.added_group_ids = list(dict.fromkeys(self.added_group_ids))
+        self.removed_group_ids = list(dict.fromkeys(self.removed_group_ids))
+        if set(self.added_group_ids) & set(self.removed_group_ids):
+            raise ValueError("A duplicate group cannot be both added and removed")
+        return self
+
+
+class DuplicateWorkspaceMembershipRequest(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+
+
+class DuplicateWorkspaceMembership(BaseModel):
+    revision: int
+    selected_count: int
+    selected_group_ids: list[str] = Field(default_factory=list)
 
 
 class DuplicateWorkspaceResetRequest(BaseModel):
@@ -369,12 +578,30 @@ class DuplicateWorkspaceResetRequest(BaseModel):
         return self
 
 
+class DuplicateWorkspacePresetRequest(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    scope: Literal["current_page", "all_matching"] = "current_page"
+    review_filter: Literal[
+        "All groups", "Needs review", "Auto-ready", "Blocked", "Actionable", "Needs decisions"
+    ] = "All groups"
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    disposition: DuplicateDraftDisposition
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> DuplicateWorkspacePresetRequest:
+        self.group_ids = list(dict.fromkeys(self.group_ids))
+        if self.scope == "current_page" and not self.group_ids:
+            raise ValueError("Current-page preset requires visible duplicate groups")
+        return self
+
+
 class DuplicateGroupDraft(BaseModel):
     group_id: str
     discovery_source: DuplicateDiscoverySource
     member_fingerprint: str
     decisions: list[DuplicateMemberDraftDecision]
     stack_primary_asset_id: UUID | None = None
+    stack_resolution: StackResolution = "move_selected"
     metadata_keeper_asset_id: UUID | None = None
     status: DuplicateDraftStatus
     stale: bool = False
@@ -382,10 +609,14 @@ class DuplicateGroupDraft(BaseModel):
 
 class DuplicateWorkspaceState(BaseModel):
     initialized: bool = False
+    revision: int = 0
+    selected_count: int = 0
     selected_group_ids: list[str] = Field(default_factory=list)
     active_group_id: str | None = None
     stale_selected_groups: list[DuplicateWorkspaceGroupReference] = Field(default_factory=list)
     drafts: list[DuplicateGroupDraft] = Field(default_factory=list)
+    last_applied_group_ids: list[str] = Field(default_factory=list)
+    last_skipped_group_ids: list[str] = Field(default_factory=list)
 
 
 class DuplicateSimilarityReferenceRequest(BaseModel):

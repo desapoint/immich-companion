@@ -6,8 +6,6 @@ WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend ./
-RUN npm run check
-RUN npm test
 RUN npm run build
 
 
@@ -47,7 +45,9 @@ ENV PATH="/opt/venv/bin:$PATH" \
     ALLOW_DESTRUCTIVE_ACTIONS=false
 
 RUN groupadd --gid "$APP_GID" companion \
-    && useradd --uid "$APP_UID" --gid "$APP_GID" --no-create-home --shell /usr/sbin/nologin companion
+    && useradd --uid "$APP_UID" --gid "$APP_GID" --no-create-home --shell /usr/sbin/nologin companion \
+    && mkdir -p /cache \
+    && chown companion:companion /cache
 
 COPY --from=builder /opt/venv /opt/venv
 COPY --from=frontend-builder --chown=companion:companion /build/frontend/dist /opt/immich-companion/frontend

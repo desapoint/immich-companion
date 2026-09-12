@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import struct
@@ -25,6 +26,21 @@ LUMINANCE_VECTOR_LENGTH = LUMINANCE_VECTOR_SIDE**2
 COLOR_HISTOGRAM_BINS = 16
 COLOR_HISTOGRAM_LENGTH = COLOR_HISTOGRAM_BINS * 3
 PIXEL_HASH_ROWS_PER_CHUNK = 64
+SIMILARITY_CONFIG_FINGERPRINT = hashlib.sha256(
+    json.dumps(
+        {
+            "model": SIMILARITY_MODEL_VERSION,
+            "feature_version": SIMILARITY_FEATURE_VERSION,
+            "pixel_normalization_version": PIXEL_NORMALIZATION_VERSION,
+            "luminance_side": LUMINANCE_VECTOR_SIDE,
+            "histogram_bins": COLOR_HISTOGRAM_BINS,
+            "weights": {"structural": 0.65, "perceptual": 0.25, "color": 0.10},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode(),
+    usedforsecurity=False,
+).hexdigest()
 
 logger = logging.getLogger("uvicorn.error")
 
