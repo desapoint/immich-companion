@@ -115,7 +115,15 @@ const ANALYSIS_OPTIONS: AnalysisOptions = {
 const TERMINAL_TASK_STATES = new Set(['completed', 'failed', 'cancelled']);
 
 type TaskStart = { task_id: string };
-type PlanResponse = { id: string };
+type PlanResponse = {
+  id: string;
+  destructive?: boolean;
+  groups?: Array<{
+    group_id: string;
+    members: Array<{ asset_id: string; disposition: DuplicateDecision }>;
+    follow_up?: { primary_asset_id: string; member_asset_ids: string[] } | null;
+  }>;
+};
 type ApiDiskCacheStatus = { path:string;healthy:boolean;used_bytes:number;max_bytes:number;free_bytes:number;entry_count:number;hits:number;misses:number;evictions:number;cleanup_failures:number };
 type ApiSimilarityCacheStatus = { config_fingerprint:string;feature_count:number;feature_estimated_bytes:number;pair_count:number;pair_estimated_bytes:number;pair_max_bytes:number;pair_hits:number;pair_misses:number;pair_evictions:number;hot_count:number;hot_estimated_bytes:number;hot_max_bytes:number;hot_hits:number;hot_misses:number;hot_evictions:number;reference_latency_p50_ms:number|null;reference_latency_p95_ms:number|null;previews:ApiDiskCacheStatus;decode:ApiDiskCacheStatus;generated_at:string };
 type ApiSimilarityCacheClearResult = { status:ApiSimilarityCacheStatus };
@@ -376,6 +384,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     async capabilities() {
       return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: false, reviewFilters: ['All groups', 'Needs review', 'Auto-ready', 'Blocked', 'Actionable', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
     },
+    selectedGroupIds() { return [...workspace.selected_group_ids]; },
     async search(query): Promise<PageResult<DuplicateGroupRecord>> {
       const [result, restored] = await Promise.all([
         requestJson<ApiDuplicateResult>('/api/assets/duplicates/cross-source/search', { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
@@ -446,6 +455,32 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     },
     async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
       const uniqueGroupIds = [...new Set(groupIds)];
+      if (!uniqueGroupIds.length) {
+        const plan = await requestJson<PlanResponse>('/api/assets/duplicates/cross-source/plan', jsonRequest('POST', {
+          options: ANALYSIS_OPTIONS,
+          group_ids: [],
+          all_eligible: false,
+          workspace_selected: true,
+        }));
+        const frozenGroups = plan.groups ?? [];
+        const frozenResolution: DuplicateResolutionPlan = {
+          decisions: Object.fromEntries(frozenGroups.flatMap((group) => group.members.map((member) => [member.asset_id, member.disposition]))),
+          stacks: frozenGroups.flatMap((group) => group.follow_up ? [{
+            id: `plan:${group.group_id}`,
+            groupId: group.group_id,
+            label: 'Frozen stack',
+            assetIds: group.follow_up.member_asset_ids,
+            primaryAssetId: group.follow_up.primary_asset_id,
+          }] : []),
+        };
+        return {
+          id: plan.id,
+          resolution: frozenResolution,
+          groupIds: frozenGroups.map((group) => group.group_id),
+          groupMemberIds: Object.fromEntries(frozenGroups.map((group) => [group.group_id, group.members.map((member) => member.asset_id)])),
+          destructive: plan.destructive,
+        };
+      }
       const groups = uniqueGroupIds.flatMap((groupId) => {
         const group = rawGroups.get(groupId);
         return group ? [group] : [];
@@ -457,7 +492,6 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         if (Object.keys(scoped.decisions).length !== group.members.length) throw new Error(`Group ${group.group_id} still has images without a decision.`);
         await saveDraft(group.group_id, scoped);
       }
-      await saveSelection(groups.map((group) => group.group_id), groups[0]?.group_id ?? null);
       const action_overrides = Object.fromEntries(groups.map((group) => [group.group_id, actionFor(groupResolution(resolution, group).decisions)]));
       const keeper_overrides = Object.fromEntries(groups.flatMap((group) => {
         const primary = primaryFor(groupResolution(resolution, group), group.members.map((member) => member.id));
@@ -467,24 +501,26 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         options: ANALYSIS_OPTIONS,
         group_ids: groups.map((group) => group.group_id),
         all_eligible: false,
-        workspace_selected: true,
+        workspace_selected: false,
         keeper_overrides,
         action_overrides,
       }));
-      return { id: plan.id, resolution, groupIds: groups.map((group) => group.group_id) };
+      return { id: plan.id, resolution, groupIds: groups.map((group) => group.group_id), destructive: plan.destructive };
     },
     async executePlan(plan: DuplicatePreparedPlan) {
-      const groups = plan.groupIds.flatMap((groupId) => {
-        const group = rawGroups.get(groupId);
-        return group ? [group] : [];
-      });
-      if (groups.length !== plan.groupIds.length) throw new Error('A duplicate group changed after review. Prepare the actions again.');
       const started = await requestJson<TaskStart>('/api/assets/duplicates/cross-source/execute', jsonRequest('POST', { plan_id: plan.id }));
       const completed = await waitForTask(tasks, started.task_id);
       const summary = completed.result?.summary as Record<string, unknown> | undefined;
       const rawFailed = summary?.failed_group_ids;
       const failed = Array.isArray(rawFailed) ? rawFailed.filter((id: unknown): id is string => typeof id === 'string') : [];
-      return failureResult(groups, failed);
+      if (plan.groupMemberIds) {
+        const failedGroups = new Set(failed);
+        return {
+          affectedIds: plan.groupIds.filter((id) => !failedGroups.has(id)).flatMap((id) => plan.groupMemberIds?.[id] ?? []),
+          failed: plan.groupIds.filter((id) => failedGroups.has(id)).flatMap((id) => (plan.groupMemberIds?.[id] ?? []).map((memberId) => ({ id: memberId, reason: `Duplicate group ${id} could not be resolved.` }))),
+        };
+      }
+      return failureResult(plan.groupIds.flatMap((id) => rawGroups.get(id) ?? []), failed);
     },
     async history(query) {
       return { items: [], total: 0, pageSize: query.pageSize, page: pageNumber(query), nextCursor: null };

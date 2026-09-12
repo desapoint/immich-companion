@@ -191,7 +191,6 @@ describe('live V2 duplicate repository', () => {
     expect(result).toEqual({ affectedIds: ASSET_IDS, failed: [] });
     expect(calls.map((call) => call.path).slice(2)).toEqual([
       '/api/assets/duplicates/workspace/group',
-      '/api/assets/duplicates/workspace/selection',
       '/api/assets/duplicates/cross-source/plan',
       '/api/assets/duplicates/cross-source/execute',
     ]);
@@ -202,6 +201,7 @@ describe('live V2 duplicate repository', () => {
     });
     expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
       group_ids: [group.group_id],
+      workspace_selected: false,
       action_overrides: { [group.group_id]: 'resolve' },
       keeper_overrides: { [group.group_id]: ASSET_IDS[0] },
     });
@@ -261,6 +261,57 @@ describe('live V2 duplicate repository', () => {
     expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
       group_ids: [group.group_id],
     });
+  });
+
+  it('plans every persisted selected group even when only another page is loaded', async () => {
+    const secondGroup = {
+      ...group,
+      group_id: 'immich-group:second',
+      provider_group_id: 'second',
+      member_fingerprint: 'fingerprint-second',
+      members: group.members.map((member, index) => ({
+        ...member,
+        id: index ? OVERLAP_ASSET_ID : '44444444-4444-4444-8444-444444444444',
+      })),
+    };
+    const selectedWorkspace = {
+      ...emptyWorkspace,
+      revision: 3,
+      selected_count: 2,
+      selected_group_ids: [group.group_id, secondGroup.group_id],
+    };
+    const planGroups = [group, secondGroup].map((item) => ({
+      group_id: item.group_id,
+      members: item.members.map((member, index) => ({
+        asset_id: member.id,
+        disposition: index ? 'delete' : 'keep',
+      })),
+      follow_up: null,
+    }));
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ path, body });
+      if (path.endsWith('/cross-source/search')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
+      if (path.endsWith('/workspace')) return response(selectedWorkspace);
+      if (path.endsWith('/cross-source/plan')) return response({ id: 'off-page-plan', groups: planGroups, destructive: true });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    const page = await repository.search({ page: 2, pageSize: 1 });
+    const plan = await repository.prepareDecisions({ decisions: {}, stacks: [] }, []);
+
+    expect(page.items.map((item) => item.id)).toEqual([secondGroup.group_id]);
+    expect(repository.selectedGroupIds()).toEqual([group.group_id, secondGroup.group_id]);
+    expect(plan.groupIds).toEqual([group.group_id, secondGroup.group_id]);
+    expect(plan.resolution.decisions).toMatchObject({ [ASSET_IDS[0]]: 'keep', [OVERLAP_ASSET_ID]: 'delete' });
+    expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({
+      group_ids: [],
+      workspace_selected: true,
+    });
+    expect(calls.some((call) => call.path.endsWith('/workspace/group'))).toBe(false);
   });
 
   it('clears every discovered group through one durable workspace reset', async () => {
