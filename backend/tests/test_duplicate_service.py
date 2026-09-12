@@ -1099,6 +1099,36 @@ async def test_similarity_backfill_includes_upload_images_without_stream_verific
 
 
 @pytest.mark.asyncio
+async def test_similarity_verification_fetches_only_discovered_candidates() -> None:
+    plausible = (
+        asset(UPLOAD_1, external=False, checksum="upload", filename="plausible-one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="plausible-two.jpg"),
+    )
+    unrelated = asset(EXTERNAL_2, external=True, checksum="other", filename="unrelated.jpg")
+
+    class CandidateDiscovery:
+        async def discover(self):
+            return [SimpleNamespace(assets=plausible)]
+
+    integrity = FakeIntegrity()
+    handler = CrossSourceDuplicateTaskHandler(
+        FakeImmich(group(*plausible, unrelated)),
+        FakeAssets(),
+        FakeReports([]),
+        integrity,
+        include_similarity=True,
+        discovery=CandidateDiscovery(),  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(
+        TaskContext(), DuplicateAnalysisOptions().model_dump(mode="json")
+    )
+
+    assert integrity.calls == [UPLOAD_1, EXTERNAL_1]
+    assert result.counters["candidate_files"] == 2
+
+
+@pytest.mark.asyncio
 async def test_review_does_not_queue_current_or_offline_external_evidence() -> None:
     content = b"same"
     current_group = group(

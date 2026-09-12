@@ -390,6 +390,14 @@ def create_app(
     )
     if task_coordinator is not None and integrity_handler is not None:
         task_coordinator.register_handler(integrity_handler)
+    duplicate_discovery = (
+        CompositeGroupDiscoveryProvider(
+            ImmichDuplicateProvider(immich),
+            SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
+        )
+        if similarity_scan_repository is not None and asset_repository is not None
+        else None
+    )
     duplicate_service = (
         CrossSourceDuplicateService(
             runtime_settings,
@@ -402,13 +410,7 @@ def create_app(
             duplicate_review_repository,
             duplicate_policy_repository,
             similarity_repository,
-            CompositeGroupDiscoveryProvider(
-                ImmichDuplicateProvider(immich),
-                SimilarityDuplicateProvider(
-                    similarity_scan_repository,
-                    asset_repository,
-                ),
-            ),
+            duplicate_discovery,
             stack_service,
         )
         if asset_repository is not None
@@ -431,6 +433,7 @@ def create_app(
                 integrity_repository,
                 integrity_handler,
                 include_similarity=True,
+                discovery=duplicate_discovery,
             )
         )
         task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))

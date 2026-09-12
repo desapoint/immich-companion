@@ -2517,7 +2517,7 @@ class CrossSourceDuplicateService:
 
 
 class CrossSourceDuplicateTaskHandler:
-    """Boundedly refresh integrity and visual evidence for Immich duplicate groups."""
+    """Verify originals only for discovered duplicate and similarity groups."""
 
     task_type = CROSS_SOURCE_DUPLICATE_TASK_TYPE
     lane_key = INTEGRITY_TASK_TYPE
@@ -2531,16 +2531,18 @@ class CrossSourceDuplicateTaskHandler:
         integrity: IntegrityTaskHandler,
         *,
         include_similarity: bool = False,
+        discovery: GroupDiscoveryProvider | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._reports = reports
         self._integrity = integrity
         self._include_similarity = include_similarity
+        self._discovery = discovery or ImmichDuplicateProvider(immich)
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         options = DuplicateAnalysisOptions.model_validate(payload)
-        groups = await self._immich.list_duplicate_groups()
+        groups = await self._discovery.discover()
         candidates: dict[UUID, ImmichAsset] = {}
         for group in groups:
             for asset in group.assets:
