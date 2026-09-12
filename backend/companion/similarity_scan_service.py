@@ -163,6 +163,7 @@ class SimilarityScanTaskHandler:
         scan_id = None
         index_counters: dict[str, int] = {}
         excluded_ids: list[UUID] = []
+        fingerprint_failure_reasons: dict[UUID, str] = {}
 
         def telemetry(**values: int) -> dict[str, int]:
             memory = process_memory_snapshot()
@@ -205,10 +206,13 @@ class SimilarityScanTaskHandler:
                     ),
                 )
             if self._indexer is not None:
-                coverage, indexed, unavailable, retry_attempted = await self._indexer.maintain(
-                    context,
-                    progress_ceiling=30,
-                )
+                (
+                    coverage,
+                    indexed,
+                    unavailable,
+                    retry_attempted,
+                    fingerprint_failure_reasons,
+                ) = await self._indexer.maintain(context, progress_ceiling=30)
                 index_counters = {
                     "eligible_images": coverage.eligible_count,
                     "current_fingerprints": coverage.current_count,
@@ -481,6 +485,11 @@ class SimilarityScanTaskHandler:
                 "fingerprints_excluded_after_retry": len(excluded_ids),
                 "excluded_asset_ids": [str(identifier) for identifier in excluded_ids[:100]],
                 "excluded_asset_ids_truncated": len(excluded_ids) > 100,
+                "excluded_asset_reasons": {
+                    str(identifier): fingerprint_failure_reasons[identifier]
+                    for identifier in excluded_ids[:100]
+                    if identifier in fingerprint_failure_reasons
+                },
             },
             counters=telemetry(
                 assets_with_current_features=len(features),

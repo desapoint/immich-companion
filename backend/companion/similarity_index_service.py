@@ -68,8 +68,8 @@ class SimilarityIndexMaintainer:
         context: TaskContext,
         *,
         progress_ceiling: float = 100.0,
-    ) -> tuple[SimilarityIndexCoverage, int, int, set[UUID]]:
-        """Fingerprint missing assets, retry unresolved work once, and report attempted IDs."""
+    ) -> tuple[SimilarityIndexCoverage, int, int, set[UUID], dict[UUID, str]]:
+        """Fingerprint missing assets, retry once, and report per-asset failures."""
 
         initial = await self.coverage()
         task = getattr(context, "task", None)
@@ -84,7 +84,7 @@ class SimilarityIndexMaintainer:
         unavailable = 0
         if total == 0 and saved.get("phase") in {"candidate_index", "scoring"}:
             # Preserve the scan's resumable candidate/scoring checkpoint.
-            return initial, 0, 0, set()
+            return initial, 0, 0, set(), {}
         await context.checkpoint(
             checkpoint={
                 "phase": "similarity_fingerprinting",
@@ -119,7 +119,8 @@ class SimilarityIndexMaintainer:
                 break
             for asset_id in page:
                 await context.ensure_active()
-                if await self._fingerprint(context, asset_id):
+                succeeded, _ = await self._fingerprint(context, asset_id, attempt="initial")
+                if succeeded:
                     completed += 1
                 else:
                     unavailable += 1
@@ -148,6 +149,7 @@ class SimilarityIndexMaintainer:
         retry_coverage = await self.coverage()
         retry_total = retry_coverage.missing_count + retry_coverage.stale_count
         retry_attempted: set[UUID] = set()
+        retry_failures: dict[UUID, str] = {}
         retry_completed = 0
         if retry_total:
             await context.checkpoint(
@@ -179,8 +181,11 @@ class SimilarityIndexMaintainer:
                 for asset_id in page:
                     await context.ensure_active()
                     retry_attempted.add(asset_id)
-                    if await self._fingerprint(context, asset_id):
+                    succeeded, reason = await self._fingerprint(context, asset_id, attempt="retry")
+                    if succeeded:
                         retry_completed += 1
+                    elif reason is not None:
+                        retry_failures[asset_id] = reason
                 retry_after = page[-1]
                 await context.checkpoint(
                     checkpoint={
@@ -208,16 +213,28 @@ class SimilarityIndexMaintainer:
             completed + retry_completed,
             final.missing_count + final.stale_count,
             retry_attempted,
+            retry_failures if not final.complete else {},
         )
 
-    async def _fingerprint(self, context: TaskContext, asset_id: UUID) -> bool:
+    async def _fingerprint(
+        self, context: TaskContext, asset_id: UUID, *, attempt: str
+    ) -> tuple[bool, str | None]:
         try:
             source = await self._immich.get_asset(asset_id)
             if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
                 await self._assets.refresh_asset(source, track_similarity_changes=False)
-                return False
+                reason = (
+                    "asset is trashed" if source.is_trashed else
+                    "asset is offline" if source.is_offline else
+                    f"asset type is {source.asset_type}, not IMAGE"
+                )
+                logger.warning(
+                    "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
+                    asset_id, attempt, reason,
+                )
+                return False, reason
             await self._assets.refresh_asset(source, track_similarity_changes=False)
-            await self._integrity.analyze(
+            report = await self._integrity.analyze(
                 context,
                 asset_id,
                 publish_progress=False,
@@ -225,15 +242,26 @@ class SimilarityIndexMaintainer:
                 track_similarity_changes=False,
             )
             feature = await self._features.get_similarity_feature(asset_id)
-            return similarity_feature_freshness(feature, source) == "current"
-        except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
+            freshness = similarity_feature_freshness(feature, source)
+            if freshness == "current":
+                return True, None
+            details = ", ".join(getattr(report, "issues", [])[:3])
+            reason = f"no current fingerprint persisted (freshness={freshness}"
+            if details:
+                reason += f"; analysis issues={details}"
+            reason += ")"
             logger.warning(
-                "Library fingerprint unavailable: asset_id=%s error_type=%s reason=%s",
-                asset_id,
-                type(error).__name__,
-                error,
+                "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
+                asset_id, attempt, reason,
             )
-            return False
+            return False, reason
+        except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
+            reason = f"{type(error).__name__}: {error}"
+            logger.warning(
+                "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
+                asset_id, attempt, reason,
+            )
+            return False, reason
 
 
 class SimilarityIndexTaskHandler:
@@ -248,9 +276,15 @@ class SimilarityIndexTaskHandler:
         self._maintainer = maintainer
 
     async def execute(self, context: TaskContext, _payload: dict[str, object]) -> TaskResult:
-        coverage, completed, unavailable, _ = await self._maintainer.maintain(context)
+        coverage, completed, unavailable, _, failures = await self._maintainer.maintain(context)
         return TaskResult(
-            summary={"coverage": coverage.model_dump(mode="json")},
+            summary={
+                "coverage": coverage.model_dump(mode="json"),
+                "unavailable_asset_reasons": {
+                    str(asset_id): reason for asset_id, reason in list(failures.items())[:100]
+                },
+                "unavailable_asset_reasons_truncated": len(failures) > 100,
+            },
             counters={
                 "eligible_images": coverage.eligible_count,
                 "current_fingerprints": coverage.current_count,

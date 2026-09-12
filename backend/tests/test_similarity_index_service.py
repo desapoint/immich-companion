@@ -150,12 +150,13 @@ async def test_library_index_reuses_committed_features_after_restart() -> None:
         batch_size=2,
     )
 
-    coverage, completed, unavailable, attempted = await maintainer.maintain(FakeContext())
+    coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(FakeContext())
 
     assert integrity.analyzed == [B, C]
     assert completed == 2
     assert unavailable == 0
     assert attempted == set()
+    assert reasons == {}
     assert coverage.complete is True
 
 
@@ -172,11 +173,12 @@ async def test_sixty_thousand_asset_catalog_only_pages_the_120_required_features
         batch_size=25,
     )
 
-    coverage, completed, unavailable, attempted = await maintainer.maintain(FakeContext())
+    coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(FakeContext())
 
     assert completed == 120
     assert unavailable == 0
     assert attempted == set()
+    assert reasons == {}
     assert coverage.eligible_count == 60_000
     assert coverage.current_count == 60_000
     assert [limit for _, limit in features.requested_pages] == [25] * 6
@@ -202,18 +204,19 @@ async def test_current_index_preserves_a_resumable_scan_checkpoint() -> None:
         FakeIntegrity(features),  # type: ignore[arg-type]
     )
 
-    coverage, completed, unavailable, attempted = await maintainer.maintain(
+    coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(
         context, progress_ceiling=30
     )
 
     assert coverage.complete is True
     assert (completed, unavailable) == (0, 0)
     assert attempted == set()
+    assert reasons == {}
     assert context.checkpoints == []
 
 
 @pytest.mark.asyncio
-async def test_eleven_persistent_failures_are_retried_once_and_reported() -> None:
+async def test_eleven_persistent_failures_are_retried_once_and_reported(caplog) -> None:
     failed_ids = [UUID(int=number) for number in range(1, 12)]
     features = FakeFeatures(failed_ids, eligible_count=60_000)
 
@@ -231,7 +234,7 @@ async def test_eleven_persistent_failures_are_retried_once_and_reported() -> Non
         batch_size=25,
     )
 
-    coverage, completed, unavailable, attempted = await maintainer.maintain(FakeContext())
+    coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(FakeContext())
 
     assert coverage.eligible_count == 60_000
     assert coverage.current_count == 59_989
@@ -239,7 +242,41 @@ async def test_eleven_persistent_failures_are_retried_once_and_reported() -> Non
     assert completed == 0
     assert unavailable == 11
     assert attempted == set(failed_ids)
+    assert reasons == {
+        asset_id: "PermanentTaskError: unsupported image" for asset_id in failed_ids
+    }
     assert integrity.analyzed == failed_ids * 2
+    failure_records = [
+        record for record in caplog.records if "Library fingerprint unavailable" in record.message
+    ]
+    assert len(failure_records) == 22
+    assert "attempt=retry reason=PermanentTaskError: unsupported image" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_analysis_without_a_feature_logs_its_issue_and_retry_reason(caplog) -> None:
+    features = FakeFeatures([A])
+
+    class UnfingerprintableIntegrity(FakeIntegrity):
+        async def analyze(self, context, asset_id, **kwargs):
+            self.analyzed.append(asset_id)
+            return SimpleNamespace(issues=["image_decode_unsupported"])
+
+    handler = SimilarityIndexTaskHandler(
+        SimilarityIndexMaintainer(
+            FakeImmich(),  # type: ignore[arg-type]
+            FakeAssets(),  # type: ignore[arg-type]
+            features,  # type: ignore[arg-type]
+            UnfingerprintableIntegrity(features),  # type: ignore[arg-type]
+        )
+    )
+
+    result = await handler.execute(FakeContext(), {})
+
+    reason = result.summary["unavailable_asset_reasons"][str(A)]
+    assert "freshness=missing" in reason
+    assert "image_decode_unsupported" in reason
+    assert f"asset_id={A} attempt=retry reason={reason}" in caplog.text
 
 
 @pytest.mark.asyncio

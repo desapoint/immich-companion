@@ -119,6 +119,7 @@
   let latestScan = $state.raw<SimilarityScanSummary | null>(null);
   const excludedFingerprintCount = $derived(Number(task?.task_type === 'similarity_scan' && task.status === 'completed' ? task.result?.summary?.fingerprints_excluded_after_retry ?? 0 : 0));
   const excludedFingerprintIds = $derived(task?.task_type === 'similarity_scan' && task.status === 'completed' && Array.isArray(task.result?.summary?.excluded_asset_ids) ? task.result.summary.excluded_asset_ids.filter((value): value is string => typeof value === 'string') : []);
+  const excludedFingerprintReasons = $derived(task?.task_type === 'similarity_scan' && task.status === 'completed' && task.result?.summary?.excluded_asset_reasons && typeof task.result.summary.excluded_asset_reasons === 'object' && !Array.isArray(task.result.summary.excluded_asset_reasons) ? task.result.summary.excluded_asset_reasons as Record<string, unknown> : {});
   let similarityThreshold = $state(95);
   let plan = $state.raw<DuplicateResolutionPlan | null>(null);
   let confirmOpen = $state(false);
@@ -1083,7 +1084,7 @@
     <details class="notice warning">
       <summary>{excludedFingerprintCount} images could not be fingerprinted after retry</summary>
       <p>Candidate search used the current fingerprints. These images were not compared and will be retried on a later scan.</p>
-      {#if excludedFingerprintIds.length}<ul>{#each excludedFingerprintIds as id (id)}<li><code>{id}</code></li>{/each}</ul>{/if}
+      {#if excludedFingerprintIds.length}<ul>{#each excludedFingerprintIds as id (id)}<li><code>{id}</code>{#if typeof excludedFingerprintReasons[id] === 'string'} — {excludedFingerprintReasons[id]}{/if}</li>{/each}</ul>{/if}
     </details>
   {/if}
 

@@ -366,6 +366,7 @@ async def test_scan_completes_library_index_before_candidate_search() -> None:
                 3,
                 0,
                 set(),
+                {},
             )
 
     class OrderedFeatures(FakeFeatures):
@@ -403,6 +404,7 @@ async def test_scan_proceeds_with_only_the_fingerprints_that_failed_after_retry(
                 2,
                 1,
                 {UUID(int=3)},
+                {UUID(int=3): "image_decode_unsupported"},
             )
 
     class IndexedFeatures(FakeFeatures):
@@ -424,6 +426,9 @@ async def test_scan_proceeds_with_only_the_fingerprints_that_failed_after_retry(
     assert scans.completed[1]["asset_count"] == 2
     assert result.counters["fingerprints_excluded_after_retry"] == 1
     assert result.summary["excluded_asset_ids"] == [str(UUID(int=3))]
+    assert result.summary["excluded_asset_reasons"] == {
+        str(UUID(int=3)): "image_decode_unsupported"
+    }
 
 
 @pytest.mark.asyncio
@@ -444,6 +449,7 @@ async def test_scan_stops_if_new_missing_work_appears_after_retry() -> None:
                 2,
                 1,
                 {UUID(int=4)},
+                {UUID(int=4): "image_decode_unsupported"},
             )
 
     class ChangedFeatures(FakeFeatures):
