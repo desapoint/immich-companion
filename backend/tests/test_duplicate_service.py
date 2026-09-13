@@ -2240,6 +2240,31 @@ async def test_duplicate_preset_resolves_applied_filter_only_for_all_matching() 
     assert filtered.last_applied_group_ids == []
     assert filtered.selected_group_ids == []
 
+    other_source = await service.apply_workspace_preset(
+        DuplicateWorkspacePresetRequest(
+            scope="all_matching", source_filter="similarity", disposition="keep"
+        )
+    )
+    assert other_source.last_applied_group_ids == []
+
+    matching_source = await service.apply_workspace_preset(
+        DuplicateWorkspacePresetRequest(
+            scope="all_matching", source_filter="immich", disposition="keep"
+        )
+    )
+    assert matching_source.last_applied_group_ids == [PUBLIC_GROUP_ID]
+    assert (await service.result()).groups[0].discovery_sources == ["immich_duplicate"]
+
+    wrong_page_source = await service.apply_workspace_preset(
+        DuplicateWorkspacePresetRequest(
+            scope="current_page",
+            group_ids=[PUBLIC_GROUP_ID],
+            source_filter="similarity",
+            disposition="keep",
+        )
+    )
+    assert wrong_page_source.last_applied_group_ids == []
+
     page = await service.apply_workspace_preset(
         DuplicateWorkspacePresetRequest(
             scope="current_page",

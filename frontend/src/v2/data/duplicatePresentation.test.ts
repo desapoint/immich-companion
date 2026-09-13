@@ -6,6 +6,7 @@ import { duplicateAssetSourceLabel, duplicateGroupTitle, duplicateKindLabel, ref
 function group(names: string[], kind = 'similar'): DuplicateGroupRecord {
   return {
     id: 'technical-group-id',
+    discoverySources: ['companion_similarity'],
     state: 'Needs review',
     kind,
     reason: null,

@@ -91,6 +91,21 @@ describe('duplicate review filters', () => {
     expect(duplicateWorkflowLabel(entry)).toBe('Auto ready');
   });
 
+  it('shows overlap groups under either discovery source', () => {
+    const similarity = projection({ group: group({ discovery_source: 'companion_similarity' }) });
+    const overlap = projection({ group: group({ discovery_sources: ['immich_duplicate', 'companion_similarity'] }) });
+
+    expect(duplicateGroupMatchesFilter(similarity, 'companion_similarity')).toBe(true);
+    expect(duplicateGroupMatchesFilter(similarity, 'immich_duplicates')).toBe(false);
+    expect(duplicateGroupMatchesFilter(overlap, 'immich_duplicates')).toBe(true);
+    expect(duplicateGroupMatchesFilter(overlap, 'companion_similarity')).toBe(true);
+    expect(countDuplicateReviewFilters([similarity, overlap])).toMatchObject({
+      all: 2,
+      immich_duplicates: 1,
+      companion_similarity: 2,
+    });
+  });
+
   it('prioritizes active analysis and integrity warnings', () => {
     const analyzing = projection({
       analysisPending: true,
@@ -140,6 +155,7 @@ describe('duplicate review filters', () => {
       stack_ready: 1,
       needs_review: 0,
       immich_duplicates: 3,
+      companion_similarity: 0,
     });
   });
 });

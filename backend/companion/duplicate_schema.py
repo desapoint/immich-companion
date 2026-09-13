@@ -581,6 +581,7 @@ class DuplicateWorkspaceResetRequest(BaseModel):
 class DuplicateWorkspacePresetRequest(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     scope: Literal["current_page", "all_matching"] = "current_page"
+    source_filter: Literal["both", "immich", "similarity"] = "both"
     review_filter: Literal[
         "All groups", "Needs review", "Auto-ready", "Blocked", "Actionable", "Needs decisions"
     ] = "All groups"

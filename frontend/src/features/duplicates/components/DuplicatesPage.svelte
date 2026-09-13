@@ -964,6 +964,8 @@
   }
 
   function discoveryLabel(group: ExactDuplicateGroup): string {
+    if (group.discovery_sources?.includes('immich_duplicate')
+      && group.discovery_sources.includes('companion_similarity')) return 'Immich + similarity scan';
     if (group.discovery_source === 'immich_duplicate') return 'Immich duplicate';
     const score = group.discovery_metadata?.similarity_percent;
     return score ? `Companion scan · ${Number(score).toFixed(1)}%` : 'Companion similarity scan';
@@ -1121,7 +1123,7 @@
     {#if loading}
       <p class="empty">Refreshing duplicate groups…</p>
     {:else if !result.groups.length}
-      <p class="empty">Immich currently reports no duplicate groups.</p>
+      <p class="empty">No duplicate groups are currently available.</p>
     {:else if !visibleReviewEntries.length}
       <p class="empty">No duplicate groups match this review filter.</p>
     {:else}

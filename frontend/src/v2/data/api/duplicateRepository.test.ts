@@ -20,6 +20,7 @@ const group = {
   similarity_validation_mode: 'linked',
   similarity_threshold_percent: 95,
   discovery_source: 'immich_duplicate',
+  discovery_sources: ['immich_duplicate'],
   provider_group_id: 'stable-provider-id',
   classification: 'exact_file',
   status: 'exact',
@@ -105,6 +106,35 @@ function tasks(): TaskRepository {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('live V2 duplicate repository', () => {
+  it('filters all groups before pagination and includes groups reported by both sources', async () => {
+    const similar = {
+      ...group,
+      group_id: 'similar-group',
+      discovery_source: 'companion_similarity',
+      discovery_sources: ['companion_similarity'],
+    };
+    const overlap = {
+      ...group,
+      group_id: 'overlap-group',
+      discovery_sources: ['immich_duplicate', 'companion_similarity'],
+    };
+    const result = { ...duplicateResult, groups: [group, similar, overlap], group_count: 3 };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(result)));
+    const repository = createDuplicateRepository(tasks());
+
+    const first = await repository.search({ page: 1, pageSize: 1, source: 'similarity' });
+    const second = await repository.search({ page: 2, pageSize: 1, source: 'similarity' });
+    const immich = await repository.search({ page: 1, pageSize: 10, source: 'immich' });
+    const both = await repository.search({ page: 1, pageSize: 10, source: 'both' });
+
+    expect(first).toMatchObject({ total: 2, nextCursor: '2', items: [{ id: 'similar-group' }] });
+    expect(second).toMatchObject({ total: 2, nextCursor: null, items: [{ id: 'overlap-group' }] });
+    expect(immich.items.map((item) => item.id)).toEqual([group.group_id, 'overlap-group']);
+    expect(both.total).toBe(3);
+    expect(second.items[0]?.discoverySources).toEqual(['immich_duplicate', 'companion_similarity']);
+  });
+
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {
     const requests: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -117,10 +147,10 @@ describe('live V2 duplicate repository', () => {
     }));
     const repository = createDuplicateRepository(tasks());
 
-    await repository.applyPreset('keep', 'all_matching', [], 'Needs review');
+    await repository.applyPreset('keep', 'all_matching', [], 'Needs review', 'similarity');
 
     expect(requests[0]).toMatchObject({
-      scope: 'all_matching', review_filter: 'Needs review', group_ids: [], disposition: 'keep',
+      scope: 'all_matching', review_filter: 'Needs review', source_filter: 'similarity', group_ids: [], disposition: 'keep',
     });
   });
 

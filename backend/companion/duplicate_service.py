@@ -1535,11 +1535,19 @@ class CrossSourceDuplicateService:
                 "Actionable" if request.review_filter == "Auto-ready" else request.review_filter
             )
 
+        source = (
+            "immich_duplicate"
+            if request.source_filter == "immich"
+            else "companion_similarity"
+        )
         targets = [
             group
             for group in result.groups
-            if (request.scope == "all_matching" and matches_filter(group))
-            or (request.scope == "current_page" and group.group_id in requested)
+            if (request.source_filter == "both" or source in group.discovery_sources)
+            and (
+                (request.scope == "all_matching" and matches_filter(group))
+                or (request.scope == "current_page" and group.group_id in requested)
+            )
         ]
         applied: list[str] = []
         skipped: list[str] = []

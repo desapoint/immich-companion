@@ -94,6 +94,7 @@ export interface DuplicatePreservationEvidence {
 export interface ExactDuplicateGroup {
   group_id: string;
   discovery_source: 'immich_duplicate' | 'companion_similarity';
+  discovery_sources?: Array<'immich_duplicate' | 'companion_similarity'>;
   provider_group_id: string | null;
   discovery_metadata?: Record<string, string>;
   classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';

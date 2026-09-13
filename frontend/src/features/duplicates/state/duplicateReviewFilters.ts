@@ -8,7 +8,8 @@ export type DuplicateReviewFilter =
   | 'needs_review'
   | 'analyzing'
   | 'integrity_warning'
-  | 'immich_duplicates';
+  | 'immich_duplicates'
+  | 'companion_similarity';
 
 export interface DuplicateReviewProjection {
   group: ExactDuplicateGroup;
@@ -21,7 +22,7 @@ export const duplicateReviewFilters: ReadonlyArray<{
   value: DuplicateReviewFilter;
   label: string;
 }> = [
-  { value: 'all', label: 'All' },
+  { value: 'all', label: 'Both sources' },
   { value: 'auto_ready', label: 'Auto ready' },
   { value: 'resolve_ready', label: 'Resolve ready' },
   { value: 'stack_ready', label: 'Stack ready' },
@@ -29,6 +30,7 @@ export const duplicateReviewFilters: ReadonlyArray<{
   { value: 'analyzing', label: 'Analyzing' },
   { value: 'integrity_warning', label: 'Integrity warning' },
   { value: 'immich_duplicates', label: 'Immich duplicates' },
+  { value: 'companion_similarity', label: 'Similarity engine' },
 ];
 
 export function duplicateGroupIsAnalyzing(entry: DuplicateReviewProjection): boolean {
@@ -50,7 +52,12 @@ export function duplicateGroupMatchesFilter(
   filter: DuplicateReviewFilter,
 ): boolean {
   if (filter === 'all') return true;
-  if (filter === 'immich_duplicates') return entry.group.discovery_source === 'immich_duplicate';
+  if (filter === 'immich_duplicates' || filter === 'companion_similarity') {
+    const source = filter === 'immich_duplicates' ? 'immich_duplicate' : 'companion_similarity';
+    return (entry.group.discovery_sources?.length
+      ? entry.group.discovery_sources
+      : [entry.group.discovery_source]).includes(source);
+  }
   if (filter === 'analyzing') return duplicateGroupIsAnalyzing(entry);
   if (filter === 'integrity_warning') return duplicateGroupHasIntegrityWarning(entry);
   if (filter === 'auto_ready') {

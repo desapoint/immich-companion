@@ -9,6 +9,7 @@ import type {
   DuplicateRepository,
   DuplicateResolutionPlan,
   DuplicateSearchQuery,
+  DuplicateSource,
   DuplicateState,
   MutationResult,
   PageResult,
@@ -16,6 +17,7 @@ import type {
 } from '../contracts';
 import type { TaskRecord, TaskRepository } from '../syncContracts';
 import { referenceFirstDuplicateMembers } from '../duplicatePresentation';
+import { matchesDuplicateSource } from '../duplicateSource';
 
 type AnalysisOptions = {
   keeper_policy: 'prefer_upload';
@@ -63,6 +65,8 @@ type ApiDuplicateMember = {
 };
 type ApiDuplicateGroup = {
   group_id: string;
+  discovery_source: DuplicateSource;
+  discovery_sources?: DuplicateSource[];
   reference_asset_id: string | null;
   group_similarity_percent: number | null;
   similarity_engine: string | null;
@@ -311,6 +315,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     const draft = draftFor(group.group_id);
     return {
       id: group.group_id,
+      discoverySources: group.discovery_sources?.length ? group.discovery_sources : [group.discovery_source],
       state: groupState(group, draft),
       kind: group.classification.replaceAll('_', ' '),
       reason: group.reason,
@@ -401,7 +406,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       rawGroups = new Map(result.groups.map((group) => [group.group_id, group]));
       const filtered = result.groups.filter((group) => {
         const state = groupState(group, draftFor(group.group_id));
-        return !query.state || query.state === 'All groups' || (query.state === 'Auto-ready' ? state === 'Actionable' : state === query.state);
+        const sources = group.discovery_sources?.length ? group.discovery_sources : [group.discovery_source];
+        return matchesDuplicateSource(sources, query.source ?? 'both')
+          && (!query.state || query.state === 'All groups' || (query.state === 'Auto-ready' ? state === 'Actionable' : state === query.state));
       });
       const page = pageNumber(query);
       const start = (page - 1) * query.pageSize;
@@ -412,9 +419,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     saveDraft,
     flushDrafts,
     saveSelection,
-    async applyPreset(disposition,scope,groupIds,reviewFilter){
+    async applyPreset(disposition,scope,groupIds,reviewFilter,sourceFilter){
       await Promise.all([...draftQueues.values()]);
-      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],review_filter:reviewFilter??'All groups',disposition}));
+      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],review_filter:reviewFilter??'All groups',source_filter:sourceFilter,disposition}));
       return{appliedGroupIds:workspace.last_applied_group_ids??[],skippedGroupIds:workspace.last_skipped_group_ids??[]};
     },
     async clearDecisions() {
