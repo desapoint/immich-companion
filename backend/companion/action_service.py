@@ -363,7 +363,7 @@ class AssetActionService:
         batch_size: int,
         throttle: bool,
     ) -> AssetActionResult:
-        """Apply, refresh once, and verify every relation in a reviewed plan."""
+        """Apply and verify relation changes, deferring repair during a global sync."""
 
         initial: dict[UUID, tuple[list[UUID], list[UUID]]] = {}
         api_failed: dict[UUID, list[UUID]] = {}
@@ -421,7 +421,15 @@ class AssetActionService:
                 if coverage is not None:
                     covered_by_global_sync = await coverage(successful_relations)
 
-                if covered_by_global_sync:
+                deferred_repair = False
+                if not covered_by_global_sync:
+                    enqueue = getattr(self._sync, "enqueue_relation_repair_during_sync", None)
+                    if enqueue is not None:
+                        deferred_repair = await enqueue(
+                            [(relation, relation_id) for relation_id in successful_relations]
+                        )
+
+                if covered_by_global_sync or deferred_repair:
                     present = operation in {"add_album", "add_tag"}
                     for relation_id in successful_relations:
                         for asset_id in initial[relation_id][0]:

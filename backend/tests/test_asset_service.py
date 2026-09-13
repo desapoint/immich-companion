@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -27,6 +28,41 @@ STACK_ID = UUID("55555555-5555-4555-8555-555555555555")
 TAG_ID = UUID("66666666-6666-4666-8666-666666666666")
 RUN_ID = UUID("77777777-7777-4777-8777-777777777777")
 OWNER_ID = UUID("88888888-8888-4888-8888-888888888888")
+
+
+@pytest.mark.asyncio
+async def test_relation_repair_is_queued_behind_active_sync_without_waiting() -> None:
+    class Coordinator:
+        def __init__(self) -> None:
+            self.submitted: list[tuple[str, dict[str, object], dict[str, object]]] = []
+            self.started = False
+
+        async def submit(self, task_type, payload, **options):
+            self.submitted.append((task_type, payload, options))
+            return SimpleNamespace(id=RUN_ID)
+
+        async def start(self):
+            self.started = True
+
+    coordinator = Coordinator()
+    service = object.__new__(AssetSyncService)
+    service._coordinator = coordinator  # type: ignore[assignment]
+
+    async def status():
+        return SimpleNamespace(active=SimpleNamespace(id=RUN_ID), pending=None)
+
+    service.status = status  # type: ignore[method-assign]
+    queued = await service.enqueue_relation_repair_during_sync([("tag", TAG_ID)])
+
+    assert queued is True
+    assert coordinator.submitted == [
+        (
+            "asset_relation_repair",
+            {"relations": [{"kind": "tag", "id": str(TAG_ID)}]},
+            {"priority": 95},
+        )
+    ]
+    assert coordinator.started is True
 
 
 def asset(asset_id: UUID, filename: str) -> ImmichAsset:

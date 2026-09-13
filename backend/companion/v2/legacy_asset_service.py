@@ -843,6 +843,32 @@ class AssetSyncService:
                     await asyncio.sleep(delay)
                     await self.start(run.mode)
 
+    async def enqueue_relation_repair_during_sync(
+        self, relations: list[tuple[str, UUID]]
+    ) -> bool:
+        """Queue authoritative repair after active sync without delaying an action."""
+
+        if self._coordinator is None or not relations:
+            return False
+        status = await self.status()
+        if status.active is None and status.pending is None:
+            return False
+        unique_relations = sorted(set(relations), key=lambda item: (item[0], str(item[1])))
+        await self._coordinator.submit(
+            "asset_relation_repair",
+            {
+                "relations": [
+                    {"kind": kind, "id": str(relation_id)}
+                    for kind, relation_id in unique_relations
+                ]
+            },
+            priority=95,
+            # Do not deduplicate two user mutations against the same relation:
+            # the first repair may finish before the second mutation is applied.
+        )
+        await self._coordinator.start()
+        return True
+
     async def reconcile_targets(
         self,
         asset_ids: list[UUID],

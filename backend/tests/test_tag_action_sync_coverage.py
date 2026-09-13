@@ -7,6 +7,7 @@ import pytest
 
 from companion.action_service import AssetActionService
 from companion.config import Settings
+from companion.immich import ImmichApiError
 
 TAG_ID = UUID("77777777-7777-4777-8777-777777777777")
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
@@ -146,3 +147,59 @@ async def test_tag_fallback_repair_receives_only_assets_that_changed() -> None:
 
     assert immich.added == [[ASSET_ONE]]
     assert sync.repair_calls == [([ASSET_ONE], [("tag", TAG_ID)])]
+
+
+@pytest.mark.asyncio
+async def test_tag_action_completes_while_global_sync_repair_is_queued() -> None:
+    class DeferredSync(CoveringSync):
+        def __init__(self) -> None:
+            super().__init__(False)
+            self.queued: list[tuple[str, UUID]] = []
+
+        async def enqueue_relation_repair_during_sync(self, relations):
+            self.queued = relations
+            return True
+
+        async def reconcile_targets(self, *_args, **_kwargs):
+            raise AssertionError("the action must not wait for the full sync lane")
+
+    assets = FakeAssets()
+    sync = DeferredSync()
+    service, _, immich = make_service(assets, sync)
+
+    result = await service._execute_relations(
+        record([ASSET_ONE]), "add_tag", [ASSET_ONE], batch_size=50, throttle=False
+    )
+
+    assert immich.added == [[ASSET_ONE]]
+    assert sync.queued == [("tag", TAG_ID)]
+    assert assets.membership_events == [("tag", TAG_ID, ASSET_ONE, True)]
+    assert result.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_missing_asset_failure_does_not_queue_relation_repair() -> None:
+    class MissingImmich(FakeImmich):
+        async def add_assets_to_tag(self, _tag_id, _asset_ids):
+            raise ImmichApiError("add tag to missing asset", status_code=404)
+
+    class DeferredSync(CoveringSync):
+        queued = False
+
+        async def enqueue_relation_repair_during_sync(self, _relations):
+            self.queued = True
+            return True
+
+    assets = FakeAssets()
+    sync = DeferredSync(False)
+    service, _, _ = make_service(assets, sync)
+    service._immich = MissingImmich()  # type: ignore[assignment]
+
+    result = await service._execute_relations(
+        record([ASSET_ONE]), "add_tag", [ASSET_ONE], batch_size=50, throttle=False
+    )
+
+    assert result.status == "failed"
+    assert result.failed_ids == [ASSET_ONE]
+    assert assets.membership_events == []
+    assert sync.queued is False
