@@ -7,7 +7,9 @@
   import DuplicateDispositionControls from '../../../lib/components/domain/DuplicateDispositionControls.svelte';
   import StackPrimaryControl from '../../../lib/components/domain/StackPrimaryControl.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import LoadingSpinner from '../../../lib/components/ui/LoadingSpinner.svelte';
   import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
+  import Pagination from '../../../lib/components/ui/Pagination.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import { loadDuplicatePolicy, loadImmichLibraries, saveDuplicatePolicy } from '../../../lib/api/duplicatePolicyApi';
   import type { SelectOption } from '../../../lib/types/ui';
@@ -55,6 +57,11 @@
     type DuplicateReviewFilter,
     type DuplicateReviewProjection,
   } from '../state/duplicateReviewFilters';
+  import {
+    DEFAULT_DUPLICATE_PAGE_SIZE,
+    DUPLICATE_PAGE_SIZE_OPTIONS,
+    paginateDuplicateReviewEntries,
+  } from '../state/duplicateReviewPagination';
 
   interface Props {
     onpreview: (request: DuplicatePreviewRequest) => void;
@@ -113,6 +120,9 @@
   const draftSaveErrors = new SvelteMap<string, string>();
   let loading = $state(true);
   let busy = $state(false);
+  let operationLabel = $state<string | null>(null);
+  let pageChanging = $state(false);
+  let pageChangeTimer: ReturnType<typeof setTimeout> | null = null;
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
   let task = $state.raw<DuplicateTaskStatus | null>(null);
@@ -132,6 +142,8 @@
   let applyRulesAfterAnalysis = false;
   const pendingRuleApplicationTaskKey = 'immich-companion:duplicates:pending-rule-application-task';
   let activeFilter = $state<DuplicateReviewFilter>('all');
+  let reviewPage = $state(1);
+  let reviewPageSize = $state(DEFAULT_DUPLICATE_PAGE_SIZE);
 
   const autoReadyGroups = $derived(
     result?.groups.filter(
@@ -164,6 +176,12 @@
   const reviewFilterCounts = $derived(countDuplicateReviewFilters(reviewEntries));
   const visibleReviewEntries = $derived(
     reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
+  );
+  const pagedReview = $derived(
+    paginateDuplicateReviewEntries(visibleReviewEntries, reviewPage, reviewPageSize),
+  );
+  const overlayLabel = $derived(
+    operationLabel ?? (loading ? 'Loading duplicate groups…' : pageChanging ? 'Changing page…' : null),
   );
   const visibleGroupIds = $derived(new Set(visibleReviewEntries.map((entry) => entry.group.group_id)));
   const visibleSelectedCount = $derived(
@@ -222,6 +240,8 @@
   function jumpToGroup(groupId: string): void {
     if (!result?.groups.some((group) => group.group_id === groupId)) return;
     activeFilter = 'all';
+    const index = result.groups.findIndex((group) => group.group_id === groupId);
+    reviewPage = Math.floor(index / reviewPageSize) + 1;
     activeGroupId = groupId;
     void persistWorkspace();
     requestAnimationFrame(() => {
@@ -236,14 +256,14 @@
     loading = true;
     error = null;
     try {
-      const [loaded, latest, scanTasks] = await Promise.all([
+      const [loaded, latest, scanTasks, restored] = await Promise.all([
         loadDuplicateGroups(appliedOptions),
         loadLatestSimilarityScan(),
         loadSimilarityScanTasks(),
+        loadDuplicateWorkspace(),
       ]);
       result = loaded;
       latestScan = latest;
-      const restored = await loadDuplicateWorkspace();
       workspace = restored;
       groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
       const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
@@ -287,6 +307,29 @@
     } finally {
       loading = false;
     }
+  }
+
+  function changeReviewPage(nextPage: number): void {
+    if (nextPage === pagedReview.page || pageChanging) return;
+    pageChanging = true;
+    if (pageChangeTimer) clearTimeout(pageChangeTimer);
+    pageChangeTimer = setTimeout(() => {
+      reviewPage = nextPage;
+      pageChangeTimer = setTimeout(() => {
+        pageChanging = false;
+        pageChangeTimer = null;
+      }, 40);
+    }, 40);
+  }
+
+  function changeReviewPageSize(nextSize: number): void {
+    reviewPageSize = nextSize;
+    reviewPage = 1;
+  }
+
+  function changeReviewFilter(nextFilter: DuplicateReviewFilter): void {
+    activeFilter = nextFilter;
+    reviewPage = 1;
   }
 
   type DuplicateTaskKind = 'analysis' | 'similarity' | 'resolution';
@@ -710,15 +753,20 @@
   async function applyBulkAction(): Promise<void> {
     if (!result || !bulkTargetGroups.length) return;
     busy = true;
+    operationLabel = 'Updating selected groups…';
     error = null;
     try {
-      for (const group of bulkTargetGroups) {
+      for (const [index, group] of bulkTargetGroups.entries()) {
         if (bulkAction === 'keep_all') applyGroupPreset(group, 'keep');
         else if (bulkAction === 'mark_all_delete') applyGroupPreset(group, 'delete');
         else if (bulkAction === 'stack_all') applyGroupPreset(group, 'stack');
+        if (index % 25 === 24) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
       }
     } finally {
       busy = false;
+      operationLabel = null;
     }
   }
 
@@ -726,6 +774,7 @@
     if (!groupIds.length) return;
     invalidatePlan();
     busy = true;
+    operationLabel = 'Clearing saved decisions…';
     error = null;
     message = null;
     try {
@@ -743,10 +792,12 @@
       error = reason instanceof Error ? reason.message : 'Could not clear saved decisions.';
     } finally {
       busy = false;
+      operationLabel = null;
     }
   }
 
   async function dismissStaleSelection(): Promise<void> {
+    operationLabel = 'Updating selection…';
     try {
       const restored = await saveDuplicateWorkspaceSelection({
         options: appliedOptions,
@@ -756,6 +807,8 @@
       restoreWorkspaceState(restored);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not clear stale selection entries.';
+    } finally {
+      operationLabel = null;
     }
   }
 
@@ -826,6 +879,7 @@
       return;
     }
     busy = true;
+    operationLabel = 'Preparing review actions…';
     error = null;
     message = null;
     const groupIds = groups.map((group) => group.group_id);
@@ -850,6 +904,7 @@
       error = reason instanceof Error ? reason.message : 'Could not prepare the duplicate plan.';
     } finally {
       busy = false;
+      operationLabel = null;
     }
   }
 
@@ -870,6 +925,7 @@
   async function executePlan(): Promise<void> {
     if (!plan) return;
     busy = true;
+    operationLabel = 'Starting reviewed actions…';
     error = null;
     try {
       const started = await executeDuplicateResolution(plan.id);
@@ -879,6 +935,8 @@
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not execute the duplicate plan.';
+    } finally {
+      operationLabel = null;
     }
   }
 
@@ -893,6 +951,7 @@
   async function applyRules(): Promise<void> {
     const nextOptions = configuredOptions();
     busy = true;
+    operationLabel = 'Applying duplicate rules…';
     error = null;
     message = null;
     appliedOptions = nextOptions;
@@ -925,11 +984,14 @@
       applyRulesAfterAnalysis = false;
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not apply duplicate rules.';
+    } finally {
+      operationLabel = null;
     }
   }
 
   async function scanForSimilarImages(): Promise<void> {
     busy = true;
+    operationLabel = 'Starting similarity scan…';
     error = null;
     message = null;
     try {
@@ -943,11 +1005,14 @@
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not start the similarity scan.';
+    } finally {
+      operationLabel = null;
     }
   }
 
   async function cancelSimilarityScan(): Promise<void> {
     if (!task || task.task_type !== 'similarity_scan') return;
+    operationLabel = 'Cancelling similarity scan…';
     error = null;
     try {
       task = await cancelDuplicateTask(task.id);
@@ -960,6 +1025,8 @@
       }
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not cancel the similarity scan.';
+    } finally {
+      operationLabel = null;
     }
   }
 
@@ -980,31 +1047,42 @@
 
   onMount(() => {
     void (async () => {
-      try {
-        const [policy, libraries] = await Promise.all([
-          loadDuplicatePolicy(),
-          loadImmichLibraries(),
-        ]);
-        options = { ...policy };
-        appliedOptions = { ...policy };
-        similarityThreshold = policy.similarity_threshold_percent;
+      let policyFailure: string | null = null;
+      const librariesPromise = loadImmichLibraries().then((libraries) => {
         libraryOptions = libraries.map((library) => ({
           value: library.id,
           label: `${library.name}${library.assetCount === null ? '' : ` · ${library.assetCount} assets`}`,
         }));
+        return null;
+      }).catch((reason: unknown) => {
+        return reason instanceof Error ? reason.message : 'Could not load Immich libraries.';
+      });
+      try {
+        const policy = await loadDuplicatePolicy();
+        options = { ...policy };
+        appliedOptions = { ...policy };
+        similarityThreshold = policy.similarity_threshold_percent;
       } catch (reason) {
-        error = reason instanceof Error ? reason.message : 'Could not load duplicate policy.';
+        policyFailure = reason instanceof Error ? reason.message : 'Could not load duplicate policy.';
       }
       await load();
+      const libraryFailure = await librariesPromise;
+      if (!error) error = policyFailure ?? libraryFailure;
     })();
     return () => {
       if (pollTimer) clearTimeout(pollTimer);
+      if (pageChangeTimer) clearTimeout(pageChangeTimer);
       flushAllDraftsBestEffort();
     };
   });
 </script>
 
-<section class="duplicates-page" aria-labelledby="duplicates-title">
+<section class="duplicates-page" aria-labelledby="duplicates-title" aria-busy={overlayLabel !== null}>
+  {#if overlayLabel}
+    <div class="page-overlay" role="status" aria-live="polite">
+      <div class="page-overlay-content"><LoadingSpinner size="2rem" /><strong>{overlayLabel}</strong></div>
+    </div>
+  {/if}
   <header class="page-intro">
     <div><span>Review workspace</span><h1 id="duplicates-title">Duplicates</h1></div>
     <p>Review Immich duplicate groups, verify exact file contents, choose which copy to keep, and resolve approved groups in one guarded batch.</p>
@@ -1100,7 +1178,7 @@
       <div><strong>{reviewFilterCounts.analyzing}</strong><span>Analyzing</span></div>
     </section>
 
-    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading} onchange={(filter) => activeFilter = filter} />
+    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading || pageChanging} onchange={changeReviewFilter} />
 
     {#if workspace?.stale_selected_groups.length}
       <div class="notice stale-workspace" role="status">
@@ -1120,15 +1198,26 @@
       <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review actions</button>
     </div>
 
-    {#if loading}
-      <p class="empty">Refreshing duplicate groups…</p>
-    {:else if !result.groups.length}
+    {#if !result.groups.length}
       <p class="empty">No duplicate groups are currently available.</p>
     {:else if !visibleReviewEntries.length}
       <p class="empty">No duplicate groups match this review filter.</p>
     {:else}
+      <Pagination
+        currentPage={pagedReview.page}
+        totalPages={pagedReview.pages}
+        totalItems={visibleReviewEntries.length}
+        pageSize={reviewPageSize}
+        pageSizeOptions={DUPLICATE_PAGE_SIZE_OPTIONS}
+        allowPageSizeChange
+        hideWhenSinglePage
+        disabled={loading || pageChanging}
+        label="Duplicate groups pages"
+        onpagechange={changeReviewPage}
+        onpagesizechange={changeReviewPageSize}
+      />
       <div class="groups">
-        {#each visibleReviewEntries as entry (entry.group.group_id)}
+        {#each pagedReview.entries as entry (entry.group.group_id)}
           {@const group = entry.group}
           {@const blockedReason = actionabilityReason(group)}
           {@const currentDraft = draftFor(group)}
@@ -1222,9 +1311,20 @@
           </article>
         {/each}
       </div>
+      <Pagination
+        currentPage={pagedReview.page}
+        totalPages={pagedReview.pages}
+        totalItems={visibleReviewEntries.length}
+        pageSize={reviewPageSize}
+        pageSizeOptions={DUPLICATE_PAGE_SIZE_OPTIONS}
+        allowPageSizeChange
+        hideWhenSinglePage
+        disabled={loading || pageChanging}
+        label="Duplicate groups pages, bottom"
+        onpagechange={changeReviewPage}
+        onpagesizechange={changeReviewPageSize}
+      />
     {/if}
-  {:else if loading}
-    <p class="empty">Loading Immich duplicate groups…</p>
   {/if}
 </section>
 
@@ -1243,6 +1343,8 @@
 
 <style>
   .duplicates-page { display: grid; gap: 1.25rem; }
+  .page-overlay { position: fixed; z-index: 90; inset: var(--app-header-height, 0px) 0 0; display: grid; place-items: center; background: color-mix(in srgb, var(--color-canvas) 72%, transparent); backdrop-filter: blur(2px); }
+  .page-overlay-content { display: flex; align-items: center; gap: .8rem; padding: 1rem 1.25rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-ink-strong); background: var(--color-surface-raised); box-shadow: var(--shadow-card); font-size: .85rem; }
   .page-intro { display: grid; grid-template-columns: minmax(15rem, .75fr) minmax(18rem, 1fr); gap: 1.5rem; align-items: end; }
   .page-intro span { color: var(--color-accent-strong); font-size: .68rem; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
   h1 { margin: .28rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.055em; line-height: .98; }
