@@ -22,14 +22,18 @@ SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
 ).hexdigest()
 
 
-def extract_search_feature(preview: bytes) -> VisualFeatureResult | None:
+def extract_search_feature(
+    preview: bytes, *, timings: dict[str, int] | None = None
+) -> VisualFeatureResult | None:
     """Decode a bounded Immich-generated preview without normalized-pixel hashing."""
 
     if not preview or len(preview) > MAX_SEARCH_PREVIEW_BYTES:
         return None
     # Pillow recognizes the encoded preview format; the JPEG hint only disables
     # the original-only TIFF/RAW fallback for generated media.
-    return extract_visual_features(BytesIO(preview), "jpeg", include_pixel_hash=False)
+    return extract_visual_features(
+        BytesIO(preview), "jpeg", include_pixel_hash=False, timings=timings
+    )
 
 
 def search_source_identity(

@@ -52,8 +52,9 @@ preview nor fallback search evidence proves original pixel equality. Explicit
 integrity analysis retains its full-original validation and pixel hash.
 
 The index task reports generated/reused/fallback/failure counts, preview and
-original bytes, and aggregate metadata, fetch, extraction, and persistence
-milliseconds. Scan counters include bounded candidate and pair-scoring work.
+original bytes, and aggregate metadata, fetch, decode, feature extraction,
+pixel-hash, and persistence milliseconds. Scan counters include bounded
+candidate and pair-scoring work.
 Compare two completed task counter sets and coverage counts to benchmark an
 initial bootstrap versus a no-change scan. Preview fetch and decode concurrency
 default to two each; `SIMILARITY_PREVIEW_FETCH_SLOTS` and

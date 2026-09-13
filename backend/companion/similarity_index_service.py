@@ -76,6 +76,10 @@ class SimilarityIndexMaintainer:
     def _count(self, key: str, value: int = 1) -> None:
         self._metrics[key] = self._metrics.get(key, 0) + value
 
+    def _record_timings(self, timings: dict[str, int]) -> None:
+        for key, value in timings.items():
+            self._count(key, value)
+
     def metrics(self) -> dict[str, int]:
         return dict(self._metrics)
 
@@ -107,13 +111,16 @@ class SimilarityIndexMaintainer:
             self._measure("original_fetch", started)
             self._count("original_bytes_downloaded", total)
             started = perf_counter()
+            timings: dict[str, int] = {}
             decoded, feature = await asyncio.to_thread(
                 decode_and_extract_features,
                 spool,
                 detect_file_format(bytes(prefix)),
                 include_pixel_hash=False,
+                timings=timings,
             )
-            self._measure("feature_extraction", started)
+            self._measure("decode_feature_wall", started)
+            self._record_timings(timings)
             self._count("original_decodes")
             if decoded.valid is not True or feature is None:
                 raise ValueError("original could not produce coarse visual evidence")
@@ -170,6 +177,9 @@ class SimilarityIndexMaintainer:
             "failed_or_skipped_attempts": 0,
             "preview_bytes_downloaded": 0,
             "original_bytes_downloaded": 0,
+            "decode_milliseconds": 0,
+            "feature_extraction_milliseconds": 0,
+            "normalized_pixel_hash_milliseconds": 0,
         }
         task = getattr(context, "task", None)
         saved = dict(getattr(task, "checkpoint", {}) or {})
@@ -367,8 +377,12 @@ class SimilarityIndexMaintainer:
             if preview is not None:
                 async with self._decode_slots:
                     started = perf_counter()
-                    feature = await asyncio.to_thread(extract_search_feature, preview)
-                    self._measure("feature_extraction", started)
+                    timings = {}
+                    feature = await asyncio.to_thread(
+                        extract_search_feature, preview, timings=timings
+                    )
+                    self._measure("decode_feature_wall", started)
+                    self._record_timings(timings)
                     self._count("preview_decodes")
             origin = "preview"
             if feature is None:

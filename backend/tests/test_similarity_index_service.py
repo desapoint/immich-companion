@@ -310,6 +310,9 @@ async def test_invalid_preview_uses_bounded_original_without_pixel_hash() -> Non
     assert maintainer.metrics()["fallbacks_to_original"] == 1
     assert maintainer.metrics()["original_bytes_downloaded"] == len(PREVIEW)
     assert maintainer.metrics()["deep_verifications_performed"] == 0
+    assert "decode_milliseconds" in maintainer.metrics()
+    assert "feature_extraction_milliseconds" in maintainer.metrics()
+    assert maintainer.metrics()["normalized_pixel_hash_milliseconds"] == 0
 
 
 @pytest.mark.asyncio
@@ -454,13 +457,13 @@ async def test_preview_fetch_and_decode_have_independent_bounded_slots(monkeypat
     active_decodes = 0
     peak_decodes = 0
 
-    def slow_decode(preview):
+    def slow_decode(preview, *, timings=None):
         nonlocal active_decodes, peak_decodes
         with lock:
             active_decodes += 1
             peak_decodes = max(peak_decodes, active_decodes)
         time.sleep(0.01)
-        feature = extract_search_feature(preview)
+        feature = extract_search_feature(preview, timings=timings)
         with lock:
             active_decodes -= 1
         return feature

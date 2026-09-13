@@ -10,6 +10,7 @@ import struct
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
+from time import perf_counter
 from typing import BinaryIO
 
 import rawpy
@@ -233,6 +234,7 @@ def _build_feature(
     has_gps: bool,
     has_orientation_metadata: bool,
     include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
 ) -> VisualFeatureResult:
     normalized = _srgb_image(image)
     width, height = normalized.size
@@ -253,6 +255,14 @@ def _build_feature(
             icc_profile_present,
         )
     )
+    pixel_hash = None
+    if include_pixel_hash:
+        started = perf_counter()
+        pixel_hash = _pixel_sha256(normalized)
+        if timings is not None:
+            timings["normalized_pixel_hash_milliseconds"] = round(
+                (perf_counter() - started) * 1000
+            )
     return VisualFeatureResult(
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
@@ -263,7 +273,7 @@ def _build_feature(
         color_histogram=_color_histogram(normalized),
         thumbnail_sha256=thumbnail_sha256,
         pixel_normalization_version=PIXEL_NORMALIZATION_VERSION,
-        pixel_sha256=_pixel_sha256(normalized) if include_pixel_hash else None,
+        pixel_sha256=pixel_hash,
         bit_depth=bit_depth,
         channel_count=channel_count,
         has_alpha=has_alpha,
@@ -327,7 +337,8 @@ def _extract_raw_visual_features(
 
 
 def _feature_from_loaded_image(
-    source: Image.Image, *, include_pixel_hash: bool
+    source: Image.Image, *, include_pixel_hash: bool,
+    timings: dict[str, int] | None = None,
 ) -> VisualFeatureResult:
     exif = source.getexif()
     orientation_value = exif.get(274)
@@ -346,6 +357,7 @@ def _feature_from_loaded_image(
         has_gps=bool(exif.get(34853)),
         has_orientation_metadata=orientation is not None,
         include_pixel_hash=include_pixel_hash,
+        timings=timings,
     )
 
 
@@ -354,12 +366,14 @@ def decode_and_extract_features(
     detected_format: DetectedFormat,
     *,
     include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
 ) -> tuple[ImageDecodeResult, VisualFeatureResult | None]:
     """Validate and extract from the same decoded original image."""
 
     if detected_format not in SUPPORTED_FORMATS:
         return ImageDecodeResult(supported=False, valid=None), None
     try:
+        decode_started = perf_counter()
         stream.seek(0)
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -375,10 +389,19 @@ def decode_and_extract_features(
                 decoded = ImageDecodeResult(
                     supported=True, valid=True, width=width, height=height
                 )
-                try:
-                    feature = _feature_from_loaded_image(
-                        source, include_pixel_hash=include_pixel_hash
+                if timings is not None:
+                    timings["decode_milliseconds"] = round(
+                        (perf_counter() - decode_started) * 1000
                     )
+                try:
+                    feature_started = perf_counter()
+                    feature = _feature_from_loaded_image(
+                        source, include_pixel_hash=include_pixel_hash, timings=timings
+                    )
+                    if timings is not None:
+                        timings["feature_extraction_milliseconds"] = round(
+                            (perf_counter() - feature_started) * 1000
+                        )
                 except (OSError, SyntaxError, ValueError) as error:
                     logger.warning(
                         "Similarity feature extraction failed after decode: "
@@ -400,10 +423,15 @@ def decode_and_extract_features(
         ), None
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         if detected_format == "tiff":
+            raw_started = perf_counter()
             feature = _extract_raw_visual_features(
                 stream, include_pixel_hash=include_pixel_hash
             )
             if feature is not None:
+                if timings is not None:
+                    timings["decode_milliseconds"] = round(
+                        (perf_counter() - raw_started) * 1000
+                    )
                 return ImageDecodeResult(
                     supported=True, valid=True, width=feature.width, height=feature.height
                 ), feature
@@ -424,11 +452,12 @@ def extract_visual_features(
     detected_format: DetectedFormat,
     *,
     include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
 ) -> VisualFeatureResult | None:
     """Compatibility wrapper for callers that only need visual evidence."""
 
     _, feature = decode_and_extract_features(
-        stream, detected_format, include_pixel_hash=include_pixel_hash
+        stream, detected_format, include_pixel_hash=include_pixel_hash, timings=timings
     )
     return feature
 
