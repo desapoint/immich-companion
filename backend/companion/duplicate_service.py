@@ -600,6 +600,8 @@ class CrossSourceDuplicateService:
                         dimensions_equal=edge.dimensions_equal,
                         exact_thumbnail_match=edge.exact_thumbnail_match,
                         exact_pixel_match=edge.exact_pixel_match,
+                        detail_changed_percent=edge.detail_changed_percent,
+                        detail_source=edge.detail_source,
                         model_version=edge.model_version,
                         feature_version=edge.feature_version,
                         comparison_version=edge.comparison_version,

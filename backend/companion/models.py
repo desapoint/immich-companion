@@ -151,6 +151,23 @@ class AssetSimilaritySearchFeatureRecord(Base):
     )
 
 
+class AssetSimilarityDetailFeatureRecord(Base):
+    """Candidate-only local-detail evidence from an original or full-size transcode."""
+
+    __tablename__ = "asset_similarity_detail_features"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class AssetSimilarityFeatureRecord(Base):
     """Latest compatible compact visual feature for one active asset."""
 
@@ -230,6 +247,9 @@ class AssetSimilarityEdgeRecord(Base):
     dimensions_equal: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_pixel_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    detail_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    detail_changed_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
@@ -322,6 +342,8 @@ class SimilarityScanPairRecord(Base):
     dimensions_equal: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_pixel_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    detail_changed_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     __table_args__ = (
         Index("ix_similarity_scan_pairs_assets", asset_id_low, asset_id_high),

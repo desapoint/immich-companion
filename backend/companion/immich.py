@@ -736,7 +736,7 @@ class ImmichApiClient:
         self,
         asset_id: UUID,
         *,
-        kind: Literal["original", "video_playback", "preview"],
+        kind: Literal["original", "video_playback", "preview", "fullsize"],
         request_headers: Mapping[str, str] | None = None,
         chunk_size: int = 1024 * 1024,
     ) -> AsyncIterator[ImmichMediaStream]:
@@ -748,11 +748,13 @@ class ImmichApiClient:
             "original": f"/api/assets/{asset_id}/original",
             "video_playback": f"/api/assets/{asset_id}/video/playback",
             "preview": f"/api/assets/{asset_id}/thumbnail?size=preview",
+            "fullsize": f"/api/assets/{asset_id}/thumbnail?size=fullsize",
         }
         operations = {
             "original": "stream original asset",
             "video_playback": "stream video playback",
             "preview": "stream asset preview",
+            "fullsize": "stream asset full-size image",
         }
         path = paths[kind]
         operation = operations[kind]
@@ -831,6 +833,25 @@ class ImmichApiClient:
                 total += len(chunk)
                 if total > max_bytes:
                     raise ImmichApiError("asset preview exceeds similarity size limit")
+                chunks.append(chunk)
+            return b"".join(chunks)
+
+    async def get_bounded_fullsize(self, asset_id: UUID, *, max_bytes: int) -> bytes:
+        """Read Immich's optional full-size generated image with a hard body cap."""
+
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        async with self.stream_asset_media(
+            asset_id, kind="fullsize", chunk_size=min(max_bytes, 1024 * 1024)
+        ) as media:
+            if media.content_length is not None and media.content_length > max_bytes:
+                raise ImmichApiError("asset full-size image exceeds similarity size limit")
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in media.chunks:
+                total += len(chunk)
+                if total > max_bytes:
+                    raise ImmichApiError("asset full-size image exceeds similarity size limit")
                 chunks.append(chunk)
             return b"".join(chunks)
 

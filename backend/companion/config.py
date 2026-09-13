@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     similarity_original_fallback_max_bytes: int = Field(
         default=128 * 1024 * 1024, ge=1024 * 1024, le=1024 * 1024 * 1024
     )
+    similarity_detail_max_bytes: int = Field(
+        default=128 * 1024 * 1024, ge=1024 * 1024, le=1024 * 1024 * 1024
+    )
+    similarity_detail_slots: int = Field(default=1, ge=1, le=2)
 
     def resolve_immich_api_key(self) -> str | None:
         """Resolve a direct or file-backed API key without exposing it."""

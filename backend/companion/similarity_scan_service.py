@@ -18,6 +18,7 @@ from companion.duplicate_schema import (
 )
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.runtime_metrics import process_memory_snapshot
+from companion.similarity_detail_service import SimilarityDetailMaintainer
 from companion.similarity_grouping import SIMILARITY_GROUPING_VERSION
 from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
@@ -44,6 +45,7 @@ from companion.task_schema import TaskResult
 SIMILARITY_SCAN_TASK_TYPE = "similarity_scan"
 SIMILARITY_INDEX_BATCH_SIZE = 1_000
 SIMILARITY_SCORE_BATCH_SIZE = 500
+DETAIL_COARSE_SCORE_MARGIN = 10.0
 
 
 class SimilarityScanAlreadyRunningError(RuntimeError):
@@ -136,13 +138,17 @@ class SimilarityScanTaskHandler:
         similarity: SimilarityRepository,
         scans: SimilarityScanRepository,
         indexer: SimilarityIndexMaintainer | None = None,
+        detailer: SimilarityDetailMaintainer | None = None,
     ) -> None:
         self._features = features
         self._similarity = similarity
         self._scans = scans
         self._indexer = indexer
+        self._detailer = detailer
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
+        if self._detailer is not None:
+            self._detailer.reset_counters()
         started = perf_counter()
         request = SimilarityScanRequest.model_validate(payload)
         parameters = SimilarityScanParameters(
@@ -167,6 +173,7 @@ class SimilarityScanTaskHandler:
         fingerprint_failure_reasons: dict[UUID, str] = {}
         candidate_discovery_milliseconds = 0
         pair_scoring_milliseconds = 0
+        detail_stage_milliseconds = 0
 
         def telemetry(**values: int) -> dict[str, int]:
             memory = process_memory_snapshot()
@@ -182,6 +189,8 @@ class SimilarityScanTaskHandler:
                 "elapsed_milliseconds": round((perf_counter() - started) * 1000),
                 "candidate_discovery_milliseconds": candidate_discovery_milliseconds,
                 "pair_scoring_milliseconds": pair_scoring_milliseconds,
+                "detail_stage_milliseconds": detail_stage_milliseconds,
+                **(self._detailer.counters if self._detailer is not None else {}),
             }
 
         try:
@@ -387,6 +396,38 @@ class SimilarityScanTaskHandler:
                     feature_by_id,
                 )
                 pair_scoring_milliseconds += round((perf_counter() - phase_started) * 1000)
+                if self._detailer is not None:
+                    shortlisted = [
+                        pair for pair in batch
+                        if (edge := edges.get((pair.asset_id_low, pair.asset_id_high)))
+                        is not None
+                        and edge.similarity_percent >= max(
+                            50.0, request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
+                        )
+                    ]
+                    if shortlisted:
+                        detail_started = perf_counter()
+                        await self._detailer.ensure(
+                            context,
+                            [
+                                asset_id for pair in shortlisted
+                                for asset_id in (pair.asset_id_low, pair.asset_id_high)
+                            ],
+                            feature_by_id,
+                        )
+                        detail_stage_milliseconds += round(
+                            (perf_counter() - detail_started) * 1000
+                        )
+                        phase_started = perf_counter()
+                        edges.update(
+                            await self._similarity.reference_edges(
+                                [[pair.asset_id_low, pair.asset_id_high] for pair in shortlisted],
+                                feature_by_id,
+                            )
+                        )
+                        pair_scoring_milliseconds += round(
+                            (perf_counter() - phase_started) * 1000
+                        )
                 for pair in batch:
                     evidence = edges.get((pair.asset_id_low, pair.asset_id_high))
                     if (

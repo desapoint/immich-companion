@@ -55,6 +55,33 @@ The index task reports generated/reused/fallback/failure counts, preview and
 original bytes, and aggregate metadata, fetch, decode, feature extraction,
 pixel-hash, and persistence milliseconds. Scan counters include bounded
 candidate and pair-scoring work.
+
+## Candidate detail scoring
+
+Preview fingerprints remain the library-wide discovery input. For bounded
+candidate pairs whose coarse score is within ten points of the scan threshold,
+the scan caches a versioned, 256×256 local-detail sample from each asset's
+original. It scores localized color/content changes and uses the lower of the
+coarse and detail percentages as the final pair percentage. This is a visual
+similarity score, not an assertion of identical normalized pixels. Detail
+samples are reused across scans and invalidated when the search source identity
+changes. The detail stage processes at most eight assets per work page and uses
+one original stream/decode slot by default (`SIMILARITY_DETAIL_SLOTS`, maximum
+two). Each original stream is capped at 128 MiB by default
+(`SIMILARITY_DETAIL_MAX_BYTES`); decoded-pixel protections still apply.
+Task counters separately time candidate discovery, pair scoring, and detail
+fetch/decode work. A repeat scan with unchanged sources should report zero
+new preview or detail features and zero original bytes downloaded.
+
+If an original HEIC or another source cannot be decoded, Companion tries
+Immich's optional generated full-size image, which may be JPEG or PNG. If that
+is unavailable it uses the generated preview as explicitly labeled lower-grade
+detail evidence. A generated response smaller than the original dimensions is
+also labeled lower-grade, even when returned by the full-size endpoint. The
+response distinguishes original, converted full-size, and
+preview sources and reports the sampled local change percentage. No converted
+or preview sample can establish an exact-pixel match.
+
 Compare two completed task counter sets and coverage counts to benchmark an
 initial bootstrap versus a no-change scan. Preview fetch and decode concurrency
 default to two each; `SIMILARITY_PREVIEW_FETCH_SLOTS` and

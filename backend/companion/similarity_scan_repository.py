@@ -14,7 +14,7 @@ from companion.similarity_grouping import (
     SIMILARITY_GROUPING_VERSION,
     SimilarityValidationMode,
 )
-from companion.similarity_repository import PairSimilarityEvidence
+from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, PairSimilarityEvidence
 from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 
 
@@ -195,6 +195,8 @@ class SimilarityScanRepository:
                 "dimensions_equal": pair.evidence.dimensions_equal,
                 "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
                 "exact_pixel_match": pair.evidence.exact_pixel_match,
+                "detail_changed_percent": pair.evidence.detail_changed_percent,
+                "detail_source": pair.evidence.detail_source,
             }
             for pair in normalized
         ]
@@ -264,6 +266,7 @@ class SimilarityScanRepository:
             .where(
                 SimilarityScanRecord.status == "completed",
                 SimilarityScanRecord.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
                 SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
@@ -292,6 +295,7 @@ class SimilarityScanRepository:
             .where(
                 SimilarityScanRecord.status == "completed",
                 SimilarityScanRecord.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
                 SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
@@ -332,6 +336,8 @@ class SimilarityScanRepository:
                 "dimensions_equal": pair.evidence.dimensions_equal,
                 "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
                 "exact_pixel_match": pair.evidence.exact_pixel_match,
+                "detail_changed_percent": pair.evidence.detail_changed_percent,
+                "detail_source": pair.evidence.detail_source,
             }
             for pair in normalized
         ]
@@ -378,6 +384,7 @@ class SimilarityScanRepository:
             .where(
                 SimilarityScanRecord.status == "completed",
                 SimilarityScanRecord.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
+                SimilarityScanRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
                 SimilarityScanRecord.grouping_version == SIMILARITY_GROUPING_VERSION,
             )
             .order_by(SimilarityScanRecord.completed_at.desc(), SimilarityScanRecord.id.desc())
@@ -423,6 +430,8 @@ class SimilarityScanRepository:
                         normalized_luminance_ssim=pair.normalized_luminance_ssim,
                         aspect_ratio_difference=pair.aspect_ratio_difference,
                         dimensions_equal=pair.dimensions_equal,
+                        detail_changed_percent=pair.detail_changed_percent,
+                        detail_source=pair.detail_source,
                     ),
                 )
                 for pair in pair_records

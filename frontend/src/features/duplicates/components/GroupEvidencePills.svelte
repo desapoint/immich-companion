@@ -62,6 +62,22 @@
   {/if}
   {#if !isSimilarityReference && member.similarity?.state === 'current'}
     <span class="pill positive">{member.similarity.similarity_percent?.toFixed(1)}% vs reference</span>
+    {#if member.similarity.model_version?.startsWith('appearance-preview')}
+      {#if member.similarity.detail_changed_percent != null}
+        <span class="pill warning">
+          {member.similarity.detail_changed_percent.toFixed(1)}% sampled detail differs
+        </span>
+        <span class="pill neutral">
+          {member.similarity.detail_source === 'original'
+            ? 'Original detail'
+            : member.similarity.detail_source === 'transcoded'
+              ? 'Full-size converted detail'
+              : 'Preview detail'}
+        </span>
+      {:else}
+        <span class="pill warning">Preview estimate</span>
+      {/if}
+    {/if}
   {:else if !isSimilarityReference && member.similarity?.state === 'pending'}
     <span class="pill pending">Similarity pending</span>
   {/if}

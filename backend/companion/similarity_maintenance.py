@@ -11,6 +11,7 @@ from sqlalchemy import delete, func, select
 from companion.database import DatabaseManager
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.models import SimilarityAssetChangeRecord
+from companion.similarity_detail_service import SimilarityDetailMaintainer
 from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import SimilarityRepository
 from companion.similarity_scan_repository import SimilarityScanPair, SimilarityScanRepository
@@ -118,12 +119,14 @@ class SimilarityMaintenanceTaskHandler:
         features: SimilaritySearchRepository,
         similarity: SimilarityRepository,
         scans: SimilarityScanRepository,
+        detailer: SimilarityDetailMaintainer | None = None,
     ) -> None:
         self._changes = changes
         self._indexer = indexer
         self._features = features
         self._similarity = similarity
         self._scans = scans
+        self._detailer = detailer
 
     async def _candidate_ids(self, asset_id: UUID) -> list[UUID]:
         if not await self._features.has_current(asset_id):
@@ -154,7 +157,7 @@ class SimilarityMaintenanceTaskHandler:
             del ranked[parameters.maximum_neighbors_per_asset :]
         return [item[2] for item in ranked]
 
-    async def _reconcile_asset(self, asset_id: UUID) -> int:
+    async def _reconcile_asset(self, context: TaskContext, asset_id: UUID) -> int:
         active = await self._scans.latest_completed_parameters()
         if active is None:
             return 0
@@ -168,6 +171,25 @@ class SimilarityMaintenanceTaskHandler:
                 [[asset_id, candidate_id] for candidate_id in candidate_ids],
                 feature_map,
             )
+            if self._detailer is not None:
+                shortlisted = [
+                    candidate_id for candidate_id in candidate_ids
+                    if (edge := edges.get((asset_id, candidate_id))) is not None
+                    and edge.similarity_percent >= max(
+                        50.0, parameters.similarity_threshold - 10.0
+                    )
+                ]
+                if shortlisted:
+                    # Incremental changes follow the same detail rule as a full scan.
+                    await self._detailer.ensure(
+                        context, [asset_id, *shortlisted], feature_map
+                    )
+                    edges.update(
+                        await self._similarity.reference_edges(
+                            [[asset_id, candidate_id] for candidate_id in shortlisted],
+                            feature_map,
+                        )
+                    )
             for candidate_id in candidate_ids:
                 evidence = edges.get((asset_id, candidate_id))
                 candidate = feature_map.get(candidate_id)
@@ -201,6 +223,8 @@ class SimilarityMaintenanceTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         del payload
+        if self._detailer is not None:
+            self._detailer.reset_counters()
         processed = int(context.task.counters.get("assets_processed", 0))
         features_refreshed = int(context.task.counters.get("features_refreshed", 0))
         deletes_reconciled = int(context.task.counters.get("deletes_reconciled", 0))
@@ -218,7 +242,7 @@ class SimilarityMaintenanceTaskHandler:
                         features_refreshed += 1
                 else:
                     deletes_reconciled += 1
-                pairs_reconciled += await self._reconcile_asset(change.asset_id)
+                pairs_reconciled += await self._reconcile_asset(context, change.asset_id)
                 await self._changes.acknowledge(change)
                 processed += 1
                 pending = await self._changes.count()

@@ -119,6 +119,8 @@ class DuplicateSimilarityEvidence(BaseModel):
     dimensions_equal: bool | None = None
     exact_thumbnail_match: bool | None = None
     exact_pixel_match: bool | None = None
+    detail_changed_percent: float | None = None
+    detail_source: Literal["original", "transcoded", "preview"] | None = None
     model_version: str | None = None
     feature_version: int | None = None
     comparison_version: int | None = None

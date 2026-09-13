@@ -92,6 +92,20 @@ async def test_bounded_similarity_preview_uses_generated_media_and_rejects_large
 
 
 @pytest.mark.asyncio
+async def test_bounded_fullsize_uses_optional_generated_media_and_rejects_large_bodies() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{ASSET_ONE}/thumbnail"
+        assert request.url.params["size"] == "fullsize"
+        return httpx.Response(200, content=b"transcoded JPEG")
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    assert await client.get_bounded_fullsize(ASSET_ONE, max_bytes=15) == b"transcoded JPEG"
+    with pytest.raises(ImmichApiError, match="size limit"):
+        await client.get_bounded_fullsize(ASSET_ONE, max_bytes=5)
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_get_album_is_typed_and_uses_the_supported_api() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["x-api-key"] == "private-test-key"

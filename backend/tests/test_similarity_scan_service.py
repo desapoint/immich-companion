@@ -148,6 +148,42 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
 
 
 @pytest.mark.asyncio
+async def test_shortlisted_pairs_receive_detail_score_before_publication() -> None:
+    class Detailer:
+        counters = {"detail_features_generated": 2}
+        ready = False
+        ensured = []
+
+        def reset_counters(self):
+            return None
+
+        async def ensure(self, context, asset_ids, features):
+            self.ready = True
+            self.ensured.append(set(asset_ids))
+
+    class DetailAwareSimilarity(FakeSimilarity):
+        async def reference_edges(self, groups, _features):
+            return {
+                (left, right): evidence(93.0 if detailer.ready else 99.0)
+                for left, right in groups
+            }
+
+    detailer = Detailer()
+    scans = FakeScans()
+    handler = SimilarityScanTaskHandler(
+        FakeFeatures([feature(1, 0), feature(2, 0)]),
+        DetailAwareSimilarity(), scans, detailer=detailer,  # type: ignore[arg-type]
+    )
+    result = await handler.execute(
+        FakeContext(), SimilarityScanRequest(similarity_threshold=90).model_dump(mode="json")
+    )
+
+    assert detailer.ensured == [{UUID(int=1), UUID(int=2)}]
+    assert scans.completed[1]["pairs"][0].evidence.similarity_percent == 93.0
+    assert result.counters["detail_features_generated"] == 2
+
+
+@pytest.mark.asyncio
 async def test_failed_scan_is_not_completed() -> None:
     scans = FakeScans()
     handler = SimilarityScanTaskHandler(FakeFeatures(), FakeSimilarity(fail=True), scans)

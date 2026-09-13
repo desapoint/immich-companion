@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import OrderedDict, deque
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,12 @@ from companion.models import (
     AssetSimilarityFeatureRecord,
     AssetSimilaritySearchFeatureRecord,
 )
+from companion.similarity_detail import (
+    DETAIL_FEATURE_VERSION,
+    DetailFeature,
+    compare_detail_features,
+)
+from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_features import (
     PIXEL_NORMALIZATION_VERSION,
     SIMILARITY_CONFIG_FINGERPRINT,
@@ -25,7 +32,8 @@ from companion.similarity_features import (
     compare_visual_features,
 )
 
-SIMILARITY_COMPARISON_VERSION = 4
+SIMILARITY_COMPARISON_VERSION = 5
+PAIR_DETAIL_BATCH_SIZE = 500
 PAIR_CACHE_ENTRY_ESTIMATE_BYTES = 512
 HOT_CACHE_ENTRY_ESTIMATE_BYTES = 1024
 
@@ -46,6 +54,8 @@ class PairSimilarityEvidence:
     normalized_luminance_ssim: float | None = None
     aspect_ratio_difference: float | None = None
     dimensions_equal: bool | None = None
+    detail_changed_percent: float | None = None
+    detail_source: str | None = None
 
 
 def canonical_pair(left: UUID, right: UUID) -> tuple[UUID, UUID]:
@@ -126,6 +136,8 @@ def _public(record: AssetSimilarityEdgeRecord) -> PairSimilarityEvidence:
         normalized_luminance_ssim=record.normalized_luminance_ssim,
         aspect_ratio_difference=record.aspect_ratio_difference,
         dimensions_equal=record.dimensions_equal,
+        detail_changed_percent=record.detail_changed_percent,
+        detail_source=record.detail_source,
     )
 
 
@@ -138,8 +150,10 @@ class SimilarityRepository:
         *,
         pair_max_bytes: int = 256 * 1024 * 1024,
         hot_max_bytes: int = 96 * 1024 * 1024,
+        details: SimilarityDetailRepository | None = None,
     ) -> None:
         self._database = database
+        self._details = details
         self._pair_max_entries = max(1, pair_max_bytes // PAIR_CACHE_ENTRY_ESTIMATE_BYTES)
         self._pair_max_bytes = pair_max_bytes
         self._hot_max_entries = max(1, hot_max_bytes // HOT_CACHE_ENTRY_ESTIMATE_BYTES)
@@ -159,6 +173,7 @@ class SimilarityRepository:
         high: UUID,
         low_feature: SimilarityFeatureRecord,
         high_feature: SimilarityFeatureRecord,
+        detail_version: int = 0,
     ) -> tuple[object, ...]:
         return (
             low,
@@ -167,6 +182,7 @@ class SimilarityRepository:
             _source_key(high_feature),
             low_feature.config_fingerprint,
             SIMILARITY_COMPARISON_VERSION,
+            detail_version,
         )
 
     def _hot_get(self, key: tuple[object, ...]) -> PairSimilarityEvidence | None:
@@ -192,6 +208,17 @@ class SimilarityRepository:
     ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
         started = perf_counter()
         requested = requested_reference_pairs(groups, set(features))
+        if len(requested) > PAIR_DETAIL_BATCH_SIZE:
+            ordered = list(requested)
+            combined: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+            for offset in range(0, len(ordered), PAIR_DETAIL_BATCH_SIZE):
+                batch = ordered[offset : offset + PAIR_DETAIL_BATCH_SIZE]
+                combined.update(
+                    await self.reference_edges(
+                        [[left, right] for left, right in batch], features
+                    )
+                )
+            return combined
         canonical = list(dict.fromkeys(requested.values()))
         if not canonical:
             return {}
@@ -204,10 +231,30 @@ class SimilarityRepository:
             raise ValueError("Similarity comparison requires one compatible feature generation")
         model_version, feature_version, config_fingerprint = generation.pop()
 
+        detail_records = (
+            await self._details.get_current_many(
+                list({asset_id for pair in canonical for asset_id in pair})
+            )
+            if self._details is not None else {}
+        )
+
+        def detail_version(low: UUID, high: UUID) -> int:
+            return (
+                DETAIL_FEATURE_VERSION
+                if low in detail_records and high in detail_records
+                and isinstance(features[low], AssetSimilaritySearchFeatureRecord)
+                and isinstance(features[high], AssetSimilaritySearchFeatureRecord)
+                else 0
+            )
+
         current: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
         uncached: list[tuple[UUID, UUID]] = []
         for low, high in canonical:
-            hot = self._hot_get(self._hot_key(low, high, features[low], features[high]))
+            hot = self._hot_get(
+                self._hot_key(
+                    low, high, features[low], features[high], detail_version(low, high)
+                )
+            )
             if hot is None:
                 uncached.append((low, high))
             else:
@@ -234,21 +281,47 @@ class SimilarityRepository:
         for low, high in uncached:
             low_feature = features[low]
             high_feature = features[high]
+            pair_detail_version = detail_version(low, high)
             record = records.get((low, high))
             if (
                 record is not None
                 and record.asset_low_source_sha256 == _source_key(low_feature)
                 and record.asset_high_source_sha256 == _source_key(high_feature)
+                and record.detail_version == pair_detail_version
             ):
                 evidence = _public(record)
                 current[(low, high)] = evidence
-                self._hot_put(self._hot_key(low, high, low_feature, high_feature), evidence)
+                self._hot_put(
+                    self._hot_key(
+                        low, high, low_feature, high_feature, pair_detail_version
+                    ), evidence
+                )
                 self._pair_hits += 1
                 continue
             self._pair_misses += 1
             comparison = compare_visual_features(_feature(low_feature), _feature(high_feature))
+            detail_comparison = None
+            detail_source = None
+            if pair_detail_version:
+                low_detail = detail_records[low]
+                high_detail = detail_records[high]
+                detail_comparison = await asyncio.to_thread(
+                    compare_detail_features,
+                    DetailFeature(low_detail.width, low_detail.height, low_detail.sample),
+                    DetailFeature(high_detail.width, high_detail.height, high_detail.sample),
+                )
+                detail_source = (
+                    "preview" if "preview_fallback" in {low_detail.origin, high_detail.origin}
+                    else "transcoded" if "transcoded_fullsize" in {
+                        low_detail.origin, high_detail.origin
+                    }
+                    else "original"
+                )
             evidence = PairSimilarityEvidence(
-                similarity_percent=comparison.similarity_percent,
+                similarity_percent=(
+                    min(comparison.similarity_percent, detail_comparison.similarity_percent)
+                    if detail_comparison is not None else comparison.similarity_percent
+                ),
                 structural_percent=comparison.structural_percent,
                 perceptual_percent=comparison.perceptual_percent,
                 color_percent=comparison.color_percent,
@@ -271,9 +344,17 @@ class SimilarityRepository:
                 normalized_luminance_ssim=comparison.normalized_luminance_ssim,
                 aspect_ratio_difference=comparison.aspect_ratio_difference,
                 dimensions_equal=comparison.dimensions_equal,
+                detail_changed_percent=(
+                    detail_comparison.changed_percent if detail_comparison else None
+                ),
+                detail_source=detail_source,
             )
             current[(low, high)] = evidence
-            self._hot_put(self._hot_key(low, high, low_feature, high_feature), evidence)
+            self._hot_put(
+                self._hot_key(
+                    low, high, low_feature, high_feature, pair_detail_version
+                ), evidence
+            )
             values.append(
                 {
                     "asset_id_low": low,
@@ -291,6 +372,9 @@ class SimilarityRepository:
                     "dimensions_equal": evidence.dimensions_equal,
                     "exact_thumbnail_match": evidence.exact_thumbnail_match,
                     "exact_pixel_match": evidence.exact_pixel_match,
+                    "detail_version": pair_detail_version,
+                    "detail_changed_percent": evidence.detail_changed_percent,
+                    "detail_source": evidence.detail_source,
                     "model_version": evidence.model_version,
                     "feature_version": evidence.feature_version,
                     "comparison_version": evidence.comparison_version,

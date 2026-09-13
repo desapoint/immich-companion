@@ -67,6 +67,8 @@ export interface DuplicateSimilarityEvidence {
   dimensions_equal: boolean | null;
   exact_thumbnail_match: boolean | null;
   exact_pixel_match: boolean | null;
+  detail_changed_percent?: number | null;
+  detail_source?: 'original' | 'transcoded' | 'preview' | null;
   model_version: string | null;
   feature_version: number | null;
   comparison_version: number | null;
