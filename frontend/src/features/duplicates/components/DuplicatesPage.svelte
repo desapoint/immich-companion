@@ -8,6 +8,7 @@
   import StackPrimaryControl from '../../../lib/components/domain/StackPrimaryControl.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
   import LoadingSpinner from '../../../lib/components/ui/LoadingSpinner.svelte';
+  import LoadingOverlay from '../../../lib/components/ui/LoadingOverlay.svelte';
   import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
   import Pagination from '../../../lib/components/ui/Pagination.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
@@ -181,7 +182,7 @@
     paginateDuplicateReviewEntries(visibleReviewEntries, reviewPage, reviewPageSize),
   );
   const overlayLabel = $derived(
-    operationLabel ?? (loading ? 'Loading duplicate groups…' : pageChanging ? 'Changing page…' : null),
+    operationLabel ?? (loading ? 'Loading duplicate groups…' : null),
   );
   const visibleGroupIds = $derived(new Set(visibleReviewEntries.map((entry) => entry.group.group_id)));
   const visibleSelectedCount = $derived(
@@ -310,16 +311,14 @@
   }
 
   function changeReviewPage(nextPage: number): void {
-    if (nextPage === pagedReview.page || pageChanging) return;
+    if (nextPage === pagedReview.page) return;
     pageChanging = true;
+    reviewPage = nextPage;
     if (pageChangeTimer) clearTimeout(pageChangeTimer);
     pageChangeTimer = setTimeout(() => {
-      reviewPage = nextPage;
-      pageChangeTimer = setTimeout(() => {
-        pageChanging = false;
-        pageChangeTimer = null;
-      }, 40);
-    }, 40);
+      pageChanging = false;
+      pageChangeTimer = null;
+    }, 350);
   }
 
   function changeReviewPageSize(nextSize: number): void {
@@ -1079,8 +1078,10 @@
 
 <section class="duplicates-page" aria-labelledby="duplicates-title" aria-busy={overlayLabel !== null}>
   {#if overlayLabel}
-    <div class="page-overlay" role="status" aria-live="polite">
-      <div class="page-overlay-content"><LoadingSpinner size="2rem" /><strong>{overlayLabel}</strong></div>
+    <LoadingOverlay label={overlayLabel} />
+  {:else if pageChanging}
+    <div class="page-change-status" role="status" aria-live="polite">
+      <LoadingSpinner size="1rem" /> Showing page {pagedReview.page}…
     </div>
   {/if}
   <header class="page-intro">
@@ -1178,7 +1179,7 @@
       <div><strong>{reviewFilterCounts.analyzing}</strong><span>Analyzing</span></div>
     </section>
 
-    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading || pageChanging} onchange={changeReviewFilter} />
+    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading} onchange={changeReviewFilter} />
 
     {#if workspace?.stale_selected_groups.length}
       <div class="notice stale-workspace" role="status">
@@ -1211,7 +1212,7 @@
         pageSizeOptions={DUPLICATE_PAGE_SIZE_OPTIONS}
         allowPageSizeChange
         hideWhenSinglePage
-        disabled={loading || pageChanging}
+        disabled={loading}
         label="Duplicate groups pages"
         onpagechange={changeReviewPage}
         onpagesizechange={changeReviewPageSize}
@@ -1319,7 +1320,7 @@
         pageSizeOptions={DUPLICATE_PAGE_SIZE_OPTIONS}
         allowPageSizeChange
         hideWhenSinglePage
-        disabled={loading || pageChanging}
+        disabled={loading}
         label="Duplicate groups pages, bottom"
         onpagechange={changeReviewPage}
         onpagesizechange={changeReviewPageSize}
@@ -1343,8 +1344,7 @@
 
 <style>
   .duplicates-page { display: grid; gap: 1.25rem; }
-  .page-overlay { position: fixed; z-index: 90; inset: var(--app-header-height, 0px) 0 0; display: grid; place-items: center; background: color-mix(in srgb, var(--color-canvas) 72%, transparent); backdrop-filter: blur(2px); }
-  .page-overlay-content { display: flex; align-items: center; gap: .8rem; padding: 1rem 1.25rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-ink-strong); background: var(--color-surface-raised); box-shadow: var(--shadow-card); font-size: .85rem; }
+  .page-change-status { position: fixed; z-index: 90; top: calc(var(--app-header-height, 0px) + .75rem); right: .75rem; display: flex; align-items: center; gap: .5rem; padding: .65rem .85rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-ink-strong); background: var(--color-surface-raised); box-shadow: var(--shadow-card); font-size: .8rem; pointer-events: none; }
   .page-intro { display: grid; grid-template-columns: minmax(15rem, .75fr) minmax(18rem, 1fr); gap: 1.5rem; align-items: end; }
   .page-intro span { color: var(--color-accent-strong); font-size: .68rem; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
   h1 { margin: .28rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.055em; line-height: .98; }
