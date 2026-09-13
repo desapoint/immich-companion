@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from io import BytesIO
 from threading import Lock
@@ -18,6 +19,7 @@ from companion.similarity_index_service import (
     SimilarityIndexTaskHandler,
 )
 from companion.similarity_search_features import extract_search_feature
+from companion.task_coordinator import TaskPausedError
 
 A = UUID(int=1)
 B = UUID(int=2)
@@ -65,9 +67,10 @@ class FakeFeatures:
             and (after_asset_id is None or asset_id.int > after_asset_id.int)
         ][:limit]
 
-    async def save(self, asset, preview_sha256, feature):
-        assert len(preview_sha256) == 64
+    async def save(self, asset, media_sha256, feature, *, origin="preview"):
+        assert len(media_sha256) == 64
         assert feature.pixel_sha256 is None
+        assert origin in {"preview", "original"}
         self.current.add(asset.id)
         return True
 
@@ -75,8 +78,10 @@ class FakeFeatures:
 class FakeImmich:
     def __init__(self) -> None:
         self.previewed: list[UUID] = []
+        self.metadata_requested: list[UUID] = []
 
     async def get_asset(self, asset_id: UUID):
+        self.metadata_requested.append(asset_id)
         return source(asset_id)
 
     async def get_bounded_preview(self, asset_id: UUID, *, max_bytes: int):
@@ -84,10 +89,20 @@ class FakeImmich:
         self.previewed.append(asset_id)
         return PREVIEW
 
+    @asynccontextmanager
+    async def stream_original(self, asset_id, **_kwargs):
+        raise ImmichApiError("original unavailable")
+        yield  # pragma: no cover
+
 
 class FakeAssets:
     def __init__(self) -> None:
         self.refreshed: list[UUID] = []
+        self.looked_up: list[UUID] = []
+
+    async def get_immich_assets(self, asset_ids):
+        self.looked_up.extend(asset_ids)
+        return {asset_id: source(asset_id) for asset_id in asset_ids}
 
     async def refresh_asset(self, item, *, track_similarity_changes=True) -> None:
         assert track_similarity_changes is False
@@ -123,7 +138,9 @@ async def test_library_index_fingerprints_assets_independent_of_immich_duplicate
     result = await handler.execute(FakeContext(), {})
 
     assert immich.previewed == [A, B, C]
-    assert assets.refreshed == [A, B, C]
+    assert immich.metadata_requested == [A, B, C]
+    assert assets.looked_up == [A, B, C]
+    assert assets.refreshed == []
     assert result.counters["eligible_images"] == 3
     assert result.counters["current_fingerprints"] == 3
     assert result.counters["missing_fingerprints"] == 0
@@ -230,16 +247,13 @@ async def test_eleven_persistent_failures_are_retried_once_and_reported(caplog) 
     assert completed == 0
     assert unavailable == 11
     assert attempted == set(failed_ids)
-    assert reasons == {
-        asset_id: "ImmichApiError: Immich operation 'generated preview unavailable' failed."
-        for asset_id in failed_ids
-    }
+    assert all("fallback failed" in reason for reason in reasons.values())
     assert immich.previewed == failed_ids * 2
     failure_records = [
         record for record in caplog.records if "Library fingerprint unavailable" in record.message
     ]
     assert len(failure_records) == 22
-    assert "attempt=retry reason=ImmichApiError" in caplog.text
+    assert "attempt=retry reason=preview unavailable" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -262,8 +276,135 @@ async def test_undecodable_preview_logs_its_retry_reason(caplog) -> None:
     result = await handler.execute(FakeContext(), {})
 
     reason = result.summary["unavailable_asset_reasons"][str(A)]
-    assert "generated preview could not be decoded" in reason
+    assert "fallback failed" in reason
     assert f"asset_id={A} attempt=retry reason={reason}" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_invalid_preview_uses_bounded_original_without_pixel_hash() -> None:
+    features = FakeFeatures([A])
+
+    class OriginalImmich(FakeImmich):
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            return b"invalid preview"
+
+        @asynccontextmanager
+        async def stream_original(self, asset_id, **_kwargs):
+            async def chunks():
+                yield PREVIEW[:10]
+                yield PREVIEW[10:]
+
+            yield SimpleNamespace(content_length=len(PREVIEW), chunks=chunks())
+
+    immich = OriginalImmich()
+    maintainer = SimilarityIndexMaintainer(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+    )
+    coverage, completed, unavailable, _, _ = await maintainer.maintain(FakeContext())
+
+    assert coverage.complete is True
+    assert (completed, unavailable) == (1, 0)
+    assert maintainer.metrics()["original_fingerprints_generated"] == 1
+    assert maintainer.metrics()["fallbacks_to_original"] == 1
+    assert maintainer.metrics()["original_bytes_downloaded"] == len(PREVIEW)
+    assert maintainer.metrics()["deep_verifications_performed"] == 0
+
+
+@pytest.mark.asyncio
+async def test_original_fallback_rejects_declared_body_over_limit() -> None:
+    features = FakeFeatures([A])
+
+    class OversizedOriginal(FakeImmich):
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            return b"bad preview"
+
+        @asynccontextmanager
+        async def stream_original(self, asset_id, **_kwargs):
+            async def chunks():
+                pytest.fail("Oversized original body was read")
+                yield b""  # pragma: no cover
+
+            yield SimpleNamespace(content_length=len(PREVIEW) + 1, chunks=chunks())
+
+    maintainer = SimilarityIndexMaintainer(
+        OversizedOriginal(),  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+        fallback_max_bytes=len(PREVIEW),
+    )
+    coverage, _, unavailable, _, reasons = await maintainer.maintain(FakeContext())
+
+    assert coverage.complete is False
+    assert unavailable == 1
+    assert "size limit" in reasons[A]
+    assert maintainer.metrics()["original_bytes_downloaded"] == 0
+
+
+@pytest.mark.asyncio
+async def test_source_change_during_preview_rejects_feature() -> None:
+    features = FakeFeatures([A])
+
+    class ChangingImmich(FakeImmich):
+        async def get_asset(self, asset_id):
+            item = source(asset_id)
+            item.file_size_bytes += 1
+            return item
+
+    maintainer = SimilarityIndexMaintainer(
+        ChangingImmich(),  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+    )
+    coverage, completed, unavailable, _, reasons = await maintainer.maintain(FakeContext())
+
+    assert coverage.complete is False
+    assert (completed, unavailable) == (0, 1)
+    assert features.current == set()
+    assert reasons[A] == "Immich source changed while search evidence was generated"
+
+
+@pytest.mark.asyncio
+async def test_pause_during_concurrent_fetch_keeps_page_uncommitted() -> None:
+    features = FakeFeatures([A, B, C])
+    both_started = asyncio.Event()
+    release = asyncio.Event()
+
+    class SlowImmich(FakeImmich):
+        started = 0
+
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            self.started += 1
+            if self.started == 2:
+                both_started.set()
+            await release.wait()
+            return PREVIEW
+
+    class PausingContext(FakeContext):
+        paused = False
+
+        async def ensure_active(self):
+            if self.paused:
+                raise TaskPausedError()
+
+    context = PausingContext()
+    maintainer = SimilarityIndexMaintainer(
+        SlowImmich(),  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+        batch_size=3,
+        fetch_slots=2,
+    )
+    task = asyncio.create_task(maintainer.maintain(context))
+    await asyncio.wait_for(both_started.wait(), timeout=2)
+    context.paused = True
+    release.set()
+
+    with pytest.raises(TaskPausedError):
+        await task
+    assert features.current == set()
+    assert all(checkpoint["checkpoint"].get("cursor") is None for checkpoint in context.checkpoints)
 
 
 @pytest.mark.asyncio

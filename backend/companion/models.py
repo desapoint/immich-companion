@@ -117,7 +117,7 @@ class AssetIntegrityReportRecord(Base):
 
 
 class AssetSimilaritySearchFeatureRecord(Base):
-    """Preview-derived search evidence, never original-file or exact-pixel proof."""
+    """Coarse search evidence, never original-file or exact-pixel proof."""
 
     __tablename__ = "asset_similarity_search_features"
 
@@ -131,7 +131,8 @@ class AssetSimilaritySearchFeatureRecord(Base):
     source_file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     source_checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_identity: Mapped[str] = mapped_column(String(64), nullable=False)
-    preview_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    media_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    fingerprint_origin: Mapped[str] = mapped_column(String(16), nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     luminance_vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

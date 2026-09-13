@@ -94,13 +94,17 @@ class SimilaritySearchRepository:
     async def save(
         self,
         asset: ImmichAsset,
-        preview_sha256: str,
+        media_sha256: str,
         feature: VisualFeatureResult,
+        *,
+        origin: str = "preview",
     ) -> bool:
         """Commit only if the synchronized source still matches the fetched source."""
 
         if feature.pixel_sha256 is not None:
             raise ValueError("Search evidence must not contain an exact-pixel hash")
+        if origin not in {"preview", "original"}:
+            raise ValueError("Unsupported search fingerprint origin")
         values = {
             "asset_id": asset.id,
             "model_version": SEARCH_MODEL_VERSION,
@@ -109,8 +113,9 @@ class SimilaritySearchRepository:
             "source_file_modified_at": asset.file_modified_at,
             "source_file_size_bytes": asset.file_size_bytes,
             "source_checksum": asset.checksum,
-            "source_identity": search_source_identity(asset, preview_sha256),
-            "preview_sha256": preview_sha256,
+            "source_identity": search_source_identity(asset, media_sha256, origin=origin),
+            "media_sha256": media_sha256,
+            "fingerprint_origin": origin,
             "width": asset.width or feature.width,
             "height": asset.height or feature.height,
             "luminance_vector": feature.luminance_vector,

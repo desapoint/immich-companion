@@ -444,6 +444,8 @@ def create_app(
             search_feature_repository,
             fetch_slots=runtime_settings.similarity_preview_fetch_slots,
             decode_slots=runtime_settings.similarity_preview_decode_slots,
+            fallback_max_bytes=runtime_settings.similarity_original_fallback_max_bytes,
+            decode_cache_path=runtime_settings.similarity_cache_dir,
         )
         if asset_repository is not None
         and search_feature_repository is not None

@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     )
     similarity_preview_fetch_slots: int = Field(default=2, ge=1, le=8)
     similarity_preview_decode_slots: int = Field(default=2, ge=1, le=4)
+    similarity_original_fallback_max_bytes: int = Field(
+        default=128 * 1024 * 1024, ge=1024 * 1024, le=1024 * 1024 * 1024
+    )
 
     def resolve_immich_api_key(self) -> str | None:
         """Resolve a direct or file-backed API key without exposing it."""

@@ -58,6 +58,7 @@ def test_search_identity_is_not_original_hash_and_changes_with_source_or_preview
     assert len(first) == 64
     assert first == search_source_identity(asset, "1" * 64)
     assert first != search_source_identity(asset, "2" * 64)
+    assert first != search_source_identity(asset, "1" * 64, origin="original")
     assert first != search_source_identity(
         _asset(modified=datetime(2026, 9, 13, tzinfo=UTC)), "1" * 64
     )

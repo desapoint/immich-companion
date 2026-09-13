@@ -165,6 +165,8 @@ class SimilarityScanTaskHandler:
         index_counters: dict[str, int] = {}
         excluded_ids: list[UUID] = []
         fingerprint_failure_reasons: dict[UUID, str] = {}
+        candidate_discovery_milliseconds = 0
+        pair_scoring_milliseconds = 0
 
         def telemetry(**values: int) -> dict[str, int]:
             memory = process_memory_snapshot()
@@ -178,6 +180,8 @@ class SimilarityScanTaskHandler:
                 "rss_bytes": memory.rss_bytes,
                 "rss_peak_bytes": memory.peak_rss_bytes,
                 "elapsed_milliseconds": round((perf_counter() - started) * 1000),
+                "candidate_discovery_milliseconds": candidate_discovery_milliseconds,
+                "pair_scoring_milliseconds": pair_scoring_milliseconds,
             }
 
         try:
@@ -221,6 +225,7 @@ class SimilarityScanTaskHandler:
                     "stale_fingerprints": coverage.stale_count,
                     "fingerprints_completed": indexed,
                     "fingerprints_unavailable": unavailable,
+                    **(self._indexer.metrics() if hasattr(self._indexer, "metrics") else {}),
                 }
                 if not coverage.complete:
                     remaining = coverage.missing_count + coverage.stale_count
@@ -304,7 +309,11 @@ class SimilarityScanTaskHandler:
                 )
             while candidate_index.processed < len(ordered_features):
                 await context.ensure_active()
+                phase_started = perf_counter()
                 await asyncio.to_thread(candidate_index.process_next, SIMILARITY_INDEX_BATCH_SIZE)
+                candidate_discovery_milliseconds += round(
+                    (perf_counter() - phase_started) * 1000
+                )
                 processed_assets = candidate_index.processed
                 if processed_assets < resume_index or saved_phase == "scoring":
                     continue
@@ -372,10 +381,12 @@ class SimilarityScanTaskHandler:
             for offset in range(0, total, SIMILARITY_SCORE_BATCH_SIZE):
                 await context.ensure_active()
                 batch = candidates[offset : offset + SIMILARITY_SCORE_BATCH_SIZE]
+                phase_started = perf_counter()
                 edges = await self._similarity.reference_edges(
                     [[pair.asset_id_low, pair.asset_id_high] for pair in batch],
                     feature_by_id,
                 )
+                pair_scoring_milliseconds += round((perf_counter() - phase_started) * 1000)
                 for pair in batch:
                     evidence = edges.get((pair.asset_id_low, pair.asset_id_high))
                     if (
