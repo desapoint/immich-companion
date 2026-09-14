@@ -239,7 +239,7 @@
     comparisonAssets={assets}
     onnavigate={(index) => void navigate(index)}
     ontoggleselection={() => {}}
-    onvisiblechange={(assetId) => {
+    onpreviewchange={(assetId) => {
       const index = members.findIndex((member) => member.id === assetId);
       if (index >= 0 && index !== viewerIndex) void navigate(index);
     }}
