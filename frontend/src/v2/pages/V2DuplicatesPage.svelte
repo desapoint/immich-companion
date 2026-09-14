@@ -82,7 +82,7 @@
   function hydrateWorkspace(items:DuplicateGroupRecord[],replace:boolean){
     let nextDecisions:Record<string,DuplicateDecision>=replace?{}:{...decisions};
     let nextStacks=replace?createDuplicateStackWorkspace():stackWorkspace;
-    const selected:string[]=[...libraryData.duplicates.selectedGroupIds()];
+    const selected:string[]=replace?[...libraryData.duplicates.selectedGroupIds()]:[...selectedGroups];
     for(const item of items){
       nextDecisions={...nextDecisions,...item.savedDecisions};
       if(item.selected&&!selected.includes(item.id))selected.push(item.id);
@@ -127,7 +127,11 @@
     if(groupRequests.loading&&!reset)return false;
     groupLoads+=1;
     try{
-      try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
+      if(reuseCachedGroups){
+        void flushWorkspace().catch((error)=>interactionError=errorMessage(error,'Duplicate choices could not be saved.'));
+      }else{
+        try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
+      }
       if(reset){nextCursor=null;if(collection.resultMode==='Infinite')collection.reset()}
       const query=collection.resultMode==='Pagination'?{state:reviewFilter,source:sourceFilter,page:collection.page,pageSize:collection.pageSize,reuseCachedGroups}:{state:reviewFilter,source:sourceFilter,pageSize:collection.pageSize,cursor:reset?null:nextCursor,reuseCachedGroups};
       const result=await groupRequests.run((signal)=>libraryData.duplicates.search({...query,signal}),{
@@ -135,7 +139,7 @@
         mode:collection.resultMode==='Infinite'&&!reset?'append':'replace',
         apply:(response,mode)=>{
           groups=mode==='append'?[...groups,...response.items]:response.items;
-          hydrateWorkspace(response.items,mode==='replace');
+          hydrateWorkspace(response.items,mode==='replace'&&!reuseCachedGroups);
           total=response.total;
           nextCursor=response.nextCursor;
           collection.clampPage(total);
@@ -278,7 +282,7 @@
   async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){interactionError=errorMessage(error,'Similarity cache status could not be loaded.')}finally{cacheLoading=false}}
   async function clearCache(cache:SimilarityCacheKind){if(cacheLoading)return;cacheLoading=true;interactionError='';try{cacheTelemetry=await libraryData.duplicates.clearCache(cache)}catch(error){interactionError=errorMessage(error,'The disposable similarity cache could not be cleared.')}finally{cacheLoading=false}}
 
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';await Promise.all([refreshGroups(),refreshHistory(),refreshCacheStatus()])}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';void refreshHistory();void refreshCacheStatus();await refreshGroups(true,true)}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
 </script>
 
 <V2PageLayout title="Duplicates" description="Review duplicate groups supplied by the active data source, with provider-backed discovery and decisions.">
@@ -290,7 +294,7 @@
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
     {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
     <V2OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll():undefined}/>
-    {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24,48,96,192]} batchLabel="page" resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={mutating} onclick={()=>void clearAllDecisions()}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
+    {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" sort="state:asc" sortFields={[]} pageSize={collection.pageSize} pageSizes={[6,12,24,48,96,192]} batchLabel="page" resultMode={collection.resultMode} onsort={()=>{}} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={reviewLoading||mutating} onclick={()=>void refreshGroups(true,false)}>Refresh groups</V2Button><V2Button disabled={mutating} onclick={()=>void clearAllDecisions()}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item (item.id)}
       {@const groupStacks=stacksForGroup(stackWorkspace,item.id)}
       <V2Card class="v2-duplicate-group"><V2Stack gap="md"><V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><span class="v2-duplicate-group-selector"><V2RoundCheckbox checked={selectedGroups.includes(item.id)} disabled={mutating} ariaLabel={`${selectedGroups.includes(item.id)?'Deselect':'Select'} ${duplicateGroupTitle(item)}`} onclick={()=>toggleGroup(item.id,!selectedGroups.includes(item.id))}/><button class="v2-duplicate-group-title" type="button" disabled={mutating} title={duplicateGroupTitle(item)} onclick={()=>toggleGroup(item.id,!selectedGroups.includes(item.id))}>{duplicateGroupTitle(item)}</button></span><V2Badge text={`${item.members.length} assets`}/><V2Badge text={duplicateKindLabel(item.kind)}/>{#each duplicateSourceLabels(item.discoverySources) as source (source)}<V2Badge text={source}/>{/each}{#if item.groupSimilarity!==null}<V2Badge text={`${item.groupSimilarity.toFixed(1)}% group similarity`}/>{/if}{#if item.similarityValidationMode}<V2Badge text={`${item.similarityValidationMode} validation`}/>{/if}<V2Badge tone={item.state==='Actionable'?'ok':item.state==='Blocked'?'bad':'warn'} text={item.state}/></V2Inline><V2Inline gap="sm" wrap={true}>{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'keep')}>Keep all</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'delete')}>Delete all</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'stack')}>Stack all</V2Button>{/if}<V2Button disabled={mutating} onclick={()=>clearGroupChoices(item)}>Clear choices</V2Button><V2Button disabled={mutating} onclick={()=>openCompare(item.id,0)}>Compare</V2Button><V2Button variant="primary" disabled={mutating||!capabilities.canApplyDecisions||!groupComplete(item)||groupHasInvalidStack(item)} title={!groupComplete(item)?'Choose an action for every asset first':groupHasInvalidStack(item)?'Complete the pending stack first':'Review only this group'} onclick={()=>requestReviewGroup(item)}>Review group</V2Button></V2Inline></V2Inline>

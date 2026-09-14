@@ -117,16 +117,17 @@ def test_identical_hash_capacity_stays_degree_bounded() -> None:
 
 
 @pytest.mark.parametrize(
-    ("edit", "color"),
+    ("edit", "color", "detail_eligible"),
     [
-        ((472, 470, 492, 615), (30, 80, 180)),
-        ((405, 265, 620, 330), (35, 35, 45)),
-        ((390, 590, 640, 850), (45, 95, 180)),
+        ((472, 470, 492, 615), (30, 80, 180), True),
+        ((405, 265, 620, 330), (35, 35, 45), True),
+        ((390, 590, 640, 850), (45, 95, 180), False),
     ],
     ids=["swimsuit_strap", "face_accessory", "swimsuit_panel"],
 )
 def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
-    edit: tuple[int, int, int, int], color: tuple[int, int, int]
+    edit: tuple[int, int, int, int], color: tuple[int, int, int],
+    detail_eligible: bool,
 ) -> None:
     original = Image.new("RGB", (1024, 1024), (90, 115, 145))
     draw = ImageDraw.Draw(original)
@@ -159,9 +160,10 @@ def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
     assert late_pairs
     assert min(pair.perceptual_distance for pair in late_pairs) <= 12
     request = SimilarityScanRequest()
-    assert compare_visual_features(reference_visual, variant_visual).similarity_percent >= (
-        request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
-    )
+    assert (
+        compare_visual_features(reference_visual, variant_visual).similarity_percent
+        >= request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
+    ) is detail_eligible
     assert len(pairs) <= 10 * 8 // 2
     assert stats.peak_query_matches <= 8
 

@@ -311,8 +311,6 @@ async function waitForTask(tasks: TaskRepository, taskId: string, similarity = f
 export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepository {
   let rawGroups = new Map<string, ApiDuplicateGroup>();
   let hasSearchSnapshot = false;
-  let snapshotLoadedAt = 0;
-  const snapshotMaxAgeMs = 30_000;
   let visibleGroupIds = new Set<string>();
   let workspace: ApiDuplicateWorkspace = { initialized: false, revision: 0, selected_count: 0, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
   const draftQueues = new Map<string, Promise<void>>();
@@ -407,7 +405,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     },
     selectedGroupIds() { return [...workspace.selected_group_ids]; },
     async search(query): Promise<PageResult<DuplicateGroupRecord>> {
-      if (!query.reuseCachedGroups || !hasSearchSnapshot || Date.now() - snapshotLoadedAt > snapshotMaxAgeMs) {
+      if (!query.reuseCachedGroups || !hasSearchSnapshot) {
         const [result, restored] = await Promise.all([
           requestJson<ApiDuplicateResult>('/api/assets/duplicates/cross-source/search', { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
           requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal }),
@@ -415,7 +413,6 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         workspace = restored;
         rawGroups = new Map(result.groups.map((group) => [group.group_id, group]));
         hasSearchSnapshot = true;
-        snapshotLoadedAt = Date.now();
       }
       const filtered = [...rawGroups.values()].filter((group) => {
         const state = groupState(group, draftFor(group.group_id));

@@ -137,8 +137,8 @@ async def test_library_index_fingerprints_assets_independent_of_immich_duplicate
 
     result = await handler.execute(FakeContext(), {})
 
-    assert immich.previewed == [A, B, C]
-    assert immich.metadata_requested == [A, B, C]
+    assert sorted(immich.previewed) == [A, B, C]
+    assert sorted(immich.metadata_requested) == [A, B, C]
     assert assets.looked_up == [A, B, C]
     assert assets.refreshed == []
     assert result.counters["eligible_images"] == 3

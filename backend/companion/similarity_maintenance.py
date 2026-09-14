@@ -11,7 +11,10 @@ from sqlalchemy import delete, func, select
 from companion.database import DatabaseManager
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.models import SimilarityAssetChangeRecord
-from companion.similarity_detail_service import SimilarityDetailMaintainer
+from companion.similarity_detail_service import (
+    DETAIL_COARSE_SCORE_MARGIN,
+    SimilarityDetailMaintainer,
+)
 from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import SimilarityRepository
 from companion.similarity_scan_repository import SimilarityScanPair, SimilarityScanRepository
@@ -176,7 +179,7 @@ class SimilarityMaintenanceTaskHandler:
                     candidate_id for candidate_id in candidate_ids
                     if (edge := edges.get((asset_id, candidate_id))) is not None
                     and edge.similarity_percent >= max(
-                        50.0, parameters.similarity_threshold - 10.0
+                        50.0, parameters.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
                     )
                 ]
                 if shortlisted:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 from io import BytesIO
@@ -33,6 +34,8 @@ from companion.task_coordinator import TaskContext
 
 DETAIL_WORK_BATCH_SIZE = 8
 DETAIL_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
+# The published score is min(coarse, detail); a lower coarse score cannot be rescued.
+DETAIL_COARSE_SCORE_MARGIN = 0.0
 logger = logging.getLogger("uvicorn.error")
 
 
@@ -243,6 +246,8 @@ class SimilarityDetailMaintainer:
         context: TaskContext,
         asset_ids: list[UUID],
         search_features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+        *,
+        on_progress: Callable[[int, int], Awaitable[None]] | None = None,
     ) -> None:
         ordered = sorted(set(asset_ids), key=lambda item: item.int)
         for offset in range(0, len(ordered), DETAIL_WORK_BATCH_SIZE):
@@ -267,3 +272,5 @@ class SimilarityDetailMaintainer:
                     if not task.done():
                         task.cancel()
                 await asyncio.gather(*tasks, return_exceptions=True)
+            if on_progress is not None:
+                await on_progress(min(offset + len(page), len(ordered)), len(ordered))

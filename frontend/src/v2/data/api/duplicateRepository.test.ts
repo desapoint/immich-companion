@@ -103,7 +103,7 @@ function tasks(): TaskRepository {
   return { get: vi.fn(async () => ({ status: 'completed', result: { summary: { failed_group_ids: [] } } })) } as unknown as TaskRepository;
 }
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('live V2 duplicate repository', () => {
   it('filters all groups before pagination and includes groups reported by both sources', async () => {
@@ -149,6 +149,11 @@ describe('live V2 duplicate repository', () => {
     currentGroups = [group];
     const cached = await repository.search({ page: 2, pageSize: 1, reuseCachedGroups: true });
     expect(cached.items[0]?.id).toBe('second-group');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60_000);
+    const laterPage = await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true });
+    expect(laterPage.items[0]?.id).toBe(group.group_id);
     expect(fetcher).toHaveBeenCalledTimes(2);
 
     const refreshed = await repository.search({ page: 1, pageSize: 1 });

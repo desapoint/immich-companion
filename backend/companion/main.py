@@ -408,7 +408,7 @@ def create_app(
         task_coordinator.register_handler(integrity_handler)
     duplicate_discovery = (
         CompositeGroupDiscoveryProvider(
-            ImmichDuplicateProvider(immich),
+            ImmichDuplicateProvider(immich, asset_repository),
             SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
         )
         if similarity_scan_repository is not None and asset_repository is not None

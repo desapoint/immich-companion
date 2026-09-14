@@ -1,5 +1,6 @@
 """Tests for provider-neutral duplicate discovery snapshots."""
 
+import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -65,3 +66,79 @@ async def test_immich_provider_emits_stable_generic_groups_and_reuses_hydration(
     assert all(group.provider_metadata == {"endpoint": "/api/duplicates"} for group in groups)
     assert all(group.assets[0].file_size_bytes == 123 for group in groups)
     assert immich.detail_calls == [ASSET_ID]
+
+
+@pytest.mark.asyncio
+async def test_immich_provider_uses_matching_synchronized_size_without_live_fetch() -> None:
+    immich = FakeImmich()
+
+    class Assets:
+        requested = []
+
+        async def get_immich_assets(self, asset_ids):
+            self.requested.extend(asset_ids)
+            return {ASSET_ID: external_asset(size=123)}
+
+    assets = Assets()
+    groups = await ImmichDuplicateProvider(immich, assets).discover()  # type: ignore[arg-type]
+
+    assert assets.requested == [ASSET_ID]
+    assert immich.detail_calls == []
+    assert all(group.assets[0].file_size_bytes == 123 for group in groups)
+
+
+@pytest.mark.asyncio
+async def test_immich_provider_rechecks_asset_when_synchronized_source_is_stale() -> None:
+    immich = FakeImmich()
+
+    class Assets:
+        async def get_immich_assets(self, _asset_ids):
+            return {
+                ASSET_ID: external_asset(size=999).model_copy(
+                    update={"file_modified_at": datetime(2026, 9, 1, tzinfo=UTC)}
+                )
+            }
+
+    groups = await ImmichDuplicateProvider(immich, Assets()).discover()  # type: ignore[arg-type]
+
+    assert immich.detail_calls == [ASSET_ID]
+    assert all(group.assets[0].file_size_bytes == 123 for group in groups)
+
+
+@pytest.mark.asyncio
+async def test_immich_provider_caps_missing_local_asset_fallbacks() -> None:
+    class Immich:
+        active = 0
+        peak = 0
+        calls = 0
+
+        async def list_duplicate_groups(self):
+            return [
+                ImmichDuplicateGroup(
+                    duplicate_id=UUID(int=100 + number),
+                    assets=[external_asset(size=None).model_copy(update={"id": UUID(int=number)})],
+                )
+                for number in range(1, 41)
+            ]
+
+        async def get_asset(self, asset_id):
+            self.active += 1
+            self.peak = max(self.peak, self.active)
+            self.calls += 1
+            try:
+                await asyncio.sleep(0.001)
+                return external_asset(size=123).model_copy(update={"id": asset_id})
+            finally:
+                self.active -= 1
+
+    class Assets:
+        async def get_immich_assets(self, _asset_ids):
+            return {}
+
+    immich = Immich()
+    groups = await ImmichDuplicateProvider(immich, Assets()).discover()  # type: ignore[arg-type]
+
+    assert len(groups) == 40
+    assert immich.calls == 40
+    assert immich.peak <= 2
+    assert all(group.assets[0].file_size_bytes == 123 for group in groups)
