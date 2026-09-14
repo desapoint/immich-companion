@@ -1,0 +1,603 @@
+name: Apply V2 duplicate review state
+
+on:
+  push:
+    branches:
+      - work/v2-duplicate-review-state
+    paths:
+      - .github/workflows/apply-v2-duplicate-review-state.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: work/v2-duplicate-review-state
+
+      - name: Apply V2 review-state slice
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent
+          import re
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"Missing patch anchor in {path}: {old[:120]!r}")
+              file.write_text(text.replace(old, new, 1))
+
+          repo = "backend/companion/composite_duplicate_repository.py"
+          replace_once(
+              repo,
+              "    delete,\n    exists,\n    func,\n    select,\n)",
+              "    and_,\n    bindparam,\n    case,\n    delete,\n    exists,\n    func,\n    select,\n)",
+          )
+          replace_once(
+              repo,
+              "from companion.models import AssetRecord, Base",
+              "from companion.models import AssetRecord, Base, DuplicateGroupReviewRecord",
+          )
+          replace_once(
+              repo,
+              "    first_discovered_at: Mapped[datetime] = mapped_column(\n        DateTime(timezone=True), nullable=False, index=True\n    )\n    provider_metadata:",
+              "    first_discovered_at: Mapped[datetime] = mapped_column(\n        DateTime(timezone=True), nullable=False, index=True\n    )\n    v2_base_review_state: Mapped[str] = mapped_column(\n        String(24), nullable=False, server_default=\"Blocked\", index=True\n    )\n    v2_state_updated_at: Mapped[datetime | None] = mapped_column(\n        DateTime(timezone=True), nullable=True\n    )\n    provider_metadata:",
+          )
+          replace_once(
+              repo,
+              "    async def page(\n        self,\n        *,\n        page: int,",
+              dedent('''
+                  async def update_v2_review_states(
+                      self,
+                      states: list[tuple[str, str, str]],
+                  ) -> int:
+                      """Update bounded V2 list-state summaries only when membership still matches."""
+
+                      if not states:
+                          return 0
+                      now = datetime.now(UTC)
+                      table = CompositeDuplicateGroupRecord.__table__
+                      statement = (
+                          table.update()
+                          .where(
+                              table.c.group_id == bindparam("target_group_id"),
+                              table.c.member_fingerprint == bindparam("target_member_fingerprint"),
+                          )
+                          .values(
+                              v2_base_review_state=bindparam("v2_base_review_state_value"),
+                              v2_state_updated_at=bindparam("v2_state_updated_at_value"),
+                          )
+                      )
+                      values = [
+                          {
+                              "target_group_id": group_id,
+                              "target_member_fingerprint": member_fingerprint,
+                              "v2_base_review_state_value": state,
+                              "v2_state_updated_at_value": now,
+                          }
+                          for group_id, member_fingerprint, state in states
+                      ]
+                      async with self._database.sessions() as session, session.begin():
+                          await session.execute(statement, values)
+                      return len(values)
+
+                  async def page(
+                      self,
+                      *,
+                      page: int,
+              '''),
+          )
+          replace_once(
+              repo,
+              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n    ) -> CompositeDuplicateSnapshotPage:",
+              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n        state: str = \"all\",\n    ) -> CompositeDuplicateSnapshotPage:",
+          )
+          old = dedent('''
+                  async with self._database.sessions() as session:
+                      count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
+                      sort_column = {
+                          "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
+                          "members": CompositeDuplicateGroupRecord.member_count,
+                          "similarity": CompositeDuplicateGroupRecord.similarity_score,
+                          "newest": CompositeDuplicateGroupRecord.newest_taken_at,
+                          "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
+                          "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
+                      }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
+                      order = sort_column.desc() if direction == "desc" else sort_column.asc()
+                      group_statement = (
+                          select(CompositeDuplicateGroupRecord)
+                          .order_by(
+                              order.nulls_last(),
+                              CompositeDuplicateGroupRecord.group_id.asc(),
+                          )
+                          .offset(offset)
+                          .limit(page_size)
+                      )
+                      if source_filter is not None:
+                          count_statement = count_statement.where(source_filter)
+                          group_statement = group_statement.where(source_filter)
+          ''')
+          new = dedent('''
+                  async with self._database.sessions() as session:
+                      review_join = and_(
+                          DuplicateGroupReviewRecord.stable_group_key
+                          == CompositeDuplicateGroupRecord.stable_group_key,
+                          DuplicateGroupReviewRecord.member_fingerprint
+                          == CompositeDuplicateGroupRecord.member_fingerprint,
+                      )
+                      decision_count = func.coalesce(
+                          func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+                      )
+                      resolved_state = case(
+                          (
+                              CompositeDuplicateGroupRecord.v2_base_review_state == "Blocked",
+                              "Blocked",
+                          ),
+                          (
+                              (decision_count > 0)
+                              & (decision_count < CompositeDuplicateGroupRecord.member_count),
+                              "Needs decisions",
+                          ),
+                          (
+                              decision_count == CompositeDuplicateGroupRecord.member_count,
+                              "Actionable",
+                          ),
+                          (
+                              CompositeDuplicateGroupRecord.v2_base_review_state == "Actionable",
+                              "Actionable",
+                          ),
+                          else_="Needs review",
+                      )
+                      count_statement = (
+                          select(func.count())
+                          .select_from(CompositeDuplicateGroupRecord)
+                          .outerjoin(DuplicateGroupReviewRecord, review_join)
+                      )
+                      sort_column = {
+                          "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
+                          "members": CompositeDuplicateGroupRecord.member_count,
+                          "similarity": CompositeDuplicateGroupRecord.similarity_score,
+                          "newest": CompositeDuplicateGroupRecord.newest_taken_at,
+                          "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
+                          "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
+                      }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
+                      order = sort_column.desc() if direction == "desc" else sort_column.asc()
+                      group_statement = (
+                          select(CompositeDuplicateGroupRecord)
+                          .outerjoin(DuplicateGroupReviewRecord, review_join)
+                          .order_by(
+                              order.nulls_last(),
+                              CompositeDuplicateGroupRecord.group_id.asc(),
+                          )
+                          .offset(offset)
+                          .limit(page_size)
+                      )
+                      state_value = {
+                          "needs_review": "Needs review",
+                          "auto_ready": "Actionable",
+                          "blocked": "Blocked",
+                          "actionable": "Actionable",
+                          "needs_decisions": "Needs decisions",
+                      }.get(state)
+                      if state_value is not None:
+                          count_statement = count_statement.where(resolved_state == state_value)
+                          group_statement = group_statement.where(resolved_state == state_value)
+                      if source_filter is not None:
+                          count_statement = count_statement.where(source_filter)
+                          group_statement = group_statement.where(source_filter)
+          ''')
+          text = Path(repo).read_text()
+          if old not in text:
+              raise SystemExit("Missing repository page-query block")
+          Path(repo).write_text(text.replace(old, new, 1))
+
+          provider = "backend/companion/discovery/persisted_composite.py"
+          replace_once(
+              provider,
+              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n    ) -> CompositeDuplicateSnapshotPage: ...",
+              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n        state: str = \"all\",\n    ) -> CompositeDuplicateSnapshotPage: ...",
+          )
+          replace_once(
+              provider,
+              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n    ) -> DiscoveredGroupPage:",
+              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n        state: str = \"all\",\n    ) -> DiscoveredGroupPage:",
+          )
+          replace_once(
+              provider,
+              "            sort=sort,\n            direction=direction,\n        )",
+              "            sort=sort,\n            direction=direction,\n            state=state,\n        )",
+          )
+
+          service = "backend/companion/duplicate_service.py"
+          replace_once(
+              service,
+              "        direction: Literal[\"asc\", \"desc\"] = \"desc\",\n    ) -> DuplicateSearchPage:",
+              "        direction: Literal[\"asc\", \"desc\"] = \"desc\",\n        state: Literal[\n            \"all\", \"needs_review\", \"auto_ready\", \"blocked\", \"actionable\", \"needs_decisions\"\n        ] = \"all\",\n    ) -> DuplicateSearchPage:",
+          )
+          replace_once(
+              service,
+              "                sort=sort,\n                direction=direction,\n            )",
+              "                sort=sort,\n                direction=direction,\n                state=state,\n            )",
+          )
+
+          main = "backend/companion/main.py"
+          replace_once(
+              main,
+              "from companion.duplicate_service import (\n    CrossSourceDuplicateService,\n    CrossSourceDuplicateTaskHandler,\n)\n",
+              "from companion.duplicate_service import (\n    CrossSourceDuplicateService,\n    CrossSourceDuplicateTaskHandler,\n)\nfrom companion.v2_duplicate_review_state import V2DuplicateReviewStateService\n",
+          )
+          replace_once(
+              main,
+              "    composite_duplicate_repository = (\n        CompositeDuplicateRepository(database) if database is not None else None\n    )\n    source_duplicate_discovery = (",
+              "    composite_duplicate_repository = (\n        CompositeDuplicateRepository(database) if database is not None else None\n    )\n    duplicate_discovery = (\n        PersistedCompositeDuplicateProvider(\n            composite_duplicate_repository,\n            asset_repository,\n        )\n        if composite_duplicate_repository is not None and asset_repository is not None\n        else None\n    )\n    v2_duplicate_review_state_service = (\n        V2DuplicateReviewStateService(\n            duplicate_discovery,\n            integrity_repository,\n            composite_duplicate_repository,\n        )\n        if duplicate_discovery is not None\n        and integrity_repository is not None\n        and composite_duplicate_repository is not None\n        else None\n    )\n    source_duplicate_discovery = (",
+          )
+          replace_once(
+              main,
+              "        task_coordinator.register_handler(\n            CompositeDuplicateRebuildTaskHandler(\n                source_duplicate_discovery,\n                composite_duplicate_repository,\n            )\n        )",
+              "        composite_duplicate_handler = CompositeDuplicateRebuildTaskHandler(\n            source_duplicate_discovery,\n            composite_duplicate_repository,\n        )\n        task_coordinator.register_handler(\n            FollowUpTaskHandler(\n                composite_duplicate_handler,\n                v2_duplicate_review_state_service.refresh_after_change,\n            )\n            if v2_duplicate_review_state_service is not None\n            else composite_duplicate_handler\n        )",
+          )
+          old_discovery = dedent('''
+              duplicate_discovery = (
+                  PersistedCompositeDuplicateProvider(
+                      composite_duplicate_repository,
+                      asset_repository,
+                  )
+                  if composite_duplicate_repository is not None and asset_repository is not None
+                  else None
+              )
+          ''')
+          text = Path(main).read_text()
+          if old_discovery not in text:
+              raise SystemExit("Missing later duplicate_discovery block")
+          Path(main).write_text(text.replace(old_discovery, "", 1))
+          replace_once(
+              main,
+              "        task_coordinator.register_handler(\n            CrossSourceDuplicateTaskHandler(\n                immich,\n                asset_repository,\n                integrity_repository,\n                integrity_handler,\n                include_similarity=True,\n                discovery=duplicate_discovery,\n            )\n        )",
+              "        duplicate_analysis_handler = CrossSourceDuplicateTaskHandler(\n            immich,\n            asset_repository,\n            integrity_repository,\n            integrity_handler,\n            include_similarity=True,\n            discovery=duplicate_discovery,\n        )\n        task_coordinator.register_handler(\n            FollowUpTaskHandler(\n                duplicate_analysis_handler,\n                v2_duplicate_review_state_service.refresh_after_change,\n            )\n            if v2_duplicate_review_state_service is not None\n            else duplicate_analysis_handler\n        )",
+          )
+          replace_once(
+              main,
+              "        direction: Literal[\"asc\", \"desc\"] = Query(default=\"desc\"),\n    ) -> DuplicateSearchPage:",
+              "        direction: Literal[\"asc\", \"desc\"] = Query(default=\"desc\"),\n        state: Literal[\n            \"all\", \"needs_review\", \"auto_ready\", \"blocked\", \"actionable\", \"needs_decisions\"\n        ] = Query(default=\"all\"),\n    ) -> DuplicateSearchPage:",
+          )
+          replace_once(
+              main,
+              "                sort=sort,\n                direction=direction,\n            )\n        except ImmichApiError as error:",
+              "                sort=sort,\n                direction=direction,\n                state=state,\n            )\n        except ImmichApiError as error:",
+          )
+
+          frontend_repo = "frontend/src/v2/data/api/duplicateRepository.ts"
+          replace_once(
+              frontend_repo,
+              "  let rawGroups = new Map<string, ApiDuplicateGroup>();\n  let hasSearchSnapshot = false;\n  let hasWorkspaceSnapshot = false;",
+              "  let rawGroups = new Map<string, ApiDuplicateGroup>();\n  let hasWorkspaceSnapshot = false;",
+          )
+          replace_once(
+              frontend_repo,
+              "function similarity(member: ApiDuplicateMember): number | null {",
+              dedent('''
+              function reviewStateParam(state: DuplicateSearchQuery['state']): string {
+                if (!state || state === 'All groups') return 'all';
+                if (state === 'Needs review') return 'needs_review';
+                if (state === 'Auto-ready') return 'auto_ready';
+                if (state === 'Blocked') return 'blocked';
+                if (state === 'Actionable') return 'actionable';
+                return 'needs_decisions';
+              }
+
+              function similarity(member: ApiDuplicateMember): number | null {
+              '''),
+          )
+          text = Path(frontend_repo).read_text()
+          pattern = re.compile(
+              r"    async search\(query\): Promise<PageResult<DuplicateGroupRecord>> \{.*?\n    \},\n    saveDraft,",
+              re.S,
+          )
+          replacement = dedent('''
+                  async search(query): Promise<PageResult<DuplicateGroupRecord>> {
+                    const page = pageNumber(query);
+                    const params = new URLSearchParams({
+                      page: String(page),
+                      page_size: String(query.pageSize),
+                      source: query.source ?? 'both',
+                      sort: query.sort?.field ?? 'reclaimable',
+                      direction: query.sort?.direction ?? 'desc',
+                      state: reviewStateParam(query.state),
+                    });
+                    const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
+                    const [rawPage, restored] = await Promise.all([
+                      requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
+                      restoreWorkspace
+                        ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
+                        : Promise.resolve(null),
+                    ]);
+                    if (restored) {
+                      workspace = restored;
+                      hasWorkspaceSnapshot = true;
+                    }
+                    if (!query.reuseCachedGroups) rawGroups.clear();
+                    const result = normalizeDuplicatePage(rawPage, query, page);
+                    for (const group of result.items) rawGroups.set(group.group_id, group);
+                    const items = result.items.map(materialize);
+                    visibleGroupIds = new Set(items.map((group) => group.id));
+                    return {
+                      items,
+                      total: result.total,
+                      pageSize: result.page_size,
+                      page: result.page,
+                      nextCursor: result.page < result.pages ? String(result.page + 1) : null,
+                    };
+                  },
+                  saveDraft,
+          ''').rstrip()
+          text, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit("Could not replace V2 duplicate search method")
+          Path(frontend_repo).write_text(text)
+
+          page_file = "frontend/src/v2/pages/V2DuplicatesPage.svelte"
+          replace_once(
+              page_file,
+              "sortFields={reviewFilter==='All groups'?[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'newest',label:'Newest'},{value:'oldest',label:'Oldest'},{value:'discovered',label:'Recently discovered'}]:[]}",
+              "sortFields={[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'newest',label:'Newest'},{value:'oldest',label:'Oldest'},{value:'discovered',label:'Recently discovered'}]}",
+          )
+
+          test = "backend/tests/test_composite_duplicate_sync.py"
+          replace_once(
+              test,
+              "        direction=\"asc\",\n    )",
+              "        direction=\"asc\",\n        state=\"needs_review\",\n    )",
+          )
+          replace_once(
+              test,
+              '        "direction": "asc",\n    }',
+              '        "direction": "asc",\n        "state": "needs_review",\n    }',
+          )
+
+          frontend_test = "frontend/src/v2/data/api/duplicateRepository.test.ts"
+          replace_once(
+              frontend_test,
+              "    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');\n    currentGroups = [group];",
+              "    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');\n    expect(pageRequests[0]?.searchParams.get('state')).toBe('all');\n    currentGroups = [group];",
+          )
+          replace_once(
+              frontend_test,
+              "    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');\n  });",
+              "    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');\n\n    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, state: 'Needs decisions' });\n    expect(pageRequests.at(-1)?.searchParams.get('state')).toBe('needs_decisions');\n    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);\n  });",
+          )
+
+          Path("backend/companion/v2_duplicate_review_state.py").write_text(dedent('''
+          """Bounded V2 duplicate list-state projection for SQL-native review filters."""
+
+          from __future__ import annotations
+
+          import logging
+
+          from companion.composite_duplicate_repository import CompositeDuplicateRepository
+          from companion.discovery.persisted_composite import PersistedCompositeDuplicateProvider
+          from companion.duplicate_schema import DuplicateAnalysisOptions, ExactDuplicateGroup
+          from companion.duplicate_service import CrossSourceDuplicateService
+          from companion.integrity_repository import IntegrityRepository
+
+          V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE = 250
+          V2_DUPLICATE_ANALYSIS_OPTIONS = DuplicateAnalysisOptions(
+              keeper_policy="prefer_upload",
+              external_library_ids=[],
+              verify_upload_streams=False,
+              automatic_handling_enabled=True,
+              preselect_safe_groups=True,
+              exact_file_action="resolve",
+              analyze_automatically=False,
+          )
+
+          logger = logging.getLogger("uvicorn.error")
+
+
+          def _base_review_state(group: ExactDuplicateGroup) -> str:
+              if (
+                  not group.eligible
+                  or group.status == "ineligible"
+                  or any(member.is_offline for member in group.members)
+              ):
+                  return "Blocked"
+              if group.auto_resolvable or group.auto_selected:
+                  return "Actionable"
+              return "Needs review"
+
+
+          class V2DuplicateReviewStateService:
+              """Refresh small base-state summaries in bounded pages, never on a list request."""
+
+              def __init__(
+                  self,
+                  discovery: PersistedCompositeDuplicateProvider,
+                  reports: IntegrityRepository,
+                  snapshots: CompositeDuplicateRepository,
+              ) -> None:
+                  self._discovery = discovery
+                  self._reports = reports
+                  self._snapshots = snapshots
+
+              async def refresh_after_change(self) -> object | None:
+                  try:
+                      return await self.refresh()
+                  except Exception:
+                      logger.exception("Could not refresh V2 duplicate review-state projection")
+                      return None
+
+              async def refresh(self) -> dict[str, int]:
+                  page = 1
+                  updated = 0
+                  while True:
+                      discovered = await self._discovery.discover_page(
+                          page=page,
+                          page_size=V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE,
+                          source="both",
+                          sort="discovered",
+                          direction="asc",
+                          state="all",
+                      )
+                      if not discovered.groups:
+                          break
+                      report_ids = list(
+                          dict.fromkeys(
+                              asset.id
+                              for group in discovered.groups
+                              for asset in group.assets
+                              if asset.library_id is not None
+                          )
+                      )
+                      reports = await self._reports.get_many(report_ids)
+                      result = CrossSourceDuplicateService.assemble(
+                          discovered.groups,
+                          reports,
+                          V2_DUPLICATE_ANALYSIS_OPTIONS,
+                      )
+                      states = [
+                          (
+                              group.group_id,
+                              group.member_fingerprint,
+                              _base_review_state(group),
+                          )
+                          for group in result.groups
+                      ]
+                      updated += await self._snapshots.update_v2_review_states(states)
+                      if page >= discovered.pages:
+                          break
+                      page += 1
+                  logger.info("Refreshed V2 duplicate review states: groups=%s", updated)
+                  return {"groups": updated}
+          ''').lstrip())
+
+          Path("backend/tests/test_v2_duplicate_review_state.py").write_text(dedent('''
+          """Tests for the persisted V2 duplicate list-state projection."""
+
+          from types import SimpleNamespace
+
+          from companion.v2_duplicate_review_state import _base_review_state
+
+
+          def group(*, eligible=True, status="exact", offline=False, auto=False):
+              return SimpleNamespace(
+                  eligible=eligible,
+                  status=status,
+                  members=[SimpleNamespace(is_offline=offline)],
+                  auto_resolvable=auto,
+                  auto_selected=auto,
+              )
+
+
+          def test_base_review_state_matches_v2_precedence() -> None:
+              assert _base_review_state(group(eligible=False, auto=True)) == "Blocked"
+              assert _base_review_state(group(status="ineligible")) == "Blocked"
+              assert _base_review_state(group(offline=True)) == "Blocked"
+              assert _base_review_state(group(auto=True)) == "Actionable"
+              assert _base_review_state(group()) == "Needs review"
+          ''').lstrip())
+
+          Path("backend/companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py").write_text(dedent('''
+          """Persist V2 duplicate base review state for SQL-native filters.
+
+          Revision ID: 20260914_0047
+          Revises: 20260914_0046
+          """
+
+          from __future__ import annotations
+
+          import sqlalchemy as sa
+          from alembic import op
+
+          revision = "20260914_0047"
+          down_revision = "20260914_0046"
+          branch_labels = None
+          depends_on = None
+
+
+          def upgrade() -> None:
+              op.add_column(
+                  "composite_duplicate_groups",
+                  sa.Column(
+                      "v2_base_review_state",
+                      sa.String(length=24),
+                      nullable=False,
+                      server_default="Blocked",
+                  ),
+              )
+              op.add_column(
+                  "composite_duplicate_groups",
+                  sa.Column("v2_state_updated_at", sa.DateTime(timezone=True), nullable=True),
+              )
+              op.create_index(
+                  "ix_composite_duplicate_groups_v2_base_review_state",
+                  "composite_duplicate_groups",
+                  ["v2_base_review_state"],
+              )
+
+
+          def downgrade() -> None:
+              op.drop_index(
+                  "ix_composite_duplicate_groups_v2_base_review_state",
+                  table_name="composite_duplicate_groups",
+              )
+              op.drop_column("composite_duplicate_groups", "v2_state_updated_at")
+              op.drop_column("composite_duplicate_groups", "v2_base_review_state")
+          ''').lstrip())
+
+          for path in (
+              repo,
+              provider,
+              service,
+              main,
+              "backend/companion/v2_duplicate_review_state.py",
+              "backend/companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py",
+              "backend/tests/test_composite_duplicate_sync.py",
+              "backend/tests/test_v2_duplicate_review_state.py",
+          ):
+              compile(Path(path).read_text(), path, "exec")
+          PY
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Validate backend
+        shell: bash
+        run: |
+          python -m pip install -e './backend[dev]'
+          cd backend
+          ruff format companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py companion/v2_duplicate_review_state.py companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py tests/test_composite_duplicate_sync.py tests/test_v2_duplicate_review_state.py
+          ruff check --fix companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py companion/v2_duplicate_review_state.py companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py tests/test_composite_duplicate_sync.py tests/test_v2_duplicate_review_state.py
+          pytest
+          ruff check companion tests
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate frontend
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run check
+          npm test
+
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-v2-duplicate-review-state.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend frontend .github/workflows/apply-v2-duplicate-review-state.yml
+          git commit -m 'perf: make V2 duplicate review filters SQL-native'
+          git push origin HEAD:work/v2-duplicate-review-state
