@@ -17,13 +17,58 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: feat/v2-shell
+          fetch-depth: 1
 
       - name: Apply bounded workspace patch
         shell: bash
         run: |
-          echo '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' | base64 -d | gzip -d > /tmp/apply_duplicate_workspace_fastpath.py
-          python -m py_compile /tmp/apply_duplicate_workspace_fastpath.py
-          python /tmp/apply_duplicate_workspace_fastpath.py
+          git fetch origin 76b861e3b337247650251846f3872944c051a8c5 --depth=1
+          git show 76b861e3b337247650251846f3872944c051a8c5:.github/workflows/apply-duplicate-workspace-fastpath-v2.yml > /tmp/original-fastpath.yml
+          python - <<'PY'
+          from pathlib import Path
+          import base64
+          import gzip
+          import re
+
+          workflow = Path('/tmp/original-fastpath.yml').read_text()
+          match = re.search(r"echo '([^']+)' \| base64 -d \| gzip -d", workflow)
+          if match is None:
+              raise SystemExit('Could not recover validated patch payload')
+          payload = gzip.decompress(base64.b64decode(match.group(1))).decode()
+          compile(payload, '<duplicate-workspace-fastpath>', 'exec')
+          exec(compile(payload, '<duplicate-workspace-fastpath>', 'exec'))
+
+          service_path = Path('backend/companion/duplicate_service.py')
+          service = service_path.read_text()
+          old = '            if current is None or source_value(current) != record.discovery_source:\n                continue\n'
+          new = (
+              '            if current is None:\n'
+              '                continue\n'
+              '            record_source = getattr(record, "discovery_source", None)\n'
+              '            if record_source is not None and source_value(current) != record_source:\n'
+              '                continue\n'
+          )
+          if old not in service:
+              raise SystemExit('Missing workspace draft compatibility anchor')
+          service_path.write_text(service.replace(old, new, 1))
+
+          test_path = Path('backend/tests/test_duplicate_service.py')
+          test = test_path.read_text()
+          anchor = '        draft_status="pending",\n    )\n    service = CrossSourceDuplicateService(\n'
+          replacement = (
+              '        draft_status="pending",\n'
+              '        manual_action=None,\n'
+              '        manual_primary_asset_id=None,\n'
+              '        review_status="pending",\n'
+              '    )\n'
+              '    service = CrossSourceDuplicateService(\n'
+          )
+          position = test.rfind(anchor)
+          if position < 0:
+              raise SystemExit('Missing fast-path regression test compatibility anchor')
+          test = test[:position] + replacement + test[position + len(anchor):]
+          test_path.write_text(test)
+          PY
           rm -f \
             .github/workflows/apply-duplicate-workspace-fastpath.yml \
             .github/workflows/retry-duplicate-workspace-fastpath.yml \
