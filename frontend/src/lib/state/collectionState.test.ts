@@ -14,8 +14,9 @@ function page(
   currentPage = 1,
   pages = 1,
   total = items.length,
+  pageSize = 25,
 ): PageResult<Item> {
-  return { items, page: currentPage, pageSize: 25, pages, total };
+  return { items, page: currentPage, pageSize, pages, total };
 }
 
 describe('collection state', () => {
@@ -87,7 +88,7 @@ describe('collection state', () => {
     const state = createCollectionState<Item>(25);
     const loader = vi.fn()
       .mockResolvedValueOnce(page([{ id: 'a' }, { id: 'b' }], 1, 2, 3))
-      .mockResolvedValueOnce(page([{ id: 'b' }, { id: 'c' }], 2, 2, 3));
+      .mockResolvedValueOnce(page([{ id: 'b' }, { id: 'c' }, { id: 'c' }], 2, 2, 3));
     const controller = createCollectionController(state, loader, { getKey: (item) => item.id });
 
     await controller.load();
@@ -110,5 +111,33 @@ describe('collection state', () => {
     expect(loader.mock.calls.map(([request]) => request.page)).toEqual([4, 2]);
     expect(state.page).toBe(2);
     expect(state.items).toEqual([{ id: 'last' }]);
+  });
+
+  it('commits a page-size change only after the new page loads successfully', async () => {
+    const state = createCollectionState<Item>(25);
+    const loader = vi.fn()
+      .mockResolvedValueOnce(page([{ id: 'a' }], 2, 4, 80, 25))
+      .mockRejectedValueOnce(new Error('Page-size request failed.'));
+    const controller = createCollectionController(state, loader);
+
+    await controller.load(2);
+    await expect(controller.changePageSize(50)).resolves.toBe(false);
+
+    expect(loader.mock.calls[1]?.[0]).toMatchObject({ page: 1, pageSize: 50 });
+    expect(state.page).toBe(2);
+    expect(state.pageSize).toBe(25);
+    expect(state.items).toEqual([{ id: 'a' }]);
+    expect(state.error).toBe('Page-size request failed.');
+  });
+
+  it('does not reload when the requested page size is already active', async () => {
+    const state = createCollectionState<Item>(25);
+    const loader = vi.fn().mockResolvedValue(page([{ id: 'a' }]));
+    const controller = createCollectionController(state, loader);
+
+    await controller.load();
+    await expect(controller.changePageSize(25)).resolves.toBe(true);
+
+    expect(loader).toHaveBeenCalledTimes(1);
   });
 });

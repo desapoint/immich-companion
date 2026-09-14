@@ -35,6 +35,11 @@ interface CollectionControllerOptions<T> {
   fallbackError?: string;
 }
 
+interface ActiveRequest {
+  controller: AbortController;
+  generation: number;
+}
+
 export function createCollectionState<T>(pageSize: number): CollectionState<T> {
   return {
     items: [],
@@ -67,12 +72,20 @@ export function createCollectionController<T>(
   let generation = 0;
   const fallbackError = options.fallbackError ?? 'Could not load this collection.';
 
-  function startRequest(): { controller: AbortController; generation: number } {
+  function startRequest(): ActiveRequest {
     activeController?.abort();
     const controller = new AbortController();
     activeController = controller;
     generation += 1;
     return { controller, generation };
+  }
+
+  function requestIsCurrent(request: ActiveRequest): boolean {
+    return !request.controller.signal.aborted && request.generation === generation;
+  }
+
+  function releaseRequest(request: ActiveRequest): void {
+    if (activeController === request.controller) activeController = null;
   }
 
   function applyResult(result: PageResult<T>): void {
@@ -84,7 +97,10 @@ export function createCollectionController<T>(
     state.hasLoaded = true;
   }
 
-  async function load(requestedPage = state.page): Promise<boolean> {
+  async function load(
+    requestedPage = state.page,
+    requestedPageSize = state.pageSize,
+  ): Promise<boolean> {
     const request = startRequest();
     const wasLoaded = state.hasLoaded;
     state.error = null;
@@ -95,29 +111,30 @@ export function createCollectionController<T>(
     try {
       let result = await loadPage({
         page: Math.max(1, requestedPage),
-        pageSize: state.pageSize,
+        pageSize: requestedPageSize,
         signal: request.controller.signal,
       });
-      if (request.controller.signal.aborted || request.generation !== generation) return false;
+      if (!requestIsCurrent(request)) return false;
 
       if (result.pages > 0 && requestedPage > result.pages) {
         result = await loadPage({
           page: result.pages,
-          pageSize: state.pageSize,
+          pageSize: requestedPageSize,
           signal: request.controller.signal,
         });
-        if (request.controller.signal.aborted || request.generation !== generation) return false;
+        if (!requestIsCurrent(request)) return false;
       }
 
       applyResult(result);
       return true;
     } catch (error) {
-      if (request.controller.signal.aborted || request.generation !== generation) return false;
+      if (!requestIsCurrent(request)) return false;
       if (error instanceof DOMException && error.name === 'AbortError') return false;
       state.error = errorMessage(error, fallbackError);
       return false;
     } finally {
       if (request.generation === generation) {
+        releaseRequest(request);
         state.initialLoading = false;
         state.refreshing = false;
       }
@@ -138,16 +155,21 @@ export function createCollectionController<T>(
         pageSize: state.pageSize,
         signal: request.controller.signal,
       });
-      if (request.controller.signal.aborted || request.generation !== generation) return false;
+      if (!requestIsCurrent(request)) return false;
 
-      const existingKeys = options.getKey
-        ? new Set(state.items.map((item) => options.getKey!(item)))
-        : null;
-      const appended = existingKeys
-        ? result.items.filter((item) => !existingKeys.has(options.getKey!(item)))
-        : result.items;
-
-      state.items = [...state.items, ...appended];
+      if (options.getKey) {
+        const knownKeys = new Set(state.items.map((item) => options.getKey!(item)));
+        const appended: T[] = [];
+        for (const item of result.items) {
+          const key = options.getKey(item);
+          if (knownKeys.has(key)) continue;
+          knownKeys.add(key);
+          appended.push(item);
+        }
+        state.items = [...state.items, ...appended];
+      } else {
+        state.items = [...state.items, ...result.items];
+      }
       state.page = result.page;
       state.pageSize = result.pageSize;
       state.pages = result.pages;
@@ -155,12 +177,15 @@ export function createCollectionController<T>(
       state.hasLoaded = true;
       return true;
     } catch (error) {
-      if (request.controller.signal.aborted || request.generation !== generation) return false;
+      if (!requestIsCurrent(request)) return false;
       if (error instanceof DOMException && error.name === 'AbortError') return false;
       state.error = errorMessage(error, fallbackError);
       return false;
     } finally {
-      if (request.generation === generation) state.loadingMore = false;
+      if (request.generation === generation) {
+        releaseRequest(request);
+        state.loadingMore = false;
+      }
     }
   }
 
@@ -171,8 +196,8 @@ export function createCollectionController<T>(
     changePage: (page) => load(page),
     changePageSize: (pageSize) => {
       if (!Number.isInteger(pageSize) || pageSize <= 0) return Promise.resolve(false);
-      state.pageSize = pageSize;
-      return load(1);
+      if (pageSize === state.pageSize) return Promise.resolve(true);
+      return load(1, pageSize);
     },
     loadNextPage,
     clearError: () => {
