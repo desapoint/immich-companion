@@ -55,6 +55,7 @@
     nextViewerIndex,
     stackMembersForAsset,
   } from '../state/assetViewModel';
+  import { BoundedCache } from '../state/boundedCache';
   import { resolveViewerMediaUrls } from '../state/viewerMedia';
   import {
     anchoredScrollOffset,
@@ -199,6 +200,8 @@
     onclose,
   }: Props = $props();
 
+  const mediaAssetCacheLimit = 16;
+  const loadedUrlCacheLimit = mediaAssetCacheLimit * 2;
   let dialogElement: HTMLDialogElement;
   let viewerScroll: HTMLDivElement;
   let viewerImage = $state<HTMLImageElement>();
@@ -225,10 +228,11 @@
   let flickerReferenceUrl = $state('');
   let loadedMediaAssetId = '';
   let mediaLoadGeneration = 0;
-  const mediaUrlCache = new Map<string, string[]>();
-  const mediaPreferredIndex = new Map<string, number>();
-  const loadedMediaUrls = new Set<string>();
-  const mediaDimensions = new Map<string, { width: number; height: number }>();
+  let viewerDisposed = false;
+  const mediaUrlCache = new BoundedCache<string, string[]>(mediaAssetCacheLimit);
+  const mediaPreferredIndex = new BoundedCache<string, number>(mediaAssetCacheLimit);
+  const loadedMediaUrls = new BoundedCache<string, true>(loadedUrlCacheLimit);
+  const mediaDimensions = new BoundedCache<string, { width: number; height: number }>(mediaAssetCacheLimit);
   const mediaPreloadPromises = new Map<string, Promise<void>>();
   let pendingComparisonAnchor: ImageZoomAnchor | null = null;
   let panOrigin = $state<ViewerPanOrigin | null>(null);
@@ -293,6 +297,10 @@
       && integrityAssetId === visibleAsset.id
       && !isTaskTerminal(integrityTask.status),
   );
+
+  function isMediaUrlLoaded(url: string): boolean {
+    return loadedMediaUrls.get(url) === true;
+  }
 
   function isTaskTerminal(status: AssetTaskStatus['status']): boolean {
     return status === 'completed' || status === 'failed' || status === 'cancelled';
@@ -591,7 +599,7 @@
     if (!urls?.length) return null;
     const index = Math.min(mediaPreferredIndex.get(assetId) ?? 0, urls.length - 1);
     const url = urls[index];
-    return url && loadedMediaUrls.has(url) ? url : null;
+    return url && isMediaUrlLoaded(url) ? url : null;
   }
 
   async function startReferenceFlicker(): Promise<void> {
@@ -739,12 +747,12 @@
     viewerMediaUrls = urls;
     viewerMediaIndex = Math.min(mediaPreferredIndex.get(assetId) ?? 0, Math.max(0, urls.length - 1));
     viewerMediaUrl = urls[viewerMediaIndex] ?? '';
-    imageLoading = Boolean(viewerMediaUrl) && !loadedMediaUrls.has(viewerMediaUrl);
+    imageLoading = Boolean(viewerMediaUrl) && !isMediaUrlLoaded(viewerMediaUrl);
     imageError = !viewerMediaUrl;
   }
 
   async function preloadAssetMedia(asset: AssetStackMember): Promise<void> {
-    if (mediaDimensions.has(asset.id)) return;
+    if (viewerDisposed || mediaDimensions.has(asset.id)) return;
     const existing = mediaPreloadPromises.get(asset.id);
     if (existing) {
       await existing;
@@ -754,6 +762,7 @@
     const preload = (async () => {
       const urls = mediaUrlCache.get(asset.id)
         ?? await resolveViewerMediaUrls(asset.id, asset.original_mime_type);
+      if (viewerDisposed) return;
       mediaUrlCache.set(asset.id, urls);
       for (let index = mediaPreferredIndex.get(asset.id) ?? 0; index < urls.length; index += 1) {
         const url = urls[index];
@@ -764,9 +773,10 @@
           image.onerror = () => resolve(null);
           image.src = url;
         });
+        if (viewerDisposed) return;
         if (!loaded) continue;
         mediaPreferredIndex.set(asset.id, index);
-        loadedMediaUrls.add(url);
+        loadedMediaUrls.set(url, true);
         mediaDimensions.set(asset.id, {
           width: loaded.naturalWidth,
           height: loaded.naturalHeight,
@@ -785,7 +795,7 @@
 
   function handleImageLoad(event: Event): void {
     const image = event.currentTarget as HTMLImageElement;
-    loadedMediaUrls.add(image.currentSrc || viewerMediaUrl);
+    loadedMediaUrls.set(image.currentSrc || viewerMediaUrl, true);
     mediaPreferredIndex.set(loadedMediaAssetId, viewerMediaIndex);
     mediaDimensions.set(loadedMediaAssetId, {
       width: image.naturalWidth,
@@ -806,7 +816,7 @@
       viewerMediaIndex = nextIndex;
       mediaPreferredIndex.set(loadedMediaAssetId, nextIndex);
       viewerMediaUrl = viewerMediaUrls[nextIndex];
-      imageLoading = !loadedMediaUrls.has(viewerMediaUrl);
+      imageLoading = !isMediaUrlLoaded(viewerMediaUrl);
       imageError = false;
       return;
     }
@@ -819,7 +829,6 @@
     if (assetId === selectedAssetId) return;
     selectedAssetId = assetId;
     if (!duplicateContext) visibleAssetId = assetId;
-    untrack(() => onvisiblechange(assetId));
   });
 
   $effect(() => {
@@ -852,14 +861,10 @@
   });
 
   $effect(() => {
-    if (!duplicateContext || comparisonMembers.length < 2) return;
-    const members = [...comparisonMembers];
-    const activeId = visibleAsset.id;
-    untrack(() => {
-      for (const member of members) {
-        if (member.id !== activeId) void preloadAssetMedia(member);
-      }
-    });
+    if (!duplicateContext || !comparisonReferenceId || comparisonMembers.length < 2) return;
+    const reference = comparisonMembers.find((member) => member.id === comparisonReferenceId);
+    if (!reference || reference.id === visibleAsset.id) return;
+    untrack(() => void preloadAssetMedia(reference));
   });
 
   $effect(() => {
@@ -886,13 +891,14 @@
 
     untrack(() => {
       void resolveViewerMediaUrls(assetId, mimeType).then((urls) => {
-        if (generation !== mediaLoadGeneration || loadedMediaAssetId !== assetId) return;
+        if (viewerDisposed || generation !== mediaLoadGeneration || loadedMediaAssetId !== assetId) return;
         applyViewerMedia(assetId, urls);
       });
     });
   });
 
   onMount(() => {
+    viewerDisposed = false;
     if (duplicateContext) infoOpen = true;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
@@ -906,10 +912,17 @@
     });
     resizeObserver.observe(viewerScroll);
     return () => {
+      viewerDisposed = true;
+      mediaLoadGeneration += 1;
       stopIntegrityWatch();
       resizeObserver.disconnect();
       window.removeEventListener('keydown', handleKeydown);
       window.removeEventListener('keyup', handleKeyup);
+      mediaUrlCache.clear();
+      mediaPreferredIndex.clear();
+      loadedMediaUrls.clear();
+      mediaDimensions.clear();
+      mediaPreloadPromises.clear();
       document.body.style.overflow = previousOverflow;
     };
   });
