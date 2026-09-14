@@ -136,7 +136,7 @@
   let actionContext = $state<'selection' | 'viewer'>('selection');
   let actionTargetIds = $state<string[]>([]);
   let viewerIndex = $state<number | null>(null);
-  let viewerSelectedAsset = $state<import('../types/assets').AssetSummary | null>(null);
+  let viewerSelectedAsset = $state<AssetSummary | null>(null);
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
@@ -184,34 +184,61 @@
     scrollY: number;
   }
 
-  function handleTaskUpdate(task: AssetTaskStatus): void {
-    if (task.task_type === 'asset_action') {
-      actionTaskHistory = [task, ...actionTaskHistory.filter((item) => item.id !== task.id)].slice(0, 10);
+  function rememberActionTask(task: AssetTaskStatus): void {
+    actionTaskHistory = [task, ...actionTaskHistory.filter((item) => item.id !== task.id)].slice(0, 10);
+  }
+
+  function stopSelectionTaskPolling(): void {
+    if (selectionTaskPollTimer === null) return;
+    clearInterval(selectionTaskPollTimer);
+    selectionTaskPollTimer = null;
+  }
+
+  function stopActionTaskPolling(): void {
+    if (actionTaskPollTimer === null) return;
+    clearInterval(actionTaskPollTimer);
+    actionTaskPollTimer = null;
+  }
+
+  function startSelectionTaskPolling(): void {
+    if (taskUpdateConnection?.connected || selectionTaskPollTimer !== null) return;
+    selectionTaskPollTimer = setInterval(() => void pollSelectionTask(), 1000);
+  }
+
+  function startActionTaskPolling(): void {
+    if (taskUpdateConnection?.connected || actionTaskPollTimer !== null) return;
+    actionTaskPollTimer = setInterval(() => void pollActionTask(), 1000);
+  }
+
+  function handleTaskConnectionChange(connected: boolean): void {
+    if (connected) {
+      stopSelectionTaskPolling();
+      stopActionTaskPolling();
+      return;
     }
+    if (selectionTask && !isTaskTerminal(selectionTask.status)) startSelectionTaskPolling();
+    if (actionTask && !isTaskTerminal(actionTask.status)) startActionTaskPolling();
+  }
+
+  function handleTaskUpdate(task: AssetTaskStatus): void {
+    if (task.task_type === 'asset_action') rememberActionTask(task);
+    if (task.task_type === 'asset_sync') {
+      void syncStatusPoller.refresh();
+      return;
+    }
+
     const trackedTaskIds = new Set([
       selectionTask?.id,
       actionTask?.id,
       localStorage.getItem('immich-companion:selected-sync-task'),
       localStorage.getItem('immich-companion:asset-action-task'),
     ].filter((id): id is string => id !== null));
-    if (task.task_type === 'asset_sync') {
-      void syncStatusPoller.refresh();
-      return;
-    }
     if (!trackedTaskIds.has(task.id)) return;
+
     if (task.task_type === 'asset_selection_sync') {
-      selectionTask = task;
-      selectionSyncing = !isTaskTerminal(task.status);
-      localStorage.setItem('immich-companion:selected-sync-task', task.id);
-      if (isTaskTerminal(task.status)) void pollSelectionTask();
-      else startSelectionTaskPolling();
-    }
-    if (task.task_type === 'asset_action') {
-      actionTask = task;
-      localStorage.setItem('immich-companion:asset-action-task', task.id);
-      actionBusy = !isTaskTerminal(task.status);
-      if (isTaskTerminal(task.status)) void pollActionTask();
-      else startActionTaskPolling();
+      void applySelectionTaskStatus(task);
+    } else if (task.task_type === 'asset_action') {
+      void applyActionTaskStatus(task);
     }
   }
 
@@ -219,9 +246,11 @@
     taskUpdateConnection ??= new TaskUpdateConnection(
       (onstatus, onclose) => openTaskUpdates(onstatus, undefined, onclose),
       handleTaskUpdate,
+      handleTaskConnectionChange,
     );
     taskUpdateConnection.start();
   }
+
   const matchingTagIds = $derived(new Set(searchedTagIds(expression)));
   const hasSearch = $derived(expression.children.length > 0);
   const selectedCount = $derived(selectedAssetCount(selection, results?.total ?? 0));
@@ -298,9 +327,9 @@
       }
       return true;
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return false;
+      if (requestError instanceof Error && requestError.name === 'AbortError') return false;
       if (generation === assetLoadGeneration) {
-        error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+        error = requestErrorMessage(requestError, 'Asset search failed.');
       }
       return false;
     } finally {
@@ -402,9 +431,9 @@
       if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
       return true;
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return false;
+      if (requestError instanceof Error && requestError.name === 'AbortError') return false;
       if (generation === assetLoadGeneration) {
-        error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+        error = requestErrorMessage(requestError, 'Asset search failed.');
       }
       return false;
     } finally {
@@ -471,9 +500,9 @@
       if (selection.selectionId) await refreshServerPageMembership(controller.signal);
       return appendedItems.length > 0;
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return false;
+      if (requestError instanceof Error && requestError.name === 'AbortError') return false;
       if (generation === assetLoadGeneration) {
-        error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+        error = requestErrorMessage(requestError, 'Asset search failed.');
       }
       return false;
     } finally {
@@ -523,8 +552,7 @@
     listMode = nextMode;
     localStorage.setItem(ASSET_LIST_MODE_STORAGE_KEY, nextMode);
     page = 1;
-    viewerIndex = null;
-    viewerSelectedAsset = null;
+    closeViewer();
     selectionAnchorIndex = null;
     void loadAssets().then((loaded) => {
       if (loaded) return;
@@ -567,10 +595,11 @@
         membership.selected_ids,
       );
     } catch (requestError) {
-      if (!(requestError instanceof DOMException && requestError.name === 'AbortError')) {
-        selectionSyncError = requestError instanceof Error
-          ? requestError.message
-          : 'Selection membership could not be loaded.';
+      if (!(requestError instanceof Error && requestError.name === 'AbortError')) {
+        selectionSyncError = requestErrorMessage(
+          requestError,
+          'Selection membership could not be loaded.',
+        );
       }
     }
   }
@@ -596,9 +625,7 @@
         };
       }
     } catch (requestError) {
-      selectionSyncError = requestError instanceof Error
-        ? requestError.message
-        : 'Selection update failed.';
+      selectionSyncError = requestErrorMessage(requestError, 'Selection update failed.');
       await refreshServerPageMembership();
     }
   }
@@ -666,9 +693,7 @@
       if (refreshedIndex >= 0 && viewerIndex !== null) viewerIndex = refreshedIndex;
       await loadRelationOptions();
     } catch (requestError) {
-      viewerSyncError = requestError instanceof Error
-        ? requestError.message
-        : 'Asset sync failed.';
+      viewerSyncError = requestErrorMessage(requestError, 'Asset sync failed.');
     } finally {
       viewerSyncing = false;
     }
@@ -681,9 +706,7 @@
     try {
       const result = await synchronizeAssetSelection(buildSelectionRequest(selection, expression));
       if (result.task_id) {
-        selectionTask = await getTaskStatus(result.task_id);
-        localStorage.setItem('immich-companion:selected-sync-task', result.task_id);
-        startSelectionTaskPolling();
+        await applySelectionTaskStatus(await getTaskStatus(result.task_id));
       } else {
         actionCompletionMessage = `${result.synced} assets synchronized.`;
         detailCache.clear();
@@ -691,9 +714,7 @@
         await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
     } catch (requestError) {
-      selectionSyncError = requestError instanceof Error
-        ? requestError.message
-        : 'Selected asset sync failed.';
+      selectionSyncError = requestErrorMessage(requestError, 'Selected asset sync failed.');
     } finally {
       selectionSyncing = selectionTask !== null && !isTaskTerminal(selectionTask.status);
     }
@@ -703,39 +724,55 @@
     return status === 'completed' || status === 'failed' || status === 'cancelled';
   }
 
-  function startSelectionTaskPolling(): void {
-    if (selectionTaskPollTimer !== null) return;
-    selectionTaskPollTimer = setInterval(() => void pollSelectionTask(), 1000);
+  async function applySelectionTaskStatus(next: AssetTaskStatus): Promise<void> {
+    const terminal = isTaskTerminal(next.status);
+    const terminalAlreadyHandled = terminal
+      && selectionTask?.id === next.id
+      && isTaskTerminal(selectionTask.status);
+
+    selectionTask = next;
+    selectionSyncing = !terminal;
+    localStorage.setItem('immich-companion:selected-sync-task', next.id);
+
+    if (!terminal) {
+      if (!taskUpdateConnection?.connected) startSelectionTaskPolling();
+      return;
+    }
+
+    stopSelectionTaskPolling();
+    localStorage.removeItem('immich-companion:selected-sync-task');
+    if (terminalAlreadyHandled) return;
+
+    const summary = next.result?.summary;
+    const failedIds = summary?.failed_ids ?? [];
+    if (next.status === 'failed' || next.status === 'cancelled' || failedIds.length > 0) {
+      selectionTaskErrorOpen = true;
+      selectionSyncError = next.error?.message
+        ?? (next.status === 'cancelled'
+          ? 'Selected asset synchronization was cancelled.'
+          : 'Some selected assets could not be synchronized.');
+      return;
+    }
+
+    actionCompletionMessage = `${summary?.synced ?? next.counters.synced ?? 0} assets synchronized.`;
+    detailCache.clear();
+    clearSelection();
+    await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
   }
 
   async function pollSelectionTask(): Promise<void> {
     const taskId = selectionTask?.id ?? localStorage.getItem('immich-companion:selected-sync-task');
-    if (!taskId) return;
+    if (!taskId) {
+      stopSelectionTaskPolling();
+      return;
+    }
     try {
-      const next = await getTaskStatus(taskId);
-      selectionTask = next;
-      selectionSyncing = !isTaskTerminal(next.status);
-      if (!isTaskTerminal(next.status)) return;
-      if (selectionTaskPollTimer !== null) {
-        clearInterval(selectionTaskPollTimer);
-        selectionTaskPollTimer = null;
-      }
-      localStorage.removeItem('immich-companion:selected-sync-task');
-      const summary = next.result?.summary;
-      const failedIds = summary?.failed_ids ?? [];
-      if (next.status === 'failed' || failedIds.length > 0) {
-        selectionTaskErrorOpen = true;
-        selectionSyncError = next.error?.message ?? 'Some selected assets could not be synchronized.';
-        return;
-      }
-      actionCompletionMessage = `${summary?.synced ?? next.counters.synced ?? 0} assets synchronized.`;
-      detailCache.clear();
-      clearSelection();
-      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
+      await applySelectionTaskStatus(await getTaskStatus(taskId));
     } catch (requestError) {
-      selectionSyncError = requestError instanceof Error
-        ? requestError.message
-        : 'Selected asset sync status is unavailable.';
+      selectionSyncError = requestErrorMessage(
+        requestError,
+        'Selected asset sync status is unavailable.',
+      );
     }
   }
 
@@ -969,9 +1006,7 @@
       actionPlan = null;
       await refreshSelection();
     } catch (requestError) {
-      actionError = requestError instanceof Error
-        ? requestError.message
-        : 'Could not select all matching assets.';
+      actionError = requestErrorMessage(requestError, 'Could not select all matching assets.');
     } finally {
       selectionLoading = false;
     }
@@ -1041,9 +1076,7 @@
         primaryAssetId ?? undefined,
       );
     } catch (requestError) {
-      actionError = requestError instanceof Error
-        ? requestError.message
-        : 'Action planning failed.';
+      actionError = requestErrorMessage(requestError, 'Action planning failed.');
     } finally {
       actionBusy = false;
     }
@@ -1078,17 +1111,13 @@
         actionPlan.stack_primary_asset_id ?? undefined,
       );
       const started = await executeAssetActionTask(reviewedPlan.id);
-      actionTask = await getTaskStatus(started.task_id);
-      localStorage.setItem('immich-companion:asset-action-task', started.task_id);
-      startActionTaskPolling();
+      await applyActionTaskStatus(await getTaskStatus(started.task_id));
       actionPlan = null;
       actionTargetIds = confirmedTargetIds;
     } catch (requestError) {
-      actionError = requestError instanceof Error
-        ? requestError.message
-        : 'Stack action execution failed.';
+      actionError = requestErrorMessage(requestError, 'Stack action execution failed.');
     } finally {
-      actionBusy = false;
+      if (!actionTask || isTaskTerminal(actionTask.status)) actionBusy = false;
     }
   }
 
@@ -1119,40 +1148,38 @@
       detailCache.clear();
       clearSelection();
       await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
+    } else if (!confirmedTargetId) {
+      closeViewer();
+      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
     } else {
-      if (!confirmedTargetId) {
-        closeViewer();
-        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
-      } else {
-        const affectedIds = [...new Set([
-          ...result.applied_ids,
-          ...result.failed_ids,
-          confirmedTargetId,
-        ])];
-        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
-        const refreshedAssets = await Promise.all(
-          affectedIds.map(async (assetId) => {
-            detailCache.delete(assetId);
-            return [assetId, await matchAssetSearch(assetId, expression)] as const;
-          }),
-        );
-        for (const [, refreshed] of refreshedAssets) {
-          if (refreshed) patchResultAsset(refreshed);
-        }
-        const refreshedAsset = refreshedAssets.find(([assetId]) => assetId === confirmedTargetId)?.[1] ?? null;
-        if (!refreshedAsset) {
-          closeViewer();
-        } else {
-          const refreshedIndex = patchResultAsset(refreshedAsset);
-          if (refreshedIndex >= 0) viewerIndex = refreshedIndex;
-          detailCache.delete(confirmedTargetId);
-          await Promise.all([
-            refreshDetail(confirmedTargetId),
-            resolveViewerActionState(confirmedTargetId, true),
-          ]);
-        }
-        if (selectedCount > 0) void refreshSelection();
+      const affectedIds = [...new Set([
+        ...result.applied_ids,
+        ...result.failed_ids,
+        confirmedTargetId,
+      ])];
+      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
+      const refreshedAssets = await Promise.all(
+        affectedIds.map(async (assetId) => {
+          detailCache.delete(assetId);
+          return [assetId, await matchAssetSearch(assetId, expression)] as const;
+        }),
+      );
+      for (const [, refreshed] of refreshedAssets) {
+        if (refreshed) patchResultAsset(refreshed);
       }
+      const refreshedAsset = refreshedAssets.find(([assetId]) => assetId === confirmedTargetId)?.[1] ?? null;
+      if (!refreshedAsset) {
+        closeViewer();
+      } else {
+        const refreshedIndex = patchResultAsset(refreshedAsset);
+        if (refreshedIndex >= 0) viewerIndex = refreshedIndex;
+        detailCache.delete(confirmedTargetId);
+        await Promise.all([
+          refreshDetail(confirmedTargetId),
+          resolveViewerActionState(confirmedTargetId, true),
+        ]);
+      }
+      if (selectedCount > 0) void refreshSelection();
     }
     actionTargetIds = [];
   }
@@ -1173,19 +1200,15 @@
       const plan = await planAssetAction(request, action, relationIds);
       if (context === 'selection') {
         const started = await executeAssetActionTask(plan.id);
-        actionTask = await getTaskStatus(started.task_id);
-        localStorage.setItem('immich-companion:asset-action-task', started.task_id);
-        startActionTaskPolling();
+        await applyActionTaskStatus(await getTaskStatus(started.task_id));
       } else {
         const result = await executeAssetAction(plan.id);
         await applyActionResult(result, context, actionTargetIds);
       }
     } catch (requestError) {
-      actionError = requestError instanceof Error
-        ? requestError.message
-        : 'Relation action failed.';
+      actionError = requestErrorMessage(requestError, 'Relation action failed.');
     } finally {
-      actionBusy = false;
+      if (context !== 'selection' || !actionTask || isTaskTerminal(actionTask.status)) actionBusy = false;
     }
   }
 
@@ -1215,7 +1238,12 @@
   }
 
   async function resolveViewerActionState(assetId: string, force = false): Promise<void> {
-    if (!force && viewerActionAssetId === assetId && viewerActionResolution) return;
+    if (
+      !force
+      && viewerActionAssetId === assetId
+      && (viewerActionResolution || viewerActionRequest.active)
+    ) return;
+
     viewerActionAssetId = assetId;
     viewerActionResolution = null;
     viewerActionError = null;
@@ -1263,61 +1291,73 @@
     try {
       if (confirmedContext === 'selection') {
         const started = await executeAssetActionTask(actionPlan.id);
-        actionTask = await getTaskStatus(started.task_id);
-        localStorage.setItem('immich-companion:asset-action-task', started.task_id);
-        startActionTaskPolling();
+        await applyActionTaskStatus(await getTaskStatus(started.task_id));
         actionPlan = null;
       } else {
         const result = await executeAssetAction(actionPlan.id);
         await applyActionResult(result, confirmedContext, confirmedTargetIds);
       }
     } catch (requestError) {
-      actionError = requestError instanceof Error
-        ? requestError.message
-        : 'Action execution failed.';
+      actionError = requestErrorMessage(requestError, 'Action execution failed.');
     } finally {
-      actionBusy = false;
+      if (confirmedContext !== 'selection' || !actionTask || isTaskTerminal(actionTask.status)) {
+        actionBusy = false;
+      }
     }
   }
 
-  function startActionTaskPolling(): void {
-    if (actionTaskPollTimer !== null) return;
-    actionTaskPollTimer = setInterval(() => void pollActionTask(), 1000);
+  async function applyActionTaskStatus(next: AssetTaskStatus): Promise<void> {
+    const terminal = isTaskTerminal(next.status);
+    const terminalAlreadyHandled = terminal
+      && actionTask?.id === next.id
+      && isTaskTerminal(actionTask.status);
+
+    actionTask = next;
+    actionBusy = !terminal;
+    rememberActionTask(next);
+    localStorage.setItem('immich-companion:asset-action-task', next.id);
+
+    if (!terminal) {
+      if (!taskUpdateConnection?.connected) startActionTaskPolling();
+      return;
+    }
+
+    stopActionTaskPolling();
+    localStorage.removeItem('immich-companion:asset-action-task');
+    if (terminalAlreadyHandled) return;
+
+    const summary = next.result?.summary ?? {};
+    detailCache.clear();
+    await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
+    if (next.status === 'failed' || next.status === 'cancelled') {
+      actionError = next.error?.message
+        ?? (next.status === 'cancelled' ? 'The bulk action was cancelled.' : 'The bulk action failed.');
+      return;
+    }
+
+    actionCompletionMessage = `${summary.applied_count ?? 0} changed · ${summary.skipped_count ?? 0} skipped.`;
+    clearSelection();
   }
 
   async function pollActionTask(): Promise<void> {
     const taskId = actionTask?.id ?? localStorage.getItem('immich-companion:asset-action-task');
-    if (!taskId) return;
+    if (!taskId) {
+      stopActionTaskPolling();
+      return;
+    }
     try {
-      const next = await getTaskStatus(taskId);
-      actionTask = next;
-      actionBusy = !isTaskTerminal(next.status);
-      if (!isTaskTerminal(next.status)) return;
-      if (actionTaskPollTimer !== null) {
-        clearInterval(actionTaskPollTimer);
-        actionTaskPollTimer = null;
-      }
-      localStorage.removeItem('immich-companion:asset-action-task');
-      const summary = next.result?.summary ?? {};
-      detailCache.clear();
-      await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
-      if (next.status === 'failed') {
-        actionError = next.error?.message ?? 'The bulk action failed.';
-        return;
-      }
-      actionCompletionMessage = `${summary.applied_count ?? 0} changed · ${summary.skipped_count ?? 0} skipped.`;
-      clearSelection();
+      await applyActionTaskStatus(await getTaskStatus(taskId));
     } catch (requestError) {
-      actionError = requestError instanceof Error ? requestError.message : 'Action status is unavailable.';
+      actionError = requestErrorMessage(requestError, 'Action status is unavailable.');
     }
   }
 
   async function cancelActionTask(): Promise<void> {
     if (!actionTask || isTaskTerminal(actionTask.status)) return;
     try {
-      actionTask = await cancelTask(actionTask.id);
+      await applyActionTaskStatus(await cancelTask(actionTask.id));
     } catch (requestError) {
-      actionError = requestError instanceof Error ? requestError.message : 'Could not cancel the action.';
+      actionError = requestErrorMessage(requestError, 'Could not cancel the action.');
     }
   }
 
@@ -1399,9 +1439,7 @@
       if (nextFailureId !== null) handledSyncFailureId = nextFailureId;
     } catch (requestError) {
       if (!syncStatusInitialized) {
-        syncMessage = requestError instanceof Error
-          ? requestError.message
-          : 'Sync status is unavailable.';
+        syncMessage = requestErrorMessage(requestError, 'Sync status is unavailable.');
       }
     }
   }
@@ -1429,7 +1467,7 @@
       await startAssetSync(mode);
       await syncStatusPoller.refresh(true);
     } catch (requestError) {
-      error = requestError instanceof Error ? requestError.message : 'Immich sync failed.';
+      error = requestErrorMessage(requestError, 'Immich sync failed.');
       syncing = false;
       syncStatusPoller.reschedule();
     }
@@ -1456,13 +1494,11 @@
     void loadRelationOptions();
     void loadAssets();
     syncStatusPoller.start();
-    const savedSelectionTask = localStorage.getItem('immich-companion:selected-sync-task');
-    if (savedSelectionTask) {
+    if (localStorage.getItem('immich-companion:selected-sync-task')) {
       void pollSelectionTask();
       startSelectionTaskPolling();
     }
-    const savedActionTask = localStorage.getItem('immich-companion:asset-action-task');
-    if (savedActionTask) {
+    if (localStorage.getItem('immich-companion:asset-action-task')) {
       void pollActionTask();
       startActionTaskPolling();
     }
@@ -1471,14 +1507,16 @@
       window.removeEventListener('pointercancel', finishDragSelection);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       syncStatusPoller.stop();
-      if (selectionTaskPollTimer !== null) clearInterval(selectionTaskPollTimer);
-      if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
+      stopSelectionTaskPolling();
+      stopActionTaskPolling();
       taskUpdateConnection?.stop();
     };
   });
 
   onDestroy(() => {
     syncStatusPoller.stop();
+    stopSelectionTaskPolling();
+    stopActionTaskPolling();
     taskUpdateConnection?.stop();
     searchController?.abort();
     detailRequest.abort();
@@ -1537,7 +1575,7 @@
   {/if}
 
   {#if actionMessage}<p class="action-message" role="status">{actionMessage}</p>{/if}
-{#if actionError && actionContext === 'selection'}
+  {#if actionError && actionContext === 'selection'}
     <p class="action-error" role="alert">Bulk action failed: {actionError}</p>
   {/if}
 
