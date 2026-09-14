@@ -309,10 +309,7 @@
     onrequestnext={() => requestViewerPage('next')}
     onnavigate={(index) => void openViewer(index)}
     ontoggleselection={toggleSelection}
-    onvisiblechange={(assetId) => {
-      const index = collection.items.findIndex((asset) => asset.id === assetId);
-      if (index >= 0) void openViewer(index);
-    }}
+    onpreviewchange={() => {}}
     onaction={() => {}}
     onrelationconfirm={() => {}}
     onconfirmaction={() => {}}
