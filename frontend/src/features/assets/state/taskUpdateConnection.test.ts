@@ -50,7 +50,7 @@ describe('task update connection', () => {
     expect(sockets).toHaveLength(4);
   });
 
-  it('reports connectivity changes once per actual transition', () => {
+  it('reports unexpected connectivity transitions without treating explicit stop as a reconnectable loss', () => {
     vi.useFakeTimers();
     const sockets: FakeSocket[] = [];
     let close: (() => void) | undefined;
@@ -72,8 +72,12 @@ describe('task update connection', () => {
     expect(connection.connected).toBe(false);
     expect(onconnectionchange).toHaveBeenLastCalledWith(false);
 
+    vi.advanceTimersByTime(1000);
+    sockets[1].emitOpen();
+    expect(connection.connected).toBe(true);
     connection.stop();
-    expect(onconnectionchange).toHaveBeenCalledTimes(2);
+    expect(connection.connected).toBe(false);
+    expect(onconnectionchange.mock.calls).toEqual([[true], [false], [true]]);
   });
 
   it('recovers when the stream closes synchronously while opening', () => {
