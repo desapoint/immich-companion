@@ -10,9 +10,15 @@ interface PendingMutation<T extends RevisionedResult> {
   reject: (reason: unknown) => void;
 }
 
+interface IdleWaiter {
+  resolve: () => void;
+  reject: (reason: unknown) => void;
+}
+
 interface MutationQueueState<T extends RevisionedResult> {
   knownRevision: number | null;
   pending: PendingMutation<T>[];
+  idleWaiters: IdleWaiter[];
   draining: boolean;
 }
 
@@ -37,7 +43,12 @@ export class RevisionedMutationQueue<T extends RevisionedResult> {
   ): Promise<T> {
     let state = this.#states.get(resourceId);
     if (!state) {
-      state = { knownRevision: requestedRevision, pending: [], draining: false };
+      state = {
+        knownRevision: requestedRevision,
+        pending: [],
+        idleWaiters: [],
+        draining: false,
+      };
       this.#states.set(resourceId, state);
     } else if (state.knownRevision === null || requestedRevision > state.knownRevision) {
       state.knownRevision = requestedRevision;
@@ -57,17 +68,29 @@ export class RevisionedMutationQueue<T extends RevisionedResult> {
     return promise;
   }
 
+  waitForIdle(resourceId: string): Promise<void> {
+    const state = this.#states.get(resourceId);
+    if (!state || (!state.draining && state.pending.length === 0)) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      state.idleWaiters.push({ resolve, reject });
+    });
+  }
+
   clear(resourceId?: string): void {
     if (resourceId === undefined) {
+      for (const state of this.#states.values()) this.#resolveIdleWaiters(state);
       this.#states.clear();
       return;
     }
+    const state = this.#states.get(resourceId);
+    if (state) this.#resolveIdleWaiters(state);
     this.#states.delete(resourceId);
   }
 
   async #drain(resourceId: string, state: MutationQueueState<T>): Promise<void> {
     if (state.draining) return;
     state.draining = true;
+    let failure: unknown = null;
     try {
       while (state.pending.length > 0) {
         state.pending.sort((left, right) => (
@@ -82,6 +105,7 @@ export class RevisionedMutationQueue<T extends RevisionedResult> {
           state.knownRevision = Math.max(state.knownRevision ?? result.revision, result.revision);
           next.resolve(result);
         } catch (error) {
+          failure = error;
           next.reject(error);
           for (const pending of state.pending.splice(0)) pending.reject(error);
           state.knownRevision = null;
@@ -94,11 +118,21 @@ export class RevisionedMutationQueue<T extends RevisionedResult> {
       }
     } finally {
       state.draining = false;
+      if (failure !== null) this.#rejectIdleWaiters(state, failure);
+      else this.#resolveIdleWaiters(state);
       if (state.pending.length === 0 && this.#states.get(resourceId) === state) {
         this.#states.delete(resourceId);
       } else if (state.pending.length > 0) {
         void this.#drain(resourceId, state);
       }
     }
+  }
+
+  #resolveIdleWaiters(state: MutationQueueState<T>): void {
+    for (const waiter of state.idleWaiters.splice(0)) waiter.resolve();
+  }
+
+  #rejectIdleWaiters(state: MutationQueueState<T>, reason: unknown): void {
+    for (const waiter of state.idleWaiters.splice(0)) waiter.reject(reason);
   }
 }
