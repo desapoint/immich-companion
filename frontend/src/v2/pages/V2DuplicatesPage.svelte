@@ -30,6 +30,7 @@
   import V2Zone from '../components/V2Zone.svelte';
   import { createCollectionView } from '../state/collectionView.svelte';
   import { backgroundTaskStatus } from '../state/backgroundTaskStatus.svelte';
+  import { readDuplicateDiscoveryPreferences, writeDuplicateDiscoveryPreferences } from '../state/duplicateDiscoveryPreferences';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { OperationController } from '../state/operationController.svelte';
   import {
@@ -253,6 +254,7 @@
       const normalizedThreshold=Math.min(100,Math.max(50,Number(similarityThreshold)||95));
       const normalizedCandidates=Math.min(64,Math.max(1,Math.round(Number(maxCandidates)||8)));
       similarityThreshold=String(normalizedThreshold);maxCandidates=String(normalizedCandidates);
+      if(!anchorAssetId&&!writeDuplicateDiscoveryPreferences({includeExact,includeSimilar,similarityThreshold:normalizedThreshold,validationMode,maxCandidates:normalizedCandidates}))interactionError='Discovery settings could not be saved in this browser. The scan can still run.';
       await operations.run('Duplicate discovery',()=>libraryData.duplicates.runDiscovery({similarityThreshold:normalizedThreshold,validationMode,anchorAssetId,includeSimilar,includeExact,maxCandidates:normalizedCandidates},(progress)=>backgroundTaskStatus.updateDuplicateDiscovery(progress)),{
         pending:pending('Duplicate discovery'),
         outcome:(result)=>({tone:'ok',title:'Discovery completed',detail:`${result.groupCount} groups · ${result.candidateCount} candidates`,failures:[]}),
@@ -282,7 +284,7 @@
   async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){interactionError=errorMessage(error,'Similarity cache status could not be loaded.')}finally{cacheLoading=false}}
   async function clearCache(cache:SimilarityCacheKind){if(cacheLoading)return;cacheLoading=true;interactionError='';try{cacheTelemetry=await libraryData.duplicates.clearCache(cache)}catch(error){interactionError=errorMessage(error,'The disposable similarity cache could not be cleared.')}finally{cacheLoading=false}}
 
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';void refreshHistory();void refreshCacheStatus();await refreshGroups(true,true)}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
+  onMount(()=>{const saved=readDuplicateDiscoveryPreferences();includeExact=saved.includeExact;includeSimilar=saved.includeSimilar;similarityThreshold=String(saved.similarityThreshold);validationMode=saved.validationMode;maxCandidates=String(saved.maxCandidates);void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';void refreshHistory();void refreshCacheStatus();await refreshGroups(true,true)}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
 </script>
 
 <V2PageLayout title="Duplicates" description="Review duplicate groups supplied by the active data source, with provider-backed discovery and decisions.">
