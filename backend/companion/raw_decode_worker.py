@@ -6,10 +6,11 @@ import argparse
 import json
 import os
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
-from typing import BinaryIO, Iterator
+from typing import BinaryIO
 
 
 def _apply_memory_limit(limit_bytes: int) -> None:
