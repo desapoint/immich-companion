@@ -55,6 +55,7 @@
     type AssetListMode,
     type InfiniteScrollAnchor,
   } from '../state/assetInfiniteWindow';
+  import { BoundedCache } from '../state/boundedCache';
   import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
@@ -93,6 +94,11 @@
   import AssetTaskProgress from './AssetTaskProgress.svelte';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
+
+  const activeSyncPollMs = 1500;
+  const idleSyncPollMs = 10000;
+  const hiddenSyncPollMs = 30000;
+  const detailCacheSize = 24;
 
   let expression = $state<SearchGroup>(
     simpleFiltersToSearchGroup(createSimpleAssetSearchFilters()),
@@ -148,7 +154,8 @@
   let dragSelecting = false;
   let dragSelectionValue = true;
   let dragLastIndex: number | null = null;
-  let syncPollTimer: ReturnType<typeof setInterval> | null = null;
+  let syncPollTimer: ReturnType<typeof setTimeout> | null = null;
+  let syncStatusRequest: Promise<void> | null = null;
   let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let actionTask = $state<AssetTaskStatus | null>(null);
   let actionTaskHistory = $state<AssetTaskStatus[]>([]);
@@ -158,7 +165,7 @@
   let handledSyncSuccessId: string | null = null;
   let handledSyncFailureId: string | null = null;
   let manualSyncPending = false;
-  const detailCache = new Map<string, AssetDetail>();
+  const detailCache = new BoundedCache<string, AssetDetail>(detailCacheSize);
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
     tags: true,
@@ -187,7 +194,7 @@
       localStorage.getItem('immich-companion:asset-action-task'),
     ].filter((id): id is string => id !== null));
     if (task.task_type === 'asset_sync') {
-      void refreshSyncStatus();
+      void requestSyncStatusRefresh();
       return;
     }
     if (!trackedTaskIds.has(task.id)) return;
@@ -256,41 +263,50 @@
     tags = tagResult.status === 'fulfilled' ? tagResult.value : [];
   }
 
-  async function loadAssets(): Promise<void> {
+  async function loadAssets(): Promise<boolean> {
     const generation = ++assetLoadGeneration;
     infiniteLoading = false;
     searchController?.abort();
-    searchController = new AbortController();
+    const controller = new AbortController();
+    searchController = controller;
     loading = true;
     error = null;
     try {
-      results = await searchAssets(
+      const next = await searchAssets(
         expression,
         page,
         pageSize,
         sort,
-        searchController.signal,
+        controller.signal,
         selection.selectionId,
       );
-      if (results.pages > 0 && page > results.pages) {
-        page = results.pages;
-        await loadAssets();
-        return;
+      if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
+      if (next.pages > 0 && page > next.pages) {
+        page = next.pages;
+        return await loadAssets();
       }
-      if (results.selection) {
+      results = next;
+      if (next.selection) {
         selection = setServerSelection(
           selection,
-          results.selection.id,
-          results.selection.revision,
-          results.selection.selected_count,
-          results.selection.selected_ids,
+          next.selection.id,
+          next.selection.revision,
+          next.selection.selected_count,
+          next.selection.selected_ids,
         );
       }
+      return true;
     } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return false;
+      if (generation === assetLoadGeneration) {
+        error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
+      }
+      return false;
     } finally {
-      if (!searchController.signal.aborted) loading = false;
+      if (generation === assetLoadGeneration) {
+        if (searchController === controller) searchController = null;
+        loading = false;
+      }
     }
   }
 
@@ -391,7 +407,10 @@
       }
       return false;
     } finally {
-      if (generation === assetLoadGeneration) loading = false;
+      if (generation === assetLoadGeneration) {
+        if (searchController === controller) searchController = null;
+        loading = false;
+      }
     }
   }
 
@@ -414,7 +433,9 @@
     if (!infiniteHasMore || loading || infiniteLoading || !results) return false;
     const generation = assetLoadGeneration;
     const nextPage = page + 1;
-    let appended = false;
+    searchController?.abort();
+    const controller = new AbortController();
+    searchController = controller;
     infiniteLoading = true;
     try {
       const next = await searchAssets(
@@ -422,32 +443,43 @@
         nextPage,
         pageSize,
         sort,
-        undefined,
+        controller.signal,
         selection.selectionId,
       );
-      if (generation !== assetLoadGeneration || listMode !== 'infinite' || !results) return false;
+      if (
+        generation !== assetLoadGeneration
+        || controller.signal.aborted
+        || listMode !== 'infinite'
+        || !results
+      ) return false;
       const knownIds = new Set(results.items.map((asset) => asset.id));
-      appended = next.items.some((asset) => !knownIds.has(asset.id));
+      const appendedItems: AssetSummary[] = [];
+      for (const asset of next.items) {
+        if (knownIds.has(asset.id)) continue;
+        knownIds.add(asset.id);
+        appendedItems.push(asset);
+      }
       page = next.page;
       results = {
         ...results,
         page: next.page,
         pages: next.pages,
         total: next.total,
-        items: [
-          ...results.items,
-          ...next.items.filter((asset) => !knownIds.has(asset.id)),
-        ],
+        items: [...results.items, ...appendedItems],
       };
-      if (selection.selectionId) await refreshServerPageMembership();
-      return appended;
+      if (selection.selectionId) await refreshServerPageMembership(controller.signal);
+      return appendedItems.length > 0;
     } catch (requestError) {
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return false;
       if (generation === assetLoadGeneration) {
         error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
       }
       return false;
     } finally {
-      if (generation === assetLoadGeneration) infiniteLoading = false;
+      if (generation === assetLoadGeneration) {
+        if (searchController === controller) searchController = null;
+        infiniteLoading = false;
+      }
     }
   }
 
@@ -459,27 +491,42 @@
       return null;
     }
     if (page >= results.pages) return null;
+    const previousPage = page;
     page += 1;
-    await loadAssets();
+    if (!await loadAssets()) {
+      page = previousPage;
+      return null;
+    }
     return results?.items.length ? 0 : null;
   }
 
   async function requestPreviousViewerIndex(): Promise<number | null> {
     if (!results || listMode !== 'paged' || page <= 1) return null;
+    const previousPage = page;
     page -= 1;
-    await loadAssets();
+    if (!await loadAssets()) {
+      page = previousPage;
+      return null;
+    }
     return results?.items.length ? results.items.length - 1 : null;
   }
 
   function changeListMode(nextMode: AssetListMode): void {
     if (nextMode === listMode) return;
+    const previousMode = listMode;
+    const previousPage = page;
     listMode = nextMode;
     localStorage.setItem(ASSET_LIST_MODE_STORAGE_KEY, nextMode);
     page = 1;
     viewerIndex = null;
     viewerSelectedAsset = null;
     selectionAnchorIndex = null;
-    void loadAssets();
+    void loadAssets().then((loaded) => {
+      if (loaded) return;
+      listMode = previousMode;
+      page = previousPage;
+      localStorage.setItem(ASSET_LIST_MODE_STORAGE_KEY, previousMode);
+    });
   }
 
   function changeLayoutMode(nextMode: AssetLayoutMode): void {
@@ -554,6 +601,8 @@
   async function loadDetail(index: number): Promise<void> {
     const asset = results?.items[index];
     if (!asset) return;
+    detailController?.abort();
+    detailController = null;
     const cached = detailCache.get(asset.id);
     if (cached) {
       detail = cached;
@@ -562,7 +611,6 @@
       return;
     }
 
-    detailController?.abort();
     const controller = new AbortController();
     detailController = controller;
     detail = null;
@@ -574,9 +622,14 @@
       if (!controller.signal.aborted) detail = loaded;
     } catch (requestError) {
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      detailError = requestError instanceof Error ? requestError.message : 'Image details failed to load.';
+      if (!controller.signal.aborted) {
+        detailError = requestError instanceof Error ? requestError.message : 'Image details failed to load.';
+      }
     } finally {
-      if (!controller.signal.aborted) detailLoading = false;
+      if (detailController === controller) {
+        detailController = null;
+        detailLoading = false;
+      }
     }
   }
 
@@ -598,7 +651,10 @@
           : 'Image details failed to load.';
       }
     } finally {
-      if (!controller.signal.aborted) detailLoading = false;
+      if (detailController === controller) {
+        detailController = null;
+        detailLoading = false;
+      }
     }
   }
 
@@ -717,30 +773,42 @@
     expression = copySearchGroup(nextExpression);
     sort = { ...nextSort };
     page = 1;
-    viewerIndex = null;
-    viewerSelectedAsset = null;
+    closeViewer();
     clearSelection();
     void loadAssets();
   }
 
   function changePage(nextPage: number): void {
+    if (nextPage === page) return;
+    const previousPage = page;
     page = nextPage;
-    viewerIndex = null;
-    viewerSelectedAsset = null;
+    closeViewer();
     selectionAnchorIndex = null;
-    void loadAssets();
-    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+    void loadAssets().then((loaded) => {
+      if (!loaded) {
+        page = previousPage;
+        return;
+      }
+      document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+    });
   }
 
   function changePageSize(nextPageSize: number): void {
     if (nextPageSize === pageSize) return;
+    const previousPageSize = pageSize;
+    const previousPage = page;
     pageSize = nextPageSize;
     page = 1;
-    viewerIndex = null;
-    viewerSelectedAsset = null;
+    closeViewer();
     selectionAnchorIndex = null;
-    void loadAssets();
-    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+    void loadAssets().then((loaded) => {
+      if (!loaded) {
+        pageSize = previousPageSize;
+        page = previousPage;
+        return;
+      }
+      document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+    });
   }
 
   function openViewer(index: number): void {
@@ -761,25 +829,34 @@
       navigateViewer(resultIndex);
       return;
     }
+    detailController?.abort();
+    const controller = new AbortController();
+    detailController = controller;
     try {
       detail = null;
       detailError = null;
       detailLoading = true;
       const [asset, loadedDetail] = await Promise.all([
-        getAssetSummary(assetId),
-        getAssetDetail(assetId),
+        getAssetSummary(assetId, controller.signal),
+        getAssetDetail(assetId, controller.signal),
       ]);
-      if (!asset || viewerIndex === null) return;
+      if (controller.signal.aborted || !asset || viewerIndex === null) return;
       viewerSelectedAsset = asset;
+      detailCache.set(assetId, loadedDetail);
       detail = loadedDetail;
       detailError = null;
-      detailLoading = false;
     } catch (requestError) {
-      detailError = requestError instanceof Error
-        ? requestError.message
-        : 'Selected stack member details could not be loaded.';
+      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
+      if (!controller.signal.aborted) {
+        detailError = requestError instanceof Error
+          ? requestError.message
+          : 'Selected stack member details could not be loaded.';
+      }
     } finally {
-      detailLoading = false;
+      if (detailController === controller) {
+        detailController = null;
+        detailLoading = false;
+      }
     }
   }
 
@@ -874,6 +951,7 @@
     selectionResolution = null;
     actionPlan = null;
     selectionController?.abort();
+    selectionController = null;
     selectionLoading = false;
     selectionAnchorIndex = null;
     dragSelecting = false;
@@ -923,14 +1001,16 @@
     );
     reconcileStackPrimary(results?.items.map((asset) => asset.id) ?? []);
     actionPlan = null;
-    void persistServerPageMembership(results?.items.map((asset) => asset.id) ?? []);
+    void persistServerPageMembership(results?.items.map((asset) => asset.id));
     void refreshSelection();
   }
 
   async function refreshSelection(): Promise<void> {
     selectionController?.abort();
     if (selectedAssetCount(selection, results?.total ?? 0) === 0) {
+      selectionController = null;
       selectionResolution = null;
+      selectionLoading = false;
       return;
     }
     const controller = new AbortController();
@@ -951,7 +1031,10 @@
           : 'Selection resolution failed.';
       }
     } finally {
-      if (!controller.signal.aborted) selectionLoading = false;
+      if (selectionController === controller) {
+        selectionController = null;
+        selectionLoading = false;
+      }
     }
   }
 
@@ -1183,13 +1266,21 @@
           ? requestError.message
           : 'Image action state could not be resolved.';
       }
+    } finally {
+      if (viewerActionController === controller) viewerActionController = null;
     }
   }
 
   function closeViewer(): void {
     viewerIndex = null;
     viewerSelectedAsset = null;
+    detailController?.abort();
+    detailController = null;
+    detail = null;
+    detailLoading = false;
+    detailError = null;
     viewerActionController?.abort();
+    viewerActionController = null;
     viewerActionAssetId = null;
     viewerActionResolution = null;
     viewerActionError = null;
@@ -1354,6 +1445,48 @@
     }
   }
 
+  function syncPollDelay(): number {
+    if (document.visibilityState === 'hidden') return hiddenSyncPollMs;
+    return syncing ? activeSyncPollMs : idleSyncPollMs;
+  }
+
+  function clearSyncPoll(): void {
+    if (syncPollTimer === null) return;
+    clearTimeout(syncPollTimer);
+    syncPollTimer = null;
+  }
+
+  function scheduleSyncPoll(delay = syncPollDelay()): void {
+    clearSyncPoll();
+    syncPollTimer = setTimeout(() => {
+      syncPollTimer = null;
+      void requestSyncStatusRefresh();
+    }, delay);
+  }
+
+  async function requestSyncStatusRefresh(forceAfterCurrent = false): Promise<void> {
+    if (syncStatusRequest) {
+      await syncStatusRequest;
+      if (!forceAfterCurrent) return;
+    }
+    clearSyncPoll();
+    const request = refreshSyncStatus();
+    syncStatusRequest = request;
+    try {
+      await request;
+    } finally {
+      if (syncStatusRequest === request) {
+        syncStatusRequest = null;
+        scheduleSyncPoll();
+      }
+    }
+  }
+
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === 'visible') void requestSyncStatusRefresh();
+    else scheduleSyncPoll();
+  }
+
   async function syncAssets(mode: AssetSyncMode = 'incremental'): Promise<void> {
     syncing = true;
     manualSyncPending = true;
@@ -1362,10 +1495,11 @@
     error = null;
     try {
       await startAssetSync(mode);
-      await refreshSyncStatus();
+      await requestSyncStatusRefresh(true);
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Immich sync failed.';
       syncing = false;
+      scheduleSyncPoll();
     }
   }
 
@@ -1386,9 +1520,10 @@
     }
     window.addEventListener('pointerup', finishDragSelection);
     window.addEventListener('pointercancel', finishDragSelection);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     void loadRelationOptions();
     void loadAssets();
-    void refreshSyncStatus();
+    void requestSyncStatusRefresh();
     const savedSelectionTask = localStorage.getItem('immich-companion:selected-sync-task');
     if (savedSelectionTask) {
       void pollSelectionTask();
@@ -1399,11 +1534,11 @@
       void pollActionTask();
       startActionTaskPolling();
     }
-    syncPollTimer = setInterval(() => void refreshSyncStatus(), 1500);
     return () => {
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
-      if (syncPollTimer !== null) clearInterval(syncPollTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      clearSyncPoll();
       if (selectionTaskPollTimer !== null) clearInterval(selectionTaskPollTimer);
       if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
       taskUpdateConnection?.stop();
@@ -1416,7 +1551,8 @@
     detailController?.abort();
     selectionController?.abort();
     viewerActionController?.abort();
-    if (syncPollTimer !== null) clearInterval(syncPollTimer);
+    clearSyncPoll();
+    detailCache.clear();
   });
 </script>
 
