@@ -6,7 +6,6 @@ on:
       - work/v2-duplicate-keeper-rules
     paths:
       - .github/workflows/validate-v2-duplicate-keeper-rules.yml
-      - .keeper-patch/**
 
 permissions:
   contents: write
@@ -19,16 +18,22 @@ jobs:
         with:
           ref: work/v2-duplicate-keeper-rules
 
-      - name: Apply staged keeper rules patch
+      - name: Apply complete keeper rules patch
         shell: bash
         run: |
           python - <<'PY'
           import base64
           from pathlib import Path
-          payload = 'X' + ''.join(path.read_text().strip() for path in sorted(Path('.keeper-patch').glob('p*')))
-          decoded = base64.b64decode(payload)
-          print(f'Decoded patch bytes: {len(decoded)}')
-          code = compile(decoded, '<keeper-rules-patch>', 'exec')
+          import zlib
+
+          payload = ''.join(
+              path.read_text().strip()
+              for path in sorted(Path('.keeper-patch').glob('p*'))
+          )
+          compressed = base64.b64decode(payload, validate=True)
+          script = zlib.decompress(compressed).decode('utf-8')
+          print(f'keeper patch: {len(payload)} encoded chars, {len(script)} decoded bytes')
+          code = compile(script, '<keeper-rules-patch>', 'exec')
           exec(code, {})
           PY
 
@@ -43,8 +48,8 @@ jobs:
         run: |
           python -m pip install -e './backend[dev]'
           cd backend
-          ruff format companion/duplicate_keeper_rules.py companion/duplicate_schema.py companion/asset_repository.py companion/duplicate_review_repository.py companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py tests/test_duplicate_keeper_rules.py tests/test_composite_duplicate_sync.py
-          ruff check --fix companion/duplicate_keeper_rules.py companion/duplicate_schema.py companion/asset_repository.py companion/duplicate_review_repository.py companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py tests/test_duplicate_keeper_rules.py tests/test_composite_duplicate_sync.py
+          ruff format companion tests
+          ruff check --fix companion tests
           pytest
           ruff check companion tests
 
@@ -65,9 +70,10 @@ jobs:
       - name: Commit validated product tree
         shell: bash
         run: |
-          rm -rf .keeper-patch .github/workflows/validate-v2-duplicate-keeper-rules.yml
+          rm -rf .keeper-patch
+          rm -f .github/workflows/validate-v2-duplicate-keeper-rules.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add backend frontend .keeper-patch .github/workflows/validate-v2-duplicate-keeper-rules.yml
+          git add -A
           git commit -m 'feat: add V2 duplicate keeper rules'
           git push origin HEAD:work/v2-duplicate-keeper-rules
