@@ -14,6 +14,7 @@ describe('V2SettingsPage', () => {
     expect(body).toContain('Action notifications');
     expect(body).toContain('Toast position');
     expect(body).toContain('Open playground');
+    expect(body).toContain('Tasks');
     expect(body).toMatch(/aria-selected="true"[^>]*>General<\/button>/);
   });
 });

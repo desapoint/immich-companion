@@ -163,6 +163,11 @@ export function createTaskRepository(): TaskRepository {
       if (!Array.isArray(values)) throw new Error('Task list response did not match the expected task contract.');
       return values.map(validatedTask);
     },
+    listActive: async (limit = 200, signal) => {
+      const values = await requestJson<unknown>(`/api/tasks?active_only=true&limit=${limit}`, { signal });
+      if (!Array.isArray(values)) throw new Error('Active task list response did not match the expected task contract.');
+      return values.map(validatedTask);
+    },
     subscribe(handlers): TaskSubscription {
       let closed = false;
       subscribers.add(handlers);

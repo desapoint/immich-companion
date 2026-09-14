@@ -87,6 +87,7 @@ export interface TaskRepository {
   resume(taskId: string): Promise<TaskRecord>;
   cancel(taskId: string): Promise<TaskRecord>;
   list(taskType: string, limit?: number, signal?: AbortSignal): Promise<TaskRecord[]>;
+  listActive(limit?: number, signal?: AbortSignal): Promise<TaskRecord[]>;
   subscribe(handlers: {
     onTask: (task: TaskRecord) => void;
     onConnectionState: (state: TaskConnectionState) => void;

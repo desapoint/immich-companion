@@ -895,13 +895,16 @@ def create_app(
     async def list_tasks(
         task_type: str | None = Query(default=None, max_length=64),
         limit: int = Query(default=50, ge=1, le=200),
+        active_only: bool = Query(default=False),
     ) -> list[TaskStatusView]:
         if task_coordinator is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="The companion database is not configured.",
             )
-        return await task_coordinator.list_tasks(task_type=task_type, limit=limit)
+        return await task_coordinator.list_tasks(
+            task_type=task_type, limit=limit, active_only=active_only
+        )
 
     @app.get("/api/settings/sync", response_model=list[TaskScheduleView])
     async def sync_schedule_settings() -> list[TaskScheduleView]:

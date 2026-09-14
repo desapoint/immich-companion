@@ -20,6 +20,37 @@ TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 WORKER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 
 
+@pytest.mark.asyncio
+async def test_active_task_listing_filters_before_limit() -> None:
+    class Session:
+        statement = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalars(self, statement):
+            self.statement = statement
+            return []
+
+    session = Session()
+
+    class Database:
+        def sessions(self):
+            return session
+
+    repository = coordinator_module.TaskRepository(Database())
+    assert await repository.list(active_only=True, limit=25) == []
+    sql = str(session.statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "task_records.status IN" in sql or "tasks.status IN" in sql
+    assert "'running'" in sql
+    assert "'cancel_requested'" in sql
+    assert "'completed'" not in sql
+    assert "LIMIT 25" in sql
+
+
 def task() -> TaskStatusView:
     now = datetime.now(UTC)
     return TaskStatusView(

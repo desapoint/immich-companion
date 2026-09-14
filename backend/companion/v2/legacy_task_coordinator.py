@@ -593,11 +593,18 @@ class TaskRepository:
             record.next_run_at = croniter(cron_expression, now).get_next(datetime)
             return _public_schedule(record)
 
-    async def list(self, *, task_type: str | None = None, limit: int = 50) -> list[TaskStatusView]:
+    async def list(
+        self, *, task_type: str | None = None, limit: int = 50, active_only: bool = False
+    ) -> list[TaskStatusView]:
         async with self._database.sessions() as session:
             statement = select(TaskRecord).order_by(TaskRecord.created_at.desc()).limit(limit)
             if task_type is not None:
                 statement = statement.where(TaskRecord.task_type == task_type)
+            if active_only:
+                statement = statement.where(TaskRecord.status.in_((
+                    "queued", "running", "retrying", "recovering",
+                    "pause_requested", "paused", "cancel_requested",
+                )))
             records = await session.scalars(statement)
             return [_public(record) for record in records if _public(record) is not None]  # type: ignore[misc]
 
@@ -875,9 +882,11 @@ class TaskCoordinator:
         return await self._repository.find_active_by_type(task_type)
 
     async def list_tasks(
-        self, *, task_type: str | None = None, limit: int = 50
+        self, *, task_type: str | None = None, limit: int = 50, active_only: bool = False
     ) -> list[TaskStatusView]:
-        return await self._repository.list(task_type=task_type, limit=limit)
+        return await self._repository.list(
+            task_type=task_type, limit=limit, active_only=active_only
+        )
 
     async def task_events(self, task_id: UUID, *, limit: int = 1000) -> list[TaskEvent]:
         return await self._repository.events(task_id, limit=limit)

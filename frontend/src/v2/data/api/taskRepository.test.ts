@@ -106,3 +106,21 @@ describe('task stream validation helpers', () => {
     expect(taskReconnectDelayMs(20, () => 1)).toBe(30000);
   });
 });
+
+describe('active task controls', () => {
+  it('requests active tasks across types and sends cancellation to the task endpoint', async () => {
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) => new Response(JSON.stringify(
+      init?.method === 'POST'
+        ? { id: 'task-1', task_type: 'similarity_scan', status: 'cancel_requested' }
+        : [{ id: 'task-1', task_type: 'similarity_scan', status: 'running' }],
+    ), { headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const repository = createTaskRepository();
+
+    expect((await repository.listActive())[0].status).toBe('running');
+    expect((await repository.cancel('task-1')).status).toBe('cancel_requested');
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/tasks?active_only=true&limit=200');
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/tasks/task-1/cancel');
+    expect(fetchMock.mock.calls[1][1]?.method).toBe('POST');
+  });
+});

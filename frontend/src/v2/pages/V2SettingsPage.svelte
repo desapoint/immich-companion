@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
+  import V2ActiveTasksSettings from '../components/V2ActiveTasksSettings.svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
@@ -23,7 +24,7 @@
   import { syncStatus } from '../state/syncStatus.svelte';
   import { V2_TOAST_POSITIONS, type V2ToastPosition } from '../state/toasts.svelte';
 
-  type SettingsTab = 'General' | 'Duplicates' | 'Sync';
+  type SettingsTab = 'General' | 'Duplicates' | 'Sync' | 'Tasks';
   type PendingOperation = 'starting' | 'cancelling' | 'runtime' | 'schedules' | null;
 
   let { toastPosition = 'top-right', ontoastpositionchange, onopenplayground }: { toastPosition?: V2ToastPosition; ontoastpositionchange?: (position: V2ToastPosition) => void; onopenplayground?: () => void } = $props();
@@ -210,7 +211,7 @@
 </script>
 
 <V2PageLayout title="Settings" description="Configure interface behavior and live synchronization controls.">
-  {#snippet tabs()}<V2Tabs items={['General', 'Duplicates', 'Sync']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />{/snippet}
+  {#snippet tabs()}<V2Tabs items={['General', 'Duplicates', 'Sync', 'Tasks']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />{/snippet}
 
   <V2Zone>
     <V2Toolbar sticky={false}><b>{tab}</b></V2Toolbar>
@@ -245,6 +246,8 @@
         {#snippet actions()}<V2Badge tone="warn" text="Live actions disabled" />{/snippet}
         <V2Notice tone="warning" title="This settings area is not live yet">Duplicate settings are intentionally disabled in V2 until their live integration is complete.</V2Notice>
       </V2Card>
+    {:else if tab === 'Tasks'}
+      <V2ActiveTasksSettings />
     {:else if loading}
       <V2Notice>Loading live synchronization status and configuration…</V2Notice>
     {:else}
