@@ -494,9 +494,11 @@
     }
     if (page >= results.pages) return null;
     const previousPage = page;
+    viewerSelectedAsset = viewerIndex !== null ? results.items[viewerIndex] ?? null : null;
     page += 1;
     if (!await loadAssets()) {
       page = previousPage;
+      viewerSelectedAsset = null;
       return null;
     }
     return results?.items.length ? 0 : null;
@@ -505,9 +507,11 @@
   async function requestPreviousViewerIndex(): Promise<number | null> {
     if (!results || listMode !== 'paged' || page <= 1) return null;
     const previousPage = page;
+    viewerSelectedAsset = viewerIndex !== null ? results.items[viewerIndex] ?? null : null;
     page -= 1;
     if (!await loadAssets()) {
       page = previousPage;
+      viewerSelectedAsset = null;
       return null;
     }
     return results?.items.length ? results.items.length - 1 : null;
@@ -1727,9 +1731,9 @@
   />
 {/if}
 
-{#if viewerIndex !== null && results?.items[viewerIndex]}
+{#if viewerIndex !== null && (viewerSelectedAsset || results?.items[viewerIndex])}
   <AssetViewerDialog
-    assets={results.items}
+    assets={results?.items ?? []}
     initialIndex={viewerIndex}
     selectedAsset={viewerSelectedAsset}
     selectedIds={visibleSelectedIds}
@@ -1750,7 +1754,7 @@
     comparisonActivation={viewerComparisonActivation}
     canrequestprevious={listMode === 'paged' && page > 1}
     onrequestprevious={requestPreviousViewerIndex}
-    canrequestnext={listMode === 'infinite' ? infiniteHasMore : page < results.pages}
+    canrequestnext={listMode === 'infinite' ? infiniteHasMore : page < (results?.pages ?? 0)}
     onrequestnext={requestNextViewerIndex}
     onnavigate={navigateViewer}
     oncomparisonnavigate={(assetId) => void selectViewerComparisonAsset(assetId)}
