@@ -83,6 +83,7 @@
   import AssetErrorState from './AssetErrorState.svelte';
   import AssetGrid from './AssetGrid.svelte';
   import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
+  import StatusNotice from '../../../lib/components/ui/StatusNotice.svelte';
   import AssetLoadingState from './AssetLoadingState.svelte';
   import AssetPagination from './AssetPagination.svelte';
   import AssetResultStatus from './AssetResultStatus.svelte';
@@ -154,6 +155,7 @@
   let dragSelecting = false;
   let dragSelectionValue = true;
   let dragLastIndex: number | null = null;
+  let workspaceActive = false;
   let syncPollTimer: ReturnType<typeof setTimeout> | null = null;
   let syncStatusRequest: Promise<void> | null = null;
   let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -1151,10 +1153,6 @@
         closeViewer();
         await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       } else {
-        // A stack mutation changes every member, not only the image used to
-        // open the viewer. Refresh the loaded result window and re-read every
-        // target reported by the action so sibling cards/detail entries cannot
-        // keep stale stack metadata.
         const affectedIds = [...new Set([
           ...result.applied_ids,
           ...result.failed_ids,
@@ -1457,6 +1455,7 @@
   }
 
   function scheduleSyncPoll(delay = syncPollDelay()): void {
+    if (!workspaceActive) return;
     clearSyncPoll();
     syncPollTimer = setTimeout(() => {
       syncPollTimer = null;
@@ -1465,9 +1464,10 @@
   }
 
   async function requestSyncStatusRefresh(forceAfterCurrent = false): Promise<void> {
+    if (!workspaceActive) return;
     if (syncStatusRequest) {
       await syncStatusRequest;
-      if (!forceAfterCurrent) return;
+      if (!forceAfterCurrent || !workspaceActive) return;
     }
     clearSyncPoll();
     const request = refreshSyncStatus();
@@ -1504,6 +1504,7 @@
   }
 
   onMount(() => {
+    workspaceActive = true;
     const savedLayout = localStorage.getItem('immich-companion:asset-layout');
     if (savedLayout === 'normal' || savedLayout === 'condensed') layoutMode = savedLayout;
     listMode = decodeAssetListMode(localStorage.getItem(ASSET_LIST_MODE_STORAGE_KEY));
@@ -1535,6 +1536,8 @@
       startActionTaskPolling();
     }
     return () => {
+      workspaceActive = false;
+      syncStatusRequest = null;
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -1546,6 +1549,8 @@
   });
 
   onDestroy(() => {
+    workspaceActive = false;
+    syncStatusRequest = null;
     taskUpdateConnection?.stop();
     searchController?.abort();
     detailController?.abort();
@@ -1570,6 +1575,10 @@
     onsync={() => void syncAssets('incremental')}
     onfullsync={() => void syncAssets('full')}
   />
+
+  {#if error && results}
+    <StatusNotice tone="error" message={error} actionLabel="Retry" onaction={() => void loadAssets()} />
+  {/if}
 
   {#if results}
     <AssetSelectionActions
@@ -1607,7 +1616,7 @@
 
   {#if loading && !results}
     <AssetLoadingState />
-  {:else if error}
+  {:else if error && !results}
     <AssetErrorState message={error} onretry={loadAssets} />
   {:else if results && results.items.length === 0}
     <AssetEmptyState {syncing} showSync={!hasSearch} onsync={() => void syncAssets('incremental')} />
