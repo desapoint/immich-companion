@@ -1,0 +1,92 @@
+name: Fix V2 duplicate review repository
+
+on:
+  push:
+    branches:
+      - work/v2-duplicate-review-state
+    paths:
+      - .github/workflows/fix-v2-duplicate-review-repository.yml
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: work/v2-duplicate-review-state
+
+      - name: Fix repository method scope
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          repo = Path('backend/companion/composite_duplicate_repository.py')
+          value = repo.read_text()
+          start = value.index('\nasync def update_v2_policy_states(') + 1
+          end = value.index('\n    async def replace_snapshot(', start)
+          block = value[start:end]
+          indented = '\n'.join(('    ' + line) if line else line for line in block.splitlines())
+          repo.write_text(value[:start] + indented + value[end:])
+          compile(repo.read_text(), str(repo), 'exec')
+
+          test = Path('backend/tests/test_composite_duplicate_sync.py')
+          value = test.read_text()
+          import_anchor = "    CompositeDuplicateSnapshotPage,\n    _group_projection_summary,\n)"
+          if import_anchor in value:
+              value = value.replace(
+                  import_anchor,
+                  "    CompositeDuplicateRepository,\n    CompositeDuplicateSnapshotPage,\n    _group_projection_summary,\n)",
+                  1,
+              )
+          insert_anchor = "\ndef test_projection_summary_supports_database_sorts() -> None:\n"
+          regression = "\ndef test_composite_repository_exposes_paged_state_methods() -> None:\n    assert callable(CompositeDuplicateRepository.page)\n    assert callable(CompositeDuplicateRepository.update_v2_policy_states)\n    assert callable(CompositeDuplicateRepository.replace_snapshot)\n\n"
+          if 'test_composite_repository_exposes_paged_state_methods' not in value:
+              if insert_anchor not in value:
+                  raise SystemExit('Missing repository regression-test anchor')
+              value = value.replace(insert_anchor, regression + insert_anchor, 1)
+          test.write_text(value)
+          PY
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Validate backend
+        shell: bash
+        run: |
+          python -m pip install -e './backend[dev]'
+          cd backend
+          ruff format companion/composite_duplicate_repository.py tests/test_composite_duplicate_sync.py
+          ruff check --fix companion/composite_duplicate_repository.py tests/test_composite_duplicate_sync.py
+          pytest
+          ruff check companion tests
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate frontend
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run check
+          npm test
+
+      - name: Commit corrected validated implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-v2-duplicate-review-state-v7.yml .github/workflows/fix-v2-duplicate-review-repository.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend frontend .github/workflows/apply-v2-duplicate-review-state-v7.yml .github/workflows/fix-v2-duplicate-review-repository.yml
+          git commit -m 'fix: keep V2 duplicate paging on repository'
+          git push origin HEAD:work/v2-duplicate-review-state
