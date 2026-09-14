@@ -6,6 +6,11 @@ export interface SelectOption {
   disabled?: boolean;
 }
 
+export interface ShortcutHelpItem {
+  shortcut: string;
+  description: string;
+}
+
 export type IconName =
   | 'album'
   | 'album-add'
