@@ -38,6 +38,24 @@ describe('RevisionedMutationQueue', () => {
     expect(serverRevision).toBe(5);
   });
 
+  it('waits for all queued mutations before releasing dependent reads', async () => {
+    const queue = new RevisionedMutationQueue<View>();
+    let resolveMutation!: (value: View) => void;
+    const mutation = queue.enqueue('selection-1', 3, () => new Promise<View>((resolve) => {
+      resolveMutation = resolve;
+    }));
+    let idle = false;
+    const barrier = queue.waitForIdle('selection-1').then(() => { idle = true; });
+
+    await Promise.resolve();
+    expect(idle).toBe(false);
+
+    resolveMutation({ revision: 4, selected_count: 1 });
+    await mutation;
+    await barrier;
+    expect(idle).toBe(true);
+  });
+
   it('keeps independent resources independent', async () => {
     const queue = new RevisionedMutationQueue<View>();
 
@@ -56,7 +74,7 @@ describe('RevisionedMutationQueue', () => {
     expect(second.revision).toBe(8);
   });
 
-  it('rejects queued work after a mutation conflict instead of replaying stale intent', async () => {
+  it('rejects queued work and dependent reads after a mutation conflict', async () => {
     const queue = new RevisionedMutationQueue<View>();
     let rejectFirst!: (reason: unknown) => void;
     const first = queue.enqueue('selection-1', 1, () => new Promise<View>((_resolve, reject) => {
@@ -66,12 +84,15 @@ describe('RevisionedMutationQueue', () => {
       revision: revision + 1,
       selected_count: 2,
     }));
+    const barrier = queue.waitForIdle('selection-1');
     const firstExpectation = expect(first).rejects.toThrow('Selection set changed');
     const secondExpectation = expect(second).rejects.toThrow('Selection set changed');
+    const barrierExpectation = expect(barrier).rejects.toThrow('Selection set changed');
 
     rejectFirst(new Error('Selection set changed; reload its membership'));
 
     await firstExpectation;
     await secondExpectation;
+    await barrierExpectation;
   });
 });
