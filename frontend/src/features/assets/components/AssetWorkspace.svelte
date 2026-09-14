@@ -5,6 +5,7 @@
     getAlbumOptions,
     getAssetDetail,
     getAssetSummary,
+    getAssetSyncRunStatus,
     getAssetSyncStatus,
     cancelTask,
     listTasks,
@@ -206,6 +207,9 @@
 
   function markSelectionChanged(abortSelectAll = true): void {
     if (abortSelectAll) selectAllRequest.abort();
+    selectionRequest.abort();
+    selectionResolution = null;
+    selectionLoading = false;
     selectionOwnership.changed();
   }
 
@@ -1641,6 +1645,20 @@
   async function refreshSyncStatus(signal: AbortSignal): Promise<void> {
     try {
       const next = await getAssetSyncStatus(signal);
+      const requestedRunId = manualSyncRunId;
+      let manualRun: Awaited<ReturnType<typeof getAssetSyncRunStatus>> | null = null;
+      if (requestedRunId !== null) {
+        try {
+          manualRun = await getAssetSyncRunStatus(requestedRunId, signal);
+        } catch (requestError) {
+          if (signal.aborted || isAbortError(requestError)) return;
+          if (isTaskUnavailableError(requestError) && manualSyncRunId === requestedRunId) {
+            manualSyncRunId = null;
+            syncError = 'The requested synchronization run is no longer available.';
+          }
+        }
+      }
+
       const nextSuccessId = next.last_success?.id ?? null;
       const nextFailureId = next.last_failure?.id ?? null;
       const failureIsCurrent = next.last_failure !== null
@@ -1652,33 +1670,50 @@
       const failedSinceLastCheck = syncStatusInitialized
         && nextFailureId !== null
         && nextFailureId !== handledSyncFailureId;
-      syncing = next.active !== null || next.pending !== null;
+      const manualRunActive = manualRun !== null
+        && !['completed', 'failed'].includes(manualRun.status);
+      const manualRunCompleted = manualRun !== null
+        && manualSyncRunId === manualRun.id
+        && manualRun.status === 'completed';
+      const manualRunFailed = manualRun !== null
+        && manualSyncRunId === manualRun.id
+        && manualRun.status === 'failed';
+
+      syncing = next.active !== null || next.pending !== null || manualRunActive;
       syncMessage = next.active || next.pending || failureIsCurrent ? describeSync(next) : null;
       syncProgress = next.active?.progress ?? null;
-      if (completedSinceLastCheck) syncError = null;
+      if (completedSinceLastCheck || manualRunCompleted) syncError = null;
       if (failedSinceLastCheck && failureIsCurrent && next.last_failure) {
         syncError = next.last_failure.error
           ? `${next.last_failure.mode === 'full' ? 'Full' : 'Incremental'} sync failed after ${next.last_failure.attempts} attempt${next.last_failure.attempts === 1 ? '' : 's'}: ${next.last_failure.error}`
           : 'Synchronization failed after its retry limit.';
       }
+      if (manualRunFailed && manualRun) {
+        syncError = manualRun.error
+          ? `${manualRun.mode === 'full' ? 'Full' : 'Incremental'} sync failed after ${manualRun.attempts} attempt${manualRun.attempts === 1 ? '' : 's'}: ${manualRun.error}`
+          : 'The requested synchronization failed after its retry limit.';
+        manualSyncRunId = null;
+      }
+      if (manualRunCompleted && manualRun) {
+        const counters = manualRun.counters;
+        syncCompletionMessage = `${manualRun.mode === 'full' ? 'Full' : 'Incremental'} sync completed: `
+          + `${counters.assets_updated ?? 0} updated, ${counters.assets_created ?? 0} created, `
+          + `${counters.assets_removed ?? 0} removed.`;
+        manualSyncRunId = null;
+      }
+
       if (!syncStatusInitialized) {
         syncStatusInitialized = true;
         handledSyncSuccessId = nextSuccessId;
         handledSyncFailureId = nextFailureId;
       } else if (completedSinceLastCheck) {
         handledSyncSuccessId = nextSuccessId;
-        if (manualSyncRunId !== null && next.last_success?.id === manualSyncRunId) {
-          const counters = next.last_success.counters;
-          syncCompletionMessage = `${next.last_success.mode === 'full' ? 'Full' : 'Incremental'} sync completed: `
-            + `${counters.assets_updated ?? 0} updated, ${counters.assets_created ?? 0} created, `
-            + `${counters.assets_removed ?? 0} removed.`;
-          manualSyncRunId = null;
-        }
         detailCache.clear();
         await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
-      if (failedSinceLastCheck && manualSyncRunId !== null && next.last_failure?.id === manualSyncRunId) {
-        manualSyncRunId = null;
+      if (manualRunCompleted && !completedSinceLastCheck) {
+        detailCache.clear();
+        await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
       if (nextFailureId !== null) handledSyncFailureId = nextFailureId;
     } catch (requestError) {
@@ -1691,7 +1726,7 @@
 
   function syncPollDelay(): number {
     if (document.visibilityState === 'hidden') return hiddenSyncPollMs;
-    return syncing ? activeSyncPollMs : idleSyncPollMs;
+    return syncing || manualSyncRunId !== null ? activeSyncPollMs : idleSyncPollMs;
   }
 
   const syncStatusPoller = new CoalescedPoller(refreshSyncStatus, syncPollDelay);
