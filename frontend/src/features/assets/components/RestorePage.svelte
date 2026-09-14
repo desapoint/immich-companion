@@ -34,6 +34,7 @@
   let detail = $state<AssetDetail | null>(null);
   let detailLoading = $state(false);
   let detailError = $state<string | null>(null);
+  let detailAssetId: string | null = null;
   let layoutMode = $state<'normal' | 'condensed'>('normal');
   let detailController: AbortController | null = null;
   let pageStart = $state<HTMLElement>();
@@ -65,6 +66,7 @@
     return () => {
       collectionController.dispose();
       detailController?.abort();
+      detailController = null;
     };
   });
 
@@ -146,22 +148,29 @@
     if (!asset) return;
     viewerSelectedAsset = null;
     viewerIndex = index;
-    detail = null;
-    detailError = null;
-    detailLoading = true;
+
+    if (detailAssetId === asset.id && (detailLoading || detail !== null)) return;
+
     detailController?.abort();
     const controller = new AbortController();
     detailController = controller;
+    detailAssetId = asset.id;
+    detail = null;
+    detailError = null;
+    detailLoading = true;
     try {
       const loaded = await getRestoreAssetDetail(asset.id, controller.signal);
-      if (!controller.signal.aborted) detail = loaded;
+      if (!controller.signal.aborted && detailAssetId === asset.id) detail = loaded;
     } catch (reason) {
       if (reason instanceof DOMException && reason.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
+      if (!controller.signal.aborted && detailAssetId === asset.id) {
         detailError = reason instanceof Error ? reason.message : 'Could not load asset details.';
       }
     } finally {
-      if (!controller.signal.aborted) detailLoading = false;
+      if (detailController === controller) {
+        detailController = null;
+        detailLoading = false;
+      }
     }
   }
 
@@ -170,6 +179,7 @@
     viewerSelectedAsset = null;
     detailController?.abort();
     detailController = null;
+    detailAssetId = null;
     detail = null;
     detailError = null;
     detailLoading = false;
