@@ -75,11 +75,18 @@ from companion.collection_delete_service import (
     CollectionDeleteService,
     tag_delete_targets,
 )
+from companion.composite_duplicate_repository import CompositeDuplicateRepository
+from companion.composite_duplicate_sync import (
+    CompositeDuplicateRebuildTaskHandler,
+    CompositeDuplicateSyncService,
+    FollowUpTaskHandler,
+)
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
 from companion.discovery import (
     CompositeGroupDiscoveryProvider,
     ImmichDuplicateProvider,
+    PersistedCompositeDuplicateProvider,
     SimilarityDuplicateProvider,
 )
 from companion.duplicate_policy import DuplicatePolicy, DuplicatePolicyRepository
@@ -117,6 +124,13 @@ from companion.duplicate_service import (
     CrossSourceDuplicateService,
     CrossSourceDuplicateTaskHandler,
 )
+from companion.immich import (
+    ImmichAlbum,
+    ImmichApiClient,
+    ImmichApiError,
+    ImmichLibrary,
+    ImmichTag,
+)
 from companion.immich_duplicate_repository import ImmichDuplicateRepository
 from companion.immich_duplicate_sync import (
     ImmichDuplicateSyncService,
@@ -124,13 +138,6 @@ from companion.immich_duplicate_sync import (
     ImmichDuplicateSyncTaskHandler,
     ImmichDuplicateSyncTaskStart,
     RefreshingDuplicateResolutionTaskHandler,
-)
-from companion.immich import (
-    ImmichAlbum,
-    ImmichApiClient,
-    ImmichApiError,
-    ImmichLibrary,
-    ImmichTag,
 )
 from companion.integrity_repository import IntegrityRepository
 from companion.integrity_schema import (
@@ -329,14 +336,53 @@ def create_app(
     immich_duplicate_repository = (
         ImmichDuplicateRepository(database) if database is not None else None
     )
+    composite_duplicate_repository = (
+        CompositeDuplicateRepository(database) if database is not None else None
+    )
+    source_duplicate_discovery = (
+        CompositeGroupDiscoveryProvider(
+            ImmichDuplicateProvider(immich_duplicate_repository, asset_repository),
+            SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
+        )
+        if similarity_scan_repository is not None
+        and asset_repository is not None
+        and immich_duplicate_repository is not None
+        else None
+    )
+    composite_duplicate_sync_service = (
+        CompositeDuplicateSyncService(task_coordinator)
+        if task_coordinator is not None
+        and source_duplicate_discovery is not None
+        and composite_duplicate_repository is not None
+        else None
+    )
+    if (
+        task_coordinator is not None
+        and source_duplicate_discovery is not None
+        and composite_duplicate_repository is not None
+    ):
+        task_coordinator.register_handler(
+            CompositeDuplicateRebuildTaskHandler(
+                source_duplicate_discovery,
+                composite_duplicate_repository,
+            )
+        )
     immich_duplicate_sync_service = (
         ImmichDuplicateSyncService(task_coordinator, immich_duplicate_repository)
         if task_coordinator is not None and immich_duplicate_repository is not None
         else None
     )
     if task_coordinator is not None and immich_duplicate_repository is not None:
+        immich_duplicate_handler = ImmichDuplicateSyncTaskHandler(
+            immich, immich_duplicate_repository
+        )
         task_coordinator.register_handler(
-            ImmichDuplicateSyncTaskHandler(immich, immich_duplicate_repository)
+            FollowUpTaskHandler(
+                immich_duplicate_handler,
+                composite_duplicate_sync_service.start_after_source_change,
+            )
+            if composite_duplicate_sync_service is not None
+            else immich_duplicate_handler
         )
     asset_sync = (
         AssetSyncService(
@@ -426,13 +472,12 @@ def create_app(
     if task_coordinator is not None and integrity_handler is not None:
         task_coordinator.register_handler(integrity_handler)
     duplicate_discovery = (
-        CompositeGroupDiscoveryProvider(
-            ImmichDuplicateProvider(immich_duplicate_repository, asset_repository),
-            SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
+        PersistedCompositeDuplicateProvider(
+            composite_duplicate_repository,
+            asset_repository,
         )
-        if similarity_scan_repository is not None
+        if composite_duplicate_repository is not None
         and asset_repository is not None
-        and immich_duplicate_repository is not None
         else None
     )
     duplicate_service = (
@@ -474,11 +519,17 @@ def create_app(
                 discovery=duplicate_discovery,
             )
         )
+        resolution_handler = RefreshingDuplicateResolutionTaskHandler(
+            duplicate_service,
+            immich_duplicate_sync_service,
+        )
         task_coordinator.register_handler(
-            RefreshingDuplicateResolutionTaskHandler(
-                duplicate_service,
-                immich_duplicate_sync_service,
+            FollowUpTaskHandler(
+                resolution_handler,
+                composite_duplicate_sync_service.start_after_source_change,
             )
+            if composite_duplicate_sync_service is not None
+            else resolution_handler
         )
     similarity_index_maintainer = (
         SimilarityIndexMaintainer(
@@ -520,14 +571,20 @@ def create_app(
         assert search_feature_repository is not None
         assert similarity_repository is not None
         assert similarity_scan_repository is not None
+        similarity_scan_handler = SimilarityScanTaskHandler(
+            search_feature_repository,
+            similarity_repository,
+            similarity_scan_repository,
+            similarity_index_maintainer,
+            detail_maintainer,
+        )
         task_coordinator.register_handler(
-            SimilarityScanTaskHandler(
-                search_feature_repository,
-                similarity_repository,
-                similarity_scan_repository,
-                similarity_index_maintainer,
-                detail_maintainer,
+            FollowUpTaskHandler(
+                similarity_scan_handler,
+                composite_duplicate_sync_service.start_after_source_change,
             )
+            if composite_duplicate_sync_service is not None
+            else similarity_scan_handler
         )
 
     similarity_maintenance_service = (
@@ -579,6 +636,8 @@ def create_app(
             await task_coordinator.start()
             if similarity_maintenance_service is not None:
                 await similarity_maintenance_service.start_if_pending()
+            if composite_duplicate_sync_service is not None:
+                await composite_duplicate_sync_service.start_after_source_change()
         try:
             yield
         finally:

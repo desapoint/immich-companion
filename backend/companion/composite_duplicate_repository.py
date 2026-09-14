@@ -7,7 +7,19 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, Integer, String, Text, Uuid, delete, select
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    Uuid,
+    delete,
+    select,
+)
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Mapped, mapped_column
 
