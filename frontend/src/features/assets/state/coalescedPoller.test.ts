@@ -54,6 +54,24 @@ describe('CoalescedPoller', () => {
     expect(task).toHaveBeenCalledTimes(2);
   });
 
+  it('aborts in-flight work when stopped', async () => {
+    let capturedSignal: AbortSignal | null = null;
+    const task = vi.fn((signal: AbortSignal) => new Promise<void>((_resolve, reject) => {
+      capturedSignal = signal;
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), {
+        once: true,
+      });
+    }));
+    const poller = new CoalescedPoller(task, () => 1000);
+
+    poller.start();
+    expect(capturedSignal?.aborted).toBe(false);
+
+    poller.stop();
+    expect(capturedSignal?.aborted).toBe(true);
+    await Promise.resolve();
+  });
+
   it('does not reschedule after stop and a later start ignores stale in-flight work', async () => {
     vi.useFakeTimers();
     let resolveOld!: () => void;
