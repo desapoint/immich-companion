@@ -2,6 +2,7 @@
   import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import type { SyncRun } from '../data/syncContracts';
+  import { formatTaskProgressPercent } from '../data/taskProgress';
   import { backgroundTaskPresentation, backgroundTaskStatus } from '../state/backgroundTaskStatus.svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../state/density';
   import { syncStatus } from '../state/syncStatus.svelte';
@@ -149,7 +150,7 @@
             <div class="v2-task-progress">
               <div class="v2-task-progress-meta">
                 <small>{currentRun.progress.completed.toLocaleString()} processed</small>
-                <small>{progressKnown ? `${currentRun.progress.percent}%` : 'Unknown total'}</small>
+                <small>{progressKnown ? formatTaskProgressPercent(currentRun.progress.percent!) : 'Unknown total'}</small>
               </div>
               <V2Progress
                 value={progressKnown ? currentRun.progress.percent ?? undefined : undefined}
@@ -157,7 +158,7 @@
                 label={`${runLabel(currentRun)} progress`}
               />
             </div>
-            <span class="v2-task-stat">{progressKnown ? `${currentRun.progress.percent}%` : '—'}</span>
+            <span class="v2-task-stat">{progressKnown ? formatTaskProgressPercent(currentRun.progress.percent!) : '—'}</span>
           </div>
         {/if}
         {#each backgroundTasks as item (item.id)}
@@ -167,7 +168,7 @@
             <div class="v2-task-progress">
               <div class="v2-task-progress-meta">
                 <small>{item.presentation.total === null ? `${item.presentation.completed.toLocaleString()} processed` : `${item.presentation.completed.toLocaleString()} of ${item.presentation.total.toLocaleString()} processed`}</small>
-                <small>{item.presentation.total !== null && item.presentation.percent !== null ? `${item.presentation.percent}%` : 'Unknown total'}</small>
+                <small>{item.presentation.total !== null && item.presentation.percent !== null ? formatTaskProgressPercent(item.presentation.percent) : 'Unknown total'}</small>
               </div>
               <V2Progress
                 value={item.presentation.total !== null ? item.presentation.percent ?? undefined : undefined}
@@ -175,7 +176,7 @@
                 label={`${item.presentation.label} progress`}
               />
             </div>
-            <span class="v2-task-stat">{item.presentation.total !== null && item.presentation.percent !== null ? `${item.presentation.percent}%` : '—'}</span>
+            <span class="v2-task-stat">{item.presentation.total !== null && item.presentation.percent !== null ? formatTaskProgressPercent(item.presentation.percent) : '—'}</span>
           </div>
         {/each}
         {#if activeTaskCount===0}
