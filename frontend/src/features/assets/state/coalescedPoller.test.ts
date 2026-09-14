@@ -27,19 +27,30 @@ describe('CoalescedPoller', () => {
     expect(task).toHaveBeenCalledTimes(2);
   });
 
-  it('coalesces concurrent refresh requests and can force one follow-up request', async () => {
+  it('coalesces concurrent refresh requests and shares one forced follow-up request', async () => {
     let resolveFirst!: () => void;
+    let resolveFollowUp!: () => void;
     const first = new Promise<void>((resolve) => { resolveFirst = resolve; });
-    const task = vi.fn().mockReturnValueOnce(first).mockResolvedValue(undefined);
+    const followUp = new Promise<void>((resolve) => { resolveFollowUp = resolve; });
+    const task = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(followUp)
+      .mockResolvedValue(undefined);
     const poller = new CoalescedPoller(task, () => 1000);
 
     poller.start();
     const coalesced = poller.refresh();
-    const forced = poller.refresh(true);
+    const forcedA = poller.refresh(true);
+    const forcedB = poller.refresh(true);
     expect(task).toHaveBeenCalledTimes(1);
 
     resolveFirst();
-    await Promise.all([first, coalesced, forced]);
+    await first;
+    await Promise.resolve();
+    expect(task).toHaveBeenCalledTimes(2);
+
+    resolveFollowUp();
+    await Promise.all([coalesced, forcedA, forcedB]);
     expect(task).toHaveBeenCalledTimes(2);
   });
 
