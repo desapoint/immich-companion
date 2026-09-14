@@ -1,5 +1,7 @@
 <script lang="ts">
   import IconButton from '../../../lib/components/ui/IconButton.svelte';
+  import ShortcutHelp from '../../../lib/components/ui/ShortcutHelp.svelte';
+  import type { ShortcutHelpItem } from '../../../lib/types/ui';
   import type {
     AlbumOption,
     AssetActionIntent,
@@ -8,7 +10,6 @@
     ViewerScaleMode,
   } from '../types/assets';
   import AssetActionControls from './AssetActionControls.svelte';
-  import AssetKeyboardHelp from './AssetKeyboardHelp.svelte';
 
   interface Props {
     filename: string;
@@ -17,6 +18,7 @@
     scaleMode: ViewerScaleMode;
     infoOpen: boolean;
     helpOpen: boolean;
+    shortcuts?: readonly ShortcutHelpItem[];
     zoomPercent: number;
     actionSummary: AssetSelectionSummary | null;
     albums: AlbumOption[];
@@ -55,6 +57,7 @@
     scaleMode,
     infoOpen,
     helpOpen,
+    shortcuts,
     zoomPercent,
     actionSummary,
     albums,
@@ -82,6 +85,33 @@
     ontogglehelp,
     onclose,
   }: Props = $props();
+
+  const defaultShortcuts = $derived<ShortcutHelpItem[]>([
+    { shortcut: 'Space', description: 'Toggle selection' },
+    { shortcut: '← / H', description: 'Previous image; loads the previous page at the edge' },
+    { shortcut: '→ / L', description: 'Next image; loads the next page at the edge' },
+    ...(duplicateMode ? [
+      { shortcut: 'K', description: 'Keep viewed copy' },
+      { shortcut: 'D', description: 'Delete viewed copy' },
+      { shortcut: 'S', description: 'Stack viewed copy' },
+      { shortcut: 'P', description: 'Make viewed stack copy the primary image' },
+      { shortcut: 'F (hold)', description: 'Flicker to the duplicate reference' },
+      { shortcut: 'R', description: 'Make viewed copy the duplicate reference' },
+    ] : []),
+    { shortcut: 'I', description: 'Toggle more info' },
+    { shortcut: 'M', description: 'Toggle fit / actual size' },
+    { shortcut: '+ / −', description: 'Zoom in or out' },
+    { shortcut: '0', description: 'Reset zoom' },
+    { shortcut: 'Ctrl + Wheel', description: 'Zoom at the pointer' },
+    { shortcut: 'Drag', description: 'Pan a zoomed image' },
+    { shortcut: '?', description: 'Pin or unpin shortcut help' },
+    { shortcut: 'Esc / Q', description: 'Close viewer' },
+  ]);
+  const shortcutItems = $derived(shortcuts ?? defaultShortcuts);
+
+  function handleShortcutOpen(nextOpen: boolean): void {
+    if (nextOpen !== helpOpen) ontogglehelp();
+  }
 </script>
 
 <header class="viewer-header">
@@ -118,12 +148,12 @@
       />
     {/if}
     {#if selectionEnabled}
-    <IconButton
-      icon={selected ? 'check' : 'select'}
-      label={selected ? 'Deselect image' : 'Select image'}
-      tone={selected ? 'accent' : 'default'}
-      onclick={ontoggleselection}
-    />
+      <IconButton
+        icon={selected ? 'check' : 'select'}
+        label={selected ? 'Deselect image' : 'Select image'}
+        tone={selected ? 'accent' : 'default'}
+        onclick={ontoggleselection}
+      />
     {/if}
     {#if actionsEnabled || onrestore || selectionEnabled}
       <span class="viewer-action-separator" aria-hidden="true"></span>
@@ -158,15 +188,11 @@
       tone={infoOpen ? 'accent' : 'default'}
       onclick={ontoggleinfo}
     />
-    <div class="help-action">
-      <IconButton
-        icon="keyboard"
-        label={helpOpen ? 'Hide keyboard shortcuts' : 'Show keyboard shortcuts'}
-        tone={helpOpen ? 'accent' : 'default'}
-        onclick={ontogglehelp}
-      />
-      {#if helpOpen}<AssetKeyboardHelp {duplicateMode} />{/if}
-    </div>
+    <ShortcutHelp
+      items={shortcutItems}
+      open={helpOpen}
+      onopenchange={handleShortcutOpen}
+    />
     <IconButton icon="close" label="Close asset viewer" onclick={onclose} />
   </div>
 </header>
@@ -245,10 +271,6 @@
     color: var(--color-accent-strong);
   }
 
-  .help-action {
-    position: relative;
-  }
-
   .zoom-actions {
     display: flex;
     align-items: center;
@@ -310,6 +332,5 @@
       width: 100%;
       flex-wrap: wrap;
     }
-
   }
 </style>
