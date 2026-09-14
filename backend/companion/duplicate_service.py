@@ -436,6 +436,14 @@ class CrossSourceDuplicateService:
             "reclaimable", "members", "similarity", "newest", "oldest", "discovered"
         ] = "reclaimable",
         direction: Literal["asc", "desc"] = "desc",
+        state: Literal[
+            "all",
+            "needs_review",
+            "auto_ready",
+            "blocked",
+            "actionable",
+            "needs_decisions",
+        ] = "all",
     ) -> DuplicateSearchPage:
         """Return one database-backed page and hydrate only its members/evidence."""
 
@@ -450,6 +458,7 @@ class CrossSourceDuplicateService:
                 source=source,
                 sort=sort,
                 direction=direction,
+                state=state,
             )
             groups = discovered.groups
             total = discovered.total

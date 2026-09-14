@@ -206,6 +206,7 @@ from companion.sync_schema import (
 from companion.sync_settings import SyncRuntimeSettingsRepository, SyncRuntimeSettingsUpdate
 from companion.task_coordinator import TaskCoordinator
 from companion.task_schema import TaskEvent, TaskScheduleUpdate, TaskScheduleView, TaskStatusView
+from companion.v2_duplicate_review_state import V2DuplicateReviewStateService
 
 
 def tag_subtree_ids(catalog: list[ImmichTag]) -> dict[UUID, list[UUID]]:
@@ -337,6 +338,25 @@ def create_app(
     composite_duplicate_repository = (
         CompositeDuplicateRepository(database) if database is not None else None
     )
+    duplicate_discovery = (
+        PersistedCompositeDuplicateProvider(
+            composite_duplicate_repository,
+            asset_repository,
+        )
+        if composite_duplicate_repository is not None and asset_repository is not None
+        else None
+    )
+    v2_duplicate_review_state_service = (
+        V2DuplicateReviewStateService(
+            duplicate_discovery,
+            integrity_repository,
+            composite_duplicate_repository,
+        )
+        if duplicate_discovery is not None
+        and integrity_repository is not None
+        and composite_duplicate_repository is not None
+        else None
+    )
     source_duplicate_discovery = (
         CompositeGroupDiscoveryProvider(
             ImmichDuplicateProvider(immich_duplicate_repository, asset_repository),
@@ -359,11 +379,17 @@ def create_app(
         and source_duplicate_discovery is not None
         and composite_duplicate_repository is not None
     ):
+        composite_duplicate_handler = CompositeDuplicateRebuildTaskHandler(
+            source_duplicate_discovery,
+            composite_duplicate_repository,
+        )
         task_coordinator.register_handler(
-            CompositeDuplicateRebuildTaskHandler(
-                source_duplicate_discovery,
-                composite_duplicate_repository,
+            FollowUpTaskHandler(
+                composite_duplicate_handler,
+                v2_duplicate_review_state_service.refresh_after_change,
             )
+            if v2_duplicate_review_state_service is not None
+            else composite_duplicate_handler
         )
     immich_duplicate_sync_service = (
         ImmichDuplicateSyncService(task_coordinator, immich_duplicate_repository)
@@ -469,14 +495,6 @@ def create_app(
     )
     if task_coordinator is not None and integrity_handler is not None:
         task_coordinator.register_handler(integrity_handler)
-    duplicate_discovery = (
-        PersistedCompositeDuplicateProvider(
-            composite_duplicate_repository,
-            asset_repository,
-        )
-        if composite_duplicate_repository is not None and asset_repository is not None
-        else None
-    )
     duplicate_service = (
         CrossSourceDuplicateService(
             runtime_settings,
@@ -506,15 +524,21 @@ def create_app(
         and integrity_handler is not None
         and immich_duplicate_sync_service is not None
     ):
+        duplicate_analysis_handler = CrossSourceDuplicateTaskHandler(
+            immich,
+            asset_repository,
+            integrity_repository,
+            integrity_handler,
+            include_similarity=True,
+            discovery=duplicate_discovery,
+        )
         task_coordinator.register_handler(
-            CrossSourceDuplicateTaskHandler(
-                immich,
-                asset_repository,
-                integrity_repository,
-                integrity_handler,
-                include_similarity=True,
-                discovery=duplicate_discovery,
+            FollowUpTaskHandler(
+                duplicate_analysis_handler,
+                v2_duplicate_review_state_service.refresh_after_change,
             )
+            if v2_duplicate_review_state_service is not None
+            else duplicate_analysis_handler
         )
         task_coordinator.register_handler(
             RefreshingDuplicateResolutionTaskHandler(
@@ -1950,6 +1974,14 @@ def create_app(
             "reclaimable", "members", "similarity", "newest", "oldest", "discovered"
         ] = Query(default="reclaimable"),
         direction: Literal["asc", "desc"] = Query(default="desc"),
+        state: Literal[
+            "all",
+            "needs_review",
+            "auto_ready",
+            "blocked",
+            "actionable",
+            "needs_decisions",
+        ] = Query(default="all"),
     ) -> DuplicateSearchPage:
         try:
             return await require_duplicate_service().review_page(
@@ -1959,6 +1991,7 @@ def create_app(
                 source=source,
                 sort=sort,
                 direction=direction,
+                state=state,
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error

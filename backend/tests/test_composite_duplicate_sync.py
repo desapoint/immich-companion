@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from companion.composite_duplicate_repository import (
+    CompositeDuplicateRepository,
     CompositeDuplicateSnapshotGroup,
     CompositeDuplicateSnapshotMetadata,
     CompositeDuplicateSnapshotPage,
@@ -178,6 +179,7 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         source="similarity",
         sort="similarity",
         direction="asc",
+        state="needs_review",
     )
 
     assert snapshots.received == {
@@ -186,11 +188,18 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         "source": DiscoverySource.COMPANION_SIMILARITY,
         "sort": "similarity",
         "direction": "asc",
+        "state": "needs_review",
     }
     assert assets.requested == [ASSET_1, ASSET_2]
     assert result.total == 23
     assert result.pages == 23
     assert [group.group_id for group in result.groups] == [second_group.group_id]
+
+
+def test_composite_repository_exposes_paged_state_methods() -> None:
+    assert callable(CompositeDuplicateRepository.page)
+    assert callable(CompositeDuplicateRepository.update_v2_policy_states)
+    assert callable(CompositeDuplicateRepository.replace_snapshot)
 
 
 def test_projection_summary_supports_database_sorts() -> None:

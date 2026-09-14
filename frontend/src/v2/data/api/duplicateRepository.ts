@@ -164,7 +164,18 @@ function normalizeDuplicatePage(
   };
 }
 
+
+function reviewStateParam(state: DuplicateSearchQuery['state']): string {
+  if (!state || state === 'All groups') return 'all';
+  if (state === 'Needs review') return 'needs_review';
+  if (state === 'Auto-ready') return 'auto_ready';
+  if (state === 'Blocked') return 'blocked';
+  if (state === 'Actionable') return 'actionable';
+  return 'needs_decisions';
+}
+
 function similarity(member: ApiDuplicateMember): number | null {
+
   if (!member.similarity) return null;
   if (member.similarity?.state === 'reference') return 100;
   return member.similarity.similarity_percent;
@@ -331,7 +342,6 @@ async function waitForTask(tasks: TaskRepository, taskId: string, similarity = f
 
 export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepository {
   let rawGroups = new Map<string, ApiDuplicateGroup>();
-  let hasSearchSnapshot = false;
   let hasWorkspaceSnapshot = false;
   let visibleGroupIds = new Set<string>();
   let workspace: ApiDuplicateWorkspace = { initialized: false, revision: 0, selected_count: 0, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
@@ -346,6 +356,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       id: group.group_id,
       discoverySources: group.discovery_sources?.length ? group.discovery_sources : [group.discovery_source],
       state: groupState(group, draft),
+      autoReady: group.auto_selected,
       kind: group.classification.replaceAll('_', ' '),
       reason: group.reason,
       referenceAssetId: group.reference_asset_id ?? null,
@@ -426,70 +437,41 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: false, reviewFilters: ['All groups', 'Needs review', 'Auto-ready', 'Blocked', 'Actionable', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
     },
     selectedGroupIds() { return [...workspace.selected_group_ids]; },
-    async search(query): Promise<PageResult<DuplicateGroupRecord>> {
-      const page = pageNumber(query);
-      if (!query.state || query.state === 'All groups') {
-        const params = new URLSearchParams({
-          page: String(page),
-          page_size: String(query.pageSize),
-          source: query.source ?? 'both',
-          sort: query.sort?.field ?? 'reclaimable',
-          direction: query.sort?.direction ?? 'desc',
-        });
-        const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
-        const [rawPage, restored] = await Promise.all([
-          requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
-          restoreWorkspace
-            ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
-            : Promise.resolve(null),
-        ]);
-        if (restored) {
-          workspace = restored;
-          hasWorkspaceSnapshot = true;
-        }
-        if (!query.reuseCachedGroups) {
-          rawGroups.clear();
-          hasSearchSnapshot = false;
-        }
-        const result = normalizeDuplicatePage(rawPage, query, page);
-        for (const group of result.items) rawGroups.set(group.group_id, group);
-        const items = result.items.map(materialize);
-        visibleGroupIds = new Set(items.map((group) => group.id));
-        return {
-          items,
-          total: result.total,
-          pageSize: result.page_size,
-          page: result.page,
-          nextCursor: result.page < result.pages ? String(result.page + 1) : null,
-        };
-      }
 
-      if (!query.reuseCachedGroups || !hasSearchSnapshot) {
-        const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
-        const [result, restored] = await Promise.all([
-          requestJson<ApiDuplicateResult>('/api/assets/duplicates/cross-source/search', { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
-          restoreWorkspace
-            ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
-            : Promise.resolve(null),
-        ]);
-        if (restored) {
-          workspace = restored;
-          hasWorkspaceSnapshot = true;
-        }
-        rawGroups = new Map(result.groups.map((group) => [group.group_id, group]));
-        hasSearchSnapshot = true;
-      }
-      const filtered = [...rawGroups.values()].filter((group) => {
-        const state = groupState(group, draftFor(group.group_id));
-        const sources = group.discovery_sources?.length ? group.discovery_sources : [group.discovery_source];
-        return matchesDuplicateSource(sources, query.source ?? 'both')
-          && (query.state === 'Auto-ready' ? state === 'Actionable' : state === query.state);
-      });
-      const start = (page - 1) * query.pageSize;
-      const items = filtered.slice(start, start + query.pageSize).map(materialize);
-      visibleGroupIds = new Set(items.map((group) => group.id));
-      return { items, total: filtered.length, pageSize: query.pageSize, page, nextCursor: start + query.pageSize < filtered.length ? String(page + 1) : null };
-    },
+async search(query): Promise<PageResult<DuplicateGroupRecord>> {
+  const page = pageNumber(query);
+  const params = new URLSearchParams({
+    page: String(page),
+    page_size: String(query.pageSize),
+    source: query.source ?? 'both',
+    sort: query.sort?.field ?? 'reclaimable',
+    direction: query.sort?.direction ?? 'desc',
+    state: reviewStateParam(query.state),
+  });
+  const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
+  const [rawPage, restored] = await Promise.all([
+    requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
+    restoreWorkspace
+      ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
+      : Promise.resolve(null),
+  ]);
+  if (restored) {
+    workspace = restored;
+    hasWorkspaceSnapshot = true;
+  }
+  if (!query.reuseCachedGroups) rawGroups.clear();
+  const result = normalizeDuplicatePage(rawPage, query, page);
+  for (const group of result.items) rawGroups.set(group.group_id, group);
+  const items = result.items.map(materialize);
+  visibleGroupIds = new Set(items.map((group) => group.id));
+  return {
+    items,
+    total: result.total,
+    pageSize: result.page_size,
+    page: result.page,
+    nextCursor: result.page < result.pages ? String(result.page + 1) : null,
+  };
+},
     saveDraft,
     flushDrafts,
     saveSelection,

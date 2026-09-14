@@ -18,6 +18,9 @@ from sqlalchemy import (
     String,
     Text,
     Uuid,
+    and_,
+    bindparam,
+    case,
     delete,
     exists,
     func,
@@ -30,7 +33,7 @@ from companion.database import DatabaseManager
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
 from companion.duplicate_identity import member_set_key, stable_group_key
 from companion.group_decision import DiscoverySource
-from companion.models import AssetRecord, Base
+from companion.models import AssetRecord, Base, DuplicateGroupReviewRecord
 from companion.similarity_grouping import SimilarityAdmissionEvidence, ValidatedSimilarityGroup
 
 SNAPSHOT_STATE_ID = 1
@@ -76,6 +79,12 @@ class CompositeDuplicateGroupRecord(Base):
     )
     first_discovered_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, index=True
+    )
+    v2_policy_state: Mapped[str] = mapped_column(
+        String(24), nullable=False, server_default="blocked", index=True
+    )
+    v2_state_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     similarity_validation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
@@ -448,6 +457,40 @@ class CompositeDuplicateRepository:
             if len(members.get(row.group_id, [])) >= 2
         ]
 
+    async def update_v2_policy_states(
+        self,
+        states: list[tuple[str, str, str]],
+    ) -> int:
+        """Publish bounded V2 policy summaries only for unchanged group memberships."""
+
+        if not states:
+            return 0
+        now = datetime.now(UTC)
+        table = CompositeDuplicateGroupRecord.__table__
+        statement = (
+            table.update()
+            .where(
+                table.c.group_id == bindparam("target_group_id"),
+                table.c.member_fingerprint == bindparam("target_member_fingerprint"),
+            )
+            .values(
+                v2_policy_state=bindparam("v2_policy_state_value"),
+                v2_state_updated_at=bindparam("v2_state_updated_at_value"),
+            )
+        )
+        values = [
+            {
+                "target_group_id": group_id,
+                "target_member_fingerprint": member_fingerprint,
+                "v2_policy_state_value": policy_state,
+                "v2_state_updated_at_value": now,
+            }
+            for group_id, member_fingerprint, policy_state in states
+        ]
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(statement, values)
+        return len(values)
+
     async def page(
         self,
         *,
@@ -456,8 +499,9 @@ class CompositeDuplicateRepository:
         source: DiscoverySource | None = None,
         sort: str = "reclaimable",
         direction: str = "desc",
+        state: str = "all",
     ) -> CompositeDuplicateSnapshotPage:
-        """Read one ordered page without hydrating the full duplicate universe."""
+        """Read one ordered SQL-filtered page before hydrating its members."""
 
         page = max(1, page)
         page_size = max(1, min(page_size, 100))
@@ -475,7 +519,6 @@ class CompositeDuplicateRepository:
         )
 
         async with self._database.sessions() as session:
-            count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
             sort_column = {
                 "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
                 "members": CompositeDuplicateGroupRecord.member_count,
@@ -485,19 +528,70 @@ class CompositeDuplicateRepository:
                 "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
             }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
             order = sort_column.desc() if direction == "desc" else sort_column.asc()
+            count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
+            group_statement = select(CompositeDuplicateGroupRecord)
+
+            if state != "all":
+                review_join = and_(
+                    DuplicateGroupReviewRecord.stable_group_key
+                    == CompositeDuplicateGroupRecord.stable_group_key,
+                    DuplicateGroupReviewRecord.member_fingerprint
+                    == CompositeDuplicateGroupRecord.member_fingerprint,
+                )
+                decision_count = func.coalesce(
+                    func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+                )
+                resolved_state = case(
+                    (
+                        CompositeDuplicateGroupRecord.v2_policy_state == "blocked",
+                        "Blocked",
+                    ),
+                    (
+                        (decision_count > 0)
+                        & (decision_count < CompositeDuplicateGroupRecord.member_count),
+                        "Needs decisions",
+                    ),
+                    (
+                        decision_count == CompositeDuplicateGroupRecord.member_count,
+                        "Actionable",
+                    ),
+                    (
+                        CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
+                        "Actionable",
+                    ),
+                    else_="Needs review",
+                )
+                count_statement = count_statement.outerjoin(DuplicateGroupReviewRecord, review_join)
+                group_statement = group_statement.outerjoin(DuplicateGroupReviewRecord, review_join)
+                if state == "auto_ready":
+                    state_filter = and_(
+                        CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
+                        resolved_state == "Actionable",
+                    )
+                else:
+                    expected = {
+                        "needs_review": "Needs review",
+                        "blocked": "Blocked",
+                        "actionable": "Actionable",
+                        "needs_decisions": "Needs decisions",
+                    }.get(state)
+                    state_filter = resolved_state == expected if expected is not None else None
+                if state_filter is not None:
+                    count_statement = count_statement.where(state_filter)
+                    group_statement = group_statement.where(state_filter)
+
+            if source_filter is not None:
+                count_statement = count_statement.where(source_filter)
+                group_statement = group_statement.where(source_filter)
+
             group_statement = (
-                select(CompositeDuplicateGroupRecord)
-                .order_by(
+                group_statement.order_by(
                     order.nulls_last(),
                     CompositeDuplicateGroupRecord.group_id.asc(),
                 )
                 .offset(offset)
                 .limit(page_size)
             )
-            if source_filter is not None:
-                count_statement = count_statement.where(source_filter)
-                group_statement = group_statement.where(source_filter)
-
             total = int((await session.scalar(count_statement)) or 0)
             group_rows = list((await session.execute(group_statement)).scalars())
             group_ids = [row.group_id for row in group_rows]
@@ -624,6 +718,8 @@ class CompositeDuplicateRepository:
                         "member_fingerprint": fingerprint,
                         **summary,
                         "first_discovered_at": now,
+                        "v2_policy_state": "blocked",
+                        "v2_state_updated_at": None,
                         "provider_metadata": dict(group.provider_metadata),
                         "similarity_validation": _validation_payload(group.similarity_validation),
                         "sync_generation": generation,
@@ -669,6 +765,8 @@ class CompositeDuplicateRepository:
                             "similarity_score": statement.excluded.similarity_score,
                             "oldest_taken_at": statement.excluded.oldest_taken_at,
                             "newest_taken_at": statement.excluded.newest_taken_at,
+                            "v2_policy_state": statement.excluded.v2_policy_state,
+                            "v2_state_updated_at": statement.excluded.v2_state_updated_at,
                             "provider_metadata": statement.excluded.provider_metadata,
                             "similarity_validation": statement.excluded.similarity_validation,
                             "sync_generation": statement.excluded.sync_generation,
