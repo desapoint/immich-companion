@@ -131,22 +131,23 @@ class ImmichDuplicateSyncService:
         await self._tasks.start()
         return ImmichDuplicateSyncTaskStart(task_id=task.id)
 
-    async def start_after_asset_sync(self) -> object:
-        """Queue a refresh after asset sync unless a very recent snapshot is still fresh."""
+    async def start_after_asset_sync(self) -> object | None:
+        """Queue a refresh without allowing follow-up failures to fail asset sync."""
 
-        metadata = await self._repository.metadata()
-        if (
-            metadata.last_success_at is not None
-            and datetime.now(UTC) - metadata.last_success_at < IMMICH_DUPLICATE_SYNC_MIN_INTERVAL
-        ):
-            return metadata
         try:
+            metadata = await self._repository.metadata()
+            if (
+                metadata.last_success_at is not None
+                and datetime.now(UTC) - metadata.last_success_at
+                < IMMICH_DUPLICATE_SYNC_MIN_INTERVAL
+            ):
+                return metadata
             return await self.start()
         except Exception:
             # This is deliberately a follow-up. Asset synchronization must remain
-            # successful even if duplicate refresh submission itself is unavailable.
+            # successful even if duplicate refresh status/submission is unavailable.
             logger.exception("Could not queue Immich duplicate synchronization after asset sync")
-            return metadata
+            return None
 
     async def status(self) -> ImmichDuplicateSyncStatus:
         metadata = await self._repository.metadata()
