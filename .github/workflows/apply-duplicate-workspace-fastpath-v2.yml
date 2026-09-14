@@ -52,6 +52,22 @@ jobs:
               raise SystemExit('Missing workspace draft compatibility anchor')
           service_path.write_text(service.replace(old, new, 1))
 
+          repository_path = Path('backend/companion/composite_duplicate_repository.py')
+          repository = repository_path.read_text()
+          old_imports = (
+              'from companion.database import DatabaseManager\n'
+              'from companion.duplicate_identity import member_set_key, stable_group_key\n'
+              'from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence\n'
+          )
+          new_imports = (
+              'from companion.database import DatabaseManager\n'
+              'from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence\n'
+              'from companion.duplicate_identity import member_set_key, stable_group_key\n'
+          )
+          if old_imports not in repository:
+              raise SystemExit('Missing composite repository import-order anchor')
+          repository_path.write_text(repository.replace(old_imports, new_imports, 1))
+
           test_path = Path('backend/tests/test_duplicate_service.py')
           test = test_path.read_text()
           anchor = '        draft_status="pending",\n    )\n    service = CrossSourceDuplicateService(\n'
