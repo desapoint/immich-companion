@@ -1195,6 +1195,7 @@
         filledSelection.revision,
         filledSelection.selected_count,
         results?.items.map((asset) => asset.id) ?? [],
+        'all_matching',
       );
       markSelectionChanged(false);
       stackPrimaryAssetId = results?.items[0]?.id ?? null;
@@ -1836,7 +1837,7 @@
       matchingTotal={results.total}
       currentPageCount={results.items.length}
       infiniteScroll={listMode === 'infinite'}
-      allMatching={selection.mode === 'all_matching'}
+      allMatching={selection.scope === 'all_matching'}
       summary={selectionResolution?.summary ?? null}
       {albums}
       {tags}
