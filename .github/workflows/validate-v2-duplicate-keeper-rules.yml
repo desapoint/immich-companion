@@ -37,6 +37,26 @@ jobs:
           exec(code, {})
           PY
 
+      - name: Align keeper choice contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('backend/companion/duplicate_keeper_rules.py')
+          text = path.read_text()
+          old = '''class DuplicateKeeperChoice:\n    keeper_asset_id: UUID | None\n    reason: str\n'''
+          new = '''class DuplicateKeeperChoice:\n    keeper_asset_id: UUID | None\n    reason: str\n    used_reference_tiebreaker: bool = False\n'''
+          if old not in text:
+              raise SystemExit('missing DuplicateKeeperChoice anchor')
+          text = text.replace(old, new, 1)
+          old_return = 'return DuplicateKeeperChoice(reference_id, "reference_tiebreaker")'
+          new_return = 'return DuplicateKeeperChoice(reference_id, "reference_tiebreaker", True)'
+          if old_return not in text:
+              raise SystemExit('missing reference tiebreaker anchor')
+          path.write_text(text.replace(old_return, new_return, 1))
+          PY
+
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
