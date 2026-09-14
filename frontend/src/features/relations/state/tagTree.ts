@@ -6,24 +6,21 @@ export interface VisibleTagRow {
   hasChildren: boolean;
 }
 
-export function branchParentIds(nodes: ManagedRelation[]): string[] {
-  const ids: string[] = [];
-  for (const node of nodes) {
-    if (node.children?.length) ids.push(node.id, ...branchParentIds(node.children));
-  }
-  return ids;
-}
-
+/**
+ * Flattens the currently loaded tag hierarchy. Branches are expanded by
+ * default and the caller records only explicit collapses, so a collection
+ * refresh cannot silently reopen something the user collapsed.
+ */
 export function flattenTagTree(
   nodes: ManagedRelation[],
-  expanded: Set<string>,
+  collapsed: Set<string>,
   forceExpanded = false,
 ): VisibleTagRow[] {
   const rows: VisibleTagRow[] = [];
   const visit = (node: ManagedRelation, depth: number) => {
     const children = node.children ?? [];
     rows.push({ item: node, depth, hasChildren: children.length > 0 });
-    if ((forceExpanded || expanded.has(node.id)) && children.length) {
+    if ((forceExpanded || !collapsed.has(node.id)) && children.length) {
       for (const child of children) visit(child, depth + 1);
     }
   };
