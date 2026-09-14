@@ -2,6 +2,7 @@ import type {
   AssetSelectionMode,
   AssetSelectionRequest,
   SearchGroup,
+  SelectionSetMembershipResponse,
 } from '../types/assets';
 import { serializeSearchGroup } from './assetViewModel';
 
@@ -12,6 +13,13 @@ export interface AssetSelectionState {
   serverSelectedCount: number | null;
   selectedIds: Set<string>;
   excludedIds: Set<string>;
+}
+
+export interface AssetPageSelection {
+  id: string;
+  revision: number;
+  selected_count: number;
+  selected_ids: string[];
 }
 
 export function createAssetSelectionState(): AssetSelectionState {
@@ -149,6 +157,55 @@ export function setServerSelection(
     serverSelectedCount: selectedCount,
     selectedIds: new Set(visibleSelectedIds),
     excludedIds: new Set(),
+  };
+}
+
+export function mergeServerSelectionPages(
+  state: AssetSelectionState,
+  pages: Array<AssetPageSelection | null | undefined>,
+): AssetSelectionState {
+  const available = pages.filter((page): page is AssetPageSelection => page !== null && page !== undefined);
+  if (available.length === 0) return state;
+  const latest = available.reduce((current, page) => (
+    page.revision >= current.revision ? page : current
+  ));
+  return setServerSelection(
+    state,
+    latest.id,
+    latest.revision,
+    latest.selected_count,
+    [...new Set(available.flatMap((page) => page.selected_ids))],
+  );
+}
+
+export function mergeServerSelectionPage(
+  state: AssetSelectionState,
+  page: AssetPageSelection,
+): AssetSelectionState {
+  if (state.selectionId !== null && state.selectionId !== page.id) return state;
+  return setServerSelection(
+    state,
+    page.id,
+    page.revision,
+    page.selected_count,
+    [...new Set([...state.selectedIds, ...page.selected_ids])],
+  );
+}
+
+export function patchServerSelectionMembership(
+  state: AssetSelectionState,
+  requestedAssetIds: string[],
+  membership: SelectionSetMembershipResponse,
+): AssetSelectionState {
+  if (state.selectionId !== membership.selection.id) return state;
+  const selectedIds = new Set(state.selectedIds);
+  requestedAssetIds.forEach((assetId) => selectedIds.delete(assetId));
+  membership.selected_ids.forEach((assetId) => selectedIds.add(assetId));
+  return {
+    ...state,
+    selectionRevision: membership.selection.revision,
+    serverSelectedCount: membership.selection.selected_count,
+    selectedIds,
   };
 }
 
