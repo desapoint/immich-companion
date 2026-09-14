@@ -11,10 +11,20 @@ from companion.similarity_scan_service import (
     SimilarityScanAlreadyRunningError,
     SimilarityScanService,
     SimilarityScanTaskHandler,
+    _feature_snapshot_key,
 )
 from companion.task_coordinator import PermanentTaskError, TaskCancelledError, TaskPausedError
 
 SCAN_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+
+def test_candidate_index_version_invalidates_paused_scan_snapshot(monkeypatch) -> None:
+    values = [feature(1, 0), feature(2, 1)]
+    current = _feature_snapshot_key(values)
+
+    monkeypatch.setattr("companion.similarity_scan_service.CANDIDATE_INDEX_VERSION", 1)
+
+    assert _feature_snapshot_key(values) != current
 
 
 def feature(number: int, perceptual_hash: int):

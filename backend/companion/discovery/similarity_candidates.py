@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import UUID
 
+CANDIDATE_INDEX_VERSION = 2
+
 
 class SimilarityCandidateFeature(Protocol):
     """Compact feature fields required before an expensive comparison."""
@@ -158,6 +160,10 @@ class BoundedSimilarityCandidateIndex:
         self._maximum_perceptual_distance = maximum_perceptual_distance
         self._maximum_aspect_difference = maximum_aspect_difference
         self._maximum_neighbors_per_asset = maximum_neighbors_per_asset
+        # With limits above one, leave one degree available on each newly
+        # indexed asset for later arrivals. Otherwise a dense early clique can
+        # disappear before a later near-identical variant is considered.
+        self._maximum_forward_neighbors = max(1, maximum_neighbors_per_asset - 1)
         self._stats = stats
         self._trees: dict[tuple[str, int], _HammingBkTree] = {}
         self._neighbor_counts: dict[UUID, int] = {}
@@ -208,7 +214,7 @@ class BoundedSimilarityCandidateIndex:
             key=lambda item: (item[0], item[1].int),
         )
         for distance, candidate_id in matches:
-            if self._neighbor_counts.get(feature.asset_id, 0) >= self._maximum_neighbors_per_asset:
+            if self._neighbor_counts.get(feature.asset_id, 0) >= self._maximum_forward_neighbors:
                 break
             if self._neighbor_counts.get(candidate_id, 0) >= self._maximum_neighbors_per_asset:
                 continue

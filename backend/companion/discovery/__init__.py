@@ -4,6 +4,7 @@ from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence, GroupDi
 from companion.discovery.composite import CompositeGroupDiscoveryProvider
 from companion.discovery.immich_duplicates import ImmichDuplicateProvider
 from companion.discovery.similarity_candidates import (
+    CANDIDATE_INDEX_VERSION,
     BoundedSimilarityCandidateIndex,
     SimilarityCandidateFeature,
     SimilarityCandidatePair,
@@ -13,6 +14,7 @@ from companion.discovery.similarity_candidates import (
 from companion.discovery.similarity_duplicates import SimilarityDuplicateProvider
 
 __all__ = [
+    "CANDIDATE_INDEX_VERSION",
     "BoundedSimilarityCandidateIndex",
     "DiscoveredGroup",
     "DiscoveryEvidence",

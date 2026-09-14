@@ -10,7 +10,11 @@ from time import perf_counter
 from typing import Any
 from uuid import UUID
 
-from companion.discovery import BoundedSimilarityCandidateIndex, SimilarityCandidateStats
+from companion.discovery import (
+    CANDIDATE_INDEX_VERSION,
+    BoundedSimilarityCandidateIndex,
+    SimilarityCandidateStats,
+)
 from companion.duplicate_schema import (
     SimilarityScanRequest,
     SimilarityScanSummary,
@@ -61,6 +65,7 @@ def _feature_snapshot_key(features: list[Any]) -> str:
     """Fingerprint the ordered candidate inputs used by a durable scan checkpoint."""
 
     digest = sha256()
+    digest.update(f"candidate-index-v{CANDIDATE_INDEX_VERSION}\n".encode())
     for feature in features:
         digest.update(
             (
