@@ -24,8 +24,38 @@ export async function getRelations(
   };
 }
 
-export function getTagOptions(signal?: AbortSignal): Promise<RelationOption[]> {
-  return requestJson('/api/tags', { signal });
+function flattenTagOptions(nodes: ManagedRelation[], parentPath: string[] = []): RelationOption[] {
+  return nodes.flatMap((node) => {
+    const path = [...parentPath, node.name];
+    return [
+      { id: node.id, name: path.join(' / ') },
+      ...flattenTagOptions(node.children ?? [], path),
+    ];
+  });
+}
+
+/**
+ * Parent choices come from Immich's live management catalog rather than the
+ * companion search-option cache. Fetch sequentially in bounded pages so a
+ * create, rename, move, or delete is reflected immediately without a sync.
+ */
+export async function getTagOptions(signal?: AbortSignal): Promise<RelationOption[]> {
+  const options: RelationOption[] = [];
+  let page = 1;
+  let pages = 1;
+  do {
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: '200',
+      sort: 'name',
+      direction: 'asc',
+    });
+    const result = await requestJson<RelationPage>(`/api/tags/manage?${params}`, { signal });
+    options.push(...flattenTagOptions(result.items));
+    pages = result.pages;
+    page += 1;
+  } while (page <= pages);
+  return options;
 }
 
 export function createRelation(
