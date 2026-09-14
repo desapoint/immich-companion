@@ -111,6 +111,7 @@
   const idleSyncPollMs = 10000;
   const hiddenSyncPollMs = 30000;
   const taskFallbackPollMs = 1000;
+  const connectedTaskReconcilePollMs = 10000;
   const detailCacheSize = 24;
   const selectionSyncTaskStorageKey = 'immich-companion:selected-sync-task';
   const selectionSyncOwnerStorageKey = 'immich-companion:selected-sync-task-owner';
@@ -189,8 +190,13 @@
   const viewerActionRequest = new LatestRequest();
   const actionPlanRequest = new LatestRequest();
   const relationOptionsRequest = new LatestRequest();
-  const selectionTaskPoller = new CoalescedPoller(pollSelectionTask, () => taskFallbackPollMs);
-  const actionTaskPoller = new CoalescedPoller(pollActionTask, () => taskFallbackPollMs);
+
+  function trackedTaskPollDelay(): number {
+    return taskUpdateConnection?.connected ? connectedTaskReconcilePollMs : taskFallbackPollMs;
+  }
+
+  const selectionTaskPoller = new CoalescedPoller(pollSelectionTask, trackedTaskPollDelay);
+  const actionTaskPoller = new CoalescedPoller(pollActionTask, trackedTaskPollDelay);
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
     tags: true,
@@ -225,7 +231,7 @@
     selectionSyncing = true;
     localStorage.setItem(selectionSyncTaskStorageKey, taskId);
     localStorage.setItem(selectionSyncOwnerStorageKey, owner);
-    if (!taskUpdateConnection?.connected) startSelectionTaskPolling();
+    startSelectionTaskPolling(false);
   }
 
   function clearSelectionTaskTracking(): void {
@@ -239,7 +245,7 @@
     actionBusy = true;
     localStorage.setItem(actionTaskStorageKey, taskId);
     localStorage.setItem(actionTaskOwnerStorageKey, owner);
-    if (!taskUpdateConnection?.connected) startActionTaskPolling();
+    startActionTaskPolling(false);
   }
 
   function clearActionTaskTracking(): void {
@@ -260,30 +266,27 @@
     actionTaskPoller.stop();
   }
 
-  function startSelectionTaskPolling(): void {
-    if (taskUpdateConnection?.connected && selectionTask !== null) return;
-    selectionTaskPoller.start();
+  function startSelectionTaskPolling(immediate = true): void {
+    selectionTaskPoller.start(immediate);
   }
 
-  function startActionTaskPolling(): void {
-    if (taskUpdateConnection?.connected && actionTask !== null) return;
-    actionTaskPoller.start();
+  function startActionTaskPolling(immediate = true): void {
+    actionTaskPoller.start(immediate);
   }
 
   function handleTaskConnectionChange(connected: boolean): void {
-    if (connected) {
-      if (selectionTask !== null) stopSelectionTaskPolling();
-      if (actionTask !== null) stopActionTaskPolling();
-      return;
+    if (isTaskTrackedInFlight(selectionTask, localStorage.getItem(selectionSyncTaskStorageKey))) {
+      startSelectionTaskPolling(!connected);
+      selectionTaskPoller.reschedule(trackedTaskPollDelay());
+    } else {
+      stopSelectionTaskPolling();
     }
-    if (
-      (selectionTask && !isTaskTerminal(selectionTask.status))
-      || localStorage.getItem(selectionSyncTaskStorageKey)
-    ) startSelectionTaskPolling();
-    if (
-      (actionTask && !isTaskTerminal(actionTask.status))
-      || localStorage.getItem(actionTaskStorageKey)
-    ) startActionTaskPolling();
+    if (isTaskTrackedInFlight(actionTask, localStorage.getItem(actionTaskStorageKey))) {
+      startActionTaskPolling(!connected);
+      actionTaskPoller.reschedule(trackedTaskPollDelay());
+    } else {
+      stopActionTaskPolling();
+    }
   }
 
   function handleTaskUpdate(task: AssetTaskStatus): void {
@@ -866,6 +869,7 @@
     } catch (requestError) {
       if (localStorage.getItem(selectionSyncTaskStorageKey)) {
         startSelectionTaskPolling();
+        void selectionTaskPoller.refresh();
         selectionSyncError = selectionTaskTrackingMessage;
       } else if (isAssetSelectionUnavailableError(requestError)) {
         selectionSyncError = expiredSelectionMessage;
@@ -894,8 +898,8 @@
     localStorage.setItem(selectionSyncTaskStorageKey, next.id);
 
     if (!terminal) {
-      if (taskUpdateConnection?.connected) stopSelectionTaskPolling();
-      else startSelectionTaskPolling();
+      startSelectionTaskPolling(false);
+      selectionTaskPoller.reschedule(trackedTaskPollDelay());
       return;
     }
 
@@ -1339,6 +1343,7 @@
     } catch (requestError) {
       if (localStorage.getItem(actionTaskStorageKey)) {
         startActionTaskPolling();
+        void actionTaskPoller.refresh();
         actionError = actionTaskTrackingMessage;
       } else if (isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
@@ -1442,6 +1447,7 @@
     } catch (requestError) {
       if (context === 'selection' && localStorage.getItem(actionTaskStorageKey)) {
         startActionTaskPolling();
+        void actionTaskPoller.refresh();
         actionError = actionTaskTrackingMessage;
       } else if (owner && isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
@@ -1543,6 +1549,7 @@
     } catch (requestError) {
       if (confirmedContext === 'selection' && localStorage.getItem(actionTaskStorageKey)) {
         startActionTaskPolling();
+        void actionTaskPoller.refresh();
         actionError = actionTaskTrackingMessage;
       } else if (owner && isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
@@ -1574,8 +1581,8 @@
     localStorage.setItem(actionTaskStorageKey, next.id);
 
     if (!terminal) {
-      if (taskUpdateConnection?.connected) stopActionTaskPolling();
-      else startActionTaskPolling();
+      startActionTaskPolling(false);
+      actionTaskPoller.reschedule(trackedTaskPollDelay());
       return;
     }
 
