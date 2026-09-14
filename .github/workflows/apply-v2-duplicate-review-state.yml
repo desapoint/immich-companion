@@ -30,14 +30,25 @@ jobs:
               file = Path(path)
               text = file.read_text()
               if old not in text:
-                  raise SystemExit(f"Missing patch anchor in {path}: {old[:120]!r}")
+                  raise SystemExit(f"Missing patch anchor in {path}: {old[:160]!r}")
               file.write_text(text.replace(old, new, 1))
+
+          def replace_between(path: str, start: str, end: str, new: str) -> None:
+              file = Path(path)
+              text = file.read_text()
+              a = text.find(start)
+              if a < 0:
+                  raise SystemExit(f"Missing start marker in {path}: {start!r}")
+              b = text.find(end, a)
+              if b < 0:
+                  raise SystemExit(f"Missing end marker in {path}: {end!r}")
+              file.write_text(text[:a] + new + text[b:])
 
           repo = "backend/companion/composite_duplicate_repository.py"
           replace_once(
               repo,
-              "    delete,\n    exists,\n    func,\n    select,\n)",
-              "    and_,\n    bindparam,\n    case,\n    delete,\n    exists,\n    func,\n    select,\n)",
+              "    Uuid,\n    delete,\n    exists,\n    func,\n    select,\n)",
+              "    Uuid,\n    and_,\n    bindparam,\n    case,\n    delete,\n    exists,\n    func,\n    select,\n)",
           )
           replace_once(
               repo,
@@ -47,184 +58,295 @@ jobs:
           replace_once(
               repo,
               "    first_discovered_at: Mapped[datetime] = mapped_column(\n        DateTime(timezone=True), nullable=False, index=True\n    )\n    provider_metadata:",
-              "    first_discovered_at: Mapped[datetime] = mapped_column(\n        DateTime(timezone=True), nullable=False, index=True\n    )\n    v2_base_review_state: Mapped[str] = mapped_column(\n        String(24), nullable=False, server_default=\"Blocked\", index=True\n    )\n    v2_state_updated_at: Mapped[datetime | None] = mapped_column(\n        DateTime(timezone=True), nullable=True\n    )\n    provider_metadata:",
+              "    first_discovered_at: Mapped[datetime] = mapped_column(\n        DateTime(timezone=True), nullable=False, index=True\n    )\n    v2_policy_state: Mapped[str] = mapped_column(\n        String(24), nullable=False, server_default=\"blocked\", index=True\n    )\n    v2_state_updated_at: Mapped[datetime | None] = mapped_column(\n        DateTime(timezone=True), nullable=True\n    )\n    provider_metadata:",
           )
-          replace_once(
-              repo,
-              "    async def page(\n        self,\n        *,\n        page: int,",
-              dedent('''
-                  async def update_v2_review_states(
-                      self,
-                      states: list[tuple[str, str, str]],
-                  ) -> int:
-                      """Update bounded V2 list-state summaries only when membership still matches."""
 
-                      if not states:
-                          return 0
-                      now = datetime.now(UTC)
-                      table = CompositeDuplicateGroupRecord.__table__
-                      statement = (
-                          table.update()
-                          .where(
-                              table.c.group_id == bindparam("target_group_id"),
-                              table.c.member_fingerprint == bindparam("target_member_fingerprint"),
-                          )
-                          .values(
-                              v2_base_review_state=bindparam("v2_base_review_state_value"),
-                              v2_state_updated_at=bindparam("v2_state_updated_at_value"),
+          page_method = dedent('''
+              async def update_v2_policy_states(
+                  self,
+                  states: list[tuple[str, str, str]],
+              ) -> int:
+                  """Publish bounded V2 policy summaries only for unchanged group memberships."""
+
+                  if not states:
+                      return 0
+                  now = datetime.now(UTC)
+                  table = CompositeDuplicateGroupRecord.__table__
+                  statement = (
+                      table.update()
+                      .where(
+                          table.c.group_id == bindparam("target_group_id"),
+                          table.c.member_fingerprint == bindparam("target_member_fingerprint"),
+                      )
+                      .values(
+                          v2_policy_state=bindparam("v2_policy_state_value"),
+                          v2_state_updated_at=bindparam("v2_state_updated_at_value"),
+                      )
+                  )
+                  values = [
+                      {
+                          "target_group_id": group_id,
+                          "target_member_fingerprint": member_fingerprint,
+                          "v2_policy_state_value": policy_state,
+                          "v2_state_updated_at_value": now,
+                      }
+                      for group_id, member_fingerprint, policy_state in states
+                  ]
+                  async with self._database.sessions() as session, session.begin():
+                      await session.execute(statement, values)
+                  return len(values)
+
+              async def page(
+                  self,
+                  *,
+                  page: int,
+                  page_size: int,
+                  source: DiscoverySource | None = None,
+                  sort: str = "reclaimable",
+                  direction: str = "desc",
+                  state: str = "all",
+              ) -> CompositeDuplicateSnapshotPage:
+                  """Read one ordered SQL-filtered page before hydrating its members."""
+
+                  page = max(1, page)
+                  page_size = max(1, min(page_size, 100))
+                  offset = (page - 1) * page_size
+                  source_filter = (
+                      exists(
+                          select(1).where(
+                              CompositeDuplicateGroupEvidenceRecord.group_id
+                              == CompositeDuplicateGroupRecord.group_id,
+                              CompositeDuplicateGroupEvidenceRecord.discovery_source == source.value,
                           )
                       )
-                      values = [
-                          {
-                              "target_group_id": group_id,
-                              "target_member_fingerprint": member_fingerprint,
-                              "v2_base_review_state_value": state,
-                              "v2_state_updated_at_value": now,
-                          }
-                          for group_id, member_fingerprint, state in states
-                      ]
-                      async with self._database.sessions() as session, session.begin():
-                          await session.execute(statement, values)
-                      return len(values)
+                      if source is not None
+                      else None
+                  )
 
-                  async def page(
-                      self,
-                      *,
-                      page: int,
-              '''),
-          )
-          replace_once(
-              repo,
-              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n    ) -> CompositeDuplicateSnapshotPage:",
-              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n        state: str = \"all\",\n    ) -> CompositeDuplicateSnapshotPage:",
-          )
-          old = dedent('''
                   async with self._database.sessions() as session:
+                      sort_column = {
+                          "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
+                          "members": CompositeDuplicateGroupRecord.member_count,
+                          "similarity": CompositeDuplicateGroupRecord.similarity_score,
+                          "newest": CompositeDuplicateGroupRecord.newest_taken_at,
+                          "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
+                          "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
+                      }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
+                      order = sort_column.desc() if direction == "desc" else sort_column.asc()
                       count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
-                      sort_column = {
-                          "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
-                          "members": CompositeDuplicateGroupRecord.member_count,
-                          "similarity": CompositeDuplicateGroupRecord.similarity_score,
-                          "newest": CompositeDuplicateGroupRecord.newest_taken_at,
-                          "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
-                          "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
-                      }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
-                      order = sort_column.desc() if direction == "desc" else sort_column.asc()
+                      group_statement = select(CompositeDuplicateGroupRecord)
+
+                      if state != "all":
+                          review_join = and_(
+                              DuplicateGroupReviewRecord.stable_group_key
+                              == CompositeDuplicateGroupRecord.stable_group_key,
+                              DuplicateGroupReviewRecord.member_fingerprint
+                              == CompositeDuplicateGroupRecord.member_fingerprint,
+                          )
+                          decision_count = func.coalesce(
+                              func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+                          )
+                          resolved_state = case(
+                              (
+                                  CompositeDuplicateGroupRecord.v2_policy_state == "blocked",
+                                  "Blocked",
+                              ),
+                              (
+                                  (decision_count > 0)
+                                  & (decision_count < CompositeDuplicateGroupRecord.member_count),
+                                  "Needs decisions",
+                              ),
+                              (
+                                  decision_count == CompositeDuplicateGroupRecord.member_count,
+                                  "Actionable",
+                              ),
+                              (
+                                  CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
+                                  "Actionable",
+                              ),
+                              else_="Needs review",
+                          )
+                          count_statement = count_statement.outerjoin(
+                              DuplicateGroupReviewRecord, review_join
+                          )
+                          group_statement = group_statement.outerjoin(
+                              DuplicateGroupReviewRecord, review_join
+                          )
+                          if state == "auto_ready":
+                              state_filter = and_(
+                                  CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
+                                  resolved_state == "Actionable",
+                              )
+                          else:
+                              expected = {
+                                  "needs_review": "Needs review",
+                                  "blocked": "Blocked",
+                                  "actionable": "Actionable",
+                                  "needs_decisions": "Needs decisions",
+                              }.get(state)
+                              state_filter = resolved_state == expected if expected is not None else None
+                          if state_filter is not None:
+                              count_statement = count_statement.where(state_filter)
+                              group_statement = group_statement.where(state_filter)
+
+                      if source_filter is not None:
+                          count_statement = count_statement.where(source_filter)
+                          group_statement = group_statement.where(source_filter)
+
                       group_statement = (
-                          select(CompositeDuplicateGroupRecord)
-                          .order_by(
+                          group_statement.order_by(
                               order.nulls_last(),
                               CompositeDuplicateGroupRecord.group_id.asc(),
                           )
                           .offset(offset)
                           .limit(page_size)
                       )
-                      if source_filter is not None:
-                          count_statement = count_statement.where(source_filter)
-                          group_statement = group_statement.where(source_filter)
-          ''')
-          new = dedent('''
-                  async with self._database.sessions() as session:
-                      review_join = and_(
-                          DuplicateGroupReviewRecord.stable_group_key
-                          == CompositeDuplicateGroupRecord.stable_group_key,
-                          DuplicateGroupReviewRecord.member_fingerprint
-                          == CompositeDuplicateGroupRecord.member_fingerprint,
-                      )
-                      decision_count = func.coalesce(
-                          func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
-                      )
-                      resolved_state = case(
-                          (
-                              CompositeDuplicateGroupRecord.v2_base_review_state == "Blocked",
-                              "Blocked",
-                          ),
-                          (
-                              (decision_count > 0)
-                              & (decision_count < CompositeDuplicateGroupRecord.member_count),
-                              "Needs decisions",
-                          ),
-                          (
-                              decision_count == CompositeDuplicateGroupRecord.member_count,
-                              "Actionable",
-                          ),
-                          (
-                              CompositeDuplicateGroupRecord.v2_base_review_state == "Actionable",
-                              "Actionable",
-                          ),
-                          else_="Needs review",
-                      )
-                      count_statement = (
-                          select(func.count())
-                          .select_from(CompositeDuplicateGroupRecord)
-                          .outerjoin(DuplicateGroupReviewRecord, review_join)
-                      )
-                      sort_column = {
-                          "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
-                          "members": CompositeDuplicateGroupRecord.member_count,
-                          "similarity": CompositeDuplicateGroupRecord.similarity_score,
-                          "newest": CompositeDuplicateGroupRecord.newest_taken_at,
-                          "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
-                          "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
-                      }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
-                      order = sort_column.desc() if direction == "desc" else sort_column.asc()
-                      group_statement = (
-                          select(CompositeDuplicateGroupRecord)
-                          .outerjoin(DuplicateGroupReviewRecord, review_join)
-                          .order_by(
-                              order.nulls_last(),
-                              CompositeDuplicateGroupRecord.group_id.asc(),
+                      total = int((await session.scalar(count_statement)) or 0)
+                      group_rows = list((await session.execute(group_statement)).scalars())
+                      group_ids = [row.group_id for row in group_rows]
+                      if group_ids:
+                          member_rows = list(
+                              (
+                                  await session.execute(
+                                      select(
+                                          CompositeDuplicateGroupMemberRecord.group_id,
+                                          CompositeDuplicateGroupMemberRecord.asset_id,
+                                      )
+                                      .where(
+                                          CompositeDuplicateGroupMemberRecord.group_id.in_(group_ids)
+                                      )
+                                      .order_by(
+                                          CompositeDuplicateGroupMemberRecord.group_id,
+                                          CompositeDuplicateGroupMemberRecord.position,
+                                      )
+                                  )
+                              ).all()
                           )
-                          .offset(offset)
-                          .limit(page_size)
+                          evidence_rows = list(
+                              (
+                                  await session.execute(
+                                      select(CompositeDuplicateGroupEvidenceRecord)
+                                      .where(
+                                          CompositeDuplicateGroupEvidenceRecord.group_id.in_(group_ids)
+                                      )
+                                      .order_by(
+                                          CompositeDuplicateGroupEvidenceRecord.group_id,
+                                          CompositeDuplicateGroupEvidenceRecord.discovery_source,
+                                      )
+                                  )
+                              ).scalars()
+                          )
+                      else:
+                          member_rows = []
+                          evidence_rows = []
+
+                  members: dict[str, list[UUID]] = {}
+                  for group_id, asset_id in member_rows:
+                      members.setdefault(group_id, []).append(asset_id)
+                  evidence: dict[str, list[DiscoveryEvidence]] = {}
+                  for row in evidence_rows:
+                      evidence.setdefault(row.group_id, []).append(
+                          DiscoveryEvidence(
+                              discovery_source=DiscoverySource(row.discovery_source),
+                              provider_group_id=row.provider_group_id,
+                              metadata=dict(row.evidence_metadata or {}),
+                          )
                       )
-                      state_value = {
-                          "needs_review": "Needs review",
-                          "auto_ready": "Actionable",
-                          "blocked": "Blocked",
-                          "actionable": "Actionable",
-                          "needs_decisions": "Needs decisions",
-                      }.get(state)
-                      if state_value is not None:
-                          count_statement = count_statement.where(resolved_state == state_value)
-                          group_statement = group_statement.where(resolved_state == state_value)
-                      if source_filter is not None:
-                          count_statement = count_statement.where(source_filter)
-                          group_statement = group_statement.where(source_filter)
+                  groups = [
+                      CompositeDuplicateSnapshotGroup(
+                          group_id=row.group_id,
+                          discovery_source=DiscoverySource(row.discovery_source),
+                          provider_group_id=row.provider_group_id,
+                          asset_ids=tuple(members.get(row.group_id, [])),
+                          provider_metadata=dict(row.provider_metadata or {}),
+                          evidence=tuple(evidence.get(row.group_id, [])),
+                          similarity_validation=_validation_from_payload(row.similarity_validation),
+                      )
+                      for row in group_rows
+                      if len(members.get(row.group_id, [])) >= 2
+                  ]
+                  return CompositeDuplicateSnapshotPage(
+                      groups=groups,
+                      total=total,
+                      page=page,
+                      page_size=page_size,
+                      pages=(total + page_size - 1) // page_size,
+                  )
+
           ''')
-          text = Path(repo).read_text()
-          if old not in text:
-              raise SystemExit("Missing repository page-query block")
-          Path(repo).write_text(text.replace(old, new, 1))
+          replace_between(repo, "    async def page(\n", "    async def replace_snapshot(\n", page_method)
+          replace_once(
+              repo,
+              '                        "first_discovered_at": now,\n                        "provider_metadata":',
+              '                        "first_discovered_at": now,\n                        "v2_policy_state": "blocked",\n                        "v2_state_updated_at": None,\n                        "provider_metadata":',
+          )
+          replace_once(
+              repo,
+              '                            "newest_taken_at": statement.excluded.newest_taken_at,\n                            "provider_metadata":',
+              '                            "newest_taken_at": statement.excluded.newest_taken_at,\n                            "v2_policy_state": statement.excluded.v2_policy_state,\n                            "v2_state_updated_at": statement.excluded.v2_state_updated_at,\n                            "provider_metadata":',
+          )
 
           provider = "backend/companion/discovery/persisted_composite.py"
           replace_once(
               provider,
-              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n    ) -> CompositeDuplicateSnapshotPage: ...",
-              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n        state: str = \"all\",\n    ) -> CompositeDuplicateSnapshotPage: ...",
+              '        direction: str = "desc",\n    ) -> CompositeDuplicateSnapshotPage: ...',
+              '        direction: str = "desc",\n        state: str = "all",\n    ) -> CompositeDuplicateSnapshotPage: ...',
           )
-          replace_once(
-              provider,
-              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n    ) -> DiscoveredGroupPage:",
-              "        sort: str = \"reclaimable\",\n        direction: str = \"desc\",\n        state: str = \"all\",\n    ) -> DiscoveredGroupPage:",
-          )
-          replace_once(
-              provider,
-              "            sort=sort,\n            direction=direction,\n        )",
-              "            sort=sort,\n            direction=direction,\n            state=state,\n        )",
-          )
+          provider_text = Path(provider).read_text()
+          provider_start = provider_text.index("    async def discover_page(\n")
+          provider_end = len(provider_text)
+          provider_method = dedent('''
+              async def discover_page(
+                  self,
+                  *,
+                  page: int,
+                  page_size: int,
+                  source: str = "both",
+                  sort: str = "reclaimable",
+                  direction: str = "desc",
+                  state: str = "all",
+              ) -> DiscoveredGroupPage:
+                  source_value = (
+                      DiscoverySource.IMMICH_DUPLICATE
+                      if source == "immich"
+                      else DiscoverySource.COMPANION_SIMILARITY
+                      if source == "similarity"
+                      else None
+                  )
+                  snapshot = await self._snapshots.page(
+                      page=page,
+                      page_size=page_size,
+                      source=source_value,
+                      sort=sort,
+                      direction=direction,
+                      state=state,
+                  )
+                  return DiscoveredGroupPage(
+                      groups=await self._hydrate(snapshot.groups),
+                      total=snapshot.total,
+                      page=snapshot.page,
+                      page_size=snapshot.page_size,
+                      pages=snapshot.pages,
+                  )
+          ''')
+          Path(provider).write_text(provider_text[:provider_start] + provider_method)
 
           service = "backend/companion/duplicate_service.py"
-          replace_once(
-              service,
-              "        direction: Literal[\"asc\", \"desc\"] = \"desc\",\n    ) -> DuplicateSearchPage:",
-              "        direction: Literal[\"asc\", \"desc\"] = \"desc\",\n        state: Literal[\n            \"all\", \"needs_review\", \"auto_ready\", \"blocked\", \"actionable\", \"needs_decisions\"\n        ] = \"all\",\n    ) -> DuplicateSearchPage:",
+          service_text = Path(service).read_text()
+          a = service_text.index("    async def review_page(\n")
+          b = service_text.index("    async def _snapshot(\n", a)
+          segment = service_text[a:b]
+          segment = segment.replace(
+              '        direction: Literal["asc", "desc"] = "desc",\n    ) -> DuplicateSearchPage:',
+              '        direction: Literal["asc", "desc"] = "desc",\n        state: Literal[\n            "all",\n            "needs_review",\n            "auto_ready",\n            "blocked",\n            "actionable",\n            "needs_decisions",\n        ] = "all",\n    ) -> DuplicateSearchPage:',
+              1,
           )
-          replace_once(
-              service,
+          segment = segment.replace(
               "                sort=sort,\n                direction=direction,\n            )",
               "                sort=sort,\n                direction=direction,\n                state=state,\n            )",
+              1,
           )
+          Path(service).write_text(service_text[:a] + segment + service_text[b:])
 
           main = "backend/companion/main.py"
           replace_once(
@@ -242,7 +364,7 @@ jobs:
               "        task_coordinator.register_handler(\n            CompositeDuplicateRebuildTaskHandler(\n                source_duplicate_discovery,\n                composite_duplicate_repository,\n            )\n        )",
               "        composite_duplicate_handler = CompositeDuplicateRebuildTaskHandler(\n            source_duplicate_discovery,\n            composite_duplicate_repository,\n        )\n        task_coordinator.register_handler(\n            FollowUpTaskHandler(\n                composite_duplicate_handler,\n                v2_duplicate_review_state_service.refresh_after_change,\n            )\n            if v2_duplicate_review_state_service is not None\n            else composite_duplicate_handler\n        )",
           )
-          old_discovery = dedent('''
+          later_discovery = dedent('''
               duplicate_discovery = (
                   PersistedCompositeDuplicateProvider(
                       composite_duplicate_repository,
@@ -252,128 +374,36 @@ jobs:
                   else None
               )
           ''')
-          text = Path(main).read_text()
-          if old_discovery not in text:
-              raise SystemExit("Missing later duplicate_discovery block")
-          Path(main).write_text(text.replace(old_discovery, "", 1))
+          main_text = Path(main).read_text()
+          first = main_text.find(later_discovery)
+          second = main_text.find(later_discovery, first + 1) if first >= 0 else -1
+          target = second if second >= 0 else first
+          if target < 0:
+              raise SystemExit("Missing duplicate_discovery block in main.py")
+          Path(main).write_text(main_text[:target] + main_text[target + len(later_discovery):])
           replace_once(
               main,
               "        task_coordinator.register_handler(\n            CrossSourceDuplicateTaskHandler(\n                immich,\n                asset_repository,\n                integrity_repository,\n                integrity_handler,\n                include_similarity=True,\n                discovery=duplicate_discovery,\n            )\n        )",
               "        duplicate_analysis_handler = CrossSourceDuplicateTaskHandler(\n            immich,\n            asset_repository,\n            integrity_repository,\n            integrity_handler,\n            include_similarity=True,\n            discovery=duplicate_discovery,\n        )\n        task_coordinator.register_handler(\n            FollowUpTaskHandler(\n                duplicate_analysis_handler,\n                v2_duplicate_review_state_service.refresh_after_change,\n            )\n            if v2_duplicate_review_state_service is not None\n            else duplicate_analysis_handler\n        )",
           )
-          replace_once(
-              main,
-              "        direction: Literal[\"asc\", \"desc\"] = Query(default=\"desc\"),\n    ) -> DuplicateSearchPage:",
-              "        direction: Literal[\"asc\", \"desc\"] = Query(default=\"desc\"),\n        state: Literal[\n            \"all\", \"needs_review\", \"auto_ready\", \"blocked\", \"actionable\", \"needs_decisions\"\n        ] = Query(default=\"all\"),\n    ) -> DuplicateSearchPage:",
+          main_text = Path(main).read_text()
+          a = main_text.index("    @app.post(\n        \"/api/assets/duplicates/cross-source/page\"")
+          b = main_text.index("    @app.post(\n        \"/api/assets/duplicates/cross-source/analyze\"", a)
+          segment = main_text[a:b]
+          segment = segment.replace(
+              '        direction: Literal["asc", "desc"] = Query(default="desc"),\n    ) -> DuplicateSearchPage:',
+              '        direction: Literal["asc", "desc"] = Query(default="desc"),\n        state: Literal[\n            "all",\n            "needs_review",\n            "auto_ready",\n            "blocked",\n            "actionable",\n            "needs_decisions",\n        ] = Query(default="all"),\n    ) -> DuplicateSearchPage:',
+              1,
           )
-          replace_once(
-              main,
-              "                sort=sort,\n                direction=direction,\n            )\n        except ImmichApiError as error:",
-              "                sort=sort,\n                direction=direction,\n                state=state,\n            )\n        except ImmichApiError as error:",
+          segment = segment.replace(
+              "                sort=sort,\n                direction=direction,\n            )",
+              "                sort=sort,\n                direction=direction,\n                state=state,\n            )",
+              1,
           )
-
-          frontend_repo = "frontend/src/v2/data/api/duplicateRepository.ts"
-          replace_once(
-              frontend_repo,
-              "  let rawGroups = new Map<string, ApiDuplicateGroup>();\n  let hasSearchSnapshot = false;\n  let hasWorkspaceSnapshot = false;",
-              "  let rawGroups = new Map<string, ApiDuplicateGroup>();\n  let hasWorkspaceSnapshot = false;",
-          )
-          replace_once(
-              frontend_repo,
-              "function similarity(member: ApiDuplicateMember): number | null {",
-              dedent('''
-              function reviewStateParam(state: DuplicateSearchQuery['state']): string {
-                if (!state || state === 'All groups') return 'all';
-                if (state === 'Needs review') return 'needs_review';
-                if (state === 'Auto-ready') return 'auto_ready';
-                if (state === 'Blocked') return 'blocked';
-                if (state === 'Actionable') return 'actionable';
-                return 'needs_decisions';
-              }
-
-              function similarity(member: ApiDuplicateMember): number | null {
-              '''),
-          )
-          text = Path(frontend_repo).read_text()
-          pattern = re.compile(
-              r"    async search\(query\): Promise<PageResult<DuplicateGroupRecord>> \{.*?\n    \},\n    saveDraft,",
-              re.S,
-          )
-          replacement = dedent('''
-                  async search(query): Promise<PageResult<DuplicateGroupRecord>> {
-                    const page = pageNumber(query);
-                    const params = new URLSearchParams({
-                      page: String(page),
-                      page_size: String(query.pageSize),
-                      source: query.source ?? 'both',
-                      sort: query.sort?.field ?? 'reclaimable',
-                      direction: query.sort?.direction ?? 'desc',
-                      state: reviewStateParam(query.state),
-                    });
-                    const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
-                    const [rawPage, restored] = await Promise.all([
-                      requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
-                      restoreWorkspace
-                        ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
-                        : Promise.resolve(null),
-                    ]);
-                    if (restored) {
-                      workspace = restored;
-                      hasWorkspaceSnapshot = true;
-                    }
-                    if (!query.reuseCachedGroups) rawGroups.clear();
-                    const result = normalizeDuplicatePage(rawPage, query, page);
-                    for (const group of result.items) rawGroups.set(group.group_id, group);
-                    const items = result.items.map(materialize);
-                    visibleGroupIds = new Set(items.map((group) => group.id));
-                    return {
-                      items,
-                      total: result.total,
-                      pageSize: result.page_size,
-                      page: result.page,
-                      nextCursor: result.page < result.pages ? String(result.page + 1) : null,
-                    };
-                  },
-                  saveDraft,
-          ''').rstrip()
-          text, count = pattern.subn(replacement, text, count=1)
-          if count != 1:
-              raise SystemExit("Could not replace V2 duplicate search method")
-          Path(frontend_repo).write_text(text)
-
-          page_file = "frontend/src/v2/pages/V2DuplicatesPage.svelte"
-          replace_once(
-              page_file,
-              "sortFields={reviewFilter==='All groups'?[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'newest',label:'Newest'},{value:'oldest',label:'Oldest'},{value:'discovered',label:'Recently discovered'}]:[]}",
-              "sortFields={[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'newest',label:'Newest'},{value:'oldest',label:'Oldest'},{value:'discovered',label:'Recently discovered'}]}",
-          )
-
-          test = "backend/tests/test_composite_duplicate_sync.py"
-          replace_once(
-              test,
-              "        direction=\"asc\",\n    )",
-              "        direction=\"asc\",\n        state=\"needs_review\",\n    )",
-          )
-          replace_once(
-              test,
-              '        "direction": "asc",\n    }',
-              '        "direction": "asc",\n        "state": "needs_review",\n    }',
-          )
-
-          frontend_test = "frontend/src/v2/data/api/duplicateRepository.test.ts"
-          replace_once(
-              frontend_test,
-              "    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');\n    currentGroups = [group];",
-              "    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');\n    expect(pageRequests[0]?.searchParams.get('state')).toBe('all');\n    currentGroups = [group];",
-          )
-          replace_once(
-              frontend_test,
-              "    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');\n  });",
-              "    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');\n\n    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, state: 'Needs decisions' });\n    expect(pageRequests.at(-1)?.searchParams.get('state')).toBe('needs_decisions');\n    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);\n  });",
-          )
+          Path(main).write_text(main_text[:a] + segment + main_text[b:])
 
           Path("backend/companion/v2_duplicate_review_state.py").write_text(dedent('''
-          """Bounded V2 duplicate list-state projection for SQL-native review filters."""
+          """Bounded V2 duplicate policy-state projection for SQL-native list filters."""
 
           from __future__ import annotations
 
@@ -399,20 +429,22 @@ jobs:
           logger = logging.getLogger("uvicorn.error")
 
 
-          def _base_review_state(group: ExactDuplicateGroup) -> str:
+          def v2_policy_state(group: ExactDuplicateGroup) -> str:
+              """Return policy state independent of manual draft progress."""
+
               if (
                   not group.eligible
                   or group.status == "ineligible"
                   or any(member.is_offline for member in group.members)
               ):
-                  return "Blocked"
-              if group.auto_resolvable or group.auto_selected:
-                  return "Actionable"
-              return "Needs review"
+                  return "blocked"
+              if group.auto_selected:
+                  return "auto_ready"
+              return "needs_review"
 
 
           class V2DuplicateReviewStateService:
-              """Refresh small base-state summaries in bounded pages, never on a list request."""
+              """Refresh policy summaries in bounded pages outside duplicate list requests."""
 
               def __init__(
                   self,
@@ -428,7 +460,7 @@ jobs:
                   try:
                       return await self.refresh()
                   except Exception:
-                      logger.exception("Could not refresh V2 duplicate review-state projection")
+                      logger.exception("Could not refresh V2 duplicate policy-state projection")
                       return None
 
               async def refresh(self) -> dict[str, int]:
@@ -463,46 +495,20 @@ jobs:
                           (
                               group.group_id,
                               group.member_fingerprint,
-                              _base_review_state(group),
+                              v2_policy_state(group),
                           )
                           for group in result.groups
                       ]
-                      updated += await self._snapshots.update_v2_review_states(states)
+                      updated += await self._snapshots.update_v2_policy_states(states)
                       if page >= discovered.pages:
                           break
                       page += 1
-                  logger.info("Refreshed V2 duplicate review states: groups=%s", updated)
+                  logger.info("Refreshed V2 duplicate policy states: groups=%s", updated)
                   return {"groups": updated}
           ''').lstrip())
 
-          Path("backend/tests/test_v2_duplicate_review_state.py").write_text(dedent('''
-          """Tests for the persisted V2 duplicate list-state projection."""
-
-          from types import SimpleNamespace
-
-          from companion.v2_duplicate_review_state import _base_review_state
-
-
-          def group(*, eligible=True, status="exact", offline=False, auto=False):
-              return SimpleNamespace(
-                  eligible=eligible,
-                  status=status,
-                  members=[SimpleNamespace(is_offline=offline)],
-                  auto_resolvable=auto,
-                  auto_selected=auto,
-              )
-
-
-          def test_base_review_state_matches_v2_precedence() -> None:
-              assert _base_review_state(group(eligible=False, auto=True)) == "Blocked"
-              assert _base_review_state(group(status="ineligible")) == "Blocked"
-              assert _base_review_state(group(offline=True)) == "Blocked"
-              assert _base_review_state(group(auto=True)) == "Actionable"
-              assert _base_review_state(group()) == "Needs review"
-          ''').lstrip())
-
           Path("backend/companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py").write_text(dedent('''
-          """Persist V2 duplicate base review state for SQL-native filters.
+          """Persist V2 duplicate policy state for SQL-native review filters.
 
           Revision ID: 20260914_0047
           Revises: 20260914_0046
@@ -523,10 +529,10 @@ jobs:
               op.add_column(
                   "composite_duplicate_groups",
                   sa.Column(
-                      "v2_base_review_state",
+                      "v2_policy_state",
                       sa.String(length=24),
                       nullable=False,
-                      server_default="Blocked",
+                      server_default="blocked",
                   ),
               )
               op.add_column(
@@ -534,20 +540,161 @@ jobs:
                   sa.Column("v2_state_updated_at", sa.DateTime(timezone=True), nullable=True),
               )
               op.create_index(
-                  "ix_composite_duplicate_groups_v2_base_review_state",
+                  "ix_composite_duplicate_groups_v2_policy_state",
                   "composite_duplicate_groups",
-                  ["v2_base_review_state"],
+                  ["v2_policy_state"],
               )
 
 
           def downgrade() -> None:
               op.drop_index(
-                  "ix_composite_duplicate_groups_v2_base_review_state",
+                  "ix_composite_duplicate_groups_v2_policy_state",
                   table_name="composite_duplicate_groups",
               )
               op.drop_column("composite_duplicate_groups", "v2_state_updated_at")
-              op.drop_column("composite_duplicate_groups", "v2_base_review_state")
+              op.drop_column("composite_duplicate_groups", "v2_policy_state")
           ''').lstrip())
+
+          Path("backend/tests/test_v2_duplicate_review_state.py").write_text(dedent('''
+          """Tests for V2 duplicate policy state."""
+
+          from types import SimpleNamespace
+
+          from companion.v2_duplicate_review_state import v2_policy_state
+
+
+          def group(*, eligible=True, status="exact", offline=False, auto_selected=False):
+              return SimpleNamespace(
+                  eligible=eligible,
+                  status=status,
+                  members=[SimpleNamespace(is_offline=offline)],
+                  auto_selected=auto_selected,
+              )
+
+
+          def test_policy_state_keeps_auto_ready_distinct_from_actionable() -> None:
+              assert v2_policy_state(group(eligible=False, auto_selected=True)) == "blocked"
+              assert v2_policy_state(group(status="ineligible")) == "blocked"
+              assert v2_policy_state(group(offline=True)) == "blocked"
+              assert v2_policy_state(group(auto_selected=True)) == "auto_ready"
+              assert v2_policy_state(group()) == "needs_review"
+          ''').lstrip())
+
+          composite_test = "backend/tests/test_composite_duplicate_sync.py"
+          replace_once(
+              composite_test,
+              '        direction="asc",\n    )',
+              '        direction="asc",\n        state="needs_review",\n    )',
+          )
+          replace_once(
+              composite_test,
+              '        "direction": "asc",\n    }',
+              '        "direction": "asc",\n        "state": "needs_review",\n    }',
+          )
+
+          contracts = "frontend/src/v2/data/contracts.ts"
+          replace_once(
+              contracts,
+              "export type DuplicateGroupRecord = { id: string; discoverySources: DuplicateSource[]; state: DuplicateState; kind: string;",
+              "export type DuplicateGroupRecord = { id: string; discoverySources: DuplicateSource[]; state: DuplicateState; autoReady: boolean; kind: string;",
+          )
+
+          frontend_repo = "frontend/src/v2/data/api/duplicateRepository.ts"
+          replace_once(
+              frontend_repo,
+              "  let rawGroups = new Map<string, ApiDuplicateGroup>();\n  let hasSearchSnapshot = false;\n  let hasWorkspaceSnapshot = false;",
+              "  let rawGroups = new Map<string, ApiDuplicateGroup>();\n  let hasWorkspaceSnapshot = false;",
+          )
+          replace_once(
+              frontend_repo,
+              "      state: groupState(group, draft),\n      kind:",
+              "      state: groupState(group, draft),\n      autoReady: group.auto_selected,\n      kind:",
+          )
+          replace_once(
+              frontend_repo,
+              "function similarity(member: ApiDuplicateMember): number | null {",
+              dedent('''
+              function reviewStateParam(state: DuplicateSearchQuery['state']): string {
+                if (!state || state === 'All groups') return 'all';
+                if (state === 'Needs review') return 'needs_review';
+                if (state === 'Auto-ready') return 'auto_ready';
+                if (state === 'Blocked') return 'blocked';
+                if (state === 'Actionable') return 'actionable';
+                return 'needs_decisions';
+              }
+
+              function similarity(member: ApiDuplicateMember): number | null {
+              '''),
+          )
+          frontend_text = Path(frontend_repo).read_text()
+          a = frontend_text.index("    async search(query): Promise<PageResult<DuplicateGroupRecord>> {")
+          b = frontend_text.index("    saveDraft,", a)
+          search_method = dedent('''
+              async search(query): Promise<PageResult<DuplicateGroupRecord>> {
+                const page = pageNumber(query);
+                const params = new URLSearchParams({
+                  page: String(page),
+                  page_size: String(query.pageSize),
+                  source: query.source ?? 'both',
+                  sort: query.sort?.field ?? 'reclaimable',
+                  direction: query.sort?.direction ?? 'desc',
+                  state: reviewStateParam(query.state),
+                });
+                const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
+                const [rawPage, restored] = await Promise.all([
+                  requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
+                  restoreWorkspace
+                    ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
+                    : Promise.resolve(null),
+                ]);
+                if (restored) {
+                  workspace = restored;
+                  hasWorkspaceSnapshot = true;
+                }
+                if (!query.reuseCachedGroups) rawGroups.clear();
+                const result = normalizeDuplicatePage(rawPage, query, page);
+                for (const group of result.items) rawGroups.set(group.group_id, group);
+                const items = result.items.map(materialize);
+                visibleGroupIds = new Set(items.map((group) => group.id));
+                return {
+                  items,
+                  total: result.total,
+                  pageSize: result.page_size,
+                  page: result.page,
+                  nextCursor: result.page < result.pages ? String(result.page + 1) : null,
+                };
+              },
+          ''')
+          Path(frontend_repo).write_text(frontend_text[:a] + search_method + frontend_text[b:])
+
+          frontend_test = "frontend/src/v2/data/api/duplicateRepository.test.ts"
+          replace_once(
+              frontend_test,
+              "    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');\n    currentGroups = [group];",
+              "    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');\n    expect(pageRequests[0]?.searchParams.get('state')).toBe('all');\n    currentGroups = [group];",
+          )
+          replace_once(
+              frontend_test,
+              "    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');\n  });",
+              "    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');\n\n    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, state: 'Needs decisions' });\n    expect(pageRequests.at(-1)?.searchParams.get('state')).toBe('needs_decisions');\n    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, state: 'Auto-ready' });\n    expect(pageRequests.at(-1)?.searchParams.get('state')).toBe('auto_ready');\n    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);\n  });",
+          )
+          replace_once(
+              frontend_test,
+              "      state: 'Needs decisions',\n      selected: true,",
+              "      state: 'Needs decisions',\n      autoReady: true,\n      selected: true,",
+          )
+
+          page_file = "frontend/src/v2/pages/V2DuplicatesPage.svelte"
+          replace_once(
+              page_file,
+              "<V2Button disabled={mutating||!groups.some((item)=>item.state==='Actionable')} onclick={()=>{selectedGroups=groups.filter((item)=>item.state==='Actionable').map((item)=>item.id);persistSelection()}}>Select auto-ready</V2Button>",
+              "<V2Button disabled={mutating||!groups.some((item)=>item.autoReady&&item.state==='Actionable')} onclick={()=>{selectedGroups=groups.filter((item)=>item.autoReady&&item.state==='Actionable').map((item)=>item.id);persistSelection()}}>Select auto-ready</V2Button>",
+          )
+          replace_once(
+              page_file,
+              "sortFields={reviewFilter==='All groups'?[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'newest',label:'Newest'},{value:'oldest',label:'Oldest'},{value:'discovered',label:'Recently discovered'}]:[]}",
+              "sortFields={[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'newest',label:'Newest'},{value:'oldest',label:'Oldest'},{value:'discovered',label:'Recently discovered'}]}",
+          )
 
           for path in (
               repo,
@@ -556,7 +703,7 @@ jobs:
               main,
               "backend/companion/v2_duplicate_review_state.py",
               "backend/companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py",
-              "backend/tests/test_composite_duplicate_sync.py",
+              composite_test,
               "backend/tests/test_v2_duplicate_review_state.py",
           ):
               compile(Path(path).read_text(), path, "exec")
