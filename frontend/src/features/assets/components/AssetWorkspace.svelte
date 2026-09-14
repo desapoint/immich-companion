@@ -852,14 +852,16 @@
 
   async function syncSelectedAssets(): Promise<void> {
     const owner = selectionOwnership.current();
+    let startedTaskId: string | null = null;
     selectionSyncing = true;
     selectionSyncError = null;
     actionError = null;
     try {
       const result = await synchronizeAssetSelection(buildSelectionRequest(selection, expression));
       if (result.task_id) {
-        registerSelectionTask(result.task_id, owner);
-        await applySelectionTaskStatus(await getTaskStatus(result.task_id));
+        startedTaskId = result.task_id;
+        registerSelectionTask(startedTaskId, owner);
+        await applySelectionTaskStatus(await getTaskStatus(startedTaskId));
       } else {
         actionCompletionMessage = `${result.synced} assets synchronized.`;
         detailCache.clear();
@@ -867,10 +869,12 @@
         await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
     } catch (requestError) {
-      if (localStorage.getItem(selectionSyncTaskStorageKey)) {
-        startSelectionTaskPolling();
-        void selectionTaskPoller.refresh();
-        selectionSyncError = selectionTaskTrackingMessage;
+      if (startedTaskId !== null) {
+        if (localStorage.getItem(selectionSyncTaskStorageKey) === startedTaskId) {
+          startSelectionTaskPolling();
+          void selectionTaskPoller.refresh();
+          selectionSyncError = selectionTaskTrackingMessage;
+        }
       } else if (isAssetSelectionUnavailableError(requestError)) {
         selectionSyncError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
@@ -1325,6 +1329,7 @@
     const request = buildSelectionRequest(selection, expression);
     const confirmedTargetIds = [...actionTargetIds];
     const owner = selectionOwnership.current();
+    let startedTaskId: string | null = null;
     actionBusy = true;
     actionError = null;
     try {
@@ -1336,15 +1341,18 @@
         actionPlan.stack_primary_asset_id ?? undefined,
       );
       const started = await executeAssetActionTask(reviewedPlan.id);
-      registerActionTask(started.task_id, owner);
-      await applyActionTaskStatus(await getTaskStatus(started.task_id));
+      startedTaskId = started.task_id;
+      registerActionTask(startedTaskId, owner);
       actionPlan = null;
       actionTargetIds = confirmedTargetIds;
+      await applyActionTaskStatus(await getTaskStatus(startedTaskId));
     } catch (requestError) {
-      if (localStorage.getItem(actionTaskStorageKey)) {
-        startActionTaskPolling();
-        void actionTaskPoller.refresh();
-        actionError = actionTaskTrackingMessage;
+      if (startedTaskId !== null) {
+        if (localStorage.getItem(actionTaskStorageKey) === startedTaskId) {
+          startActionTaskPolling();
+          void actionTaskPoller.refresh();
+          actionError = actionTaskTrackingMessage;
+        }
       } else if (isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
@@ -1434,21 +1442,25 @@
     actionContext = context;
     actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
     const owner = context === 'selection' ? selectionOwnership.current() : null;
+    let startedTaskId: string | null = null;
     try {
       const plan = await planAssetAction(request, action, relationIds);
       if (context === 'selection') {
         const started = await executeAssetActionTask(plan.id);
-        registerActionTask(started.task_id, owner!);
-        await applyActionTaskStatus(await getTaskStatus(started.task_id));
+        startedTaskId = started.task_id;
+        registerActionTask(startedTaskId, owner!);
+        await applyActionTaskStatus(await getTaskStatus(startedTaskId));
       } else {
         const result = await executeAssetAction(plan.id);
         await applyActionResult(result, context, actionTargetIds);
       }
     } catch (requestError) {
-      if (context === 'selection' && localStorage.getItem(actionTaskStorageKey)) {
-        startActionTaskPolling();
-        void actionTaskPoller.refresh();
-        actionError = actionTaskTrackingMessage;
+      if (startedTaskId !== null) {
+        if (localStorage.getItem(actionTaskStorageKey) === startedTaskId) {
+          startActionTaskPolling();
+          void actionTaskPoller.refresh();
+          actionError = actionTaskTrackingMessage;
+        }
       } else if (owner && isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
@@ -1534,23 +1546,27 @@
     const confirmedContext = actionContext;
     const confirmedTargetIds = [...actionTargetIds];
     const owner = confirmedContext === 'selection' ? selectionOwnership.current() : null;
+    let startedTaskId: string | null = null;
     actionBusy = true;
     actionError = null;
     try {
       if (confirmedContext === 'selection') {
         const started = await executeAssetActionTask(actionPlan.id);
-        registerActionTask(started.task_id, owner!);
-        await applyActionTaskStatus(await getTaskStatus(started.task_id));
+        startedTaskId = started.task_id;
+        registerActionTask(startedTaskId, owner!);
         actionPlan = null;
+        await applyActionTaskStatus(await getTaskStatus(startedTaskId));
       } else {
         const result = await executeAssetAction(actionPlan.id);
         await applyActionResult(result, confirmedContext, confirmedTargetIds);
       }
     } catch (requestError) {
-      if (confirmedContext === 'selection' && localStorage.getItem(actionTaskStorageKey)) {
-        startActionTaskPolling();
-        void actionTaskPoller.refresh();
-        actionError = actionTaskTrackingMessage;
+      if (startedTaskId !== null) {
+        if (localStorage.getItem(actionTaskStorageKey) === startedTaskId) {
+          startActionTaskPolling();
+          void actionTaskPoller.refresh();
+          actionError = actionTaskTrackingMessage;
+        }
       } else if (owner && isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
