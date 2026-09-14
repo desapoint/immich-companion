@@ -50,6 +50,8 @@ type ApiDuplicateMember = {
     structural_percent: number | null;
     perceptual_percent: number | null;
     color_percent: number | null;
+    detail_changed_percent?: number | null;
+    detail_source?: 'original' | 'transcoded' | 'preview' | null;
   } | null;
   admission: {
     admitted_by_asset_id: string | null;
@@ -153,6 +155,10 @@ function similarityEvidence(member: ApiDuplicateMember) {
     structuralPercent: member.similarity.structural_percent,
     perceptualPercent: member.similarity.perceptual_percent,
     colorPercent: member.similarity.color_percent,
+    ...(member.similarity.detail_changed_percent !== undefined
+      ? { detailChangedPercent: member.similarity.detail_changed_percent } : {}),
+    ...(member.similarity.detail_source !== undefined
+      ? { detailSource: member.similarity.detail_source } : {}),
   };
 }
 

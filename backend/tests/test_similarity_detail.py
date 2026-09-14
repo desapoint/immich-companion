@@ -1,6 +1,7 @@
 """Local differences remain visible after bounded candidate-detail extraction."""
 
 import asyncio
+import zlib
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from io import BytesIO
@@ -10,7 +11,13 @@ from uuid import UUID
 import pytest
 from PIL import Image, ImageDraw
 
-from companion.similarity_detail import compare_detail_features, extract_detail_feature
+from companion.similarity_detail import (
+    DETAIL_FEATURE_VERSION,
+    DETAIL_SAMPLE_BYTES,
+    DetailFeature,
+    compare_detail_features,
+    extract_detail_feature,
+)
 from companion.similarity_detail_service import SimilarityDetailMaintainer
 from companion.task_coordinator import TaskPausedError
 
@@ -57,6 +64,52 @@ def test_jpeg_transcode_of_same_scene_remains_high_similarity() -> None:
 
     assert original is not None and transcoded is not None
     assert compare_detail_features(original, transcoded).similarity_percent > 95
+
+
+def test_small_costume_and_face_edits_remain_reviewable_at_95_percent() -> None:
+    original = Image.new("RGB", (1024, 1024), (90, 115, 145))
+    draw = ImageDraw.Draw(original)
+    draw.ellipse((300, 80, 720, 500), fill=(235, 190, 155))
+    draw.rectangle((355, 470, 670, 930), fill=(205, 70, 100))
+    strap = original.copy()
+    ImageDraw.Draw(strap).rectangle((472, 470, 492, 615), fill=(30, 80, 180))
+    face = original.copy()
+    ImageDraw.Draw(face).rectangle((405, 265, 620, 330), fill=(35, 35, 45))
+    swimsuit = original.copy()
+    ImageDraw.Draw(swimsuit).rectangle((390, 590, 640, 850), fill=(45, 95, 180))
+
+    reference = extract_detail_feature(BytesIO(_encoded(original)), "png")
+    jpeg = extract_detail_feature(BytesIO(_encoded(original, "JPEG")), "jpeg")
+    variants = [
+        extract_detail_feature(BytesIO(_encoded(image)), "png")
+        for image in (strap, face, swimsuit)
+    ]
+    assert reference is not None and jpeg is not None and all(variants)
+    scores = [compare_detail_features(reference, variant) for variant in variants]
+
+    assert DETAIL_FEATURE_VERSION == 2
+    assert compare_detail_features(reference, reference).similarity_percent == 100
+    assert compare_detail_features(reference, jpeg).similarity_percent >= 98.5
+    assert 95 <= scores[2].similarity_percent < scores[1].similarity_percent
+    assert scores[1].similarity_percent < scores[0].similarity_percent < 100
+    assert 0 < scores[0].changed_percent < scores[1].changed_percent
+
+
+def test_old_256_pixel_detail_sample_cannot_be_scored_as_current() -> None:
+    current = extract_detail_feature(BytesIO(_encoded(_scene())), "png")
+    assert current is not None
+    old = DetailFeature(384, 384, zlib.compress(bytes(256 * 256 * 3)))
+    assert len(zlib.decompress(current.sample)) == DETAIL_SAMPLE_BYTES
+    with pytest.raises(ValueError, match="incompatible"):
+        compare_detail_features(current, old)
+
+
+def test_oversized_detail_sample_is_rejected() -> None:
+    current = extract_detail_feature(BytesIO(_encoded(_scene())), "png")
+    assert current is not None
+    oversized = DetailFeature(384, 384, zlib.compress(bytes(DETAIL_SAMPLE_BYTES + 1)))
+    with pytest.raises(ValueError, match="incompatible"):
+        compare_detail_features(current, oversized)
 
 
 @pytest.mark.asyncio

@@ -18,6 +18,8 @@ describe('V2DuplicateCompareViewer', () => {
             structuralPercent: 98.126,
             perceptualPercent: 96.9,
             colorPercent: 92.4,
+            detailChangedPercent: 2.345,
+            detailSource: 'original',
           },
         },
         decisions: { 'asset-1': 'stack' },
@@ -39,6 +41,11 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('96.9%');
     expect(body).toContain('Color');
     expect(body).toContain('92.4%');
+    expect(body).toContain('Detail changed area');
+    expect(body).toContain('2.35%');
+    expect(body).toContain('Detail evidence');
+    expect(body).toContain('Original');
+    expect(body).toContain('Use Difference mode');
     expect(body).not.toContain('Similarity engine');
     expect(body).toContain('data-decision="stack"');
     expect(body).toContain('Stack 1');

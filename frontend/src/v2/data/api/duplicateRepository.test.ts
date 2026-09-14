@@ -56,7 +56,7 @@ const group = {
     content_checksum: 'abc',
     evidence: {},
     similarity: index
-      ? { state: 'current', reference_asset_id: ASSET_IDS[0], similarity_percent: 98.5, structural_percent: 99.1, perceptual_percent: 96.9, color_percent: 97.2 }
+      ? { state: 'current', reference_asset_id: ASSET_IDS[0], similarity_percent: 98.5, structural_percent: 99.1, perceptual_percent: 96.9, color_percent: 97.2, detail_changed_percent: 1.25, detail_source: 'transcoded' }
       : { state: 'reference', reference_asset_id: ASSET_IDS[0], similarity_percent: 100, structural_percent: 100, perceptual_percent: 100, color_percent: 100 },
     admission: {
       admitted_by_asset_id: index ? ASSET_IDS[0] : null,
@@ -208,7 +208,7 @@ describe('live V2 duplicate repository', () => {
       similarityValidationMode: 'linked',
       members: [
         { similarity: 100, similarityEvidence: { structuralPercent: 100, perceptualPercent: 100, colorPercent: 100 }, asset: { id: ASSET_IDS[0], original_file_name: 'asset-0.jpg', asset_type: 'IMAGE' } },
-        { similarity: 98.5, similarityEvidence: { structuralPercent: 99.1, perceptualPercent: 96.9, colorPercent: 97.2 }, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
+        { similarity: 98.5, similarityEvidence: { structuralPercent: 99.1, perceptualPercent: 96.9, colorPercent: 97.2, detailChangedPercent: 1.25, detailSource: 'transcoded' }, asset: { id: ASSET_IDS[1], original_file_name: 'asset-1.jpg', asset_type: 'IMAGE', library_id: 'library-1' } },
       ],
     });
     expect(fetcher).toHaveBeenCalledTimes(2);
