@@ -13,6 +13,7 @@
   import V2Card from '../components/V2Card.svelte';
   import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
   import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
+  import V2CollectionLoadingOverlay from '../components/V2CollectionLoadingOverlay.svelte';
   import V2ConfirmDialog from '../components/V2ConfirmDialog.svelte';
   import V2ErrorState from '../components/V2ErrorState.svelte';
   import V2Field from '../components/V2Field.svelte';
@@ -67,12 +68,13 @@
   let appliedRules=$state<AssetRule[]>([]),appliedGroups=$state<AssetGroup[]>([]),appliedLogic=$state<'AND'|'OR'>('AND'),appliedNegated=$state(false),draftRules=$state<AssetRule[]>([]),draftGroups=$state<AssetGroup[]>([]),draftLogic=$state<'AND'|'OR'>('AND'),draftNegated=$state(false);
   let viewerLastId:string|null=null,viewerLastPosition:number|null=null,viewerCollectionSync:Promise<void>=Promise.resolve();
   let capabilityTimer:ReturnType<typeof setTimeout>|null=null;
+  let assetLoads=$state(0),initialLoading=$state(true);
 
   const relations=new AssetRelationOptionsController();
   const removableRelations=new AssetRemovableRelationshipsController();
   const savedSearches=new SavedSearchController();
   const searchRequests=new CollectionRequestController(),capabilityRequests=new LatestRequestController();
-  const searching=$derived(searchRequests.loading),loadError=$derived(searchRequests.error);
+  const searching=$derived(initialLoading||assetLoads>0||searchRequests.loading),loadError=$derived(searchRequests.error);
   const gridViewportAnchor=createGridViewportAnchor(()=>assetGrid);
   const ids=$derived(items.map((asset)=>asset.id));
   const selection=$derived(selectionWorkspace.snapshot());
@@ -94,21 +96,24 @@
   async function refreshSelectionCapabilities(){if(!selectionActive){capabilityRequests.cancel();selectionCapabilities=emptyCapabilities();selectionError='';return}const request=capabilityRequests.begin();try{const target=await exactSelectionTarget();const result=await libraryData.assets.selectionCapabilities(target,request.signal);if(capabilityRequests.isCurrent(request)){selectionCapabilities=result;selectionError=''}}catch(error){if(capabilityRequests.isCurrent(request))selectionError=errorMessage(error,'Selection details could not be loaded.')}finally{capabilityRequests.finish(request)}}
   async function refreshSearch(reset=true):Promise<boolean>{
     if(searching&&!reset)return false;
-    if(reset)nextCursor=null;
-    const result=await searchRequests.run((signal)=>libraryData.assets.search({...pageQuery(reset),signal}),{
-      fallbackError:'Assets could not be loaded.',
-      mode:collection.resultMode==='Infinite'&&!reset?'append':'replace',
-      apply:(response,mode)=>{
-        items=mode==='append'?[...items,...response.items]:response.items;
-        total=response.total;
-        nextCursor=response.nextCursor;
-        collection.clampPage(total);
-      },
-    });
-    if(!result)return false;
-    try{await selectionWorkspace.refreshVisible(items.map((asset)=>asset.id))}catch(error){selectionError=errorMessage(error,'Saved selection membership could not be loaded.');return false}
-    await refreshSelectionCapabilities();
-    return true;
+    assetLoads+=1;
+    try{
+      if(reset)nextCursor=null;
+      const result=await searchRequests.run((signal)=>libraryData.assets.search({...pageQuery(reset),signal}),{
+        fallbackError:'Assets could not be loaded.',
+        mode:collection.resultMode==='Infinite'&&!reset?'append':'replace',
+        apply:(response,mode)=>{
+          items=mode==='append'?[...items,...response.items]:response.items;
+          total=response.total;
+          nextCursor=response.nextCursor;
+          collection.clampPage(total);
+        },
+      });
+      if(!result)return false;
+      try{await selectionWorkspace.refreshVisible(items.map((asset)=>asset.id))}catch(error){selectionError=errorMessage(error,'Saved selection membership could not be loaded.');return false}
+      await refreshSelectionCapabilities();
+      return true;
+    }finally{assetLoads-=1}
   }
   const mutations=new AssetMutationController(async()=>{if(!await refreshSearch(true))throw new Error(searchRequests.error||'Assets could not be refreshed.')},()=>{});
 
@@ -117,7 +122,7 @@
   function requestSearch(transition:SearchTransition){searchTransition=transition;if(selectionActive){searchTransitionError='';searchSelectionOpen=true;return}if(transition==='clear')void applyClearedSearch();else void applySearch()}
   async function runSearch(){requestSearch('apply')}
   async function continueSearch(keepSelection:boolean){if(searchTransitionBusy)return;searchTransitionBusy=true;searchTransitionError='';try{if(!keepSelection)clearSelection();searchSelectionOpen=false;if(searchTransition==='clear')await applyClearedSearch();else await applySearch()}catch(error){searchTransitionError=errorMessage(error,keepSelection?'The current selection could not be preserved.':'The search could not be applied.')}finally{searchTransitionBusy=false}}
-  function setPage(next:number){collection.setPage(next);void refreshSearch(true);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'smooth'})}
+  function setPage(next:number){collection.setPage(next);void refreshSearch(true);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'auto'})}
   function setAssetColumns(next:number|string){collection.setColumns(next);gridViewportAnchor.adjust()}
   function setSort(value:string){sort=value;collection.reset();void refreshSearch(true)}
   function setPageSize(value:number){collection.setPageSize(value,total);void refreshSearch(true)}
@@ -189,7 +194,7 @@
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen&&target instanceof Element&&!target.closest('.v2-selection-more'))moreOpen=false}
   async function consumeFilterHandoff(){const handoff=consumeV2AssetFilterHandoff();if(!handoff)return false;simpleAdvanced={...emptyAssetAdvanced(),albumIds:(handoff.albumIds??[]).join(','),tagIds:(handoff.tagIds??[]).join(',')};searchMode='Simple';await runSearch();return true}
   async function retryPageError(){mutations.clearError();relations.clearError();removableRelations.error='';savedSearches.error='';selectionError='';searchRequests.clearError();await Promise.all([refreshSearch(true),searchAlbumOptions(relations.albumQuery),searchTagOptions(relations.tagQuery),savedSearches.refresh()])}
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true)}catch(error){searchRequests.setError(errorMessage(error,'The asset data source could not be initialized.'))}})();return()=>{if(capabilityTimer!==null)clearTimeout(capabilityTimer);void selectionWorkspace.flush();searchRequests.cancel();capabilityRequests.cancel();relations.destroy();removableRelations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true)}catch(error){searchRequests.setError(errorMessage(error,'The asset data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{if(capabilityTimer!==null)clearTimeout(capabilityTimer);void selectionWorkspace.flush();searchRequests.cancel();capabilityRequests.cancel();relations.destroy();removableRelations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
 <svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={finishSelectionInteraction} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(stackPlan){if(!mutations.busy)resetStackReview()}else if(trashConfirmOpen){if(!mutations.busy)trashConfirmOpen=false}else if(relationDialog)relationDialog=null;else if(removeRelationDialog){if(!mutations.busy)removeRelationDialog=null}else if(moreOpen)moreOpen=false;else if(saveSearchOpen){}else if(drawer)drawer=false;else if(viewer)closeViewer();else if(selectionActive)clearSelection()}}}/>
@@ -205,6 +210,8 @@
     <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each items as asset,index (asset.id)}<V2AssetTile index={collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index:index} assetId={asset.id} label={asset.original_file_name} sublabel={assetSublabel(asset)} favorite={asset.is_favorite} tags={asset.tags.map((tag)=>tag.name)} albums={(asset.albums??[]).map((album)=>album.name)} stackCount={asset.stack?.assetCount??0} image={()=>libraryData.media.thumbnail(asset)} selected={isSelected(asset.id)} selectionMode={selectionActive} stackPrimary={stackPrimaryAssetId===asset.id} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>openViewer(asset.id)} onstackview={()=>openViewer(asset.id,true)} onstackprimary={()=>chooseStackPrimary(asset.id)} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}</V2AssetGrid><V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={items.length} noun="assets" onpage={setPage} onloadmore={loadMore}/>
   {:else}<V2SavedSearchLibrary controller={savedSearches} currentCriteria={criteria()} onopen={openSaved}/>{/if}</V2Zone>
 </V2PageLayout>
+
+{#if searching && tab==='Browse'}<V2CollectionLoadingOverlay label="Loading asset page…" />{/if}
 
 <V2Viewer open={viewer} mode="assets" assetId={viewerAssetId} assetIds={ids} resultMode={collection.resultMode} collectionPage={collection.page} collectionPageSize={collection.pageSize} collectionTotal={total} startStack={viewerStartStack} onclose={closeViewer} onnavigate={handleViewerNavigate} onmutated={reconcileViewerMutation} onfilterrelation={filterViewerRelationship} isselected={isSelected} ontoggleselection={toggleViewerSelection}/>
 {#if trashConfirmOpen}<V2ConfirmDialog title="Move selected assets to trash?" message={`${selectedCount.toLocaleString()} selected asset${selectedCount===1?'':'s'} will be moved to trash.`} confirmLabel="Move to trash" icon="trash" destructive pending={mutations.busy} onconfirm={()=>void trashSelected()} onclose={()=>{if(!mutations.busy)trashConfirmOpen=false}}/>{/if}

@@ -10,12 +10,12 @@ describe('V2DuplicateCompareViewer', () => {
         open: true,
         groupTitle: 'IMG_1234.JPG and 2 more',
         groupKind: 'similar',
-        groupSimilarity: 96.4,
+        groupSimilarity: 96.456,
         assetIds: ['asset-1'],
         similarities: { 'asset-1': 97.2 },
         similarityEvidence: {
           'asset-1': {
-            structuralPercent: 98.1,
+            structuralPercent: 98.126,
             perceptualPercent: 96.9,
             colorPercent: 92.4,
           },
@@ -31,10 +31,10 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('IMG_1234.JPG and 2 more');
     expect(body).toContain('Appearance match');
     expect(body).toContain('Group similarity');
-    expect(body).toContain('96.4%');
+    expect(body).toContain('96.46%');
     expect(body).toContain('Similarity to reference');
     expect(body).toContain('Structure');
-    expect(body).toContain('98.1%');
+    expect(body).toContain('98.13%');
     expect(body).toContain('Perceptual hash');
     expect(body).toContain('96.9%');
     expect(body).toContain('Color');

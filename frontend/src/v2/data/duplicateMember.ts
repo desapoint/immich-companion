@@ -23,6 +23,12 @@ function formatDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString();
 }
 
+const similarityNumberFormat = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+
+export function formatSimilarityPercent(value: number | null): string {
+  return value === null ? 'Not calculated' : `${similarityNumberFormat.format(value)}%`;
+}
+
 export function assetFolder(path: string | null | undefined): string | null {
   if (!path) return null;
   const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '');
@@ -52,6 +58,6 @@ export function comparisonMemberData(
     libraryId,
     folder,
     uploaded: formatDate(asset?.immich_created_at),
-    similarity: similarityPercent === null ? 'Not calculated' : `${similarityPercent.toFixed(1)}%`,
+    similarity: formatSimilarityPercent(similarityPercent),
   };
 }

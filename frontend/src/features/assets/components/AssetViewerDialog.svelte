@@ -56,7 +56,7 @@
     stackMembersForAsset,
   } from '../state/assetViewModel';
   import { resolveViewerMediaUrls } from '../state/viewerMedia';
-  import { comparisonTargetId, stepComparisonTargetId } from '../state/duplicateComparisonNavigation';
+  import { comparisonTargetId, stepComparisonTargetId } from '../../../lib/utils/duplicateComparisonNavigation';
   import {
     anchoredScrollOffset,
     captureImageZoomAnchor,

@@ -135,6 +135,27 @@ describe('live V2 duplicate repository', () => {
     expect(second.items[0]?.discoverySources).toEqual(['immich_duplicate', 'companion_similarity']);
   });
 
+  it('reuses the fetched group snapshot for page changes and refreshes explicitly', async () => {
+    const secondGroup = { ...group, group_id: 'second-group' };
+    let currentGroups = [group, secondGroup];
+    const fetcher = vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/workspace')
+        ? response(emptyWorkspace)
+        : response({ ...duplicateResult, groups: currentGroups }));
+    vi.stubGlobal('fetch', fetcher);
+    const repository = createDuplicateRepository(tasks());
+
+    expect((await repository.search({ page: 1, pageSize: 1 })).total).toBe(2);
+    currentGroups = [group];
+    const cached = await repository.search({ page: 2, pageSize: 1, reuseCachedGroups: true });
+    expect(cached.items[0]?.id).toBe('second-group');
+    expect(fetcher).toHaveBeenCalledTimes(2);
+
+    const refreshed = await repository.search({ page: 1, pageSize: 1 });
+    expect(refreshed.total).toBe(1);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {
     const requests: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
