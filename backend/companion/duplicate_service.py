@@ -10,7 +10,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from time import perf_counter
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from companion.action_repository import ActionRepository
@@ -44,6 +44,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
+    DuplicateSearchPage,
     DuplicateSimilarityEvidence,
     DuplicateSimilarityReferenceRequest,
     DuplicateWorkspaceGroupReference,
@@ -403,6 +404,60 @@ class CrossSourceDuplicateService:
             }
         )
 
+    async def review_page(
+        self,
+        options: DuplicateAnalysisOptions | None = None,
+        *,
+        page: int = 1,
+        page_size: int = 6,
+        source: Literal["both", "immich", "similarity"] = "both",
+    ) -> DuplicateSearchPage:
+        """Return one database-backed page and hydrate only its members/evidence."""
+
+        options = await self._options(options)
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        discover_page = getattr(self._discovery, "discover_page", None)
+        if callable(discover_page):
+            discovered = await discover_page(
+                page=page,
+                page_size=page_size,
+                source=source,
+            )
+            groups = discovered.groups
+            total = discovered.total
+            resolved_page = discovered.page
+            resolved_page_size = discovered.page_size
+            pages = discovered.pages
+        else:
+            all_groups = await self._live_groups()
+            if source != "both":
+                expected = (
+                    DiscoverySource.IMMICH_DUPLICATE
+                    if source == "immich"
+                    else DiscoverySource.COMPANION_SIMILARITY
+                )
+                all_groups = [
+                    group
+                    for group in all_groups
+                    if expected in {item.discovery_source for item in group.evidence}
+                ]
+            total = len(all_groups)
+            resolved_page = page
+            resolved_page_size = page_size
+            pages = (total + page_size - 1) // page_size
+            start = (page - 1) * page_size
+            groups = all_groups[start : start + page_size]
+
+        _, _, _, result = await self._snapshot_groups(groups, options)
+        return DuplicateSearchPage(
+            items=result.groups,
+            total=total,
+            page=resolved_page,
+            page_size=resolved_page_size,
+            pages=pages,
+        )
+
     async def _snapshot(
         self,
         options: DuplicateAnalysisOptions,
@@ -412,7 +467,18 @@ class CrossSourceDuplicateService:
         dict[UUID, AssetSimilarityFeatureRecord],
         CrossSourceDuplicateResult,
     ]:
-        groups = await self._live_groups()
+        return await self._snapshot_groups(await self._live_groups(), options)
+
+    async def _snapshot_groups(
+        self,
+        groups: list[DiscoveredGroup],
+        options: DuplicateAnalysisOptions,
+    ) -> tuple[
+        list[DiscoveredGroup],
+        dict[UUID, AssetIntegrityReportRecord],
+        dict[UUID, AssetSimilarityFeatureRecord],
+        CrossSourceDuplicateResult,
+    ]:
         report_ids = [
             asset.id
             for group in groups

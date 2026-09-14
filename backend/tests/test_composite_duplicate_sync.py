@@ -9,6 +9,7 @@ import pytest
 from companion.composite_duplicate_repository import (
     CompositeDuplicateSnapshotGroup,
     CompositeDuplicateSnapshotMetadata,
+    CompositeDuplicateSnapshotPage,
 )
 from companion.composite_duplicate_sync import (
     COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY,
@@ -129,6 +130,62 @@ async def test_persisted_provider_preserves_composite_contract_without_source_di
     assert groups[0].evidence == snapshot.evidence
     assert groups[0].similarity_validation == snapshot.similarity_validation
     assert [item.id for item in groups[0].assets] == [ASSET_1, ASSET_2]
+
+
+@pytest.mark.asyncio
+async def test_persisted_provider_pages_before_asset_hydration() -> None:
+    second_group = CompositeDuplicateSnapshotGroup(
+        group_id="companion:similarity:2",
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id="scan-2",
+        asset_ids=(ASSET_1, ASSET_2),
+        provider_metadata={},
+        evidence=(
+            DiscoveryEvidence(
+                discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+                provider_group_id="scan-2",
+            ),
+        ),
+        similarity_validation=validation(),
+    )
+
+    class Snapshots:
+        received = None
+
+        async def page(self, **kwargs):
+            self.received = kwargs
+            return CompositeDuplicateSnapshotPage(
+                groups=[second_group],
+                total=23,
+                page=3,
+                page_size=1,
+                pages=23,
+            )
+
+    class Assets:
+        requested = None
+
+        async def get_immich_assets(self, asset_ids):
+            self.requested = asset_ids
+            return {asset_id: asset(asset_id) for asset_id in asset_ids}
+
+    snapshots = Snapshots()
+    assets = Assets()
+    result = await PersistedCompositeDuplicateProvider(snapshots, assets).discover_page(
+        page=3,
+        page_size=1,
+        source="similarity",
+    )
+
+    assert snapshots.received == {
+        "page": 3,
+        "page_size": 1,
+        "source": DiscoverySource.COMPANION_SIMILARITY,
+    }
+    assert assets.requested == [ASSET_1, ASSET_2]
+    assert result.total == 23
+    assert result.pages == 23
+    assert [group.group_id for group in result.groups] == [second_group.group_id]
 
 
 @pytest.mark.asyncio

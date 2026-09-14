@@ -252,6 +252,14 @@ class CrossSourceDuplicateResult(BaseModel):
     groups: list[ExactDuplicateGroup]
 
 
+class DuplicateSearchPage(BaseModel):
+    items: list[ExactDuplicateGroup]
+    total: int = Field(ge=0)
+    page: int = Field(ge=1)
+    page_size: int = Field(ge=1, le=100)
+    pages: int = Field(ge=0)
+
+
 class CrossSourceDuplicateTaskStart(BaseModel):
     task_id: UUID
 

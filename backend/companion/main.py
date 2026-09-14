@@ -101,6 +101,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
+    DuplicateSearchPage,
     DuplicateSimilarityReferenceRequest,
     DuplicateWorkspaceMembership,
     DuplicateWorkspaceMembershipRequest,
@@ -1942,6 +1943,26 @@ def create_app(
     ) -> CrossSourceDuplicateResult:
         try:
             return await require_duplicate_service().review(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/cross-source/page",
+        response_model=DuplicateSearchPage,
+    )
+    async def page_cross_source_duplicates(
+        request: DuplicateAnalysisOptions,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=6, ge=1, le=100),
+        source: Literal["both", "immich", "similarity"] = Query(default="both"),
+    ) -> DuplicateSearchPage:
+        try:
+            return await require_duplicate_service().review_page(
+                request,
+                page=page,
+                page_size=page_size,
+                source=source,
+            )
         except ImmichApiError as error:
             raise map_immich_error(error) from error
 

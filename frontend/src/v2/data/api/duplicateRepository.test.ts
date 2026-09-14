@@ -135,30 +135,43 @@ describe('live V2 duplicate repository', () => {
     expect(second.items[0]?.discoverySources).toEqual(['immich_duplicate', 'companion_similarity']);
   });
 
-  it('reuses the fetched group snapshot for page changes and refreshes explicitly', async () => {
+  it('uses server pagination for page changes and restores workspace once', async () => {
     const secondGroup = { ...group, group_id: 'second-group' };
     let currentGroups = [group, secondGroup];
-    const fetcher = vi.fn(async (input: RequestInfo | URL) =>
-      String(input).endsWith('/workspace')
-        ? response(emptyWorkspace)
-        : response({ ...duplicateResult, groups: currentGroups }));
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.includes('/cross-source/page?')) {
+        const url = new URL(path, 'http://localhost');
+        const page = Number(url.searchParams.get('page') ?? '1');
+        const pageSize = Number(url.searchParams.get('page_size') ?? '1');
+        const start = (page - 1) * pageSize;
+        return response({
+          items: currentGroups.slice(start, start + pageSize),
+          total: currentGroups.length,
+          page,
+          page_size: pageSize,
+          pages: Math.ceil(currentGroups.length / pageSize),
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
     vi.stubGlobal('fetch', fetcher);
     const repository = createDuplicateRepository(tasks());
 
     expect((await repository.search({ page: 1, pageSize: 1 })).total).toBe(2);
     currentGroups = [group];
-    const cached = await repository.search({ page: 2, pageSize: 1, reuseCachedGroups: true });
-    expect(cached.items[0]?.id).toBe('second-group');
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    const laterPage = await repository.search({ page: 2, pageSize: 1, reuseCachedGroups: true });
+    expect(laterPage.items).toEqual([]);
+    expect(fetcher).toHaveBeenCalledTimes(3);
 
-    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 10 * 60_000);
-    const laterPage = await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true });
-    expect(laterPage.items[0]?.id).toBe(group.group_id);
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    const firstPage = await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true });
+    expect(firstPage.items[0]?.id).toBe(group.group_id);
+    expect(fetcher).toHaveBeenCalledTimes(4);
 
     const refreshed = await repository.search({ page: 1, pageSize: 1 });
     expect(refreshed.total).toBe(1);
-    expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher).toHaveBeenCalledTimes(6);
   });
 
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {
@@ -244,6 +257,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
+      if (path.includes('/cross-source/page?')) return response(duplicateResult);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
@@ -317,6 +331,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
+      if (path.includes('/cross-source/page?')) return response(resultWithOverlap);
       if (path.endsWith('/cross-source/search')) return response(resultWithOverlap);
       if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
@@ -368,6 +383,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
+      if (path.includes('/cross-source/page?')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
       if (path.endsWith('/cross-source/search')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
       if (path.endsWith('/workspace')) return response(selectedWorkspace);
       if (path.endsWith('/cross-source/plan')) return response({ id: 'off-page-plan', groups: planGroups, destructive: true });
@@ -394,6 +410,7 @@ describe('live V2 duplicate repository', () => {
     const pendingWrite = new Promise<Response>((resolve) => { completeWrite = resolve; });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
+      if (path.includes('/cross-source/page?')) return response(duplicateResult);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return pendingWrite;
@@ -421,6 +438,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
+      if (path.includes('/cross-source/page?')) return response(duplicateResult);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace/reset')) return response(emptyWorkspace);
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
@@ -451,6 +469,7 @@ describe('live V2 duplicate repository', () => {
     };
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
+      if (path.includes('/cross-source/page?')) return response(duplicateResult);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       if (path.includes('/similarity-reference')) return response(switched);
@@ -487,6 +506,7 @@ describe('live V2 duplicate repository', () => {
         similarityBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return response({task_id:'similarity-task'},202);
       }
+      if (path.includes('/cross-source/page?')) return response(duplicateResult);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       throw new Error(`Unexpected request: ${path}`);
     }));

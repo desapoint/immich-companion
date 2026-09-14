@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
-from companion.composite_duplicate_repository import CompositeDuplicateSnapshotGroup
+from companion.composite_duplicate_repository import (
+    CompositeDuplicateSnapshotGroup,
+    CompositeDuplicateSnapshotPage,
+)
 from companion.discovery.base import DiscoveredGroup
+from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
 
 logger = logging.getLogger("uvicorn.error")
@@ -16,9 +21,26 @@ logger = logging.getLogger("uvicorn.error")
 class _CompositeSnapshotReader(Protocol):
     async def groups(self) -> list[CompositeDuplicateSnapshotGroup]: ...
 
+    async def page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        source: DiscoverySource | None = None,
+    ) -> CompositeDuplicateSnapshotPage: ...
+
 
 class _AssetReader(Protocol):
     async def get_immich_assets(self, asset_ids: list[UUID]) -> dict[UUID, ImmichAsset]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveredGroupPage:
+    groups: list[DiscoveredGroup]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 class PersistedCompositeDuplicateProvider:
@@ -28,8 +50,9 @@ class PersistedCompositeDuplicateProvider:
         self._snapshots = snapshots
         self._assets = assets
 
-    async def discover(self) -> list[DiscoveredGroup]:
-        snapshot = await self._snapshots.groups()
+    async def _hydrate(
+        self, snapshot: list[CompositeDuplicateSnapshotGroup]
+    ) -> list[DiscoveredGroup]:
         asset_ids = list(
             dict.fromkeys(asset_id for group in snapshot for asset_id in group.asset_ids)
         )
@@ -60,3 +83,33 @@ class PersistedCompositeDuplicateProvider:
                 )
             )
         return discovered
+
+    async def discover(self) -> list[DiscoveredGroup]:
+        return await self._hydrate(await self._snapshots.groups())
+
+    async def discover_page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        source: str = "both",
+    ) -> DiscoveredGroupPage:
+        source_value = (
+            DiscoverySource.IMMICH_DUPLICATE
+            if source == "immich"
+            else DiscoverySource.COMPANION_SIMILARITY
+            if source == "similarity"
+            else None
+        )
+        snapshot = await self._snapshots.page(
+            page=page,
+            page_size=page_size,
+            source=source_value,
+        )
+        return DiscoveredGroupPage(
+            groups=await self._hydrate(snapshot.groups),
+            total=snapshot.total,
+            page=snapshot.page,
+            page_size=snapshot.page_size,
+            pages=snapshot.pages,
+        )

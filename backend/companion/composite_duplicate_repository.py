@@ -18,6 +18,8 @@ from sqlalchemy import (
     Text,
     Uuid,
     delete,
+    exists,
+    func,
     select,
 )
 from sqlalchemy.dialects.postgresql import insert
@@ -123,6 +125,15 @@ class CompositeDuplicateSnapshotGroup:
     provider_metadata: dict[str, str]
     evidence: tuple[DiscoveryEvidence, ...]
     similarity_validation: ValidatedSimilarityGroup | None
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeDuplicateSnapshotPage:
+    groups: list[CompositeDuplicateSnapshotGroup]
+    total: int
+    page: int
+    page_size: int
+    pages: int
 
 
 def _validation_payload(validation: ValidatedSimilarityGroup | None) -> dict[str, Any] | None:
@@ -274,6 +285,114 @@ class CompositeDuplicateRepository:
             for row in group_rows
             if len(members.get(row.group_id, [])) >= 2
         ]
+
+    async def page(
+        self,
+        *,
+        page: int,
+        page_size: int,
+        source: DiscoverySource | None = None,
+    ) -> CompositeDuplicateSnapshotPage:
+        """Read one ordered page without hydrating the full duplicate universe."""
+
+        page = max(1, page)
+        page_size = max(1, min(page_size, 100))
+        offset = (page - 1) * page_size
+        source_filter = (
+            exists(
+                select(1).where(
+                    CompositeDuplicateGroupEvidenceRecord.group_id
+                    == CompositeDuplicateGroupRecord.group_id,
+                    CompositeDuplicateGroupEvidenceRecord.discovery_source == source.value,
+                )
+            )
+            if source is not None
+            else None
+        )
+
+        async with self._database.sessions() as session:
+            count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
+            group_statement = (
+                select(CompositeDuplicateGroupRecord)
+                .order_by(CompositeDuplicateGroupRecord.position)
+                .offset(offset)
+                .limit(page_size)
+            )
+            if source_filter is not None:
+                count_statement = count_statement.where(source_filter)
+                group_statement = group_statement.where(source_filter)
+
+            total = int((await session.scalar(count_statement)) or 0)
+            group_rows = list((await session.execute(group_statement)).scalars())
+            group_ids = [row.group_id for row in group_rows]
+            if group_ids:
+                member_rows = list(
+                    (
+                        await session.execute(
+                            select(
+                                CompositeDuplicateGroupMemberRecord.group_id,
+                                CompositeDuplicateGroupMemberRecord.asset_id,
+                            )
+                            .where(
+                                CompositeDuplicateGroupMemberRecord.group_id.in_(group_ids)
+                            )
+                            .order_by(
+                                CompositeDuplicateGroupMemberRecord.group_id,
+                                CompositeDuplicateGroupMemberRecord.position,
+                            )
+                        )
+                    ).all()
+                )
+                evidence_rows = list(
+                    (
+                        await session.execute(
+                            select(CompositeDuplicateGroupEvidenceRecord)
+                            .where(
+                                CompositeDuplicateGroupEvidenceRecord.group_id.in_(group_ids)
+                            )
+                            .order_by(
+                                CompositeDuplicateGroupEvidenceRecord.group_id,
+                                CompositeDuplicateGroupEvidenceRecord.discovery_source,
+                            )
+                        )
+                    ).scalars()
+                )
+            else:
+                member_rows = []
+                evidence_rows = []
+
+        members: dict[str, list[UUID]] = {}
+        for group_id, asset_id in member_rows:
+            members.setdefault(group_id, []).append(asset_id)
+        evidence: dict[str, list[DiscoveryEvidence]] = {}
+        for row in evidence_rows:
+            evidence.setdefault(row.group_id, []).append(
+                DiscoveryEvidence(
+                    discovery_source=DiscoverySource(row.discovery_source),
+                    provider_group_id=row.provider_group_id,
+                    metadata=dict(row.evidence_metadata or {}),
+                )
+            )
+        groups = [
+            CompositeDuplicateSnapshotGroup(
+                group_id=row.group_id,
+                discovery_source=DiscoverySource(row.discovery_source),
+                provider_group_id=row.provider_group_id,
+                asset_ids=tuple(members.get(row.group_id, [])),
+                provider_metadata=dict(row.provider_metadata or {}),
+                evidence=tuple(evidence.get(row.group_id, [])),
+                similarity_validation=_validation_from_payload(row.similarity_validation),
+            )
+            for row in group_rows
+            if len(members.get(row.group_id, [])) >= 2
+        ]
+        return CompositeDuplicateSnapshotPage(
+            groups=groups,
+            total=total,
+            page=page,
+            page_size=page_size,
+            pages=(total + page_size - 1) // page_size,
+        )
 
     async def replace_snapshot(
         self,
