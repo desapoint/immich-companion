@@ -56,6 +56,7 @@
     type InfiniteScrollAnchor,
   } from '../state/assetInfiniteWindow';
   import { BoundedCache } from '../state/boundedCache';
+  import { CoalescedPoller } from '../state/coalescedPoller';
   import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
@@ -155,9 +156,6 @@
   let dragSelecting = false;
   let dragSelectionValue = true;
   let dragLastIndex: number | null = null;
-  let workspaceActive = false;
-  let syncPollTimer: ReturnType<typeof setTimeout> | null = null;
-  let syncStatusRequest: Promise<void> | null = null;
   let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let actionTask = $state<AssetTaskStatus | null>(null);
   let actionTaskHistory = $state<AssetTaskStatus[]>([]);
@@ -196,7 +194,7 @@
       localStorage.getItem('immich-companion:asset-action-task'),
     ].filter((id): id is string => id !== null));
     if (task.task_type === 'asset_sync') {
-      void requestSyncStatusRefresh();
+      void syncStatusPoller.refresh();
       return;
     }
     if (!trackedTaskIds.has(task.id)) return;
@@ -1452,63 +1450,31 @@
     return syncing ? activeSyncPollMs : idleSyncPollMs;
   }
 
-  function clearSyncPoll(): void {
-    if (syncPollTimer === null) return;
-    clearTimeout(syncPollTimer);
-    syncPollTimer = null;
-  }
-
-  function scheduleSyncPoll(delay = syncPollDelay()): void {
-    if (!workspaceActive) return;
-    clearSyncPoll();
-    syncPollTimer = setTimeout(() => {
-      syncPollTimer = null;
-      void requestSyncStatusRefresh();
-    }, delay);
-  }
-
-  async function requestSyncStatusRefresh(forceAfterCurrent = false): Promise<void> {
-    if (!workspaceActive) return;
-    if (syncStatusRequest) {
-      await syncStatusRequest;
-      if (!forceAfterCurrent || !workspaceActive) return;
-    }
-    clearSyncPoll();
-    const request = refreshSyncStatus();
-    syncStatusRequest = request;
-    try {
-      await request;
-    } finally {
-      if (syncStatusRequest === request) {
-        syncStatusRequest = null;
-        scheduleSyncPoll();
-      }
-    }
-  }
+  const syncStatusPoller = new CoalescedPoller(refreshSyncStatus, syncPollDelay);
 
   function handleVisibilityChange(): void {
-    if (document.visibilityState === 'visible') void requestSyncStatusRefresh();
-    else scheduleSyncPoll();
+    if (document.visibilityState === 'visible') void syncStatusPoller.refresh();
+    else syncStatusPoller.reschedule();
   }
 
   async function syncAssets(mode: AssetSyncMode = 'incremental'): Promise<void> {
     syncing = true;
+    syncStatusPoller.reschedule(activeSyncPollMs);
     manualSyncPending = true;
     syncMessage = mode === 'full' ? 'Queueing full sync…' : 'Queueing incremental sync…';
     syncError = null;
     error = null;
     try {
       await startAssetSync(mode);
-      await requestSyncStatusRefresh(true);
+      await syncStatusPoller.refresh(true);
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Immich sync failed.';
       syncing = false;
-      scheduleSyncPoll();
+      syncStatusPoller.reschedule();
     }
   }
 
   onMount(() => {
-    workspaceActive = true;
     const savedLayout = localStorage.getItem('immich-companion:asset-layout');
     if (savedLayout === 'normal' || savedLayout === 'condensed') layoutMode = savedLayout;
     listMode = decodeAssetListMode(localStorage.getItem(ASSET_LIST_MODE_STORAGE_KEY));
@@ -1528,7 +1494,7 @@
     document.addEventListener('visibilitychange', handleVisibilityChange);
     void loadRelationOptions();
     void loadAssets();
-    void requestSyncStatusRefresh();
+    syncStatusPoller.start();
     const savedSelectionTask = localStorage.getItem('immich-companion:selected-sync-task');
     if (savedSelectionTask) {
       void pollSelectionTask();
@@ -1540,12 +1506,10 @@
       startActionTaskPolling();
     }
     return () => {
-      workspaceActive = false;
-      syncStatusRequest = null;
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      clearSyncPoll();
+      syncStatusPoller.stop();
       if (selectionTaskPollTimer !== null) clearInterval(selectionTaskPollTimer);
       if (actionTaskPollTimer !== null) clearInterval(actionTaskPollTimer);
       taskUpdateConnection?.stop();
@@ -1553,14 +1517,12 @@
   });
 
   onDestroy(() => {
-    workspaceActive = false;
-    syncStatusRequest = null;
+    syncStatusPoller.stop();
     taskUpdateConnection?.stop();
     searchController?.abort();
     detailController?.abort();
     selectionController?.abort();
     viewerActionController?.abort();
-    clearSyncPoll();
     detailCache.clear();
   });
 </script>
