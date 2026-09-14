@@ -27,6 +27,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from companion.database import DatabaseManager
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
+from companion.duplicate_identity import member_set_key, stable_group_key
 from companion.group_decision import DiscoverySource
 from companion.models import AssetRecord, Base
 from companion.similarity_grouping import SimilarityAdmissionEvidence, ValidatedSimilarityGroup
@@ -61,6 +62,8 @@ class CompositeDuplicateGroupRecord(Base):
     position: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     discovery_source: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
     provider_group_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    stable_group_key: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     similarity_validation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
@@ -114,6 +117,16 @@ class CompositeDuplicateSnapshotMetadata:
     member_count: int
     evidence_count: int
     last_success_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class CompositeDuplicateGroupIdentity:
+    group_id: str
+    discovery_source: DiscoverySource
+    provider_group_id: str | None
+    stable_group_key: str
+    member_set_key: str
+    member_fingerprint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +237,128 @@ class CompositeDuplicateRepository:
                 evidence_count=state.evidence_count,
                 last_success_at=state.last_success_at,
             )
+
+    async def identities(
+        self,
+        *,
+        group_ids: list[str] | None = None,
+        stable_group_keys: list[str] | None = None,
+    ) -> list[CompositeDuplicateGroupIdentity]:
+        """Resolve persisted group identity without hydrating members or evidence."""
+
+        ids = list(dict.fromkeys(group_ids or []))
+        keys = list(dict.fromkeys(stable_group_keys or []))
+        if not ids and not keys:
+            return []
+        resolved: dict[str, CompositeDuplicateGroupRecord] = {}
+        async with self._database.sessions() as session:
+            for values, column in (
+                (ids, CompositeDuplicateGroupRecord.group_id),
+                (keys, CompositeDuplicateGroupRecord.stable_group_key),
+            ):
+                for offset in range(0, len(values), WRITE_BATCH_SIZE):
+                    rows = list(
+                        (
+                            await session.execute(
+                                select(CompositeDuplicateGroupRecord).where(
+                                    column.in_(values[offset : offset + WRITE_BATCH_SIZE])
+                                )
+                            )
+                        ).scalars()
+                    )
+                    resolved.update((row.group_id, row) for row in rows)
+        return [
+            CompositeDuplicateGroupIdentity(
+                group_id=row.group_id,
+                discovery_source=DiscoverySource(row.discovery_source),
+                provider_group_id=row.provider_group_id,
+                stable_group_key=row.stable_group_key,
+                member_set_key=row.member_fingerprint,
+                member_fingerprint=row.member_fingerprint,
+            )
+            for row in resolved.values()
+        ]
+
+    async def groups_by_ids(
+        self, group_ids: list[str]
+    ) -> list[CompositeDuplicateSnapshotGroup]:
+        """Load complete snapshots only for explicitly requested group IDs."""
+
+        unique_ids = list(dict.fromkeys(group_ids))
+        if not unique_ids:
+            return []
+        async with self._database.sessions() as session:
+            group_rows = list(
+                (
+                    await session.execute(
+                        select(CompositeDuplicateGroupRecord)
+                        .where(CompositeDuplicateGroupRecord.group_id.in_(unique_ids))
+                        .order_by(CompositeDuplicateGroupRecord.position)
+                    )
+                ).scalars()
+            )
+            found_ids = [row.group_id for row in group_rows]
+            if found_ids:
+                member_rows = list(
+                    (
+                        await session.execute(
+                            select(
+                                CompositeDuplicateGroupMemberRecord.group_id,
+                                CompositeDuplicateGroupMemberRecord.asset_id,
+                            )
+                            .where(
+                                CompositeDuplicateGroupMemberRecord.group_id.in_(found_ids)
+                            )
+                            .order_by(
+                                CompositeDuplicateGroupMemberRecord.group_id,
+                                CompositeDuplicateGroupMemberRecord.position,
+                            )
+                        )
+                    ).all()
+                )
+                evidence_rows = list(
+                    (
+                        await session.execute(
+                            select(CompositeDuplicateGroupEvidenceRecord)
+                            .where(
+                                CompositeDuplicateGroupEvidenceRecord.group_id.in_(found_ids)
+                            )
+                            .order_by(
+                                CompositeDuplicateGroupEvidenceRecord.group_id,
+                                CompositeDuplicateGroupEvidenceRecord.discovery_source,
+                            )
+                        )
+                    ).scalars()
+                )
+            else:
+                member_rows = []
+                evidence_rows = []
+
+        members: dict[str, list[UUID]] = {}
+        for group_id, asset_id in member_rows:
+            members.setdefault(group_id, []).append(asset_id)
+        evidence: dict[str, list[DiscoveryEvidence]] = {}
+        for row in evidence_rows:
+            evidence.setdefault(row.group_id, []).append(
+                DiscoveryEvidence(
+                    discovery_source=DiscoverySource(row.discovery_source),
+                    provider_group_id=row.provider_group_id,
+                    metadata=dict(row.evidence_metadata or {}),
+                )
+            )
+        return [
+            CompositeDuplicateSnapshotGroup(
+                group_id=row.group_id,
+                discovery_source=DiscoverySource(row.discovery_source),
+                provider_group_id=row.provider_group_id,
+                asset_ids=tuple(members.get(row.group_id, [])),
+                provider_metadata=dict(row.provider_metadata or {}),
+                evidence=tuple(evidence.get(row.group_id, [])),
+                similarity_validation=_validation_from_payload(row.similarity_validation),
+            )
+            for row in group_rows
+            if len(members.get(row.group_id, [])) >= 2
+        ]
 
     async def groups(self) -> list[CompositeDuplicateSnapshotGroup]:
         async with self._database.sessions() as session:
@@ -436,19 +571,27 @@ class CompositeDuplicateRepository:
                     )
 
             generation = state.authoritative_generation + 1
-            group_rows = [
-                {
-                    "group_id": group.group_id,
-                    "position": position,
-                    "discovery_source": group.discovery_source.value,
-                    "provider_group_id": group.provider_group_id,
-                    "provider_metadata": dict(group.provider_metadata),
-                    "similarity_validation": _validation_payload(group.similarity_validation),
-                    "sync_generation": generation,
-                    "synced_at": now,
-                }
-                for position, group in enumerate(groups)
-            ]
+            group_rows = []
+            for position, group in enumerate(groups):
+                fingerprint = member_set_key(asset.id for asset in group.assets)
+                group_rows.append(
+                    {
+                        "group_id": group.group_id,
+                        "position": position,
+                        "discovery_source": group.discovery_source.value,
+                        "provider_group_id": group.provider_group_id,
+                        "stable_group_key": stable_group_key(
+                            group.discovery_source.value, fingerprint
+                        ),
+                        "member_fingerprint": fingerprint,
+                        "provider_metadata": dict(group.provider_metadata),
+                        "similarity_validation": _validation_payload(
+                            group.similarity_validation
+                        ),
+                        "sync_generation": generation,
+                        "synced_at": now,
+                    }
+                )
             member_rows = [
                 {
                     "group_id": group.group_id,
@@ -481,6 +624,8 @@ class CompositeDuplicateRepository:
                             "position": statement.excluded.position,
                             "discovery_source": statement.excluded.discovery_source,
                             "provider_group_id": statement.excluded.provider_group_id,
+                            "stable_group_key": statement.excluded.stable_group_key,
+                            "member_fingerprint": statement.excluded.member_fingerprint,
                             "provider_metadata": statement.excluded.provider_metadata,
                             "similarity_validation": statement.excluded.similarity_validation,
                             "sync_generation": statement.excluded.sync_generation,

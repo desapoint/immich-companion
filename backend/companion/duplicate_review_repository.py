@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
@@ -36,6 +36,28 @@ class DuplicateReviewRepository:
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
         return {record.stable_group_key: record for record in records}
+
+    async def list_drafts(self) -> list[DuplicateGroupReviewRecord]:
+        """Return only review rows carrying member-level draft state."""
+
+        statement = (
+            select(DuplicateGroupReviewRecord)
+            .where(
+                or_(
+                    func.coalesce(
+                        func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+                    )
+                    > 0,
+                    DuplicateGroupReviewRecord.stack_primary_asset_id.is_not(None),
+                )
+            )
+            .order_by(
+                DuplicateGroupReviewRecord.discovery_source,
+                DuplicateGroupReviewRecord.stable_group_key,
+            )
+        )
+        async with self._database.sessions() as session:
+            return list((await session.scalars(statement)).all())
 
     async def save(
         self,

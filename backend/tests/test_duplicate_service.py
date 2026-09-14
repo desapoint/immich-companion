@@ -2665,3 +2665,131 @@ async def test_incomplete_stack_follow_up_can_resume_after_plan_expiry() -> None
 
     assert started.task_id == UPLOAD_2
     assert tasks.submissions[0][1] == {"plan_id": str(GROUP_ID)}
+
+
+@pytest.mark.asyncio
+async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    discovered = DiscoveredGroup(
+        group_id=PUBLIC_GROUP_ID,
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id=str(GROUP_ID),
+        assets=tuple(candidate_group.assets),
+    )
+    assembled = assemble(candidate_group, [report(EXTERNAL_1, content)]).groups[0]
+    identity = SimpleNamespace(
+        group_id=PUBLIC_GROUP_ID,
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id=str(GROUP_ID),
+        stable_group_key=assembled.stable_group_key,
+        member_set_key=assembled.member_set_key,
+        member_fingerprint=assembled.member_fingerprint,
+    )
+
+    class PersistedDiscovery:
+        full_calls = 0
+        group_calls = 0
+        identity_calls = 0
+
+        async def discover(self):
+            self.full_calls += 1
+            raise AssertionError(
+                "workspace/draft path must not discover the full duplicate universe"
+            )
+
+        async def discover_groups(self, group_ids):
+            self.group_calls += 1
+            return [discovered] if PUBLIC_GROUP_ID in group_ids else []
+
+        async def resolve_identities(self, *, group_ids=None, stable_group_keys=None):
+            self.identity_calls += 1
+            if group_ids is not None and PUBLIC_GROUP_ID not in group_ids:
+                return []
+            if (
+                stable_group_keys is not None
+                and assembled.stable_group_key not in stable_group_keys
+            ):
+                return []
+            return [identity]
+
+    class PersistedReviews(FakeReviews):
+        async def list_drafts(self):
+            return [self.record] if self.record is not None else []
+
+    discovery = PersistedDiscovery()
+    reviews = PersistedReviews()
+    reviews.workspace_record = SimpleNamespace(
+        revision=3,
+        selected_groups=[
+            {
+                "group_id": PUBLIC_GROUP_ID,
+                "discovery_source": "immich_duplicate",
+                "member_fingerprint": assembled.member_fingerprint,
+                "stable_group_key": assembled.stable_group_key,
+                "member_set_key": assembled.member_set_key,
+            }
+        ],
+        active_group={
+            "group_id": PUBLIC_GROUP_ID,
+            "discovery_source": "immich_duplicate",
+            "member_fingerprint": assembled.member_fingerprint,
+            "stable_group_key": assembled.stable_group_key,
+            "member_set_key": assembled.member_set_key,
+        },
+    )
+    reviews.record = SimpleNamespace(
+        discovery_source="immich_duplicate",
+        provider_group_id=str(GROUP_ID),
+        stable_group_key=assembled.stable_group_key,
+        member_fingerprint=assembled.member_fingerprint,
+        member_decisions=[
+            {
+                "asset_id": str(UPLOAD_1),
+                "disposition": "keep",
+                "source": "manual",
+                "status": "pending",
+            }
+        ],
+        stack_primary_asset_id=None,
+        stack_resolution="move_selected",
+        metadata_keeper_asset_id=None,
+        draft_status="pending",
+        manual_action=None,
+        manual_primary_asset_id=None,
+        review_status="pending",
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        FakeTasks(),
+        SimpleNamespace(),
+        reviews,
+        discovery=discovery,
+    )
+
+    restored = await service.workspace()
+    assert restored.selected_group_ids == [PUBLIC_GROUP_ID]
+    assert restored.active_group_id == PUBLIC_GROUP_ID
+    assert restored.drafts[0].group_id == PUBLIC_GROUP_ID
+    assert discovery.full_calls == 0
+    assert discovery.identity_calls == 1
+
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=assembled.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep"),
+                DuplicateMemberDraftDecision(asset_id=EXTERNAL_1, disposition="delete"),
+            ],
+        )
+    )
+    assert discovery.full_calls == 0
+    assert discovery.group_calls == 1

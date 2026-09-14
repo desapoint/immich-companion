@@ -8,6 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from companion.composite_duplicate_repository import (
+    CompositeDuplicateGroupIdentity,
     CompositeDuplicateSnapshotGroup,
     CompositeDuplicateSnapshotPage,
 )
@@ -20,6 +21,17 @@ logger = logging.getLogger("uvicorn.error")
 
 class _CompositeSnapshotReader(Protocol):
     async def groups(self) -> list[CompositeDuplicateSnapshotGroup]: ...
+
+    async def groups_by_ids(
+        self, group_ids: list[str]
+    ) -> list[CompositeDuplicateSnapshotGroup]: ...
+
+    async def identities(
+        self,
+        *,
+        group_ids: list[str] | None = None,
+        stable_group_keys: list[str] | None = None,
+    ) -> list[CompositeDuplicateGroupIdentity]: ...
 
     async def page(
         self,
@@ -83,6 +95,20 @@ class PersistedCompositeDuplicateProvider:
                 )
             )
         return discovered
+
+    async def resolve_identities(
+        self,
+        *,
+        group_ids: list[str] | None = None,
+        stable_group_keys: list[str] | None = None,
+    ) -> list[CompositeDuplicateGroupIdentity]:
+        return await self._snapshots.identities(
+            group_ids=group_ids,
+            stable_group_keys=stable_group_keys,
+        )
+
+    async def discover_groups(self, group_ids: list[str]) -> list[DiscoveredGroup]:
+        return await self._hydrate(await self._snapshots.groups_by_ids(group_ids))
 
     async def discover(self) -> list[DiscoveredGroup]:
         return await self._hydrate(await self._snapshots.groups())

@@ -361,6 +361,30 @@ class CrossSourceDuplicateService:
     async def _live_groups(self) -> list[DiscoveredGroup]:
         return await self._discovery.discover()
 
+    async def _groups_by_ids(self, group_ids: list[str]) -> list[DiscoveredGroup]:
+        unique_ids = list(dict.fromkeys(group_ids))
+        if not unique_ids:
+            return []
+        discover_groups = getattr(self._discovery, "discover_groups", None)
+        if callable(discover_groups):
+            return await discover_groups(unique_ids)
+        wanted = set(unique_ids)
+        return [group for group in await self._live_groups() if group.group_id in wanted]
+
+    async def _group_identities(
+        self,
+        *,
+        group_ids: list[str] | None = None,
+        stable_group_keys: list[str] | None = None,
+    ) -> list[Any] | None:
+        resolver = getattr(self._discovery, "resolve_identities", None)
+        if not callable(resolver):
+            return None
+        return await resolver(
+            group_ids=group_ids,
+            stable_group_keys=stable_group_keys,
+        )
+
     async def result(
         self,
         options: DuplicateAnalysisOptions | None = None,
@@ -1295,19 +1319,69 @@ class CrossSourceDuplicateService:
         self,
         options: DuplicateAnalysisOptions | None = None,
     ) -> DuplicateWorkspaceState:
-        """Restore durable duplicate selections and member-level drafts."""
+        """Restore durable selections/drafts without hydrating the duplicate universe."""
 
         if self._reviews is None:
             raise RuntimeError("Duplicate review persistence is unavailable")
-        result = await self.result(options)
-        groups_by_stable_key = {group.stable_group_key: group for group in result.groups}
         workspace = await self._reviews.get_workspace()
         selected_references = list(getattr(workspace, "selected_groups", []) or [])
         active_reference = getattr(workspace, "active_group", None)
+        parsed_references = [
+            DuplicateWorkspaceGroupReference.model_validate(raw)
+            for raw in selected_references
+        ]
+        parsed_active = (
+            DuplicateWorkspaceGroupReference.model_validate(active_reference)
+            if active_reference
+            else None
+        )
+
+        list_drafts = getattr(self._reviews, "list_drafts", None)
+        identities: list[Any] | None = None
+        records: list[Any] = []
+        if callable(list_drafts):
+            records = await list_drafts()
+            stable_keys = [
+                reference.stable_group_key
+                or stable_group_key(
+                    reference.discovery_source,
+                    reference.member_set_key or reference.member_fingerprint,
+                )
+                for reference in [
+                    *parsed_references,
+                    *([parsed_active] if parsed_active else []),
+                ]
+            ]
+            stable_keys.extend(record.stable_group_key for record in records)
+            identities = await self._group_identities(
+                stable_group_keys=list(dict.fromkeys(stable_keys))
+            )
+
+        # Legacy/test providers without the persisted identity API retain old semantics.
+        if identities is None:
+            result = await self.result(options)
+            identities = list(result.groups)
+            records = []
+            for discovery_source in {group.discovery_source for group in result.groups}:
+                source_groups = [
+                    group
+                    for group in result.groups
+                    if group.discovery_source == discovery_source
+                ]
+                direct = await self._reviews.get_many(
+                    discovery_source,
+                    [group.stable_group_key for group in source_groups],
+                )
+                records.extend(direct.values())
+
+        def source_value(item: Any) -> str:
+            value = item.discovery_source
+            return value.value if isinstance(value, DiscoverySource) else str(value)
+
+        groups_by_stable_key = {item.stable_group_key: item for item in identities}
         selected_ids: list[str] = []
         stale_selected: list[DuplicateWorkspaceGroupReference] = []
-        for raw in selected_references:
-            reference = DuplicateWorkspaceGroupReference.model_validate(raw)
+        for reference in parsed_references:
             reference_key = reference.stable_group_key or stable_group_key(
                 reference.discovery_source,
                 reference.member_set_key or reference.member_fingerprint,
@@ -1315,58 +1389,53 @@ class CrossSourceDuplicateService:
             current = groups_by_stable_key.get(reference_key)
             if (
                 current is not None
-                and current.discovery_source == reference.discovery_source
+                and source_value(current) == reference.discovery_source
                 and current.member_fingerprint == reference.member_fingerprint
             ):
                 selected_ids.append(current.group_id)
             else:
                 stale_selected.append(reference)
+
         active_group_id = None
-        if active_reference:
-            active = DuplicateWorkspaceGroupReference.model_validate(active_reference)
-            active_key = active.stable_group_key or stable_group_key(
-                active.discovery_source,
-                active.member_set_key or active.member_fingerprint,
+        if parsed_active is not None:
+            active_key = parsed_active.stable_group_key or stable_group_key(
+                parsed_active.discovery_source,
+                parsed_active.member_set_key or parsed_active.member_fingerprint,
             )
             current = groups_by_stable_key.get(active_key)
             if (
                 current is not None
-                and current.discovery_source == active.discovery_source
-                and current.member_fingerprint == active.member_fingerprint
+                and source_value(current) == parsed_active.discovery_source
+                and current.member_fingerprint == parsed_active.member_fingerprint
             ):
                 active_group_id = current.group_id
 
         drafts: list[DuplicateGroupDraft] = []
-        for discovery_source in {group.discovery_source for group in result.groups}:
-            source_groups = [
-                group for group in result.groups if group.discovery_source == discovery_source
-            ]
-            records = await self._reviews.get_many(
-                discovery_source,
-                [group.stable_group_key for group in source_groups],
-            )
-            for group in source_groups:
-                record = records.get(group.stable_group_key)
-                decisions = list(getattr(record, "member_decisions", []) or []) if record else []
-                if not decisions and not getattr(record, "stack_primary_asset_id", None):
-                    continue
-                drafts.append(
-                    DuplicateGroupDraft(
-                        group_id=group.group_id,
-                        discovery_source=group.discovery_source,
-                        member_fingerprint=record.member_fingerprint,
-                        decisions=decisions,
-                        stack_primary_asset_id=getattr(record, "stack_primary_asset_id", None),
-                        stack_resolution=getattr(
-                            record, "stack_resolution", "move_selected"
-                        ),
-                        metadata_keeper_asset_id=getattr(
-                            record, "metadata_keeper_asset_id", None
-                        ),
-                        status=getattr(record, "draft_status", "pending"),
-                        stale=record.member_fingerprint != group.member_fingerprint,
-                    )
+        for record in records:
+            current = groups_by_stable_key.get(record.stable_group_key)
+            if current is None:
+                continue
+            record_source = getattr(record, "discovery_source", None)
+            if record_source is not None and source_value(current) != record_source:
+                continue
+            decisions = list(getattr(record, "member_decisions", []) or [])
+            if not decisions and not getattr(record, "stack_primary_asset_id", None):
+                continue
+            drafts.append(
+                DuplicateGroupDraft(
+                    group_id=current.group_id,
+                    discovery_source=source_value(current),
+                    member_fingerprint=record.member_fingerprint,
+                    decisions=decisions,
+                    stack_primary_asset_id=getattr(record, "stack_primary_asset_id", None),
+                    stack_resolution=getattr(record, "stack_resolution", "move_selected"),
+                    metadata_keeper_asset_id=getattr(
+                        record, "metadata_keeper_asset_id", None
+                    ),
+                    status=getattr(record, "draft_status", "pending"),
+                    stale=record.member_fingerprint != current.member_fingerprint,
                 )
+            )
         return DuplicateWorkspaceState(
             initialized=workspace is not None,
             revision=int(getattr(workspace, "revision", 0) or 0),
@@ -1381,26 +1450,41 @@ class CrossSourceDuplicateService:
         self,
         request: DuplicateWorkspaceSelectionUpdate,
     ) -> DuplicateWorkspaceState:
-        """Save resolved group identities without mutating Immich."""
+        """Save persisted group identities without materializing duplicate evidence."""
 
         if self._reviews is None:
             raise RuntimeError("Duplicate review persistence is unavailable")
-        result = await self.result(request.options)
-        groups_by_id = {group.group_id: group for group in result.groups}
-        missing = [group_id for group_id in request.selected_group_ids if group_id not in groups_by_id]
-        if request.active_group_id is not None and request.active_group_id not in groups_by_id:
-            missing.append(request.active_group_id)
+        requested_ids = list(
+            dict.fromkeys(
+                [
+                    *request.selected_group_ids,
+                    *([request.active_group_id] if request.active_group_id else []),
+                ]
+            )
+        )
+        identities = await self._group_identities(group_ids=requested_ids)
+        if identities is None:
+            result = await self.result(request.options)
+            groups_by_id: dict[str, Any] = {
+                group.group_id: group for group in result.groups
+            }
+        else:
+            groups_by_id = {group.group_id: group for group in identities}
+        missing = [group_id for group_id in requested_ids if group_id not in groups_by_id]
         if missing:
             raise ActionPlanConflictError("A selected duplicate group is no longer available")
 
         def reference(group_id: str) -> dict[str, str]:
             group = groups_by_id[group_id]
+            source = group.discovery_source
+            source_name = source.value if isinstance(source, DiscoverySource) else str(source)
+            fingerprint = group.member_fingerprint
             return DuplicateWorkspaceGroupReference(
                 group_id=group.group_id,
-                discovery_source=group.discovery_source,
-                member_fingerprint=group.member_fingerprint,
+                discovery_source=source_name,
+                member_fingerprint=fingerprint,
                 stable_group_key=group.stable_group_key,
-                member_set_key=group.member_set_key,
+                member_set_key=getattr(group, "member_set_key", fingerprint),
             ).model_dump(mode="json")
 
         await self._reviews.save_workspace(
@@ -1684,7 +1768,9 @@ class CrossSourceDuplicateService:
 
         if self._reviews is None:
             raise RuntimeError("Duplicate review persistence is unavailable")
-        result = await self.result(request.options)
+        options = await self._options(request.options)
+        groups = await self._groups_by_ids([request.group_id])
+        _, _, _, result = await self._snapshot_groups(groups, options)
         group = next(
             (candidate for candidate in result.groups if candidate.group_id == request.group_id),
             None,
