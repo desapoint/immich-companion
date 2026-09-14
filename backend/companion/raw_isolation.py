@@ -9,7 +9,7 @@ import shutil
 import signal
 import subprocess
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryFile
@@ -64,10 +64,8 @@ def _returncode_description(returncode: int) -> str:
 def _restore_position(stream: BinaryIO, position: int | None) -> None:
     if position is None:
         return
-    try:
+    with suppress(OSError, ValueError):
         stream.seek(position)
-    except (OSError, ValueError):
-        pass
 
 
 @contextmanager
@@ -96,7 +94,11 @@ def _worker_input(stream: BinaryIO) -> Iterator[tuple[list[str], tuple[int, ...]
 
         temporary_path: Path | None = None
         try:
-            with NamedTemporaryFile(prefix="immich-companion-raw-", suffix=".bin", delete=False) as copy:
+            with NamedTemporaryFile(
+                prefix="immich-companion-raw-",
+                suffix=".bin",
+                delete=False,
+            ) as copy:
                 temporary_path = Path(copy.name)
                 shutil.copyfileobj(stream, copy, length=RAW_COPY_CHUNK_BYTES)
             yield ["--input", str(temporary_path)], ()
@@ -205,7 +207,7 @@ def decode_raw_isolated(
                     issue=payload.get("issue"),
                     feature=_decode_feature_payload(payload.get("feature")),
                 )
-            except (TypeError, ValueError, json.JSONDecodeError) as error:
+            except (TypeError, ValueError) as error:
                 logger.warning(
                     "RAW decoder worker returned an invalid response: error=%s%s",
                     error,
