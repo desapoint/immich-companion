@@ -117,6 +117,8 @@
   const actionTaskStorageKey = 'immich-companion:asset-action-task';
   const actionTaskOwnerStorageKey = 'immich-companion:asset-action-task-owner';
   const expiredSelectionMessage = 'The server-backed selection expired. Select the assets again.';
+  const selectionTaskTrackingMessage = 'Selected asset sync started, but its status is temporarily unavailable. Tracking will continue.';
+  const actionTaskTrackingMessage = 'The bulk action started, but its status is temporarily unavailable. Tracking will continue.';
 
   let expression = $state<SearchGroup>(
     simpleFiltersToSearchGroup(createSimpleAssetSearchFilters()),
@@ -862,7 +864,10 @@
         await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
       }
     } catch (requestError) {
-      if (isAssetSelectionUnavailableError(requestError)) {
+      if (localStorage.getItem(selectionSyncTaskStorageKey)) {
+        startSelectionTaskPolling();
+        selectionSyncError = selectionTaskTrackingMessage;
+      } else if (isAssetSelectionUnavailableError(requestError)) {
         selectionSyncError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
       } else {
@@ -882,6 +887,7 @@
     const terminalAlreadyHandled = terminal
       && selectionTask?.id === next.id
       && isTaskTerminal(selectionTask.status);
+    if (!terminalAlreadyHandled) selectionSyncError = null;
 
     selectionTask = next;
     selectionSyncing = !terminal;
@@ -1331,7 +1337,10 @@
       actionPlan = null;
       actionTargetIds = confirmedTargetIds;
     } catch (requestError) {
-      if (isAssetSelectionUnavailableError(requestError)) {
+      if (localStorage.getItem(actionTaskStorageKey)) {
+        startActionTaskPolling();
+        actionError = actionTaskTrackingMessage;
+      } else if (isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
       } else {
@@ -1431,7 +1440,10 @@
         await applyActionResult(result, context, actionTargetIds);
       }
     } catch (requestError) {
-      if (owner && isAssetSelectionUnavailableError(requestError)) {
+      if (context === 'selection' && localStorage.getItem(actionTaskStorageKey)) {
+        startActionTaskPolling();
+        actionError = actionTaskTrackingMessage;
+      } else if (owner && isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
       } else {
@@ -1529,7 +1541,10 @@
         await applyActionResult(result, confirmedContext, confirmedTargetIds);
       }
     } catch (requestError) {
-      if (owner && isAssetSelectionUnavailableError(requestError)) {
+      if (confirmedContext === 'selection' && localStorage.getItem(actionTaskStorageKey)) {
+        startActionTaskPolling();
+        actionError = actionTaskTrackingMessage;
+      } else if (owner && isAssetSelectionUnavailableError(requestError)) {
         actionError = expiredSelectionMessage;
         if (selectionOwnership.owns(owner)) clearSelection();
       } else {
@@ -1551,6 +1566,7 @@
     const terminalAlreadyHandled = terminal
       && actionTask?.id === next.id
       && isTaskTerminal(actionTask.status);
+    if (!terminalAlreadyHandled) actionError = null;
 
     actionTask = next;
     actionBusy = !terminal;
