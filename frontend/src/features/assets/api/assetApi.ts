@@ -251,13 +251,19 @@ export function updateAssetSelectionMembers(
   ));
 }
 
+export function waitForAssetSelectionMutations(selectionId: string): Promise<void> {
+  return selectionMutationQueue.waitForIdle(selectionId);
+}
+
 export function getAssetSelectionMembership(
   selectionId: string,
   assetIds: string[],
+  signal?: AbortSignal,
 ): Promise<SelectionSetMembershipResponse> {
   return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/membership`, {
     method: 'POST',
     json: { asset_ids: assetIds },
+    signal,
   });
 }
 
