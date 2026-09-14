@@ -1,0 +1,76 @@
+name: Apply V2 duplicate review state v3
+
+on:
+  push:
+    branches:
+      - work/v2-duplicate-review-state
+    paths:
+      - .github/workflows/apply-v2-duplicate-review-state-v3.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: work/v2-duplicate-review-state
+
+      - name: Apply corrected V2 review-state slice
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          text = Path('.github/workflows/apply-v2-duplicate-review-state.yml').read_text()
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "\n          PY\n"
+          start = text.index(start_marker) + len(start_marker)
+          end = text.index(end_marker, start)
+          lines = text[start:end].splitlines()
+          script = '\n'.join(line[10:] if line.startswith('          ') else line for line in lines)
+          script = script.replace("later_discovery = dedent('''", "later_discovery = ('''")
+          exec(compile(script, '<v2-review-state-patch>', 'exec'), {})
+          PY
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Validate backend
+        shell: bash
+        run: |
+          python -m pip install -e './backend[dev]'
+          cd backend
+          ruff format companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py companion/v2_duplicate_review_state.py companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py tests/test_composite_duplicate_sync.py tests/test_v2_duplicate_review_state.py
+          ruff check --fix companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py companion/v2_duplicate_review_state.py companion/migrations/versions/20260914_0047_v2_duplicate_review_state.py tests/test_composite_duplicate_sync.py tests/test_v2_duplicate_review_state.py
+          pytest
+          ruff check companion tests
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate frontend
+        shell: bash
+        run: |
+          cd frontend
+          npm ci
+          npm run check
+          npm test
+
+      - name: Commit validated implementation
+        shell: bash
+        run: |
+          rm -f .github/workflows/apply-v2-duplicate-review-state.yml .github/workflows/apply-v2-duplicate-review-state-v3.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add backend frontend .github/workflows/apply-v2-duplicate-review-state.yml .github/workflows/apply-v2-duplicate-review-state-v3.yml
+          git commit -m 'perf: make V2 duplicate review filters SQL-native'
+          git push origin HEAD:work/v2-duplicate-review-state
