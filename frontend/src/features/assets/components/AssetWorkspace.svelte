@@ -16,6 +16,7 @@
     executeAssetAction,
     executeAssetActionTask,
     isAssetSelectionUnavailableError,
+    isTaskUnavailableError,
     matchAssetSearch,
     selectAllAssetSelection,
     updateAssetSelectionMembers,
@@ -30,6 +31,7 @@
   import {
     buildSelectionRequest,
     buildExplicitAssetSelectionRequest,
+    canMergeServerSelectionPages,
     createAssetSelectionState,
     invertCurrentPage,
     isAssetSelected,
@@ -175,11 +177,12 @@
   let syncStatusInitialized = false;
   let handledSyncSuccessId: string | null = null;
   let handledSyncFailureId: string | null = null;
-  let manualSyncPending = false;
+  let manualSyncRunId: string | null = null;
   const selectionOwnership = new SelectionOwnership();
   const detailCache = new BoundedCache<string, AssetDetail>(detailCacheSize);
   const detailRequest = new LatestRequest();
   const selectionRequest = new LatestRequest();
+  const selectAllRequest = new LatestRequest();
   const viewerActionRequest = new LatestRequest();
   const actionPlanRequest = new LatestRequest();
   const selectionTaskPoller = new CoalescedPoller(pollSelectionTask, () => taskFallbackPollMs);
@@ -201,8 +204,13 @@
     scrollY: number;
   }
 
-  function markSelectionChanged(): void {
+  function markSelectionChanged(abortSelectAll = true): void {
+    if (abortSelectAll) selectAllRequest.abort();
     selectionOwnership.changed();
+  }
+
+  function selectionReadIsCurrent(owner: string, selectionId: string | null): boolean {
+    return selectionOwnership.owns(owner) && selection.selectionId === selectionId;
   }
 
   function registerSelectionTask(taskId: string, owner: string): void {
@@ -246,19 +254,19 @@
   }
 
   function startSelectionTaskPolling(): void {
-    if (taskUpdateConnection?.connected) return;
+    if (taskUpdateConnection?.connected && selectionTask !== null) return;
     selectionTaskPoller.start();
   }
 
   function startActionTaskPolling(): void {
-    if (taskUpdateConnection?.connected) return;
+    if (taskUpdateConnection?.connected && actionTask !== null) return;
     actionTaskPoller.start();
   }
 
   function handleTaskConnectionChange(connected: boolean): void {
     if (connected) {
-      stopSelectionTaskPolling();
-      stopActionTaskPolling();
+      if (selectionTask !== null) stopSelectionTaskPolling();
+      if (actionTask !== null) stopActionTaskPolling();
       return;
     }
     if (
@@ -360,6 +368,8 @@
 
   async function loadAssets(allowSelectionRecovery = true): Promise<boolean> {
     const generation = ++assetLoadGeneration;
+    const selectionOwner = selectionOwnership.current();
+    const selectionId = selection.selectionId;
     infiniteLoading = false;
     searchController?.abort();
     const controller = new AbortController();
@@ -373,7 +383,7 @@
         pageSize,
         sort,
         controller.signal,
-        selection.selectionId,
+        selectionId,
       );
       if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
       if (next.pages > 0 && page > next.pages) {
@@ -381,7 +391,13 @@
         return await loadAssets(allowSelectionRecovery);
       }
       results = next;
-      if (next.selection) {
+      if (
+        next.selection
+        && selectionId !== null
+        && next.selection.id === selectionId
+        && selectionReadIsCurrent(selectionOwner, selectionId)
+        && (selection.selectionRevision === null || next.selection.revision >= selection.selectionRevision)
+      ) {
         selection = setServerSelection(
           selection,
           next.selection.id,
@@ -396,7 +412,8 @@
       if (
         allowSelectionRecovery
         && generation === assetLoadGeneration
-        && selection.selectionId
+        && selectionId !== null
+        && selectionReadIsCurrent(selectionOwner, selectionId)
         && isAssetSelectionUnavailableError(requestError)
       ) {
         selectionSyncError = expiredSelectionMessage;
@@ -457,6 +474,8 @@
     allowSelectionRecovery = true,
   ): Promise<boolean> {
     const generation = ++assetLoadGeneration;
+    const selectionOwner = selectionOwnership.current();
+    const selectionId = selection.selectionId;
     infiniteLoading = false;
     searchController?.abort();
     const controller = new AbortController();
@@ -470,7 +489,7 @@
         pageSize,
         sort,
         controller.signal,
-        selection.selectionId,
+        selectionId,
       );
       if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
       const pageNumbers = infiniteWindowPages(loadedThroughPage, first.pages);
@@ -484,7 +503,7 @@
           pageSize,
           sort,
           controller.signal,
-          selection.selectionId,
+          selectionId,
         )));
         if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
         loadedPages.push(...responses);
@@ -496,10 +515,14 @@
         page: lastPage,
         items: mergeInfiniteWindowItems(loadedPages.map((response) => response.items)),
       };
-      selection = mergeServerSelectionPages(
-        selection,
-        loadedPages.map((response) => response.selection),
-      );
+      if (selectionId !== null && selectionReadIsCurrent(selectionOwner, selectionId)) {
+        const pageSelections = loadedPages.map((response) => response.selection);
+        if (canMergeServerSelectionPages(selection, pageSelections)) {
+          selection = mergeServerSelectionPages(selection, pageSelections);
+        } else if (pageSelections.some(Boolean)) {
+          await refreshServerPageMembership(results.items.map((asset) => asset.id), controller.signal);
+        }
+      }
       if (generation !== assetLoadGeneration || controller.signal.aborted) return false;
       return true;
     } catch (requestError) {
@@ -507,7 +530,8 @@
       if (
         allowSelectionRecovery
         && generation === assetLoadGeneration
-        && selection.selectionId
+        && selectionId !== null
+        && selectionReadIsCurrent(selectionOwner, selectionId)
         && isAssetSelectionUnavailableError(requestError)
       ) {
         selectionSyncError = expiredSelectionMessage;
@@ -544,6 +568,8 @@
   async function loadNextInfinitePage(allowSelectionRecovery = true): Promise<boolean> {
     if (!infiniteHasMore || loading || infiniteLoading || !results) return false;
     const generation = assetLoadGeneration;
+    const selectionOwner = selectionOwnership.current();
+    const selectionId = selection.selectionId;
     const nextPage = page + 1;
     searchController?.abort();
     const controller = new AbortController();
@@ -556,7 +582,7 @@
         pageSize,
         sort,
         controller.signal,
-        selection.selectionId,
+        selectionId,
       );
       if (
         generation !== assetLoadGeneration
@@ -579,14 +605,27 @@
         total: next.total,
         items: [...results.items, ...appendedItems],
       };
-      if (next.selection) selection = mergeServerSelectionPage(selection, next.selection);
+      if (
+        next.selection
+        && selectionId !== null
+        && next.selection.id === selectionId
+        && selectionReadIsCurrent(selectionOwner, selectionId)
+      ) {
+        const merged = mergeServerSelectionPage(selection, next.selection);
+        if (merged === selection) {
+          await refreshServerPageMembership(next.items.map((asset) => asset.id), controller.signal);
+        } else {
+          selection = merged;
+        }
+      }
       return appendedItems.length > 0;
     } catch (requestError) {
       if (requestError instanceof Error && requestError.name === 'AbortError') return false;
       if (
         allowSelectionRecovery
         && generation === assetLoadGeneration
-        && selection.selectionId
+        && selectionId !== null
+        && selectionReadIsCurrent(selectionOwner, selectionId)
         && isAssetSelectionUnavailableError(requestError)
       ) {
         selectionSyncError = expiredSelectionMessage;
@@ -679,13 +718,14 @@
   ): Promise<void> {
     if (!selection.selectionId || assetIds.length === 0) return;
     const selectionId = selection.selectionId;
+    const owner = selectionOwnership.current();
     try {
       const membership = await getAssetSelectionMembership(selectionId, assetIds, signal);
-      if (signal?.aborted || selection.selectionId !== selectionId) return;
+      if (signal?.aborted || !selectionReadIsCurrent(owner, selectionId)) return;
       selection = patchServerSelectionMembership(selection, assetIds, membership);
     } catch (requestError) {
       if (signal?.aborted || isAbortError(requestError)) return;
-      if (selection.selectionId !== selectionId) return;
+      if (!selectionReadIsCurrent(owner, selectionId)) return;
       if (isAssetSelectionUnavailableError(requestError)) {
         selectionSyncError = expiredSelectionMessage;
         clearSelection();
@@ -843,7 +883,8 @@
     localStorage.setItem(selectionSyncTaskStorageKey, next.id);
 
     if (!terminal) {
-      if (!taskUpdateConnection?.connected) startSelectionTaskPolling();
+      if (taskUpdateConnection?.connected) stopSelectionTaskPolling();
+      else startSelectionTaskPolling();
       return;
     }
 
@@ -879,6 +920,14 @@
       await applySelectionTaskStatus(await getTaskStatus(taskId, signal));
     } catch (requestError) {
       if (signal.aborted || isAbortError(requestError)) return;
+      if (isTaskUnavailableError(requestError)) {
+        stopSelectionTaskPolling();
+        clearSelectionTaskTracking();
+        selectionTask = null;
+        selectionSyncing = false;
+        selectionSyncError = 'The previously tracked selected-asset sync is no longer available.';
+        return;
+      }
       selectionSyncError = requestErrorMessage(
         requestError,
         'Selected asset sync status is unavailable.',
@@ -952,14 +1001,18 @@
     invalidateViewerActionPlan();
     viewerSelectedAsset = null;
     viewerIndex = index;
+    const asset = results?.items[index];
     void loadDetail(index);
+    if (asset) void resolveViewerActionState(asset.id);
   }
 
   function navigateViewer(index: number): void {
     invalidateViewerActionPlan();
     viewerSelectedAsset = null;
     viewerIndex = index;
+    const asset = results?.items[index];
     void loadDetail(index);
+    if (asset) void resolveViewerActionState(asset.id);
   }
 
   async function selectViewerComparisonAsset(assetId: string): Promise<void> {
@@ -985,6 +1038,7 @@
         viewerSelectedAsset = asset;
         detailCache.set(assetId, loadedDetail);
         detail = loadedDetail;
+        void resolveViewerActionState(assetId, true);
       }
     } else if (result.status === 'error') {
       detailError = requestErrorMessage(
@@ -1116,11 +1170,20 @@
   }
 
   async function selectEveryMatch(): Promise<void> {
+    const owner = selectionOwnership.current();
+    const expressionSnapshot = copySearchGroup(expression);
+    selectionRequest.abort();
+    selectionResolution = null;
     selectionLoading = true;
     actionError = null;
-    try {
-      const serverSelection = await createAssetSelection();
-      const filledSelection = await selectAllAssetSelection(serverSelection.id, expression);
+    const result = await selectAllRequest.run(async (signal) => {
+      const serverSelection = await createAssetSelection(signal);
+      return await selectAllAssetSelection(serverSelection.id, expressionSnapshot, signal);
+    });
+    if (!selectAllRequest.isCurrent(result.version) || !selectionOwnership.owns(owner)) return;
+
+    if (result.status === 'success') {
+      const filledSelection = result.value;
       selection = setServerSelection(
         selection,
         filledSelection.id,
@@ -1128,15 +1191,17 @@
         filledSelection.selected_count,
         results?.items.map((asset) => asset.id) ?? [],
       );
-      markSelectionChanged();
+      markSelectionChanged(false);
       stackPrimaryAssetId = results?.items[0]?.id ?? null;
       invalidateActionPlan();
-      await refreshSelection();
-    } catch (requestError) {
-      actionError = requestErrorMessage(requestError, 'Could not select all matching assets.');
-    } finally {
       selectionLoading = false;
+      await refreshSelection();
+      return;
     }
+    if (result.status === 'error') {
+      actionError = requestErrorMessage(result.error, 'Could not select all matching assets.');
+    }
+    selectionLoading = false;
   }
 
   function invertPage(): void {
@@ -1479,7 +1544,8 @@
     localStorage.setItem(actionTaskStorageKey, next.id);
 
     if (!terminal) {
-      if (!taskUpdateConnection?.connected) startActionTaskPolling();
+      if (taskUpdateConnection?.connected) stopActionTaskPolling();
+      else startActionTaskPolling();
       return;
     }
 
@@ -1511,6 +1577,14 @@
       await applyActionTaskStatus(await getTaskStatus(taskId, signal));
     } catch (requestError) {
       if (signal.aborted || isAbortError(requestError)) return;
+      if (isTaskUnavailableError(requestError)) {
+        stopActionTaskPolling();
+        clearActionTaskTracking();
+        actionTask = null;
+        actionBusy = false;
+        actionError = 'The previously tracked bulk action is no longer available.';
+        return;
+      }
       actionError = requestErrorMessage(requestError, 'Action status is unavailable.');
     }
   }
@@ -1593,15 +1667,18 @@
         handledSyncFailureId = nextFailureId;
       } else if (completedSinceLastCheck) {
         handledSyncSuccessId = nextSuccessId;
-        if (manualSyncPending && next.last_success) {
+        if (manualSyncRunId !== null && next.last_success?.id === manualSyncRunId) {
           const counters = next.last_success.counters;
           syncCompletionMessage = `${next.last_success.mode === 'full' ? 'Full' : 'Incremental'} sync completed: `
             + `${counters.assets_updated ?? 0} updated, ${counters.assets_created ?? 0} created, `
             + `${counters.assets_removed ?? 0} removed.`;
-          manualSyncPending = false;
+          manualSyncRunId = null;
         }
         detailCache.clear();
         await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
+      }
+      if (failedSinceLastCheck && manualSyncRunId !== null && next.last_failure?.id === manualSyncRunId) {
+        manualSyncRunId = null;
       }
       if (nextFailureId !== null) handledSyncFailureId = nextFailureId;
     } catch (requestError) {
@@ -1627,14 +1704,15 @@
   async function syncAssets(mode: AssetSyncMode = 'incremental'): Promise<void> {
     syncing = true;
     syncStatusPoller.reschedule(activeSyncPollMs);
-    manualSyncPending = true;
     syncMessage = mode === 'full' ? 'Queueing full sync…' : 'Queueing incremental sync…';
     syncError = null;
     error = null;
     try {
-      await startAssetSync(mode);
+      const started = await startAssetSync(mode);
+      manualSyncRunId = started.id;
       await syncStatusPoller.refresh(true);
     } catch (requestError) {
+      manualSyncRunId = null;
       error = requestErrorMessage(requestError, 'Immich sync failed.');
       syncing = false;
       syncStatusPoller.reschedule();
@@ -1647,6 +1725,10 @@
     listMode = decodeAssetListMode(localStorage.getItem(ASSET_LIST_MODE_STORAGE_KEY));
     selectionTaskOwner = localStorage.getItem(selectionSyncOwnerStorageKey);
     actionTaskOwner = localStorage.getItem(actionTaskOwnerStorageKey);
+    const recoveredSelectionTaskId = localStorage.getItem(selectionSyncTaskStorageKey);
+    const recoveredActionTaskId = localStorage.getItem(actionTaskStorageKey);
+    selectionSyncing = recoveredSelectionTaskId !== null;
+    actionBusy = recoveredActionTaskId !== null;
     startTaskUpdates();
     void loadActionTaskHistory();
     const url = new URL(window.location.href);
@@ -1664,8 +1746,8 @@
     void loadRelationOptions();
     void loadAssets();
     syncStatusPoller.start();
-    if (localStorage.getItem(selectionSyncTaskStorageKey)) startSelectionTaskPolling();
-    if (localStorage.getItem(actionTaskStorageKey)) startActionTaskPolling();
+    if (recoveredSelectionTaskId) startSelectionTaskPolling();
+    if (recoveredActionTaskId) startActionTaskPolling();
     return () => {
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
@@ -1685,6 +1767,7 @@
     searchController?.abort();
     detailRequest.abort();
     selectionRequest.abort();
+    selectAllRequest.abort();
     viewerActionRequest.abort();
     actionPlanRequest.abort();
     detailCache.clear();
@@ -1886,7 +1969,7 @@
     oncomparisonnavigate={(assetId) => void selectViewerComparisonAsset(assetId)}
     ontoggleselection={toggleSelection}
     onselectionstackprimary={chooseStackPrimary}
-    onvisiblechange={(assetId) => void resolveViewerActionState(assetId)}
+    onpreviewchange={() => invalidateViewerActionPlan()}
     onaction={previewViewerAction}
     onsetprimary={(assetId) => previewViewerAction(assetId, 'set_stack_primary')}
     onrelationconfirm={confirmViewerRelationAction}
