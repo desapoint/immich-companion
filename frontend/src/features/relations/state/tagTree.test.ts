@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { branchParentIds, flattenTagTree } from './tagTree';
+import { flattenTagTree } from './tagTree';
 import type { ManagedRelation } from '../types/relations';
 
 const tree: ManagedRelation[] = [
@@ -11,17 +11,21 @@ const tree: ManagedRelation[] = [
 ];
 
 describe('tag tree visibility', () => {
-  it('collects every expandable branch', () => {
-    expect(branchParentIds(tree)).toEqual(['root', 'child']);
+  it('expands loaded branches by default', () => {
+    expect(flattenTagTree(tree, new Set()).map(({ item }) => item.id)).toEqual([
+      'root', 'child', 'leaf',
+    ]);
   });
 
-  it('does not render descendants of a collapsed parent', () => {
-    expect(flattenTagTree(tree, new Set()).map(({ item }) => item.id)).toEqual(['root']);
-    expect(flattenTagTree(tree, new Set(['root'])).map(({ item }) => item.id)).toEqual(['root', 'child']);
+  it('preserves explicit collapsed branches', () => {
+    expect(flattenTagTree(tree, new Set(['root'])).map(({ item }) => item.id)).toEqual(['root']);
+    expect(flattenTagTree(tree, new Set(['child'])).map(({ item }) => item.id)).toEqual([
+      'root', 'child',
+    ]);
   });
 
   it('renders all matching hierarchy context when search forces expansion', () => {
-    expect(flattenTagTree(tree, new Set(), true).map(({ item, depth }) => [item.id, depth])).toEqual([
+    expect(flattenTagTree(tree, new Set(['root', 'child']), true).map(({ item, depth }) => [item.id, depth])).toEqual([
       ['root', 0], ['child', 1], ['leaf', 2],
     ]);
   });
