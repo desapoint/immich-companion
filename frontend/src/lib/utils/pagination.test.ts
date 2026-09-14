@@ -1,6 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { buildPaginationItems, type PaginationItem } from './pagination';
+import {
+  buildPaginationItems,
+  paginationItemRange,
+  scrollToPaginationStart,
+  type PaginationItem,
+} from './pagination';
 
 function values(items: PaginationItem[]): Array<number | 'ellipsis'> {
   return items.map((item) => (item.kind === 'page' ? item.page : 'ellipsis'));
@@ -62,5 +67,20 @@ describe('buildPaginationItems', () => {
   it('handles empty and out-of-range input safely', () => {
     expect(buildPaginationItems({ currentPage: 1, totalPages: 0 })).toEqual([]);
     expect(values(buildPaginationItems({ currentPage: 99, totalPages: 3 }))).toEqual([1, 2, 3]);
+  });
+});
+
+describe('pagination details', () => {
+  it('reports the visible item range and clamps out-of-range pages', () => {
+    expect(paginationItemRange(1, 25, 83)).toEqual({ start: 1, end: 25 });
+    expect(paginationItemRange(4, 25, 83)).toEqual({ start: 76, end: 83 });
+    expect(paginationItemRange(99, 25, 83)).toEqual({ start: 76, end: 83 });
+    expect(paginationItemRange(1, 25, 0)).toEqual({ start: 0, end: 0 });
+  });
+
+  it('scrolls the collection start with the standard behavior', () => {
+    const scrollIntoView = vi.fn();
+    scrollToPaginationStart({ scrollIntoView } as unknown as Element);
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' });
   });
 });
