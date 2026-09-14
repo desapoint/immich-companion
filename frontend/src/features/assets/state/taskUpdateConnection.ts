@@ -20,13 +20,20 @@ export class TaskUpdateConnection {
   #timer: ReturnType<typeof setTimeout> | null = null;
   #delay = 1000;
   #stopped = true;
+  #connected = false;
 
   constructor(
     private readonly open: OpenTaskUpdates,
     private readonly onstatus: (task: AssetTaskStatus) => void,
+    private readonly onconnectionchange?: (connected: boolean) => void,
   ) {}
 
+  get connected(): boolean {
+    return this.#connected;
+  }
+
   start(): void {
+    if (!this.#stopped) return;
     this.#stopped = false;
     this.#connect();
   }
@@ -39,6 +46,7 @@ export class TaskUpdateConnection {
     }
     const socket = this.#socket;
     this.#socket = null;
+    this.#setConnected(false);
     if (!socket) return;
     if (socket.readyState === CONNECTING) {
       socket.addEventListener('open', () => socket.close(), { once: true });
@@ -48,13 +56,25 @@ export class TaskUpdateConnection {
   }
 
   #connect(): void {
-    if (this.#stopped || this.#socket?.readyState === OPEN || this.#socket?.readyState === CONNECTING) return;
-    this.#socket = this.open(this.onstatus, () => this.#scheduleReconnect());
-    this.#socket.addEventListener('open', () => { this.#delay = 1000; }, { once: true });
+    if (
+      this.#stopped
+      || this.#socket?.readyState === OPEN
+      || this.#socket?.readyState === CONNECTING
+    ) return;
+
+    const socket = this.open(this.onstatus, () => this.#scheduleReconnect(socket));
+    this.#socket = socket;
+    socket.addEventListener('open', () => {
+      if (this.#stopped || this.#socket !== socket) return;
+      this.#delay = 1000;
+      this.#setConnected(true);
+    }, { once: true });
   }
 
-  #scheduleReconnect(): void {
+  #scheduleReconnect(socket: TaskUpdateSocket): void {
+    if (this.#socket !== socket) return;
     this.#socket = null;
+    this.#setConnected(false);
     if (this.#stopped || this.#timer !== null) return;
     const delay = this.#delay;
     this.#timer = setTimeout(() => {
@@ -62,5 +82,11 @@ export class TaskUpdateConnection {
       this.#connect();
       this.#delay = Math.min(delay * 2, 10000);
     }, delay);
+  }
+
+  #setConnected(connected: boolean): void {
+    if (this.#connected === connected) return;
+    this.#connected = connected;
+    this.onconnectionchange?.(connected);
   }
 }
