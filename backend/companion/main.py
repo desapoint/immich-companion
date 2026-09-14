@@ -519,17 +519,11 @@ def create_app(
                 discovery=duplicate_discovery,
             )
         )
-        resolution_handler = RefreshingDuplicateResolutionTaskHandler(
-            duplicate_service,
-            immich_duplicate_sync_service,
-        )
         task_coordinator.register_handler(
-            FollowUpTaskHandler(
-                resolution_handler,
-                composite_duplicate_sync_service.start_after_source_change,
+            RefreshingDuplicateResolutionTaskHandler(
+                duplicate_service,
+                immich_duplicate_sync_service,
             )
-            if composite_duplicate_sync_service is not None
-            else resolution_handler
         )
     similarity_index_maintainer = (
         SimilarityIndexMaintainer(
