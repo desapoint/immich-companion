@@ -34,6 +34,16 @@ import { RevisionedMutationQueue } from '../state/revisionedMutationQueue';
 
 const selectionMutationQueue = new RevisionedMutationQueue<SelectionSetView>();
 
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+}
+
+async function settleSelection(selectionId: string | null | undefined, signal?: AbortSignal): Promise<void> {
+  if (!selectionId) return;
+  await selectionMutationQueue.waitForIdle(selectionId);
+  throwIfAborted(signal);
+}
+
 export function openTaskStream(
   taskId: string,
   onstatus: (task: AssetTaskStatus) => void,
@@ -120,6 +130,7 @@ export async function searchAssets(
   signal?: AbortSignal,
   selectionId?: string | null,
 ): Promise<AssetSearchResponse> {
+  await settleSelection(selectionId, signal);
   const response = await requestJson<AssetSearchResponse>('/api/assets/search', {
     method: 'POST',
     json: buildAssetSearchRequest(expression, page, pageSize, sort, selectionId),
@@ -193,10 +204,11 @@ export function listTasks(taskType: string, limit = 10): Promise<AssetTaskStatus
   return requestJson(`/api/tasks?task_type=${encodeURIComponent(taskType)}&limit=${limit}`);
 }
 
-export function resolveAssetSelection(
+export async function resolveAssetSelection(
   selection: AssetSelectionRequest,
   signal?: AbortSignal,
 ): Promise<AssetSelectionResolution> {
+  await settleSelection(selection.selection_id, signal);
   return requestJson('/api/assets/selection/resolve', {
     method: 'POST',
     json: selection,
@@ -255,11 +267,12 @@ export function waitForAssetSelectionMutations(selectionId: string): Promise<voi
   return selectionMutationQueue.waitForIdle(selectionId);
 }
 
-export function getAssetSelectionMembership(
+export async function getAssetSelectionMembership(
   selectionId: string,
   assetIds: string[],
   signal?: AbortSignal,
 ): Promise<SelectionSetMembershipResponse> {
+  await settleSelection(selectionId, signal);
   return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/membership`, {
     method: 'POST',
     json: { asset_ids: assetIds },
@@ -267,7 +280,7 @@ export function getAssetSelectionMembership(
   });
 }
 
-export function planAssetAction(
+export async function planAssetAction(
   selection: AssetSelectionRequest,
   action: AssetActionIntent,
   relationIds: string[] = [],
@@ -275,6 +288,7 @@ export function planAssetAction(
   stackPrimaryAssetId?: string,
   signal?: AbortSignal,
 ): Promise<AssetActionPlan> {
+  await settleSelection(selection.selection_id, signal);
   return requestJson('/api/assets/actions/plan', {
     method: 'POST',
     json: {
@@ -358,9 +372,10 @@ export function synchronizeAsset(assetId: string): Promise<AssetDetail> {
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}/sync`, { method: 'POST' });
 }
 
-export function synchronizeAssetSelection(
+export async function synchronizeAssetSelection(
   selection: AssetSelectionRequest,
 ): Promise<AssetSelectionSyncResult> {
+  await settleSelection(selection.selection_id);
   return requestJson('/api/assets/sync/selection', {
     method: 'POST',
     json: selection,
