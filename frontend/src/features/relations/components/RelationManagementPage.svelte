@@ -24,7 +24,7 @@
     getTagOptions,
     updateRelation,
   } from '../api/relationsApi';
-  import { branchParentIds, flattenTagTree } from '../state/tagTree';
+  import { flattenTagTree } from '../state/tagTree';
   import type { ManagedRelation, RelationKind } from '../types/relations';
   import ColorPicker from './ColorPicker.svelte';
 
@@ -53,8 +53,9 @@
   let pendingDeleteLabel = $state('');
   let sort = $state<'name' | 'asset_count'>('name');
   let direction = $state<'asc' | 'desc'>('asc');
-  let expanded = $state(new Set<string>());
+  let collapsed = $state(new Set<string>());
   let tagOptions = $state<{ id: string; name: string }[]>([]);
+  let tagOptionsController: AbortController | null = null;
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
   let pageStart = $state<HTMLElement>();
 
@@ -69,7 +70,7 @@
   const displayRows = $derived(
     isAlbum
       ? collection.items.map((item) => ({ item, depth: 0, hasChildren: false }))
-      : flattenTagTree(collection.items, expanded, Boolean(appliedSearch)),
+      : flattenTagTree(collection.items, collapsed, Boolean(appliedSearch)),
   );
   const allVisibleSelected = $derived(
     displayRows.length > 0 && displayRows.every((row) => selected.has(row.item.id)),
@@ -92,15 +93,29 @@
     searchTimer = null;
   }
 
-  function expandLoadedTagBranches(): void {
-    if (isAlbum || appliedSearch) return;
-    expanded = new Set([...expanded, ...branchParentIds(collection.items)]);
+  async function refreshTagOptions(showWarning = false): Promise<void> {
+    if (isAlbum) return;
+    tagOptionsController?.abort();
+    const controller = new AbortController();
+    tagOptionsController = controller;
+    try {
+      const options = await getTagOptions(controller.signal);
+      if (tagOptionsController === controller && !controller.signal.aborted) tagOptions = options;
+    } catch (cause) {
+      if (controller.signal.aborted) return;
+      if (showWarning) {
+        notice = {
+          tone: 'warning',
+          message: cause instanceof Error ? cause.message : 'Tag parent options could not be loaded.',
+        };
+      }
+    } finally {
+      if (tagOptionsController === controller) tagOptionsController = null;
+    }
   }
 
   async function runCollection(operation: () => Promise<boolean>): Promise<boolean> {
-    const loaded = await operation();
-    if (loaded) expandLoadedTagBranches();
-    return loaded;
+    return await operation();
   }
 
   function applySearch(nextSearch = search): void {
@@ -215,7 +230,10 @@
       };
       dialogOpen = false;
       resetForm();
-      await runCollection(() => collectionController.reload());
+      await Promise.all([
+        runCollection(() => collectionController.reload()),
+        refreshTagOptions(),
+      ]);
     } catch (cause) {
       formError = cause instanceof Error ? cause.message : 'Relation could not be saved.';
     } finally {
@@ -246,7 +264,10 @@
             message: `${result.completed.length} deleted; ${result.failed.length} failed and remain selected.`,
           }
         : { tone: 'success', message: `${result.completed.length} deleted.` };
-      await runCollection(() => collectionController.reload());
+      await Promise.all([
+        runCollection(() => collectionController.reload()),
+        refreshTagOptions(),
+      ]);
     } catch (cause) {
       notice = {
         tone: 'error',
@@ -269,10 +290,10 @@
   }
 
   function toggleExpanded(id: string): void {
-    const next = new Set(expanded);
+    const next = new Set(collapsed);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    expanded = next;
+    collapsed = next;
   }
 
   function changePage(nextPage: number): void {
@@ -282,24 +303,12 @@
   }
 
   onMount(() => {
-    const optionsController = new AbortController();
-    if (!isAlbum) {
-      void getTagOptions(optionsController.signal)
-        .then((options) => { tagOptions = options; })
-        .catch((cause) => {
-          if (!(cause instanceof DOMException && cause.name === 'AbortError')) {
-            notice = {
-              tone: 'warning',
-              message: cause instanceof Error ? cause.message : 'Tag parent options could not be loaded.',
-            };
-          }
-        });
-    }
+    void refreshTagOptions(true);
     void runCollection(() => collectionController.load());
 
     return () => {
       clearSearchTimer();
-      optionsController.abort();
+      tagOptionsController?.abort();
       collectionController.dispose();
     };
   });
@@ -384,6 +393,7 @@
         <tbody>
           {#each displayRows as row (row.item.id)}
             {@const item = row.item}
+            {@const rowExpanded = Boolean(appliedSearch) || !collapsed.has(item.id)}
             <tr>
               <td class="selection-cell">
                 <div class="styled-checkbox">
@@ -393,7 +403,7 @@
               <td>
                 <div class="tag-name" style={`--depth:${row.depth}`}>
                   {#if !isAlbum && row.hasChildren}
-                    <button class="tag-title" type="button" aria-expanded={expanded.has(item.id)} aria-label={`${expanded.has(item.id) ? 'Collapse' : 'Expand'} ${item.name}`} onclick={() => toggleExpanded(item.id)}>
+                    <button class="tag-title" type="button" aria-expanded={rowExpanded} aria-label={`${rowExpanded ? 'Collapse' : 'Expand'} ${item.name}`} onclick={() => toggleExpanded(item.id)}>
                       <span>
                         <strong>{item.name}</strong>
                         {#if appliedSearch && item.parent_path?.length}<small>{[...item.parent_path, item.name].join(' / ')}</small>{/if}
