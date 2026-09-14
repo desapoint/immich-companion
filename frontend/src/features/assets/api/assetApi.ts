@@ -26,27 +26,10 @@ import type {
   StackResolution,
 } from '../types/assets';
 import type { MediaPreviewItem } from '../../../lib/types/media';
+import { requestJson, requestVoid } from '../../shared/api/http';
 import { createDefaultAssetSort } from '../state/assetSort';
 import { serializeSearchGroup } from '../state/assetViewModel';
 import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
-
-async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  const response = await fetch(input, {
-    ...init,
-    headers: { Accept: 'application/json', ...init?.headers },
-  });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null);
-    const detail = body && typeof body.detail === 'string' ? body.detail : null;
-    throw new Error(detail ?? `Companion request failed with HTTP ${response.status}.`);
-  }
-  return response;
-}
-
-async function requestJson<T>(input: RequestInfo | URL, init?: RequestInit): Promise<T> {
-  const response = await request(input, init);
-  return (await response.json()) as T;
-}
 
 export function openTaskStream(
   taskId: string,
@@ -136,8 +119,7 @@ export async function searchAssets(
 ): Promise<AssetSearchResponse> {
   const response = await requestJson<AssetSearchResponse>('/api/assets/search', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(buildAssetSearchRequest(expression, page, pageSize, sort, selectionId)),
+    json: buildAssetSearchRequest(expression, page, pageSize, sort, selectionId),
     signal,
   });
   return normalizeAssetSearchResponse(response);
@@ -152,8 +134,7 @@ export async function matchAssetSearch(
     `/api/assets/${encodeURIComponent(assetId)}/search-match`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ expression: serializeSearchGroup(expression) }),
+      json: { expression: serializeSearchGroup(expression) },
       signal,
     },
   );
@@ -171,16 +152,14 @@ export function getTagOptions(signal?: AbortSignal): Promise<TagOption[]> {
 export function createAlbum(name: string, description = ''): Promise<AlbumOption> {
   return requestJson('/api/albums/manage', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, description }),
+    json: { name, description },
   });
 }
 
 export function createTag(name: string, color: string | null = null): Promise<TagOption> {
   return requestJson('/api/tags/manage', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, color }),
+    json: { name, color },
   });
 }
 
@@ -191,8 +170,7 @@ export function synchronizeAssets(): Promise<AssetSyncResult> {
 export function startAssetSync(mode: AssetSyncMode): Promise<AssetSyncRunStatus> {
   return requestJson('/api/assets/sync/start', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
+    json: { mode },
   });
 }
 
@@ -218,8 +196,7 @@ export function resolveAssetSelection(
 ): Promise<AssetSelectionResolution> {
   return requestJson('/api/assets/selection/resolve', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(selection),
+    json: selection,
     signal,
   });
 }
@@ -230,13 +207,12 @@ export function materializeAssetSelection(
 ): Promise<string[]> {
   return requestJson('/api/assets/selection/ids', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    json: {
       mode: 'all_matching',
       ids: [],
       expression: serializeSearchGroup(expression),
       excluded_ids: [],
-    }),
+    },
     signal,
   });
 }
@@ -244,8 +220,7 @@ export function materializeAssetSelection(
 export function createAssetSelection(): Promise<SelectionSetView> {
   return requestJson('/api/assets/selections', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    json: {},
   });
 }
 
@@ -255,8 +230,7 @@ export function selectAllAssetSelection(
 ): Promise<SelectionSetView> {
   return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/select-all`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ expression: serializeSearchGroup(expression) }),
+    json: { expression: serializeSearchGroup(expression) },
   });
 }
 
@@ -268,8 +242,7 @@ export function updateAssetSelectionMembers(
 ): Promise<SelectionSetView> {
   return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/members`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ asset_ids: assetIds, selected, revision }),
+    json: { asset_ids: assetIds, selected, revision },
   });
 }
 
@@ -279,8 +252,7 @@ export function getAssetSelectionMembership(
 ): Promise<SelectionSetMembershipResponse> {
   return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/membership`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ asset_ids: assetIds }),
+    json: { asset_ids: assetIds },
   });
 }
 
@@ -293,30 +265,27 @@ export function planAssetAction(
 ): Promise<AssetActionPlan> {
   return requestJson('/api/assets/actions/plan', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
+    json: {
       selection,
       action,
       relation_ids: relationIds,
       ...(stackResolution ? { stack_resolution: stackResolution } : {}),
       ...(stackPrimaryAssetId ? { stack_primary_asset_id: stackPrimaryAssetId } : {}),
-    }),
+    },
   });
 }
 
 export function executeAssetAction(planId: string): Promise<AssetActionResult> {
   return requestJson('/api/assets/actions/execute', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId, confirm: true }),
+    json: { plan_id: planId, confirm: true },
   });
 }
 
 export function executeAssetActionTask(planId: string): Promise<AssetActionTaskStart> {
   return requestJson('/api/assets/actions/execute-task', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ plan_id: planId, confirm: true }),
+    json: { plan_id: planId, confirm: true },
   });
 }
 
@@ -337,8 +306,7 @@ export function analyzeAssetIntegrity(
 ): Promise<AssetIntegrityAnalyzeResponse> {
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}/integrity/analyze`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ force }),
+    json: { force },
   });
 }
 
@@ -356,8 +324,8 @@ export async function getRestoreAssets(
   return normalizeAssetSearchResponse(response);
 }
 
-export async function restoreAsset(assetId: string): Promise<void> {
-  await request(`/api/restore/${encodeURIComponent(assetId)}`, { method: 'POST' });
+export function restoreAsset(assetId: string): Promise<void> {
+  return requestVoid(`/api/restore/${encodeURIComponent(assetId)}`, { method: 'POST' });
 }
 
 export function restoreAssets(
@@ -365,8 +333,7 @@ export function restoreAssets(
 ): Promise<{ restored: number }> {
   return requestJson('/api/restore', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(target),
+    json: target,
   });
 }
 
@@ -383,8 +350,7 @@ export function synchronizeAssetSelection(
 ): Promise<AssetSelectionSyncResult> {
   return requestJson('/api/assets/sync/selection', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(selection),
+    json: selection,
   });
 }
 
