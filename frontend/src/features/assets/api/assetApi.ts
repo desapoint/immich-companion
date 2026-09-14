@@ -51,10 +51,15 @@ export function isAssetSelectionUnavailableError(error: unknown): boolean {
     && (detail.includes('expired') || detail.includes('not found'));
 }
 
+export function isTaskUnavailableError(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
 export function openTaskStream(
   taskId: string,
   onstatus: (task: AssetTaskStatus) => void,
   onerror?: () => void,
+  onclose?: () => void,
 ): WebSocket {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const socket = new WebSocket(
@@ -69,6 +74,7 @@ export function openTaskStream(
     }
   };
   socket.onerror = () => onerror?.();
+  socket.onclose = () => onclose?.();
   return socket;
 }
 
@@ -239,20 +245,23 @@ export function materializeAssetSelection(
   });
 }
 
-export function createAssetSelection(): Promise<SelectionSetView> {
+export function createAssetSelection(signal?: AbortSignal): Promise<SelectionSetView> {
   return requestJson('/api/assets/selections', {
     method: 'POST',
     json: {},
+    signal,
   });
 }
 
 export function selectAllAssetSelection(
   selectionId: string,
   expression: SearchGroup,
+  signal?: AbortSignal,
 ): Promise<SelectionSetView> {
   return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/select-all`, {
     method: 'POST',
     json: { expression: serializeSearchGroup(expression) },
+    signal,
   });
 }
 
@@ -337,10 +346,12 @@ export function getAssetIntegrity(
 export function analyzeAssetIntegrity(
   assetId: string,
   force = false,
+  signal?: AbortSignal,
 ): Promise<AssetIntegrityAnalyzeResponse> {
   return requestJson(`/api/assets/${encodeURIComponent(assetId)}/integrity/analyze`, {
     method: 'POST',
     json: { force },
+    signal,
   });
 }
 
