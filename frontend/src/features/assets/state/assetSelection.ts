@@ -160,20 +160,41 @@ export function setServerSelection(
   };
 }
 
+function canApplyServerSelectionPage(
+  state: AssetSelectionState,
+  page: AssetPageSelection,
+): boolean {
+  if (state.selectionId !== null && state.selectionId !== page.id) return false;
+  return state.selectionRevision === null || page.revision >= state.selectionRevision;
+}
+
+export function canMergeServerSelectionPages(
+  state: AssetSelectionState,
+  pages: Array<AssetPageSelection | null | undefined>,
+): boolean {
+  const available = pages.filter((page): page is AssetPageSelection => page !== null && page !== undefined);
+  if (available.length === 0) return true;
+  const first = available[0];
+  if (!canApplyServerSelectionPage(state, first)) return false;
+  return available.every((page) => (
+    page.id === first.id
+    && page.revision === first.revision
+    && canApplyServerSelectionPage(state, page)
+  ));
+}
+
 export function mergeServerSelectionPages(
   state: AssetSelectionState,
   pages: Array<AssetPageSelection | null | undefined>,
 ): AssetSelectionState {
   const available = pages.filter((page): page is AssetPageSelection => page !== null && page !== undefined);
-  if (available.length === 0) return state;
-  const latest = available.reduce((current, page) => (
-    page.revision >= current.revision ? page : current
-  ));
+  if (available.length === 0 || !canMergeServerSelectionPages(state, available)) return state;
+  const snapshot = available[0];
   return setServerSelection(
     state,
-    latest.id,
-    latest.revision,
-    latest.selected_count,
+    snapshot.id,
+    snapshot.revision,
+    snapshot.selected_count,
     [...new Set(available.flatMap((page) => page.selected_ids))],
   );
 }
@@ -182,7 +203,7 @@ export function mergeServerSelectionPage(
   state: AssetSelectionState,
   page: AssetPageSelection,
 ): AssetSelectionState {
-  if (state.selectionId !== null && state.selectionId !== page.id) return state;
+  if (!canApplyServerSelectionPage(state, page)) return state;
   return setServerSelection(
     state,
     page.id,
@@ -198,6 +219,10 @@ export function patchServerSelectionMembership(
   membership: SelectionSetMembershipResponse,
 ): AssetSelectionState {
   if (state.selectionId !== membership.selection.id) return state;
+  if (
+    state.selectionRevision !== null
+    && membership.selection.revision < state.selectionRevision
+  ) return state;
   const selectedIds = new Set(state.selectedIds);
   requestedAssetIds.forEach((assetId) => selectedIds.delete(assetId));
   membership.selected_ids.forEach((assetId) => selectedIds.add(assetId));
