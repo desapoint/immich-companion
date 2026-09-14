@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createRelation, deleteRelations, getRelations, updateRelation } from './relationsApi';
+import { createRelation, deleteRelations, getRelations, getTagOptions, updateRelation } from './relationsApi';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -35,6 +35,43 @@ describe('relation management API', () => {
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/albums/manage?page=2&page_size=25&sort=asset_count&direction=desc&search=Family');
     expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+  });
+
+  it('loads tag parent choices from the live paginated management catalog', async () => {
+    const fetcher = vi.fn<typeof fetch>(async (input) => {
+      const url = String(input);
+      const secondPage = url.includes('page=2');
+      return new Response(JSON.stringify(secondPage ? {
+        items: [{ id: 'other', name: 'Other', asset_count: 0 }],
+        total: 3,
+        page: 2,
+        page_size: 200,
+        pages: 2,
+      } : {
+        items: [{
+          id: 'root',
+          name: 'People',
+          asset_count: 0,
+          children: [{ id: 'child', name: 'Family', parent_id: 'root', asset_count: 0 }],
+        }],
+        total: 3,
+        page: 1,
+        page_size: 200,
+        pages: 2,
+      }), { headers: { 'content-type': 'application/json' } });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    const controller = new AbortController();
+
+    await expect(getTagOptions(controller.signal)).resolves.toEqual([
+      { id: 'root', name: 'People' },
+      { id: 'child', name: 'People / Family' },
+      { id: 'other', name: 'Other' },
+    ]);
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/tags/manage?page=1&page_size=200&sort=name&direction=asc');
+    expect(String(fetcher.mock.calls[1]?.[0])).toBe('/api/tags/manage?page=2&page_size=200&sort=name&direction=asc');
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(fetcher.mock.calls[1]?.[1]?.signal).toBe(controller.signal);
   });
 
   it('uses API-only create, edit, and relation-only batch delete contracts', async () => {
