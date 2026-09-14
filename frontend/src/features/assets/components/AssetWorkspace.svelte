@@ -66,7 +66,7 @@
   import { CoalescedPoller } from '../state/coalescedPoller';
   import { LatestRequest, isAbortError, requestErrorMessage } from '../state/latestRequest';
   import { SelectionOwnership } from '../state/selectionOwnership';
-  import { isTaskTerminal, shouldApplyTaskStatus } from '../state/taskStatus';
+  import { isTaskTerminal, isTaskTrackedInFlight, shouldApplyTaskStatus } from '../state/taskStatus';
   import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
@@ -869,9 +869,9 @@
         selectionSyncError = requestErrorMessage(requestError, 'Selected asset sync failed.');
       }
     } finally {
-      selectionSyncing = Boolean(
-        (selectionTask && !isTaskTerminal(selectionTask.status))
-        || localStorage.getItem(selectionSyncTaskStorageKey),
+      selectionSyncing = isTaskTrackedInFlight(
+        selectionTask,
+        localStorage.getItem(selectionSyncTaskStorageKey),
       );
     }
   }
@@ -1338,7 +1338,9 @@
         actionError = requestErrorMessage(requestError, 'Stack action execution failed.');
       }
     } finally {
-      if (!actionTask || isTaskTerminal(actionTask.status)) actionBusy = false;
+      if (!isTaskTrackedInFlight(actionTask, localStorage.getItem(actionTaskStorageKey))) {
+        actionBusy = false;
+      }
     }
   }
 
@@ -1436,7 +1438,10 @@
         actionError = requestErrorMessage(requestError, 'Relation action failed.');
       }
     } finally {
-      if (context !== 'selection' || !actionTask || isTaskTerminal(actionTask.status)) actionBusy = false;
+      if (
+        context !== 'selection'
+        || !isTaskTrackedInFlight(actionTask, localStorage.getItem(actionTaskStorageKey))
+      ) actionBusy = false;
     }
   }
 
@@ -1531,7 +1536,10 @@
         actionError = requestErrorMessage(requestError, 'Action execution failed.');
       }
     } finally {
-      if (confirmedContext !== 'selection' || !actionTask || isTaskTerminal(actionTask.status)) {
+      if (
+        confirmedContext !== 'selection'
+        || !isTaskTrackedInFlight(actionTask, localStorage.getItem(actionTaskStorageKey))
+      ) {
         actionBusy = false;
       }
     }
