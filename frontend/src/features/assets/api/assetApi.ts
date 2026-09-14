@@ -26,7 +26,7 @@ import type {
   StackResolution,
 } from '../types/assets';
 import type { MediaPreviewItem } from '../../../lib/types/media';
-import { requestJson, requestVoid } from '../../shared/api/http';
+import { ApiError, requestJson, requestVoid } from '../../shared/api/http';
 import { createDefaultAssetSort } from '../state/assetSort';
 import { serializeSearchGroup } from '../state/assetViewModel';
 import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
@@ -42,6 +42,13 @@ async function settleSelection(selectionId: string | null | undefined, signal?: 
   if (!selectionId) return;
   await selectionMutationQueue.waitForIdle(selectionId);
   throwIfAborted(signal);
+}
+
+export function isAssetSelectionUnavailableError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  const detail = (error.detail ?? error.message).toLowerCase();
+  return detail.includes('selection set')
+    && (detail.includes('expired') || detail.includes('not found'));
 }
 
 export function openTaskStream(
