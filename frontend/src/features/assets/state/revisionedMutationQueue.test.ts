@@ -66,10 +66,12 @@ describe('RevisionedMutationQueue', () => {
       revision: revision + 1,
       selected_count: 2,
     }));
+    const firstExpectation = expect(first).rejects.toThrow('Selection set changed');
+    const secondExpectation = expect(second).rejects.toThrow('Selection set changed');
 
     rejectFirst(new Error('Selection set changed; reload its membership'));
 
-    await expect(first).rejects.toThrow('Selection set changed');
-    await expect(second).rejects.toThrow('Selection set changed');
+    await firstExpectation;
+    await secondExpectation;
   });
 });
