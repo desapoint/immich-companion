@@ -7,6 +7,9 @@ import {
   createAssetSelectionState,
   invertCurrentPage,
   isAssetSelected,
+  mergeServerSelectionPage,
+  mergeServerSelectionPages,
+  patchServerSelectionMembership,
   selectAllMatching,
   selectCurrentPage,
   selectedAssetCount,
@@ -77,5 +80,46 @@ describe('asset selection', () => {
       ids: ['visible-1', 'visible-2'],
       excluded_ids: [],
     });
+  });
+
+  it('merges visible membership from search pages without a separate membership request', () => {
+    const state = mergeServerSelectionPages(createAssetSelectionState(), [
+      { id: 'selection-1', revision: 4, selected_count: 8, selected_ids: ['one', 'two'] },
+      { id: 'selection-1', revision: 4, selected_count: 8, selected_ids: ['three'] },
+    ]);
+    const appended = mergeServerSelectionPage(state, {
+      id: 'selection-1',
+      revision: 5,
+      selected_count: 9,
+      selected_ids: ['four'],
+    });
+
+    expect([...appended.selectedIds]).toEqual(['one', 'two', 'three', 'four']);
+    expect(appended.selectionRevision).toBe(5);
+    expect(appended.serverSelectedCount).toBe(9);
+  });
+
+  it('patches only requested visible membership during reconciliation', () => {
+    const state = setServerSelection(
+      createAssetSelectionState(),
+      'selection-1',
+      4,
+      10,
+      ['one', 'two', 'three'],
+    );
+    const patched = patchServerSelectionMembership(state, ['two', 'four'], {
+      selection: {
+        id: 'selection-1',
+        revision: 5,
+        selected_count: 9,
+        status: 'active',
+        expires_at: '2026-09-14T20:00:00Z',
+      },
+      selected_ids: ['four'],
+    });
+
+    expect([...patched.selectedIds]).toEqual(['one', 'three', 'four']);
+    expect(patched.selectionRevision).toBe(5);
+    expect(patched.serverSelectedCount).toBe(9);
   });
 });
