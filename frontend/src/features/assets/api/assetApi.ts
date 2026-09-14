@@ -30,6 +30,9 @@ import { requestJson, requestVoid } from '../../shared/api/http';
 import { createDefaultAssetSort } from '../state/assetSort';
 import { serializeSearchGroup } from '../state/assetViewModel';
 import { DEFAULT_ASSET_PAGE_SIZE } from '../state/assetPagination';
+import { RevisionedMutationQueue } from '../state/revisionedMutationQueue';
+
+const selectionMutationQueue = new RevisionedMutationQueue<SelectionSetView>();
 
 export function openTaskStream(
   taskId: string,
@@ -240,10 +243,12 @@ export function updateAssetSelectionMembers(
   selected: boolean,
   revision: number,
 ): Promise<SelectionSetView> {
-  return requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/members`, {
-    method: 'POST',
-    json: { asset_ids: assetIds, selected, revision },
-  });
+  return selectionMutationQueue.enqueue(selectionId, revision, (effectiveRevision) => (
+    requestJson(`/api/assets/selections/${encodeURIComponent(selectionId)}/members`, {
+      method: 'POST',
+      json: { asset_ids: assetIds, selected, revision: effectiveRevision },
+    })
+  ));
 }
 
 export function getAssetSelectionMembership(
@@ -262,6 +267,7 @@ export function planAssetAction(
   relationIds: string[] = [],
   stackResolution?: StackResolution,
   stackPrimaryAssetId?: string,
+  signal?: AbortSignal,
 ): Promise<AssetActionPlan> {
   return requestJson('/api/assets/actions/plan', {
     method: 'POST',
@@ -272,6 +278,7 @@ export function planAssetAction(
       ...(stackResolution ? { stack_resolution: stackResolution } : {}),
       ...(stackPrimaryAssetId ? { stack_primary_asset_id: stackPrimaryAssetId } : {}),
     },
+    signal,
   });
 }
 
