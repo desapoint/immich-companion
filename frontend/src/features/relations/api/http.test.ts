@@ -6,7 +6,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe('shared HTTP client', () => {
+describe('relation HTTP client', () => {
   it('adds JSON headers and serializes json bodies', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: '1' }), {
       status: 200,
@@ -44,7 +44,13 @@ describe('shared HTTP client', () => {
     });
   });
 
-  it('supports empty successful responses and preserves abort signals', async () => {
+  it('supports empty successful JSON responses', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+
+    await expect(requestJson<void>('/api/example')).resolves.toBeUndefined();
+  });
+
+  it('preserves abort signals for void requests', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
     vi.stubGlobal('fetch', fetchMock);
     const controller = new AbortController();

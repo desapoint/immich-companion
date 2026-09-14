@@ -73,6 +73,7 @@ export async function requestJson<T>(
   init: ApiRequestInit = {},
 ): Promise<T> {
   const response = await request(input, init);
+  if (response.status === 204) return undefined as T;
   return await response.json() as T;
 }
 
