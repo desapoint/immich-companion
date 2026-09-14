@@ -58,6 +58,15 @@ export class CoalescedPoller {
         || !this.#running
         || generation !== this.#generation
       ) return;
+
+      // Another forced caller may already have started the shared follow-up
+      // while this caller was waiting for the first request. Reuse it instead
+      // of creating a second concurrent poll.
+      const followUp = this.#request;
+      if (followUp) {
+        await followUp;
+        return;
+      }
     }
 
     this.#clearTimer();
