@@ -57,7 +57,8 @@
   } from '../state/assetInfiniteWindow';
   import { BoundedCache } from '../state/boundedCache';
   import { CoalescedPoller } from '../state/coalescedPoller';
-  import { LatestRequest, requestErrorMessage } from '../state/latestRequest';
+  import { LatestRequest, isAbortError, requestErrorMessage } from '../state/latestRequest';
+  import { isTaskTerminal, shouldApplyTaskStatus } from '../state/taskStatus';
   import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
@@ -166,6 +167,7 @@
   const detailRequest = new LatestRequest();
   const selectionRequest = new LatestRequest();
   const viewerActionRequest = new LatestRequest();
+  const actionPlanRequest = new LatestRequest();
   const selectionTaskPoller = new CoalescedPoller(pollSelectionTask, () => taskFallbackPollMs);
   const actionTaskPoller = new CoalescedPoller(pollActionTask, () => taskFallbackPollMs);
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
@@ -262,6 +264,20 @@
       ?? `Asset ${stackPrimaryAssetId.slice(0, 8)}`;
   });
 
+  function invalidateActionPlan(): void {
+    const wasPlanning = actionPlanRequest.active;
+    actionPlanRequest.abort();
+    actionPlan = null;
+    actionTargetIds = [];
+    if (wasPlanning) actionBusy = false;
+  }
+
+  function invalidateViewerActionPlan(): void {
+    if (actionContext !== 'viewer') return;
+    invalidateActionPlan();
+    actionError = null;
+  }
+
   function reconcileStackPrimary(changedAssetIds: string[] = []): void {
     if (
       stackPrimaryAssetId
@@ -278,7 +294,7 @@
   function chooseStackPrimary(assetId: string): void {
     if (!isAssetSelected(selection, assetId)) return;
     stackPrimaryAssetId = assetId;
-    actionPlan = null;
+    invalidateActionPlan();
   }
 
   async function loadRelationOptions(): Promise<void> {
@@ -615,6 +631,7 @@
           value,
           selection.selectionRevision,
         );
+        if (selection.selectionId !== selectionId) return;
         selection = {
           ...selection,
           selectionRevision: updated.revision,
@@ -622,6 +639,7 @@
         };
       }
     } catch (requestError) {
+      if (selection.selectionId !== selectionId) return;
       selectionSyncError = requestErrorMessage(requestError, 'Selection update failed.');
       await refreshServerPageMembership();
     }
@@ -717,11 +735,8 @@
     }
   }
 
-  function isTaskTerminal(status: AssetTaskStatus['status']): boolean {
-    return status === 'completed' || status === 'failed' || status === 'cancelled';
-  }
-
   async function applySelectionTaskStatus(next: AssetTaskStatus): Promise<void> {
+    if (!shouldApplyTaskStatus(selectionTask, next)) return;
     const terminal = isTaskTerminal(next.status);
     const terminalAlreadyHandled = terminal
       && selectionTask?.id === next.id
@@ -757,15 +772,16 @@
     await Promise.all([loadRelationOptions(), refreshAssetsAfterMutation()]);
   }
 
-  async function pollSelectionTask(): Promise<void> {
+  async function pollSelectionTask(signal: AbortSignal): Promise<void> {
     const taskId = selectionTask?.id ?? localStorage.getItem('immich-companion:selected-sync-task');
     if (!taskId) {
       stopSelectionTaskPolling();
       return;
     }
     try {
-      await applySelectionTaskStatus(await getTaskStatus(taskId));
+      await applySelectionTaskStatus(await getTaskStatus(taskId, signal));
     } catch (requestError) {
+      if (signal.aborted || isAbortError(requestError)) return;
       selectionSyncError = requestErrorMessage(
         requestError,
         'Selected asset sync status is unavailable.',
@@ -777,7 +793,7 @@
     selection = setExplicitAssetIds(ids);
     selectionTaskErrorOpen = false;
     selectionSyncError = null;
-    actionPlan = null;
+    invalidateActionPlan();
     void refreshSelection();
   }
 
@@ -835,18 +851,21 @@
   }
 
   function openViewer(index: number): void {
+    invalidateViewerActionPlan();
     viewerSelectedAsset = null;
     viewerIndex = index;
     void loadDetail(index);
   }
 
   function navigateViewer(index: number): void {
+    invalidateViewerActionPlan();
     viewerSelectedAsset = null;
     viewerIndex = index;
     void loadDetail(index);
   }
 
   async function selectViewerComparisonAsset(assetId: string): Promise<void> {
+    invalidateViewerActionPlan();
     const resultIndex = results?.items.findIndex((asset) => asset.id === assetId) ?? -1;
     if (resultIndex >= 0) {
       navigateViewer(resultIndex);
@@ -881,7 +900,7 @@
   function toggleSelection(assetId: string): void {
     selection = toggleAssetSelection(selection, assetId);
     reconcileStackPrimary([assetId]);
-    actionPlan = null;
+    invalidateActionPlan();
     void persistServerPageMembership([assetId]);
     void refreshSelection();
   }
@@ -907,7 +926,7 @@
       : [asset.id];
     reconcileStackPrimary(affectedIds);
     selectionAnchorIndex = index;
-    actionPlan = null;
+    invalidateActionPlan();
     void persistServerPageMembership(items.map((item) => item.id));
     void refreshSelection();
   }
@@ -931,7 +950,7 @@
       dragSelectionValue,
     );
     reconcileStackPrimary([asset.id]);
-    actionPlan = null;
+    invalidateActionPlan();
   }
 
   function continueDragSelection(index: number, event: PointerEvent): void {
@@ -951,7 +970,7 @@
     );
     reconcileStackPrimary(ids.slice(Math.min(dragLastIndex, index), Math.max(dragLastIndex, index) + 1));
     dragLastIndex = index;
-    actionPlan = null;
+    invalidateActionPlan();
   }
 
   function finishDragSelection(): void {
@@ -967,7 +986,7 @@
     selection = createAssetSelectionState();
     stackPrimaryAssetId = null;
     selectionResolution = null;
-    actionPlan = null;
+    invalidateActionPlan();
     selectionRequest.abort();
     selectionLoading = false;
     selectionAnchorIndex = null;
@@ -981,7 +1000,7 @@
       results?.items.map((asset) => asset.id) ?? [],
     );
     reconcileStackPrimary();
-    actionPlan = null;
+    invalidateActionPlan();
     void persistServerPageMembership(results?.items.map((asset) => asset.id) ?? []);
     void refreshSelection();
   }
@@ -1000,7 +1019,7 @@
         results?.items.map((asset) => asset.id) ?? [],
       );
       stackPrimaryAssetId = results?.items[0]?.id ?? null;
-      actionPlan = null;
+      invalidateActionPlan();
       await refreshSelection();
     } catch (requestError) {
       actionError = requestErrorMessage(requestError, 'Could not select all matching assets.');
@@ -1015,7 +1034,7 @@
       results?.items.map((asset) => asset.id) ?? [],
     );
     reconcileStackPrimary(results?.items.map((asset) => asset.id) ?? []);
-    actionPlan = null;
+    invalidateActionPlan();
     void persistServerPageMembership(results?.items.map((asset) => asset.id));
     void refreshSelection();
   }
@@ -1050,10 +1069,10 @@
     relationIds: string[] = [],
     stackResolution?: StackResolution,
   ): Promise<void> {
+    invalidateActionPlan();
     actionBusy = true;
     actionError = null;
     actionMessage = null;
-    actionPlan = null;
     actionContext = context;
     actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
     const primaryAssetId = action === 'stack'
@@ -1064,19 +1083,22 @@
       actionBusy = false;
       return;
     }
-    try {
-      actionPlan = await planAssetAction(
-        request,
-        action,
-        relationIds,
-        stackResolution,
-        primaryAssetId ?? undefined,
-      );
-    } catch (requestError) {
-      actionError = requestErrorMessage(requestError, 'Action planning failed.');
-    } finally {
-      actionBusy = false;
+
+    const result = await actionPlanRequest.run((signal) => planAssetAction(
+      request,
+      action,
+      relationIds,
+      stackResolution,
+      primaryAssetId ?? undefined,
+      signal,
+    ));
+    if (!actionPlanRequest.isCurrent(result.version)) return;
+
+    if (result.status === 'success') actionPlan = result.value;
+    else if (result.status === 'error') {
+      actionError = requestErrorMessage(result.error, 'Action planning failed.');
     }
+    actionBusy = false;
   }
 
   function previewSelectionAction(
@@ -1187,10 +1209,10 @@
     action: Extract<AssetActionIntent, 'add_album' | 'add_tag' | 'remove_album' | 'remove_tag'>,
     relationIds: string[],
   ): Promise<void> {
+    invalidateActionPlan();
     actionBusy = true;
     actionError = null;
     actionMessage = null;
-    actionPlan = null;
     actionContext = context;
     actionTargetIds = request.mode === 'explicit' ? [...request.ids] : [];
     try {
@@ -1272,11 +1294,7 @@
     viewerActionError = null;
     viewerSyncing = false;
     viewerSyncError = null;
-    if (actionContext === 'viewer') {
-      actionPlan = null;
-      actionError = null;
-      actionTargetIds = [];
-    }
+    if (actionContext === 'viewer') invalidateViewerActionPlan();
   }
 
   async function confirmAction(): Promise<void> {
@@ -1304,6 +1322,7 @@
   }
 
   async function applyActionTaskStatus(next: AssetTaskStatus): Promise<void> {
+    if (!shouldApplyTaskStatus(actionTask, next)) return;
     const terminal = isTaskTerminal(next.status);
     const terminalAlreadyHandled = terminal
       && actionTask?.id === next.id
@@ -1336,15 +1355,16 @@
     clearSelection();
   }
 
-  async function pollActionTask(): Promise<void> {
+  async function pollActionTask(signal: AbortSignal): Promise<void> {
     const taskId = actionTask?.id ?? localStorage.getItem('immich-companion:asset-action-task');
     if (!taskId) {
       stopActionTaskPolling();
       return;
     }
     try {
-      await applyActionTaskStatus(await getTaskStatus(taskId));
+      await applyActionTaskStatus(await getTaskStatus(taskId, signal));
     } catch (requestError) {
+      if (signal.aborted || isAbortError(requestError)) return;
       actionError = requestErrorMessage(requestError, 'Action status is unavailable.');
     }
   }
@@ -1398,9 +1418,9 @@
     return null;
   }
 
-  async function refreshSyncStatus(): Promise<void> {
+  async function refreshSyncStatus(signal: AbortSignal): Promise<void> {
     try {
-      const next = await getAssetSyncStatus();
+      const next = await getAssetSyncStatus(signal);
       const nextSuccessId = next.last_success?.id ?? null;
       const nextFailureId = next.last_failure?.id ?? null;
       const failureIsCurrent = next.last_failure !== null
@@ -1440,6 +1460,7 @@
       }
       if (nextFailureId !== null) handledSyncFailureId = nextFailureId;
     } catch (requestError) {
+      if (signal.aborted || isAbortError(requestError)) return;
       if (!syncStatusInitialized) {
         syncMessage = requestErrorMessage(requestError, 'Sync status is unavailable.');
       }
@@ -1518,6 +1539,7 @@
     detailRequest.abort();
     selectionRequest.abort();
     viewerActionRequest.abort();
+    actionPlanRequest.abort();
     detailCache.clear();
   });
 </script>
@@ -1565,7 +1587,7 @@
       onplan={previewSelectionAction}
       onrelationconfirm={confirmSelectionRelationAction}
       onconfirm={confirmAction}
-      oncancel={() => (actionPlan = null)}
+      oncancel={invalidateActionPlan}
       onstackconfirm={confirmStackAction}
     />
   {/if}
@@ -1722,7 +1744,7 @@
     onsetprimary={(assetId) => previewViewerAction(assetId, 'set_stack_primary')}
     onrelationconfirm={confirmViewerRelationAction}
     onconfirmaction={confirmAction}
-    oncancelaction={() => (actionPlan = null)}
+    oncancelaction={invalidateActionPlan}
     onsync={(assetId) => void syncViewerAsset(assetId)}
     onclose={closeViewer}
   />
