@@ -13,16 +13,15 @@ from io import BytesIO
 from time import perf_counter
 from typing import BinaryIO
 
-import rawpy
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
 from companion.image_decode import (
     MAX_DECODED_PIXELS,
     SUPPORTED_FORMATS,
     ImageDecodeResult,
-    decode_image,
 )
 from companion.integrity import DetectedFormat
+from companion.raw_isolation import decode_raw_isolated
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
 SIMILARITY_FEATURE_VERSION = 2
@@ -291,49 +290,38 @@ def _build_feature(
 
 def _extract_raw_visual_features(
     stream: BinaryIO, *, include_pixel_hash: bool = True
-) -> VisualFeatureResult | None:
-    """Render a bounded DNG/RAW stream through LibRaw for similarity evidence."""
+) -> tuple[ImageDecodeResult, VisualFeatureResult | None]:
+    """Render RAW/DNG through a fault-isolated LibRaw worker."""
 
+    result = decode_raw_isolated(
+        stream,
+        max_decoded_pixels=MAX_DECODED_PIXELS,
+        extract_features=True,
+        include_pixel_hash=include_pixel_hash,
+    )
+    decoded = ImageDecodeResult(
+        supported=True,
+        valid=result.valid,
+        width=result.width,
+        height=result.height,
+        issue=result.issue,
+    )
+    if result.feature is None:
+        return decoded, None
     try:
-        stream.seek(0)
-        with rawpy.imread(stream) as raw:
-            width = raw.sizes.width
-            height = raw.sizes.height
-            if width * height > MAX_DECODED_PIXELS:
-                logger.warning(
-                    "RAW similarity feature unavailable: decoded dimensions %sx%s exceed limit",
-                    width,
-                    height,
-                )
-                return None
-            pixels = raw.postprocess(
-                use_camera_wb=True,
-                no_auto_bright=True,
-                output_bps=8,
-            )
-        image = Image.fromarray(pixels, "RGB")
-        return _build_feature(
-            image,
-            bit_depth=8,
-            channel_count=3,
-            has_alpha=False,
-            color_space="RAW-sRGB",
-            orientation=None,
-            icc_profile_present=False,
-            has_exif=False,
-            has_capture_time=False,
-            has_camera_info=False,
-            has_gps=False,
-            has_orientation_metadata=False,
-            include_pixel_hash=include_pixel_hash,
-        )
-    except (rawpy.LibRawError, OSError, ValueError) as error:
+        return decoded, VisualFeatureResult(**result.feature)
+    except TypeError as error:
         logger.warning(
-            "RAW similarity feature extraction failed: error_type=%s reason=%s",
-            type(error).__name__,
+            "RAW similarity worker returned invalid feature evidence: reason=%s",
             error,
         )
-        return None
+        return ImageDecodeResult(
+            supported=True,
+            valid=None,
+            width=result.width,
+            height=result.height,
+            issue="image_decode_raw_worker_failed",
+        ), None
 
 
 def _feature_from_loaded_image(
@@ -424,18 +412,14 @@ def decode_and_extract_features(
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         if detected_format == "tiff":
             raw_started = perf_counter()
-            feature = _extract_raw_visual_features(
+            decoded, feature = _extract_raw_visual_features(
                 stream, include_pixel_hash=include_pixel_hash
             )
-            if feature is not None:
-                if timings is not None:
-                    timings["decode_milliseconds"] = round(
-                        (perf_counter() - raw_started) * 1000
-                    )
-                return ImageDecodeResult(
-                    supported=True, valid=True, width=feature.width, height=feature.height
-                ), feature
-            return decode_image(stream, detected_format), None
+            if timings is not None:
+                timings["decode_milliseconds"] = round(
+                    (perf_counter() - raw_started) * 1000
+                )
+            return decoded, feature
         logger.warning(
             "Similarity feature extraction failed: format=%s error_type=%s reason=%s",
             detected_format,
