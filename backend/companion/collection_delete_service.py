@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
+from time import perf_counter
 from uuid import UUID
 
 from companion.action_repository import ActionRepository
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichTag
 from companion.models import ActionPlanRecord
 from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CollectionDeletePlanError(ValueError):
@@ -92,6 +96,9 @@ class CollectionDeleteService:
         if record is None:
             raise CollectionDeletePlanBusyError("Delete plan is already executing.")
 
+        started = perf_counter()
+        immich_seconds = 0.0
+        verification_seconds = 0.0
         selection_id = UUID(record.relation_work["selection_id"])
         results = {item["id"]: item for item in (record.result or {}).get("items", [])}
         try:
@@ -125,6 +132,7 @@ class CollectionDeleteService:
                 raw_id = work_ids[index]
                 identifier = UUID(raw_id)
                 try:
+                    immich_started = perf_counter()
                     if kind == "album":
                         await self._immich.delete_album(identifier)
                     else:
@@ -141,6 +149,8 @@ class CollectionDeleteService:
                     )
                 else:
                     item = {"id": raw_id, "status": "completed", "reason": None}
+                finally:
+                    immich_seconds += perf_counter() - immich_started
                 await self._actions.record_collection_delete_item_result(
                     plan_id, item, next_index=index + 1
                 )
@@ -150,8 +160,15 @@ class CollectionDeleteService:
                 await self._actions.finish_collection_delete_plan(plan_id, "partial")
                 refreshed = await self._actions.get_plan(plan_id)
                 assert refreshed is not None
+                logger.info(
+                    "Collection delete timing: kind=%s items=%s status=partial "
+                    "immich_seconds=%.3f verification_seconds=%.3f total_seconds=%.3f",
+                    kind, stop - work_index, immich_seconds, verification_seconds,
+                    perf_counter() - started,
+                )
                 return refreshed
 
+            verification_started = perf_counter()
             catalog = (
                 await self._immich.list_album_catalog()
                 if kind == "album"
@@ -168,6 +185,7 @@ class CollectionDeleteService:
                     }
                     await self._actions.record_collection_delete_item_result(plan_id, failed)
                     results[raw_id] = failed
+            verification_seconds = perf_counter() - verification_started
 
             # Reconcile the workspace only after API verification. Replayed calls
             # can safely repeat this removal after a checkpointed crash.
@@ -187,4 +205,10 @@ class CollectionDeleteService:
             raise
         refreshed = await self._actions.get_plan(plan_id)
         assert refreshed is not None
+        logger.info(
+            "Collection delete timing: kind=%s items=%s status=%s "
+            "immich_seconds=%.3f verification_seconds=%.3f total_seconds=%.3f",
+            kind, stop - work_index, refreshed.status, immich_seconds,
+            verification_seconds, perf_counter() - started,
+        )
         return refreshed

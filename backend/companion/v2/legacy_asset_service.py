@@ -863,6 +863,8 @@ class AssetSyncService:
                 ]
             },
             priority=95,
+            lane_key="asset_sync",
+            max_concurrency=1,
             # Do not deduplicate two user mutations against the same relation:
             # the first repair may finish before the second mutation is applied.
         )
@@ -886,6 +888,8 @@ class AssetSyncService:
                 "include_stacks": include_stacks,
             },
             priority=90,
+            lane_key="asset_sync",
+            max_concurrency=1,
             # A later action on the same asset must always trigger a later repair.
         )
         await self._coordinator.start()

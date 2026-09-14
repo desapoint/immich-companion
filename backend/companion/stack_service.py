@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
+from time import perf_counter
 from uuid import UUID
 
 from companion.action_schema import StackConflict, StackResolution
 from companion.asset_repository import AssetRepository
 from companion.asset_service import AssetSyncService
-from companion.immich import ImmichApiClient
+from companion.immich import ImmichApiClient, ImmichStack
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,9 +191,19 @@ class StackService:
     async def execute(self, preparation: StackPreparation) -> bool:
         """Create, repair, and verify one prepared stack through Immich APIs."""
 
+        started = perf_counter()
         await self._immich.create_stack(preparation.asset_ids)
-        await self._repair_targets(preparation.affected_ids)
-        return await self._creation_visible(preparation.primary_asset_id)
+        created = perf_counter()
+        visible, stacks = await self._verified_stack_snapshot(preparation.primary_asset_id)
+        verified = perf_counter()
+        await self._repair_targets(preparation.affected_ids, stacks=stacks)
+        logger.info(
+            "Stack action timing: assets=%s confirmed=%s immich_seconds=%.3f "
+            "verification_seconds=%.3f reconciliation_seconds=%.3f total_seconds=%.3f",
+            len(preparation.affected_ids), visible, created - started,
+            verified - created, perf_counter() - verified, perf_counter() - started,
+        )
+        return visible
 
     async def repair_ids(self, asset_ids: list[UUID]) -> list[UUID]:
         """Snapshot every affected member from Immich's authoritative topology."""
@@ -208,7 +222,18 @@ class StackService:
                 repair_ids.append(asset_id)
         return repair_ids
 
-    async def _repair_targets(self, asset_ids: list[UUID]) -> None:
+    async def _repair_targets(
+        self, asset_ids: list[UUID], *, stacks: list[ImmichStack] | None = None
+    ) -> None:
+        enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
+        snapshot = getattr(self._sync, "apply_stack_snapshot_for_targets", None)
+        if (
+            enqueue is not None
+            and snapshot is not None
+            and await enqueue(asset_ids, include_stacks=True)
+        ):
+            await snapshot(asset_ids, stacks=stacks)
+            return
         repair = getattr(self._sync, "reconcile_targets", None)
         if repair is not None:
             await repair(asset_ids, include_stacks=True)
@@ -216,13 +241,19 @@ class StackService:
             await self._sync.synchronize()
 
     async def _creation_visible(self, primary_asset_id: UUID) -> bool:
+        visible, _ = await self._verified_stack_snapshot(primary_asset_id)
+        return visible
+
+    async def _verified_stack_snapshot(
+        self, primary_asset_id: UUID
+    ) -> tuple[bool, list[ImmichStack]]:
         for attempt in range(3):
             stacks = await self._immich.list_stacks()
             if any(stack.primary_asset_id == primary_asset_id for stack in stacks):
-                return True
+                return True, stacks
             if attempt < 2:
                 await asyncio.sleep(0.2)
-        return False
+        return False, stacks
 
     @staticmethod
     def _require_stackable(asset_ids: list[UUID]) -> None:

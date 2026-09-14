@@ -5,7 +5,7 @@ from uuid import UUID
 
 import pytest
 
-from companion.stack_service import StackSelectionError, StackService
+from companion.stack_service import StackPreparation, StackSelectionError, StackService
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -64,8 +64,40 @@ class FakeSync:
         self.repairs.append((asset_ids, include_stacks))
 
 
+class DeferredSync(FakeSync):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[tuple[list[UUID], bool]] = []
+        self.snapshots: list[list[UUID]] = []
+
+    async def enqueue_asset_repair_during_sync(self, asset_ids, *, include_stacks=False):
+        self.queued.append((asset_ids, include_stacks))
+        return True
+
+    async def apply_stack_snapshot_for_targets(self, asset_ids, stacks=None):
+        assert stacks is not None
+        self.snapshots.append(asset_ids)
+
+
 def service(immich: FakeImmich, sync: FakeSync | None = None) -> StackService:
     return StackService(immich, FakeAssets(), sync or FakeSync())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_created_stack_is_verified_and_published_without_waiting_for_repair(caplog) -> None:
+    immich = FakeImmich()
+    sync = DeferredSync()
+    workflow = service(immich, sync)
+    preparation = StackPreparation([ASSET_ONE, ASSET_TWO], [ASSET_ONE, ASSET_TWO], ASSET_ONE)
+
+    with caplog.at_level("INFO", logger="companion.stack_service"):
+        assert await workflow.execute(preparation) is True
+    assert sync.queued == [([ASSET_ONE, ASSET_TWO], True)]
+    assert sync.snapshots == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.repairs == []
+    assert immich.list_calls == 1
+    assert "verification_seconds=" in caplog.text
+    assert "reconciliation_seconds=" in caplog.text
 
 
 @pytest.mark.asyncio

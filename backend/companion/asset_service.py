@@ -12,7 +12,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
-from companion.immich import ImmichAlbum, ImmichApiError, ImmichTag
+from companion.immich import ImmichAlbum, ImmichApiError, ImmichStack, ImmichTag
 from companion.sync_schema import SyncProgress, SyncRunStatus
 from companion.v2.legacy_asset_service import *  # noqa: F403
 from companion.v2.legacy_asset_service import AssetSyncService as _LegacyAssetSyncService
@@ -44,6 +44,25 @@ class _LegacyPacedCatalogSyncStep(CatalogSyncStep):
 
 class AssetSyncService(_LegacyAssetSyncService):
     """Live V2 staged sync with extracted steps replacing legacy stages incrementally."""
+
+    async def apply_stack_snapshot_for_targets(
+        self, asset_ids: list[UUID], stacks: list[ImmichStack] | None = None
+    ) -> list[ImmichStack]:
+        """Publish current Immich stack topology for one bounded action target set."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if not unique_ids:
+            return stacks or []
+        targets = set(unique_ids)
+        payload_by_asset: dict[UUID, dict[str, object]] = {}
+        current_stacks = stacks if stacks is not None else await self._immich.list_stacks()
+        for stack in current_stacks:
+            payload, member_ids = self._stack_payload(stack)
+            for member_id in member_ids:
+                if member_id in targets:
+                    payload_by_asset[member_id] = payload
+        await self._assets.replace_asset_stack_snapshots(unique_ids, payload_by_asset)
+        return current_stacks
 
     async def album_reconciliation_will_cover(self, album_ids: list[UUID]) -> bool:
         """Return whether the active global sync will still traverse every target album."""

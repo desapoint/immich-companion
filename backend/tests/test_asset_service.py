@@ -59,7 +59,7 @@ async def test_relation_repair_is_queued_behind_active_sync_without_waiting() ->
         (
             "asset_relation_repair",
             {"relations": [{"kind": "tag", "id": str(TAG_ID)}]},
-            {"priority": 95},
+            {"priority": 95, "lane_key": "asset_sync", "max_concurrency": 1},
         )
     ]
     assert coordinator.started is True
@@ -93,10 +93,45 @@ async def test_asset_repair_is_queued_durably_during_active_sync() -> None:
         (
             "asset_repair",
             {"asset_ids": [str(ASSET_ONE)], "include_stacks": False},
-            {"priority": 90},
+            {"priority": 90, "lane_key": "asset_sync", "max_concurrency": 1},
         )
     ]
     assert coordinator.started is True
+
+
+@pytest.mark.asyncio
+async def test_stack_snapshot_updates_only_action_affected_assets() -> None:
+    class Assets:
+        updated: tuple[list[UUID], dict[UUID, dict[str, object]]] | None = None
+
+        async def replace_asset_stack_snapshots(self, ids, payloads):
+            self.updated = (ids, payloads)
+
+    class Immich:
+        calls = 0
+
+        async def list_stacks(self):
+            self.calls += 1
+            return [SimpleNamespace(id=RUN_ID, assets=[SimpleNamespace(id=ASSET_ONE)])]
+
+    assets = Assets()
+    immich = Immich()
+    service = object.__new__(AssetSyncService)
+    service._immich = immich  # type: ignore[assignment]
+    service._assets = assets  # type: ignore[assignment]
+    service._stack_payload = lambda _stack: ({"id": str(RUN_ID)}, [ASSET_ONE])  # type: ignore[method-assign]
+
+    await service.apply_stack_snapshot_for_targets([ASSET_ONE, ASSET_TWO])
+
+    assert assets.updated == (
+        [ASSET_ONE, ASSET_TWO],
+        {ASSET_ONE: {"id": str(RUN_ID)}},
+    )
+    assert immich.calls == 1
+    await service.apply_stack_snapshot_for_targets(
+        [ASSET_ONE], [SimpleNamespace(id=RUN_ID, assets=[SimpleNamespace(id=ASSET_ONE)])]
+    )
+    assert immich.calls == 1
 
 
 def asset(asset_id: UUID, filename: str) -> ImmichAsset:

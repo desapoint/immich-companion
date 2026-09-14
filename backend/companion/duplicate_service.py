@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from time import perf_counter
 from typing import Any
 from uuid import UUID
 
@@ -2002,6 +2003,7 @@ class CrossSourceDuplicateService:
         return CrossSourceDuplicateTaskStart(task_id=task.id)
 
     async def execute_plan(self, context: TaskContext, plan_id: UUID) -> TaskResult:
+        action_started = perf_counter()
         existing = await self._actions.get_plan(plan_id)
         if existing is None or existing.action != "resolve_duplicates":
             raise PermanentTaskError("Duplicate resolution plan was not found")
@@ -2114,6 +2116,7 @@ class CrossSourceDuplicateService:
                 )
                 preflight_ready.append(planned)
         pending_resolution = preflight_ready
+        preflight_done = perf_counter()
 
         if existing.status == "planned":
             claimed = await self._actions.claim_plan(plan_id)
@@ -2232,6 +2235,7 @@ class CrossSourceDuplicateService:
             else:
                 metadata_ready.append(planned)
         pending_resolution = metadata_ready
+        metadata_done = perf_counter()
 
         resolution_batches = [
             pending_resolution[offset : offset + batch_size]
@@ -2328,6 +2332,7 @@ class CrossSourceDuplicateService:
 
         if pending_resolution:
             await checkpoint("Verified resolved Immich duplicate groups.")
+        resolution_done = perf_counter()
 
         stack_groups = [
             item for item in raw_groups if execution_state(item) == "follow_up_pending"
@@ -2511,6 +2516,15 @@ class CrossSourceDuplicateService:
             "verified": not failed_ids,
         }
         await self._actions.finish_plan(plan_id, status, result)
+        logger.info(
+            "Duplicate action timing: groups=%s resolved=%s failed=%s "
+            "preflight_seconds=%.3f metadata_seconds=%.3f "
+            "immich_resolution_seconds=%.3f follow_up_seconds=%.3f total_seconds=%.3f",
+            len(raw_groups), len(resolved_ids), len(failed_ids),
+            preflight_done - action_started, metadata_done - preflight_done,
+            resolution_done - metadata_done, perf_counter() - resolution_done,
+            perf_counter() - action_started,
+        )
         return TaskResult(
             status=status,
             summary=result,

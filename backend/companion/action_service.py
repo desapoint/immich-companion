@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -31,6 +32,8 @@ from companion.stack_service import StackPreparation, StackSelectionError, Stack
 from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import PermanentTaskError, RetryableTaskError, TaskContext
 from companion.task_schema import TaskResult
+
+logger = logging.getLogger(__name__)
 
 
 class ActionPlanNotFoundError(RuntimeError):
@@ -365,6 +368,8 @@ class AssetActionService:
     ) -> AssetActionResult:
         """Apply and verify relation changes, deferring repair during a global sync."""
 
+        action_started = perf_counter()
+        mutation_seconds = 0.0
         initial: dict[UUID, tuple[list[UUID], list[UUID]]] = {}
         api_failed: dict[UUID, list[UUID]] = {}
         successful_relations: list[UUID] = []
@@ -386,6 +391,7 @@ class AssetActionService:
                 for index, batch in enumerate(action_batches):
                     batch_started = perf_counter()
                     await self._apply(operation, batch, relation_id)
+                    mutation_seconds += perf_counter() - batch_started
                     relation_processed += len(batch)
                     if progress is not None:
                         await progress(
@@ -399,6 +405,7 @@ class AssetActionService:
             except Exception:
                 api_failed[relation_id] = applicable
 
+        reconciliation_started = perf_counter()
         has_successful_changes = any(
             initial[relation_id][0] for relation_id in successful_relations
         )
@@ -467,6 +474,8 @@ class AssetActionService:
                 )
                 raise
 
+        reconciliation_seconds = perf_counter() - reconciliation_started
+        verification_started = perf_counter()
         relation_results: list[AssetActionRelationResult] = []
         for relation_id, (applicable, skipped) in initial.items():
             if relation_id in api_failed:
@@ -493,6 +502,14 @@ class AssetActionService:
             record.id,
             result.status,
             result.model_dump(mode="json"),
+        )
+        logger.info(
+            "Asset relation action timing: operation=%s targets=%s relations=%s "
+            "mutation_seconds=%.3f reconciliation_seconds=%.3f "
+            "verification_seconds=%.3f total_seconds=%.3f",
+            operation, len(target_ids), len(record.relation_ids), mutation_seconds,
+            reconciliation_seconds, perf_counter() - verification_started,
+            perf_counter() - action_started,
         )
         return result
 
@@ -630,6 +647,12 @@ class AssetActionService:
         applicable_ids = [identifier for identifier in target_ids if identifier in applicable_set]
         skipped_count = len(target_ids) - len(applicable_ids)
 
+        action_started = perf_counter()
+        mutation_seconds = 0.0
+        reconciliation_seconds = 0.0
+        verification_seconds = 0.0
+        deferred_repair = False
+        post_action_stacks = None
         try:
             repair_ids = applicable_ids
             if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
@@ -645,6 +668,7 @@ class AssetActionService:
                     created = await self._stacks.execute(stack_preparation)
                 else:
                     await self._apply(operation, batch, relation_id)
+                mutation_seconds += perf_counter() - batch_started
                 if operation == "trash":
                     # Immich's successful response is authoritative. Trashed
                     # assets belong to the live Restore API, not the local index.
@@ -659,13 +683,20 @@ class AssetActionService:
                 if index + 1 < len(action_batches):
                     await self._pace_large_action_batch(batch_started, enabled=throttle)
             if applicable_ids and operation not in {"trash", "stack"}:
-                deferred_repair = False
+                reconciliation_started = perf_counter()
                 if operation in {"favorite", "unfavorite", "archive", "unarchive"}:
                     enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
                     if enqueue is not None:
                         deferred_repair = await enqueue(repair_ids)
                     if deferred_repair:
                         await self._assets.apply_asset_action_event(operation, applicable_ids)
+                elif operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
+                    enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
+                    snapshot = getattr(self._sync, "apply_stack_snapshot_for_targets", None)
+                    if enqueue is not None and snapshot is not None:
+                        deferred_repair = await enqueue(repair_ids, include_stacks=True)
+                        if deferred_repair:
+                            post_action_stacks = await snapshot(repair_ids)
                 if not deferred_repair:
                     await self._repair_targets(
                         repair_ids,
@@ -676,6 +707,8 @@ class AssetActionService:
                             "remove_stack",
                         },
                     )
+                reconciliation_seconds += perf_counter() - reconciliation_started
+            verification_started = perf_counter()
             if operation == "stack":
                 # Stacking is a positive state change. The generic applicability
                 # query intentionally returns every asset for this operation, so
@@ -684,7 +717,9 @@ class AssetActionService:
                 # create request through the requested primary asset instead.
                 remaining = set() if created else set(applicable_ids)
             elif operation == "set_stack_primary":
-                current_stacks = await self._immich.list_stacks()
+                current_stacks = post_action_stacks
+                if current_stacks is None:
+                    current_stacks = await self._immich.list_stacks()
                 primary_ids = {stack.primary_asset_id for stack in current_stacks}
                 remaining = {
                     identifier for identifier in applicable_ids if identifier not in primary_ids
@@ -695,6 +730,7 @@ class AssetActionService:
                     applicable_ids,
                     relation_id,
                 )
+            verification_seconds = perf_counter() - verification_started
         except ImmichApiError as error:
             result_payload = {
                 "operation": operation,
@@ -755,6 +791,14 @@ class AssetActionService:
             claimed.id,
             status,
             result.model_dump(mode="json"),
+        )
+        logger.info(
+            "Asset action timing: operation=%s targets=%s applied=%s failed=%s "
+            "mutation_seconds=%.3f reconciliation_seconds=%.3f "
+            "verification_seconds=%.3f total_seconds=%.3f repair_deferred=%s",
+            operation, len(target_ids), len(applied_ids), len(failed_ids),
+            mutation_seconds, reconciliation_seconds, verification_seconds,
+            perf_counter() - action_started, deferred_repair,
         )
         return result
 

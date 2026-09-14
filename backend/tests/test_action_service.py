@@ -282,6 +282,20 @@ class DeferredSync(FakeSync):
         return True
 
 
+class DeferredStackSync(FakeSync):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[tuple[list[UUID], bool]] = []
+        self.snapshots: list[list[UUID]] = []
+
+    async def enqueue_asset_repair_during_sync(self, asset_ids, *, include_stacks=False):
+        self.queued.append((asset_ids, include_stacks))
+        return True
+
+    async def apply_stack_snapshot_for_targets(self, asset_ids):
+        self.snapshots.append(asset_ids)
+
+
 class RuntimeSettings:
     def __init__(self, batch_size: int = 50, delay: float = 0.2) -> None:
         self.value = SyncRuntimeSettings(
@@ -506,6 +520,45 @@ async def test_favorite_action_finishes_without_waiting_for_active_sync_repair()
     assert sync.queued == [[ASSET_ONE, ASSET_TWO]]
     assert sync.calls == 0
     assert instance._assets.flag_events == [("favorite", [ASSET_ONE, ASSET_TWO])]
+
+
+@pytest.mark.asyncio
+async def test_remove_stack_returns_after_immich_confirmation_with_repair_queued() -> None:
+    class StackImmich(FakeImmich):
+        active = True
+
+        async def list_stacks(self):
+            if not self.active:
+                return []
+            return [SimpleNamespace(
+                id=RELATION_ID,
+                primary_asset_id=ASSET_ONE,
+                assets=[SimpleNamespace(id=ASSET_ONE), SimpleNamespace(id=ASSET_TWO)],
+            )]
+
+        async def delete_stack(self, stack_id):
+            await super().delete_stack(stack_id)
+            self.active = False
+
+    selected = {ASSET_ONE, ASSET_TWO}
+    instance, _, _, sync = service(
+        resolution(), [selected, selected, set()], sync=DeferredStackSync()
+    )
+    immich = StackImmich()
+    instance._immich = immich  # type: ignore[assignment]
+    instance._stacks._immich = immich  # type: ignore[assignment]
+    plan = await instance.plan(AssetActionPlanRequest(
+        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+        action="remove_stack",
+    ))
+
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert result.status == "completed"
+    assert immich.calls == [("remove_stack", RELATION_ID, [])]
+    assert sync.queued == [([ASSET_ONE, ASSET_TWO], True)]
+    assert sync.snapshots == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.calls == 0
 
 
 @pytest.mark.asyncio
