@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { AssetTaskStatus } from '../types/assets';
-import { isTaskTerminal, shouldApplyTaskStatus } from './taskStatus';
+import { isTaskTerminal, isTaskTrackedInFlight, shouldApplyTaskStatus } from './taskStatus';
 
 function task(id: string, status: AssetTaskStatus['status']): AssetTaskStatus {
   return {
@@ -29,6 +29,13 @@ describe('task status ordering', () => {
     expect(isTaskTerminal('cancelled')).toBe(true);
     expect(isTaskTerminal('cancel_requested')).toBe(false);
     expect(isTaskTerminal('retrying')).toBe(false);
+  });
+
+  it('keeps a persisted task in flight before its status hydrates', () => {
+    expect(isTaskTrackedInFlight(null, 'task-1')).toBe(true);
+    expect(isTaskTrackedInFlight(task('task-1', 'running'), null)).toBe(true);
+    expect(isTaskTrackedInFlight(task('task-1', 'completed'), null)).toBe(false);
+    expect(isTaskTrackedInFlight(null, null)).toBe(false);
   });
 
   it('rejects a stale non-terminal observation after the same task completed', () => {
