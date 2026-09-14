@@ -1,6 +1,6 @@
 name: Validate Immich duplicate DB work
 
-# Rerun 2: validate legacy provider compatibility and current backend gate.
+# Rerun 3: validate persisted composite duplicate projection.
 on:
   push:
     branches:
