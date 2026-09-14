@@ -101,7 +101,7 @@ class CompositeDuplicateGroupEvidenceRecord(Base):
     )
     discovery_source: Mapped[str] = mapped_column(String(48), primary_key=True)
     provider_group_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    metadata: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
+    evidence_metadata: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default=dict)
     sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
 
 
@@ -258,7 +258,7 @@ class CompositeDuplicateRepository:
                 DiscoveryEvidence(
                     discovery_source=DiscoverySource(row.discovery_source),
                     provider_group_id=row.provider_group_id,
-                    metadata=dict(row.metadata or {}),
+                    metadata=dict(row.evidence_metadata or {}),
                 )
             )
         return [
@@ -345,7 +345,7 @@ class CompositeDuplicateRepository:
                     "group_id": group.group_id,
                     "discovery_source": item.discovery_source.value,
                     "provider_group_id": item.provider_group_id,
-                    "metadata": dict(item.metadata),
+                    "evidence_metadata": dict(item.metadata),
                     "sync_generation": generation,
                 }
                 for group in groups
@@ -397,7 +397,7 @@ class CompositeDuplicateRepository:
                         ],
                         set_={
                             "provider_group_id": statement.excluded.provider_group_id,
-                            "metadata": statement.excluded.metadata,
+                            "evidence_metadata": statement.excluded.evidence_metadata,
                             "sync_generation": statement.excluded.sync_generation,
                         },
                     )

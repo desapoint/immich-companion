@@ -90,7 +90,7 @@ def upgrade() -> None:
         sa.Column("group_id", sa.Text(), nullable=False),
         sa.Column("discovery_source", sa.String(length=48), nullable=False),
         sa.Column("provider_group_id", sa.Text(), nullable=True),
-        sa.Column("metadata", sa.JSON(), nullable=False),
+        sa.Column("evidence_metadata", sa.JSON(), nullable=False),
         sa.Column("sync_generation", sa.BigInteger(), nullable=False),
         sa.ForeignKeyConstraint(
             ["group_id"],
