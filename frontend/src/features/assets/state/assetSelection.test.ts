@@ -11,12 +11,10 @@ import {
   mergeServerSelectionPage,
   mergeServerSelectionPages,
   patchServerSelectionMembership,
-  selectAllMatching,
   selectCurrentPage,
   selectedAssetCount,
   setSelectionRange,
   setServerSelection,
-  toggleAssetSelection,
 } from './assetSelection';
 
 describe('asset selection', () => {
@@ -36,30 +34,33 @@ describe('asset selection', () => {
     });
   });
 
-  it('selects and deselects ordered page ranges in either selection mode', () => {
+  it('selects and deselects ordered page ranges', () => {
     const page = ['one', 'two', 'three', 'four'];
-    let explicit = setSelectionRange(createAssetSelectionState(), page, 1, 3, true);
-    explicit = setSelectionRange(explicit, page, 2, 3, false);
-    expect([...explicit.selectedIds]).toEqual(['two']);
-
-    let matching = selectAllMatching();
-    matching = setSelectionRange(matching, page, 1, 2, false);
-    matching = setSelectionRange(matching, page, 2, 2, true);
-    expect([...matching.excludedIds]).toEqual(['two']);
+    let state = setSelectionRange(createAssetSelectionState(), page, 1, 3, true);
+    state = setSelectionRange(state, page, 2, 3, false);
+    expect([...state.selectedIds]).toEqual(['two']);
   });
 
-  it('models all matching with explicit exclusions', () => {
-    let state = selectAllMatching();
-    state = toggleAssetSelection(state, 'excluded');
+  it('keeps all-matching as scope while using a revisioned explicit server selection', () => {
+    let state = setServerSelection(
+      createAssetSelectionState(),
+      'selection-1',
+      4,
+      50000,
+      ['visible-1', 'visible-2'],
+      'all_matching',
+    );
+    state = setSelectionRange(state, ['visible-1', 'visible-2'], 1, 1, false);
 
-    expect(isAssetSelected(state, 'included')).toBe(true);
-    expect(isAssetSelected(state, 'excluded')).toBe(false);
-    expect(selectedAssetCount(state, 66)).toBe(65);
-    expect(buildSelectionRequest(state, createSearchGroup())).toMatchObject({
-      mode: 'all_matching',
-      ids: [],
-      excluded_ids: ['excluded'],
-      expression: { kind: 'group', operator: 'and', children: [] },
+    expect(state.scope).toBe('all_matching');
+    expect(selectedAssetCount(state, 50000)).toBe(50000);
+    expect(isAssetSelected(state, 'visible-1')).toBe(true);
+    expect(isAssetSelected(state, 'visible-2')).toBe(false);
+    expect(buildSelectionRequest(state, createSearchGroup())).toEqual({
+      mode: 'explicit',
+      selection_id: 'selection-1',
+      ids: ['visible-1'],
+      excluded_ids: [],
     });
   });
 
@@ -98,6 +99,26 @@ describe('asset selection', () => {
     expect([...appended.selectedIds]).toEqual(['one', 'two', 'three', 'four']);
     expect(appended.selectionRevision).toBe(5);
     expect(appended.serverSelectedCount).toBe(9);
+  });
+
+  it('preserves selection scope while merging refreshed server membership', () => {
+    const state = setServerSelection(
+      createAssetSelectionState(),
+      'selection-1',
+      4,
+      8,
+      ['one'],
+      'all_matching',
+    );
+    const merged = mergeServerSelectionPage(state, {
+      id: 'selection-1',
+      revision: 5,
+      selected_count: 7,
+      selected_ids: ['two'],
+    });
+
+    expect(merged.scope).toBe('all_matching');
+    expect([...merged.selectedIds]).toEqual(['one', 'two']);
   });
 
   it('rejects mixed ids and revisions instead of combining incompatible membership', () => {
