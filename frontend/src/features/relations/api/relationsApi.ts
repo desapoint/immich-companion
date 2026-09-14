@@ -1,4 +1,4 @@
-import { requestJson } from './http';
+import { requestJson } from '../../shared/api/http';
 import type { PageResult } from '../../../lib/types/collection';
 import type { ManagedRelation, RelationKind, RelationPage } from '../types/relations';
 
