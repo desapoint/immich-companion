@@ -62,7 +62,10 @@ export class TaskUpdateConnection {
       || this.#socket?.readyState === CONNECTING
     ) return;
 
-    const socket = this.open(this.onstatus, () => this.#scheduleReconnect(socket));
+    let socket: TaskUpdateSocket | null = null;
+    socket = this.open(this.onstatus, () => {
+      if (socket) this.#scheduleReconnect(socket);
+    });
     this.#socket = socket;
     socket.addEventListener('open', () => {
       if (this.#stopped || this.#socket !== socket) return;
