@@ -178,6 +178,7 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         source="similarity",
         sort="similarity",
         direction="asc",
+        state="needs_review",
     )
 
     assert snapshots.received == {
@@ -186,6 +187,7 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         "source": DiscoverySource.COMPANION_SIMILARITY,
         "sort": "similarity",
         "direction": "asc",
+        "state": "needs_review",
     }
     assert assets.requested == [ASSET_1, ASSET_2]
     assert result.total == 23

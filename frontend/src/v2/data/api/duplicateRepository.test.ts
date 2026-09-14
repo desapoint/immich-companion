@@ -164,6 +164,7 @@ describe('live V2 duplicate repository', () => {
     expect((await repository.search({ page: 1, pageSize: 1 })).total).toBe(2);
     expect(pageRequests[0]?.searchParams.get('sort')).toBe('reclaimable');
     expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');
+    expect(pageRequests[0]?.searchParams.get('state')).toBe('all');
     currentGroups = [group];
     const laterPage = await repository.search({ page: 2, pageSize: 1, reuseCachedGroups: true });
     expect(laterPage.items).toEqual([]);
@@ -180,6 +181,12 @@ describe('live V2 duplicate repository', () => {
     await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, sort: { field: 'similarity', direction: 'asc' } });
     expect(pageRequests.at(-1)?.searchParams.get('sort')).toBe('similarity');
     expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');
+
+    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, state: 'Needs decisions' });
+    expect(pageRequests.at(-1)?.searchParams.get('state')).toBe('needs_decisions');
+    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, state: 'Auto-ready' });
+    expect(pageRequests.at(-1)?.searchParams.get('state')).toBe('auto_ready');
+    expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);
   });
 
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {
@@ -226,6 +233,7 @@ describe('live V2 duplicate repository', () => {
     expect(result.items[0]).toMatchObject({
       id: group.group_id,
       state: 'Needs decisions',
+      autoReady: true,
       selected: true,
       savedDecisions: { [ASSET_IDS[0]]: 'keep' },
       referenceAssetId: ASSET_IDS[0],

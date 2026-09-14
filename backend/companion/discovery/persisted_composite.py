@@ -41,6 +41,7 @@ class _CompositeSnapshotReader(Protocol):
         source: DiscoverySource | None = None,
         sort: str = "reclaimable",
         direction: str = "desc",
+        state: str = "all",
     ) -> CompositeDuplicateSnapshotPage: ...
 
 
@@ -123,6 +124,7 @@ class PersistedCompositeDuplicateProvider:
         source: str = "both",
         sort: str = "reclaimable",
         direction: str = "desc",
+        state: str = "all",
     ) -> DiscoveredGroupPage:
         source_value = (
             DiscoverySource.IMMICH_DUPLICATE
@@ -137,6 +139,7 @@ class PersistedCompositeDuplicateProvider:
             source=source_value,
             sort=sort,
             direction=direction,
+            state=state,
         )
         return DiscoveredGroupPage(
             groups=await self._hydrate(snapshot.groups),

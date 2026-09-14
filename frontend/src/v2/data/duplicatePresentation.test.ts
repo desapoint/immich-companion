@@ -8,6 +8,7 @@ function group(names: string[], kind = 'similar'): DuplicateGroupRecord {
     id: 'technical-group-id',
     discoverySources: ['companion_similarity'],
     state: 'Needs review',
+    autoReady: false,
     kind,
     reason: null,
     referenceAssetId: null,
