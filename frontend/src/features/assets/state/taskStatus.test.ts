@@ -34,6 +34,7 @@ describe('task status ordering', () => {
   it('keeps a persisted task in flight before its status hydrates', () => {
     expect(isTaskTrackedInFlight(null, 'task-1')).toBe(true);
     expect(isTaskTrackedInFlight(task('task-1', 'running'), null)).toBe(true);
+    expect(isTaskTrackedInFlight(task('task-1', 'completed'), 'task-1')).toBe(true);
     expect(isTaskTrackedInFlight(task('task-1', 'completed'), null)).toBe(false);
     expect(isTaskTrackedInFlight(null, null)).toBe(false);
   });
