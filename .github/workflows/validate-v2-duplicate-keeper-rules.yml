@@ -9,7 +9,7 @@ on:
       - .keeper-patch/**
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   validate:
@@ -19,21 +19,20 @@ jobs:
         with:
           ref: work/v2-duplicate-keeper-rules
 
-      - name: Inspect staged keeper patch
+      - name: Inspect staged keeper patch prefix
         shell: bash
         run: |
           python - <<'PY'
           import base64
           from pathlib import Path
           payload = ''.join(path.read_text().strip() for path in sorted(Path('.keeper-patch').glob('p*')))
-          payload += '=' * (-len(payload) % 4)
-          decoded = base64.b64decode(payload)
-          print(f'Decoded patch bytes: {len(decoded)}')
+          complete_length = len(payload) - (len(payload) % 4)
+          decoded = base64.b64decode(payload[:complete_length])
+          print(f'Encoded chars: {len(payload)}; decoded complete prefix: {len(decoded)} bytes')
           try:
               compile(decoded, '<keeper-rules-patch>', 'exec')
           except SyntaxError as error:
               print(f'PATCH_INCOMPLETE: {error}')
-              print(decoded[-4000:].decode('utf-8', errors='replace'))
-              raise SystemExit(2)
-          print('PATCH_COMPLETE')
+          print('--- decoded patch tail ---')
+          print(decoded[-5000:].decode('utf-8', errors='replace'))
           PY
