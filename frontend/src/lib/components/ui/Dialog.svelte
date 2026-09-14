@@ -46,9 +46,16 @@
     '[tabindex]:not([tabindex="-1"])',
   ].join(', ');
 
+  function ownsKeyboardEvent(event: KeyboardEvent): boolean {
+    const target = event.target instanceof Element ? event.target : null;
+    return !target || target.closest('dialog') === dialog;
+  }
+
   function handleKeydown(event: KeyboardEvent): void {
+    if (!ownsKeyboardEvent(event)) return;
     if (event.key === 'Escape' && closeOnEscape) {
       event.preventDefault();
+      event.stopPropagation();
       onclose();
     } else if (event.key === 'Tab' && panel) {
       const focusable = [...panel.querySelectorAll<HTMLElement>(focusableSelector)];
@@ -106,14 +113,13 @@
   });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 <dialog
   bind:this={dialog}
   class="dialog-modal"
   aria-labelledby={titleId}
   aria-describedby={description ? descriptionId : undefined}
   oncancel={handleCancel}
+  onkeydown={handleKeydown}
   onpointerdown={(event) => {
     if (closeOnBackdrop && event.target === event.currentTarget) onclose();
   }}
