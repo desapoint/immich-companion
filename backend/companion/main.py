@@ -116,7 +116,6 @@ from companion.duplicate_schema import (
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
     CrossSourceDuplicateTaskHandler,
-    DuplicateResolutionTaskHandler,
 )
 from companion.immich_duplicate_repository import ImmichDuplicateRepository
 from companion.immich_duplicate_sync import (
@@ -124,6 +123,7 @@ from companion.immich_duplicate_sync import (
     ImmichDuplicateSyncStatus,
     ImmichDuplicateSyncTaskHandler,
     ImmichDuplicateSyncTaskStart,
+    RefreshingDuplicateResolutionTaskHandler,
 )
 from companion.immich import (
     ImmichAlbum,
@@ -462,6 +462,7 @@ def create_app(
         task_coordinator is not None
         and duplicate_service is not None
         and integrity_handler is not None
+        and immich_duplicate_sync_service is not None
     ):
         task_coordinator.register_handler(
             CrossSourceDuplicateTaskHandler(
@@ -473,7 +474,12 @@ def create_app(
                 discovery=duplicate_discovery,
             )
         )
-        task_coordinator.register_handler(DuplicateResolutionTaskHandler(duplicate_service))
+        task_coordinator.register_handler(
+            RefreshingDuplicateResolutionTaskHandler(
+                duplicate_service,
+                immich_duplicate_sync_service,
+            )
+        )
     similarity_index_maintainer = (
         SimilarityIndexMaintainer(
             immich,
