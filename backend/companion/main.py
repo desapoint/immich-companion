@@ -118,6 +118,13 @@ from companion.duplicate_service import (
     CrossSourceDuplicateTaskHandler,
     DuplicateResolutionTaskHandler,
 )
+from companion.immich_duplicate_repository import ImmichDuplicateRepository
+from companion.immich_duplicate_sync import (
+    ImmichDuplicateSyncService,
+    ImmichDuplicateSyncStatus,
+    ImmichDuplicateSyncTaskHandler,
+    ImmichDuplicateSyncTaskStart,
+)
 from companion.immich import (
     ImmichAlbum,
     ImmichApiClient,
@@ -319,6 +326,18 @@ def create_app(
         if database is not None
         else None
     )
+    immich_duplicate_repository = (
+        ImmichDuplicateRepository(database) if database is not None else None
+    )
+    immich_duplicate_sync_service = (
+        ImmichDuplicateSyncService(task_coordinator, immich_duplicate_repository)
+        if task_coordinator is not None and immich_duplicate_repository is not None
+        else None
+    )
+    if task_coordinator is not None and immich_duplicate_repository is not None:
+        task_coordinator.register_handler(
+            ImmichDuplicateSyncTaskHandler(immich, immich_duplicate_repository)
+        )
     asset_sync = (
         AssetSyncService(
             immich,
@@ -408,10 +427,12 @@ def create_app(
         task_coordinator.register_handler(integrity_handler)
     duplicate_discovery = (
         CompositeGroupDiscoveryProvider(
-            ImmichDuplicateProvider(immich, asset_repository),
+            ImmichDuplicateProvider(immich_duplicate_repository, asset_repository),
             SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
         )
-        if similarity_scan_repository is not None and asset_repository is not None
+        if similarity_scan_repository is not None
+        and asset_repository is not None
+        and immich_duplicate_repository is not None
         else None
     )
     duplicate_service = (
@@ -528,10 +549,15 @@ def create_app(
                 detail_maintainer,
             )
         )
+        async def after_asset_sync_success() -> None:
+            await similarity_maintenance_service.start_if_pending()
+            if immich_duplicate_sync_service is not None:
+                await immich_duplicate_sync_service.start_after_asset_sync()
+
         task_coordinator.register_handler(
             AssetSyncTaskHandler(
                 asset_sync,
-                after_success=similarity_maintenance_service.start_if_pending,
+                after_success=after_asset_sync_success,
             )
         )
 
@@ -714,6 +740,14 @@ def create_app(
                 detail="The companion database is not configured.",
             )
         return duplicate_service
+
+    def require_immich_duplicate_sync_service() -> ImmichDuplicateSyncService:
+        if immich_duplicate_sync_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Immich duplicate synchronization is unavailable.",
+            )
+        return immich_duplicate_sync_service
 
     def require_similarity_scan_service() -> SimilarityScanService:
         if similarity_scan_service is None:
@@ -917,6 +951,21 @@ def create_app(
         if database is None:
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
         return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
+
+    @app.get(
+        "/api/settings/duplicates/immich-sync",
+        response_model=ImmichDuplicateSyncStatus,
+    )
+    async def immich_duplicate_sync_status() -> ImmichDuplicateSyncStatus:
+        return await require_immich_duplicate_sync_service().status()
+
+    @app.post(
+        "/api/settings/duplicates/immich-sync",
+        response_model=ImmichDuplicateSyncTaskStart,
+        status_code=status.HTTP_202_ACCEPTED,
+    )
+    async def start_immich_duplicate_sync() -> ImmichDuplicateSyncTaskStart:
+        return await require_immich_duplicate_sync_service().start()
 
     @app.get("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
     async def duplicate_policy_settings() -> DuplicatePolicy:

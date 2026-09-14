@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
   import V2ActiveTasksSettings from '../components/V2ActiveTasksSettings.svelte';
+  import V2ImmichDuplicateSyncSettings from '../components/V2ImmichDuplicateSyncSettings.svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
@@ -242,10 +243,13 @@
         </V2Card>
       </div>
     {:else if tab === 'Duplicates'}
-      <V2Card title="Implementation not done yet">
-        {#snippet actions()}<V2Badge tone="warn" text="Live actions disabled" />{/snippet}
-        <V2Notice tone="warning" title="This settings area is not live yet">Duplicate settings are intentionally disabled in V2 until their live integration is complete.</V2Notice>
-      </V2Card>
+      <V2Stack gap="md">
+        <V2ImmichDuplicateSyncSettings />
+        <V2Card title="Duplicate policy">
+          {#snippet actions()}<V2Badge tone="warn" text="Policy UI pending" />{/snippet}
+          <V2Notice tone="info">Immich duplicate synchronization is live. The remaining duplicate policy controls will move into this section separately.</V2Notice>
+        </V2Card>
+      </V2Stack>
     {:else if tab === 'Tasks'}
       <V2ActiveTasksSettings />
     {:else if loading}
