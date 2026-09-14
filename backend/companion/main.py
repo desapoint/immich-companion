@@ -602,15 +602,21 @@ def create_app(
         and similarity_repository is not None
         and similarity_scan_repository is not None
     ):
+        similarity_maintenance_handler = SimilarityMaintenanceTaskHandler(
+            similarity_maintenance_repository,
+            similarity_index_maintainer,
+            search_feature_repository,
+            similarity_repository,
+            similarity_scan_repository,
+            detail_maintainer,
+        )
         task_coordinator.register_handler(
-            SimilarityMaintenanceTaskHandler(
-                similarity_maintenance_repository,
-                similarity_index_maintainer,
-                search_feature_repository,
-                similarity_repository,
-                similarity_scan_repository,
-                detail_maintainer,
+            FollowUpTaskHandler(
+                similarity_maintenance_handler,
+                composite_duplicate_sync_service.start_after_source_change,
             )
+            if composite_duplicate_sync_service is not None
+            else similarity_maintenance_handler
         )
         async def after_asset_sync_success() -> None:
             await similarity_maintenance_service.start_if_pending()
