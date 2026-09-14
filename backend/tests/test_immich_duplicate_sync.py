@@ -101,5 +101,44 @@ async def test_sync_service_uses_durable_deduplicated_task_submission() -> None:
 
     assert started.task_id == task_id
     assert tasks.submitted[0] == (IMMICH_DUPLICATE_SYNC_TASK_TYPE, {})
-    assert tasks.submitted[1]["deduplication_key"] == IMMICH_DUPLICATE_SYNC_DEDUPLICATION_KEY
+    assert (
+        tasks.submitted[1]["deduplication_key"]
+        == IMMICH_DUPLICATE_SYNC_DEDUPLICATION_KEY
+    )
     assert tasks.started == 1
+
+
+@pytest.mark.asyncio
+async def test_post_mutation_refresh_waits_for_older_snapshot_then_publishes_new_one() -> None:
+    old_task_id = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+    new_task_id = UUID("ffffffff-ffff-4fff-8fff-ffffffffffff")
+
+    class Tasks:
+        waited: list[UUID] = []
+        submitted = 0
+
+        async def find_active(self, _task_type, _deduplication_key):
+            return SimpleNamespace(id=old_task_id)
+
+        async def wait(self, task_id):
+            self.waited.append(task_id)
+            return SimpleNamespace(status="completed")
+
+        async def submit(self, *_args, **_kwargs):
+            self.submitted += 1
+            return SimpleNamespace(id=new_task_id)
+
+        async def start(self):
+            return None
+
+    class Repository:
+        async def metadata(self):
+            return ImmichDuplicateSnapshotMetadata(0, 0, 0, None)
+
+    tasks = Tasks()
+    service = ImmichDuplicateSyncService(tasks, Repository())
+
+    await service.refresh_after_mutation()
+
+    assert tasks.waited == [old_task_id, new_task_id]
+    assert tasks.submitted == 1
