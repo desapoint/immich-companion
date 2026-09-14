@@ -101,6 +101,7 @@
   const activeSyncPollMs = 1500;
   const idleSyncPollMs = 10000;
   const hiddenSyncPollMs = 30000;
+  const taskFallbackPollMs = 1000;
   const detailCacheSize = 24;
 
   let expression = $state<SearchGroup>(
@@ -154,10 +155,8 @@
   let dragSelecting = false;
   let dragSelectionValue = true;
   let dragLastIndex: number | null = null;
-  let selectionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let actionTask = $state<AssetTaskStatus | null>(null);
   let actionTaskHistory = $state<AssetTaskStatus[]>([]);
-  let actionTaskPollTimer: ReturnType<typeof setInterval> | null = null;
   let taskUpdateConnection: TaskUpdateConnection | null = null;
   let syncStatusInitialized = false;
   let handledSyncSuccessId: string | null = null;
@@ -167,6 +166,8 @@
   const detailRequest = new LatestRequest();
   const selectionRequest = new LatestRequest();
   const viewerActionRequest = new LatestRequest();
+  const selectionTaskPoller = new CoalescedPoller(pollSelectionTask, () => taskFallbackPollMs);
+  const actionTaskPoller = new CoalescedPoller(pollActionTask, () => taskFallbackPollMs);
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
     tags: true,
@@ -189,25 +190,21 @@
   }
 
   function stopSelectionTaskPolling(): void {
-    if (selectionTaskPollTimer === null) return;
-    clearInterval(selectionTaskPollTimer);
-    selectionTaskPollTimer = null;
+    selectionTaskPoller.stop();
   }
 
   function stopActionTaskPolling(): void {
-    if (actionTaskPollTimer === null) return;
-    clearInterval(actionTaskPollTimer);
-    actionTaskPollTimer = null;
+    actionTaskPoller.stop();
   }
 
   function startSelectionTaskPolling(): void {
-    if (taskUpdateConnection?.connected || selectionTaskPollTimer !== null) return;
-    selectionTaskPollTimer = setInterval(() => void pollSelectionTask(), 1000);
+    if (taskUpdateConnection?.connected) return;
+    selectionTaskPoller.start();
   }
 
   function startActionTaskPolling(): void {
-    if (taskUpdateConnection?.connected || actionTaskPollTimer !== null) return;
-    actionTaskPollTimer = setInterval(() => void pollActionTask(), 1000);
+    if (taskUpdateConnection?.connected) return;
+    actionTaskPoller.start();
   }
 
   function handleTaskConnectionChange(connected: boolean): void {
@@ -1363,7 +1360,12 @@
 
   async function loadActionTaskHistory(): Promise<void> {
     try {
-      actionTaskHistory = await listTasks('asset_action');
+      const history = await listTasks('asset_action');
+      const knownIds = new Set(actionTaskHistory.map((task) => task.id));
+      actionTaskHistory = [
+        ...actionTaskHistory,
+        ...history.filter((task) => !knownIds.has(task.id)),
+      ].slice(0, 10);
     } catch {
       // The active task overlay remains usable if task history cannot be loaded.
     }
@@ -1494,30 +1496,24 @@
     void loadRelationOptions();
     void loadAssets();
     syncStatusPoller.start();
-    if (localStorage.getItem('immich-companion:selected-sync-task')) {
-      void pollSelectionTask();
-      startSelectionTaskPolling();
-    }
-    if (localStorage.getItem('immich-companion:asset-action-task')) {
-      void pollActionTask();
-      startActionTaskPolling();
-    }
+    if (localStorage.getItem('immich-companion:selected-sync-task')) startSelectionTaskPolling();
+    if (localStorage.getItem('immich-companion:asset-action-task')) startActionTaskPolling();
     return () => {
       window.removeEventListener('pointerup', finishDragSelection);
       window.removeEventListener('pointercancel', finishDragSelection);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       syncStatusPoller.stop();
+      taskUpdateConnection?.stop();
       stopSelectionTaskPolling();
       stopActionTaskPolling();
-      taskUpdateConnection?.stop();
     };
   });
 
   onDestroy(() => {
     syncStatusPoller.stop();
+    taskUpdateConnection?.stop();
     stopSelectionTaskPolling();
     stopActionTaskPolling();
-    taskUpdateConnection?.stop();
     searchController?.abort();
     detailRequest.abort();
     selectionRequest.abort();
