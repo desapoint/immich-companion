@@ -729,9 +729,13 @@ class TaskCoordinator:
         handler = self._handlers.get(task_type)
         if handler is None:
             raise ValueError(f"No handler registered for task type {task_type}")
+        prepared_payload = dict(payload)
+        prepare_payload = getattr(handler, "prepare_payload", None)
+        if prepare_payload is not None:
+            prepared_payload = await prepare_payload(prepared_payload)
         task = await self._repository.submit(
             task_type,
-            payload,
+            prepared_payload,
             priority=priority,
             deduplication_key=deduplication_key,
             lane_key=lane_key or handler.lane_key,
