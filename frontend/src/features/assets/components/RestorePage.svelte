@@ -19,6 +19,7 @@
     restoreAsset,
     restoreAssets,
   } from '../api/assetApi';
+  import { LatestRequest, requestErrorMessage } from '../state/latestRequest';
   import type { AssetDetail, AssetSummary } from '../types/assets';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
 
@@ -36,8 +37,8 @@
   let detailError = $state<string | null>(null);
   let detailAssetId: string | null = null;
   let layoutMode = $state<'normal' | 'condensed'>('normal');
-  let detailController: AbortController | null = null;
   let pageStart = $state<HTMLElement>();
+  const detailRequest = new LatestRequest();
 
   const loadedSelectionCount = $derived(
     collection.items.reduce((count, asset) => count + Number(selectedIds.has(asset.id)), 0),
@@ -65,8 +66,7 @@
     void collectionController.load();
     return () => {
       collectionController.dispose();
-      detailController?.abort();
-      detailController = null;
+      detailRequest.abort();
     };
   });
 
@@ -101,7 +101,7 @@
     } catch (reason) {
       notice = {
         tone: 'error',
-        message: reason instanceof Error ? reason.message : 'Could not restore the asset.',
+        message: requestErrorMessage(reason, 'Could not restore the asset.'),
       };
     } finally {
       restoring = null;
@@ -134,9 +134,10 @@
     } catch (reason) {
       notice = {
         tone: 'error',
-        message: reason instanceof Error
-          ? reason.message
-          : all ? 'Could not restore the trash.' : 'Could not restore the selected assets.',
+        message: requestErrorMessage(
+          reason,
+          all ? 'Could not restore the trash.' : 'Could not restore the selected assets.',
+        ),
       };
     } finally {
       restoring = null;
@@ -151,34 +152,24 @@
 
     if (detailAssetId === asset.id && (detailLoading || detail !== null)) return;
 
-    detailController?.abort();
-    const controller = new AbortController();
-    detailController = controller;
     detailAssetId = asset.id;
     detail = null;
     detailError = null;
     detailLoading = true;
-    try {
-      const loaded = await getRestoreAssetDetail(asset.id, controller.signal);
-      if (!controller.signal.aborted && detailAssetId === asset.id) detail = loaded;
-    } catch (reason) {
-      if (reason instanceof DOMException && reason.name === 'AbortError') return;
-      if (!controller.signal.aborted && detailAssetId === asset.id) {
-        detailError = reason instanceof Error ? reason.message : 'Could not load asset details.';
-      }
-    } finally {
-      if (detailController === controller) {
-        detailController = null;
-        detailLoading = false;
-      }
+    const result = await detailRequest.run((signal) => getRestoreAssetDetail(asset.id, signal));
+    if (!detailRequest.isCurrent(result.version) || detailAssetId !== asset.id) return;
+
+    if (result.status === 'success') detail = result.value;
+    else if (result.status === 'error') {
+      detailError = requestErrorMessage(result.error, 'Could not load asset details.');
     }
+    detailLoading = false;
   }
 
   function closeViewer(): void {
     viewerIndex = null;
     viewerSelectedAsset = null;
-    detailController?.abort();
-    detailController = null;
+    detailRequest.abort();
     detailAssetId = null;
     detail = null;
     detailError = null;
