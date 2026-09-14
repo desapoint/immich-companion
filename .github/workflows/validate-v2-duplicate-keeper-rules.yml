@@ -19,54 +19,21 @@ jobs:
         with:
           ref: work/v2-duplicate-keeper-rules
 
-      - name: Apply staged keeper rules patch
+      - name: Inspect staged keeper patch
         shell: bash
         run: |
-          cat .keeper-patch/p* | base64 --decode > /tmp/keeper-rules-patch.py
-          echo "Decoded patch bytes: $(wc -c < /tmp/keeper-rules-patch.py)"
-          if ! python -m py_compile /tmp/keeper-rules-patch.py; then
-            echo '--- decoded patch tail ---'
-            tail -c 2500 /tmp/keeper-rules-patch.py
-            exit 1
-          fi
-          python /tmp/keeper-rules-patch.py
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-          cache: pip
-          cache-dependency-path: backend/pyproject.toml
-
-      - name: Validate backend
-        shell: bash
-        run: |
-          python -m pip install -e './backend[dev]'
-          cd backend
-          ruff format companion/duplicate_keeper_rules.py companion/duplicate_schema.py companion/asset_repository.py companion/duplicate_review_repository.py companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py tests/test_duplicate_keeper_rules.py tests/test_composite_duplicate_sync.py
-          ruff check --fix companion/duplicate_keeper_rules.py companion/duplicate_schema.py companion/asset_repository.py companion/duplicate_review_repository.py companion/composite_duplicate_repository.py companion/discovery/persisted_composite.py companion/duplicate_service.py companion/main.py tests/test_duplicate_keeper_rules.py tests/test_composite_duplicate_sync.py
-          pytest
-          ruff check companion tests
-
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-
-      - name: Validate frontend
-        shell: bash
-        run: |
-          cd frontend
-          npm ci
-          npm run check
-          npm test
-
-      - name: Commit validated product tree
-        shell: bash
-        run: |
-          rm -rf .keeper-patch .github/workflows/validate-v2-duplicate-keeper-rules.yml
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add backend frontend .keeper-patch .github/workflows/validate-v2-duplicate-keeper-rules.yml
-          git commit -m 'feat: add V2 duplicate keeper rules'
-          git push origin HEAD:work/v2-duplicate-keeper-rules
+          python - <<'PY'
+          import base64
+          from pathlib import Path
+          payload = ''.join(path.read_text().strip() for path in sorted(Path('.keeper-patch').glob('p*')))
+          payload += '=' * (-len(payload) % 4)
+          decoded = base64.b64decode(payload)
+          print(f'Decoded patch bytes: {len(decoded)}')
+          try:
+              compile(decoded, '<keeper-rules-patch>', 'exec')
+          except SyntaxError as error:
+              print(f'PATCH_INCOMPLETE: {error}')
+              print(decoded[-4000:].decode('utf-8', errors='replace'))
+              raise SystemExit(2)
+          print('PATCH_COMPLETE')
+          PY
