@@ -5,15 +5,36 @@ import { createRelation, deleteRelations, getRelations, updateRelation } from '.
 afterEach(() => vi.unstubAllGlobals());
 
 describe('relation management API', () => {
-  it('requests paginated album management data with search and sorting', async () => {
-    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ items: [], total: 0, page: 2, page_size: 25, pages: 0 }), {
+  it('normalizes paginated management data and forwards query state', async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({
+      items: [{ id: 'album-1', name: 'Trips', asset_count: 12 }],
+      total: 51,
+      page: 2,
+      page_size: 25,
+      pages: 3,
+    }), {
       headers: { 'content-type': 'application/json' },
     }));
     vi.stubGlobal('fetch', fetcher);
+    const controller = new AbortController();
 
-    await getRelations('albums', 2, ' Family ', 'asset_count', 'desc');
+    await expect(getRelations(
+      'albums',
+      2,
+      ' Family ',
+      'asset_count',
+      'desc',
+      controller.signal,
+    )).resolves.toEqual({
+      items: [{ id: 'album-1', name: 'Trips', asset_count: 12 }],
+      total: 51,
+      page: 2,
+      pageSize: 25,
+      pages: 3,
+    });
 
     expect(String(fetcher.mock.calls[0]?.[0])).toBe('/api/albums/manage?page=2&page_size=25&sort=asset_count&direction=desc&search=Family');
+    expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
   });
 
   it('uses API-only create, edit, and relation-only batch delete contracts', async () => {
