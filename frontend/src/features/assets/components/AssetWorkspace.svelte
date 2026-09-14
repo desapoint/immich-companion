@@ -186,6 +186,7 @@
   const selectAllRequest = new LatestRequest();
   const viewerActionRequest = new LatestRequest();
   const actionPlanRequest = new LatestRequest();
+  const relationOptionsRequest = new LatestRequest();
   const selectionTaskPoller = new CoalescedPoller(pollSelectionTask, () => taskFallbackPollMs);
   const actionTaskPoller = new CoalescedPoller(pollActionTask, () => taskFallbackPollMs);
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
@@ -362,12 +363,12 @@
   }
 
   async function loadRelationOptions(): Promise<void> {
-    const [albumResult, tagResult] = await Promise.allSettled([
-      getAlbumOptions(),
-      getTagOptions(),
-    ]);
-    albums = albumResult.status === 'fulfilled' ? albumResult.value : [];
-    tags = tagResult.status === 'fulfilled' ? tagResult.value : [];
+    const result = await relationOptionsRequest.run((signal) => Promise.all([
+      getAlbumOptions(signal),
+      getTagOptions(signal),
+    ]));
+    if (!relationOptionsRequest.isCurrent(result.version) || result.status !== 'success') return;
+    [albums, tags] = result.value;
   }
 
   async function loadAssets(allowSelectionRecovery = true): Promise<boolean> {
@@ -1805,6 +1806,7 @@
     selectAllRequest.abort();
     viewerActionRequest.abort();
     actionPlanRequest.abort();
+    relationOptionsRequest.abort();
     detailCache.clear();
   });
 </script>
@@ -1858,9 +1860,6 @@
   {/if}
 
   {#if actionMessage}<p class="action-message" role="status">{actionMessage}</p>{/if}
-  {#if actionError && actionContext === 'selection'}
-    <p class="action-error" role="alert">Bulk action failed: {actionError}</p>
-  {/if}
 
   {#if loading && !results}
     <AssetLoadingState />
@@ -1936,13 +1935,6 @@
     task={selectionTask}
     onretry={retryFailedSelection}
     onclose={() => (selectionTaskErrorOpen = false)}
-  />
-{/if}
-
-{#if actionError}
-  <AssetActionErrorDialog
-    message={actionError}
-    onclose={() => (actionError = null)}
   />
 {/if}
 
@@ -2039,13 +2031,6 @@
   .action-message {
     margin: 0;
     color: var(--color-accent-strong);
-    font-size: 0.74rem;
-    font-weight: 720;
-  }
-
-  .action-error {
-    margin: 0;
-    color: var(--color-danger, #b42318);
     font-size: 0.74rem;
     font-weight: 720;
   }
