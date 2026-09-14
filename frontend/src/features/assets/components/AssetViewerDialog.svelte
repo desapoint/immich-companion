@@ -47,6 +47,7 @@
     buildAssetPreviewItems,
     getAssetIntegrity,
     getTaskStatus,
+    isTaskUnavailableError,
     openTaskStream,
   } from '../api/assetApi';
   import {
@@ -56,6 +57,9 @@
     stackMembersForAsset,
   } from '../state/assetViewModel';
   import { BoundedCache } from '../state/boundedCache';
+  import { LatestRequest, requestErrorMessage } from '../state/latestRequest';
+  import { isTaskTerminal, shouldApplyTaskStatus } from '../state/taskStatus';
+  import { TaskStatusWatcher } from '../state/taskStatusWatcher';
   import { resolveViewerMediaUrls } from '../state/viewerMedia';
   import {
     anchoredScrollOffset,
@@ -130,7 +134,7 @@
     onnavigate: (index: number) => void;
     ontoggleselection: (assetId: string) => void;
     onselectionstackprimary?: (assetId: string) => void;
-    onvisiblechange: (assetId: string) => void;
+    onpreviewchange: (assetId: string) => void;
     onaction: (
       assetId: string,
       action: AssetActionIntent,
@@ -189,7 +193,7 @@
     onnavigate,
     ontoggleselection,
     onselectionstackprimary,
-    onvisiblechange,
+    onpreviewchange,
     onaction,
     onsetprimary,
     onrelationconfirm,
@@ -243,9 +247,9 @@
   let integrityReport = $state.raw<AssetIntegrityReport | null>(null);
   let integrityTask = $state.raw<AssetTaskStatus | null>(null);
   let integrityError = $state<string | null>(null);
-  let integritySocket: WebSocket | null = null;
-  let integrityPollTimer: ReturnType<typeof setInterval> | null = null;
+  let integrityWatcher: TaskStatusWatcher | null = null;
   let integrityGeneration = 0;
+  const integrityRequest = new LatestRequest();
   const currentIndex = $derived(initialIndex);
   const currentAsset = $derived(selectedAsset ?? assets[currentIndex]);
   const selectionAvailable = $derived(selectionEnabled ?? actionsEnabled);
@@ -302,23 +306,20 @@
     return loadedMediaUrls.get(url) === true;
   }
 
-  function isTaskTerminal(status: AssetTaskStatus['status']): boolean {
-    return status === 'completed' || status === 'failed' || status === 'cancelled';
-  }
-
   function stopIntegrityWatch(): void {
-    integritySocket?.close();
-    integritySocket = null;
-    if (integrityPollTimer !== null) {
-      clearInterval(integrityPollTimer);
-      integrityPollTimer = null;
-    }
+    integrityWatcher?.stop();
+    integrityWatcher = null;
   }
 
   async function refreshIntegrityReport(assetId: string, generation: number): Promise<void> {
-    try {
-      const state = await getAssetIntegrity(assetId);
-      if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+    const result = await integrityRequest.run((signal) => getAssetIntegrity(assetId, signal));
+    if (
+      !integrityRequest.isCurrent(result.version)
+      || generation !== integrityGeneration
+      || assetId !== integrityAssetId
+    ) return;
+    if (result.status === 'success') {
+      const state = result.value;
       if (state.freshness !== 'current' || !state.report) {
         integrityError = 'The completed report is no longer current for this asset.';
         return;
@@ -326,11 +327,8 @@
       integrityError = null;
       integrityReport = state.report;
       integrityTask = null;
-    } catch (requestError) {
-      if (generation !== integrityGeneration) return;
-      integrityError = requestError instanceof Error
-        ? requestError.message
-        : 'The integrity report could not be loaded.';
+    } else if (result.status === 'error') {
+      integrityError = requestErrorMessage(result.error, 'The integrity report could not be loaded.');
     }
   }
 
@@ -340,6 +338,7 @@
     generation: number,
   ): Promise<void> {
     if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+    if (!shouldApplyTaskStatus(integrityTask, task)) return;
     integrityError = null;
     integrityTask = task;
     if (!isTaskTerminal(task.status)) return;
@@ -354,57 +353,53 @@
         : 'Integrity analysis failed.');
   }
 
-  async function pollIntegrityTask(
-    taskId: string,
-    assetId: string,
-    generation: number,
-  ): Promise<void> {
-    try {
-      await handleIntegrityTask(await getTaskStatus(taskId), assetId, generation);
-    } catch (requestError) {
-      if (generation !== integrityGeneration) return;
-      integrityError = requestError instanceof Error
-        ? requestError.message
-        : 'Integrity progress is temporarily unavailable.';
-    }
-  }
-
-  function startIntegrityPolling(taskId: string, assetId: string, generation: number): void {
-    if (
-      generation !== integrityGeneration
-      || assetId !== integrityAssetId
-      || !integrityDialogOpen
-    ) return;
-    if (integrityPollTimer !== null) return;
-    void pollIntegrityTask(taskId, assetId, generation);
-    integrityPollTimer = setInterval(
-      () => void pollIntegrityTask(taskId, assetId, generation),
-      1000,
-    );
-  }
-
   function watchIntegrityTask(taskId: string, assetId: string, generation: number): void {
     stopIntegrityWatch();
-    integritySocket = openTaskStream(
-      taskId,
+    integrityWatcher = new TaskStatusWatcher(
+      (watchedTaskId, onstatus, onerror, onclose) => openTaskStream(
+        watchedTaskId,
+        onstatus,
+        onerror,
+        onclose,
+      ),
+      (watchedTaskId, signal) => getTaskStatus(watchedTaskId, signal),
       (task) => void handleIntegrityTask(task, assetId, generation),
-      () => startIntegrityPolling(taskId, assetId, generation),
+      (requestError) => {
+        if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+        if (isTaskUnavailableError(requestError)) {
+          stopIntegrityWatch();
+          integrityTask = null;
+          integrityError = 'The integrity task is no longer available.';
+          return;
+        }
+        integrityError = requestErrorMessage(
+          requestError,
+          'Integrity progress is temporarily unavailable.',
+        );
+      },
     );
+    integrityWatcher.start(taskId);
   }
 
   async function openIntegrity(force = false): Promise<void> {
     const assetId = visibleAsset.id;
     const generation = ++integrityGeneration;
     stopIntegrityWatch();
+    integrityRequest.abort();
     integrityDialogOpen = true;
     integrityAssetId = assetId;
     integrityFilename = visibleFilename;
     integrityReport = null;
     integrityTask = null;
     integrityError = null;
-    try {
-      const response = await analyzeAssetIntegrity(assetId, force);
-      if (generation !== integrityGeneration || assetId !== integrityAssetId) return;
+    const result = await integrityRequest.run((signal) => analyzeAssetIntegrity(assetId, force, signal));
+    if (
+      !integrityRequest.isCurrent(result.version)
+      || generation !== integrityGeneration
+      || assetId !== integrityAssetId
+    ) return;
+    if (result.status === 'success') {
+      const response = result.value;
       integrityReport = response.state === 'ready' ? response.report : null;
       if (response.state === 'ready' && response.report) return;
       if (!response.task_id) {
@@ -412,17 +407,15 @@
         return;
       }
       watchIntegrityTask(response.task_id, assetId, generation);
-    } catch (requestError) {
-      if (generation !== integrityGeneration) return;
-      integrityError = requestError instanceof Error
-        ? requestError.message
-        : 'Integrity analysis could not be started.';
+    } else if (result.status === 'error') {
+      integrityError = requestErrorMessage(result.error, 'Integrity analysis could not be started.');
     }
   }
 
   function closeIntegrity(): void {
     integrityGeneration += 1;
     stopIntegrityWatch();
+    integrityRequest.abort();
     integrityDialogOpen = false;
     integrityTask = null;
   }
@@ -873,7 +866,7 @@
     if (assetId === loadedMediaAssetId) return;
     loadedMediaAssetId = assetId;
     const generation = ++mediaLoadGeneration;
-    untrack(() => onvisiblechange(assetId));
+    untrack(() => onpreviewchange(assetId));
     if (!duplicateContext) zoom = 1;
     const cachedDimensions = mediaDimensions.get(assetId);
     imageNaturalWidth = cachedDimensions?.width ?? null;
@@ -915,6 +908,7 @@
       viewerDisposed = true;
       mediaLoadGeneration += 1;
       stopIntegrityWatch();
+      integrityRequest.abort();
       resizeObserver.disconnect();
       window.removeEventListener('keydown', handleKeydown);
       window.removeEventListener('keyup', handleKeyup);
