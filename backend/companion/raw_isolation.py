@@ -9,11 +9,12 @@ import shutil
 import signal
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile, TemporaryFile
-from typing import Any, BinaryIO, Iterator
+from typing import Any, BinaryIO
 
 logger = logging.getLogger("uvicorn.error")
 
