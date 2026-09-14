@@ -153,6 +153,22 @@ class ImmichDuplicateSyncService:
             logger.exception("Could not queue Immich duplicate synchronization after asset sync")
             return None
 
+    async def refresh_after_mutation(self) -> None:
+        """Ensure an authoritative snapshot published after the mutation is complete."""
+
+        active = await self._tasks.find_active(
+            IMMICH_DUPLICATE_SYNC_TASK_TYPE,
+            IMMICH_DUPLICATE_SYNC_DEDUPLICATION_KEY,
+        )
+        if active is not None:
+            await self._tasks.wait(active.id)
+        started = await self.start()
+        completed = await self._tasks.wait(started.task_id)
+        if completed.status != "completed":
+            raise RuntimeError(
+                "Immich duplicate synchronization did not complete after duplicate resolution"
+            )
+
     async def status(self) -> ImmichDuplicateSyncStatus:
         metadata = await self._repository.metadata()
         active = await self._tasks.find_active(
@@ -202,9 +218,9 @@ class RefreshingDuplicateResolutionTaskHandler(DuplicateResolutionTaskHandler):
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         result = await super().execute(context, payload)
         try:
-            await self._duplicate_sync.start()
+            await self._duplicate_sync.refresh_after_mutation()
         except Exception:
             # Resolution already completed and was independently verified against Immich.
             # A snapshot refresh failure must not rewrite the resolution outcome.
-            logger.exception("Could not queue Immich duplicate refresh after resolution")
+            logger.exception("Could not refresh Immich duplicate snapshot after resolution")
         return result
