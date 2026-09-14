@@ -1,6 +1,6 @@
 name: Validate Immich duplicate DB work
 
-# Rerun 4: validate latest composite duplicate persistence wiring.
+# Rerun 5: validate composite projection after ORM evidence fix.
 on:
   push:
     branches:
