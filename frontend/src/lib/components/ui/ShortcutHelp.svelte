@@ -23,6 +23,7 @@
   const componentId = $props.id();
   const panelId = `${componentId}-shortcut-help`;
   const visible = $derived(open || hovering || focusWithin);
+  const lowerLabel = $derived(label.toLowerCase());
 
   function togglePinned(): void {
     onopenchange?.(!open);
@@ -45,9 +46,10 @@
   <button
     type="button"
     class:active={open}
-    aria-label={open ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+    aria-label={open ? `Unpin ${lowerLabel}` : `Pin ${lowerLabel}`}
     aria-expanded={visible}
     aria-controls={panelId}
+    aria-pressed={open}
     onclick={togglePinned}
   >
     <Icon name="keyboard" size="1.08rem" />
