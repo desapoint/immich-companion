@@ -18,8 +18,7 @@ def _apply_memory_limit(limit_bytes: int) -> None:
     try:
         import resource
 
-        current_soft, current_hard = resource.getrlimit(resource.RLIMIT_AS)
-        del current_soft
+        _, current_hard = resource.getrlimit(resource.RLIMIT_AS)
         hard_is_unlimited = current_hard in {resource.RLIM_INFINITY, -1}
         target = limit_bytes if hard_is_unlimited else min(limit_bytes, current_hard)
         resource.setrlimit(resource.RLIMIT_AS, (target, target))
@@ -33,12 +32,9 @@ def _apply_memory_limit(limit_bytes: int) -> None:
 @contextmanager
 def _source(*, fd: int | None, input_path: Path | None) -> Iterator[BinaryIO]:
     if fd is not None:
-        stream = os.fdopen(os.dup(fd), "rb", closefd=True)
-        try:
+        with os.fdopen(os.dup(fd), "rb", closefd=True) as stream:
             stream.seek(0)
             yield stream
-        finally:
-            stream.close()
         return
     if input_path is None:
         raise ValueError("RAW worker requires --fd or --input")
@@ -100,27 +96,29 @@ def _parse_args() -> argparse.Namespace:
 def main() -> int:
     args = _parse_args()
     _apply_memory_limit(args.memory_limit)
+    rawpy_module = None
 
     try:
-        import rawpy
+        import rawpy as rawpy_module
 
-        with _source(fd=args.fd, input_path=args.input) as stream:
-            with rawpy.imread(stream) as raw:
-                source_width = raw.sizes.width
-                source_height = raw.sizes.height
-                if source_width * source_height > args.max_pixels:
-                    _emit(
-                        valid=None,
-                        width=source_width,
-                        height=source_height,
-                        issue="image_decode_limit_exceeded",
-                    )
-                    return 0
-                pixels = raw.postprocess(
-                    use_camera_wb=True,
-                    no_auto_bright=True,
-                    output_bps=8,
+        with _source(fd=args.fd, input_path=args.input) as stream, rawpy_module.imread(
+            stream
+        ) as raw:
+            source_width = raw.sizes.width
+            source_height = raw.sizes.height
+            if source_width * source_height > args.max_pixels:
+                _emit(
+                    valid=None,
+                    width=source_width,
+                    height=source_height,
+                    issue="image_decode_limit_exceeded",
                 )
+                return 0
+            pixels = raw.postprocess(
+                use_camera_wb=True,
+                no_auto_bright=True,
+                output_bps=8,
+            )
 
         height, width = pixels.shape[:2]
         if args.mode == "decode":
@@ -159,12 +157,7 @@ def main() -> int:
         _emit(valid=None, issue="image_decode_memory_limit_exceeded")
         return 0
     except Exception as error:
-        try:
-            import rawpy
-        except ImportError:
-            rawpy = None  # type: ignore[assignment]
-
-        if rawpy is not None and isinstance(error, rawpy.LibRawError):
+        if rawpy_module is not None and isinstance(error, rawpy_module.LibRawError):
             issue = (
                 "image_decode_memory_limit_exceeded"
                 if _memory_related(error)
