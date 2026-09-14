@@ -9,6 +9,10 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from companion.duplicate_service import (
+    CrossSourceDuplicateService,
+    DuplicateResolutionTaskHandler,
+)
 from companion.immich import ImmichApiClient
 from companion.immich_duplicate_repository import (
     ImmichDuplicateRepository,
@@ -182,3 +186,25 @@ class ImmichDuplicateSyncService:
             task_status=latest.status if latest is not None else None,
             error=error,
         )
+
+
+class RefreshingDuplicateResolutionTaskHandler(DuplicateResolutionTaskHandler):
+    """Refresh the authoritative Immich group projection after duplicate mutations."""
+
+    def __init__(
+        self,
+        service: CrossSourceDuplicateService,
+        duplicate_sync: ImmichDuplicateSyncService,
+    ) -> None:
+        super().__init__(service)
+        self._duplicate_sync = duplicate_sync
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        result = await super().execute(context, payload)
+        try:
+            await self._duplicate_sync.start()
+        except Exception:
+            # Resolution already completed and was independently verified against Immich.
+            # A snapshot refresh failure must not rewrite the resolution outcome.
+            logger.exception("Could not queue Immich duplicate refresh after resolution")
+        return result
