@@ -205,6 +205,13 @@ export function getAssetSyncStatus(signal?: AbortSignal): Promise<AssetSyncCoord
   return requestJson('/api/assets/sync/status', { signal });
 }
 
+export function getAssetSyncRunStatus(
+  runId: string,
+  signal?: AbortSignal,
+): Promise<AssetSyncRunStatus> {
+  return requestJson(`/api/assets/sync/runs/${encodeURIComponent(runId)}`, { signal });
+}
+
 export function getTaskStatus(taskId: string, signal?: AbortSignal): Promise<AssetTaskStatus> {
   return requestJson(`/api/tasks/${encodeURIComponent(taskId)}`, { signal });
 }
