@@ -76,6 +76,23 @@ describe('task update connection', () => {
     expect(onconnectionchange).toHaveBeenCalledTimes(2);
   });
 
+  it('recovers when the stream closes synchronously while opening', () => {
+    vi.useFakeTimers();
+    const sockets: FakeSocket[] = [];
+    const open = vi.fn((_status, onclose) => {
+      const socket = new FakeSocket();
+      sockets.push(socket);
+      if (sockets.length === 1) onclose();
+      return socket;
+    });
+    const connection = new TaskUpdateConnection(open, vi.fn());
+
+    connection.start();
+    expect(sockets).toHaveLength(1);
+    vi.advanceTimersByTime(1000);
+    expect(sockets).toHaveLength(2);
+  });
+
   it('closes a connecting stream after a workspace reload/unmount', () => {
     vi.useFakeTimers();
     const socket = new FakeSocket();
