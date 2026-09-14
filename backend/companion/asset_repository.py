@@ -679,6 +679,25 @@ class AssetRepository:
             )
             return int(result.rowcount or 0)
 
+    async def apply_asset_action_event(
+        self, operation: AssetActionOperation, asset_ids: list[UUID]
+    ) -> None:
+        """Reflect an API-confirmed flag change while durable repair is queued."""
+
+        flag = {
+            "favorite": (AssetRecord.is_favorite, True),
+            "unfavorite": (AssetRecord.is_favorite, False),
+            "archive": (AssetRecord.is_archived, True),
+            "unarchive": (AssetRecord.is_archived, False),
+        }.get(operation)
+        if flag is None or not asset_ids:
+            return
+        column, value = flag
+        async with self._database.sessions() as session, session.begin():
+            await session.execute(
+                update(AssetRecord).where(AssetRecord.id.in_(asset_ids)).values({column: value})
+            )
+
     async def apply_membership_event(
         self,
         relation: str,

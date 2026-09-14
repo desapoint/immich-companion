@@ -144,7 +144,7 @@
       return result!==null;
     }finally{groupLoads-=1}
   }
-  async function reconcileGroups(action:string):Promise<void>{if(!await refreshGroups())throw new Error(groupRequests.error||`${action} was applied, but duplicate groups could not be refreshed.`)}
+  async function reconcileGroups(action:string):Promise<void>{if(!await refreshGroups()&&groupRequests.error)throw new Error(groupRequests.error||`${action} was applied, but duplicate groups could not be refreshed.`)}
   function pending(action:string){return(phase:'applying'|'reconciling')=>pendingOperationFeedback(action,phase==='applying'?'applying':'refreshing')}
   async function loadMore(){if(!nextCursor||groupRequests.loading)return;collection.loadMore(total);await refreshGroups(false,true)}
   function setPage(value:number){collection.setPage(value);void refreshGroups(true,true);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'auto'})}

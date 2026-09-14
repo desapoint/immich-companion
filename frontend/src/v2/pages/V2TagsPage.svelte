@@ -75,7 +75,7 @@
     if(mode==='Pagination'&&requestedPage>lastPage){page=lastPage;return refresh(true)}
     return true;
   }
-  async function reconcile(action:string):Promise<void>{if(!await refresh(true))throw new Error(collectionRequests.error||`${action} was applied, but tags could not be refreshed.`)}
+  async function reconcile(action:string):Promise<void>{if(!await refresh(true)&&collectionRequests.error)throw new Error(collectionRequests.error||`${action} was applied, but tags could not be refreshed.`)}
   function pending(action:string){return(phase:'applying'|'reconciling')=>pendingOperationFeedback(action,phase==='applying'?'applying':'refreshing')}
   function setPageSize(next:number){pageSize=next;page=1;void refresh(true)}
   function setMode(mode:ResultMode){resultMode=mode;page=1;void refresh(true)}

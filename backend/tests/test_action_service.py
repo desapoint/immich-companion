@@ -60,6 +60,7 @@ class FakeAssets:
         self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
         self.removed_batches: list[list[UUID]] = []
         self.relation_ids: list[UUID] = []
+        self.flag_events: list[tuple[str, list[UUID]]] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
         return self.current
@@ -81,6 +82,9 @@ class FakeAssets:
     async def remove_assets(self, asset_ids: list[UUID]) -> int:
         self.removed_batches.append(asset_ids)
         return len(asset_ids)
+
+    async def apply_asset_action_event(self, operation, asset_ids):
+        self.flag_events.append((operation, asset_ids))
 
 
 class FakeActions:
@@ -266,6 +270,16 @@ class FakeSync:
 
     async def synchronize(self):
         self.calls += 1
+
+
+class DeferredSync(FakeSync):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[list[UUID]] = []
+
+    async def enqueue_asset_repair_during_sync(self, asset_ids):
+        self.queued.append(asset_ids)
+        return True
 
 
 class RuntimeSettings:
@@ -472,6 +486,26 @@ async def test_uniform_true_state_chooses_only_unarchive_and_unfavorite() -> Non
 
     assert archive.operation == "unarchive"
     assert favorite.operation == "unfavorite"
+
+
+@pytest.mark.asyncio
+async def test_favorite_action_finishes_without_waiting_for_active_sync_repair() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    selected = {ASSET_ONE, ASSET_TWO}
+    instance, _, immich, sync = service(
+        resolution(), [selected, selected, set()], sync=DeferredSync()
+    )
+
+    plan = await instance.plan(
+        AssetActionPlanRequest(selection=selection, action="favorite_toggle")
+    )
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert result.status == "completed"
+    assert immich.calls == [("favorite", None, [ASSET_ONE, ASSET_TWO])]
+    assert sync.queued == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.calls == 0
+    assert instance._assets.flag_events == [("favorite", [ASSET_ONE, ASSET_TWO])]
 
 
 @pytest.mark.asyncio

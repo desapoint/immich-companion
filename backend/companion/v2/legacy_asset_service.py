@@ -869,6 +869,28 @@ class AssetSyncService:
         await self._coordinator.start()
         return True
 
+    async def enqueue_asset_repair_during_sync(
+        self, asset_ids: list[UUID], *, include_stacks: bool = False
+    ) -> bool:
+        """Persist targeted repair without waiting for an active sync to finish."""
+
+        if self._coordinator is None or not asset_ids:
+            return False
+        status = await self.status()
+        if status.active is None and status.pending is None:
+            return False
+        await self._coordinator.submit(
+            "asset_repair",
+            {
+                "asset_ids": [str(asset_id) for asset_id in dict.fromkeys(asset_ids)],
+                "include_stacks": include_stacks,
+            },
+            priority=90,
+            # A later action on the same asset must always trigger a later repair.
+        )
+        await self._coordinator.start()
+        return True
+
     async def reconcile_targets(
         self,
         asset_ids: list[UUID],

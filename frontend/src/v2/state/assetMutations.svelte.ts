@@ -19,11 +19,13 @@ export class AssetMutationController {
   get error(): string { return this.operation.error; }
   set error(value: string) { this.operation.error = value; }
   get busy(): boolean { return this.operation.busy; }
+  get reconciling(): boolean { return this.operation.reconciling; }
   get phase(): AssetMutationPhase {
     return this.operation.phase === 'reconciling' ? 'refreshing' : this.operation.phase;
   }
   get action(): string { return this.operation.action; }
   get retry(): (() => Promise<void>) | null { return this.operation.retry; }
+  waitForReconciliation(): Promise<void> { return this.operation.waitForReconciliation(); }
 
   clearError(): void { this.operation.clearError(); }
   clearOutcome(): void { this.operation.clearOutcome(); }
@@ -36,7 +38,10 @@ export class AssetMutationController {
       retry: (result) => result.failed.length
         ? () => this.run(action, runner, { kind: 'ids', ids: result.failed.map((failure) => failure.id) }, options).then(() => {})
         : null,
-      reconcile: options.refresh ? (result) => options.refresh!(result) : () => this.refresh(),
+      reconcile: async (result) => {
+        if (options.refresh) await options.refresh(result);
+        await this.refresh();
+      },
       reconcileError: options.refreshError ?? `${action} was applied, but the latest asset state could not be loaded.`,
     });
   }

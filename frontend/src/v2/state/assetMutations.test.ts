@@ -14,7 +14,7 @@ const target={kind:'ids' as const,ids:['asset-1']};
 const success:MutationResult={affectedIds:['asset-1'],failed:[]};
 
 describe('AssetMutationController',()=>{
-  it('uses one applying then refreshing lifecycle with pending feedback',async()=>{
+  it('releases action controls before refreshing the collection',async()=>{
     const execute=deferred<MutationResult>();
     const refresh=deferred<void>();
     const controller=new AssetMutationController(()=>refresh.promise,()=>{});
@@ -27,12 +27,13 @@ describe('AssetMutationController',()=>{
     execute.resolve(success);
     await Promise.resolve();
     await Promise.resolve();
-    expect(controller.busy).toBe(true);
-    expect(controller.phase).toBe('refreshing');
-    expect(controller.feedback).toMatchObject({tone:'pending',title:'Favorite applied',detail:'Refreshing latest asset state…'});
+    expect(await pending).toEqual(success);
+    expect(controller.busy).toBe(false);
+    expect(controller.reconciling).toBe(true);
+    expect(controller.feedback?.tone).toBe('ok');
 
     refresh.resolve();
-    await pending;
+    await controller.waitForReconciliation();
     expect(controller.feedback?.tone).toBe('ok');
     expect(controller.busy).toBe(false);
     expect(controller.phase).toBe('idle');
@@ -42,6 +43,7 @@ describe('AssetMutationController',()=>{
     const controller=new AssetMutationController(async()=>{throw new Error('refresh failed')},()=>{});
 
     const result=await controller.run('Favorite',async()=>success,target);
+    await controller.waitForReconciliation();
 
     expect(result).toEqual(success);
     expect(controller.feedback?.tone).toBe('ok');
@@ -57,8 +59,9 @@ describe('AssetMutationController',()=>{
     await controller.run('Move to trash',async()=>success,target,{
       refresh:async(result)=>{expect(result).toEqual(success);singleRefreshes+=1},
     });
+    await controller.waitForReconciliation();
 
     expect(singleRefreshes).toBe(1);
-    expect(defaultRefreshes).toBe(0);
+    expect(defaultRefreshes).toBe(1);
   });
 });

@@ -12,7 +12,7 @@ const pending = (phase: 'applying' | 'reconciling') => ({
 const outcome = () => ({ tone: 'ok' as const, title: 'done', detail: 'done', failures: [] });
 
 describe('OperationController', () => {
-  it('separates apply and reconcile phases', async () => {
+  it('returns after apply while a refresh runs in the background', async () => {
     const operation = new OperationController();
     let releaseApply!: () => void;
     let releaseReconcile!: () => void;
@@ -31,10 +31,15 @@ describe('OperationController', () => {
     releaseApply();
     await Promise.resolve();
     await Promise.resolve();
-    expect(operation.phase).toBe('reconciling');
-    releaseReconcile();
-    await run;
+    expect(await run).toEqual({ id: 'x' });
+    expect(operation.busy).toBe(false);
+    expect(operation.reconciling).toBe(true);
     expect(operation.phase).toBe('idle');
+    expect(operation.feedback?.tone).toBe('ok');
+    releaseReconcile();
+    await operation.waitForReconciliation();
+    expect(operation.phase).toBe('idle');
+    expect(operation.reconciling).toBe(false);
     expect(operation.feedback?.tone).toBe('ok');
   });
 
@@ -46,6 +51,7 @@ describe('OperationController', () => {
       reconcile: async () => { throw new Error('refresh failed'); },
       reconcileError: 'Save was applied, but latest state could not be loaded.',
     });
+    await operation.waitForReconciliation();
 
     expect(operation.feedback?.tone).toBe('ok');
     expect(operation.error).toContain('Save was applied');
@@ -62,5 +68,33 @@ describe('OperationController', () => {
     });
 
     expect(operation.retry).toBe(retry);
+  });
+
+  it('allows another action during refresh and coalesces queued refreshes', async () => {
+    const operation = new OperationController();
+    let release!: () => void;
+    const firstRefresh = new Promise<void>((resolve) => release = resolve);
+    const refreshes: string[] = [];
+    await operation.run('First', async () => 1, { pending, outcome, reconcile: async () => { refreshes.push('first'); await firstRefresh; } });
+    await Promise.resolve();
+    expect(operation.reconciling).toBe(true);
+    await operation.run('Second', async () => 2, { pending, outcome, reconcile: async () => { refreshes.push('second'); } });
+    await operation.run('Third', async () => 3, { pending, outcome, reconcile: async () => { refreshes.push('third'); } });
+    release();
+    await operation.waitForReconciliation();
+    expect(refreshes).toEqual(['first', 'third']);
+    expect(operation.feedback?.title).toBe('done');
+  });
+
+  it('does not let an older refresh failure overwrite a newer action', async () => {
+    const operation = new OperationController();
+    let fail!: (error: Error) => void;
+    const firstRefresh = new Promise<void>((_resolve, reject) => fail = reject);
+    await operation.run('First', async () => 1, { pending, outcome, reconcile: () => firstRefresh });
+    await Promise.resolve();
+    await operation.run('Second', async () => 2, { pending, outcome, reconcile: async () => {} });
+    fail(new Error('old failure'));
+    await operation.waitForReconciliation();
+    expect(operation.error).toBe('');
   });
 });

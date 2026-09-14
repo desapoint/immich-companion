@@ -659,15 +659,23 @@ class AssetActionService:
                 if index + 1 < len(action_batches):
                     await self._pace_large_action_batch(batch_started, enabled=throttle)
             if applicable_ids and operation not in {"trash", "stack"}:
-                await self._repair_targets(
-                    repair_ids,
-                    include_stacks=operation in {
-                        "stack",
-                        "set_stack_primary",
-                        "remove_from_stack",
-                        "remove_stack",
-                    },
-                )
+                deferred_repair = False
+                if operation in {"favorite", "unfavorite", "archive", "unarchive"}:
+                    enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
+                    if enqueue is not None:
+                        deferred_repair = await enqueue(repair_ids)
+                    if deferred_repair:
+                        await self._assets.apply_asset_action_event(operation, applicable_ids)
+                if not deferred_repair:
+                    await self._repair_targets(
+                        repair_ids,
+                        include_stacks=operation in {
+                            "stack",
+                            "set_stack_primary",
+                            "remove_from_stack",
+                            "remove_stack",
+                        },
+                    )
             if operation == "stack":
                 # Stacking is a positive state change. The generic applicability
                 # query intentionally returns every asset for this operation, so

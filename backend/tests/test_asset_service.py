@@ -65,6 +65,40 @@ async def test_relation_repair_is_queued_behind_active_sync_without_waiting() ->
     assert coordinator.started is True
 
 
+@pytest.mark.asyncio
+async def test_asset_repair_is_queued_durably_during_active_sync() -> None:
+    class Coordinator:
+        def __init__(self) -> None:
+            self.submitted: list[tuple[str, dict[str, object], dict[str, object]]] = []
+            self.started = False
+
+        async def submit(self, task_type, payload, **options):
+            self.submitted.append((task_type, payload, options))
+
+        async def start(self):
+            self.started = True
+
+    coordinator = Coordinator()
+    service = object.__new__(AssetSyncService)
+    service._coordinator = coordinator  # type: ignore[assignment]
+
+    async def status():
+        return SimpleNamespace(active=SimpleNamespace(id=RUN_ID), pending=None)
+
+    service.status = status  # type: ignore[method-assign]
+    queued = await service.enqueue_asset_repair_during_sync([ASSET_ONE, ASSET_ONE])
+
+    assert queued is True
+    assert coordinator.submitted == [
+        (
+            "asset_repair",
+            {"asset_ids": [str(ASSET_ONE)], "include_stacks": False},
+            {"priority": 90},
+        )
+    ]
+    assert coordinator.started is True
+
+
 def asset(asset_id: UUID, filename: str) -> ImmichAsset:
     return ImmichAsset.model_validate(
         {

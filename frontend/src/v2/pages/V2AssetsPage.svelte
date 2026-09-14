@@ -115,7 +115,7 @@
       return true;
     }finally{assetLoads-=1}
   }
-  const mutations=new AssetMutationController(async()=>{if(!await refreshSearch(true))throw new Error(searchRequests.error||'Assets could not be refreshed.')},()=>{});
+  const mutations=new AssetMutationController(async()=>{if(!await refreshSearch(true)&&(searchRequests.error||selectionError))throw new Error(searchRequests.error||selectionError)},()=>{});
 
   async function loadMore(){if(collection.resultMode!=='Infinite'||!nextCursor||searching)return;collection.loadMore(total);await refreshSearch(false)}
   async function applySearch(){appliedSearchMode=searchMode;if(searchMode==='Simple')appliedSimple={filename,mediaType,favorite,archived,advanced:{...simpleAdvanced}};else{appliedRules=rules.map((rule)=>({...rule}));appliedGroups=cloneAssetGroups(groups);appliedLogic=logic;appliedNegated=negated}collection.reset();await refreshSearch(true)}
@@ -170,9 +170,9 @@
   function closeViewer(){viewer=false;viewerStartStack=false;const id=viewerLastId;const pending=viewerCollectionSync;void(async()=>{await pending;await tick();scrollViewedAssetIntoView(assetGrid,id)})()}
   async function filterViewerRelationship(kind:'album'|'tag',id:string){viewer=false;viewerAssetId=null;viewerStartStack=false;tab='Browse';selectedSaved='';searchMode='Expert';rules=[{id:++seq,field:kind,op:'is',value:id}];groups=[];logic='AND';negated=false;await runSearch()}
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
-  async function setSelectedFavorite(){if(!selectionActive)return;const next=favoriteActionLabel==='Favorite',target=await preparedSelectionTarget();if(!target)return;await mutations.run(next?'Favorite':'Unfavorite',(value)=>libraryData.assets.setFavorite(value,next),target);moreOpen=false}
-  async function setSelectedArchived(){if(!selectionActive)return;const next=archiveActionLabel==='Archive',target=await preparedSelectionTarget();if(!target)return;await mutations.run(next?'Archive':'Unarchive',(value)=>libraryData.assets.setArchived(value,next),target);moreOpen=false}
-  async function trashSelected(){if(!selectionActive||mutations.busy)return;const target=await preparedSelectionTarget();if(!target)return;const result=await mutations.run('Move to trash',(value)=>libraryData.assets.trash(value),target);trashConfirmOpen=false;if(result)clearSelection()}
+  async function setSelectedFavorite(){if(!selectionActive)return;const next=favoriteActionLabel==='Favorite',target=await preparedSelectionTarget();if(!target)return;const result=await mutations.run(next?'Favorite':'Unfavorite',(value)=>libraryData.assets.setFavorite(value,next),target);if(result){const changed=new Set(result.affectedIds);items=items.map((item)=>changed.has(item.id)?{...item,is_favorite:next}:item)}moreOpen=false}
+  async function setSelectedArchived(){if(!selectionActive)return;const next=archiveActionLabel==='Archive',target=await preparedSelectionTarget();if(!target)return;const result=await mutations.run(next?'Archive':'Unarchive',(value)=>libraryData.assets.setArchived(value,next),target);if(result){const changed=new Set(result.affectedIds);items=items.map((item)=>changed.has(item.id)?{...item,is_archived:next}:item)}moreOpen=false}
+  async function trashSelected(){if(!selectionActive||mutations.busy)return;const target=await preparedSelectionTarget();if(!target)return;const result=await mutations.run('Move to trash',(value)=>libraryData.assets.trash(value),target);trashConfirmOpen=false;if(result){const removed=new Set(result.affectedIds);items=items.filter((item)=>!removed.has(item.id));clearSelection()}}
   async function syncSelected(){const target=await preparedSelectionTarget();if(!target)return;await mutations.run('Sync',(value)=>libraryData.assets.sync(value),target);moreOpen=false}
   async function removeAllTags(){const target=await preparedSelectionTarget();if(!target)return;await mutations.run('Remove all tags',(value)=>libraryData.assets.removeTags(value),target);moreOpen=false}
   async function removeAllAlbums(){const target=await preparedSelectionTarget();if(!target)return;await mutations.run('Remove all albums',(value)=>libraryData.assets.removeFromAlbums(value),target);moreOpen=false}
