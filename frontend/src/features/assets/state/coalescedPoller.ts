@@ -1,4 +1,4 @@
-export type PollTask = () => Promise<void>;
+export type PollTask = (signal: AbortSignal) => Promise<void>;
 export type PollDelay = () => number;
 
 /**
@@ -9,6 +9,7 @@ export type PollDelay = () => number;
 export class CoalescedPoller {
   #timer: ReturnType<typeof setTimeout> | null = null;
   #request: Promise<void> | null = null;
+  #controller: AbortController | null = null;
   #generation = 0;
   #running = false;
 
@@ -26,13 +27,20 @@ export class CoalescedPoller {
   }
 
   stop(): void {
-    if (!this.#running && this.#timer === null && this.#request === null) return;
+    if (
+      !this.#running
+      && this.#timer === null
+      && this.#request === null
+      && this.#controller === null
+    ) return;
     this.#running = false;
     this.#generation += 1;
     this.#clearTimer();
-    // An in-flight promise cannot be cancelled generically. Detach it so a
-    // future start does not wait for stale work and its completion cannot
-    // schedule another poll for the stopped generation.
+    this.#controller?.abort();
+    this.#controller = null;
+    // Detach stale work immediately so a later start can issue a fresh poll.
+    // The aborted request may settle afterward, but its generation can no
+    // longer schedule another run.
     this.#request = null;
   }
 
@@ -52,7 +60,12 @@ export class CoalescedPoller {
     const generation = this.#generation;
     const activeRequest = this.#request;
     if (activeRequest) {
-      await activeRequest;
+      try {
+        await activeRequest;
+      } catch (error) {
+        if (!this.#running || generation !== this.#generation) return;
+        throw error;
+      }
       if (
         !forceAfterCurrent
         || !this.#running
@@ -64,19 +77,30 @@ export class CoalescedPoller {
       // of creating a second concurrent poll.
       const followUp = this.#request;
       if (followUp) {
-        await followUp;
+        try {
+          await followUp;
+        } catch (error) {
+          if (!this.#running || generation !== this.#generation) return;
+          throw error;
+        }
         return;
       }
     }
 
     this.#clearTimer();
-    const request = this.task();
+    const controller = new AbortController();
+    this.#controller = controller;
+    const request = this.task(controller.signal);
     this.#request = request;
     try {
       await request;
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      throw error;
     } finally {
       if (this.#request !== request) return;
       this.#request = null;
+      if (this.#controller === controller) this.#controller = null;
       if (this.#running && generation === this.#generation) this.reschedule();
     }
   }
