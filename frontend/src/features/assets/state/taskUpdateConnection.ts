@@ -46,7 +46,10 @@ export class TaskUpdateConnection {
     }
     const socket = this.#socket;
     this.#socket = null;
-    this.#setConnected(false);
+    // Explicit teardown is owned by the caller and must not look like a
+    // recoverable connection loss; otherwise consumers may restart fallback
+    // polling while they are unmounting.
+    this.#connected = false;
     if (!socket) return;
     if (socket.readyState === CONNECTING) {
       socket.addEventListener('open', () => socket.close(), { once: true });
