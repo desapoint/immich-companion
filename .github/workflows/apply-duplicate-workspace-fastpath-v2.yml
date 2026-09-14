@@ -1,0 +1,66 @@
+name: Apply duplicate workspace fast path v2
+
+on:
+  push:
+    branches:
+      - feat/v2-shell
+    paths:
+      - .github/workflows/apply-duplicate-workspace-fastpath-v2.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/v2-shell
+
+      - name: Apply bounded workspace patch
+        shell: bash
+        run: |
+          echo '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' | base64 -d | gzip -d > /tmp/apply_duplicate_workspace_fastpath.py
+          python -m py_compile /tmp/apply_duplicate_workspace_fastpath.py
+          python /tmp/apply_duplicate_workspace_fastpath.py
+          rm -f \
+            .github/workflows/apply-duplicate-workspace-fastpath.yml \
+            .github/workflows/retry-duplicate-workspace-fastpath.yml \
+            .github/workflows/apply-duplicate-workspace-fastpath-v2.yml
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend
+        run: python -m pip install -e './backend[dev]'
+
+      - name: Validate backend
+        working-directory: backend
+        run: |
+          pytest
+          ruff check companion tests
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Validate frontend
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run check
+          npm test
+
+      - name: Commit validated implementation
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git commit -m 'perf: bound duplicate workspace restoration'
+          git push origin HEAD:feat/v2-shell
