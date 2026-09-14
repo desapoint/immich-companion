@@ -63,8 +63,10 @@ export class TaskUpdateConnection {
     ) return;
 
     let socket: TaskUpdateSocket | null = null;
+    let closedBeforeAssignment = false;
     socket = this.open(this.onstatus, () => {
       if (socket) this.#scheduleReconnect(socket);
+      else closedBeforeAssignment = true;
     });
     this.#socket = socket;
     socket.addEventListener('open', () => {
@@ -72,6 +74,7 @@ export class TaskUpdateConnection {
       this.#delay = 1000;
       this.#setConnected(true);
     }, { once: true });
+    if (closedBeforeAssignment) this.#scheduleReconnect(socket);
   }
 
   #scheduleReconnect(socket: TaskUpdateSocket): void {
