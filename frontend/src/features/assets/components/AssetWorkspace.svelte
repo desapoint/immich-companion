@@ -57,6 +57,7 @@
   } from '../state/assetInfiniteWindow';
   import { BoundedCache } from '../state/boundedCache';
   import { CoalescedPoller } from '../state/coalescedPoller';
+  import { LatestRequest, requestErrorMessage } from '../state/latestRequest';
   import { TaskUpdateConnection } from '../state/taskUpdateConnection';
   import type {
     AlbumOption,
@@ -146,9 +147,6 @@
   let selectionTask = $state<AssetTaskStatus | null>(null);
   let selectionTaskErrorOpen = $state(false);
   let searchController: AbortController | null = null;
-  let detailController: AbortController | null = null;
-  let selectionController: AbortController | null = null;
-  let viewerActionController: AbortController | null = null;
   let viewerActionAssetId = $state<string | null>(null);
   let viewerActionResolution = $state<AssetSelectionResolution | null>(null);
   let viewerActionError = $state<string | null>(null);
@@ -166,6 +164,9 @@
   let handledSyncFailureId: string | null = null;
   let manualSyncPending = false;
   const detailCache = new BoundedCache<string, AssetDetail>(detailCacheSize);
+  const detailRequest = new LatestRequest();
+  const selectionRequest = new LatestRequest();
+  const viewerActionRequest = new LatestRequest();
   const cardIndicatorConfig: AssetCardIndicatorConfig = {
     albums: true,
     tags: true,
@@ -605,8 +606,7 @@
   async function loadDetail(index: number): Promise<void> {
     const asset = results?.items[index];
     if (!asset) return;
-    detailController?.abort();
-    detailController = null;
+    detailRequest.abort();
     const cached = detailCache.get(asset.id);
     if (cached) {
       detail = cached;
@@ -615,56 +615,41 @@
       return;
     }
 
-    const controller = new AbortController();
-    detailController = controller;
     detail = null;
     detailError = null;
     detailLoading = true;
-    try {
-      const loaded = await getAssetDetail(asset.id, controller.signal);
-      detailCache.set(asset.id, loaded);
-      if (!controller.signal.aborted) detail = loaded;
-    } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
-        detailError = requestError instanceof Error ? requestError.message : 'Image details failed to load.';
-      }
-    } finally {
-      if (detailController === controller) {
-        detailController = null;
-        detailLoading = false;
-      }
+    const result = await detailRequest.run((signal) => getAssetDetail(asset.id, signal));
+    if (!detailRequest.isCurrent(result.version)) return;
+
+    if (result.status === 'success') {
+      detailCache.set(asset.id, result.value);
+      detail = result.value;
+    } else if (result.status === 'error') {
+      detailError = requestErrorMessage(result.error, 'Image details failed to load.');
     }
+    detailLoading = false;
   }
 
   async function refreshDetail(assetId: string): Promise<void> {
-    detailController?.abort();
-    const controller = new AbortController();
-    detailController = controller;
     detailError = null;
     detailLoading = true;
-    try {
-      const loaded = await getAssetDetail(assetId, controller.signal);
-      detailCache.set(assetId, loaded);
-      if (!controller.signal.aborted) detail = loaded;
-    } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
-        detailError = requestError instanceof Error
-          ? requestError.message
-          : 'Image details failed to load.';
-      }
-    } finally {
-      if (detailController === controller) {
-        detailController = null;
-        detailLoading = false;
-      }
+    const result = await detailRequest.run((signal) => getAssetDetail(assetId, signal));
+    if (!detailRequest.isCurrent(result.version)) return;
+
+    if (result.status === 'success') {
+      detailCache.set(assetId, result.value);
+      detail = result.value;
+    } else if (result.status === 'error') {
+      detailError = requestErrorMessage(result.error, 'Image details failed to load.');
     }
+    detailLoading = false;
   }
 
   async function syncViewerAsset(assetId: string): Promise<void> {
     viewerSyncing = true;
     viewerSyncError = null;
+    detailRequest.abort();
+    detailLoading = false;
     try {
       const syncedDetail = await synchronizeAsset(assetId);
       detailCache.set(assetId, syncedDetail);
@@ -833,35 +818,30 @@
       navigateViewer(resultIndex);
       return;
     }
-    detailController?.abort();
-    const controller = new AbortController();
-    detailController = controller;
-    try {
-      detail = null;
-      detailError = null;
-      detailLoading = true;
-      const [asset, loadedDetail] = await Promise.all([
-        getAssetSummary(assetId, controller.signal),
-        getAssetDetail(assetId, controller.signal),
-      ]);
-      if (controller.signal.aborted || !asset || viewerIndex === null) return;
-      viewerSelectedAsset = asset;
-      detailCache.set(assetId, loadedDetail);
-      detail = loadedDetail;
-      detailError = null;
-    } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
-        detailError = requestError instanceof Error
-          ? requestError.message
-          : 'Selected stack member details could not be loaded.';
+
+    detail = null;
+    detailError = null;
+    detailLoading = true;
+    const result = await detailRequest.run((signal) => Promise.all([
+      getAssetSummary(assetId, signal),
+      getAssetDetail(assetId, signal),
+    ]));
+    if (!detailRequest.isCurrent(result.version) || viewerIndex === null) return;
+
+    if (result.status === 'success') {
+      const [asset, loadedDetail] = result.value;
+      if (asset) {
+        viewerSelectedAsset = asset;
+        detailCache.set(assetId, loadedDetail);
+        detail = loadedDetail;
       }
-    } finally {
-      if (detailController === controller) {
-        detailController = null;
-        detailLoading = false;
-      }
+    } else if (result.status === 'error') {
+      detailError = requestErrorMessage(
+        result.error,
+        'Selected stack member details could not be loaded.',
+      );
     }
+    detailLoading = false;
   }
 
   function toggleSelection(assetId: string): void {
@@ -954,8 +934,7 @@
     stackPrimaryAssetId = null;
     selectionResolution = null;
     actionPlan = null;
-    selectionController?.abort();
-    selectionController = null;
+    selectionRequest.abort();
     selectionLoading = false;
     selectionAnchorIndex = null;
     dragSelecting = false;
@@ -1010,36 +989,26 @@
   }
 
   async function refreshSelection(): Promise<void> {
-    selectionController?.abort();
     if (selectedAssetCount(selection, results?.total ?? 0) === 0) {
-      selectionController = null;
+      selectionRequest.abort();
       selectionResolution = null;
       selectionLoading = false;
       return;
     }
-    const controller = new AbortController();
-    selectionController = controller;
+
     selectionLoading = true;
     actionError = null;
-    try {
-      const resolved = await resolveAssetSelection(
-        buildSelectionRequest(selection, expression),
-        controller.signal,
-      );
-      if (!controller.signal.aborted) selectionResolution = resolved;
-    } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
-        actionError = requestError instanceof Error
-          ? requestError.message
-          : 'Selection resolution failed.';
-      }
-    } finally {
-      if (selectionController === controller) {
-        selectionController = null;
-        selectionLoading = false;
-      }
+    const result = await selectionRequest.run((signal) => resolveAssetSelection(
+      buildSelectionRequest(selection, expression),
+      signal,
+    ));
+    if (!selectionRequest.isCurrent(result.version)) return;
+
+    if (result.status === 'success') selectionResolution = result.value;
+    else if (result.status === 'error') {
+      actionError = requestErrorMessage(result.error, 'Selection resolution failed.');
     }
+    selectionLoading = false;
   }
 
   async function createActionPlan(
@@ -1247,40 +1216,32 @@
 
   async function resolveViewerActionState(assetId: string, force = false): Promise<void> {
     if (!force && viewerActionAssetId === assetId && viewerActionResolution) return;
-    viewerActionController?.abort();
-    const controller = new AbortController();
-    viewerActionController = controller;
     viewerActionAssetId = assetId;
     viewerActionResolution = null;
     viewerActionError = null;
-    try {
-      const resolved = await resolveAssetSelection(
-        buildExplicitAssetSelectionRequest(assetId),
-        controller.signal,
+    const result = await viewerActionRequest.run((signal) => resolveAssetSelection(
+      buildExplicitAssetSelectionRequest(assetId),
+      signal,
+    ));
+    if (!viewerActionRequest.isCurrent(result.version) || viewerActionAssetId !== assetId) return;
+
+    if (result.status === 'success') viewerActionResolution = result.value;
+    else if (result.status === 'error') {
+      viewerActionError = requestErrorMessage(
+        result.error,
+        'Image action state could not be resolved.',
       );
-      if (!controller.signal.aborted) viewerActionResolution = resolved;
-    } catch (requestError) {
-      if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-      if (!controller.signal.aborted) {
-        viewerActionError = requestError instanceof Error
-          ? requestError.message
-          : 'Image action state could not be resolved.';
-      }
-    } finally {
-      if (viewerActionController === controller) viewerActionController = null;
     }
   }
 
   function closeViewer(): void {
     viewerIndex = null;
     viewerSelectedAsset = null;
-    detailController?.abort();
-    detailController = null;
+    detailRequest.abort();
     detail = null;
     detailLoading = false;
     detailError = null;
-    viewerActionController?.abort();
-    viewerActionController = null;
+    viewerActionRequest.abort();
     viewerActionAssetId = null;
     viewerActionResolution = null;
     viewerActionError = null;
@@ -1520,9 +1481,9 @@
     syncStatusPoller.stop();
     taskUpdateConnection?.stop();
     searchController?.abort();
-    detailController?.abort();
-    selectionController?.abort();
-    viewerActionController?.abort();
+    detailRequest.abort();
+    selectionRequest.abort();
+    viewerActionRequest.abort();
     detailCache.clear();
   });
 </script>
