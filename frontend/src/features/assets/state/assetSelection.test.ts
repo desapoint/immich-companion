@@ -4,6 +4,7 @@ import { createSearchGroup } from './assetViewModel';
 import {
   buildSelectionRequest,
   buildExplicitAssetSelectionRequest,
+  canMergeServerSelectionPages,
   createAssetSelectionState,
   invertCurrentPage,
   isAssetSelected,
@@ -82,7 +83,7 @@ describe('asset selection', () => {
     });
   });
 
-  it('merges visible membership from search pages without a separate membership request', () => {
+  it('merges visible membership from one coherent server revision', () => {
     const state = mergeServerSelectionPages(createAssetSelectionState(), [
       { id: 'selection-1', revision: 4, selected_count: 8, selected_ids: ['one', 'two'] },
       { id: 'selection-1', revision: 4, selected_count: 8, selected_ids: ['three'] },
@@ -97,6 +98,57 @@ describe('asset selection', () => {
     expect([...appended.selectedIds]).toEqual(['one', 'two', 'three', 'four']);
     expect(appended.selectionRevision).toBe(5);
     expect(appended.serverSelectedCount).toBe(9);
+  });
+
+  it('rejects mixed ids and revisions instead of combining incompatible membership', () => {
+    const state = setServerSelection(
+      createAssetSelectionState(),
+      'selection-1',
+      5,
+      9,
+      ['current'],
+    );
+    const mixedRevision = [
+      { id: 'selection-1', revision: 4, selected_count: 8, selected_ids: ['stale'] },
+      { id: 'selection-1', revision: 5, selected_count: 9, selected_ids: ['fresh'] },
+    ];
+    const mixedIds = [
+      { id: 'selection-1', revision: 5, selected_count: 9, selected_ids: ['fresh'] },
+      { id: 'selection-2', revision: 5, selected_count: 3, selected_ids: ['other'] },
+    ];
+
+    expect(canMergeServerSelectionPages(state, mixedRevision)).toBe(false);
+    expect(mergeServerSelectionPages(state, mixedRevision)).toBe(state);
+    expect(canMergeServerSelectionPages(state, mixedIds)).toBe(false);
+    expect(mergeServerSelectionPages(state, mixedIds)).toBe(state);
+  });
+
+  it('ignores stale page and membership revisions', () => {
+    const state = setServerSelection(
+      createAssetSelectionState(),
+      'selection-1',
+      6,
+      10,
+      ['one', 'two'],
+    );
+
+    expect(mergeServerSelectionPage(state, {
+      id: 'selection-1',
+      revision: 5,
+      selected_count: 9,
+      selected_ids: ['stale'],
+    })).toBe(state);
+
+    expect(patchServerSelectionMembership(state, ['one'], {
+      selection: {
+        id: 'selection-1',
+        revision: 5,
+        selected_count: 9,
+        status: 'active',
+        expires_at: '2026-09-14T20:00:00Z',
+      },
+      selected_ids: [],
+    })).toBe(state);
   });
 
   it('patches only requested visible membership during reconciliation', () => {
