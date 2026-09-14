@@ -11,6 +11,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     Integer,
@@ -64,6 +65,18 @@ class CompositeDuplicateGroupRecord(Base):
     provider_group_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     stable_group_key: Mapped[str] = mapped_column(Text, nullable=False, index=True)
     member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    member_count: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    reclaimable_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    similarity_score: Mapped[float | None] = mapped_column(Float, nullable=True, index=True)
+    oldest_taken_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    newest_taken_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, index=True
+    )
+    first_discovered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
     provider_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
     similarity_validation: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     sync_generation: Mapped[int] = mapped_column(BigInteger, nullable=False, index=True)
@@ -149,6 +162,30 @@ class CompositeDuplicateSnapshotPage:
     pages: int
 
 
+def _group_projection_summary(group: DiscoveredGroup) -> dict[str, Any]:
+    """Return small SQL-sortable values without retaining duplicate group objects."""
+
+    sizes = [asset.file_size_bytes for asset in group.assets]
+    reclaimable_bytes = (
+        sum(size for size in sizes if size is not None)
+        - max(size for size in sizes if size is not None)
+        if sizes and all(size is not None for size in sizes)
+        else None
+    )
+    capture_times = [asset.file_created_at for asset in group.assets]
+    return {
+        "member_count": len(group.assets),
+        "reclaimable_bytes": reclaimable_bytes,
+        "similarity_score": (
+            group.similarity_validation.minimum_similarity_percent
+            if group.similarity_validation is not None
+            else None
+        ),
+        "oldest_taken_at": min(capture_times) if capture_times else None,
+        "newest_taken_at": max(capture_times) if capture_times else None,
+    }
+
+
 def _validation_payload(validation: ValidatedSimilarityGroup | None) -> dict[str, Any] | None:
     if validation is None:
         return None
@@ -167,9 +204,7 @@ def _validation_payload(validation: ValidatedSimilarityGroup | None) -> dict[str
                 ),
                 "admission_similarity_percent": item.admission_similarity_percent,
                 "best_group_match_asset_id": (
-                    str(item.best_group_match_asset_id)
-                    if item.best_group_match_asset_id
-                    else None
+                    str(item.best_group_match_asset_id) if item.best_group_match_asset_id else None
                 ),
                 "best_group_match_similarity_percent": item.best_group_match_similarity_percent,
                 "link_depth": item.link_depth,
@@ -193,9 +228,7 @@ def _validation_from_payload(payload: dict[str, Any] | None) -> ValidatedSimilar
             SimilarityAdmissionEvidence(
                 asset_id=UUID(item["asset_id"]),
                 admitted_by_asset_id=(
-                    UUID(item["admitted_by_asset_id"])
-                    if item.get("admitted_by_asset_id")
-                    else None
+                    UUID(item["admitted_by_asset_id"]) if item.get("admitted_by_asset_id") else None
                 ),
                 admission_similarity_percent=(
                     float(item["admission_similarity_percent"])
@@ -279,9 +312,7 @@ class CompositeDuplicateRepository:
             for row in resolved.values()
         ]
 
-    async def groups_by_ids(
-        self, group_ids: list[str]
-    ) -> list[CompositeDuplicateSnapshotGroup]:
+    async def groups_by_ids(self, group_ids: list[str]) -> list[CompositeDuplicateSnapshotGroup]:
         """Load complete snapshots only for explicitly requested group IDs."""
 
         unique_ids = list(dict.fromkeys(group_ids))
@@ -306,9 +337,7 @@ class CompositeDuplicateRepository:
                                 CompositeDuplicateGroupMemberRecord.group_id,
                                 CompositeDuplicateGroupMemberRecord.asset_id,
                             )
-                            .where(
-                                CompositeDuplicateGroupMemberRecord.group_id.in_(found_ids)
-                            )
+                            .where(CompositeDuplicateGroupMemberRecord.group_id.in_(found_ids))
                             .order_by(
                                 CompositeDuplicateGroupMemberRecord.group_id,
                                 CompositeDuplicateGroupMemberRecord.position,
@@ -320,9 +349,7 @@ class CompositeDuplicateRepository:
                     (
                         await session.execute(
                             select(CompositeDuplicateGroupEvidenceRecord)
-                            .where(
-                                CompositeDuplicateGroupEvidenceRecord.group_id.in_(found_ids)
-                            )
+                            .where(CompositeDuplicateGroupEvidenceRecord.group_id.in_(found_ids))
                             .order_by(
                                 CompositeDuplicateGroupEvidenceRecord.group_id,
                                 CompositeDuplicateGroupEvidenceRecord.discovery_source,
@@ -427,6 +454,8 @@ class CompositeDuplicateRepository:
         page: int,
         page_size: int,
         source: DiscoverySource | None = None,
+        sort: str = "reclaimable",
+        direction: str = "desc",
     ) -> CompositeDuplicateSnapshotPage:
         """Read one ordered page without hydrating the full duplicate universe."""
 
@@ -447,9 +476,21 @@ class CompositeDuplicateRepository:
 
         async with self._database.sessions() as session:
             count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
+            sort_column = {
+                "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
+                "members": CompositeDuplicateGroupRecord.member_count,
+                "similarity": CompositeDuplicateGroupRecord.similarity_score,
+                "newest": CompositeDuplicateGroupRecord.newest_taken_at,
+                "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
+                "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
+            }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
+            order = sort_column.desc() if direction == "desc" else sort_column.asc()
             group_statement = (
                 select(CompositeDuplicateGroupRecord)
-                .order_by(CompositeDuplicateGroupRecord.position)
+                .order_by(
+                    order.nulls_last(),
+                    CompositeDuplicateGroupRecord.group_id.asc(),
+                )
                 .offset(offset)
                 .limit(page_size)
             )
@@ -468,9 +509,7 @@ class CompositeDuplicateRepository:
                                 CompositeDuplicateGroupMemberRecord.group_id,
                                 CompositeDuplicateGroupMemberRecord.asset_id,
                             )
-                            .where(
-                                CompositeDuplicateGroupMemberRecord.group_id.in_(group_ids)
-                            )
+                            .where(CompositeDuplicateGroupMemberRecord.group_id.in_(group_ids))
                             .order_by(
                                 CompositeDuplicateGroupMemberRecord.group_id,
                                 CompositeDuplicateGroupMemberRecord.position,
@@ -482,9 +521,7 @@ class CompositeDuplicateRepository:
                     (
                         await session.execute(
                             select(CompositeDuplicateGroupEvidenceRecord)
-                            .where(
-                                CompositeDuplicateGroupEvidenceRecord.group_id.in_(group_ids)
-                            )
+                            .where(CompositeDuplicateGroupEvidenceRecord.group_id.in_(group_ids))
                             .order_by(
                                 CompositeDuplicateGroupEvidenceRecord.group_id,
                                 CompositeDuplicateGroupEvidenceRecord.discovery_source,
@@ -574,6 +611,7 @@ class CompositeDuplicateRepository:
             group_rows = []
             for position, group in enumerate(groups):
                 fingerprint = member_set_key(asset.id for asset in group.assets)
+                summary = _group_projection_summary(group)
                 group_rows.append(
                     {
                         "group_id": group.group_id,
@@ -584,10 +622,10 @@ class CompositeDuplicateRepository:
                             group.discovery_source.value, fingerprint
                         ),
                         "member_fingerprint": fingerprint,
+                        **summary,
+                        "first_discovered_at": now,
                         "provider_metadata": dict(group.provider_metadata),
-                        "similarity_validation": _validation_payload(
-                            group.similarity_validation
-                        ),
+                        "similarity_validation": _validation_payload(group.similarity_validation),
                         "sync_generation": generation,
                         "synced_at": now,
                     }
@@ -626,6 +664,11 @@ class CompositeDuplicateRepository:
                             "provider_group_id": statement.excluded.provider_group_id,
                             "stable_group_key": statement.excluded.stable_group_key,
                             "member_fingerprint": statement.excluded.member_fingerprint,
+                            "member_count": statement.excluded.member_count,
+                            "reclaimable_bytes": statement.excluded.reclaimable_bytes,
+                            "similarity_score": statement.excluded.similarity_score,
+                            "oldest_taken_at": statement.excluded.oldest_taken_at,
+                            "newest_taken_at": statement.excluded.newest_taken_at,
                             "provider_metadata": statement.excluded.provider_metadata,
                             "similarity_validation": statement.excluded.similarity_validation,
                             "sync_generation": statement.excluded.sync_generation,

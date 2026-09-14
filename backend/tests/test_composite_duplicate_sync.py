@@ -10,6 +10,7 @@ from companion.composite_duplicate_repository import (
     CompositeDuplicateSnapshotGroup,
     CompositeDuplicateSnapshotMetadata,
     CompositeDuplicateSnapshotPage,
+    _group_projection_summary,
 )
 from companion.composite_duplicate_sync import (
     COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY,
@@ -175,17 +176,41 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         page=3,
         page_size=1,
         source="similarity",
+        sort="similarity",
+        direction="asc",
     )
 
     assert snapshots.received == {
         "page": 3,
         "page_size": 1,
         "source": DiscoverySource.COMPANION_SIMILARITY,
+        "sort": "similarity",
+        "direction": "asc",
     }
     assert assets.requested == [ASSET_1, ASSET_2]
     assert result.total == 23
     assert result.pages == 23
     assert [group.group_id for group in result.groups] == [second_group.group_id]
+
+
+def test_projection_summary_supports_database_sorts() -> None:
+    first = asset(ASSET_1).model_copy(update={"exif_info": {"fileSizeInByte": 400}})
+    second = asset(ASSET_2).model_copy(update={"exif_info": {"fileSizeInByte": 100}})
+    group = DiscoveredGroup(
+        group_id="companion:similarity:summary",
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id="scan-summary",
+        assets=(first, second),
+        similarity_validation=validation(),
+    )
+
+    summary = _group_projection_summary(group)
+
+    assert summary["member_count"] == 2
+    assert summary["reclaimable_bytes"] == 100
+    assert summary["similarity_score"] == 91.0
+    assert summary["oldest_taken_at"] == NOW
+    assert summary["newest_taken_at"] == NOW
 
 
 @pytest.mark.asyncio
@@ -215,9 +240,7 @@ async def test_rebuild_handler_materializes_source_discovery_once() -> None:
     discovery = Discovery()
     repository = Repository()
     context = Context()
-    result = await CompositeDuplicateRebuildTaskHandler(discovery, repository).execute(
-        context, {}
-    )
+    result = await CompositeDuplicateRebuildTaskHandler(discovery, repository).execute(context, {})
 
     assert discovery.calls == 1
     assert repository.received == [source_group]
@@ -244,10 +267,7 @@ async def test_sync_service_uses_one_deduplicated_durable_rebuild() -> None:
 
     assert task_id == TASK_ID
     assert tasks.submitted[0] == (COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE, {})
-    assert (
-        tasks.submitted[1]["deduplication_key"]
-        == COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY
-    )
+    assert tasks.submitted[1]["deduplication_key"] == COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY
     assert tasks.started == 1
 
 

@@ -138,11 +138,13 @@ describe('live V2 duplicate repository', () => {
   it('uses server pagination for page changes and restores workspace once', async () => {
     const secondGroup = { ...group, group_id: 'second-group' };
     let currentGroups = [group, secondGroup];
+    const pageRequests: URL[] = [];
     const fetcher = vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       if (path.includes('/cross-source/page?')) {
         const url = new URL(path, 'http://localhost');
+        pageRequests.push(url);
         const page = Number(url.searchParams.get('page') ?? '1');
         const pageSize = Number(url.searchParams.get('page_size') ?? '1');
         const start = (page - 1) * pageSize;
@@ -160,6 +162,8 @@ describe('live V2 duplicate repository', () => {
     const repository = createDuplicateRepository(tasks());
 
     expect((await repository.search({ page: 1, pageSize: 1 })).total).toBe(2);
+    expect(pageRequests[0]?.searchParams.get('sort')).toBe('reclaimable');
+    expect(pageRequests[0]?.searchParams.get('direction')).toBe('desc');
     currentGroups = [group];
     const laterPage = await repository.search({ page: 2, pageSize: 1, reuseCachedGroups: true });
     expect(laterPage.items).toEqual([]);
@@ -172,6 +176,10 @@ describe('live V2 duplicate repository', () => {
     const refreshed = await repository.search({ page: 1, pageSize: 1 });
     expect(refreshed.total).toBe(1);
     expect(fetcher).toHaveBeenCalledTimes(6);
+
+    await repository.search({ page: 1, pageSize: 1, reuseCachedGroups: true, sort: { field: 'similarity', direction: 'asc' } });
+    expect(pageRequests.at(-1)?.searchParams.get('sort')).toBe('similarity');
+    expect(pageRequests.at(-1)?.searchParams.get('direction')).toBe('asc');
   });
 
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {

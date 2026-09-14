@@ -433,6 +433,8 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           page: String(page),
           page_size: String(query.pageSize),
           source: query.source ?? 'both',
+          sort: query.sort?.field ?? 'reclaimable',
+          direction: query.sort?.direction ?? 'desc',
         });
         const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
         const [rawPage, restored] = await Promise.all([

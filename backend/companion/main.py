@@ -223,9 +223,7 @@ def tag_subtree_ids(catalog: list[ImmichTag]) -> dict[UUID, list[UUID]]:
     return subtrees
 
 
-def matching_tag_ids(
-    catalog: list[ImmichTag], query: str, include_hierarchy: bool
-) -> list[UUID]:
+def matching_tag_ids(catalog: list[ImmichTag], query: str, include_hierarchy: bool) -> list[UUID]:
     """Resolve matching hierarchy rows to their real subtree members."""
 
     needle = query.strip().casefold()
@@ -252,11 +250,9 @@ def matching_tag_ids(
         for tag in catalog
         if needle in (path(tag) if include_hierarchy else tag.name).casefold()
     ]
-    return list(dict.fromkeys(
-        descendant_id
-        for tag in matching
-        for descendant_id in subtrees[tag.id]
-    ))
+    return list(
+        dict.fromkeys(descendant_id for tag in matching for descendant_id in subtrees[tag.id])
+    )
 
 
 def create_app(
@@ -293,7 +289,8 @@ def create_app(
             slots=runtime_settings.similarity_detail_slots,
             cache_path=similarity_cache.decode_path,
         )
-        if detail_repository is not None else None
+        if detail_repository is not None
+        else None
     )
     similarity_repository = (
         SimilarityRepository(
@@ -477,8 +474,7 @@ def create_app(
             composite_duplicate_repository,
             asset_repository,
         )
-        if composite_duplicate_repository is not None
-        and asset_repository is not None
+        if composite_duplicate_repository is not None and asset_repository is not None
         else None
     )
     duplicate_service = (
@@ -536,8 +532,7 @@ def create_app(
             fallback_max_bytes=runtime_settings.similarity_original_fallback_max_bytes,
             decode_cache_path=runtime_settings.similarity_cache_dir,
         )
-        if asset_repository is not None
-        and search_feature_repository is not None
+        if asset_repository is not None and search_feature_repository is not None
         else None
     )
     similarity_index_service = (
@@ -545,13 +540,8 @@ def create_app(
         if task_coordinator is not None and similarity_index_maintainer is not None
         else None
     )
-    if (
-        task_coordinator is not None
-        and similarity_index_maintainer is not None
-    ):
-        task_coordinator.register_handler(
-            SimilarityIndexTaskHandler(similarity_index_maintainer)
-        )
+    if task_coordinator is not None and similarity_index_maintainer is not None:
+        task_coordinator.register_handler(SimilarityIndexTaskHandler(similarity_index_maintainer))
 
     similarity_scan_service = (
         SimilarityScanService(task_coordinator, similarity_scan_repository)
@@ -613,6 +603,7 @@ def create_app(
             if composite_duplicate_sync_service is not None
             else similarity_maintenance_handler
         )
+
         async def after_asset_sync_success() -> None:
             await similarity_maintenance_service.start_if_pending()
             if immich_duplicate_sync_service is not None:
@@ -1955,6 +1946,10 @@ def create_app(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=6, ge=1, le=100),
         source: Literal["both", "immich", "similarity"] = Query(default="both"),
+        sort: Literal[
+            "reclaimable", "members", "similarity", "newest", "oldest", "discovered"
+        ] = Query(default="reclaimable"),
+        direction: Literal["asc", "desc"] = Query(default="desc"),
     ) -> DuplicateSearchPage:
         try:
             return await require_duplicate_service().review_page(
@@ -1962,6 +1957,8 @@ def create_app(
                 page=page,
                 page_size=page_size,
                 source=source,
+                sort=sort,
+                direction=direction,
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error
