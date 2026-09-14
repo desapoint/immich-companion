@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
 
   import { getAssetDetail, getAssetIntegrity } from '../api/assetApi';
+  import { LatestRequest, requestErrorMessage } from '../state/latestRequest';
   import type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
   import { resolveStackPrimary } from '../../../lib/utils/duplicateReview';
   import type { AssetDetail, AssetIntegrityState, AssetSummary, DuplicateReviewContext } from '../types/assets';
@@ -67,7 +68,7 @@
   let integrity = $state.raw<AssetIntegrityState | null>(null);
   let detailLoading = $state(true);
   let detailError = $state<string | null>(null);
-  let detailGeneration = 0;
+  const detailRequest = new LatestRequest();
   let selectedKeeperId = $state<string | null>(null);
   let selectedAction = $state<DuplicatePreviewReview['selected_action']>('automatic');
   let memberDecisions = $state<Record<string, DuplicateDisposition>>({});
@@ -144,28 +145,26 @@
 
   async function navigate(index: number): Promise<void> {
     if (index < 0 || index >= members.length) return;
+    const assetId = members[index].id;
     viewerIndex = index;
     detail = null;
     integrity = null;
     detailError = null;
     detailLoading = true;
-    const generation = ++detailGeneration;
-    try {
-      const [loaded, integrityState] = await Promise.all([
-        getAssetDetail(members[index].id),
-        getAssetIntegrity(members[index].id),
-      ]);
-      if (generation === detailGeneration) {
-        detail = loaded;
-        integrity = integrityState;
-      }
-    } catch (reason) {
-      if (generation === detailGeneration) {
-        detailError = reason instanceof Error ? reason.message : 'Could not load live asset details.';
-      }
-    } finally {
-      if (generation === detailGeneration) detailLoading = false;
+    const result = await detailRequest.run((signal) => Promise.all([
+      getAssetDetail(assetId, signal),
+      getAssetIntegrity(assetId, signal),
+    ]));
+    if (!detailRequest.isCurrent(result.version) || members[viewerIndex]?.id !== assetId) return;
+
+    if (result.status === 'success') {
+      const [loaded, integrityState] = result.value;
+      detail = loaded;
+      integrity = integrityState;
+    } else if (result.status === 'error') {
+      detailError = requestErrorMessage(result.error, 'Could not load live asset details.');
     }
+    detailLoading = false;
   }
 
   function chooseDisposition(assetId: string, disposition: DuplicateDisposition): void {
@@ -209,6 +208,7 @@
     memberDecisions = { ...review.member_decisions };
     stackPrimaryAssetId = review.stack_primary_asset_id;
     void navigate(review.initial_index);
+    return () => detailRequest.abort();
   });
 </script>
 
