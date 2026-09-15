@@ -129,6 +129,7 @@ type ApiDuplicateWorkspace = {
   drafts: ApiDuplicateDraft[];
   last_applied_group_ids?: string[];
   last_skipped_group_ids?: string[];
+  cleared_group_count?: number;
 };
 type ApiDuplicateHistoryItem = {
   id: string;
@@ -648,24 +649,16 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     previewKeeperRules(input){return keeperSelection('preview',input)},
     applyKeeperRules(input){return keeperSelection('apply',input)},
     async clearDecisions() {
-      await Promise.all([...draftQueues.values()]);
-      if (!hasWorkspaceSnapshot) {
-        workspace = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace');
-        hasWorkspaceSnapshot = true;
-      }
-      const groupIds = [...new Set([
-        ...workspace.selected_group_ids,
-        ...workspace.drafts.map((draft) => draft.group_id),
-      ])];
-      if (!groupIds.length) return 0;
-      for (let offset = 0; offset < groupIds.length; offset += 10_000) {
-        workspace = await requestJson<ApiDuplicateWorkspace>(
-          '/api/assets/duplicates/workspace/reset',
-          jsonRequest('POST', { options: ANALYSIS_OPTIONS, group_ids: groupIds.slice(offset, offset + 10_000) }),
-        );
-      }
+      const pendingDrafts = [...draftQueues.values()];
+      if (pendingDrafts.length) await Promise.allSettled(pendingDrafts);
+      workspace = await requestJson<ApiDuplicateWorkspace>(
+        '/api/assets/duplicates/workspace/reset',
+        jsonRequest('POST', { options: ANALYSIS_OPTIONS, all_decisions: true }),
+      );
+      draftQueues.clear();
+      draftErrors.clear();
       hasWorkspaceSnapshot = true;
-      return groupIds.length;
+      return workspace.cleared_group_count ?? 0;
     },
     async cacheStatus(){return cacheStatus(await requestJson<ApiSimilarityCacheStatus>('/api/assets/duplicates/cache'))},
     async clearCache(cache){const result=await requestJson<ApiSimilarityCacheClearResult>('/api/assets/duplicates/cache/clear',jsonRequest('POST',{cache}));return cacheStatus(result.status)},
