@@ -1,4 +1,4 @@
-name: Validate V2 duplicate keeper rules audit
+name: Validate V2 duplicate keeper rules audit retry
 
 on:
   push:
