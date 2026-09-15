@@ -48,7 +48,10 @@ class V2DuplicateReviewStateService:
         self._discovery = discovery
         self._reports = reports
         self._snapshots = snapshots
-        self._reviews = reviews
+        # The snapshot repository and review repository deliberately share the
+        # same companion-owned database boundary. Keep the optional injection
+        # for tests and callers that already own the review repository.
+        self._reviews = reviews or DuplicateReviewRepository(snapshots._database)
 
     async def refresh_after_change(self) -> object | None:
         try:
@@ -85,8 +88,7 @@ class V2DuplicateReviewStateService:
             )
             if not discovered.groups:
                 continue
-            if self._reviews is not None:
-                inherited += await self._reviews.inherit_completed_groups(discovered.groups)
+            inherited += await self._reviews.inherit_completed_groups(discovered.groups)
             report_ids = list(
                 dict.fromkeys(
                     asset.id
