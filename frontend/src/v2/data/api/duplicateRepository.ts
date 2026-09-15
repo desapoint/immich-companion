@@ -5,6 +5,8 @@ import type {
   DuplicateDiscoveryOptions,
   DuplicateDiscoveryProgress,
   DuplicateGroupRecord,
+  DuplicateKeeperSelectionInput,
+  DuplicateKeeperSelectionResult,
   DuplicatePreparedPlan,
   DuplicateRepository,
   DuplicateResolutionPlan,
@@ -65,6 +67,21 @@ type ApiDuplicateMember = {
     config_fingerprint: string;
   } | null;
 };
+type ApiDuplicateKeeperSelectionResult = {
+  matched_group_count: number;
+  valid_group_count: number;
+  resolved_group_count: number;
+  would_apply_group_count: number;
+  applied_group_count: number;
+  ambiguous_group_count: number;
+  blocked_group_count: number;
+  preserved_manual_group_count: number;
+  missing_group_count: number;
+  keeper_count: number;
+  trash_count: number;
+  limit_exceeded: boolean;
+};
+
 type ApiDuplicateGroup = {
   group_id: string;
   discovery_source: DuplicateSource;
@@ -432,9 +449,43 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     }));
   };
 
+
+const keeperSelection = async (
+  mode: 'preview' | 'apply',
+  input: DuplicateKeeperSelectionInput,
+): Promise<DuplicateKeeperSelectionResult> => {
+  await Promise.all([...draftQueues.values()]);
+  const result = await requestJson<ApiDuplicateKeeperSelectionResult>(
+    `/api/assets/duplicates/workspace/auto-select/${mode}`,
+    jsonRequest('POST', {
+      options: ANALYSIS_OPTIONS,
+      scope: input.scope,
+      group_ids: [...new Set(input.groupIds)],
+      review_filter: input.reviewFilter ?? 'All groups',
+      source_filter: input.sourceFilter,
+      rules: input.rules,
+      overwrite_manual: input.overwriteManual ?? false,
+    }),
+  );
+  return {
+    matchedGroupCount: result.matched_group_count,
+    validGroupCount: result.valid_group_count,
+    resolvedGroupCount: result.resolved_group_count,
+    wouldApplyGroupCount: result.would_apply_group_count,
+    appliedGroupCount: result.applied_group_count,
+    ambiguousGroupCount: result.ambiguous_group_count,
+    blockedGroupCount: result.blocked_group_count,
+    preservedManualGroupCount: result.preserved_manual_group_count,
+    missingGroupCount: result.missing_group_count,
+    keeperCount: result.keeper_count,
+    trashCount: result.trash_count,
+    limitExceeded: result.limit_exceeded,
+  };
+};
+
   return {
     async capabilities() {
-      return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: false, reviewFilters: ['All groups', 'Needs review', 'Auto-ready', 'Blocked', 'Actionable', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
+      return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: false, reviewFilters: ['Actionable', 'All groups', 'Needs review', 'Blocked', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
     },
     selectedGroupIds() { return [...workspace.selected_group_ids]; },
 
@@ -480,6 +531,8 @@ async search(query): Promise<PageResult<DuplicateGroupRecord>> {
       workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],review_filter:reviewFilter??'All groups',source_filter:sourceFilter,disposition}));
       return{appliedGroupIds:workspace.last_applied_group_ids??[],skippedGroupIds:workspace.last_skipped_group_ids??[]};
     },
+    previewKeeperRules(input){return keeperSelection('preview',input)},
+    applyKeeperRules(input){return keeperSelection('apply',input)},
     async clearDecisions() {
       const groupIds = [...rawGroups.keys()];
       await Promise.all(

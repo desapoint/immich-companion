@@ -51,6 +51,73 @@ DuplicateDraftDisposition = Literal["keep", "delete", "stack"]
 DuplicateDraftDecisionSource = Literal["manual", "automatic"]
 DuplicateDraftDecisionStatus = Literal["pending", "completed"]
 DuplicateDraftStatus = Literal["pending", "completed"]
+
+DuplicateKeeperRuleEffect = Literal["require", "prefer", "avoid"]
+DuplicateKeeperRuleOperator = Literal[
+    "is",
+    "is_not",
+    "contains",
+    "not_contains",
+    "starts_with",
+    "ends_with",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "highest",
+    "lowest",
+    "is_true",
+    "is_false",
+    "has_any",
+    "has_all",
+    "has_none",
+]
+DuplicateKeeperRuleField = Literal[
+    "library",
+    "folder",
+    "filename",
+    "extension",
+    "mime_type",
+    "media_type",
+    "date",
+    "modified_date",
+    "immich_created_at",
+    "immich_updated_at",
+    "file_size",
+    "resolution",
+    "width",
+    "height",
+    "aspect_ratio",
+    "favorite",
+    "archived",
+    "availability",
+    "edited",
+    "has_metadata",
+    "visibility",
+    "live_photo",
+    "tag",
+    "album",
+    "has_tag",
+    "has_album",
+    "stack_membership",
+    "stack_primary",
+    "owner",
+    "checksum",
+    "reference",
+    "similarity",
+    "structural_similarity",
+    "perceptual_similarity",
+    "color_similarity",
+    "detail_change",
+    "admission_similarity",
+    "link_depth",
+    "duration",
+    "same_folder_as_reference",
+    "same_library_as_reference",
+    "same_mime_as_reference",
+    "metadata_richness",
+    "format_quality",
+]
 DuplicateGroupExecutionState = Literal[
     "pending",
     "duplicate_resolved",
@@ -586,6 +653,59 @@ class DuplicateWorkspaceResetRequest(BaseModel):
     def unique_groups(self) -> DuplicateWorkspaceResetRequest:
         self.group_ids = list(dict.fromkeys(self.group_ids))
         return self
+
+
+
+class DuplicateKeeperRule(BaseModel):
+    effect: DuplicateKeeperRuleEffect = "prefer"
+    field: DuplicateKeeperRuleField
+    operator: DuplicateKeeperRuleOperator
+    value: str = ""
+
+    @model_validator(mode="after")
+    def validate_operator(self) -> DuplicateKeeperRule:
+        if self.effect == "require" and self.operator in {"highest", "lowest"}:
+            raise ValueError("Require rules need a concrete comparison")
+        if (
+            self.operator not in {"highest", "lowest", "is_true", "is_false"}
+            and not self.value.strip()
+        ):
+            raise ValueError("This keeper rule needs a comparison value")
+        return self
+
+
+class DuplicateKeeperSelectionRequest(BaseModel):
+    options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
+    scope: Literal["current_page", "all_matching"] = "current_page"
+    source_filter: Literal["both", "immich", "similarity"] = "both"
+    review_filter: Literal[
+        "All groups", "Needs review", "Auto-ready", "Blocked", "Actionable", "Needs decisions"
+    ] = "All groups"
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    rules: list[DuplicateKeeperRule] = Field(min_length=1, max_length=32)
+    overwrite_manual: bool = False
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> DuplicateKeeperSelectionRequest:
+        self.group_ids = list(dict.fromkeys(self.group_ids))
+        if self.scope == "current_page" and not self.group_ids:
+            raise ValueError("Current-page auto-selection requires visible duplicate groups")
+        return self
+
+
+class DuplicateKeeperSelectionResult(BaseModel):
+    matched_group_count: int = Field(ge=0)
+    valid_group_count: int = Field(ge=0)
+    resolved_group_count: int = Field(ge=0)
+    would_apply_group_count: int = Field(ge=0)
+    applied_group_count: int = Field(ge=0)
+    ambiguous_group_count: int = Field(ge=0)
+    blocked_group_count: int = Field(ge=0)
+    preserved_manual_group_count: int = Field(ge=0)
+    missing_group_count: int = Field(ge=0)
+    keeper_count: int = Field(ge=0)
+    trash_count: int = Field(ge=0)
+    limit_exceeded: bool = False
 
 
 class DuplicateWorkspacePresetRequest(BaseModel):
