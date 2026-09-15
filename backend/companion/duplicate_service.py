@@ -1721,17 +1721,13 @@ class CrossSourceDuplicateService:
             missing = set(batch_ids) - set(exact_by_id)
             counts["missing_group_count"] += len(missing)
 
-            asset_ids = {
-                asset.id for group in discovered for asset in group.assets
-            }
+            asset_ids = {asset.id for group in discovered for asset in group.assets}
             relations = await self._assets.get_relation_ids(asset_ids)
 
             review_records: dict[tuple[str, str], Any] = {}
             for discovery_source in {group.discovery_source for group in snapshot.groups}:
                 source_groups = [
-                    group
-                    for group in snapshot.groups
-                    if group.discovery_source == discovery_source
+                    group for group in snapshot.groups if group.discovery_source == discovery_source
                 ]
                 records = await self._reviews.get_many(
                     discovery_source,
@@ -1826,8 +1822,6 @@ class CrossSourceDuplicateService:
         request: DuplicateKeeperSelectionRequest,
     ) -> DuplicateKeeperSelectionResult:
         return await self._run_keeper_selection(request, apply=True)
-
-
 
     async def apply_workspace_preset(
         self, request: DuplicateWorkspacePresetRequest
@@ -2025,19 +2019,23 @@ class CrossSourceDuplicateService:
         return relations, _stable_fingerprint(serialized)
 
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
-        result = await self.result(request.options)
-        requested_group_ids = request.group_ids
+        options = await self._options(request.options)
+        requested_group_ids = list(request.group_ids)
         if request.workspace_selected:
-            requested_group_ids = (await self.workspace(request.options)).selected_group_ids
+            requested_group_ids = (await self.workspace(options)).selected_group_ids
             if request.group_ids and set(request.group_ids) != set(requested_group_ids):
                 raise ActionPlanConflictError(
                     "The duplicate workspace selection changed before planning"
                 )
-        selected = (
-            [group for group in result.groups if group.auto_resolvable]
-            if request.all_eligible
-            else [group for group in result.groups if group.group_id in requested_group_ids]
-        )
+        if request.all_eligible:
+            result = await self.result(options)
+            selected = [group for group in result.groups if group.auto_resolvable]
+        else:
+            discovered = await self._groups_by_ids(requested_group_ids)
+            _, _, _, result = await self._snapshot_groups(discovered, options)
+            selected = [
+                group for group in result.groups if group.group_id in requested_group_ids
+            ]
         if not selected:
             raise ValueError("No duplicate groups were selected")
         if not request.all_eligible and {group.group_id for group in selected} != set(
