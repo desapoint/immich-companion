@@ -645,13 +645,17 @@ class DuplicateWorkspaceMembership(BaseModel):
 
 class DuplicateWorkspaceResetRequest(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
-    group_ids: list[str] = Field(min_length=1, max_length=10_000)
+    group_ids: list[str] = Field(default_factory=list, max_length=10_000)
+    all_decisions: bool = False
 
     @model_validator(mode="after")
-    def unique_groups(self) -> DuplicateWorkspaceResetRequest:
+    def validate_scope(self) -> DuplicateWorkspaceResetRequest:
         self.group_ids = list(dict.fromkeys(self.group_ids))
+        if self.all_decisions and self.group_ids:
+            raise ValueError("Clear either all duplicate decisions or explicit groups, not both")
+        if not self.all_decisions and not self.group_ids:
+            raise ValueError("Choose duplicate groups or clear all duplicate decisions")
         return self
-
 
 
 class DuplicateKeeperRule(BaseModel):
@@ -746,6 +750,7 @@ class DuplicateWorkspaceState(BaseModel):
     drafts: list[DuplicateGroupDraft] = Field(default_factory=list)
     last_applied_group_ids: list[str] = Field(default_factory=list)
     last_skipped_group_ids: list[str] = Field(default_factory=list)
+    cleared_group_count: int = Field(default=0, ge=0)
 
 
 class DuplicateSimilarityReferenceRequest(BaseModel):
