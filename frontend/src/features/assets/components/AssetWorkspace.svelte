@@ -94,6 +94,7 @@
   import AssetErrorState from './AssetErrorState.svelte';
   import AssetGrid from './AssetGrid.svelte';
   import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
+  import LoadingOverlay from '../../../lib/components/ui/LoadingOverlay.svelte';
   import StatusNotice from '../../../lib/components/ui/StatusNotice.svelte';
   import AssetLoadingState from './AssetLoadingState.svelte';
   import AssetPagination from './AssetPagination.svelte';
@@ -994,7 +995,7 @@
         page = previousPage;
         return;
       }
-      document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+      document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'auto' });
     });
   }
 
@@ -1012,7 +1013,7 @@
         page = previousPage;
         return;
       }
-      document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+      document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'auto' });
     });
   }
 
@@ -1859,7 +1860,11 @@
   });
 </script>
 
-<section class="asset-workspace" aria-label="Asset search workspace">
+<section class="asset-workspace" aria-label="Asset search workspace" aria-busy={loading}>
+  {#if loading && results}
+    <LoadingOverlay label="Loading asset page…" />
+  {/if}
+
   <AssetSearchToolbar {albums} {tags} disabled={loading} onsearch={applySearch} />
 
   <AssetResultStatus
