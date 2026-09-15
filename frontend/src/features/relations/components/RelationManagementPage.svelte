@@ -464,7 +464,7 @@
       {#if isAlbum}
         <label>Description<textarea autocomplete="off" name="relation-description" bind:value={description} maxlength="2000"></textarea></label>
       {:else}
-        <div class="color-field"><span>Color</span><ColorPicker value={color} onchange={(next) => (parentId = next)} /></div>
+        <div class="color-field"><span>Color</span><ColorPicker value={color} onchange={(next) => (color = next)} /></div>
         <SelectField id="parent-tag" label="Parent tag" value={parentId} options={parentOptions} onchange={(next) => (parentId = next)} />
       {/if}
       {#if formError}<StatusNotice compact tone="error" message={formError} />{/if}
