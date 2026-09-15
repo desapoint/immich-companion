@@ -65,7 +65,7 @@ class ActionRepository:
         target_digest: str,
         expires_at: datetime,
     ) -> ActionPlanRecord:
-        """Persist an immutable reviewed Immich duplicate resolution."""
+        """Persist an immutable reviewed duplicate resolution."""
 
         target_ids = [asset_id for group in groups for asset_id in group["member_asset_ids"]]
         trash_ids = [asset_id for group in groups for asset_id in group["trash_asset_ids"]]
@@ -230,7 +230,7 @@ class ActionRepository:
             record.executed_at = datetime.now(UTC)
 
     async def reopen_duplicate_follow_up(self, plan_id: UUID) -> ActionPlanRecord | None:
-        """Reopen a failed plan when durable native or stack work remains."""
+        """Reopen a failed plan when durable asset or stack work remains."""
 
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
