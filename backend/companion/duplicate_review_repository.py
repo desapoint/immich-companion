@@ -104,10 +104,7 @@ class DuplicateReviewRepository:
         if not completed:
             return 0
 
-        completed_members = [
-            (record, _review_member_ids(record))
-            for record in completed
-        ]
+        completed_members = [(record, _review_member_ids(record)) for record in completed]
         now = datetime.now(UTC)
         candidates: list[dict[str, object]] = []
         current_keys_by_source: dict[str, list[str]] = {}
@@ -115,7 +112,12 @@ class DuplicateReviewRepository:
         for group in groups:
             source_value = getattr(group.discovery_source, "value", group.discovery_source)
             source = str(source_value)
-            asset_ids = tuple(group.asset_ids)
+            explicit_asset_ids = getattr(group, "asset_ids", None)
+            asset_ids = tuple(
+                explicit_asset_ids
+                if explicit_asset_ids is not None
+                else (asset.id for asset in getattr(group, "assets", ()))
+            )
             if len(asset_ids) < 2:
                 continue
             fingerprint = member_set_key(asset_ids)
