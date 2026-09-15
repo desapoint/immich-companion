@@ -448,7 +448,7 @@ describe('live V2 duplicate repository', () => {
     expect(flushed).toBe(true);
   });
 
-  it('clears every discovered group through one durable workspace reset', async () => {
+  it('clears durable decisions through one server-owned reset without enumerating groups', async () => {
     const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
@@ -456,7 +456,7 @@ describe('live V2 duplicate repository', () => {
       calls.push({ path, body });
       if (path.includes('/cross-source/page?')) return response(duplicateResult);
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
-      if (path.endsWith('/workspace/reset')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace/reset')) return response({ ...emptyWorkspace, cleared_group_count: 1 });
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       throw new Error(`Unexpected request: ${path}`);
     }));
@@ -468,8 +468,32 @@ describe('live V2 duplicate repository', () => {
     expect(cleared).toBe(1);
     expect(calls.at(-1)).toEqual({
       path: '/api/assets/duplicates/workspace/reset',
-      body: expect.objectContaining({ group_ids: [group.group_id] }),
+      body: expect.objectContaining({ all_decisions: true }),
     });
+    expect(calls.at(-1)?.body).not.toHaveProperty('group_ids');
+  });
+
+  it('can clear durable decisions after a draft write fails', async () => {
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.includes('/cross-source/page?')) return response(duplicateResult);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return response({ detail: 'draft failed' }, 500);
+      if (path.endsWith('/workspace/reset')) return response({ ...emptyWorkspace, cleared_group_count: 1 });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 1 });
+
+    await expect(repository.saveDraft(group.group_id, {
+      decisions: { [ASSET_IDS[0]]: 'keep', [ASSET_IDS[1]]: 'delete' },
+      stacks: [],
+    })).rejects.toThrow();
+
+    await expect(repository.clearDecisions()).resolves.toBe(1);
+    expect(calls.at(-1)).toBe('/api/assets/duplicates/workspace/reset');
   });
 
   it('switches only the display reference contract returned by the backend', async () => {
