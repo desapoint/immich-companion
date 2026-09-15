@@ -220,6 +220,7 @@ function historySummary(item: ApiDuplicateHistoryItem): string {
 function reviewStateParam(state: DuplicateSearchQuery['state']): string {
   if (!state || state === 'All groups' || state === 'Selected') return 'all';
   if (state === 'Needs review') return 'needs_review';
+  if (state === 'Auto-ready') return 'auto_ready';
   if (state === 'Blocked') return 'blocked';
   if (state === 'Actionable') return 'actionable';
   return 'needs_decisions';
@@ -529,13 +530,17 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     input: DuplicateKeeperSelectionInput,
   ): Promise<DuplicateKeeperSelectionResult> => {
     await Promise.all([...draftQueues.values()]);
+    const selectedView = input.reviewFilter === 'Selected';
+    const targetGroupIds = selectedView && input.scope === 'all_matching'
+      ? workspace.selected_group_ids
+      : input.groupIds;
     const result = await requestJson<ApiDuplicateKeeperSelectionResult>(
       `/api/assets/duplicates/workspace/auto-select/${mode}`,
       jsonRequest('POST', {
         options: ANALYSIS_OPTIONS,
-        scope: input.scope,
-        group_ids: [...new Set(input.groupIds)],
-        review_filter: input.reviewFilter ?? 'All groups',
+        scope: selectedView ? 'current_page' : input.scope,
+        group_ids: [...new Set(targetGroupIds)],
+        review_filter: selectedView ? 'All groups' : input.reviewFilter ?? 'All groups',
         source_filter: input.sourceFilter,
         rules: input.rules,
         overwrite_manual: input.overwriteManual ?? false,
@@ -635,7 +640,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     saveSelection,
     async applyPreset(disposition,scope,groupIds,reviewFilter,sourceFilter){
       await Promise.all([...draftQueues.values()]);
-      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope,group_ids:[...new Set(groupIds)],review_filter:reviewFilter??'All groups',source_filter:sourceFilter,disposition}));
+      const selectedView=reviewFilter==='Selected';
+      const targetGroupIds=selectedView&&scope==='all_matching'?workspace.selected_group_ids:groupIds;
+      workspace=await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/preset',jsonRequest('POST',{options:ANALYSIS_OPTIONS,scope:selectedView?'current_page':scope,group_ids:[...new Set(targetGroupIds)],review_filter:selectedView?'All groups':reviewFilter??'All groups',source_filter:sourceFilter,disposition}));
       return{appliedGroupIds:workspace.last_applied_group_ids??[],skippedGroupIds:workspace.last_skipped_group_ids??[]};
     },
     previewKeeperRules(input){return keeperSelection('preview',input)},
