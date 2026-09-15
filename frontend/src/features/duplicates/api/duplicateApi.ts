@@ -12,6 +12,7 @@ import type {
 } from '../types/duplicates';
 
 let suppressNextAutomaticDuplicateAnalysis = false;
+let workspaceSelectionTail: Promise<void> = Promise.resolve();
 
 async function requestJson<T>(input: string, init?: RequestInit): Promise<T> {
   const response = await fetch(input, {
@@ -54,7 +55,14 @@ export function saveDuplicateWorkspaceSelection(request: {
   selected_group_ids: string[];
   active_group_id: string | null;
 }): Promise<DuplicateWorkspaceState> {
-  return requestJson('/api/assets/duplicates/workspace/selection', jsonBody(request, 'PUT'));
+  const queued = workspaceSelectionTail
+    .catch(() => undefined)
+    .then(() => requestJson<DuplicateWorkspaceState>(
+      '/api/assets/duplicates/workspace/selection',
+      jsonBody(request, 'PUT'),
+    ));
+  workspaceSelectionTail = queued.then(() => undefined, () => undefined);
+  return queued;
 }
 
 export function saveDuplicateGroupDraft(request: {
@@ -69,16 +77,20 @@ export function saveDuplicateGroupDraft(request: {
   return requestJson('/api/assets/duplicates/workspace/group', jsonBody(request, 'PUT'));
 }
 
-export function applyDuplicateRules(
+export async function applyDuplicateRules(
   options: DuplicateAnalysisOptions,
 ): Promise<DuplicateWorkspaceState> {
+  await workspaceSelectionTail;
   return requestJson('/api/assets/duplicates/workspace/apply-rules', jsonBody(options));
 }
 
-export function resetDuplicateWorkspaceDecisions(request: {
+export async function resetDuplicateWorkspaceDecisions(request: {
   options: DuplicateAnalysisOptions;
   group_ids: string[];
 }): Promise<DuplicateWorkspaceState> {
+  // Selection writes are detached from UI interactions. Drain every older snapshot before
+  // resetting decisions so an earlier save cannot land after the reset and re-select groups.
+  await workspaceSelectionTail;
   return requestJson('/api/assets/duplicates/workspace/reset', jsonBody(request));
 }
 
