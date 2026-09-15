@@ -441,6 +441,10 @@
     const hasDeletions = hasDraftDecisions
       ? draft!.decisions.some((decision) => decision.disposition === 'delete')
       : action === 'resolve';
+    const reviewedImmichDeleteSupported = group.discovery_source === 'immich_duplicate'
+      && group.provider_group_id !== null
+      && group.status !== 'ineligible'
+      && group.members.length >= 2;
     const requiresPrimary = action === 'resolve' || action === 'stack_all' || stackDecisions.length > 0;
 
     if (action === 'none') return 'Choose an action for every image.';
@@ -448,8 +452,8 @@
     if (hasDraftDecisions && !draftComplete) return 'Choose an action for every image.';
     if (requiresPrimary && selectedKeeper(group) === null) return 'Choose the surviving primary image.';
     if (stackDecisions.length === 1) return 'A stack needs at least two surviving images.';
-    if (hasDeletions && (!group.eligible || group.members.some((member) => member.is_offline))) {
-      return 'Deleting duplicate members requires an eligible Immich group with every image online.';
+    if (hasDeletions && !reviewedImmichDeleteSupported) {
+      return 'Deleting duplicate members requires an available Immich duplicate group.';
     }
     if (stackDecisions.length && group.members.some((member) => (
       stackDecisions.some((decision) => decision.asset_id === member.id)
@@ -664,6 +668,7 @@
     message = null;
     try {
       await discardPendingDrafts(groupIds);
+      await workspaceSaveQueue.catch(() => undefined);
       const restored = await resetDuplicateWorkspaceDecisions({
         options: appliedOptions,
         group_ids: groupIds,
@@ -744,6 +749,7 @@
   }
 
   function openPreview(group: ExactDuplicateGroup, index: number): void {
+    if (busy) return;
     activeGroupId = group.group_id;
     void persistWorkspace();
     onpreview(previewRequest(group, index));
