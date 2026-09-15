@@ -77,10 +77,12 @@ class DuplicateReviewRepository:
         """Suppress membership shrinkage without rewriting the original completed review.
 
         A current group is inherited only when its members are a subset of one completed
-        review lineage. Existing exact review rows always win, so a fresh draft is never
-        hidden. The inherited row retains the original reviewed membership in
-        ``member_decisions`` so another deletion remains covered, while ``draft_status``
-        keeps these projection rows out of resolution history.
+        review lineage. The comparison is provider-neutral because a durable user decision
+        belongs to the reviewed assets, not to whichever discovery provider still reports
+        them. Existing exact review rows always win, so a fresh draft is never hidden. The
+        inherited row retains the original reviewed membership in ``member_decisions`` so
+        another deletion remains covered, while ``draft_status`` keeps these projection
+        rows out of resolution history.
         """
 
         if not groups:
@@ -108,7 +110,7 @@ class DuplicateReviewRepository:
         now = datetime.now(UTC)
         candidates: list[dict[str, object]] = []
         current_keys_by_source: dict[str, list[str]] = {}
-        normalized_groups: list[tuple[Any, str, str, str, set[str], set[str]]] = []
+        normalized_groups: list[tuple[Any, str, str, str, set[str]]] = []
         for group in groups:
             source_value = getattr(group.discovery_source, "value", group.discovery_source)
             source = str(source_value)
@@ -123,28 +125,22 @@ class DuplicateReviewRepository:
             fingerprint = member_set_key(asset_ids)
             group_key = stable_group_key(source, fingerprint)
             current_ids = {str(asset_id) for asset_id in asset_ids}
-            evidence_sources = {
-                str(getattr(item.discovery_source, "value", item.discovery_source))
-                for item in getattr(group, "evidence", ())
-            }
-            evidence_sources.add(source)
             current_keys_by_source.setdefault(source, []).append(group_key)
             normalized_groups.append(
-                (group, source, group_key, fingerprint, current_ids, evidence_sources)
+                (group, source, group_key, fingerprint, current_ids)
             )
 
         existing_by_source: dict[str, dict[str, DuplicateGroupReviewRecord]] = {}
         for source, keys in current_keys_by_source.items():
             existing_by_source[source] = await self.get_many(source, keys)
 
-        for group, source, group_key, fingerprint, current_ids, evidence_sources in normalized_groups:
+        for group, source, group_key, fingerprint, current_ids in normalized_groups:
             if group_key in existing_by_source.get(source, {}):
                 continue
             matches = [
                 (record, reviewed_ids)
                 for record, reviewed_ids in completed_members
-                if record.discovery_source in evidence_sources
-                and current_ids.issubset(reviewed_ids)
+                if current_ids.issubset(reviewed_ids)
             ]
             if not matches:
                 continue
