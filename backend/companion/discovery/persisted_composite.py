@@ -33,6 +33,14 @@ class _CompositeSnapshotReader(Protocol):
         stable_group_keys: list[str] | None = None,
     ) -> list[CompositeDuplicateGroupIdentity]: ...
 
+    async def matching_group_ids(
+        self,
+        *,
+        source: DiscoverySource | None = None,
+        state: str = "all",
+        limit: int = 5_001,
+    ) -> list[str]: ...
+
     async def page(
         self,
         *,
@@ -115,6 +123,26 @@ class PersistedCompositeDuplicateProvider:
 
     async def discover(self) -> list[DiscoveredGroup]:
         return await self._hydrate(await self._snapshots.groups())
+
+    async def resolve_matching_group_ids(
+        self,
+        *,
+        source: str = "both",
+        state: str = "all",
+        limit: int = 5_001,
+    ) -> list[str]:
+        source_value = (
+            DiscoverySource.IMMICH_DUPLICATE
+            if source == "immich"
+            else DiscoverySource.COMPANION_SIMILARITY
+            if source == "similarity"
+            else None
+        )
+        return await self._snapshots.matching_group_ids(
+            source=source_value,
+            state=state,
+            limit=limit,
+        )
 
     async def discover_page(
         self,

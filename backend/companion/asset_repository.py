@@ -1577,6 +1577,43 @@ class AssetRepository:
                 is not None
             )
 
+    async def get_relation_ids(
+        self,
+        asset_ids: set[UUID] | list[UUID],
+    ) -> dict[UUID, tuple[set[UUID], set[UUID]]]:
+        """Load album/tag membership for a bounded asset set without N+1 queries."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        relations = {asset_id: (set(), set()) for asset_id in unique_ids}
+        if not unique_ids:
+            return relations
+        async with self._database.sessions() as session:
+            album_rows = list(
+                (
+                    await session.execute(
+                        select(AlbumAssetRecord.asset_id, AlbumAssetRecord.album_id).where(
+                            AlbumAssetRecord.asset_id.in_(unique_ids)
+                        )
+                    )
+                ).all()
+            )
+            tag_rows = list(
+                (
+                    await session.execute(
+                        select(TagAssetRecord.asset_id, TagAssetRecord.tag_id).where(
+                            TagAssetRecord.asset_id.in_(unique_ids)
+                        )
+                    )
+                ).all()
+            )
+        for asset_id, album_id in album_rows:
+            relations.setdefault(asset_id, (set(), set()))[0].add(album_id)
+        for asset_id, tag_id in tag_rows:
+            relations.setdefault(asset_id, (set(), set()))[1].add(tag_id)
+        return relations
+
+
+
     async def get_asset_summary(self, asset_id: UUID) -> AssetSummary | None:
         """Return one synchronized asset summary without applying search filters."""
 
