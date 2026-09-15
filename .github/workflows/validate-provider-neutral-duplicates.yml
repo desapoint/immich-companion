@@ -25,7 +25,16 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
 
       - name: Apply provider-neutral duplicate patch
-        run: python .github/provider_neutral_duplicate_patch.py
+        run: |
+          python .github/provider_neutral_duplicate_patch.py
+          python .github/provider_neutral_duplicate_followup.py
+
+      - name: Audit duplicate service for native-group execution gates
+        run: |
+          if grep -nE 'available Immich duplicate group|unsupported_discovery_provider|resolve_duplicate_groups|ImmichDuplicateResolution' backend/companion/duplicate_service.py; then
+            echo 'Legacy provider-specific duplicate resolution assumption remains in duplicate_service.py' >&2
+            exit 1
+          fi
 
       - name: Install backend
         run: python -m pip install -e './backend[dev]'
@@ -38,13 +47,32 @@ jobs:
         working-directory: backend
         run: ruff check companion tests
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend
+        working-directory: frontend
+        run: npm ci
+
+      - name: Frontend check
+        working-directory: frontend
+        run: npm run check
+
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test
+
       - name: Commit validated product tree
         if: success()
         run: |
           rm -f .github/workflows/validate-provider-neutral-duplicates.yml
           rm -f .github/provider_neutral_duplicate_patch.py
+          rm -f .github/provider_neutral_duplicate_followup.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add backend/companion backend/tests .github
+          git add backend/companion backend/tests frontend/src/v2 .github
           git commit -m 'fix: make duplicate resolution provider-neutral'
           git push origin HEAD:work/v2-provider-neutral-duplicate-resolution
