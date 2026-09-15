@@ -108,7 +108,12 @@ type ApiDuplicatePage = { items: ApiDuplicateGroup[]; total: number; page: numbe
 type ApiDuplicateDraft = {
   group_id: string;
   member_fingerprint: string;
-  decisions: Array<{ asset_id: string; disposition: DuplicateDecision }>;
+  decisions: Array<{
+    asset_id: string;
+    disposition: DuplicateDecision;
+    source?: 'manual' | 'automatic';
+    status?: 'pending' | 'completed';
+  }>;
   stack_primary_asset_id: string | null;
   stack_resolution: 'keep_existing' | 'move_selected' | 'include_existing';
   status: 'pending' | 'completed';
@@ -213,9 +218,8 @@ function historySummary(item: ApiDuplicateHistoryItem): string {
 }
 
 function reviewStateParam(state: DuplicateSearchQuery['state']): string {
-  if (!state || state === 'All groups') return 'all';
+  if (!state || state === 'All groups' || state === 'Selected') return 'all';
   if (state === 'Needs review') return 'needs_review';
-  if (state === 'Auto-ready') return 'auto_ready';
   if (state === 'Blocked') return 'blocked';
   if (state === 'Actionable') return 'actionable';
   return 'needs_decisions';
@@ -479,80 +483,153 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     }));
   };
 
-
-const keeperSelection = async (
-  mode: 'preview' | 'apply',
-  input: DuplicateKeeperSelectionInput,
-): Promise<DuplicateKeeperSelectionResult> => {
-  await Promise.all([...draftQueues.values()]);
-  const result = await requestJson<ApiDuplicateKeeperSelectionResult>(
-    `/api/assets/duplicates/workspace/auto-select/${mode}`,
-    jsonRequest('POST', {
-      options: ANALYSIS_OPTIONS,
-      scope: input.scope,
-      group_ids: [...new Set(input.groupIds)],
-      review_filter: input.reviewFilter ?? 'All groups',
-      source_filter: input.sourceFilter,
-      rules: input.rules,
-      overwrite_manual: input.overwriteManual ?? false,
-    }),
-  );
-  return {
-    matchedGroupCount: result.matched_group_count,
-    validGroupCount: result.valid_group_count,
-    resolvedGroupCount: result.resolved_group_count,
-    wouldApplyGroupCount: result.would_apply_group_count,
-    appliedGroupCount: result.applied_group_count,
-    ambiguousGroupCount: result.ambiguous_group_count,
-    blockedGroupCount: result.blocked_group_count,
-    preservedManualGroupCount: result.preserved_manual_group_count,
-    missingGroupCount: result.missing_group_count,
-    keeperCount: result.keeper_count,
-    trashCount: result.trash_count,
-    limitExceeded: result.limit_exceeded,
+  const selectedPage = async (
+    query: DuplicateSearchQuery,
+    page: number,
+  ): Promise<ApiDuplicatePage> => {
+    const selected = new Set(workspace.selected_group_ids);
+    if (!selected.size) {
+      return { items: [], total: 0, page, page_size: query.pageSize, pages: 0 };
+    }
+    const matching: ApiDuplicateGroup[] = [];
+    let scanPage = 1;
+    let scanPages = 1;
+    do {
+      const params = new URLSearchParams({
+        page: String(scanPage),
+        page_size: '100',
+        source: query.source ?? 'both',
+        sort: query.sort?.field ?? 'reclaimable',
+        direction: query.sort?.direction ?? 'desc',
+        state: 'all',
+      });
+      const result = await requestJson<ApiDuplicatePage>(
+        `/api/assets/duplicates/cross-source/page?${params.toString()}`,
+        { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal },
+      );
+      matching.push(...result.items.filter((group) => selected.has(group.group_id)));
+      scanPages = result.pages;
+      scanPage += 1;
+    } while (
+      scanPage <= scanPages
+      && ((query.source ?? 'both') !== 'both' || matching.length < selected.size)
+    );
+    const start = (page - 1) * query.pageSize;
+    return {
+      items: matching.slice(start, start + query.pageSize),
+      total: matching.length,
+      page,
+      page_size: query.pageSize,
+      pages: Math.ceil(matching.length / query.pageSize),
+    };
   };
-};
+
+  const keeperSelection = async (
+    mode: 'preview' | 'apply',
+    input: DuplicateKeeperSelectionInput,
+  ): Promise<DuplicateKeeperSelectionResult> => {
+    await Promise.all([...draftQueues.values()]);
+    const result = await requestJson<ApiDuplicateKeeperSelectionResult>(
+      `/api/assets/duplicates/workspace/auto-select/${mode}`,
+      jsonRequest('POST', {
+        options: ANALYSIS_OPTIONS,
+        scope: input.scope,
+        group_ids: [...new Set(input.groupIds)],
+        review_filter: input.reviewFilter ?? 'All groups',
+        source_filter: input.sourceFilter,
+        rules: input.rules,
+        overwrite_manual: input.overwriteManual ?? false,
+      }),
+    );
+    if (mode === 'apply' && !result.limit_exceeded) {
+      const refreshed = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace');
+      const automaticGroupIds = refreshed.drafts
+        .filter((draft) => (
+          !draft.stale
+          && draft.status === 'completed'
+          && draft.decisions.length > 0
+          && draft.decisions.every((decision) => decision.source === 'automatic')
+        ))
+        .map((draft) => draft.group_id);
+      const automatic = new Set(automaticGroupIds);
+      workspace = await requestJson<ApiDuplicateWorkspace>(
+        '/api/assets/duplicates/workspace/selection',
+        jsonRequest('PUT', {
+          options: ANALYSIS_OPTIONS,
+          selected_group_ids: [...automatic],
+          active_group_id: refreshed.active_group_id && automatic.has(refreshed.active_group_id)
+            ? refreshed.active_group_id
+            : null,
+          revision: refreshed.revision,
+        }),
+      );
+      hasWorkspaceSnapshot = true;
+    }
+    return {
+      matchedGroupCount: result.matched_group_count,
+      validGroupCount: result.valid_group_count,
+      resolvedGroupCount: result.resolved_group_count,
+      wouldApplyGroupCount: result.would_apply_group_count,
+      appliedGroupCount: result.applied_group_count,
+      ambiguousGroupCount: result.ambiguous_group_count,
+      blockedGroupCount: result.blocked_group_count,
+      preservedManualGroupCount: result.preserved_manual_group_count,
+      missingGroupCount: result.missing_group_count,
+      keeperCount: result.keeper_count,
+      trashCount: result.trash_count,
+      limitExceeded: result.limit_exceeded,
+    };
+  };
 
   return {
     async capabilities() {
-      return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: true, reviewFilters: ['Actionable', 'All groups', 'Needs review', 'Blocked', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
+      return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: true, reviewFilters: ['All groups', 'Selected', 'Actionable', 'Needs review', 'Needs decisions', 'Blocked'], decisions: ['keep', 'delete', 'stack'] };
     },
     selectedGroupIds() { return [...workspace.selected_group_ids]; },
 
-async search(query): Promise<PageResult<DuplicateGroupRecord>> {
-  const page = pageNumber(query);
-  const params = new URLSearchParams({
-    page: String(page),
-    page_size: String(query.pageSize),
-    source: query.source ?? 'both',
-    sort: query.sort?.field ?? 'reclaimable',
-    direction: query.sort?.direction ?? 'desc',
-    state: reviewStateParam(query.state),
-  });
-  const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
-  const [rawPage, restored] = await Promise.all([
-    requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
-    restoreWorkspace
-      ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
-      : Promise.resolve(null),
-  ]);
-  if (restored) {
-    workspace = restored;
-    hasWorkspaceSnapshot = true;
-  }
-  if (!query.reuseCachedGroups) rawGroups.clear();
-  const result = normalizeDuplicatePage(rawPage, query, page);
-  for (const group of result.items) rawGroups.set(group.group_id, group);
-  const items = result.items.map(materialize);
-  visibleGroupIds = new Set(items.map((group) => group.id));
-  return {
-    items,
-    total: result.total,
-    pageSize: result.page_size,
-    page: result.page,
-    nextCursor: result.page < result.pages ? String(result.page + 1) : null,
-  };
-},
+    async search(query): Promise<PageResult<DuplicateGroupRecord>> {
+      const page = pageNumber(query);
+      const restoreWorkspace = !hasWorkspaceSnapshot || !query.reuseCachedGroups;
+      let result: ApiDuplicatePage;
+      if (query.state === 'Selected') {
+        if (restoreWorkspace) {
+          workspace = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal });
+          hasWorkspaceSnapshot = true;
+        }
+        result = await selectedPage(query, page);
+      } else {
+        const params = new URLSearchParams({
+          page: String(page),
+          page_size: String(query.pageSize),
+          source: query.source ?? 'both',
+          sort: query.sort?.field ?? 'reclaimable',
+          direction: query.sort?.direction ?? 'desc',
+          state: reviewStateParam(query.state),
+        });
+        const [rawPage, restored] = await Promise.all([
+          requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
+          restoreWorkspace
+            ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
+            : Promise.resolve(null),
+        ]);
+        if (restored) {
+          workspace = restored;
+          hasWorkspaceSnapshot = true;
+        }
+        result = normalizeDuplicatePage(rawPage, query, page);
+      }
+      if (!query.reuseCachedGroups) rawGroups.clear();
+      for (const group of result.items) rawGroups.set(group.group_id, group);
+      const items = result.items.map(materialize);
+      visibleGroupIds = new Set(items.map((group) => group.id));
+      return {
+        items,
+        total: result.total,
+        pageSize: result.page_size,
+        page: result.page,
+        nextCursor: result.page < result.pages ? String(result.page + 1) : null,
+      };
+    },
     saveDraft,
     flushDrafts,
     saveSelection,
