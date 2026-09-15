@@ -1643,6 +1643,9 @@ class CrossSourceDuplicateService:
 
         if self._reviews is None:
             raise RuntimeError("Duplicate review persistence is unavailable")
+        if request.all_decisions:
+            await self._reviews.reset_all_decisions()
+            return DuplicateWorkspaceState()
         requested_ids = list(dict.fromkeys(request.group_ids))
         identities = await self._group_identities(group_ids=requested_ids)
         if identities is None:
