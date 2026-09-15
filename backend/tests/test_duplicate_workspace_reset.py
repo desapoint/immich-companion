@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from companion.action_service import ActionPlanConflictError
-from companion.duplicate_schema import DuplicateWorkspaceResetRequest
+from companion.duplicate_schema import DuplicateWorkspaceResetRequest, DuplicateWorkspaceState
 from companion.duplicate_service import CrossSourceDuplicateService
 from companion.group_decision import DiscoverySource
 
@@ -29,6 +29,7 @@ class ReviewRepository:
     def __init__(self) -> None:
         self.cleared: list[tuple[str, list[str]]] = []
         self.consumed: tuple[list[str], list[str]] | None = None
+        self.reset_all_calls = 0
 
     async def clear_decisions(
         self,
@@ -43,6 +44,10 @@ class ReviewRepository:
         legacy_group_ids: list[str],
     ) -> None:
         self.consumed = (stable_group_keys, legacy_group_ids)
+
+    async def reset_all_decisions(self) -> int:
+        self.reset_all_calls += 1
+        return 3
 
 
 def service_with(
@@ -105,5 +110,31 @@ async def test_reset_workspace_decisions_rejects_missing_target_without_full_res
         )
 
     assert discovery.calls == [([group_id], None)]
+    assert reviews.cleared == []
+    assert reviews.consumed is None
+
+
+@pytest.mark.asyncio
+async def test_reset_all_workspace_decisions_never_touches_discovery_or_workspace_restore() -> None:
+    discovery = IdentityDiscovery([])
+    reviews = ReviewRepository()
+    service = service_with(discovery, reviews)
+
+    async def full_result(*args, **kwargs):
+        raise AssertionError("global workspace reset must not materialize duplicate results")
+
+    async def workspace(*args, **kwargs):
+        raise AssertionError("global workspace reset must not restore the workspace")
+
+    service.result = full_result  # type: ignore[method-assign]
+    service.workspace = workspace  # type: ignore[method-assign]
+
+    result = await service.reset_workspace_decisions(
+        DuplicateWorkspaceResetRequest(all_decisions=True)
+    )
+
+    assert result == DuplicateWorkspaceState(cleared_group_count=3)
+    assert discovery.calls == []
+    assert reviews.reset_all_calls == 1
     assert reviews.cleared == []
     assert reviews.consumed is None
