@@ -7,22 +7,28 @@ from uuid import uuid4
 
 import pytest
 
+from companion.action_service import ActionPlanConflictError
 from companion.duplicate_schema import DuplicateAnalysisOptions, DuplicateResolutionPlanRequest
 from companion.duplicate_service import CrossSourceDuplicateService
 
 
 class _Reviews:
-    def __init__(self, asset_ids: list[object]) -> None:
+    def __init__(
+        self,
+        asset_ids: list[object],
+        dispositions: list[str] | None = None,
+    ) -> None:
+        dispositions = dispositions or ["keep"] * len(asset_ids)
         self._record = SimpleNamespace(
             member_fingerprint="fingerprint",
             member_decisions=[
                 {
                     "asset_id": str(asset_id),
-                    "disposition": "keep",
+                    "disposition": disposition,
                     "source": "manual",
                     "status": "completed",
                 }
-                for asset_id in asset_ids
+                for asset_id, disposition in zip(asset_ids, dispositions, strict=True)
             ],
             stack_primary_asset_id=None,
             stack_resolution="move_selected",
@@ -52,26 +58,45 @@ class _Actions:
         )
 
 
-def _service(group_ids: list[str]) -> tuple[CrossSourceDuplicateService, list[object]]:
+def _service(
+    group_ids: list[str],
+    *,
+    dispositions: list[str] | None = None,
+    offline_member: bool = False,
+    eligible: bool = True,
+    status: str = "exact",
+    discovery_source: str = "immich_duplicate",
+    provider_group_id: str | None = None,
+) -> tuple[CrossSourceDuplicateService, list[object]]:
     asset_ids = [uuid4(), uuid4()]
-    members = [SimpleNamespace(id=asset_id, is_offline=False) for asset_id in asset_ids]
+    members = [
+        SimpleNamespace(id=asset_id, is_offline=offline_member and index == 1)
+        for index, asset_id in enumerate(asset_ids)
+    ]
     group = SimpleNamespace(
         group_id=group_ids[0],
         auto_resolvable=False,
-        discovery_source="immich_duplicate",
+        discovery_source=discovery_source,
         stable_group_key="stable-key",
         member_set_key="member-set-key",
         member_fingerprint="fingerprint",
-        provider_group_id=str(uuid4()),
+        provider_group_id=(
+            provider_group_id
+            if provider_group_id is not None
+            else str(uuid4())
+            if discovery_source == "immich_duplicate"
+            else None
+        ),
         members=members,
-        eligible=True,
+        eligible=eligible,
+        status=status,
         effective_action="none",
         effective_primary_asset_id=None,
         keeper_asset_id=None,
     )
 
     service = CrossSourceDuplicateService.__new__(CrossSourceDuplicateService)
-    service._reviews = _Reviews(asset_ids)
+    service._reviews = _Reviews(asset_ids, dispositions)
     service._actions = _Actions()
     service._settings = SimpleNamespace(action_plan_ttl_seconds=300)
     service._stacks = None
@@ -79,6 +104,7 @@ def _service(group_ids: list[str]) -> tuple[CrossSourceDuplicateService, list[ob
     service._snapshot_groups = AsyncMock(
         return_value=([], {}, {}, SimpleNamespace(groups=[group]))
     )
+    service._relation_snapshot = AsyncMock(return_value=({}, "relations"))
     service.result = AsyncMock(
         side_effect=AssertionError("selected-group planning hydrated the full duplicate universe")
     )
@@ -107,3 +133,49 @@ async def test_plan_hydrates_only_selected_groups(workspace_selected: bool) -> N
     assert plan.group_count == 1
     assert plan.groups[0].group_id == group_id
     assert {member.disposition for member in plan.groups[0].members} == {"keep"}
+
+
+@pytest.mark.asyncio
+async def test_reviewed_immich_delete_allows_offline_member() -> None:
+    group_id = "immich:offline-review-target"
+    service, asset_ids = _service(
+        [group_id],
+        dispositions=["keep", "delete"],
+        offline_member=True,
+        eligible=False,
+        status="unverified",
+    )
+
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            options=DuplicateAnalysisOptions(analyze_automatically=False),
+            group_ids=[group_id],
+        )
+    )
+
+    assert plan.group_count == 1
+    assert plan.groups[0].keep_asset_ids == [asset_ids[0]]
+    assert plan.groups[0].trash_asset_ids == [asset_ids[1]]
+
+
+@pytest.mark.asyncio
+async def test_reviewed_delete_still_rejects_similarity_only_group() -> None:
+    group_id = "similarity:review-target"
+    service, _ = _service(
+        [group_id],
+        dispositions=["keep", "delete"],
+        eligible=False,
+        status="unverified",
+        discovery_source="companion_similarity",
+    )
+
+    with pytest.raises(
+        ActionPlanConflictError,
+        match="available Immich duplicate group",
+    ):
+        await service.plan(
+            DuplicateResolutionPlanRequest(
+                options=DuplicateAnalysisOptions(analyze_automatically=False),
+                group_ids=[group_id],
+            )
+        )
