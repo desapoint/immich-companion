@@ -1643,35 +1643,32 @@ class CrossSourceDuplicateService:
 
         if self._reviews is None:
             raise RuntimeError("Duplicate review persistence is unavailable")
-        result = await self.result(request.options)
-        groups_by_id = {group.group_id: group for group in result.groups}
-        missing = [group_id for group_id in request.group_ids if group_id not in groups_by_id]
+        requested_ids = list(dict.fromkeys(request.group_ids))
+        identities = await self._group_identities(group_ids=requested_ids)
+        if identities is None:
+            # Legacy/test providers without targeted identity lookup retain old semantics.
+            result = await self.result(request.options)
+            groups_by_id: dict[str, Any] = {group.group_id: group for group in result.groups}
+        else:
+            groups_by_id = {group.group_id: group for group in identities}
+        missing = [group_id for group_id in requested_ids if group_id not in groups_by_id]
         if missing:
             raise ActionPlanConflictError("A duplicate group is no longer available")
-        for discovery_source in {
-            groups_by_id[group_id].discovery_source for group_id in request.group_ids
-        }:
-            await self._reviews.clear_decisions(
-                discovery_source,
-                [
-                    groups_by_id[group_id].stable_group_key
-                    for group_id in request.group_ids
-                    if groups_by_id[group_id].discovery_source == discovery_source
-                ],
-            )
-        workspace = await self.workspace(request.options)
-        cleared = set(request.group_ids)
-        return await self.save_workspace_selection(
-            DuplicateWorkspaceSelectionUpdate(
-                options=request.options,
-                selected_group_ids=[
-                    group_id for group_id in workspace.selected_group_ids if group_id not in cleared
-                ],
-                active_group_id=(
-                    workspace.active_group_id if workspace.active_group_id not in cleared else None
-                ),
-            )
+
+        stable_keys_by_source: dict[str, list[str]] = {}
+        for group_id in requested_ids:
+            group = groups_by_id[group_id]
+            source = group.discovery_source
+            source_name = source.value if isinstance(source, DiscoverySource) else str(source)
+            stable_keys_by_source.setdefault(source_name, []).append(group.stable_group_key)
+        for discovery_source, stable_group_keys in stable_keys_by_source.items():
+            await self._reviews.clear_decisions(discovery_source, stable_group_keys)
+
+        await self._reviews.consume_workspace_groups(
+            [groups_by_id[group_id].stable_group_key for group_id in requested_ids],
+            requested_ids,
         )
+        return await self.workspace(request.options)
 
     @staticmethod
     def _review_state_query(review_filter: str) -> str:
