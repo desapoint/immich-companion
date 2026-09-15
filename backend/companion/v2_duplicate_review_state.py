@@ -43,15 +43,12 @@ class V2DuplicateReviewStateService:
         discovery: PersistedCompositeDuplicateProvider,
         reports: IntegrityRepository,
         snapshots: CompositeDuplicateRepository,
-        reviews: DuplicateReviewRepository | None = None,
+        reviews: DuplicateReviewRepository,
     ) -> None:
         self._discovery = discovery
         self._reports = reports
         self._snapshots = snapshots
-        # The snapshot repository and review repository deliberately share the
-        # same companion-owned database boundary. Keep the optional injection
-        # for tests and callers that already own the review repository.
-        self._reviews = reviews or DuplicateReviewRepository(snapshots._database)
+        self._reviews = reviews
 
     async def refresh_after_change(self) -> object | None:
         try:
