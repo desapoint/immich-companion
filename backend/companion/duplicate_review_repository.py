@@ -377,6 +377,62 @@ class DuplicateReviewRepository:
         async with self._database.sessions() as session, session.begin():
             await session.execute(statement)
 
+    async def reset_all_decisions(self) -> int:
+        """Atomically clear every active decision and discard workspace navigation state.
+
+        Completed resolutions are historical records and remain untouched.  The update is
+        deliberately restricted to non-completed rows that actually carry mutable review
+        state, avoiding write amplification when there is nothing to clear.  Removing the
+        singleton workspace in the same transaction also clears stale selections that can no
+        longer be resolved by discovery.
+        """
+
+        now = datetime.now(UTC)
+        resettable_state = or_(
+            DuplicateGroupReviewRecord.manual_action.is_not(None),
+            DuplicateGroupReviewRecord.manual_primary_asset_id.is_not(None),
+            func.coalesce(
+                func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+            )
+            > 0,
+            DuplicateGroupReviewRecord.stack_primary_asset_id.is_not(None),
+            DuplicateGroupReviewRecord.metadata_keeper_asset_id.is_not(None),
+            DuplicateGroupReviewRecord.stack_resolution != "move_selected",
+            DuplicateGroupReviewRecord.draft_status != "pending",
+            DuplicateGroupReviewRecord.review_status != "pending",
+        )
+        statement = (
+            update(DuplicateGroupReviewRecord)
+            .where(
+                ~DuplicateGroupReviewRecord.review_status.in_(
+                    COMPLETED_DUPLICATE_REVIEW_STATUSES
+                ),
+                resettable_state,
+            )
+            .values(
+                manual_action=None,
+                manual_primary_asset_id=None,
+                member_decisions=[],
+                stack_primary_asset_id=None,
+                stack_resolution="move_selected",
+                metadata_keeper_asset_id=None,
+                draft_status="pending",
+                review_status="pending",
+                last_reviewed_at=now,
+                updated_at=now,
+            )
+        )
+        async with self._database.sessions() as session, session.begin():
+            result = await session.execute(statement)
+            workspace = await session.scalar(
+                select(DuplicateReviewWorkspaceRecord)
+                .where(DuplicateReviewWorkspaceRecord.workspace_key == WORKSPACE_KEY)
+                .with_for_update()
+            )
+            if workspace is not None:
+                await session.delete(workspace)
+        return max(0, int(getattr(result, "rowcount", 0) or 0))
+
     async def complete_draft(
         self,
         discovery_source: str,
