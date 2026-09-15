@@ -28,9 +28,7 @@ def test_reusable_bootstrap_state_requires_a_previous_success(tmp_path) -> None:
     assert has_reusable_state(state_path) is False
 
 
-def test_bootstrap_skips_all_immich_work_when_state_is_already_ready(
-    tmp_path, monkeypatch
-) -> None:
+def test_bootstrap_skips_all_immich_work_when_state_is_already_ready(tmp_path, monkeypatch) -> None:
     state_path = tmp_path / "bootstrap-state.json"
     state_path.write_text('{"ready": true}', encoding="utf-8")
     values = {
@@ -54,9 +52,7 @@ def test_bootstrap_skips_all_immich_work_when_state_is_already_ready(
     test_bootstrap.main()
 
 
-def test_resolve_api_key_reuses_the_persisted_valid_secret(
-    tmp_path, monkeypatch
-) -> None:
+def test_resolve_api_key_reuses_the_persisted_valid_secret(tmp_path, monkeypatch) -> None:
     key_path = tmp_path / "api-key"
     key_path.write_text("stable-test-key\n", encoding="utf-8")
     monkeypatch.setattr(test_bootstrap, "api_key_is_valid", lambda *_args: True)
@@ -140,9 +136,7 @@ def test_reconcile_external_library_uses_admin_api_and_queues_scan() -> None:
         return httpx.Response(200, json={"id": "library-1"})
 
     relationships = {
-        "external_libraries": [
-            {"name": "Demo external", "import_path": "/external-library"}
-        ]
+        "external_libraries": [{"name": "Demo external", "import_path": "/external-library"}]
     }
     with httpx.Client(
         base_url="http://immich.test",

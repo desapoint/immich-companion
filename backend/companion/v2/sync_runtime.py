@@ -102,6 +102,4 @@ def register_sync_steps(
 ) -> None:
     """Register V2 sync-step handlers without changing V1 coordinator modules."""
 
-    coordinator.register_handler(
-        CatalogSyncTaskHandler(immich, assets, runtime_settings)
-    )
+    coordinator.register_handler(CatalogSyncTaskHandler(immich, assets, runtime_settings))

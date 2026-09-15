@@ -105,8 +105,7 @@ class SimilarityDetailRepository:
                 statement.on_conflict_do_update(
                     index_elements=[AssetSimilarityDetailFeatureRecord.asset_id],
                     set_={
-                        key: getattr(statement.excluded, key)
-                        for key in values if key != "asset_id"
+                        key: getattr(statement.excluded, key) for key in values if key != "asset_id"
                     },
                 )
             )
@@ -162,7 +161,7 @@ class SimilarityDetailMaintainer:
                     if total > self._max_bytes:
                         raise ValueError("original exceeds detail size limit")
                     if len(prefix) < 64:
-                        prefix.extend(chunk[:64 - len(prefix)])
+                        prefix.extend(chunk[: 64 - len(prefix)])
                     spool.write(chunk)
             self.counters["detail_original_bytes"] += total
             return await asyncio.to_thread(
@@ -170,7 +169,9 @@ class SimilarityDetailMaintainer:
             )
 
     async def _extract_one(
-        self, context: TaskContext, asset_id: UUID,
+        self,
+        context: TaskContext,
+        asset_id: UUID,
         search: AssetSimilaritySearchFeatureRecord,
     ) -> bool:
         async with self._slots:
@@ -186,7 +187,8 @@ class SimilarityDetailMaintainer:
                     )
                     feature = await asyncio.to_thread(
                         extract_detail_feature,
-                        BytesIO(content), detect_file_format(content[:64]),
+                        BytesIO(content),
+                        detect_file_format(content[:64]),
                     )
                     if feature is not None:
                         origin = "transcoded_fullsize"
@@ -199,7 +201,8 @@ class SimilarityDetailMaintainer:
                     )
                     feature = await asyncio.to_thread(
                         extract_detail_feature,
-                        BytesIO(content), detect_file_format(content[:64]),
+                        BytesIO(content),
+                        detect_file_format(content[:64]),
                     )
                     if feature is not None:
                         origin = "preview_fallback"
@@ -216,7 +219,9 @@ class SimilarityDetailMaintainer:
                 self.counters["detail_features_unavailable"] += 1
                 return False
             if (
-                live.asset_type != "IMAGE" or live.is_trashed or live.is_offline
+                live.asset_type != "IMAGE"
+                or live.is_trashed
+                or live.is_offline
                 or live.file_modified_at != search.source_file_modified_at
                 or live.file_size_bytes != search.source_file_size_bytes
                 or live.checksum != search.source_checksum
@@ -224,9 +229,9 @@ class SimilarityDetailMaintainer:
                 self.counters["detail_features_unavailable"] += 1
                 return False
             if origin == "transcoded_fullsize" and (
-                not live.width or not live.height
-                or sorted((feature.width, feature.height))
-                != sorted((live.width, live.height))
+                not live.width
+                or not live.height
+                or sorted((feature.width, feature.height)) != sorted((live.width, live.height))
             ):
                 # Some servers can serve a reduced rendition for this endpoint.
                 # Keep its useful visual evidence without calling it full-size.
@@ -256,13 +261,12 @@ class SimilarityDetailMaintainer:
             current = await self._details.get_current_many(page)
             self.counters["detail_features_reused"] += len(current)
             pending = [
-                asset_id for asset_id in page
+                asset_id
+                for asset_id in page
                 if asset_id not in current and asset_id in search_features
             ]
             tasks = [
-                asyncio.create_task(
-                    self._extract_one(context, asset_id, search_features[asset_id])
-                )
+                asyncio.create_task(self._extract_one(context, asset_id, search_features[asset_id]))
                 for asset_id in pending
             ]
             try:

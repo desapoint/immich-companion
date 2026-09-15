@@ -87,9 +87,7 @@ class CandidateGroup:
 
 @dataclass(frozen=True, slots=True)
 class ResolutionPolicy:
-    keeper_preference: Literal[
-        "most_recent", "prefer_upload", "prefer_external", "first"
-    ]
+    keeper_preference: Literal["most_recent", "prefer_upload", "prefer_external", "first"]
     automatic_handling: bool = True
     preselect_safe_groups: bool = True
     exact_file_action: Literal["resolve", "keep_all", "stack_all", "review"] = "resolve"

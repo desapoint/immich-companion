@@ -108,11 +108,7 @@ class _HammingBkTree:
                 matches.extend((distance, asset_id) for asset_id in node.asset_ids)
             lower = distance - maximum_distance
             upper = distance + maximum_distance
-            pending.extend(
-                child
-                for edge, child in node.children.items()
-                if lower <= edge <= upper
-            )
+            pending.extend(child for edge, child in node.children.items() if lower <= edge <= upper)
         if stats is not None:
             stats.raw_neighbor_matches += len(matches)
             stats.peak_query_matches = max(stats.peak_query_matches, len(matches))

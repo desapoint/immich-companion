@@ -15,14 +15,17 @@ depends_on = None
 
 def upgrade() -> None:
     op.alter_column(
-        "asset_similarity_search_features", "preview_sha256",
+        "asset_similarity_search_features",
+        "preview_sha256",
         new_column_name="media_sha256",
     )
     op.add_column(
         "asset_similarity_search_features",
         sa.Column(
-            "fingerprint_origin", sa.String(length=16),
-            nullable=False, server_default="preview",
+            "fingerprint_origin",
+            sa.String(length=16),
+            nullable=False,
+            server_default="preview",
         ),
     )
 
@@ -30,6 +33,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_column("asset_similarity_search_features", "fingerprint_origin")
     op.alter_column(
-        "asset_similarity_search_features", "media_sha256",
+        "asset_similarity_search_features",
+        "media_sha256",
         new_column_name="preview_sha256",
     )

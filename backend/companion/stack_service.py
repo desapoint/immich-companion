@@ -97,9 +97,7 @@ class StackService:
 
     async def without_existing_members(self, asset_ids: list[UUID]) -> list[UUID]:
         stacked_ids = {
-            member.id
-            for stack in await self._immich.list_stacks()
-            for member in stack.assets
+            member.id for stack in await self._immich.list_stacks() for member in stack.assets
         }
         remaining = [identifier for identifier in asset_ids if identifier not in stacked_ids]
         self._require_stackable(remaining)
@@ -200,8 +198,12 @@ class StackService:
         logger.info(
             "Stack action timing: assets=%s confirmed=%s immich_seconds=%.3f "
             "verification_seconds=%.3f reconciliation_seconds=%.3f total_seconds=%.3f",
-            len(preparation.affected_ids), visible, created - started,
-            verified - created, perf_counter() - verified, perf_counter() - started,
+            len(preparation.affected_ids),
+            visible,
+            created - started,
+            verified - created,
+            perf_counter() - verified,
+            perf_counter() - started,
         )
         return visible
 

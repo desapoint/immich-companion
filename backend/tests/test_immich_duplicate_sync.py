@@ -101,10 +101,7 @@ async def test_sync_service_uses_durable_deduplicated_task_submission() -> None:
 
     assert started.task_id == task_id
     assert tasks.submitted[0] == (IMMICH_DUPLICATE_SYNC_TASK_TYPE, {})
-    assert (
-        tasks.submitted[1]["deduplication_key"]
-        == IMMICH_DUPLICATE_SYNC_DEDUPLICATION_KEY
-    )
+    assert tasks.submitted[1]["deduplication_key"] == IMMICH_DUPLICATE_SYNC_DEDUPLICATION_KEY
     assert tasks.started == 1
 
 

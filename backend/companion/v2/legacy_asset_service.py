@@ -843,9 +843,7 @@ class AssetSyncService:
                     await asyncio.sleep(delay)
                     await self.start(run.mode)
 
-    async def enqueue_relation_repair_during_sync(
-        self, relations: list[tuple[str, UUID]]
-    ) -> bool:
+    async def enqueue_relation_repair_during_sync(self, relations: list[tuple[str, UUID]]) -> bool:
         """Queue authoritative repair after active sync without delaying an action."""
 
         if self._coordinator is None or not relations:
@@ -858,8 +856,7 @@ class AssetSyncService:
             "asset_relation_repair",
             {
                 "relations": [
-                    {"kind": kind, "id": str(relation_id)}
-                    for kind, relation_id in unique_relations
+                    {"kind": kind, "id": str(relation_id)} for kind, relation_id in unique_relations
                 ]
             },
             priority=95,

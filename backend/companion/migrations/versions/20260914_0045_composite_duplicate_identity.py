@@ -51,12 +51,16 @@ def upgrade() -> None:
 
     last_position = -1
     while True:
-        group_rows = bind.execute(
-            sa.select(groups.c.group_id, groups.c.position, groups.c.discovery_source)
-            .where(groups.c.position > last_position)
-            .order_by(groups.c.position)
-            .limit(BATCH_SIZE)
-        ).mappings().all()
+        group_rows = (
+            bind.execute(
+                sa.select(groups.c.group_id, groups.c.position, groups.c.discovery_source)
+                .where(groups.c.position > last_position)
+                .order_by(groups.c.position)
+                .limit(BATCH_SIZE)
+            )
+            .mappings()
+            .all()
+        )
         if not group_rows:
             break
         group_ids = [row["group_id"] for row in group_rows]
@@ -74,7 +78,7 @@ def upgrade() -> None:
             updates.append(
                 {
                     "target_group_id": row["group_id"],
-                    "stable_key": f'{row["discovery_source"]}:{fingerprint}',
+                    "stable_key": f"{row['discovery_source']}:{fingerprint}",
                     "fingerprint": fingerprint,
                 }
             )

@@ -79,9 +79,7 @@ class SimilarityMaintenanceRepository:
     async def count(self) -> int:
         async with self._database.sessions() as session:
             return int(
-                await session.scalar(
-                    select(func.count()).select_from(SimilarityAssetChangeRecord)
-                )
+                await session.scalar(select(func.count()).select_from(SimilarityAssetChangeRecord))
                 or 0
             )
 
@@ -176,17 +174,15 @@ class SimilarityMaintenanceTaskHandler:
             )
             if self._detailer is not None:
                 shortlisted = [
-                    candidate_id for candidate_id in candidate_ids
+                    candidate_id
+                    for candidate_id in candidate_ids
                     if (edge := edges.get((asset_id, candidate_id))) is not None
-                    and edge.similarity_percent >= max(
-                        50.0, parameters.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
-                    )
+                    and edge.similarity_percent
+                    >= max(50.0, parameters.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN)
                 ]
                 if shortlisted:
                     # Incremental changes follow the same detail rule as a full scan.
-                    await self._detailer.ensure(
-                        context, [asset_id, *shortlisted], feature_map
-                    )
+                    await self._detailer.ensure(context, [asset_id, *shortlisted], feature_map)
                     edges.update(
                         await self._similarity.reference_edges(
                             [[asset_id, candidate_id] for candidate_id in shortlisted],

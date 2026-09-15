@@ -49,10 +49,7 @@ class SyncRuntimeSettingsRepository:
                 session.add(record)
                 await session.flush()
             tag_association_concurrency = await session.scalar(
-                text(
-                    "SELECT tag_association_concurrency "
-                    "FROM sync_runtime_settings WHERE id = 1"
-                )
+                text("SELECT tag_association_concurrency FROM sync_runtime_settings WHERE id = 1")
             )
             return SyncRuntimeSettings(
                 full_batch_size=record.full_batch_size,

@@ -81,8 +81,7 @@ def test_small_costume_and_face_edits_remain_reviewable_at_95_percent() -> None:
     reference = extract_detail_feature(BytesIO(_encoded(original)), "png")
     jpeg = extract_detail_feature(BytesIO(_encoded(original, "JPEG")), "jpeg")
     variants = [
-        extract_detail_feature(BytesIO(_encoded(image)), "png")
-        for image in (strap, face, swimsuit)
+        extract_detail_feature(BytesIO(_encoded(image)), "png") for image in (strap, face, swimsuit)
     ]
     assert reference is not None and jpeg is not None and all(variants)
     scores = [compare_detail_features(reference, variant) for variant in variants]
@@ -131,8 +130,7 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
 
         async def get_current_many(self, asset_ids):
             return {
-                asset_id: self.saved[asset_id]
-                for asset_id in asset_ids if asset_id in self.saved
+                asset_id: self.saved[asset_id] for asset_id in asset_ids if asset_id in self.saved
             }
 
         async def save(self, source_identity, asset_id, feature, origin):
@@ -160,9 +158,14 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
 
         async def get_asset(self, asset_id):
             return SimpleNamespace(
-                asset_type="IMAGE", is_trashed=False, is_offline=False,
-                file_modified_at=MODIFIED, file_size_bytes=100, checksum=None,
-                width=384, height=384,
+                asset_type="IMAGE",
+                is_trashed=False,
+                is_offline=False,
+                file_modified_at=MODIFIED,
+                file_size_bytes=100,
+                checksum=None,
+                width=384,
+                height=384,
             )
 
     class Context:
@@ -172,7 +175,9 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
     immich = Immich()
     repository = Repository()
     maintainer = SimilarityDetailMaintainer(
-        immich, repository, max_bytes=10_000_000  # type: ignore[arg-type]
+        immich,
+        repository,
+        max_bytes=10_000_000,  # type: ignore[arg-type]
     )
     await maintainer.ensure(Context(), [ASSET], {ASSET: search})  # type: ignore[arg-type]
     assert maintainer.counters["detail_features_generated"] == 1
@@ -220,9 +225,14 @@ async def test_reduced_fullsize_response_is_labeled_lower_grade() -> None:
 
         async def get_asset(self, _asset_id):
             return SimpleNamespace(
-                asset_type="IMAGE", is_trashed=False, is_offline=False,
-                file_modified_at=MODIFIED, file_size_bytes=100, checksum=None,
-                width=384, height=384,
+                asset_type="IMAGE",
+                is_trashed=False,
+                is_offline=False,
+                file_modified_at=MODIFIED,
+                file_size_bytes=100,
+                checksum=None,
+                width=384,
+                height=384,
             )
 
     class Context:
@@ -254,8 +264,7 @@ async def test_detail_stage_caps_streams_and_preserves_pause() -> None:
 
         async def get_current_many(self, asset_ids):
             return {
-                asset_id: self.saved[asset_id]
-                for asset_id in asset_ids if asset_id in self.saved
+                asset_id: self.saved[asset_id] for asset_id in asset_ids if asset_id in self.saved
             }
 
         async def save(self, _identity, asset_id, feature, _origin):
@@ -282,9 +291,14 @@ async def test_detail_stage_caps_streams_and_preserves_pause() -> None:
 
         async def get_asset(self, _asset_id):
             return SimpleNamespace(
-                asset_type="IMAGE", is_trashed=False, is_offline=False,
-                file_modified_at=MODIFIED, file_size_bytes=len(content), checksum=None,
-                width=384, height=384,
+                asset_type="IMAGE",
+                is_trashed=False,
+                is_offline=False,
+                file_modified_at=MODIFIED,
+                file_size_bytes=len(content),
+                checksum=None,
+                width=384,
+                height=384,
             )
 
     class Context:
@@ -298,7 +312,9 @@ async def test_detail_stage_caps_streams_and_preserves_pause() -> None:
     repository = Repository()
     context = Context()
     maintainer = SimilarityDetailMaintainer(
-        immich, repository, slots=2  # type: ignore[arg-type]
+        immich,
+        repository,
+        slots=2,  # type: ignore[arg-type]
     )
     await maintainer.ensure(context, ids, {asset_id: search for asset_id in ids})  # type: ignore[arg-type]
     assert immich.peak <= 2

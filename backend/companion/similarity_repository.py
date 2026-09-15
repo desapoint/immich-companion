@@ -214,9 +214,7 @@ class SimilarityRepository:
             for offset in range(0, len(ordered), PAIR_DETAIL_BATCH_SIZE):
                 batch = ordered[offset : offset + PAIR_DETAIL_BATCH_SIZE]
                 combined.update(
-                    await self.reference_edges(
-                        [[left, right] for left, right in batch], features
-                    )
+                    await self.reference_edges([[left, right] for left, right in batch], features)
                 )
             return combined
         canonical = list(dict.fromkeys(requested.values()))
@@ -235,13 +233,15 @@ class SimilarityRepository:
             await self._details.get_current_many(
                 list({asset_id for pair in canonical for asset_id in pair})
             )
-            if self._details is not None else {}
+            if self._details is not None
+            else {}
         )
 
         def detail_version(low: UUID, high: UUID) -> int:
             return (
                 DETAIL_FEATURE_VERSION
-                if low in detail_records and high in detail_records
+                if low in detail_records
+                and high in detail_records
                 and isinstance(features[low], AssetSimilaritySearchFeatureRecord)
                 and isinstance(features[high], AssetSimilaritySearchFeatureRecord)
                 else 0
@@ -251,9 +251,7 @@ class SimilarityRepository:
         uncached: list[tuple[UUID, UUID]] = []
         for low, high in canonical:
             hot = self._hot_get(
-                self._hot_key(
-                    low, high, features[low], features[high], detail_version(low, high)
-                )
+                self._hot_key(low, high, features[low], features[high], detail_version(low, high))
             )
             if hot is None:
                 uncached.append((low, high))
@@ -292,9 +290,8 @@ class SimilarityRepository:
                 evidence = _public(record)
                 current[(low, high)] = evidence
                 self._hot_put(
-                    self._hot_key(
-                        low, high, low_feature, high_feature, pair_detail_version
-                    ), evidence
+                    self._hot_key(low, high, low_feature, high_feature, pair_detail_version),
+                    evidence,
                 )
                 self._pair_hits += 1
                 continue
@@ -311,16 +308,17 @@ class SimilarityRepository:
                     DetailFeature(high_detail.width, high_detail.height, high_detail.sample),
                 )
                 detail_source = (
-                    "preview" if "preview_fallback" in {low_detail.origin, high_detail.origin}
-                    else "transcoded" if "transcoded_fullsize" in {
-                        low_detail.origin, high_detail.origin
-                    }
+                    "preview"
+                    if "preview_fallback" in {low_detail.origin, high_detail.origin}
+                    else "transcoded"
+                    if "transcoded_fullsize" in {low_detail.origin, high_detail.origin}
                     else "original"
                 )
             evidence = PairSimilarityEvidence(
                 similarity_percent=(
                     min(comparison.similarity_percent, detail_comparison.similarity_percent)
-                    if detail_comparison is not None else comparison.similarity_percent
+                    if detail_comparison is not None
+                    else comparison.similarity_percent
                 ),
                 structural_percent=comparison.structural_percent,
                 perceptual_percent=comparison.perceptual_percent,
@@ -351,9 +349,7 @@ class SimilarityRepository:
             )
             current[(low, high)] = evidence
             self._hot_put(
-                self._hot_key(
-                    low, high, low_feature, high_feature, pair_detail_version
-                ), evidence
+                self._hot_key(low, high, low_feature, high_feature, pair_detail_version), evidence
             )
             values.append(
                 {

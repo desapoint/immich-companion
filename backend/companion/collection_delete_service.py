@@ -163,7 +163,10 @@ class CollectionDeleteService:
                 logger.info(
                     "Collection delete timing: kind=%s items=%s status=partial "
                     "immich_seconds=%.3f verification_seconds=%.3f total_seconds=%.3f",
-                    kind, stop - work_index, immich_seconds, verification_seconds,
+                    kind,
+                    stop - work_index,
+                    immich_seconds,
+                    verification_seconds,
                     perf_counter() - started,
                 )
                 return refreshed
@@ -196,9 +199,11 @@ class CollectionDeleteService:
             ]
             await self._selections.remove(selection_id, confirmed_removed)
 
-            status = "failed" if any(
-                results[raw_id]["status"] == "failed" for raw_id in record.applicable_ids
-            ) else "completed"
+            status = (
+                "failed"
+                if any(results[raw_id]["status"] == "failed" for raw_id in record.applicable_ids)
+                else "completed"
+            )
             await self._actions.finish_collection_delete_plan(plan_id, status)
         except Exception:
             await self._actions.finish_collection_delete_plan(plan_id, "failed")
@@ -208,7 +213,11 @@ class CollectionDeleteService:
         logger.info(
             "Collection delete timing: kind=%s items=%s status=%s "
             "immich_seconds=%.3f verification_seconds=%.3f total_seconds=%.3f",
-            kind, stop - work_index, refreshed.status, immich_seconds,
-            verification_seconds, perf_counter() - started,
+            kind,
+            stop - work_index,
+            refreshed.status,
+            immich_seconds,
+            verification_seconds,
+            perf_counter() - started,
         )
         return refreshed

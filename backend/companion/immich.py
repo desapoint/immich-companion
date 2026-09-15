@@ -129,6 +129,7 @@ class ImmichAsset(ImmichModel):
     people: list[dict[str, Any]] = Field(default_factory=list)
     tags: list[dict[str, Any]] = Field(default_factory=list)
     stack: dict[str, Any] | None = None
+
     @property
     def includes_tags(self) -> bool:
         """Whether the response explicitly included the tags relationship."""
@@ -422,9 +423,7 @@ class ImmichApiClient:
     async def get_server_version(self) -> ImmichServerVersion:
         """Retrieve and validate the server version through the API boundary."""
 
-        response = await self._request(
-            "GET", "/api/server/version", operation="get server version"
-        )
+        response = await self._request("GET", "/api/server/version", operation="get server version")
         return ImmichServerVersion.model_validate(response.json())
 
     async def compatibility_report(self) -> ImmichCompatibilityReport:
@@ -1009,20 +1008,26 @@ class ImmichApiClient:
 
     async def create_album(self, name: str, description: str = "") -> ImmichAlbum:
         response = await self._request(
-            "POST", "/api/albums", operation="create album",
+            "POST",
+            "/api/albums",
+            operation="create album",
             json={"albumName": name, "description": description, "assetIds": []},
         )
         return ImmichAlbum.model_validate(response.json())
 
-    async def update_album(self, album_id: UUID, *, name: str | None = None,
-                           description: str | None = None) -> ImmichAlbum:
+    async def update_album(
+        self, album_id: UUID, *, name: str | None = None, description: str | None = None
+    ) -> ImmichAlbum:
         payload: dict[str, Any] = {}
         if name is not None:
             payload["albumName"] = name
         if description is not None:
             payload["description"] = description
         response = await self._request(
-            "PATCH", f"/api/albums/{album_id}", operation="update album", json=payload,
+            "PATCH",
+            f"/api/albums/{album_id}",
+            operation="update album",
+            json=payload,
         )
         return ImmichAlbum.model_validate(response.json())
 
@@ -1160,8 +1165,9 @@ class ImmichApiClient:
         response = await self._request("GET", "/api/tags", operation="list tags")
         return [ImmichTag.model_validate(payload) for payload in response.json()]
 
-    async def create_tag(self, name: str, color: str | None = None,
-                         parent_id: UUID | None = None) -> ImmichTag:
+    async def create_tag(
+        self, name: str, color: str | None = None, parent_id: UUID | None = None
+    ) -> ImmichTag:
         payload: dict[str, Any] = {"name": name}
         if color is not None:
             payload["color"] = color
@@ -1175,7 +1181,10 @@ class ImmichApiClient:
         if color is not None:
             payload["color"] = color
         response = await self._request(
-            "PATCH", f"/api/tags/{tag_id}", operation="update tag", json=payload,
+            "PATCH",
+            f"/api/tags/{tag_id}",
+            operation="update tag",
+            json=payload,
         )
         return ImmichTag.model_validate(response.json())
 

@@ -51,9 +51,7 @@ class Assets:
     async def get_immich_assets(self, asset_ids):
         self.requested.extend(asset_ids)
         return {
-            asset_id: external_asset(asset_id)
-            for asset_id in asset_ids
-            if asset_id != self.missing
+            asset_id: external_asset(asset_id) for asset_id in asset_ids if asset_id != self.missing
         }
 
 

@@ -122,18 +122,22 @@ async def test_one_stack_snapshot_can_serve_multiple_group_filters() -> None:
     second = workflow.select_conflict_snapshot([ASSET_TWO], snapshot)
 
     assert immich.list_calls == 1
-    assert first == second == [{
-        "stack_id": str(STACK_ID),
-        "primary_asset_id": str(ASSET_ONE),
-        "member_asset_ids": sorted(map(str, [ASSET_ONE, ASSET_TWO, ASSET_THREE])),
-    }]
+    assert (
+        first
+        == second
+        == [
+            {
+                "stack_id": str(STACK_ID),
+                "primary_asset_id": str(ASSET_ONE),
+                "member_asset_ids": sorted(map(str, [ASSET_ONE, ASSET_TWO, ASSET_THREE])),
+            }
+        ]
+    )
 
 
 @pytest.mark.asyncio
 async def test_move_selected_preserves_unselected_stack_with_new_primary() -> None:
-    immich = FakeImmich(
-        [stack(ASSET_ONE, ASSET_THREE, ASSET_FOUR, primary=ASSET_ONE)]
-    )
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_THREE, ASSET_FOUR, primary=ASSET_ONE)])
     workflow = service(immich)
 
     preparation = await workflow.prepare([ASSET_ONE, ASSET_TWO], "move_selected")
@@ -223,9 +227,7 @@ async def test_include_existing_merges_members_from_different_stacks() -> None:
     )
     workflow = service(immich)
 
-    preparation = await workflow.prepare(
-        [ASSET_ONE, ASSET_TWO], "include_existing", ASSET_TWO
-    )
+    preparation = await workflow.prepare([ASSET_ONE, ASSET_TWO], "include_existing", ASSET_TWO)
 
     assert preparation.asset_ids == [ASSET_TWO, ASSET_ONE, ASSET_THREE, ASSET_FOUR]
     assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]

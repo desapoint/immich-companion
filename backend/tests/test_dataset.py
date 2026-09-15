@@ -86,9 +86,7 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
             upload_pixels = upload_image.convert("RGBA").tobytes()
         with Image.open(io.BytesIO(external)) as external_image:
             external_pixels = external_image.convert("RGBA").tobytes()
-        assert (upload_pixels == external_pixels) is (
-            fixture["expected_pixel_relation"] == "equal"
-        )
+        assert (upload_pixels == external_pixels) is (fixture["expected_pixel_relation"] == "equal")
     same_dimensions_similarity = {
         "similar-brightness-darker",
         "similar-brightness-lighter",
@@ -117,8 +115,8 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
         first / same_size["external_path"]
     ).stat().st_size
     trailing = duplicate_groups["decodable-png-trailing-data"]
-    assert (first / trailing["external_path"]).read_bytes().endswith(
-        b"COMPANION-DEMO-TRAILING-DATA"
+    assert (
+        (first / trailing["external_path"]).read_bytes().endswith(b"COMPANION-DEMO-TRAILING-DATA")
     )
     trailing_bytes = (first / trailing["external_path"]).read_bytes()
     analyzer = FileIntegrityAnalyzer("image/png", None)
@@ -129,13 +127,13 @@ def test_corpus_is_repeatable_rich_and_larger_than_default_page(tmp_path: Path) 
     assert integrity.structurally_valid is False
     assert integrity.trailing_byte_count == len(b"COMPANION-DEMO-TRAILING-DATA")
     assert decoded.valid is True
-    assert {
-        record["expected_case"] for record in relationships["analysis_fixtures"]
-    } == {"healthy", "trailing-bytes", "truncated-segment", "missing-soi"}
-    assert all(
-        record["upload_to_immich"] is False
-        for record in relationships["analysis_fixtures"]
-    )
+    assert {record["expected_case"] for record in relationships["analysis_fixtures"]} == {
+        "healthy",
+        "trailing-bytes",
+        "truncated-segment",
+        "missing-soi",
+    }
+    assert all(record["upload_to_immich"] is False for record in relationships["analysis_fixtures"])
     assert any(record["has_alpha"] for record in manifest["files"])
     assert len({record["aspect_ratio"] for record in manifest["files"]}) >= 4
 

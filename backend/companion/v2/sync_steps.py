@@ -72,9 +72,7 @@ class SyncStepProgress:
         }
 
 
-CheckpointCallback = Callable[
-    [str | None, dict[str, int], SyncStepProgress], Awaitable[None]
-]
+CheckpointCallback = Callable[[str | None, dict[str, int], SyncStepProgress], Awaitable[None]]
 
 
 async def _noop_checkpoint(
@@ -202,18 +200,14 @@ class CatalogSyncStep(SyncStep[CatalogSyncInput]):
 
     @staticmethod
     async def load(immich: ImmichApiClient) -> CatalogSyncInput:
-        albums, tags = await asyncio.gather(
-            immich.list_album_catalog(), immich.list_tag_catalog()
-        )
+        albums, tags = await asyncio.gather(immich.list_album_catalog(), immich.list_tag_catalog())
         return CatalogSyncInput(albums=albums, tags=tags)
 
     @staticmethod
     def _batches[T](items: Sequence[T], size: int) -> list[Sequence[T]]:
         return [items[index : index + size] for index in range(0, len(items), size)]
 
-    async def execute(
-        self, context: SyncStepContext, data: CatalogSyncInput
-    ) -> tuple[int, int]:
+    async def execute(self, context: SyncStepContext, data: CatalogSyncInput) -> tuple[int, int]:
         if context.config.batch_size is None:
             raise ValueError("CatalogSyncStep requires config.batch_size")
 

@@ -176,9 +176,7 @@ class ActionRepository:
             record.executed_at = now
         return record
 
-    async def start_collection_delete_pass(
-        self, plan_id: UUID, work_ids: list[str]
-    ) -> None:
+    async def start_collection_delete_pass(self, plan_id: UUID, work_ids: list[str]) -> None:
         """Freeze the next bounded execution pass over unresolved target IDs."""
 
         async with self._database.sessions() as session, session.begin():
@@ -206,9 +204,7 @@ class ActionRepository:
                 raise ValueError("Delete plan was not found")
             result = dict(record.result or {})
             items = [
-                existing
-                for existing in result.get("items", [])
-                if existing["id"] != item["id"]
+                existing for existing in result.get("items", []) if existing["id"] != item["id"]
             ]
             items.append(item)
             result["items"] = items
@@ -217,9 +213,7 @@ class ActionRepository:
             record.result = result
             record.executed_at = datetime.now(UTC)
 
-    async def finish_collection_delete_plan(
-        self, plan_id: UUID, status: ActionPlanStatus
-    ) -> None:
+    async def finish_collection_delete_plan(self, plan_id: UUID, status: ActionPlanStatus) -> None:
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
                 select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()

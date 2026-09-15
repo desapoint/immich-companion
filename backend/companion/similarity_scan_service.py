@@ -317,9 +317,7 @@ class SimilarityScanTaskHandler:
                         "phase": "similarity_candidates",
                         "completed": resume_index,
                         "total": len(ordered_features),
-                        "percent": round(
-                            35 + 10 * resume_index / max(1, len(ordered_features)), 1
-                        ),
+                        "percent": round(35 + 10 * resume_index / max(1, len(ordered_features)), 1),
                         "detail": (
                             f"Resuming candidate index after {resume_index} fingerprints…"
                             if resume_index
@@ -331,9 +329,7 @@ class SimilarityScanTaskHandler:
                 await context.ensure_active()
                 phase_started = perf_counter()
                 await asyncio.to_thread(candidate_index.process_next, SIMILARITY_INDEX_BATCH_SIZE)
-                candidate_discovery_milliseconds += round(
-                    (perf_counter() - phase_started) * 1000
-                )
+                candidate_discovery_milliseconds += round((perf_counter() - phase_started) * 1000)
                 processed_assets = candidate_index.processed
                 if processed_assets < resume_index or saved_phase == "scoring":
                     continue
@@ -380,9 +376,7 @@ class SimilarityScanTaskHandler:
                 counters=telemetry(
                     assets_with_current_features=len(features),
                     candidate_pairs=total,
-                    candidate_pair_limit=(
-                        len(features) * request.maximum_neighbors_per_asset // 2
-                    ),
+                    candidate_pair_limit=(len(features) * request.maximum_neighbors_per_asset // 2),
                     pairs_scored=resume_scored,
                     matches_retained=0,
                 ),
@@ -409,12 +403,11 @@ class SimilarityScanTaskHandler:
                 pair_scoring_milliseconds += round((perf_counter() - phase_started) * 1000)
                 if self._detailer is not None:
                     shortlisted = [
-                        pair for pair in batch
-                        if (edge := edges.get((pair.asset_id_low, pair.asset_id_high)))
-                        is not None
-                        and edge.similarity_percent >= max(
-                            50.0, request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
-                        )
+                        pair
+                        for pair in batch
+                        if (edge := edges.get((pair.asset_id_low, pair.asset_id_high))) is not None
+                        and edge.similarity_percent
+                        >= max(50.0, request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN)
                     ]
                     detail_pairs_eligible += len(shortlisted)
                     detail_pairs_skipped_below_threshold += len(batch) - len(shortlisted)
@@ -449,12 +442,9 @@ class SimilarityScanTaskHandler:
                                     "phase": "similarity_scoring",
                                     "completed": scored_so_far,
                                     "total": total,
-                                    "percent": round(
-                                        45 + 50 * scored_so_far / max(1, total), 1
-                                    ),
+                                    "percent": round(45 + 50 * scored_so_far / max(1, total), 1),
                                     "detail": (
-                                        f"Checking candidate image detail {done} "
-                                        f"of {work_total}…"
+                                        f"Checking candidate image detail {done} of {work_total}…"
                                     ),
                                 },
                             )
@@ -462,15 +452,14 @@ class SimilarityScanTaskHandler:
                         await self._detailer.ensure(
                             context,
                             [
-                                asset_id for pair in shortlisted
+                                asset_id
+                                for pair in shortlisted
                                 for asset_id in (pair.asset_id_low, pair.asset_id_high)
                             ],
                             feature_by_id,
                             on_progress=detail_progress,
                         )
-                        detail_stage_milliseconds += round(
-                            (perf_counter() - detail_started) * 1000
-                        )
+                        detail_stage_milliseconds += round((perf_counter() - detail_started) * 1000)
                         phase_started = perf_counter()
                         edges.update(
                             await self._similarity.reference_edges(
@@ -478,9 +467,7 @@ class SimilarityScanTaskHandler:
                                 feature_by_id,
                             )
                         )
-                        pair_scoring_milliseconds += round(
-                            (perf_counter() - phase_started) * 1000
-                        )
+                        pair_scoring_milliseconds += round((perf_counter() - phase_started) * 1000)
                 for pair in batch:
                     evidence = edges.get((pair.asset_id_low, pair.asset_id_high))
                     if (
@@ -547,9 +534,7 @@ class SimilarityScanTaskHandler:
                 counters=telemetry(
                     assets_with_current_features=len(features),
                     candidate_pairs=total,
-                    candidate_pair_limit=(
-                        len(features) * request.maximum_neighbors_per_asset // 2
-                    ),
+                    candidate_pair_limit=(len(features) * request.maximum_neighbors_per_asset // 2),
                     pairs_scored=total,
                     matches_retained=len(matches),
                 ),
@@ -600,9 +585,7 @@ class SimilarityScanTaskHandler:
             counters=telemetry(
                 assets_with_current_features=len(features),
                 candidate_pairs=total,
-                candidate_pair_limit=(
-                    len(features) * request.maximum_neighbors_per_asset // 2
-                ),
+                candidate_pair_limit=(len(features) * request.maximum_neighbors_per_asset // 2),
                 pairs_scored=total,
                 matches_retained=len(matches),
             ),

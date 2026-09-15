@@ -27,6 +27,7 @@ from companion.discovery import (
     ImmichDuplicateProvider,
 )
 from companion.duplicate_identity import member_set_key, stable_group_key
+from companion.duplicate_keeper_rules import choose_keeper
 from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
@@ -36,6 +37,8 @@ from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateGroupDraft,
     DuplicateGroupDraftUpdate,
+    DuplicateKeeperSelectionRequest,
+    DuplicateKeeperSelectionResult,
     DuplicateMember,
     DuplicateMemberEvidence,
     DuplicatePreservationEvidence,
@@ -432,9 +435,7 @@ class CrossSourceDuplicateService:
         page: int = 1,
         page_size: int = 6,
         source: Literal["both", "immich", "similarity"] = "both",
-        sort: Literal[
-            "reclaimable", "members", "similarity", "newest", "oldest", "discovered"
-        ] = "reclaimable",
+        sort: Literal["reclaimable", "members", "similarity", "date", "discovered"] = "reclaimable",
         direction: Literal["asc", "desc"] = "desc",
         state: Literal[
             "all",
@@ -488,10 +489,8 @@ class CrossSourceDuplicateService:
                         if group.similarity_validation is not None
                         else None
                     )
-                if sort == "newest":
+                if sort == "date":
                     return max((asset.file_created_at for asset in group.assets), default=None)
-                if sort == "oldest":
-                    return min((asset.file_created_at for asset in group.assets), default=None)
                 if sort == "discovered":
                     return None
                 sizes = [asset.file_size_bytes for asset in group.assets]
@@ -1649,6 +1648,176 @@ class CrossSourceDuplicateService:
                 ),
             )
         )
+
+    @staticmethod
+    def _review_state_query(review_filter: str) -> str:
+        return {
+            "All groups": "all",
+            "Needs review": "needs_review",
+            "Auto-ready": "auto_ready",
+            "Blocked": "blocked",
+            "Actionable": "actionable",
+            "Needs decisions": "needs_decisions",
+        }.get(review_filter, "all")
+
+    async def _keeper_target_ids(
+        self,
+        request: DuplicateKeeperSelectionRequest,
+    ) -> tuple[list[str], bool]:
+        if request.scope == "current_page":
+            return list(dict.fromkeys(request.group_ids)), False
+
+        resolver = getattr(self._discovery, "resolve_matching_group_ids", None)
+        if not callable(resolver):
+            raise RuntimeError(
+                "All-matching keeper rules require the persisted V2 duplicate projection"
+            )
+        limit = self._settings.action_max_targets
+        group_ids = await resolver(
+            source=request.source_filter,
+            state=self._review_state_query(request.review_filter),
+            limit=limit + 1,
+        )
+        return group_ids[:limit], len(group_ids) > limit
+
+    async def _run_keeper_selection(
+        self,
+        request: DuplicateKeeperSelectionRequest,
+        *,
+        apply: bool,
+    ) -> DuplicateKeeperSelectionResult:
+        """Preview or persist bounded rule-driven keep/delete drafts."""
+
+        if self._reviews is None:
+            raise RuntimeError("Duplicate review persistence is unavailable")
+        target_ids, limit_exceeded = await self._keeper_target_ids(request)
+        counts = {
+            "matched_group_count": len(target_ids),
+            "valid_group_count": 0,
+            "resolved_group_count": 0,
+            "would_apply_group_count": 0,
+            "applied_group_count": 0,
+            "ambiguous_group_count": 0,
+            "blocked_group_count": 0,
+            "preserved_manual_group_count": 0,
+            "missing_group_count": 0,
+            "keeper_count": 0,
+            "trash_count": 0,
+        }
+        if limit_exceeded:
+            counts["matched_group_count"] = self._settings.action_max_targets + 1
+            return DuplicateKeeperSelectionResult(**counts, limit_exceeded=True)
+
+        options = await self._options(request.options)
+        batch_size = max(1, min(250, self._settings.sync_batch_size))
+        for offset in range(0, len(target_ids), batch_size):
+            batch_ids = target_ids[offset : offset + batch_size]
+            discovered = await self._groups_by_ids(batch_ids)
+            discovered_by_id = {group.group_id: group for group in discovered}
+            _, _, _, snapshot = await self._snapshot_groups(discovered, options)
+            exact_by_id = {group.group_id: group for group in snapshot.groups}
+            missing = set(batch_ids) - set(exact_by_id)
+            counts["missing_group_count"] += len(missing)
+
+            asset_ids = {asset.id for group in discovered for asset in group.assets}
+            relations = await self._assets.get_relation_ids(asset_ids)
+
+            review_records: dict[tuple[str, str], Any] = {}
+            for discovery_source in {group.discovery_source for group in snapshot.groups}:
+                source_groups = [
+                    group for group in snapshot.groups if group.discovery_source == discovery_source
+                ]
+                records = await self._reviews.get_many(
+                    discovery_source,
+                    [group.stable_group_key for group in source_groups],
+                )
+                review_records.update(
+                    ((discovery_source, key), record) for key, record in records.items()
+                )
+
+            drafts: list[dict[str, Any]] = []
+            for group_id in batch_ids:
+                exact = exact_by_id.get(group_id)
+                source = discovered_by_id.get(group_id)
+                if exact is None or source is None:
+                    continue
+                invalid = (
+                    not exact.eligible
+                    or len(exact.members) < 2
+                    or any(member.is_offline for member in exact.members)
+                )
+                if invalid:
+                    counts["blocked_group_count"] += 1
+                    continue
+                counts["valid_group_count"] += 1
+
+                record = review_records.get((exact.discovery_source, exact.stable_group_key))
+                existing_decisions = list(getattr(record, "member_decisions", []) or [])
+                has_manual = any(
+                    isinstance(decision, dict) and decision.get("source") == "manual"
+                    for decision in existing_decisions
+                )
+                if has_manual and not request.overwrite_manual:
+                    counts["preserved_manual_group_count"] += 1
+                    continue
+
+                choice = choose_keeper(exact, source, request.rules, relations)
+                if choice.keeper_asset_id is None:
+                    counts["ambiguous_group_count"] += 1
+                    continue
+                counts["resolved_group_count"] += 1
+                counts["would_apply_group_count"] += 1
+                counts["keeper_count"] += 1
+                counts["trash_count"] += len(exact.members) - 1
+
+                if apply:
+                    drafts.append(
+                        {
+                            "discovery_source": exact.discovery_source,
+                            "provider_group_id": exact.provider_group_id or exact.group_id,
+                            "stable_group_key": exact.stable_group_key,
+                            "member_set_key": exact.member_set_key,
+                            "member_fingerprint": exact.member_fingerprint,
+                            "member_decisions": [
+                                {
+                                    "asset_id": str(member.id),
+                                    "disposition": (
+                                        "keep" if member.id == choice.keeper_asset_id else "delete"
+                                    ),
+                                    "source": "automatic",
+                                    "status": "pending",
+                                }
+                                for member in exact.members
+                            ],
+                            "stack_primary_asset_id": None,
+                            "stack_resolution": "move_selected",
+                            "metadata_keeper_asset_id": choice.keeper_asset_id,
+                            "draft_status": "completed",
+                        }
+                    )
+
+            if apply and drafts:
+                save_many = getattr(self._reviews, "save_drafts", None)
+                if callable(save_many):
+                    await save_many(drafts)
+                else:
+                    for draft in drafts:
+                        await self._reviews.save_draft(**draft)
+                counts["applied_group_count"] += len(drafts)
+
+        return DuplicateKeeperSelectionResult(**counts, limit_exceeded=False)
+
+    async def preview_keeper_selection(
+        self,
+        request: DuplicateKeeperSelectionRequest,
+    ) -> DuplicateKeeperSelectionResult:
+        return await self._run_keeper_selection(request, apply=False)
+
+    async def apply_keeper_selection(
+        self,
+        request: DuplicateKeeperSelectionRequest,
+    ) -> DuplicateKeeperSelectionResult:
+        return await self._run_keeper_selection(request, apply=True)
 
     async def apply_workspace_preset(
         self, request: DuplicateWorkspacePresetRequest

@@ -1327,9 +1327,8 @@ class AssetRepository:
             )
             if condition.field == "stack":
                 return stack_present if bool(value) else not_(stack_present)
-            is_primary = (
-                AssetRecord.stack["primaryAssetId"].as_string()
-                == cast(AssetRecord.id, String)
+            is_primary = AssetRecord.stack["primaryAssetId"].as_string() == cast(
+                AssetRecord.id, String
             )
             return and_(stack_present, is_primary if bool(value) else not_(is_primary))
         if condition.field in {"album", "tag"}:
@@ -1577,6 +1576,41 @@ class AssetRepository:
                 is not None
             )
 
+    async def get_relation_ids(
+        self,
+        asset_ids: set[UUID] | list[UUID],
+    ) -> dict[UUID, tuple[set[UUID], set[UUID]]]:
+        """Load album/tag membership for a bounded asset set without N+1 queries."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        relations = {asset_id: (set(), set()) for asset_id in unique_ids}
+        if not unique_ids:
+            return relations
+        async with self._database.sessions() as session:
+            album_rows = list(
+                (
+                    await session.execute(
+                        select(AlbumAssetRecord.asset_id, AlbumAssetRecord.album_id).where(
+                            AlbumAssetRecord.asset_id.in_(unique_ids)
+                        )
+                    )
+                ).all()
+            )
+            tag_rows = list(
+                (
+                    await session.execute(
+                        select(TagAssetRecord.asset_id, TagAssetRecord.tag_id).where(
+                            TagAssetRecord.asset_id.in_(unique_ids)
+                        )
+                    )
+                ).all()
+            )
+        for asset_id, album_id in album_rows:
+            relations.setdefault(asset_id, (set(), set()))[0].add(album_id)
+        for asset_id, tag_id in tag_rows:
+            relations.setdefault(asset_id, (set(), set()))[1].add(tag_id)
+        return relations
+
     async def get_asset_summary(self, asset_id: UUID) -> AssetSummary | None:
         """Return one synchronized asset summary without applying search filters."""
 
@@ -1719,9 +1753,7 @@ class AssetRepository:
             can_stack=count >= 2,
             single_asset_id=single.id if single is not None else None,
             can_set_stack_primary=bool(
-                single is not None
-                and stack
-                and str(stack.get("primaryAssetId")) != str(single.id)
+                single is not None and stack and str(stack.get("primaryAssetId")) != str(single.id)
             ),
             can_remove_complete_stack=bool(stack),
         )
@@ -1821,13 +1853,7 @@ class AssetRepository:
         if excluded_ids:
             statement = statement.where(AssetRecord.id.not_in(excluded_ids))
         async with self._database.sessions() as session:
-            return list(
-                (
-                    await session.scalars(
-                        statement.order_by(AssetRecord.id)
-                    )
-                ).all()
-            )
+            return list((await session.scalars(statement.order_by(AssetRecord.id))).all())
 
     async def create_selection(
         self, *, ttl_seconds: int, entity_kind: str = "asset"

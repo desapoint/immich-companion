@@ -27,9 +27,7 @@ def upgrade() -> None:
         sa.Column("classification", sa.String(length=24), nullable=False),
         sa.Column("structurally_valid", sa.Boolean(), nullable=True),
         sa.Column("jpeg_eoi_offset", sa.BigInteger(), nullable=True),
-        sa.Column(
-            "trailing_byte_count", sa.BigInteger(), nullable=False, server_default="0"
-        ),
+        sa.Column("trailing_byte_count", sa.BigInteger(), nullable=False, server_default="0"),
         sa.Column("immich_checksum_match", sa.Boolean(), nullable=True),
         sa.Column("issues", sa.JSON(), nullable=False, server_default="[]"),
         sa.Column("analyzed_at", sa.DateTime(timezone=True), nullable=False),
@@ -55,10 +53,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_asset_integrity_exact_hash", table_name="asset_integrity_reports")
-    op.drop_index(
-        "ix_asset_integrity_reports_analyzed_at", table_name="asset_integrity_reports"
-    )
-    op.drop_index(
-        "ix_asset_integrity_reports_classification", table_name="asset_integrity_reports"
-    )
+    op.drop_index("ix_asset_integrity_reports_analyzed_at", table_name="asset_integrity_reports")
+    op.drop_index("ix_asset_integrity_reports_classification", table_name="asset_integrity_reports")
     op.drop_table("asset_integrity_reports")

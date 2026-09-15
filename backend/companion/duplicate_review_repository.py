@@ -29,9 +29,7 @@ class DuplicateReviewRepository:
             return {}
         statement = select(DuplicateGroupReviewRecord).where(
             DuplicateGroupReviewRecord.discovery_source == discovery_source,
-            DuplicateGroupReviewRecord.stable_group_key.in_(
-                list(dict.fromkeys(stable_group_keys))
-            ),
+            DuplicateGroupReviewRecord.stable_group_key.in_(list(dict.fromkeys(stable_group_keys))),
         )
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
@@ -136,6 +134,37 @@ class DuplicateReviewRepository:
             )
         records = await self.get_many(discovery_source, [stable_group_key])
         return records[stable_group_key]
+
+    async def save_drafts(self, drafts: list[dict[str, object]]) -> None:
+        """Persist many complete drafts in bounded upsert batches."""
+
+        if not drafts:
+            return
+        now = datetime.now(UTC)
+        rows = [
+            {
+                **draft,
+                "last_seen_at": now,
+                "last_reviewed_at": now,
+                "updated_at": now,
+            }
+            for draft in drafts
+        ]
+        async with self._database.sessions() as session, session.begin():
+            for offset in range(0, len(rows), 500):
+                values = rows[offset : offset + 500]
+                statement = insert(DuplicateGroupReviewRecord).values(values)
+                await session.execute(
+                    statement.on_conflict_do_update(
+                        constraint="uq_duplicate_group_reviews_stable_key",
+                        set_={
+                            key: getattr(statement.excluded, key)
+                            for key in values[0]
+                            if key not in {"last_seen_at"}
+                        }
+                        | {"last_seen_at": statement.excluded.last_seen_at},
+                    )
+                )
 
     async def clear_decisions(
         self,

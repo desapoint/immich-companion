@@ -411,9 +411,7 @@ async def test_remove_all_relations_resolves_current_ids_before_planning() -> No
     instance, actions, _, _ = service(resolution(), [{ASSET_ONE}, {ASSET_TWO}])
     instance._assets.relation_ids = [RELATION_ID, RELATION_TWO]
 
-    plan = await instance.plan(
-        AssetActionPlanRequest(selection=selection, action="remove_tag")
-    )
+    plan = await instance.plan(AssetActionPlanRequest(selection=selection, action="remove_tag"))
 
     assert plan.relation_ids == [RELATION_ID, RELATION_TWO]
     assert actions.record is not None
@@ -428,9 +426,7 @@ async def test_remove_stack_keeps_original_selection_digest_after_expansion() ->
         [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}, set()],
     )
 
-    plan = await instance.plan(
-        AssetActionPlanRequest(selection=selection, action="remove_stack")
-    )
+    plan = await instance.plan(AssetActionPlanRequest(selection=selection, action="remove_stack"))
     result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert result.verified is True
@@ -530,11 +526,13 @@ async def test_remove_stack_returns_after_immich_confirmation_with_repair_queued
         async def list_stacks(self):
             if not self.active:
                 return []
-            return [SimpleNamespace(
-                id=RELATION_ID,
-                primary_asset_id=ASSET_ONE,
-                assets=[SimpleNamespace(id=ASSET_ONE), SimpleNamespace(id=ASSET_TWO)],
-            )]
+            return [
+                SimpleNamespace(
+                    id=RELATION_ID,
+                    primary_asset_id=ASSET_ONE,
+                    assets=[SimpleNamespace(id=ASSET_ONE), SimpleNamespace(id=ASSET_TWO)],
+                )
+            ]
 
         async def delete_stack(self, stack_id):
             await super().delete_stack(stack_id)
@@ -547,10 +545,12 @@ async def test_remove_stack_returns_after_immich_confirmation_with_repair_queued
     immich = StackImmich()
     instance._immich = immich  # type: ignore[assignment]
     instance._stacks._immich = immich  # type: ignore[assignment]
-    plan = await instance.plan(AssetActionPlanRequest(
-        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
-        action="remove_stack",
-    ))
+    plan = await instance.plan(
+        AssetActionPlanRequest(
+            selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+            action="remove_stack",
+        )
+    )
 
     result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 

@@ -664,13 +664,16 @@ def main() -> None:
     expected_tags = int(expected.get("tags", 0))
     expected_tagged_assets = int(expected.get("tagged_assets", 0))
     expected_external_assets = int(expected.get("external_assets", 0))
-    if min(
-        expected_assets,
-        source_files,
-        expected_tags,
-        expected_tagged_assets,
-        expected_external_assets,
-    ) <= 0:
+    if (
+        min(
+            expected_assets,
+            source_files,
+            expected_tags,
+            expected_tagged_assets,
+            expected_external_assets,
+        )
+        <= 0
+    ):
         raise RuntimeError("Media manifest has invalid expected counts")
 
     with httpx.Client(base_url=base_url, timeout=60, follow_redirects=False) as client:

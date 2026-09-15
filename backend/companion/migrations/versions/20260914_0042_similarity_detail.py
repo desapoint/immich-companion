@@ -29,7 +29,8 @@ def upgrade() -> None:
     )
     op.create_index(
         "ix_asset_similarity_detail_features_analyzed_at",
-        "asset_similarity_detail_features", ["analyzed_at"],
+        "asset_similarity_detail_features",
+        ["analyzed_at"],
     )
     op.add_column(
         "asset_similarity_edges",

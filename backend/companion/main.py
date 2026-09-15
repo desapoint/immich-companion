@@ -97,6 +97,8 @@ from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateGroupDraft,
     DuplicateGroupDraftUpdate,
+    DuplicateKeeperSelectionRequest,
+    DuplicateKeeperSelectionResult,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
@@ -1970,9 +1972,9 @@ def create_app(
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=6, ge=1, le=100),
         source: Literal["both", "immich", "similarity"] = Query(default="both"),
-        sort: Literal[
-            "reclaimable", "members", "similarity", "newest", "oldest", "discovered"
-        ] = Query(default="reclaimable"),
+        sort: Literal["reclaimable", "members", "similarity", "date", "discovered"] = Query(
+            default="reclaimable"
+        ),
         direction: Literal["asc", "desc"] = Query(default="desc"),
         state: Literal[
             "all",
@@ -2181,6 +2183,34 @@ def create_app(
         except ImmichApiError as error:
             raise map_immich_error(error) from error
         except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/workspace/auto-select/preview",
+        response_model=DuplicateKeeperSelectionResult,
+    )
+    async def preview_duplicate_keeper_selection(
+        request: DuplicateKeeperSelectionRequest,
+    ) -> DuplicateKeeperSelectionResult:
+        try:
+            return await require_duplicate_service().preview_keeper_selection(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except (RuntimeError, ValueError) as error:
+            raise map_action_error(error) from error
+
+    @app.post(
+        "/api/assets/duplicates/workspace/auto-select/apply",
+        response_model=DuplicateKeeperSelectionResult,
+    )
+    async def apply_duplicate_keeper_selection(
+        request: DuplicateKeeperSelectionRequest,
+    ) -> DuplicateKeeperSelectionResult:
+        try:
+            return await require_duplicate_service().apply_keeper_selection(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except (RuntimeError, ValueError) as error:
             raise map_action_error(error) from error
 
     @app.post(

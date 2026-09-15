@@ -130,7 +130,9 @@ async def test_incremental_below_threshold_pair_skips_original_detail() -> None:
         async def list_current(self):
             return [
                 SimpleNamespace(
-                    asset_id=neighbor_id, height=100, width=100,
+                    asset_id=neighbor_id,
+                    height=100,
+                    width=100,
                     perceptual_hash="0" * 16,
                 )
             ]
@@ -157,10 +159,14 @@ async def test_incremental_below_threshold_pair_skips_original_detail() -> None:
         async def reference_edges(self, groups, _features):
             return {
                 (left, right): PairSimilarityEvidence(
-                    similarity_percent=94, structural_percent=94,
-                    perceptual_percent=94, color_percent=94,
-                    exact_thumbnail_match=False, exact_pixel_match=False,
-                    model_version="appearance-preview-v1", feature_version=2,
+                    similarity_percent=94,
+                    structural_percent=94,
+                    perceptual_percent=94,
+                    color_percent=94,
+                    exact_thumbnail_match=False,
+                    exact_pixel_match=False,
+                    model_version="appearance-preview-v1",
+                    feature_version=2,
                     comparison_version=1,
                 )
                 for left, right in groups
@@ -253,10 +259,7 @@ async def test_incremental_pipeline_only_processes_changes_and_resumes_without_d
             SimilarityAssetChange(asset_id, "upsert", f"fingerprint-{asset_id}", now)
             for asset_id in [*added, *modified]
         ]
-        + [
-            SimilarityAssetChange(asset_id, "delete", None, now)
-            for asset_id in deleted
-        ]
+        + [SimilarityAssetChange(asset_id, "delete", None, now) for asset_id in deleted]
     )
     indexer = FakeIndexer()
     scans = FakeScans()

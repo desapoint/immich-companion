@@ -491,6 +491,78 @@ class CompositeDuplicateRepository:
             await session.execute(statement, values)
         return len(values)
 
+    async def matching_group_ids(
+        self,
+        *,
+        source: DiscoverySource | None = None,
+        state: str = "all",
+        limit: int = 5_001,
+    ) -> list[str]:
+        """Resolve only matching group IDs so bulk V2 actions avoid group hydration."""
+
+        limit = max(1, min(limit, 50_001))
+        statement = select(CompositeDuplicateGroupRecord.group_id)
+        if state != "all":
+            review_join = and_(
+                DuplicateGroupReviewRecord.stable_group_key
+                == CompositeDuplicateGroupRecord.stable_group_key,
+                DuplicateGroupReviewRecord.member_fingerprint
+                == CompositeDuplicateGroupRecord.member_fingerprint,
+            )
+            decision_count = func.coalesce(
+                func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+            )
+            resolved_state = case(
+                (
+                    CompositeDuplicateGroupRecord.v2_policy_state == "blocked",
+                    "Blocked",
+                ),
+                (
+                    (decision_count > 0)
+                    & (decision_count < CompositeDuplicateGroupRecord.member_count),
+                    "Needs decisions",
+                ),
+                (
+                    decision_count == CompositeDuplicateGroupRecord.member_count,
+                    "Actionable",
+                ),
+                (
+                    CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
+                    "Actionable",
+                ),
+                else_="Needs review",
+            )
+            statement = statement.outerjoin(DuplicateGroupReviewRecord, review_join)
+            if state == "auto_ready":
+                statement = statement.where(
+                    CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
+                    resolved_state == "Actionable",
+                )
+            else:
+                expected = {
+                    "needs_review": "Needs review",
+                    "blocked": "Blocked",
+                    "actionable": "Actionable",
+                    "needs_decisions": "Needs decisions",
+                }.get(state)
+                if expected is not None:
+                    statement = statement.where(resolved_state == expected)
+
+        if source is not None:
+            statement = statement.where(
+                exists(
+                    select(1).where(
+                        CompositeDuplicateGroupEvidenceRecord.group_id
+                        == CompositeDuplicateGroupRecord.group_id,
+                        CompositeDuplicateGroupEvidenceRecord.discovery_source == source.value,
+                    )
+                )
+            )
+
+        statement = statement.order_by(CompositeDuplicateGroupRecord.group_id.asc()).limit(limit)
+        async with self._database.sessions() as session:
+            return list((await session.scalars(statement)).all())
+
     async def page(
         self,
         *,
@@ -523,8 +595,7 @@ class CompositeDuplicateRepository:
                 "reclaimable": CompositeDuplicateGroupRecord.reclaimable_bytes,
                 "members": CompositeDuplicateGroupRecord.member_count,
                 "similarity": CompositeDuplicateGroupRecord.similarity_score,
-                "newest": CompositeDuplicateGroupRecord.newest_taken_at,
-                "oldest": CompositeDuplicateGroupRecord.oldest_taken_at,
+                "date": CompositeDuplicateGroupRecord.newest_taken_at,
                 "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
             }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
             order = sort_column.desc() if direction == "desc" else sort_column.asc()

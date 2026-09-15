@@ -290,9 +290,7 @@ class SimilarityScanRecord(Base):
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict")
     anchor_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
-    scope: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="all_eligible_assets"
-    )
+    scope: Mapped[str] = mapped_column(String(32), nullable=False, default="all_eligible_assets")
     maximum_perceptual_distance: Mapped[int] = mapped_column(Integer, nullable=False)
     maximum_aspect_difference: Mapped[float] = mapped_column(Float, nullable=False)
     maximum_neighbors_per_asset: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -345,9 +343,7 @@ class SimilarityScanPairRecord(Base):
     detail_changed_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
     detail_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
-    __table_args__ = (
-        Index("ix_similarity_scan_pairs_assets", asset_id_low, asset_id_high),
-    )
+    __table_args__ = (Index("ix_similarity_scan_pairs_assets", asset_id_low, asset_id_high),)
 
 
 class AlbumRecord(Base):
@@ -600,9 +596,7 @@ class DuplicatePolicyRecord(Base):
     analyze_automatically: Mapped[bool] = mapped_column(Boolean, nullable=False)
     verify_upload_streams: Mapped[bool] = mapped_column(Boolean, nullable=False)
     external_library_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
-    similarity_threshold_percent: Mapped[float] = mapped_column(
-        Float, nullable=False, default=95.0
-    )
+    similarity_threshold_percent: Mapped[float] = mapped_column(Float, nullable=False, default=95.0)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

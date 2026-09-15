@@ -102,9 +102,10 @@ def main() -> int:
     try:
         import rawpy as rawpy_module
 
-        with _source(fd=args.fd, input_path=args.input) as stream, rawpy_module.imread(
-            stream
-        ) as raw:
+        with (
+            _source(fd=args.fd, input_path=args.input) as stream,
+            rawpy_module.imread(stream) as raw,
+        ):
             source_width = raw.sizes.width
             source_height = raw.sizes.height
             if source_width * source_height > args.max_pixels:

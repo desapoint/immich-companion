@@ -112,13 +112,10 @@ class ImmichDuplicateProvider:
                     sparse_ids[offset : offset + LOCAL_HYDRATION_BATCH_SIZE]
                 )
                 for asset_id, source in local.items():
-                    if (
-                        source.file_size_bytes is not None
-                        and all(
-                            source.file_modified_at == asset.file_modified_at
-                            and (asset.checksum is None or asset.checksum == source.checksum)
-                            for asset in sparse[asset_id]
-                        )
+                    if source.file_size_bytes is not None and all(
+                        source.file_modified_at == asset.file_modified_at
+                        and (asset.checksum is None or asset.checksum == source.checksum)
+                        for asset in sparse[asset_id]
                     ):
                         local_sizes[asset_id] = source.file_size_bytes
 
@@ -134,9 +131,7 @@ class ImmichDuplicateProvider:
                 await asyncio.gather(
                     *(
                         fetch_live(asset_id)
-                        for asset_id in unresolved[
-                            offset : offset + LIVE_HYDRATION_BATCH_SIZE
-                        ]
+                        for asset_id in unresolved[offset : offset + LIVE_HYDRATION_BATCH_SIZE]
                     )
                 )
             )

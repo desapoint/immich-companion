@@ -110,15 +110,13 @@ def _normalized_luminance_evidence(
     right_mean = sum(right) / count
     left_variance = sum((value - left_mean) ** 2 for value in left) / count
     right_variance = sum((value - right_mean) ** 2 for value in right) / count
-    covariance = sum(
-        (a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True)
-    ) / count
+    covariance = (
+        sum((a - left_mean) * (b - right_mean) for a, b in zip(left, right, strict=True)) / count
+    )
     c1 = (0.01 * 255) ** 2
     c2 = (0.03 * 255) ** 2
     numerator = (2 * left_mean * right_mean + c1) * (2 * covariance + c2)
-    denominator = (left_mean**2 + right_mean**2 + c1) * (
-        left_variance + right_variance + c2
-    )
+    denominator = (left_mean**2 + right_mean**2 + c1) * (left_variance + right_variance + c2)
     ssim = numerator / denominator if denominator else 1.0
     return (
         round(max(0.0, min(1.0, mae)), 6),
@@ -241,9 +239,7 @@ def _build_feature(
         (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
         Image.Resampling.LANCZOS,
     )
-    thumbnail_sha256 = hashlib.sha256(
-        thumbnail.tobytes(), usedforsecurity=False
-    ).hexdigest()
+    thumbnail_sha256 = hashlib.sha256(thumbnail.tobytes(), usedforsecurity=False).hexdigest()
     metadata_richness = sum(
         (
             has_exif,
@@ -259,9 +255,7 @@ def _build_feature(
         started = perf_counter()
         pixel_hash = _pixel_sha256(normalized)
         if timings is not None:
-            timings["normalized_pixel_hash_milliseconds"] = round(
-                (perf_counter() - started) * 1000
-            )
+            timings["normalized_pixel_hash_milliseconds"] = round((perf_counter() - started) * 1000)
     return VisualFeatureResult(
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
@@ -325,7 +319,9 @@ def _extract_raw_visual_features(
 
 
 def _feature_from_loaded_image(
-    source: Image.Image, *, include_pixel_hash: bool,
+    source: Image.Image,
+    *,
+    include_pixel_hash: bool,
     timings: dict[str, int] | None = None,
 ) -> VisualFeatureResult:
     exif = source.getexif()
@@ -374,13 +370,9 @@ def decode_and_extract_features(
                     orientation = None
                 if orientation in {5, 6, 7, 8}:
                     width, height = height, width
-                decoded = ImageDecodeResult(
-                    supported=True, valid=True, width=width, height=height
-                )
+                decoded = ImageDecodeResult(supported=True, valid=True, width=width, height=height)
                 if timings is not None:
-                    timings["decode_milliseconds"] = round(
-                        (perf_counter() - decode_started) * 1000
-                    )
+                    timings["decode_milliseconds"] = round((perf_counter() - decode_started) * 1000)
                 try:
                     feature_started = perf_counter()
                     feature = _feature_from_loaded_image(
@@ -394,7 +386,9 @@ def decode_and_extract_features(
                     logger.warning(
                         "Similarity feature extraction failed after decode: "
                         "format=%s error_type=%s reason=%s",
-                        detected_format, type(error).__name__, error,
+                        detected_format,
+                        type(error).__name__,
+                        error,
                     )
                     feature = None
                 return decoded, feature
@@ -416,9 +410,7 @@ def decode_and_extract_features(
                 stream, include_pixel_hash=include_pixel_hash
             )
             if timings is not None:
-                timings["decode_milliseconds"] = round(
-                    (perf_counter() - raw_started) * 1000
-                )
+                timings["decode_milliseconds"] = round((perf_counter() - raw_started) * 1000)
             return decoded, feature
         logger.warning(
             "Similarity feature extraction failed: format=%s error_type=%s reason=%s",
@@ -426,9 +418,7 @@ def decode_and_extract_features(
             type(error).__name__,
             error,
         )
-        return ImageDecodeResult(
-            supported=True, valid=False, issue="image_decode_failed"
-        ), None
+        return ImageDecodeResult(supported=True, valid=False, issue="image_decode_failed"), None
 
 
 def extract_visual_features(
@@ -465,9 +455,7 @@ def compare_visual_features(
     perceptual = 1 - hash_distance / 64
     color = min(
         1.0,
-        sum(
-            min(a, b) for a, b in zip(left.color_histogram, right.color_histogram, strict=True)
-        )
+        sum(min(a, b) for a, b in zip(left.color_histogram, right.color_histogram, strict=True))
         / (3 * 255),
     )
     left_aspect = left.width / left.height

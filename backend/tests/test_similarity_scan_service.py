@@ -176,8 +176,7 @@ async def test_shortlisted_pairs_receive_detail_score_before_publication() -> No
     class DetailAwareSimilarity(FakeSimilarity):
         async def reference_edges(self, groups, _features):
             return {
-                (left, right): evidence(93.0 if detailer.ready else 99.0)
-                for left, right in groups
+                (left, right): evidence(93.0 if detailer.ready else 99.0) for left, right in groups
             }
 
     detailer = Detailer()
@@ -185,7 +184,9 @@ async def test_shortlisted_pairs_receive_detail_score_before_publication() -> No
     context = FakeContext()
     handler = SimilarityScanTaskHandler(
         FakeFeatures([feature(1, 0), feature(2, 0)]),
-        DetailAwareSimilarity(), scans, detailer=detailer,  # type: ignore[arg-type]
+        DetailAwareSimilarity(),
+        scans,
+        detailer=detailer,  # type: ignore[arg-type]
     )
     result = await handler.execute(
         context, SimilarityScanRequest(similarity_threshold=90).model_dump(mode="json")
@@ -221,7 +222,9 @@ async def test_below_threshold_pair_does_not_download_original_detail() -> None:
     scans = FakeScans()
     handler = SimilarityScanTaskHandler(
         FakeFeatures([feature(1, 0), feature(2, 0)]),
-        BelowThresholdSimilarity(), scans, detailer=detailer,  # type: ignore[arg-type]
+        BelowThresholdSimilarity(),
+        scans,
+        detailer=detailer,  # type: ignore[arg-type]
     )
 
     result = await handler.execute(FakeContext(), SimilarityScanRequest().model_dump(mode="json"))
@@ -387,10 +390,7 @@ async def test_scan_resumes_scoring_without_regressing_its_durable_cursor() -> N
         if item["checkpoint"]["phase"] == "scoring"
     ]
     assert min(scoring_progress) >= 500
-    assert all(
-        item["checkpoint"]["phase"] != "candidate_index"
-        for item in recovered.checkpoints
-    )
+    assert all(item["checkpoint"]["phase"] != "candidate_index" for item in recovered.checkpoints)
     assert scans.completed is not None
     assert result.counters["pairs_scored"] == scans.completed[1]["candidate_count"]
 

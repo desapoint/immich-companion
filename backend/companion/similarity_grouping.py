@@ -205,9 +205,7 @@ def validated_similarity_groups(
                 if asset_id != anchor
             }
             results.append(
-                _group_result(
-                    group, anchor=anchor, mode=mode, parents=parents, scores=scores
-                )
+                _group_result(group, anchor=anchor, mode=mode, parents=parents, scores=scores)
             )
         return tuple(results)
 
@@ -252,9 +250,7 @@ def validated_similarity_groups(
             members = frozenset(accepted)
         if len(members) >= 2:
             results.append(
-                _group_result(
-                    members, anchor=anchor, mode=mode, parents=parents, scores=scores
-                )
+                _group_result(members, anchor=anchor, mode=mode, parents=parents, scores=scores)
             )
     return tuple(results)
 

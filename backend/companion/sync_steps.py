@@ -92,9 +92,7 @@ class SyncStepProgress:
         }
 
 
-CheckpointCallback = Callable[
-    [str | None, dict[str, int], SyncStepProgress], Awaitable[None]
-]
+CheckpointCallback = Callable[[str | None, dict[str, int], SyncStepProgress], Awaitable[None]]
 
 
 async def _noop_checkpoint(

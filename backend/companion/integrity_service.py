@@ -54,8 +54,10 @@ def same_source(left: ImmichAsset, right: ImmichAsset) -> bool:
 
     if left.id != right.id or left.is_trashed or right.is_trashed:
         return False
-    if left.library_id is None and right.library_id is None and (
-        left.checksum is not None or right.checksum is not None
+    if (
+        left.library_id is None
+        and right.library_id is None
+        and (left.checksum is not None or right.checksum is not None)
     ):
         return left.checksum is not None and left.checksum == right.checksum
     if left.file_modified_at != right.file_modified_at:
@@ -322,15 +324,16 @@ class IntegrityTaskHandler:
             await context.ensure_active()
             result = analyzer.finalize()
             decoded, visual_feature = (
-                await asyncio.to_thread(
-                    decode_and_extract_features, spool, result.detected_format
-                )
+                await asyncio.to_thread(decode_and_extract_features, spool, result.detected_format)
                 if spool_complete
-                else (ImageDecodeResult(
-                    supported=result.detected_format in SUPPORTED_FORMATS,
-                    valid=None,
-                    issue="image_decode_cache_limit_exceeded",
-                ), None)
+                else (
+                    ImageDecodeResult(
+                        supported=result.detected_format in SUPPORTED_FORMATS,
+                        valid=None,
+                        issue="image_decode_cache_limit_exceeded",
+                    ),
+                    None,
+                )
             )
             result = result.with_decode(
                 supported=decoded.supported,
@@ -406,9 +409,7 @@ class IntegrityTaskHandler:
         # A lightweight synchronization payload may omit file size. Persist the
         # verified detailed metadata so this feature becomes current in the
         # catalog and is not reprocessed on every later library-wide pass.
-        await self._assets.refresh_asset(
-            current, track_similarity_changes=track_similarity_changes
-        )
+        await self._assets.refresh_asset(current, track_similarity_changes=track_similarity_changes)
         return await self._reports.save(current, result, visual_feature)
 
     @staticmethod

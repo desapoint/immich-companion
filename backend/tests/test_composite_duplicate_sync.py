@@ -198,6 +198,7 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
 
 def test_composite_repository_exposes_paged_state_methods() -> None:
     assert callable(CompositeDuplicateRepository.page)
+    assert callable(CompositeDuplicateRepository.matching_group_ids)
     assert callable(CompositeDuplicateRepository.update_v2_policy_states)
     assert callable(CompositeDuplicateRepository.replace_snapshot)
 

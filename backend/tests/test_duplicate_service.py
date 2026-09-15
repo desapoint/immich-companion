@@ -222,9 +222,7 @@ def test_same_file_across_sources_is_exact_with_different_names() -> None:
         member.id: member.recommended_disposition for member in result.groups[0].members
     }
     assert recommendations == {UPLOAD_1: "keep", EXTERNAL_1: "delete"}
-    assert result.groups[0].members[0].recommendation_reason_codes == [
-        "recommended_keeper"
-    ]
+    assert result.groups[0].members[0].recommendation_reason_codes == ["recommended_keeper"]
 
 
 def test_coalesced_group_exposes_both_discovery_sources_and_evidence() -> None:
@@ -273,9 +271,7 @@ def test_coalesced_group_exposes_both_discovery_sources_and_evidence() -> None:
         "companion_similarity",
     ]
     assert result.groups[0].discovery_evidence[1].provider_group_id == "scan:pair"
-    assert result.groups[0].discovery_evidence[1].metadata == {
-        "similarity_percent": "99.2"
-    }
+    assert result.groups[0].discovery_evidence[1].metadata == {"similarity_percent": "99.2"}
     assert result.groups[0].eligible is True
 
 
@@ -530,11 +526,7 @@ class FakeStackService:
 
     def select_conflict_snapshot(self, asset_ids, snapshot):
         selected = {str(asset_id) for asset_id in asset_ids}
-        return [
-            item
-            for item in snapshot
-            if selected.intersection(item["member_asset_ids"])
-        ]
+        return [item for item in snapshot if selected.intersection(item["member_asset_ids"])]
 
     async def execute(self, preparation):
         await self.immich.create_stack(preparation.asset_ids)
@@ -626,14 +618,9 @@ class FakeReviews:
             if item.get("stable_group_key") not in consumed_keys
             and item["group_id"] not in consumed_legacy_ids
         ]
-        if (
-            self.workspace_record.active_group
-            and (
-                self.workspace_record.active_group.get("stable_group_key")
-                in consumed_keys
-                or self.workspace_record.active_group["group_id"]
-                in consumed_legacy_ids
-            )
+        if self.workspace_record.active_group and (
+            self.workspace_record.active_group.get("stable_group_key") in consumed_keys
+            or self.workspace_record.active_group["group_id"] in consumed_legacy_ids
         ):
             self.workspace_record.active_group = None
 
@@ -672,8 +659,7 @@ class FakeActions:
     async def reopen_duplicate_follow_up(self, _plan_id):
         states = (getattr(self.record, "result", None) or {}).get("group_execution", {})
         if self.record.status != "failed" or not any(
-            item.get("state") in {"failed", "follow_up_pending"}
-            for item in states.values()
+            item.get("state") in {"failed", "follow_up_pending"} for item in states.values()
         ):
             return None
         self.record.result["group_execution"] = {
@@ -848,10 +834,7 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     assert result.groups[0].members[0].similarity is not None
     assert result.groups[0].members[0].similarity.state == "reference"
     assert result.groups[0].members[0].similarity.exact_pixel_match is True
-    assert (
-        result.groups[0].members[0].similarity.feature_version
-        == SIMILARITY_FEATURE_VERSION
-    )
+    assert result.groups[0].members[0].similarity.feature_version == SIMILARITY_FEATURE_VERSION
     assert result.groups[0].members[1].similarity is not None
     assert result.groups[0].members[1].similarity.similarity_percent == 96.5
     assert result.groups[0].members[1].similarity.normalized_luminance_rmse == 0.02
@@ -1061,9 +1044,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
     assert result.auto_resolvable == original.auto_resolvable
     assert result.effective_action == original.effective_action
     assert result.effective_primary_asset_id == original.effective_primary_asset_id
-    assert [member.id for member in result.members] == [
-        member.id for member in original.members
-    ]
+    assert [member.id for member in result.members] == [member.id for member in original.members]
     assert result.members[0].similarity is not None
     assert result.members[0].similarity.similarity_percent == 93.0
     assert result.members[1].similarity is not None
@@ -1714,9 +1695,7 @@ async def test_stack_primary_must_first_be_marked_stack() -> None:
             DuplicateGroupDraftUpdate(
                 group_id=PUBLIC_GROUP_ID,
                 member_fingerprint=current.member_fingerprint,
-                decisions=[
-                    DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")
-                ],
+                decisions=[DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")],
                 stack_primary_asset_id=UPLOAD_1,
             )
         )
@@ -1769,10 +1748,12 @@ async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
-        FakeReports([
-            report(EXTERNAL_1, content),
-            report(EXTERNAL_2, content),
-        ]),
+        FakeReports(
+            [
+                report(EXTERNAL_1, content),
+                report(EXTERNAL_2, content),
+            ]
+        ),
         FakeActions(),
         SimpleNamespace(),
         SimpleNamespace(),
@@ -1795,9 +1776,7 @@ async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None
         )
     )
 
-    plan = await service.plan(
-        DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID])
-    )
+    plan = await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
 
     planned = plan.groups[0]
     assert planned.action == "mixed"
@@ -1830,13 +1809,15 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
         asset(EXTERNAL_2, external=True, checksum="path-2", filename="four.jpg"),
     )
     immich = FakeImmich(candidate_group)
-    assets = FakeAssets({
-        UPLOAD_1: SimpleNamespace(
-            albums=[SimpleNamespace(id=ALBUM_ID)],
-            tags=[SimpleNamespace(id=str(TAG_ID))],
-        ),
-        UPLOAD_2: SimpleNamespace(albums=[], tags=[]),
-    })
+    assets = FakeAssets(
+        {
+            UPLOAD_1: SimpleNamespace(
+                albums=[SimpleNamespace(id=ALBUM_ID)],
+                tags=[SimpleNamespace(id=str(TAG_ID))],
+            ),
+            UPLOAD_2: SimpleNamespace(albums=[], tags=[]),
+        }
+    )
     actions = FakeActions()
     reviews = FakeReviews()
     stacks = FakeStackService(immich)
@@ -1844,10 +1825,12 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         assets,
-        FakeReports([
-            report(EXTERNAL_1, content),
-            report(EXTERNAL_2, content),
-        ]),
+        FakeReports(
+            [
+                report(EXTERNAL_1, content),
+                report(EXTERNAL_2, content),
+            ]
+        ),
         actions,
         SimpleNamespace(),
         FakeRuntimeSettings(),
@@ -2161,11 +2144,13 @@ async def test_existing_stack_drift_blocks_follow_up() -> None:
     )
     await service.plan(DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID]))
     actions.record = created_plan_record(actions, destructive=False)
-    stacks.snapshots.append({
-        "stack_id": str(GROUP_ID),
-        "primary_asset_id": str(UPLOAD_1),
-        "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
-    })
+    stacks.snapshots.append(
+        {
+            "stack_id": str(GROUP_ID),
+            "primary_asset_id": str(UPLOAD_1),
+            "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+        }
+    )
 
     outcome = await service.execute_plan(TaskContext(), GROUP_ID)
 
@@ -2198,9 +2183,7 @@ async def test_plan_rejects_an_incomplete_saved_member_draft() -> None:
         DuplicateGroupDraftUpdate(
             group_id=PUBLIC_GROUP_ID,
             member_fingerprint=current.member_fingerprint,
-            decisions=[
-                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")
-            ],
+            decisions=[DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")],
         )
     )
 
@@ -2396,9 +2379,7 @@ async def test_workspace_does_not_apply_saved_state_to_changed_membership() -> N
         DuplicateGroupDraftUpdate(
             group_id=PUBLIC_GROUP_ID,
             member_fingerprint=current.member_fingerprint,
-            decisions=[
-                DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")
-            ],
+            decisions=[DuplicateMemberDraftDecision(asset_id=UPLOAD_1, disposition="keep")],
         )
     )
     candidate_group.assets.append(
@@ -2579,13 +2560,15 @@ async def test_failed_native_resolution_can_resume_without_replaying_completed_g
         result=None,
         relation_work={
             "options": DuplicateAnalysisOptions().model_dump(mode="json"),
-            "groups": [{
-                "duplicate_id": str(GROUP_ID),
-                "action": "resolve",
-                "keeper_asset_id": str(UPLOAD_1),
-                "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
-                "trash_asset_ids": [str(EXTERNAL_1)],
-            }],
+            "groups": [
+                {
+                    "duplicate_id": str(GROUP_ID),
+                    "action": "resolve",
+                    "keeper_asset_id": str(UPLOAD_1),
+                    "member_asset_ids": [str(UPLOAD_1), str(EXTERNAL_1)],
+                    "trash_asset_ids": [str(EXTERNAL_1)],
+                }
+            ],
         },
     )
     actions = FakeActions(record)
@@ -2659,9 +2642,7 @@ async def test_incomplete_stack_follow_up_can_resume_after_plan_expiry() -> None
         SimpleNamespace(),
     )
 
-    started = await service.start_resolution(
-        DuplicateResolutionExecuteRequest(plan_id=GROUP_ID)
-    )
+    started = await service.start_resolution(DuplicateResolutionExecuteRequest(plan_id=GROUP_ID))
 
     assert started.task_id == UPLOAD_2
     assert tasks.submissions[0][1] == {"plan_id": str(GROUP_ID)}

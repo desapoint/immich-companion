@@ -295,9 +295,7 @@ class TaskCoordinator(_TaskCoordinator):
                             "rss_peak_bytes": reclaim.peak_rss_bytes,
                             "memory_released_bytes": reclaim.released_bytes,
                             "memory_collected_objects": reclaim.collected_objects,
-                            "allocator_trim_attempted": int(
-                                reclaim.allocator_trim_attempted
-                            ),
+                            "allocator_trim_attempted": int(reclaim.allocator_trim_attempted),
                         }
                     }
                 )

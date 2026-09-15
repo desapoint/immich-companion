@@ -418,9 +418,7 @@ class FileIntegrityAnalyzer:
 
     def finalize(self) -> FileIntegrityResult:
         sha1_digest = self._sha1.digest()
-        checksum_match = (
-            None if self._immich_sha1 is None else self._immich_sha1 == sha1_digest
-        )
+        checksum_match = None if self._immich_sha1 is None else self._immich_sha1 == sha1_digest
         issues: list[str] = []
         structurally_valid: bool | None = None
         eoi_offset: int | None = None

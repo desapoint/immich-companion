@@ -126,7 +126,8 @@ def test_identical_hash_capacity_stays_degree_bounded() -> None:
     ids=["swimsuit_strap", "face_accessory", "swimsuit_panel"],
 )
 def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
-    edit: tuple[int, int, int, int], color: tuple[int, int, int],
+    edit: tuple[int, int, int, int],
+    color: tuple[int, int, int],
     detail_eligible: bool,
 ) -> None:
     original = Image.new("RGB", (1024, 1024), (90, 115, 145))
@@ -153,8 +154,7 @@ def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
 
     pairs = bounded_similarity_candidates([*references, late], stats=stats)
     late_pairs = [
-        pair for pair in pairs
-        if late.asset_id in (pair.asset_id_low, pair.asset_id_high)
+        pair for pair in pairs if late.asset_id in (pair.asset_id_low, pair.asset_id_high)
     ]
 
     assert late_pairs

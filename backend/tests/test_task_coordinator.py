@@ -278,6 +278,4 @@ async def test_startup_fence_cancels_only_requested_unfinished_task_type() -> No
     )
 
     assert cancelled == 2
-    assert repository.cancelled_types == [
-        ("asset_sync", "Do not resume library sync at startup.")
-    ]
+    assert repository.cancelled_types == [("asset_sync", "Do not resume library sync at startup.")]

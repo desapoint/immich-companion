@@ -190,9 +190,7 @@ class TaskRepository:
                 .where(
                     # A process can disappear while a task is running. Once its
                     # lease expires, reclaim it and resume from its checkpoint.
-                    TaskRecord.status.in_(
-                        ("queued", "running", "retrying", "recovering")
-                    ),
+                    TaskRecord.status.in_(("queued", "running", "retrying", "recovering")),
                     (TaskRecord.next_attempt_at.is_(None)) | (TaskRecord.next_attempt_at <= now),
                     (TaskRecord.lease_expires_at.is_(None)) | (TaskRecord.lease_expires_at <= now),
                 )
@@ -251,9 +249,7 @@ class TaskRepository:
             record.lease_expires_at = now + lease_duration
             record.heartbeat_at = now
 
-    async def update_payload(
-        self, task_id: UUID, worker_id: UUID, payload: dict[str, Any]
-    ) -> None:
+    async def update_payload(self, task_id: UUID, worker_id: UUID, payload: dict[str, Any]) -> None:
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
                 select(TaskRecord).where(TaskRecord.id == task_id).with_for_update()
@@ -540,9 +536,9 @@ class TaskRepository:
                 schedule.deduplication_policy = deduplication_policy
                 schedule.blocked_by = list(blocked_by or [])
                 if schedule.cron_expression:
-                    schedule.next_run_at = croniter(
-                        schedule.cron_expression, now
-                    ).get_next(datetime)
+                    schedule.next_run_at = croniter(schedule.cron_expression, now).get_next(
+                        datetime
+                    )
 
     async def claim_due_schedules(self) -> list[TaskScheduleRecord]:
         now = datetime.now(UTC)
@@ -601,10 +597,19 @@ class TaskRepository:
             if task_type is not None:
                 statement = statement.where(TaskRecord.task_type == task_type)
             if active_only:
-                statement = statement.where(TaskRecord.status.in_((
-                    "queued", "running", "retrying", "recovering",
-                    "pause_requested", "paused", "cancel_requested",
-                )))
+                statement = statement.where(
+                    TaskRecord.status.in_(
+                        (
+                            "queued",
+                            "running",
+                            "retrying",
+                            "recovering",
+                            "pause_requested",
+                            "paused",
+                            "cancel_requested",
+                        )
+                    )
+                )
             records = await session.scalars(statement)
             return [_public(record) for record in records if _public(record) is not None]  # type: ignore[misc]
 
@@ -869,9 +874,7 @@ class TaskCoordinator:
                     queue.get_nowait()
             queue.put_nowait(task if queue in queues else global_task)
 
-    async def find_active(
-        self, task_type: str, deduplication_key: str
-    ) -> TaskStatusView | None:
+    async def find_active(self, task_type: str, deduplication_key: str) -> TaskStatusView | None:
         """Find an active task for idempotent domain submissions."""
 
         return await self._repository.find_active(task_type, deduplication_key)

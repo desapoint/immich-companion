@@ -146,6 +146,4 @@ async def test_fallback_repair_receives_only_assets_that_actually_changed() -> N
     )
 
     assert immich.added == [[ASSET_ONE, ASSET_TWO]]
-    assert sync.repair_calls == [
-        ([ASSET_ONE, ASSET_TWO], [("album", ALBUM_ID)])
-    ]
+    assert sync.repair_calls == [([ASSET_ONE, ASSET_TWO], [("album", ALBUM_ID)])]

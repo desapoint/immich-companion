@@ -69,9 +69,7 @@ class SimilarityIndexMaintainer:
 
     def _measure(self, phase: str, started: float) -> None:
         key = f"{phase}_milliseconds"
-        self._metrics[key] = self._metrics.get(key, 0) + round(
-            (perf_counter() - started) * 1000
-        )
+        self._metrics[key] = self._metrics.get(key, 0) + round((perf_counter() - started) * 1000)
 
     def _count(self, key: str, value: int = 1) -> None:
         self._metrics[key] = self._metrics.get(key, 0) + value
@@ -105,7 +103,7 @@ class SimilarityIndexMaintainer:
                     if total > self._fallback_max_bytes:
                         raise ValueError("original exceeds similarity fallback size limit")
                     if len(prefix) < 64:
-                        prefix.extend(chunk[:64 - len(prefix)])
+                        prefix.extend(chunk[: 64 - len(prefix)])
                     digest.update(chunk)
                     spool.write(chunk)
             self._measure("original_fetch", started)
@@ -343,9 +341,7 @@ class SimilarityIndexMaintainer:
                 async with self._fetch_slots:
                     started = perf_counter()
                     source = await self._immich.get_asset(asset_id)
-                    await self._assets.refresh_asset(
-                        source, track_similarity_changes=False
-                    )
+                    await self._assets.refresh_asset(source, track_similarity_changes=False)
                     self._measure("metadata_preparation", started)
             preview = None
             preview_error: Exception | None = None
@@ -363,13 +359,17 @@ class SimilarityIndexMaintainer:
                         self._measure("preview_fetch", started)
             if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
                 reason = (
-                    "asset is trashed" if source.is_trashed else
-                    "asset is offline" if source.is_offline else
-                    f"asset type is {source.asset_type}, not IMAGE"
+                    "asset is trashed"
+                    if source.is_trashed
+                    else "asset is offline"
+                    if source.is_offline
+                    else f"asset type is {source.asset_type}, not IMAGE"
                 )
                 logger.warning(
                     "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                    asset_id, attempt, reason,
+                    asset_id,
+                    attempt,
+                    reason,
                 )
                 self._count("failed_or_skipped_attempts")
                 return False, reason
@@ -397,7 +397,9 @@ class SimilarityIndexMaintainer:
                     reason = f"preview unavailable ({preview_error}); fallback failed: {error}"
                     logger.warning(
                         "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                        asset_id, attempt, reason,
+                        asset_id,
+                        attempt,
+                        reason,
                     )
                     self._count("failed_or_skipped_attempts")
                     return False, reason
@@ -412,9 +414,7 @@ class SimilarityIndexMaintainer:
                 self._measure("metadata_preparation", started)
             if not self._same_source(source, current):
                 if not current.is_trashed:
-                    await self._assets.refresh_asset(
-                        current, track_similarity_changes=False
-                    )
+                    await self._assets.refresh_asset(current, track_similarity_changes=False)
                 reason = "Immich source changed while search evidence was generated"
                 self._count("failed_or_skipped_attempts")
                 return False, reason
@@ -423,14 +423,17 @@ class SimilarityIndexMaintainer:
                 self._measure("db_persistence", started)
                 self._count(
                     "preview_fingerprints_generated"
-                    if origin == "preview" else "original_fingerprints_generated"
+                    if origin == "preview"
+                    else "original_fingerprints_generated"
                 )
                 return True, None
             self._measure("db_persistence", started)
             reason = "synchronized source changed while preview evidence was being generated"
             logger.warning(
                 "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                asset_id, attempt, reason,
+                asset_id,
+                attempt,
+                reason,
             )
             self._count("failed_or_skipped_attempts")
             return False, reason
@@ -438,7 +441,9 @@ class SimilarityIndexMaintainer:
             reason = f"{type(error).__name__}: {error}"
             logger.warning(
                 "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                asset_id, attempt, reason,
+                asset_id,
+                attempt,
+                reason,
             )
             self._count("failed_or_skipped_attempts")
             return False, reason
@@ -512,10 +517,7 @@ class SimilarityIndexService:
         self._maintainer = maintainer
 
     async def start(self) -> SimilarityIndexTaskStart:
-        key = (
-            f"{SEARCH_MODEL_VERSION}:{SEARCH_FEATURE_VERSION}:"
-            f"{SEARCH_CONFIG_FINGERPRINT}"
-        )
+        key = f"{SEARCH_MODEL_VERSION}:{SEARCH_FEATURE_VERSION}:{SEARCH_CONFIG_FINGERPRINT}"
         task = await self._tasks.find_active(SIMILARITY_INDEX_TASK_TYPE, key)
         if task is None:
             task = await self._tasks.submit(

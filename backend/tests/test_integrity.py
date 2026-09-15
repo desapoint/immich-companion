@@ -21,11 +21,7 @@ def analyze(payload: bytes, chunks: list[int], *, mime: str | None = "image/jpeg
 
 def jpeg(scan: bytes = b"\x01\xff\x00\x02\xff\xd0\x03") -> bytes:
     return (
-        b"\xff\xd8"
-        b"\xff\xe0\x00\x04AB"
-        b"\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00"
-        + scan
-        + b"\xff\xd9"
+        b"\xff\xd8\xff\xe0\x00\x04AB\xff\xda\x00\x08\x01\x01\x00\x00\x3f\x00" + scan + b"\xff\xd9"
     )
 
 
@@ -175,11 +171,14 @@ def test_declared_jpeg_without_jpeg_magic_is_not_called_malformed(payload: bytes
 )
 def test_common_formats_are_detected_from_content(expected: str, payload: bytes) -> None:
     assert detect_file_format(payload) == expected
-    assert analyze(
-        payload,
-        [1] * len(payload),
-        mime="application/octet-stream",
-    ).detected_format == expected
+    assert (
+        analyze(
+            payload,
+            [1] * len(payload),
+            mime="application/octet-stream",
+        ).detected_format
+        == expected
+    )
 
 
 def test_heic_declared_as_jpeg_is_a_warning_not_malformed() -> None:

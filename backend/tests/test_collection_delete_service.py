@@ -23,9 +23,7 @@ def test_tag_plan_deletes_selected_descendants_before_parents() -> None:
         ImmichTag(id=THIRD, name="grandchild", value="grandchild", parentId=SECOND),
     ]
 
-    assert tag_delete_targets([FIRST, SECOND, THIRD], tags) == (
-        [THIRD, SECOND, FIRST], []
-    )
+    assert tag_delete_targets([FIRST, SECOND, THIRD], tags) == ([THIRD, SECOND, FIRST], [])
     assert tag_delete_targets([FIRST, SECOND], tags) == ([], [FIRST, SECOND])
 
 
@@ -65,9 +63,7 @@ class FakeActions:
             **self.record.result,
             "items": [*items, item],
             "work_index": (
-                next_index
-                if next_index is not None
-                else self.record.result.get("work_index", 0)
+                next_index if next_index is not None else self.record.result.get("work_index", 0)
             ),
         }
 
@@ -108,9 +104,7 @@ async def test_failed_items_retry_without_replaying_completed_deletions() -> Non
     selections = FakeSelections([FIRST, SECOND])
     immich = FakeImmich([FIRST, SECOND])
     immich.fail_once.add(SECOND)
-    service = CollectionDeleteService(
-        actions, selections, immich, allow_destructive_actions=True
-    )
+    service = CollectionDeleteService(actions, selections, immich, allow_destructive_actions=True)
 
     first = await service.execute("album", PLAN)
     assert first.status == "failed"
@@ -131,9 +125,7 @@ async def test_uncheckpointed_api_success_is_reconciled_as_already_missing() -> 
     actions.fail_checkpoint_once = True
     selections = FakeSelections([FIRST])
     immich = FakeImmich([FIRST])
-    service = CollectionDeleteService(
-        actions, selections, immich, allow_destructive_actions=True
-    )
+    service = CollectionDeleteService(actions, selections, immich, allow_destructive_actions=True)
 
     with pytest.raises(RuntimeError, match="checkpoint unavailable"):
         await service.execute("album", PLAN)
@@ -154,9 +146,7 @@ async def test_large_plan_runs_in_bounded_resumable_passes() -> None:
     actions = FakeActions(identifiers)
     selections = FakeSelections(identifiers)
     immich = FakeImmich(identifiers)
-    service = CollectionDeleteService(
-        actions, selections, immich, allow_destructive_actions=True
-    )
+    service = CollectionDeleteService(actions, selections, immich, allow_destructive_actions=True)
 
     first = await service.execute("album", PLAN)
     assert first.status == "partial"

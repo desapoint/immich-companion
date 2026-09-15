@@ -49,9 +49,7 @@ class DuplicatePolicy(BaseModel):
         self.external_library_ids = list(dict.fromkeys(self.external_library_ids))
         self.source_priority = list(
             dict.fromkeys(
-                source
-                if source in {"immich_uploads", "unlisted"}
-                else str(UUID(source))
+                source if source in {"immich_uploads", "unlisted"} else str(UUID(source))
                 for source in self.source_priority
             )
         )
@@ -79,9 +77,7 @@ class DuplicatePolicyRepository:
     async def get(self) -> DuplicatePolicy:
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
-                select(DuplicatePolicyRecord)
-                .where(DuplicatePolicyRecord.id == 1)
-                .with_for_update()
+                select(DuplicatePolicyRecord).where(DuplicatePolicyRecord.id == 1).with_for_update()
             )
             if record is None:
                 policy = DuplicatePolicy()
@@ -109,9 +105,7 @@ class DuplicatePolicyRepository:
     async def update(self, policy: DuplicatePolicy) -> DuplicatePolicy:
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
-                select(DuplicatePolicyRecord)
-                .where(DuplicatePolicyRecord.id == 1)
-                .with_for_update()
+                select(DuplicatePolicyRecord).where(DuplicatePolicyRecord.id == 1).with_for_update()
             )
             if record is None:
                 record = DuplicatePolicyRecord(id=1)

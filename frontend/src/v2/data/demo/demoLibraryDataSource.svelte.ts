@@ -159,7 +159,9 @@ export function createDemoLibraryDataSource():LibraryDataSource{
     async parentOptions(excludeTagId){await delay();const editing=excludeTagId?demoAssetState.tags.find((tag)=>tag.id===excludeTagId)?.tag_name??'':'';return hierarchyRows().filter((row)=>row.children>0&&row.path!==editing&&!row.path.startsWith(`${editing} / `)).map((row)=>({value:row.path,label:row.name,subtitle:row.parent||'Root'}))},async create(name,color=null,parentPath=''){await delay();return createDemoTag(name,color,parentPath) as TagRecord|undefined},async update(id,patch){await delay();if(!demoAssetState.tags.some((tag)=>tag.id===id))return result([],[{id,reason:'Tag not found'}]);updateDemoTag(id,patch);return result([id])},async delete(ids){await delay();const existing=ids.filter((id)=>demoAssetState.tags.some((tag)=>tag.id===id));deleteDemoTags(existing);return result(existing)},
   },
   duplicates:{
-    async capabilities(){await delay();return{canRunDiscovery:true,canApplyDecisions:true,canViewHistory:true,reviewFilters:['All groups','Needs review','Auto-ready','Blocked','Actionable','Needs decisions'],decisions:['keep','delete','stack']}},
+    async previewKeeperRules(){await delay();return {} as any},
+    async applyKeeperRules(){await delay();return {} as any},
+    async capabilities(){await delay();return{canRunDiscovery:true,canApplyDecisions:true,canViewHistory:true,reviewFilters:['All groups','Actionable','Needs review','Needs decisions','Blocked'],decisions:['keep','delete','stack']}},
     async search(query){await delay();return collectionPage(searchDuplicateGroups(query),query)},
     selectedGroupIds(){return [...demoSelectedDuplicateGroupIds]},
     async saveDraft(){await delay()},

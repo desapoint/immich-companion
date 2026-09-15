@@ -20,9 +20,7 @@ def edge(left: UUID, right: UUID, score: float) -> SimilarityGroupingEdge:
 
 
 def test_fully_connected_triangle_becomes_one_cohesive_group() -> None:
-    groups = cohesive_similarity_groups(
-        (edge(A, B, 99), edge(B, C, 96), edge(A, C, 97))
-    )
+    groups = cohesive_similarity_groups((edge(A, B, 99), edge(B, C, 96), edge(A, C, 97)))
 
     assert len(groups) == 1
     assert groups[0].asset_ids == (A, B, C)
@@ -52,9 +50,7 @@ def test_overlapping_cliques_preserve_every_edge_without_false_merge() -> None:
     assert [group.asset_ids for group in groups] == [(A, B, C), (B, C, D)]
     accepted = {(item.asset_id_low, item.asset_id_high) for item in edges}
     covered = {
-        (left, right)
-        for group in groups
-        for left, right in combinations(group.asset_ids, 2)
+        (left, right) for group in groups for left, right in combinations(group.asset_ids, 2)
     }
     assert covered == accepted
 
@@ -63,9 +59,7 @@ def test_grouping_is_stable_across_edge_order_and_duplicate_edges() -> None:
     first = cohesive_similarity_groups(
         (edge(A, B, 96), edge(A, C, 97), edge(B, C, 98), edge(A, B, 99))
     )
-    second = cohesive_similarity_groups(
-        (edge(B, C, 98), edge(A, B, 99), edge(A, C, 97))
-    )
+    second = cohesive_similarity_groups((edge(B, C, 98), edge(A, B, 99), edge(A, C, 97)))
 
     assert first == second
     assert first[0].minimum_similarity_percent == 97

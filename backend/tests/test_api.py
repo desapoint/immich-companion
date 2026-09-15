@@ -367,9 +367,7 @@ def test_cross_source_duplicate_api_requires_companion_database() -> None:
             json={},
         )
         similarity_index = client.post("/api/assets/duplicates/similarity-index")
-        similarity_coverage = client.get(
-            "/api/assets/duplicates/similarity-index/coverage"
-        )
+        similarity_coverage = client.get("/api/assets/duplicates/similarity-index/coverage")
 
     assert result.status_code == 503
     assert start.status_code == 503

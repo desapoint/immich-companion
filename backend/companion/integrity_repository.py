@@ -236,12 +236,10 @@ class IntegrityRepository:
                 AssetRecord.is_offline.is_(False),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
-                AssetSimilarityFeatureRecord.config_fingerprint
-                == SIMILARITY_CONFIG_FINGERPRINT,
+                AssetSimilarityFeatureRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
                 AssetSimilarityFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
-                AssetSimilarityFeatureRecord.source_file_size_bytes
-                == AssetRecord.file_size_bytes,
+                AssetSimilarityFeatureRecord.source_file_size_bytes == AssetRecord.file_size_bytes,
             )
             .order_by(AssetSimilarityFeatureRecord.asset_id)
         )
@@ -262,12 +260,10 @@ class IntegrityRepository:
                 AssetRecord.file_size_bytes.is_not(None),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
-                AssetSimilarityFeatureRecord.config_fingerprint
-                == SIMILARITY_CONFIG_FINGERPRINT,
+                AssetSimilarityFeatureRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
                 AssetSimilarityFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
-                AssetSimilarityFeatureRecord.source_file_size_bytes
-                == AssetRecord.file_size_bytes,
+                AssetSimilarityFeatureRecord.source_file_size_bytes == AssetRecord.file_size_bytes,
             )
         )
         async with self._database.sessions() as session:
@@ -299,11 +295,7 @@ class IntegrityRepository:
                     == AssetRecord.file_modified_at,
                     AssetSimilarityFeatureRecord.source_file_size_bytes
                     == AssetRecord.file_size_bytes,
-                    *(
-                        [AssetSimilarityFeatureRecord.asset_id > after]
-                        if after is not None
-                        else []
-                    ),
+                    *([AssetSimilarityFeatureRecord.asset_id > after] if after is not None else []),
                 )
                 .order_by(AssetSimilarityFeatureRecord.asset_id)
                 .limit(batch_size)
@@ -328,12 +320,10 @@ class IntegrityRepository:
                 AssetRecord.is_offline.is_(False),
                 AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
                 AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
-                AssetSimilarityFeatureRecord.config_fingerprint
-                == SIMILARITY_CONFIG_FINGERPRINT,
+                AssetSimilarityFeatureRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
                 AssetSimilarityFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
-                AssetSimilarityFeatureRecord.source_file_size_bytes
-                == AssetRecord.file_size_bytes,
+                AssetSimilarityFeatureRecord.source_file_size_bytes == AssetRecord.file_size_bytes,
             )
         )
         async with self._database.sessions() as session:
@@ -352,12 +342,9 @@ class IntegrityRepository:
             AssetRecord.file_size_bytes.is_not(None),
             AssetSimilarityFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
             AssetSimilarityFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
-            AssetSimilarityFeatureRecord.config_fingerprint
-            == SIMILARITY_CONFIG_FINGERPRINT,
-            AssetSimilarityFeatureRecord.source_file_modified_at
-            == AssetRecord.file_modified_at,
-            AssetSimilarityFeatureRecord.source_file_size_bytes
-            == AssetRecord.file_size_bytes,
+            AssetSimilarityFeatureRecord.config_fingerprint == SIMILARITY_CONFIG_FINGERPRINT,
+            AssetSimilarityFeatureRecord.source_file_modified_at == AssetRecord.file_modified_at,
+            AssetSimilarityFeatureRecord.source_file_size_bytes == AssetRecord.file_size_bytes,
         )
         statement = (
             select(

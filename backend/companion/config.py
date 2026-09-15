@@ -49,9 +49,7 @@ class Settings(BaseSettings):
     similarity_preview_cache_max_bytes: int = Field(
         default=1536 * 1024 * 1024, ge=1024 * 1024, le=64 * 1024 * 1024 * 1024
     )
-    similarity_preview_cache_max_age_seconds: int = Field(
-        default=30 * 86400, ge=60, le=365 * 86400
-    )
+    similarity_preview_cache_max_age_seconds: int = Field(default=30 * 86400, ge=60, le=365 * 86400)
     similarity_pair_cache_max_bytes: int = Field(
         default=256 * 1024 * 1024, ge=1024 * 1024, le=16 * 1024 * 1024 * 1024
     )

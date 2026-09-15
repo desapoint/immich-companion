@@ -98,8 +98,7 @@ class AssetSyncService(_LegacyAssetSyncService):
         catalog = await self._immich.list_album_catalog()
         positions = {album.id: index for index, album in enumerate(catalog, start=1)}
         return all(
-            (position := positions.get(album_id)) is not None
-            and position > current_album_index
+            (position := positions.get(album_id)) is not None and position > current_album_index
             for album_id in unique_album_ids
         )
 
@@ -178,9 +177,7 @@ class AssetSyncService(_LegacyAssetSyncService):
 
         if relations and asset_ids and all(kind == "album" for kind, _ in relations):
             unique_asset_ids = list(dict.fromkeys(asset_ids))
-            unique_relation_ids = list(
-                dict.fromkeys(relation_id for _, relation_id in relations)
-            )
+            unique_relation_ids = list(dict.fromkeys(relation_id for _, relation_id in relations))
             catalog = await self._immich.list_album_catalog()
             albums_by_id = {album.id: album for album in catalog}
             affected_albums = [

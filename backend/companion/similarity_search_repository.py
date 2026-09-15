@@ -141,9 +141,7 @@ class SimilaritySearchRepository:
                 statement.on_conflict_do_update(
                     index_elements=[AssetSimilaritySearchFeatureRecord.asset_id],
                     set_={
-                        key: getattr(statement.excluded, key)
-                        for key in values
-                        if key != "asset_id"
+                        key: getattr(statement.excluded, key) for key in values if key != "asset_id"
                     },
                 )
             )

@@ -14,10 +14,9 @@ from companion.duplicate_schema import DuplicateKeeperRule, ExactDuplicateGroup
 
 @dataclass(frozen=True, slots=True)
 class DuplicateKeeperChoice:
-    """Result of evaluating ordered keeper rules for one duplicate group."""
-
     keeper_asset_id: UUID | None
     reason: str
+    used_reference_tiebreaker: bool = False
 
 
 def _text(value: object | None) -> str:
@@ -27,7 +26,8 @@ def _text(value: object | None) -> str:
 def _folder(path: str | None) -> str:
     if not path:
         return ""
-    return str(PurePosixPath(path.replace("\\", "/")).parent)
+    normalized = path.replace("\\", "/")
+    return str(PurePosixPath(normalized).parent)
 
 
 def _extension(name: str) -> str:
@@ -36,8 +36,6 @@ def _extension(name: str) -> str:
 
 
 def _format_quality(asset: Any) -> float:
-    """Return a conservative format-preservation rank, not an image-quality claim."""
-
     extension = _extension(asset.original_file_name)
     mime = (asset.original_mime_type or "").casefold()
     if extension in {"dng", "nef", "cr2", "cr3", "arw", "raf", "rw2", "orf", "pef"}:
@@ -50,9 +48,7 @@ def _format_quality(asset: Any) -> float:
         marker in mime for marker in ("heic", "heif", "avif")
     ):
         return 3.0
-    if extension in {"jpg", "jpeg", "webp"} or any(
-        marker in mime for marker in ("jpeg", "webp")
-    ):
+    if extension in {"jpg", "jpeg", "webp"} or any(marker in mime for marker in ("jpeg", "webp")):
         return 2.0
     return 1.0
 
@@ -86,10 +82,7 @@ def _metadata_richness(asset: Any, member: Any) -> float:
     if isinstance(value, int | float):
         return float(value)
     return float(
-        sum(
-            value not in (None, "", False, [], {})
-            for value in (asset.exif_info or {}).values()
-        )
+        sum(value not in (None, "", False, [], {}) for value in (asset.exif_info or {}).values())
     )
 
 
@@ -298,9 +291,13 @@ def _matches(actual: object | None, rule: DuplicateKeeperRule) -> bool:
     actual_text = _text(actual).casefold()
     expected_text = expected.casefold()
     if operator == "is":
-        return actual_text in set(_values(expected)) if "," in expected else actual_text == expected_text
+        if "," in expected:
+            return actual_text in set(_values(expected))
+        return actual_text == expected_text
     if operator == "is_not":
-        return actual_text not in set(_values(expected)) if "," in expected else actual_text != expected_text
+        if "," in expected:
+            return actual_text not in set(_values(expected))
+        return actual_text != expected_text
     if operator == "contains":
         return expected_text in actual_text
     if operator == "not_contains":
@@ -341,46 +338,52 @@ def choose_keeper(
     for rule in rules:
         if rule.effect != "require":
             continue
-        if rule.operator in {"highest", "lowest"}:
-            valued = [(value(asset_id, rule), asset_id) for asset_id in candidates]
-            valued = [(item_value, asset_id) for item_value, asset_id in valued if item_value is not None]
-            if not valued:
-                return DuplicateKeeperChoice(None, "requirement_unmatched")
-            best = max(item[0] for item in valued) if rule.operator == "highest" else min(item[0] for item in valued)
-            candidates = [asset_id for item_value, asset_id in valued if item_value == best]
-        else:
-            matched = [asset_id for asset_id in candidates if _matches(value(asset_id, rule), rule)]
-            if not matched:
-                return DuplicateKeeperChoice(None, "requirement_unmatched")
-            candidates = matched
-        if len(candidates) == 1:
-            return DuplicateKeeperChoice(candidates[0], "rule_match")
+        matched = [
+            asset_id
+            for asset_id in candidates
+            if rule.operator not in {"highest", "lowest"} and _matches(value(asset_id, rule), rule)
+        ]
+        if not matched:
+            return DuplicateKeeperChoice(None, "requirement_unmatched")
+        candidates = matched
 
     for rule in rules:
         if rule.effect == "require":
             continue
         if rule.operator in {"highest", "lowest"}:
-            valued = [(value(asset_id, rule), asset_id) for asset_id in candidates]
-            valued = [(item_value, asset_id) for item_value, asset_id in valued if item_value is not None]
+            valued = []
+            for asset_id in candidates:
+                item_value = value(asset_id, rule)
+                if item_value is not None:
+                    valued.append((item_value, asset_id))
             if not valued:
                 continue
-            best = max(item[0] for item in valued) if rule.operator == "highest" else min(item[0] for item in valued)
-            selected = [asset_id for item_value, asset_id in valued if item_value == best]
-        else:
-            selected = [asset_id for asset_id in candidates if _matches(value(asset_id, rule), rule)]
-            if not selected:
-                continue
+            best_value = (
+                max(item[0] for item in valued)
+                if rule.operator == "highest"
+                else min(item[0] for item in valued)
+            )
+            selected = [asset_id for item_value, asset_id in valued if item_value == best_value]
+            if rule.effect == "prefer":
+                candidates = selected
+            elif rule.effect == "avoid":
+                survivors = [asset_id for asset_id in candidates if asset_id not in selected]
+                if survivors:
+                    candidates = survivors
+            continue
+
+        matching = [asset_id for asset_id in candidates if _matches(value(asset_id, rule), rule)]
         if rule.effect == "prefer":
-            candidates = selected
+            if matching:
+                candidates = matching
         elif rule.effect == "avoid":
-            selected_set = set(selected)
-            survivors = [asset_id for asset_id in candidates if asset_id not in selected_set]
+            matching_set = set(matching)
+            survivors = [asset_id for asset_id in candidates if asset_id not in matching_set]
             if survivors:
                 candidates = survivors
-        if len(candidates) == 1:
-            return DuplicateKeeperChoice(candidates[0], "rule_match")
 
-    return DuplicateKeeperChoice(
-        candidates[0] if len(candidates) == 1 else None,
-        "rule_match" if len(candidates) == 1 else "tie",
-    )
+    if len(candidates) == 1:
+        return DuplicateKeeperChoice(candidates[0], "rules")
+    if reference_id is not None and reference_id in candidates:
+        return DuplicateKeeperChoice(reference_id, "reference_tiebreaker", True)
+    return DuplicateKeeperChoice(None, "ambiguous")

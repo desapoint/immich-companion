@@ -34,6 +34,7 @@ def test_analysis_options_deduplicates_ordered_policy_entries() -> None:
     assert options.source_priority == ["immich_uploads", library_id.lower(), "unlisted"]
     assert options.keeper_tiebreakers == ["favorite", "resolution"]
 
+
 A = UUID("11111111-1111-4111-8111-111111111111")
 B = UUID("22222222-2222-4222-8222-222222222222")
 C = UUID("33333333-3333-4333-8333-333333333333")

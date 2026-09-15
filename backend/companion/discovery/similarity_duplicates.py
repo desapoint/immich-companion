@@ -71,9 +71,7 @@ class SimilarityDuplicateProvider:
                     if asset_id != validated.anchor_asset_id
                 ),
             )
-            group_assets = tuple(
-                assets[asset_id] for asset_id in ordered_ids if asset_id in assets
-            )
+            group_assets = tuple(assets[asset_id] for asset_id in ordered_ids if asset_id in assets)
             if len(group_assets) != len(validated.asset_ids):
                 continue
             member_key = ":".join(str(asset_id) for asset_id in validated.asset_ids)
@@ -105,12 +103,8 @@ class SimilarityDuplicateProvider:
                         "scan_threshold_percent": str(parameters.similarity_threshold),
                         "scan_scope": parameters.scope,
                         "similarity_percent": str(validated.minimum_similarity_percent),
-                        "minimum_similarity_percent": str(
-                            validated.minimum_similarity_percent
-                        ),
-                        "maximum_similarity_percent": str(
-                            validated.maximum_similarity_percent
-                        ),
+                        "minimum_similarity_percent": str(validated.minimum_similarity_percent),
+                        "maximum_similarity_percent": str(validated.maximum_similarity_percent),
                         "cohesive_pair_count": str(validated.pair_count),
                         "grouping_version": str(SIMILARITY_GROUPING_VERSION),
                         "validation_mode": parameters.validation_mode,

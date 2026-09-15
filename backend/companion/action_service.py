@@ -90,9 +90,7 @@ class AssetActionService:
         if not enabled:
             return
         pacing = await self._runtime_sync_settings.get()
-        await asyncio.sleep(
-            max(pacing.full_min_batch_delay_seconds, perf_counter() - started)
-        )
+        await asyncio.sleep(max(pacing.full_min_batch_delay_seconds, perf_counter() - started))
 
     async def _repair_targets(
         self,
@@ -243,9 +241,9 @@ class AssetActionService:
                     raise EmptySelectionError("Fewer than two unstacked assets remain") from error
                 resolution = resolution.model_copy(update={"ids": ids})
             relation_work = {
-                "__stack_conflicts": [] if request.stack_resolution else [
-                    item.model_dump(mode="json") for item in stack_conflicts
-                ],
+                "__stack_conflicts": []
+                if request.stack_resolution
+                else [item.model_dump(mode="json") for item in stack_conflicts],
                 "__stack_resolution": request.stack_resolution or "move_selected",
                 "__stack_primary_asset_id": str(primary_asset_id),
             }
@@ -449,9 +447,7 @@ class AssetActionService:
                 else:
                     await self._repair_targets(
                         changed_asset_ids,
-                        relations=[
-                            (relation, relation_id) for relation_id in successful_relations
-                        ],
+                        relations=[(relation, relation_id) for relation_id in successful_relations],
                     )
             except Exception as error:
                 relation_results = [
@@ -507,8 +503,12 @@ class AssetActionService:
             "Asset relation action timing: operation=%s targets=%s relations=%s "
             "mutation_seconds=%.3f reconciliation_seconds=%.3f "
             "verification_seconds=%.3f total_seconds=%.3f",
-            operation, len(target_ids), len(record.relation_ids), mutation_seconds,
-            reconciliation_seconds, perf_counter() - verification_started,
+            operation,
+            len(target_ids),
+            len(record.relation_ids),
+            mutation_seconds,
+            reconciliation_seconds,
+            perf_counter() - verification_started,
             perf_counter() - action_started,
         )
         return result
@@ -700,7 +700,8 @@ class AssetActionService:
                 if not deferred_repair:
                     await self._repair_targets(
                         repair_ids,
-                        include_stacks=operation in {
+                        include_stacks=operation
+                        in {
                             "stack",
                             "set_stack_primary",
                             "remove_from_stack",
@@ -796,9 +797,15 @@ class AssetActionService:
             "Asset action timing: operation=%s targets=%s applied=%s failed=%s "
             "mutation_seconds=%.3f reconciliation_seconds=%.3f "
             "verification_seconds=%.3f total_seconds=%.3f repair_deferred=%s",
-            operation, len(target_ids), len(applied_ids), len(failed_ids),
-            mutation_seconds, reconciliation_seconds, verification_seconds,
-            perf_counter() - action_started, deferred_repair,
+            operation,
+            len(target_ids),
+            len(applied_ids),
+            len(failed_ids),
+            mutation_seconds,
+            reconciliation_seconds,
+            verification_seconds,
+            perf_counter() - action_started,
+            deferred_repair,
         )
         return result
 
@@ -861,9 +868,7 @@ class AssetActionTaskHandler:
         )
 
         async def report(completed: int, progress_total: int, detail: str) -> None:
-            percent = (
-                round(completed / progress_total * 100, 1) if progress_total else 100.0
-            )
+            percent = round(completed / progress_total * 100, 1) if progress_total else 100.0
             await context.checkpoint(
                 checkpoint={
                     "phase": "executing",

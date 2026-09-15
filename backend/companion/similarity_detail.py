@@ -71,9 +71,7 @@ def extract_detail_feature(
         with rawpy.imread(stream) as raw:
             if raw.sizes.width * raw.sizes.height > MAX_DECODED_PIXELS:
                 return None
-            pixels = raw.postprocess(
-                use_camera_wb=True, no_auto_bright=True, output_bps=8
-            )
+            pixels = raw.postprocess(use_camera_wb=True, no_auto_bright=True, output_bps=8)
         return _sample(Image.fromarray(pixels, "RGB"))
     except (rawpy.LibRawError, OSError, ValueError):
         return None
@@ -114,8 +112,10 @@ def compare_detail_features(left: DetailFeature, right: DetailFeature) -> Detail
         if side == DETAIL_SAMPLE_SIDE:
             changed_fraction = fraction
             tiles = changed.reshape(
-                side // DETAIL_TILE_SIDE, DETAIL_TILE_SIDE,
-                side // DETAIL_TILE_SIDE, DETAIL_TILE_SIDE,
+                side // DETAIL_TILE_SIDE,
+                DETAIL_TILE_SIDE,
+                side // DETAIL_TILE_SIDE,
+                DETAIL_TILE_SIDE,
             ).mean(axis=(1, 3))
             local_fraction = float(np.mean(np.sort(tiles.ravel())[-4:]))
     # The area term tracks broad changes; the top-four local tiles retain small
