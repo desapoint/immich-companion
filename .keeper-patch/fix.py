@@ -13,6 +13,19 @@ if old_return not in text:
     raise SystemExit('missing reference tiebreaker anchor')
 path.write_text(text.replace(old_return, new_return, 1))
 
+schema = Path('backend/companion/duplicate_schema.py')
+text = schema.read_text()
+old = '        if self.operator not in {"highest", "lowest", "is_true", "is_false"} and not self.value.strip():\n'
+new = (
+    '        if (\n'
+    '            self.operator not in {"highest", "lowest", "is_true", "is_false"}\n'
+    '            and not self.value.strip()\n'
+    '        ):\n'
+)
+if old not in text:
+    raise SystemExit('missing keeper rule validation lint anchor')
+schema.write_text(text.replace(old, new, 1))
+
 modal = Path('frontend/src/v2/components/V2DuplicateKeeperModal.svelte')
 text = modal.read_text()
 replacements = {
