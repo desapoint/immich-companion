@@ -687,6 +687,7 @@
 
   async function dismissStaleSelection(): Promise<void> {
     try {
+      await workspaceSaveQueue.catch(() => undefined);
       const restored = await saveDuplicateWorkspaceSelection({
         options: appliedOptions,
         selected_group_ids: [...selected],
@@ -823,6 +824,7 @@
   }
 
   async function persistAutomaticRules(): Promise<void> {
+    await workspaceSaveQueue.catch(() => undefined);
     const restored = await applyDuplicateRules({
       ...appliedOptions,
       analyze_automatically: false,
