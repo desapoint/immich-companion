@@ -253,7 +253,7 @@ export function automationRuleValid(rule: DuplicateAutomationUiRule): boolean {
 }
 
 function values(value: string): string[] {
-  return value.split(',').map((item) => item.trim().casefold()).filter(Boolean);
+  return value.split(',').map((item) => item.trim().toLocaleLowerCase()).filter(Boolean);
 }
 
 function folder(path: string | null): string {
