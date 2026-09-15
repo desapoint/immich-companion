@@ -648,7 +648,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     previewKeeperRules(input){return keeperSelection('preview',input)},
     applyKeeperRules(input){return keeperSelection('apply',input)},
     async clearDecisions() {
-      await flushDrafts();
+      await Promise.all([...draftQueues.values()]);
       if (!hasWorkspaceSnapshot) {
         workspace = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace');
         hasWorkspaceSnapshot = true;
