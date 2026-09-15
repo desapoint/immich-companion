@@ -25,7 +25,9 @@ jobs:
           cache-dependency-path: backend/pyproject.toml
 
       - name: Apply lifecycle patch
-        run: python .github/provider_neutral_lifecycle_patch.py
+        run: |
+          python .github/provider_neutral_lifecycle_patch.py
+          python .github/provider_neutral_lifecycle_followup.py
 
       - name: Audit legacy native-group assumptions
         run: |
@@ -68,6 +70,7 @@ jobs:
         run: |
           rm -f .github/workflows/validate-provider-neutral-lifecycle.yml
           rm -f .github/provider_neutral_lifecycle_patch.py
+          rm -f .github/provider_neutral_lifecycle_followup.py
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add backend/companion backend/tests frontend/src/v2 .github
