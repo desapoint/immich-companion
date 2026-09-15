@@ -66,7 +66,7 @@ jobs:
           modal = Path('frontend/src/v2/components/V2DuplicateKeeperModal.svelte')
           text = modal.read_text()
           replacements = {
-              "let scope=$state<'current_page'|'all_matching'>(initialScope);": "let scope=$state<'current_page'|'all_matching'>('current_page');\n  $effect(()=>{ if(open) scope=initialScope; });",
+              "let scope=$state<'current_page'|'all_matching'>(initialScope);": "let scope=$state<'current_page'|'all_matching'>('current_page');\n  $effect(()=>{ scope=initialScope; });",
               "next.operator=operators[0]?.value??'is';": "next.operator=(operators[0]?.value??'is') as DuplicateKeeperUiRule['operator'];",
               "options={operators}": "options={[...operators]}",
               "{#if definition.kind==='boolean'}\n                {:else if definition.kind==='media'}": "{#if definition.kind==='media'}",
