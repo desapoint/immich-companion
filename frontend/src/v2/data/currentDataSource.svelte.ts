@@ -1,6 +1,7 @@
 import { destructiveActionAvailability, type CapabilityAvailability } from '../../lib/api/capabilities';
 import { createApiLibraryDataSource } from './api/apiLibraryDataSource.svelte';
 import type { ResolvedLibraryDataSource } from './contracts';
+import { withDuplicateWorkspaceWriteBarrier } from './duplicateWorkspaceWriteBarrier';
 import type { LiveLibraryDataSource } from './liveContracts';
 
 let destructiveCapabilityPromise: Promise<CapabilityAvailability> | null = null;
@@ -19,6 +20,13 @@ async function requireDestructiveActions(): Promise<void> {
   if (availability.state === 'enabled') return;
   if (availability.state === 'disabled') throw new Error(availability.reason);
   throw new Error(`Destructive-action availability could not be verified. The action was not attempted. ${availability.error.message}`);
+}
+
+function withDuplicateWorkspacePersistence<T extends ResolvedLibraryDataSource>(source: T): T {
+  return {
+    ...source,
+    duplicates: withDuplicateWorkspaceWriteBarrier(source.duplicates),
+  } as T;
 }
 
 function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source: T): T {
@@ -54,5 +62,5 @@ function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source:
 // createApiLibraryDataSource explicitly implements it. Unsupported operations fail closed
 // with V2NotImplementedError rather than falling back to demo data or an existing V1 API.
 export const libraryData: LiveLibraryDataSource = withDestructiveActionGuard(
-  createApiLibraryDataSource(),
+  withDuplicateWorkspacePersistence(createApiLibraryDataSource()),
 );
