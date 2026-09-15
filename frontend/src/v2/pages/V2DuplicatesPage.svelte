@@ -196,8 +196,10 @@
     decisions={};stackWorkspace=createDuplicateStackWorkspace();selectedGroups=[];compare=false;interactionError='';
     const cleared=await operations.run('Clear duplicate decisions',()=>libraryData.duplicates.clearDecisions(),{
       pending:pending('Clear duplicate decisions'),
-      outcome:(count)=>({tone:'ok',title:'Duplicate decisions cleared',detail:`Cleared saved decisions for ${count.toLocaleString()} ${count===1?'group':'groups'}.`,failures:[]}),
-      reconcile:()=>reconcileGroups('Duplicate decisions'),
+      outcome:(count)=>count===0
+        ? {tone:'ok',title:'No duplicate decisions to clear',detail:'There are no saved duplicate decisions or selections.',failures:[]}
+        : {tone:'ok',title:'Duplicate decisions cleared',detail:`Cleared saved decisions for ${count.toLocaleString()} ${count===1?'group':'groups'}.`,failures:[]},
+      reconcile:(count)=>count>0?reconcileGroups('Duplicate decisions'):Promise.resolve(),
       reconcileError:'Duplicate decisions were cleared, but the latest groups could not be loaded.',
     });
     if(cleared===null){
