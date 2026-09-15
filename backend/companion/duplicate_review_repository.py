@@ -3,16 +3,26 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
+from companion.duplicate_identity import member_set_key, stable_group_key
 from companion.duplicate_schema import COMPLETED_DUPLICATE_REVIEW_STATUSES
 from companion.models import DuplicateGroupReviewRecord, DuplicateReviewWorkspaceRecord
 
 WORKSPACE_KEY = "default"
+
+
+def _review_member_ids(record: DuplicateGroupReviewRecord) -> set[str]:
+    return {
+        str(decision["asset_id"])
+        for decision in list(record.member_decisions or [])
+        if isinstance(decision, dict) and decision.get("asset_id")
+    }
 
 
 class DuplicateReviewRepository:
@@ -62,6 +72,169 @@ class DuplicateReviewRepository:
         )
         async with self._database.sessions() as session:
             return list((await session.scalars(statement)).all())
+
+    async def inherit_completed_groups(self, groups: list[Any]) -> int:
+        """Suppress membership shrinkage without rewriting the original completed review.
+
+        A current group is inherited only when its members are a subset of one completed
+        review lineage. Existing exact review rows always win, so a fresh draft is never
+        hidden. The inherited row retains the original reviewed membership in
+        ``member_decisions`` so another deletion remains covered, while ``draft_status``
+        keeps these projection rows out of resolution history.
+        """
+
+        if not groups:
+            return 0
+        statement = (
+            select(DuplicateGroupReviewRecord)
+            .where(
+                DuplicateGroupReviewRecord.review_status.in_(
+                    COMPLETED_DUPLICATE_REVIEW_STATUSES
+                ),
+                DuplicateGroupReviewRecord.draft_status == "completed",
+                func.coalesce(
+                    func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
+                )
+                > 0,
+            )
+            .order_by(DuplicateGroupReviewRecord.last_reviewed_at.desc())
+        )
+        async with self._database.sessions() as session:
+            completed = list((await session.scalars(statement)).all())
+        if not completed:
+            return 0
+
+        completed_members = [
+            (record, _review_member_ids(record))
+            for record in completed
+        ]
+        now = datetime.now(UTC)
+        candidates: list[dict[str, object]] = []
+        current_keys_by_source: dict[str, list[str]] = {}
+        normalized_groups: list[tuple[Any, str, str, str, set[str], set[str]]] = []
+        for group in groups:
+            source_value = getattr(group.discovery_source, "value", group.discovery_source)
+            source = str(source_value)
+            asset_ids = tuple(group.asset_ids)
+            if len(asset_ids) < 2:
+                continue
+            fingerprint = member_set_key(asset_ids)
+            group_key = stable_group_key(source, fingerprint)
+            current_ids = {str(asset_id) for asset_id in asset_ids}
+            evidence_sources = {
+                str(getattr(item.discovery_source, "value", item.discovery_source))
+                for item in getattr(group, "evidence", ())
+            }
+            evidence_sources.add(source)
+            current_keys_by_source.setdefault(source, []).append(group_key)
+            normalized_groups.append(
+                (group, source, group_key, fingerprint, current_ids, evidence_sources)
+            )
+
+        existing_by_source: dict[str, dict[str, DuplicateGroupReviewRecord]] = {}
+        for source, keys in current_keys_by_source.items():
+            existing_by_source[source] = await self.get_many(source, keys)
+
+        for group, source, group_key, fingerprint, current_ids, evidence_sources in normalized_groups:
+            if group_key in existing_by_source.get(source, {}):
+                continue
+            matches = [
+                (record, reviewed_ids)
+                for record, reviewed_ids in completed_members
+                if record.discovery_source in evidence_sources
+                and current_ids.issubset(reviewed_ids)
+            ]
+            if not matches:
+                continue
+            source_review, _ = min(
+                matches,
+                key=lambda item: (
+                    len(item[1]),
+                    -(item[0].last_reviewed_at or item[0].updated_at).timestamp(),
+                ),
+            )
+            provider_group_id = getattr(group, "provider_group_id", None) or getattr(
+                group, "group_id", group_key
+            )
+            candidates.append(
+                {
+                    "discovery_source": source,
+                    "provider_group_id": str(provider_group_id),
+                    "stable_group_key": group_key,
+                    "member_set_key": fingerprint,
+                    "member_fingerprint": fingerprint,
+                    "manual_action": source_review.manual_action,
+                    "manual_primary_asset_id": source_review.manual_primary_asset_id,
+                    "member_decisions": list(source_review.member_decisions or []),
+                    "stack_primary_asset_id": source_review.stack_primary_asset_id,
+                    "stack_resolution": source_review.stack_resolution,
+                    "metadata_keeper_asset_id": source_review.metadata_keeper_asset_id,
+                    "draft_status": "inherited",
+                    "review_status": source_review.review_status,
+                    "last_seen_at": now,
+                    "last_reviewed_at": source_review.last_reviewed_at,
+                    "updated_at": now,
+                }
+            )
+
+        if not candidates:
+            return 0
+        async with self._database.sessions() as session, session.begin():
+            for offset in range(0, len(candidates), 500):
+                values = candidates[offset : offset + 500]
+                statement = insert(DuplicateGroupReviewRecord).values(values)
+                await session.execute(
+                    statement.on_conflict_do_nothing(
+                        constraint="uq_duplicate_group_reviews_stable_key"
+                    )
+                )
+        return len(candidates)
+
+    async def history(
+        self,
+        *,
+        since: datetime | None = None,
+        page: int = 1,
+        page_size: int = 50,
+    ) -> tuple[list[DuplicateGroupReviewRecord], int]:
+        """Return original completed resolutions, excluding inherited suppression rows."""
+
+        page = max(1, page)
+        page_size = max(1, min(page_size, 200))
+        filters = [
+            DuplicateGroupReviewRecord.review_status.in_(
+                COMPLETED_DUPLICATE_REVIEW_STATUSES
+            ),
+            DuplicateGroupReviewRecord.draft_status == "completed",
+        ]
+        if since is not None:
+            filters.append(DuplicateGroupReviewRecord.last_reviewed_at >= since)
+        async with self._database.sessions() as session:
+            total = int(
+                (
+                    await session.scalar(
+                        select(func.count())
+                        .select_from(DuplicateGroupReviewRecord)
+                        .where(*filters)
+                    )
+                )
+                or 0
+            )
+            records = list(
+                (
+                    await session.scalars(
+                        select(DuplicateGroupReviewRecord)
+                        .where(*filters)
+                        .order_by(
+                            DuplicateGroupReviewRecord.last_reviewed_at.desc(),
+                            DuplicateGroupReviewRecord.id.desc(),
+                        )
+                        .offset((page - 1) * page_size)
+                        .limit(page_size)
+                    )
+                ).all()
+            )
+        return records, total
 
     async def save(
         self,
@@ -171,8 +344,6 @@ class DuplicateReviewRepository:
                         | {"last_seen_at": statement.excluded.last_seen_at},
                     )
                 )
-
-
 
     async def clear_decisions(
         self,
