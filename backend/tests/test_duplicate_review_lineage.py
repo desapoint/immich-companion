@@ -109,6 +109,19 @@ def test_deleted_member_keeps_resolved_group_suppressed() -> None:
     assert len(database.session.executed) == 1
 
 
+def test_provider_change_keeps_same_resolved_lineage_suppressed() -> None:
+    repository, database = _repository(_review(A, B, C, source="immich_duplicate"))
+
+    inherited = asyncio.run(
+        repository.inherit_completed_groups(
+            [_group(A, B, source="companion_similarity")]
+        )
+    )
+
+    assert inherited == 1
+    assert len(database.session.executed) == 1
+
+
 def test_new_member_reopens_previously_resolved_group() -> None:
     repository, database = _repository(_review(A, B, C))
 
