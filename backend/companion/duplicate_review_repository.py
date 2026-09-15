@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
@@ -424,13 +424,11 @@ class DuplicateReviewRepository:
         )
         async with self._database.sessions() as session, session.begin():
             result = await session.execute(statement)
-            workspace = await session.scalar(
-                select(DuplicateReviewWorkspaceRecord)
-                .where(DuplicateReviewWorkspaceRecord.workspace_key == WORKSPACE_KEY)
-                .with_for_update()
+            await session.execute(
+                delete(DuplicateReviewWorkspaceRecord).where(
+                    DuplicateReviewWorkspaceRecord.workspace_key == WORKSPACE_KEY
+                )
             )
-            if workspace is not None:
-                await session.delete(workspace)
         return max(0, int(getattr(result, "rowcount", 0) or 0))
 
     async def complete_draft(
