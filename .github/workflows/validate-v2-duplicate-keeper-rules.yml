@@ -1,11 +1,9 @@
-name: Validate V2 duplicate keeper rules
+name: Validate V2 duplicate keeper rules audit
 
 on:
   push:
-    branches:
-      - work/v2-duplicate-keeper-rules
-    paths:
-      - .github/workflows/validate-v2-duplicate-keeper-rules.yml
+    branches: [work/v2-duplicate-keeper-rules-audit]
+    paths: [.github/workflows/validate-v2-duplicate-keeper-rules.yml]
 
 permissions:
   contents: write
@@ -16,108 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: work/v2-duplicate-keeper-rules
+          ref: work/v2-duplicate-keeper-rules-audit
 
-      - name: Apply complete keeper rules patch
+      - name: Apply product patch
         shell: bash
         run: |
           python - <<'PY'
-          import base64
+          import base64, zlib
           from pathlib import Path
-          import zlib
-
-          payload = ''.join(
-              path.read_text().strip()
-              for path in sorted(Path('.keeper-patch').glob('p*'))
-          )
-          compressed = base64.b64decode(payload, validate=True)
-          script = zlib.decompress(compressed).decode('utf-8')
-          print(f'keeper patch: {len(payload)} encoded chars, {len(script)} decoded bytes')
-          code = compile(script, '<keeper-rules-patch>', 'exec')
-          exec(code, {})
+          payload = ''.join(p.read_text().strip() for p in sorted(Path('.keeper-patch').glob('p[0-9]*')))
+          Path('/tmp/keeper.py').write_bytes(zlib.decompress(base64.b64decode(payload, validate=True)))
           PY
-
-      - name: Align keeper choice contract
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          path = Path('backend/companion/duplicate_keeper_rules.py')
-          text = path.read_text()
-          old = '''class DuplicateKeeperChoice:\n    keeper_asset_id: UUID | None\n    reason: str\n'''
-          new = '''class DuplicateKeeperChoice:\n    keeper_asset_id: UUID | None\n    reason: str\n    used_reference_tiebreaker: bool = False\n'''
-          if old not in text:
-              raise SystemExit('missing DuplicateKeeperChoice anchor')
-          text = text.replace(old, new, 1)
-          old_return = 'return DuplicateKeeperChoice(reference_id, "reference_tiebreaker")'
-          new_return = 'return DuplicateKeeperChoice(reference_id, "reference_tiebreaker", True)'
-          if old_return not in text:
-              raise SystemExit('missing reference tiebreaker anchor')
-          path.write_text(text.replace(old_return, new_return, 1))
-          PY
-
-      - name: Align keeper rules frontend contracts
-        shell: bash
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-          modal = Path('frontend/src/v2/components/V2DuplicateKeeperModal.svelte')
-          text = modal.read_text()
-          replacements = {
-              "let scope=$state<'current_page'|'all_matching'>(initialScope);": "let scope=$state<'current_page'|'all_matching'>('current_page');\n  $effect(()=>{ scope=initialScope; });",
-              "next.operator=operators[0]?.value??'is';": "next.operator=(operators[0]?.value??'is') as DuplicateKeeperUiRule['operator'];",
-              "options={operators}": "options={[...operators]}",
-              "{#if definition.kind==='boolean'}\n                {:else if definition.kind==='media'}": "{#if definition.kind==='media'}",
-          }
-          for old, new in replacements.items():
-              if old not in text:
-                  raise SystemExit(f'missing modal anchor: {old}')
-              text = text.replace(old, new, 1)
-          modal.write_text(text)
-
-          demo = Path('frontend/src/v2/data/demo/demoLibraryDataSource.svelte.ts')
-          text = demo.read_text()
-          needle = "  duplicates:{\n"
-          if needle not in text:
-              raise SystemExit('missing demo duplicates anchor')
-          methods = (
-              "  duplicates:{\n"
-              "    async previewKeeperRules(){await delay();return {} as any},\n"
-              "    async applyKeeperRules(){await delay();return {} as any},\n"
-          )
-          text = text.replace(needle, methods, 1)
-          text = text.replace(
-              "reviewFilters:['All groups','Needs review','Auto-ready','Blocked','Actionable','Needs decisions']",
-              "reviewFilters:['All groups','Actionable','Needs review','Needs decisions','Blocked']",
-          )
-          demo.write_text(text)
-
-          tests = Path('frontend/src/v2/state/duplicateKeeperRules.test.ts')
-          text = tests.read_text()
-          text = text.replace(
-              "expect(keeperRuleFields.some((field) => field.value === 'newest')).toBe(false);",
-              "expect(keeperRuleFields.map((field) => String(field.value))).not.toContain('newest');",
-          )
-          text = text.replace(
-              "expect(keeperRuleFields.some((field) => field.value === 'oldest')).toBe(false);",
-              "expect(keeperRuleFields.map((field) => String(field.value))).not.toContain('oldest');",
-          )
-          text = text.replace(
-              "for (const field of ['library', 'folder', 'filename', 'mime_type', 'file_size', 'resolution', 'favorite', 'edited', 'tag', 'album', 'reference', 'similarity', 'metadata_richness', 'format_quality']) {",
-              "for (const field of ['library', 'folder', 'filename', 'mime_type', 'file_size', 'resolution', 'favorite', 'edited', 'tag', 'album', 'reference', 'similarity', 'metadata_richness', 'format_quality'] as const) {",
-          )
-          text = text.replace(
-              "keeperOperatorOptions(definition, 'require')",
-              "keeperOperatorOptions(definition.value, 'require')",
-          )
-          text = text.replace(
-              "keeperOperatorOptions(definition, 'prefer')",
-              "keeperOperatorOptions(definition.value, 'prefer')",
-          )
-          tests.write_text(text)
-          PY
+          python /tmp/keeper.py
+          python .keeper-patch/fix.py
+          echo 'Intended files:'
+          git diff --name-only
 
       - uses: actions/setup-python@v6
         with:
@@ -125,13 +36,10 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
 
-      - name: Validate backend
-        shell: bash
+      - name: Validate backend without mutation
         run: |
           python -m pip install -e './backend[dev]'
           cd backend
-          ruff format companion tests
-          ruff check --fix companion tests
           pytest
           ruff check companion tests
 
@@ -142,20 +50,18 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Validate frontend
-        shell: bash
         run: |
           cd frontend
           npm ci
           npm run check
           npm test
 
-      - name: Commit validated product tree
-        shell: bash
+      - name: Commit clean product tree
         run: |
           rm -rf .keeper-patch
           rm -f .github/workflows/validate-v2-duplicate-keeper-rules.yml
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -A
-          git commit -m 'feat: add V2 duplicate keeper rules'
-          git push origin HEAD:work/v2-duplicate-keeper-rules
+          git commit -m 'feat: add V2 duplicate keeper rules (clean audit)'
+          git push origin HEAD:work/v2-duplicate-keeper-rules-audit
