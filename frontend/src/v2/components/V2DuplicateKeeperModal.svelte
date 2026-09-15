@@ -262,11 +262,17 @@
         }
         if(apply&&saves.length)await mapLimit(saves,WRITE_CONCURRENCY,({group,draft,evaluation})=>saveAutomationDraft(group,draft,evaluation));
       }
-      if(scope==='current_page'&&explicitIds&&found.size>=explicitIds.size)break;
+      if(explicitIds&&found.size>=explicitIds.size)break;
       page+=1;
     }while(page<=pages);
-    if(scope==='current_page'&&explicitIds)summary.missingGroupCount=Math.max(0,explicitIds.size-found.size);
-    if(apply&&appliedIds.length){await libraryData.duplicates.saveSelection([...new Set(appliedIds)],null);summary.appliedGroupCount=new Set(appliedIds).size}
+    if(explicitIds)summary.missingGroupCount=Math.max(0,explicitIds.size-found.size);
+    if(apply&&appliedIds.length){
+      const selected=[...new Set([...workspace.selected_group_ids,...appliedIds])];
+      const active=workspace.active_group_id&&selected.includes(workspace.active_group_id)?workspace.active_group_id:null;
+      await libraryData.duplicates.saveSelection(selected,active);
+      await libraryData.duplicates.flushDrafts();
+      summary.appliedGroupCount=new Set(appliedIds).size;
+    }
     return summary;
   }
 
