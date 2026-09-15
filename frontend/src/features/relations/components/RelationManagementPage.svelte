@@ -379,12 +379,12 @@
             </th>
             <th>
               <button class="sort-heading" onclick={() => changeSort('name')} aria-label={`Sort by name${sortLabel('name')}`}>
-                Name <span>{sort === 'name' ? direction === 'asc' ? '↑' : '↓' : '↕'}</span>
+                Name <span>{sort === 'name' ? direction === 'asc' ? '↓' : '↑' : '↕'}</span>
               </button>
             </th>
             <th>
               <button class="sort-heading" onclick={() => changeSort('asset_count')} aria-label={`Sort by asset count${sortLabel('asset_count')}`}>
-                Assets <span>{sort === 'asset_count' ? direction === 'asc' ? '↑' : '↓' : '↕'}</span>
+                Assets <span>{sort === 'asset_count' ? direction === 'asc' ? '↓' : '↑' : '↕'}</span>
               </button>
             </th>
             <th class="actions-heading">Actions</th>
@@ -464,7 +464,7 @@
       {#if isAlbum}
         <label>Description<textarea autocomplete="off" name="relation-description" bind:value={description} maxlength="2000"></textarea></label>
       {:else}
-        <div class="color-field"><span>Color</span><ColorPicker value={color} onchange={(next) => (color = next)} /></div>
+        <div class="color-field"><span>Color</span><ColorPicker value={color} onchange={(next) => (parentId = next)} /></div>
         <SelectField id="parent-tag" label="Parent tag" value={parentId} options={parentOptions} onchange={(next) => (parentId = next)} />
       {/if}
       {#if formError}<StatusNotice compact tone="error" message={formError} />{/if}
