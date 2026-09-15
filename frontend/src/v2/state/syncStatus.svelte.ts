@@ -11,6 +11,7 @@ import type {
 } from '../data/syncContracts';
 
 const POLL_INTERVAL_MS = 30_000;
+const DISCONNECT_GRACE_MS = 10_000;
 
 type SyncStatusSource = {
   sync: Pick<SyncDataRepository, 'status'>;
@@ -85,7 +86,8 @@ export class SyncStatusController {
 
   private subscribers = 0;
   private taskSubscription: TaskSubscription | null = null;
-  private pollTimer: ReturnType<typeof setInterval> | null = null;
+  private disconnectGraceTimer: ReturnType<typeof setTimeout> | null = null;
+  private fallbackPollTimer: ReturnType<typeof setInterval> | null = null;
   private refreshGeneration = 0;
   private refreshPromise: Promise<void> | null = null;
   private refreshQueued = false;
@@ -93,6 +95,7 @@ export class SyncStatusController {
   constructor(
     private readonly source: SyncStatusSource = libraryData,
     private readonly pollIntervalMs = POLL_INTERVAL_MS,
+    private readonly disconnectGraceMs = DISCONNECT_GRACE_MS,
   ) {}
 
   get stale(): boolean {
@@ -181,6 +184,38 @@ export class SyncStatusController {
     return true;
   }
 
+  private clearFallbackTimers(): void {
+    if (this.disconnectGraceTimer) clearTimeout(this.disconnectGraceTimer);
+    if (this.fallbackPollTimer) clearInterval(this.fallbackPollTimer);
+    this.disconnectGraceTimer = null;
+    this.fallbackPollTimer = null;
+  }
+
+  private scheduleFallbackPolling(): void {
+    if (
+      this.subscribers === 0
+      || this.connectionState === 'connected'
+      || this.disconnectGraceTimer
+      || this.fallbackPollTimer
+    ) return;
+
+    this.disconnectGraceTimer = setTimeout(() => {
+      this.disconnectGraceTimer = null;
+      if (this.subscribers === 0 || this.connectionState === 'connected') return;
+      void this.refresh();
+      this.fallbackPollTimer = setInterval(() => void this.refresh(), this.pollIntervalMs);
+    }, this.disconnectGraceMs);
+  }
+
+  private handleConnectionState(state: TaskConnectionState): void {
+    this.connectionState = state;
+    if (state === 'connected') {
+      this.clearFallbackTimers();
+      return;
+    }
+    this.scheduleFallbackPolling();
+  }
+
   private start(): void {
     void this.refresh();
     this.taskSubscription = this.source.tasks.subscribe({
@@ -189,24 +224,19 @@ export class SyncStatusController {
         const matched = this.applyTask(task);
         if (!matched || TERMINAL_TASK_STATES.has(task.status)) void this.refresh();
       },
-      onConnectionState: (state) => {
-        this.connectionState = state;
-      },
-      onRecovered: () => {
-        void this.refresh();
-      },
+      onConnectionState: (state) => this.handleConnectionState(state),
+      onRecovered: () => void this.refresh(),
       onError: () => undefined,
     });
-    this.pollTimer = setInterval(() => void this.refresh(), this.pollIntervalMs);
   }
 
   private stop(): void {
-    if (this.pollTimer) clearInterval(this.pollTimer);
-    this.pollTimer = null;
+    this.clearFallbackTimers();
     this.taskSubscription?.close();
     this.taskSubscription = null;
     this.connectionState = 'disconnected';
     this.refreshGeneration += 1;
+    this.refreshPromise = null;
     this.refreshQueued = false;
     this.loading = false;
   }

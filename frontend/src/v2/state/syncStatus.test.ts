@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { SyncCoordinatorStatus, SyncRun, TaskRecord, TaskRepository } from '../data/syncContracts';
 import { SyncStatusController } from './syncStatus.svelte';
@@ -67,6 +67,8 @@ const task: TaskRecord = {
   completedAt: null,
 };
 
+afterEach(() => vi.useRealTimers());
+
 describe('SyncStatusController', () => {
   it('shares one task subscription until the last consumer releases it', async () => {
     let handlers!: Parameters<TaskRepository['subscribe']>[0];
@@ -102,6 +104,7 @@ describe('SyncStatusController', () => {
 
     const release = controller.acquire();
     await Promise.resolve();
+    handlers.onConnectionState('connected');
     handlers.onTask(task);
     await Promise.resolve();
 
@@ -124,7 +127,9 @@ describe('SyncStatusController', () => {
 
     const release = controller.acquire();
     await Promise.resolve();
+    handlers.onConnectionState('connected');
     handlers.onRecovered?.();
+    await Promise.resolve();
     await Promise.resolve();
 
     expect(statusRequest).toHaveBeenCalledTimes(2);
@@ -147,12 +152,49 @@ describe('SyncStatusController', () => {
 
     const release = controller.acquire();
     await Promise.resolve();
-    handlers.onTask(task);
+    handlers.onConnectionState('connected');
     handlers.onTask(task);
     await Promise.resolve();
     await Promise.resolve();
 
     expect(statusRequest).toHaveBeenCalledTimes(2);
+    release();
+  });
+
+  it('does not poll while connected and enables fallback polling only after the grace period', async () => {
+    vi.useFakeTimers();
+    let handlers!: Parameters<TaskRepository['subscribe']>[0];
+    const statusRequest = vi.fn(async () => emptyStatus);
+    const controller = new SyncStatusController({
+      sync: { status: statusRequest },
+      tasks: { subscribe: (next) => { handlers = next; return { close: () => undefined }; } },
+    }, 30_000, 10_000);
+
+    const release = controller.acquire();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusRequest).toHaveBeenCalledTimes(1);
+
+    handlers.onConnectionState('connected');
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(statusRequest).toHaveBeenCalledTimes(1);
+
+    handlers.onConnectionState('reconnecting');
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(statusRequest).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(statusRequest).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(statusRequest).toHaveBeenCalledTimes(3);
+
+    handlers.onConnectionState('connected');
+    handlers.onRecovered?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statusRequest).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(statusRequest).toHaveBeenCalledTimes(4);
+
     release();
   });
 });

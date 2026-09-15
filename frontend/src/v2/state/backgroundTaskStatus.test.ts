@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { TaskRecord, TaskRepository } from '../data/syncContracts';
 import {
@@ -29,6 +29,8 @@ const similarityTask: TaskRecord = {
   completedAt: null,
 };
 
+afterEach(() => vi.useRealTimers());
+
 describe('background task status', () => {
   it('presents similarity phases and retained-match detail for the global tray', () => {
     expect(backgroundTaskPresentation(similarityTask)).toEqual({
@@ -40,14 +42,16 @@ describe('background task status', () => {
     });
   });
 
-  it('loads active duplicate tasks and applies live terminal updates', async () => {
+  it('hydrates active tasks once and applies live terminal updates', async () => {
     let handlers!: Parameters<TaskRepository['subscribe']>[0];
     const close = vi.fn();
-    const list = vi.fn(async (taskType: string) => taskType === 'similarity_scan'
-      ? [similarityTask, { ...similarityTask, id: 'old', status: 'completed' as const }]
-      : []);
+    const listActive = vi.fn(async () => [
+      similarityTask,
+      { ...similarityTask, id: 'sync', taskType: 'asset_sync' },
+      { ...similarityTask, id: 'old', status: 'completed' as const },
+    ]);
     const controller = new BackgroundTaskStatusController({
-      list,
+      listActive,
       subscribe: (next) => { handlers = next; return { close }; },
     }, 60_000);
 
@@ -55,7 +59,8 @@ describe('background task status', () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(list).toHaveBeenCalledTimes(2);
+    expect(listActive).toHaveBeenCalledTimes(1);
+    expect(listActive).toHaveBeenCalledWith(200);
     expect(controller.tasks.map((task) => task.id)).toEqual(['similarity-1']);
 
     handlers.onTask({ ...similarityTask, progress: { ...similarityTask.progress, percent: 60 } });
@@ -67,11 +72,48 @@ describe('background task status', () => {
     expect(close).toHaveBeenCalledTimes(1);
   });
 
+  it('uses the WebSocket while connected and polls only after a disconnect grace period', async () => {
+    vi.useFakeTimers();
+    let handlers!: Parameters<TaskRepository['subscribe']>[0];
+    const listActive = vi.fn(async () => []);
+    const controller = new BackgroundTaskStatusController({
+      listActive,
+      subscribe: (next) => { handlers = next; return { close: () => undefined }; },
+    }, 30_000, 10_000);
+
+    const release = controller.acquire();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(listActive).toHaveBeenCalledTimes(1);
+
+    handlers.onConnectionState('connected');
+    await vi.advanceTimersByTimeAsync(180_000);
+    expect(listActive).toHaveBeenCalledTimes(1);
+
+    handlers.onConnectionState('reconnecting');
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(listActive).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(listActive).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(listActive).toHaveBeenCalledTimes(3);
+
+    handlers.onConnectionState('connected');
+    handlers.onRecovered?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(listActive).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(listActive).toHaveBeenCalledTimes(4);
+
+    release();
+  });
+
   it('shares one task subscription across consumers', () => {
     const close = vi.fn();
     const subscribe = vi.fn(() => ({ close }));
     const controller = new BackgroundTaskStatusController({
-      list: vi.fn(async () => []),
+      listActive: vi.fn(async () => []),
       subscribe,
     }, 60_000);
 
@@ -86,7 +128,7 @@ describe('background task status', () => {
 
   it('keeps one stable workflow identity while backend scan stages change', () => {
     const controller = new BackgroundTaskStatusController({
-      list: vi.fn(async () => []),
+      listActive: vi.fn(async () => []),
       subscribe: vi.fn(() => ({ close: () => undefined })),
     });
 
