@@ -125,6 +125,23 @@ type ApiDuplicateWorkspace = {
   last_applied_group_ids?: string[];
   last_skipped_group_ids?: string[];
 };
+type ApiDuplicateHistoryItem = {
+  id: string;
+  occurred_at: string;
+  discovery_source: DuplicateSource;
+  provider_group_id: string;
+  review_status: 'reviewed_keep_all' | 'reviewed_resolve' | 'reviewed_stack_all' | 'reviewed_mixed';
+  manual_action: string | null;
+  member_count: number;
+  member_asset_ids: string[];
+};
+type ApiDuplicateHistoryPage = {
+  items: ApiDuplicateHistoryItem[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+};
 
 const ANALYSIS_OPTIONS: AnalysisOptions = {
   keeper_policy: 'prefer_upload',
@@ -181,6 +198,19 @@ function normalizeDuplicatePage(
   };
 }
 
+function historyDays(range: 'Last 30 days' | 'Last 90 days' | 'All history'): number | null {
+  if (range === 'Last 30 days') return 30;
+  if (range === 'Last 90 days') return 90;
+  return null;
+}
+
+function historySummary(item: ApiDuplicateHistoryItem): string {
+  const count = item.member_count;
+  if (item.review_status === 'reviewed_keep_all') return `Kept all ${count} duplicate assets`;
+  if (item.review_status === 'reviewed_stack_all') return `Stacked ${count} duplicate assets`;
+  if (item.review_status === 'reviewed_mixed') return `Applied mixed decisions to ${count} duplicate assets`;
+  return `Resolved ${count} duplicate assets`;
+}
 
 function reviewStateParam(state: DuplicateSearchQuery['state']): string {
   if (!state || state === 'All groups') return 'all';
@@ -485,7 +515,7 @@ const keeperSelection = async (
 
   return {
     async capabilities() {
-      return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: false, reviewFilters: ['Actionable', 'All groups', 'Needs review', 'Blocked', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
+      return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: true, reviewFilters: ['Actionable', 'All groups', 'Needs review', 'Blocked', 'Needs decisions'], decisions: ['keep', 'delete', 'stack'] };
     },
     selectedGroupIds() { return [...workspace.selected_group_ids]; },
 
@@ -647,7 +677,29 @@ async search(query): Promise<PageResult<DuplicateGroupRecord>> {
       return failureResult(plan.groupIds.flatMap((id) => rawGroups.get(id) ?? []), failed);
     },
     async history(query) {
-      return { items: [], total: 0, pageSize: query.pageSize, page: pageNumber(query), nextCursor: null };
+      const page = pageNumber(query);
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(query.pageSize),
+      });
+      const days = historyDays(query.range);
+      if (days !== null) params.set('days', String(days));
+      const result = await requestJson<ApiDuplicateHistoryPage>(
+        `/api/assets/duplicates/history?${params.toString()}`,
+        { signal: query.signal },
+      );
+      return {
+        items: result.items.map((item) => ({
+          id: item.id,
+          occurredAt: item.occurred_at,
+          groupLabel: `Duplicate group · ${item.member_count} assets`,
+          summary: historySummary(item),
+        })),
+        total: result.total,
+        pageSize: result.page_size,
+        page: result.page,
+        nextCursor: result.page < result.pages ? String(result.page + 1) : null,
+      };
     },
   };
 }
