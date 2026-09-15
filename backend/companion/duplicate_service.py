@@ -31,6 +31,7 @@ from companion.duplicate_keeper_rules import choose_keeper
 from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
+    COMPLETED_DUPLICATE_REVIEW_STATUSES,
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
     DuplicateAdmissionEvidence,
@@ -72,7 +73,6 @@ from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
-    ImmichDuplicateResolution,
 )
 from companion.integrity import decode_immich_sha1
 from companion.integrity_repository import (
@@ -195,15 +195,10 @@ def _action_for_dispositions(dispositions: list[str]) -> str:
     return "mixed"
 
 
-def _reviewed_immich_delete_supported(group: ExactDuplicateGroup) -> bool:
-    """Return whether a reviewed delete can be delegated to an Immich duplicate group."""
+def _reviewed_delete_supported(group: ExactDuplicateGroup) -> bool:
+    """Return whether reviewed member deletion is valid for the current group."""
 
-    return (
-        group.discovery_source == DiscoverySource.IMMICH_DUPLICATE.value
-        and group.provider_group_id is not None
-        and group.status != "ineligible"
-        and len(group.members) >= 2
-    )
+    return group.status != "ineligible" and len(group.members) >= 2
 
 
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
@@ -890,7 +885,6 @@ class CrossSourceDuplicateService:
                     )
                 group_update.update(
                     {
-                        "eligible": False,
                         "auto_resolvable": False,
                         "auto_selected": False,
                         "recommended_action": "none",
@@ -932,6 +926,8 @@ class CrossSourceDuplicateService:
             if state.member_fingerprint != group.member_fingerprint:
                 groups.append(group.model_copy(update={"review_status": "drifted"}))
                 continue
+            if state.review_status in COMPLETED_DUPLICATE_REVIEW_STATUSES:
+                continue
             manual_action = state.manual_action
             manual_primary = state.manual_primary_asset_id
             effective_action = manual_action or group.recommended_action
@@ -962,7 +958,20 @@ class CrossSourceDuplicateService:
                     }
                 )
             )
-        return result.model_copy(update={"groups": groups})
+        counts = {
+            name: sum(group.status == name for group in groups)
+            for name in ("exact", "unverified", "mismatch", "ineligible")
+        }
+        return result.model_copy(
+            update={
+                "groups": groups,
+                "group_count": len(groups),
+                "exact_group_count": counts["exact"],
+                "unverified_group_count": counts["unverified"],
+                "mismatch_group_count": counts["mismatch"],
+                "ineligible_group_count": counts["ineligible"],
+            }
+        )
 
     @staticmethod
     def _verification_candidates(
@@ -1316,7 +1325,9 @@ class CrossSourceDuplicateService:
         if primary_id is not None and primary_id not in member_ids:
             raise ActionPlanConflictError("The selected primary is not a group member")
         if action == "resolve" and not group.eligible:
-            raise ActionPlanConflictError("Only verified exact groups can be resolved")
+            raise ActionPlanConflictError(
+                "This duplicate group is not eligible for reviewed resolution"
+            )
         if action == "stack_all" and any(
             member.is_offline or member.is_stacked for member in group.members
         ):
@@ -1754,11 +1765,7 @@ class CrossSourceDuplicateService:
                 source = discovered_by_id.get(group_id)
                 if exact is None or source is None:
                     continue
-                invalid = (
-                    not exact.eligible
-                    or len(exact.members) < 2
-                    or any(member.is_offline for member in exact.members)
-                )
+                invalid = not exact.eligible or len(exact.members) < 2
                 if invalid:
                     counts["blocked_group_count"] += 1
                     continue
@@ -1853,7 +1860,6 @@ class CrossSourceDuplicateService:
             if (
                 not group.eligible
                 or group.status == "ineligible"
-                or any(member.is_offline for member in group.members)
                 or (draft is not None and draft.stale)
             ):
                 state = "Blocked"
@@ -1888,10 +1894,12 @@ class CrossSourceDuplicateService:
                 not group.members
                 or (request.disposition == "delete" and not group.eligible)
                 or (
-                    request.disposition in {"delete", "stack"}
-                    and any(member.is_offline for member in group.members)
+                    request.disposition == "stack"
+                    and (
+                        len(group.members) < 2
+                        or any(member.is_offline for member in group.members)
+                    )
                 )
-                or (request.disposition == "stack" and len(group.members) < 2)
             )
             if invalid:
                 skipped.append(group.group_id)
@@ -2117,9 +2125,9 @@ class CrossSourceDuplicateService:
             if action == "none":
                 raise ActionPlanConflictError("Every selected group needs an action")
             has_deletions = "delete" in dispositions
-            if has_deletions and not _reviewed_immich_delete_supported(group):
+            if has_deletions and not _reviewed_delete_supported(group):
                 raise ActionPlanConflictError(
-                    "Deleting duplicate members requires an available Immich duplicate group"
+                    "Deleting duplicate members requires a current multi-member duplicate group"
                 )
             stack_ids = [
                 member.id
@@ -2366,11 +2374,19 @@ class CrossSourceDuplicateService:
         pending_resolution = [
             planned for planned in raw_groups if execution_state(planned) == "pending"
         ]
-        reviewed = (
-            {group.stable_group_key: group for group in (await self.result(options)).groups}
-            if pending_resolution
-            else {}
-        )
+        if pending_resolution:
+            stable_keys = [planned["stable_group_key"] for planned in pending_resolution]
+            identities = await self._group_identities(stable_group_keys=stable_keys)
+            if identities is None:
+                live_result = await self.result(options)
+            else:
+                discovered = await self._groups_by_ids(
+                    [identity.group_id for identity in identities]
+                )
+                _, _, _, live_result = await self._snapshot_groups(discovered, options)
+            reviewed = {group.stable_group_key: group for group in live_result.groups}
+        else:
+            reviewed = {}
         preflight_ready: list[dict[str, Any]] = []
         for planned in pending_resolution:
             live_group = reviewed.get(planned["stable_group_key"])
@@ -2382,7 +2398,7 @@ class CrossSourceDuplicateService:
                 or live_group.member_fingerprint != planned["member_fingerprint"]
                 or (
                     has_deletions
-                    and not _reviewed_immich_delete_supported(live_group)
+                    and not _reviewed_delete_supported(live_group)
                 )
                 or (
                     planned.get("follow_up") is not None
@@ -2407,7 +2423,7 @@ class CrossSourceDuplicateService:
                     error="group_drift",
                 )
             else:
-                planned["provider_group_id"] = live_group.provider_group_id or live_group.group_id
+                planned["provider_group_id"] = live_group.provider_group_id
                 preflight_ready.append(planned)
         pending_resolution = preflight_ready
         preflight_done = perf_counter()
@@ -2451,22 +2467,6 @@ class CrossSourceDuplicateService:
                     "percent": round(completed_steps / total_steps * 100, 1),
                     "detail": detail,
                 },
-            )
-
-        unsupported = [
-            item
-            for item in pending_resolution
-            if item["discovery_source"] != DiscoverySource.IMMICH_DUPLICATE.value
-            or item.get("provider_group_id") is None
-        ]
-        if unsupported:
-            await self._actions.finish_plan(
-                plan_id,
-                "failed",
-                {"error": "unsupported_discovery_provider"},
-            )
-            raise PermanentTaskError(
-                "Duplicate resolution is not supported for this discovery provider"
             )
 
         metadata_ready: list[dict[str, Any]] = []
@@ -2527,101 +2527,63 @@ class CrossSourceDuplicateService:
         pending_resolution = metadata_ready
         metadata_done = perf_counter()
 
-        resolution_batches = [
+        action_batches = [
             pending_resolution[offset : offset + batch_size]
             for offset in range(0, len(pending_resolution), batch_size)
         ]
-        for batch_index, batch in enumerate(resolution_batches):
+        for batch_index, batch in enumerate(action_batches):
             await context.ensure_active()
-            resolutions = [
-                ImmichDuplicateResolution(
-                    duplicate_id=UUID(item["provider_group_id"]),
-                    keep_asset_ids=[UUID(value) for value in item["keep_asset_ids"]],
-                    trash_asset_ids=[UUID(value) for value in item["trash_asset_ids"]],
-                )
-                for item in batch
-            ]
-            try:
-                responses = await self._immich.resolve_duplicate_groups(resolutions)
-            except ImmichApiError:
-                responses = []
-            for index, resolution in enumerate(resolutions):
-                identifier = batch[index]["group_id"]
-                response = responses[index] if index < len(responses) else {}
-                if response.get("success") is True:
-                    resolved_ids.add(identifier)
-                    trashed_ids.extend(resolution.trash_asset_ids)
-                    state = "duplicate_resolved"
-                    stored_execution[identifier] = {"state": state, "error": None}
-                    await self._actions.record_duplicate_group_execution(
-                        plan_id,
-                        identifier,
-                        state,
-                    )
-                else:
-                    failed_ids.append(identifier)
+            for planned in batch:
+                identifier = planned["group_id"]
+                group_trash_ids = [
+                    UUID(value) for value in planned.get("trash_asset_ids", [])
+                ]
+                try:
+                    if group_trash_ids:
+                        await self._immich.trash_assets(group_trash_ids)
+                        refreshed = [
+                            await self._immich.get_asset(asset_id)
+                            for asset_id in group_trash_ids
+                        ]
+                        if any(not asset.is_trashed for asset in refreshed):
+                            raise ImmichApiError("verify trashed duplicate members")
+                except ImmichApiError:
+                    if identifier not in failed_ids:
+                        failed_ids.append(identifier)
                     stored_execution[identifier] = {
                         "state": "failed",
-                        "error": "immich_duplicate_resolution_failed",
+                        "error": "duplicate_member_trash_failed",
                     }
                     await self._actions.record_duplicate_group_execution(
                         plan_id,
                         identifier,
                         "failed",
-                        error="immich_duplicate_resolution_failed",
+                        error="duplicate_member_trash_failed",
                     )
-            await checkpoint("Immich accepted reviewed groups; verifying resolution…")
-            if batch_index + 1 < len(resolution_batches):
+                    continue
+
+                resolved_ids.add(identifier)
+                trashed_ids.extend(group_trash_ids)
+                state = (
+                    "follow_up_pending"
+                    if planned.get("follow_up") is not None
+                    else "completed"
+                )
+                stored_execution[identifier] = {"state": state, "error": None}
+                await self._actions.record_duplicate_group_execution(
+                    plan_id,
+                    identifier,
+                    state,
+                )
+                completed_steps += 1
+
+            await checkpoint("Applied reviewed duplicate member actions.")
+            if batch_index + 1 < len(action_batches):
                 await asyncio.sleep(pacing.full_min_batch_delay_seconds)
 
         if trashed_ids:
             await self._assets.remove_assets(trashed_ids)
 
-        remaining = {
-            str(group.duplicate_id) for group in await self._immich.list_duplicate_groups()
-        }
-        for planned in raw_groups:
-            identifier = planned["group_id"]
-            if execution_state(planned) not in {
-                "duplicate_resolved",
-                "follow_up_pending",
-            }:
-                continue
-            if planned.get("provider_group_id") in remaining:
-                failed_ids.append(identifier)
-                resolved_ids.discard(identifier)
-                stored_execution[identifier] = {
-                    "state": "failed",
-                    "error": "provider_group_still_active",
-                }
-                await self._actions.record_duplicate_group_execution(
-                    plan_id,
-                    identifier,
-                    "failed",
-                    error="provider_group_still_active",
-                )
-            elif planned.get("follow_up") is None:
-                stored_execution[identifier] = {"state": "completed", "error": None}
-                await self._actions.record_duplicate_group_execution(
-                    plan_id,
-                    identifier,
-                    "completed",
-                )
-                completed_steps += 1
-            else:
-                stored_execution[identifier] = {
-                    "state": "follow_up_pending",
-                    "error": None,
-                }
-                await self._actions.record_duplicate_group_execution(
-                    plan_id,
-                    identifier,
-                    "follow_up_pending",
-                )
-                completed_steps += 1
-
-        if pending_resolution:
-            await checkpoint("Verified resolved Immich duplicate groups.")
         resolution_done = perf_counter()
 
         stack_groups = [item for item in raw_groups if execution_state(item) == "follow_up_pending"]
@@ -2747,7 +2709,7 @@ class CrossSourceDuplicateService:
                 "resolve": "reviewed_resolve",
                 "keep_all": "reviewed_keep_all",
                 "stack_all": "reviewed_stack_all",
-                "mixed": "manually_configured",
+                "mixed": "reviewed_mixed",
             }
             for planned in raw_groups:
                 if planned["group_id"] not in successful_ids:

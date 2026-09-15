@@ -43,9 +43,13 @@ DuplicateReviewStatus = Literal[
     "reviewed_keep_all",
     "reviewed_resolve",
     "reviewed_stack_all",
+    "reviewed_mixed",
     "review_later",
     "drifted",
 ]
+COMPLETED_DUPLICATE_REVIEW_STATUSES = frozenset(
+    {"reviewed_keep_all", "reviewed_resolve", "reviewed_stack_all", "reviewed_mixed"}
+)
 DuplicateMemberDisposition = Literal["keep", "delete", "stack", "no_change"]
 DuplicateDraftDisposition = Literal["keep", "delete", "stack"]
 DuplicateDraftDecisionSource = Literal["manual", "automatic"]
@@ -291,15 +295,9 @@ class ExactDuplicateGroup(BaseModel):
 
     @model_validator(mode="after")
     def manual_resolution_eligibility(self) -> ExactDuplicateGroup:
-        """Allow explicit review of available Immich groups without relaxing automation."""
+        """Allow explicit review for any current multi-member duplicate group."""
 
-        self.eligible = (
-            self.discovery_source == "immich_duplicate"
-            and self.provider_group_id is not None
-            and self.status != "ineligible"
-            and len(self.members) >= 2
-            and all(not member.is_offline for member in self.members)
-        )
+        self.eligible = self.status != "ineligible" and len(self.members) >= 2
         if not self.discovery_sources:
             self.discovery_sources = [self.discovery_source]
         return self

@@ -7,7 +7,6 @@ from uuid import uuid4
 
 import pytest
 
-from companion.action_service import ActionPlanConflictError
 from companion.duplicate_schema import DuplicateAnalysisOptions, DuplicateResolutionPlanRequest
 from companion.duplicate_service import CrossSourceDuplicateService
 
@@ -159,23 +158,24 @@ async def test_reviewed_immich_delete_allows_offline_member() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reviewed_delete_still_rejects_similarity_only_group() -> None:
+async def test_reviewed_delete_allows_similarity_only_group_without_provider_id() -> None:
     group_id = "similarity:review-target"
-    service, _ = _service(
+    service, asset_ids = _service(
         [group_id],
         dispositions=["keep", "delete"],
-        eligible=False,
+        eligible=True,
         status="unverified",
         discovery_source="companion_similarity",
     )
 
-    with pytest.raises(
-        ActionPlanConflictError,
-        match="available Immich duplicate group",
-    ):
-        await service.plan(
-            DuplicateResolutionPlanRequest(
-                options=DuplicateAnalysisOptions(analyze_automatically=False),
-                group_ids=[group_id],
-            )
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            options=DuplicateAnalysisOptions(analyze_automatically=False),
+            group_ids=[group_id],
         )
+    )
+
+    assert plan.group_count == 1
+    assert plan.groups[0].provider_group_id is None
+    assert plan.groups[0].keep_asset_ids == [asset_ids[0]]
+    assert plan.groups[0].trash_asset_ids == [asset_ids[1]]

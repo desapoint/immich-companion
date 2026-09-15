@@ -24,6 +24,7 @@ from sqlalchemy import (
     delete,
     exists,
     func,
+    or_,
     select,
 )
 from sqlalchemy.dialects.postgresql import insert
@@ -32,12 +33,20 @@ from sqlalchemy.orm import Mapped, mapped_column
 from companion.database import DatabaseManager
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
 from companion.duplicate_identity import member_set_key, stable_group_key
+from companion.duplicate_schema import COMPLETED_DUPLICATE_REVIEW_STATUSES
 from companion.group_decision import DiscoverySource
 from companion.models import AssetRecord, Base, DuplicateGroupReviewRecord
 from companion.similarity_grouping import SimilarityAdmissionEvidence, ValidatedSimilarityGroup
 
 SNAPSHOT_STATE_ID = 1
 WRITE_BATCH_SIZE = 1_000
+
+
+def _unresolved_review_filter():
+    return or_(
+        DuplicateGroupReviewRecord.review_status.is_(None),
+        ~DuplicateGroupReviewRecord.review_status.in_(COMPLETED_DUPLICATE_REVIEW_STATUSES),
+    )
 
 
 class CompositeDuplicateSnapshotAssetMissingError(RuntimeError):
@@ -501,14 +510,18 @@ class CompositeDuplicateRepository:
         """Resolve only matching group IDs so bulk V2 actions avoid group hydration."""
 
         limit = max(1, min(limit, 50_001))
-        statement = select(CompositeDuplicateGroupRecord.group_id)
+        review_join = and_(
+            DuplicateGroupReviewRecord.stable_group_key
+            == CompositeDuplicateGroupRecord.stable_group_key,
+            DuplicateGroupReviewRecord.member_fingerprint
+            == CompositeDuplicateGroupRecord.member_fingerprint,
+        )
+        statement = (
+            select(CompositeDuplicateGroupRecord.group_id)
+            .outerjoin(DuplicateGroupReviewRecord, review_join)
+            .where(_unresolved_review_filter())
+        )
         if state != "all":
-            review_join = and_(
-                DuplicateGroupReviewRecord.stable_group_key
-                == CompositeDuplicateGroupRecord.stable_group_key,
-                DuplicateGroupReviewRecord.member_fingerprint
-                == CompositeDuplicateGroupRecord.member_fingerprint,
-            )
             decision_count = func.coalesce(
                 func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
             )
@@ -532,7 +545,6 @@ class CompositeDuplicateRepository:
                 ),
                 else_="Needs review",
             )
-            statement = statement.outerjoin(DuplicateGroupReviewRecord, review_join)
             if state == "auto_ready":
                 statement = statement.where(
                     CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",
@@ -601,16 +613,25 @@ class CompositeDuplicateRepository:
                 "discovered": CompositeDuplicateGroupRecord.first_discovered_at,
             }.get(sort, CompositeDuplicateGroupRecord.reclaimable_bytes)
             order = sort_column.desc() if direction == "desc" else sort_column.asc()
-            count_statement = select(func.count()).select_from(CompositeDuplicateGroupRecord)
-            group_statement = select(CompositeDuplicateGroupRecord)
+            review_join = and_(
+                DuplicateGroupReviewRecord.stable_group_key
+                == CompositeDuplicateGroupRecord.stable_group_key,
+                DuplicateGroupReviewRecord.member_fingerprint
+                == CompositeDuplicateGroupRecord.member_fingerprint,
+            )
+            count_statement = (
+                select(func.count())
+                .select_from(CompositeDuplicateGroupRecord)
+                .outerjoin(DuplicateGroupReviewRecord, review_join)
+                .where(_unresolved_review_filter())
+            )
+            group_statement = (
+                select(CompositeDuplicateGroupRecord)
+                .outerjoin(DuplicateGroupReviewRecord, review_join)
+                .where(_unresolved_review_filter())
+            )
 
             if state != "all":
-                review_join = and_(
-                    DuplicateGroupReviewRecord.stable_group_key
-                    == CompositeDuplicateGroupRecord.stable_group_key,
-                    DuplicateGroupReviewRecord.member_fingerprint
-                    == CompositeDuplicateGroupRecord.member_fingerprint,
-                )
                 decision_count = func.coalesce(
                     func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
                 )
@@ -634,8 +655,6 @@ class CompositeDuplicateRepository:
                     ),
                     else_="Needs review",
                 )
-                count_statement = count_statement.outerjoin(DuplicateGroupReviewRecord, review_join)
-                group_statement = group_statement.outerjoin(DuplicateGroupReviewRecord, review_join)
                 if state == "auto_ready":
                     state_filter = and_(
                         CompositeDuplicateGroupRecord.v2_policy_state == "auto_ready",

@@ -27,11 +27,7 @@ logger = logging.getLogger("uvicorn.error")
 def v2_policy_state(group: ExactDuplicateGroup) -> str:
     """Return policy state independent of manual draft progress."""
 
-    if (
-        not group.eligible
-        or group.status == "ineligible"
-        or any(member.is_offline for member in group.members)
-    ):
+    if not group.eligible or group.status == "ineligible":
         return "blocked"
     if group.auto_selected:
         return "auto_ready"

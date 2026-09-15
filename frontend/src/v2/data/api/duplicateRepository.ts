@@ -274,7 +274,7 @@ function savedDecisions(draft: ApiDuplicateDraft | undefined): Record<string, Du
 }
 
 function groupState(group: ApiDuplicateGroup, draft: ApiDuplicateDraft | undefined): DuplicateState {
-  if (!group.eligible || group.status === 'ineligible' || group.members.some((member) => member.is_offline) || draft?.stale) return 'Blocked';
+  if (!group.eligible || group.status === 'ineligible' || draft?.stale) return 'Blocked';
   const decisionCount = draft?.decisions.length ?? 0;
   if (decisionCount > 0 && decisionCount < group.members.length) return 'Needs decisions';
   if (decisionCount === group.members.length || group.auto_resolvable || group.auto_selected) return 'Actionable';
