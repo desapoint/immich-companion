@@ -6,6 +6,7 @@ import logging
 
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
 from companion.discovery.persisted_composite import PersistedCompositeDuplicateProvider
+from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import DuplicateAnalysisOptions, ExactDuplicateGroup
 from companion.duplicate_service import CrossSourceDuplicateService
 from companion.integrity_repository import IntegrityRepository
@@ -42,10 +43,12 @@ class V2DuplicateReviewStateService:
         discovery: PersistedCompositeDuplicateProvider,
         reports: IntegrityRepository,
         snapshots: CompositeDuplicateRepository,
+        reviews: DuplicateReviewRepository | None = None,
     ) -> None:
         self._discovery = discovery
         self._reports = reports
         self._snapshots = snapshots
+        self._reviews = reviews
 
     async def refresh_after_change(self) -> object | None:
         try:
@@ -55,19 +58,35 @@ class V2DuplicateReviewStateService:
             return None
 
     async def refresh(self) -> dict[str, int]:
-        page = 1
+        initial = await self._discovery.discover_page(
+            page=1,
+            page_size=V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE,
+            source="both",
+            sort="discovered",
+            direction="asc",
+            state="all",
+        )
         updated = 0
-        while True:
-            discovered = await self._discovery.discover_page(
-                page=page,
-                page_size=V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE,
-                source="both",
-                sort="discovered",
-                direction="asc",
-                state="all",
+        inherited = 0
+        # Work backwards so inserting inherited completed rows cannot shift an
+        # unvisited SQL offset page forward and cause groups to be skipped.
+        for page in range(initial.pages, 0, -1):
+            discovered = (
+                initial
+                if initial.pages == 1 and page == 1
+                else await self._discovery.discover_page(
+                    page=page,
+                    page_size=V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE,
+                    source="both",
+                    sort="discovered",
+                    direction="asc",
+                    state="all",
+                )
             )
             if not discovered.groups:
-                break
+                continue
+            if self._reviews is not None:
+                inherited += await self._reviews.inherit_completed_groups(discovered.groups)
             report_ids = list(
                 dict.fromkeys(
                     asset.id
@@ -91,8 +110,9 @@ class V2DuplicateReviewStateService:
                 for group in result.groups
             ]
             updated += await self._snapshots.update_v2_policy_states(states)
-            if page >= discovered.pages:
-                break
-            page += 1
-        logger.info("Refreshed V2 duplicate policy states: groups=%s", updated)
-        return {"groups": updated}
+        logger.info(
+            "Refreshed V2 duplicate policy states: groups=%s inherited_resolutions=%s",
+            updated,
+            inherited,
+        )
+        return {"groups": updated, "inherited_resolutions": inherited}
