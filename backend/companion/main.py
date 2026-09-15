@@ -353,10 +353,12 @@ def create_app(
             duplicate_discovery,
             integrity_repository,
             composite_duplicate_repository,
+            duplicate_review_repository,
         )
         if duplicate_discovery is not None
         and integrity_repository is not None
         and composite_duplicate_repository is not None
+        and duplicate_review_repository is not None
         else None
     )
     source_duplicate_discovery = (
@@ -1325,7 +1327,9 @@ def create_app(
     @app.post("/api/albums/manage", response_model=AlbumManagementItem)
     async def create_managed_album(request: AlbumCreateRequest):
         album = await require_immich().create_album(request.name, request.description)
-        return album_management_item(album)
+        return album_management_item(
+            album
+        )
 
     @app.post("/api/albums/manage/batch-delete")
     async def batch_delete_albums(request: RelationBatchDeleteRequest):
@@ -1951,6 +1955,52 @@ def create_app(
         except ImmichApiError as error:
             raise map_immich_error(error) from error
 
+    @app.get("/api/assets/duplicates/history")
+    async def duplicate_resolution_history(
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=50, ge=1, le=200),
+        days: int | None = Query(default=None, ge=1, le=3650),
+    ) -> dict[str, object]:
+        if duplicate_review_repository is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        since = datetime.now(UTC) - timedelta(days=days) if days is not None else None
+        records, total = await duplicate_review_repository.history(
+            since=since,
+            page=page,
+            page_size=page_size,
+        )
+        items: list[dict[str, object]] = []
+        for record in records:
+            member_ids = list(
+                dict.fromkeys(
+                    str(decision["asset_id"])
+                    for decision in list(record.member_decisions or [])
+                    if isinstance(decision, dict) and decision.get("asset_id")
+                )
+            )
+            items.append(
+                {
+                    "id": str(record.id),
+                    "occurred_at": record.last_reviewed_at or record.updated_at,
+                    "discovery_source": record.discovery_source,
+                    "provider_group_id": record.provider_group_id,
+                    "review_status": record.review_status,
+                    "manual_action": record.manual_action,
+                    "member_count": len(member_ids),
+                    "member_asset_ids": member_ids,
+                }
+            )
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "pages": (total + page_size - 1) // page_size,
+        }
+
     @app.post(
         "/api/assets/duplicates/cross-source/search",
         response_model=CrossSourceDuplicateResult,
@@ -2212,8 +2262,6 @@ def create_app(
             raise map_immich_error(error) from error
         except (RuntimeError, ValueError) as error:
             raise map_action_error(error) from error
-
-
 
     @app.post(
         "/api/assets/duplicates/workspace/preset",
