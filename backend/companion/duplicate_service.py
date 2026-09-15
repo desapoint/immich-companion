@@ -148,6 +148,17 @@ def _action_for_dispositions(dispositions: list[str]) -> str:
     return "mixed"
 
 
+def _reviewed_immich_delete_supported(group: ExactDuplicateGroup) -> bool:
+    """Return whether a reviewed delete can be delegated to an Immich duplicate group."""
+
+    return (
+        group.discovery_source == DiscoverySource.IMMICH_DUPLICATE.value
+        and group.provider_group_id is not None
+        and group.status != "ineligible"
+        and len(group.members) >= 2
+    )
+
+
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     """Normalize persisted plans to the current member-partition contract."""
 
@@ -1407,11 +1418,9 @@ class CrossSourceDuplicateService:
             if action == "none":
                 raise ActionPlanConflictError("Every selected group needs an action")
             has_deletions = "delete" in dispositions
-            if has_deletions and (
-                not group.eligible or any(member.is_offline for member in group.members)
-            ):
+            if has_deletions and not _reviewed_immich_delete_supported(group):
                 raise ActionPlanConflictError(
-                    "Deleting duplicate members requires an available Immich group with every image online"
+                    "Deleting duplicate members requires an available Immich duplicate group"
                 )
             stack_ids = [
                 member.id
@@ -1640,10 +1649,7 @@ class CrossSourceDuplicateService:
                 or live_group.member_fingerprint != planned["member_fingerprint"]
                 or (
                     has_deletions
-                    and (
-                        not live_group.eligible
-                        or any(member.is_offline for member in live_group.members)
-                    )
+                    and not _reviewed_immich_delete_supported(live_group)
                 )
                 or (
                     planned.get("follow_up") is not None
