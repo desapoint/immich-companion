@@ -2473,7 +2473,7 @@ async def test_zero_survivor_plan_trashes_all_reviewed_members_directly() -> Non
     assert immich.resolutions == []
     assert immich.trash_calls == [[UPLOAD_1, EXTERNAL_1]]
     assert assets.removed == [UPLOAD_1, EXTERNAL_1]
-    assert reviews.saved["review_status"] == "manually_configured"
+    assert reviews.saved["review_status"] == "reviewed_mixed"
 
 
 @pytest.mark.asyncio
@@ -2809,3 +2809,52 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
     )
     assert discovery.full_calls == 0
     assert discovery.group_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_completed_review_is_suppressed_without_native_group_removal() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    baseline = assemble(candidate_group, [report(EXTERNAL_1, content)])
+    reviewed = baseline.groups[0]
+    reviews = FakeReviews(
+        SimpleNamespace(
+            stable_group_key=reviewed.stable_group_key,
+            member_fingerprint=reviewed.member_fingerprint,
+            manual_action="keep_all",
+            manual_primary_asset_id=None,
+            member_decisions=[
+                {
+                    "asset_id": str(member.id),
+                    "disposition": "keep",
+                    "source": "manual",
+                    "status": "completed",
+                }
+                for member in reviewed.members
+            ],
+            stack_primary_asset_id=None,
+            stack_resolution="move_selected",
+            metadata_keeper_asset_id=None,
+            draft_status="completed",
+            review_status="reviewed_keep_all",
+        )
+    )
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        FakeTasks(),
+        FakeRuntimeSettings(),
+        reviews,
+    )
+
+    result = await service.result()
+
+    assert result.groups == []
+    assert result.group_count == 0
+    assert result.exact_group_count == 0

@@ -31,6 +31,7 @@ from companion.duplicate_keeper_rules import choose_keeper
 from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
+    COMPLETED_DUPLICATE_REVIEW_STATUSES,
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
     DuplicateAdmissionEvidence,
@@ -925,6 +926,8 @@ class CrossSourceDuplicateService:
             if state.member_fingerprint != group.member_fingerprint:
                 groups.append(group.model_copy(update={"review_status": "drifted"}))
                 continue
+            if state.review_status in COMPLETED_DUPLICATE_REVIEW_STATUSES:
+                continue
             manual_action = state.manual_action
             manual_primary = state.manual_primary_asset_id
             effective_action = manual_action or group.recommended_action
@@ -955,7 +958,20 @@ class CrossSourceDuplicateService:
                     }
                 )
             )
-        return result.model_copy(update={"groups": groups})
+        counts = {
+            name: sum(group.status == name for group in groups)
+            for name in ("exact", "unverified", "mismatch", "ineligible")
+        }
+        return result.model_copy(
+            update={
+                "groups": groups,
+                "group_count": len(groups),
+                "exact_group_count": counts["exact"],
+                "unverified_group_count": counts["unverified"],
+                "mismatch_group_count": counts["mismatch"],
+                "ineligible_group_count": counts["ineligible"],
+            }
+        )
 
     @staticmethod
     def _verification_candidates(
@@ -2693,7 +2709,7 @@ class CrossSourceDuplicateService:
                 "resolve": "reviewed_resolve",
                 "keep_all": "reviewed_keep_all",
                 "stack_all": "reviewed_stack_all",
-                "mixed": "manually_configured",
+                "mixed": "reviewed_mixed",
             }
             for planned in raw_groups:
                 if planned["group_id"] not in successful_ids:

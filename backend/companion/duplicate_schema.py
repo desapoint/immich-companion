@@ -43,9 +43,13 @@ DuplicateReviewStatus = Literal[
     "reviewed_keep_all",
     "reviewed_resolve",
     "reviewed_stack_all",
+    "reviewed_mixed",
     "review_later",
     "drifted",
 ]
+COMPLETED_DUPLICATE_REVIEW_STATUSES = frozenset(
+    {"reviewed_keep_all", "reviewed_resolve", "reviewed_stack_all", "reviewed_mixed"}
+)
 DuplicateMemberDisposition = Literal["keep", "delete", "stack", "no_change"]
 DuplicateDraftDisposition = Literal["keep", "delete", "stack"]
 DuplicateDraftDecisionSource = Literal["manual", "automatic"]

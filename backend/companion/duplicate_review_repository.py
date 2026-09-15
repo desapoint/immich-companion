@@ -9,6 +9,7 @@ from sqlalchemy import func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
+from companion.duplicate_schema import COMPLETED_DUPLICATE_REVIEW_STATUSES
 from companion.models import DuplicateGroupReviewRecord, DuplicateReviewWorkspaceRecord
 
 WORKSPACE_KEY = "default"
@@ -43,13 +44,16 @@ class DuplicateReviewRepository:
         statement = (
             select(DuplicateGroupReviewRecord)
             .where(
+                ~DuplicateGroupReviewRecord.review_status.in_(
+                    COMPLETED_DUPLICATE_REVIEW_STATUSES
+                ),
                 or_(
                     func.coalesce(
                         func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
                     )
                     > 0,
                     DuplicateGroupReviewRecord.stack_primary_asset_id.is_not(None),
-                )
+                ),
             )
             .order_by(
                 DuplicateGroupReviewRecord.discovery_source,
@@ -228,6 +232,8 @@ class DuplicateReviewRepository:
                 {**decision, "status": "completed"}
                 for decision in list(record.member_decisions or [])
             ]
+            if record.manual_action == "mixed" and record.review_status == "manually_configured":
+                record.review_status = "reviewed_mixed"
             record.draft_status = "completed"
             record.updated_at = datetime.now(UTC)
 
