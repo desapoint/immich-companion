@@ -43,7 +43,7 @@
   }: {
     groupIds: string[];
     initialScope?: 'current_page'|'all_matching';
-    reviewFilter: DuplicateState|'All groups'|'Auto-ready';
+    reviewFilter: DuplicateState|'All groups'|'Auto-ready'|'Selected';
     sourceFilter: DuplicateSourceFilter;
     onclose: () => void;
     onapplied?: (result: DuplicateKeeperSelectionResult) => void;
@@ -121,7 +121,7 @@
     return 'Value';
   }
   function requestPayload(){
-    return{scope,groupIds,reviewFilter:scope==='all_matching'?'All groups':reviewFilter,sourceFilter,rules:validRules,overwriteManual};
+    return{scope,groupIds,reviewFilter,sourceFilter,rules:validRules,overwriteManual};
   }
   async function runPreview(){
     if(!canRun)return;
@@ -146,7 +146,7 @@
 <V2Modal
   id="duplicate-keeper-rules"
   title="Auto-select keeper"
-  description="Choose one keeper per valid duplicate group. The other members are saved as Delete drafts; nothing is trashed until you review and execute those drafts."
+  description="Choose one keeper per valid duplicate group. The other members are saved as Delete drafts; nothing is trashed until you review and execute those drafts. Keeper rules choose a single winner; group-level Keep all policies are separate decisions."
   size="xl"
   onclose={onclose}
 >
@@ -158,15 +158,16 @@
           <div>
             <span class="v2-field-label">Scope</span>
             <V2Segmented
-              items={[{value:'current_page',label:`This page (${groupIds.length})`},{value:'all_matching',label:'All valid groups'}]}
+              items={[{value:'current_page',label:`Current page · ${groupIds.length} loaded`},{value:'all_matching',label:'All groups matching filters'}]}
               active={scope}
               ariaLabel="Keeper rule scope"
               onselect={(value)=>{scope=value as typeof scope;markDirty()}}
             />
           </div>
         </div>
+        <span class="v2-small v2-muted">Current page only evaluates the groups loaded in the review list. All groups matching filters evaluates the full result set for the current discovery source and group-state filter, including groups on other pages.</span>
         <V2Inline gap="md" wrap>
-          <V2Badge>Filter: {scope==='all_matching'?'All valid groups':reviewFilter}</V2Badge>
+          <V2Badge>State: {reviewFilter}</V2Badge>
           <V2Badge>Source: {sourceFilter}</V2Badge>
           <V2Checkbox label="Replace existing manual choices" checked={overwriteManual} onchange={(value)=>{overwriteManual=value;markDirty()}}/>
         </V2Inline>
@@ -249,7 +250,7 @@
                 <div class="keeper-rule-no-value">No value needed</div>
               {/if}
             </div>
-            <V2Button variant="danger" iconOnly ariaLabel="Remove condition" onclick={()=>removeRule(rule.id)}><Trash2 size={15}/></V2Button>
+            <V2Button variant="danger" iconOnly ariaLabel="Remove condition" onclick={()=>removeRule(rule.id)}><Trash2 size={15}/> </V2Button>
           </div>
         </V2Card>
       {/each}
