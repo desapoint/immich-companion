@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, status
 
 from companion.similarity_detail_schema import SimilarityLocalDiagnosticsResponse
 from companion.similarity_detail_service import SimilarityDetailRepository
@@ -29,8 +29,8 @@ def register_similarity_detail_routes(
         response_model=SimilarityLocalDiagnosticsResponse,
     )
     async def similarity_local_change_diagnostics(
-        selected_asset_id: UUID = Query(...),
-        reference_asset_id: UUID = Query(...),
+        selected_asset_id: UUID,
+        reference_asset_id: UUID,
     ) -> SimilarityLocalDiagnosticsResponse:
         stored = await require_repository().diagnostics(
             selected_asset_id,
