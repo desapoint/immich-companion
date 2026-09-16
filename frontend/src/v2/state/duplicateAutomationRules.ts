@@ -549,7 +549,6 @@ export function evaluateDuplicateAutomation(
   let manualReview = false;
   let ambiguous = false;
   let matchedRuleCount = 0;
-  let metadataKeeperAssetId: string | null = null;
 
   const currentlyDecided = (id: string) => manual.has(id) || automatic.has(id) || lockedUndecided.has(id);
 
@@ -574,7 +573,6 @@ export function evaluateDuplicateAutomation(
         ambiguous = true;
         manualReview = true;
       } else {
-        metadataKeeperAssetId = keeperId;
         for (const id of targetIds) automatic.set(id, id === keeperId ? 'keep' : 'delete');
       }
     } else if (targetIds.length) {
@@ -614,6 +612,10 @@ export function evaluateDuplicateAutomation(
       status: 'pending' as const,
     })),
   ];
+  const decisionByAssetId = new Map(decisions.map((decision) => [decision.assetId, decision.disposition]));
+  const hasDeletions = decisions.some((decision) => decision.disposition === 'delete');
+  const survivorIds = memberIds.filter((id) => decisionByAssetId.get(id) !== 'delete');
+  const metadataKeeperAssetId = hasDeletions && survivorIds.length === 1 ? survivorIds[0] : null;
   const touched = touchedByRule || manualReview;
   const complete = touched && decisions.length === memberIds.length;
   const partial = touched && decisions.length > 0 && decisions.length < memberIds.length;
