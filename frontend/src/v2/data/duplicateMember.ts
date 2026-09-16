@@ -29,6 +29,15 @@ export function formatSimilarityPercent(value: number | null): string {
   return value === null ? 'Not calculated' : `${similarityNumberFormat.format(value)}%`;
 }
 
+export function duplicateListMemberMeta(
+  asset: Pick<AssetRecord, 'library_id' | 'file_size_bytes'>,
+  similarityPercent: number | null,
+): string {
+  const parts = [duplicateAssetSourceLabel(asset.library_id), formatBytes(asset.file_size_bytes)];
+  if (similarityPercent !== null) parts.push(`${formatSimilarityPercent(similarityPercent)} similarity`);
+  return parts.join(' · ');
+}
+
 export function assetFolder(path: string | null | undefined): string | null {
   if (!path) return null;
   const normalized = path.replaceAll('\\', '/').replace(/\/+$/, '');

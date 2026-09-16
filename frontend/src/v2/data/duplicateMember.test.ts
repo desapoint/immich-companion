@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { AssetRecord } from './contracts';
-import { assetFolder, comparisonMemberData, formatSimilarityPercent } from './duplicateMember';
+import { assetFolder, comparisonMemberData, duplicateListMemberMeta, formatSimilarityPercent } from './duplicateMember';
 
 function asset(patch: Partial<AssetRecord> = {}): AssetRecord {
   return {
@@ -28,6 +28,11 @@ describe('duplicate comparison member data', () => {
     expect(formatSimilarityPercent(100)).toBe('100.00%');
     expect(comparisonMemberData(asset(), 98.256).similarity).toBe('98.26%');
     expect(formatSimilarityPercent(null)).toBe('Not calculated');
+  });
+
+  it('formats duplicate list member metadata with viewer file sizes', () => {
+    expect(duplicateListMemberMeta(asset(), 99.98)).toBe('Immich upload · 1.00 MB · 99.98% similarity');
+    expect(duplicateListMemberMeta(asset(), null)).toBe('Immich upload · 1.00 MB');
   });
 
   it('uses KB for files smaller than one MB', () => {
