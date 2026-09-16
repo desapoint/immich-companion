@@ -53,16 +53,28 @@ export function serializeStackResolution(value: StackResolutionSelection | null 
   return typeof normalized === 'string' ? normalized : JSON.stringify(normalized);
 }
 
+function normalizedSelection(
+  resolution: StackResolutionSelection | null | undefined,
+): StackResolutionSelection | null {
+  if (!resolution) return null;
+  if (typeof resolution !== 'string' || STACK_RESOLUTIONS.has(resolution as StackResolution)) return resolution;
+  // The Assets page historically stores the reviewed resolution in scalar state.
+  // Accept a canonical serialized map so that page can use the shared multi-conflict modal
+  // without weakening the public StackResolution literal type.
+  return parseStackResolution(resolution);
+}
+
 export function conflictResolutionMap(
   plan: StackActionPlan,
   resolution: StackResolutionSelection | null | undefined,
 ): StackResolutionMap {
-  if (!resolution) return {};
-  if (typeof resolution === 'string') {
-    return Object.fromEntries(plan.conflicts.map((conflict) => [conflict.stackId, resolution]));
+  const normalized = normalizedSelection(resolution);
+  if (!normalized) return {};
+  if (typeof normalized === 'string') {
+    return Object.fromEntries(plan.conflicts.map((conflict) => [conflict.stackId, normalized]));
   }
   const ids = new Set(plan.conflicts.map((conflict) => conflict.stackId));
-  return Object.fromEntries(Object.entries(resolution).filter(([stackId]) => ids.has(stackId)));
+  return Object.fromEntries(Object.entries(normalized).filter(([stackId]) => ids.has(stackId)));
 }
 
 export function withConflictResolution(
@@ -94,7 +106,7 @@ export function stackReviewComplete(target: StackConflictReviewTarget): boolean 
   if (projectedStackCount(target.plan, target.resolution) < 2) return false;
   return !target.plan.conflicts.some((conflict) => (
     choices[conflict.stackId] === 'keep_existing'
-    && conflict.selectedAssetIds.includes(target.plan.primaryAssetId)
+    && (conflict.selectedAssetIds ?? []).includes(target.plan.primaryAssetId)
   ));
 }
 
