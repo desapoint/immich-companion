@@ -13,6 +13,7 @@
     confirmLabel,
     cancelLabel = 'Cancel',
     icon = 'check',
+    size = 'sm',
     children,
     detail,
     pending = false,
@@ -26,6 +27,7 @@
     confirmLabel: string;
     cancelLabel?: string;
     icon?: IconName;
+    size?: 'sm' | 'md' | 'lg' | 'xl';
     children?: Snippet;
     detail?: Snippet;
     pending?: boolean;
@@ -44,7 +46,7 @@
 <V2Modal
   id={dialogId}
   {title}
-  size="sm"
+  {size}
   dismissOnBackdrop={!pending}
   onclose={requestClose}
 >
