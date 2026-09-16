@@ -178,7 +178,7 @@
   .v2-history-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px}
   .v2-history-asset{min-width:0;overflow:hidden;border:1px solid var(--v2-border);border-radius:12px;background:var(--v2-surface-2)}
   .v2-history-asset-preview{position:relative;aspect-ratio:4/3;overflow:hidden;background:#0d141d}
-  .v2-history-asset-state{position:absolute;z-index:3;top:8px;right:8px}
+  .v2-history-asset-state{position:absolute;z-index:3;top:8px;right:8px;display:inline-flex;border:1px solid rgba(255,255,255,.2);border-radius:999px;background:rgba(5,10,16,.76);box-shadow:0 2px 8px rgba(0,0,0,.38);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px)}
   .v2-history-asset-missing{position:absolute;inset:0;display:grid;place-items:center;padding:12px;color:var(--v2-muted);text-align:center}
   .v2-history-asset-copy{display:grid;gap:3px;padding:10px;min-width:0}
   .v2-history-asset-copy b,.v2-history-asset-copy small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
