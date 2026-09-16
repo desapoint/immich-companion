@@ -1,4 +1,4 @@
-"""Regression coverage for reviewed Assets stack topology drift."""
+"""Regression coverage for reviewed stack conflict safety."""
 
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -16,12 +16,14 @@ from companion.action_schema import (
 from companion.action_service import ActionPlanConflictError, AssetActionService
 from companion.config import Settings
 from companion.models import ActionPlanRecord
+from companion.stack_service import StackSelectionError, StackService
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
 ASSET_THREE = UUID("33333333-3333-4333-8333-333333333333")
 ASSET_FOUR = UUID("44444444-4444-4444-8444-444444444444")
 STACK_ID = UUID("55555555-5555-4555-8555-555555555555")
+STACK_TWO_ID = UUID("66666666-6666-4666-8666-666666666666")
 
 
 def selection_resolution() -> AssetSelectionResolution:
@@ -48,6 +50,14 @@ def stack(*member_ids: UUID):
     return SimpleNamespace(
         id=STACK_ID,
         primary_asset_id=ASSET_ONE,
+        assets=[SimpleNamespace(id=asset_id) for asset_id in member_ids],
+    )
+
+
+def second_stack(*member_ids: UUID):
+    return SimpleNamespace(
+        id=STACK_TWO_ID,
+        primary_asset_id=ASSET_TWO,
         assets=[SimpleNamespace(id=asset_id) for asset_id in member_ids],
     )
 
@@ -173,4 +183,27 @@ async def test_assets_stack_execution_rejects_source_topology_changed_after_revi
     assert actions.finished is not None
     assert actions.finished[0] == "drifted"
     assert actions.finished[1]["error"] == "stack_topology_drift"
+    assert immich.mutations == []
+
+
+@pytest.mark.asyncio
+async def test_incomplete_per_stack_resolution_fails_before_any_source_stack_mutation() -> None:
+    immich = FakeImmich()
+    immich.stacks = [
+        stack(ASSET_ONE, ASSET_THREE),
+        second_stack(ASSET_TWO, ASSET_FOUR),
+    ]
+    workflow = StackService(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        FakeSync(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(StackSelectionError, match="needs a reviewed resolution"):
+        await workflow.prepare(
+            [ASSET_ONE, ASSET_TWO],
+            {str(STACK_ID): "include_existing"},
+            ASSET_TWO,
+        )
+
     assert immich.mutations == []
