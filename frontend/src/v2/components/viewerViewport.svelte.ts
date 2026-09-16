@@ -10,6 +10,13 @@ import {
 } from './viewerViewport';
 
 type ViewportMetrics = { width: number; height: number };
+type ViewportTransfer = ViewportMetrics & {
+  naturalWidth: number;
+  naturalHeight: number;
+  zoom: number;
+  panX: number;
+  panY: number;
+};
 
 export class ViewerViewportController {
   zoom = $state(1);
@@ -25,6 +32,7 @@ export class ViewerViewportController {
   private viewportWidth = 0;
   private viewportHeight = 0;
   private pendingFocus: NormalizedFocus | null = null;
+  private pendingViewportTransfer: ViewportTransfer | null = null;
   private initializedNaturalSize = false;
 
   constructor(minZoom = 0.1, maxZoom = 8) {
@@ -72,10 +80,39 @@ export class ViewerViewportController {
     return normalizedFocusFromPan(this.panX, this.panY, this.storedSize());
   }
 
+  private captureViewportTransfer(): ViewportTransfer {
+    return {
+      width: this.viewportWidth,
+      height: this.viewportHeight,
+      naturalWidth: this.naturalWidth,
+      naturalHeight: this.naturalHeight,
+      zoom: this.zoom,
+      panX: this.panX,
+      panY: this.panY,
+    };
+  }
+
+  private canRestoreExactTransfer(transfer: ViewportTransfer, metrics: ViewportMetrics): boolean {
+    return transfer.width === metrics.width
+      && transfer.height === metrics.height
+      && transfer.naturalWidth === this.naturalWidth
+      && transfer.naturalHeight === this.naturalHeight
+      && transfer.zoom === this.zoom;
+  }
+
   private restoreFocus(focus: NormalizedFocus, metrics: ViewportMetrics): void {
     const next = panForNormalizedFocus(focus, this.sizeFor(metrics));
     this.panX = next.x;
     this.panY = next.y;
+  }
+
+  private restoreViewportTransfer(transfer: ViewportTransfer): void {
+    this.panX = transfer.panX;
+    this.panY = transfer.panY;
+  }
+
+  private clearPendingViewportTransfer(): void {
+    this.pendingViewportTransfer = null;
   }
 
   private clampWith(metrics: ViewportMetrics): void {
@@ -92,6 +129,7 @@ export class ViewerViewportController {
 
     if (this.viewport && this.viewportWidth > 0 && this.viewportHeight > 0) {
       this.pendingFocus = this.captureFocus();
+      this.pendingViewportTransfer = this.captureViewportTransfer();
     }
 
     this.viewport = viewport;
@@ -101,8 +139,16 @@ export class ViewerViewportController {
     if (!metrics) return;
 
     if (this.pendingFocus) {
-      this.restoreFocus(this.pendingFocus, metrics);
+      if (
+        this.pendingViewportTransfer
+        && this.canRestoreExactTransfer(this.pendingViewportTransfer, metrics)
+      ) {
+        this.restoreViewportTransfer(this.pendingViewportTransfer);
+      } else {
+        this.restoreFocus(this.pendingFocus, metrics);
+      }
       this.pendingFocus = null;
+      this.clearPendingViewportTransfer();
     } else {
       this.clampWith(metrics);
     }
@@ -122,6 +168,7 @@ export class ViewerViewportController {
       this.panX = 0;
       this.panY = 0;
       this.pendingFocus = null;
+      this.clearPendingViewportTransfer();
       const metrics = this.measureViewport();
       if (metrics) this.rememberViewport(metrics);
       return;
@@ -136,6 +183,7 @@ export class ViewerViewportController {
       this.restoreFocus(focus, metrics);
       this.rememberViewport(metrics);
       this.pendingFocus = null;
+      this.clearPendingViewportTransfer();
     } else {
       this.pendingFocus = focus;
     }
@@ -155,6 +203,7 @@ export class ViewerViewportController {
     this.restoreFocus(focus, metrics);
     this.rememberViewport(metrics);
     this.pendingFocus = null;
+    this.clearPendingViewportTransfer();
   }
 
   fit(): void {
@@ -162,6 +211,7 @@ export class ViewerViewportController {
     this.panX = 0;
     this.panY = 0;
     this.pendingFocus = null;
+    this.clearPendingViewportTransfer();
     const metrics = this.measureViewport();
     if (metrics) this.rememberViewport(metrics);
   }
@@ -183,6 +233,7 @@ export class ViewerViewportController {
     this.panX = 0;
     this.panY = 0;
     this.pendingFocus = null;
+    this.clearPendingViewportTransfer();
     this.rememberViewport(metrics);
   }
 
@@ -204,6 +255,7 @@ export class ViewerViewportController {
       this.panY = nextPan.y;
     }
     this.zoom = nextZoom;
+    this.clearPendingViewportTransfer();
     this.clamp();
   }
 
@@ -211,6 +263,7 @@ export class ViewerViewportController {
     this.remapViewport();
     this.panX += deltaX;
     this.panY += deltaY;
+    this.clearPendingViewportTransfer();
     this.clamp();
   }
 
