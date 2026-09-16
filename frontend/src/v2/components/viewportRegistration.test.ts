@@ -15,9 +15,9 @@ describe('ViewportRegistrationController', () => {
     const applyViewport = vi.fn();
     const remapViewport = vi.fn();
     const observer = observerDouble();
-    let resizeCallback: ResizeObserverCallback | null = null;
+    const resizeCallbacks: ResizeObserverCallback[] = [];
     const createResizeObserver: ResizeObserverFactory = vi.fn((callback) => {
-      resizeCallback = callback;
+      resizeCallbacks.push(callback);
       return observer;
     });
     const controller = new ViewportRegistrationController(
@@ -34,8 +34,9 @@ describe('ViewportRegistrationController', () => {
     expect(createResizeObserver).toHaveBeenCalledTimes(1);
     expect(observer.observe).toHaveBeenCalledTimes(1);
     expect(observer.observe).toHaveBeenLastCalledWith(viewport);
+    expect(resizeCallbacks).toHaveLength(1);
 
-    resizeCallback?.([], observer);
+    resizeCallbacks[0]([], observer);
     expect(remapViewport).toHaveBeenCalledTimes(1);
   });
 
