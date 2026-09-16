@@ -15,8 +15,9 @@
 
   type HistoryAsset = {
     id: string;
-    state: 'active' | 'trash' | 'missing';
+    state: 'active' | 'trash' | 'missing' | 'error';
     asset: AssetRecord | TrashAssetRecord | null;
+    error: string | null;
   };
 
   let {
@@ -49,13 +50,20 @@
   }
 
   async function resolveAsset(id: string): Promise<HistoryAsset> {
-    const [trash, active] = await Promise.all([
-      libraryData.assets.getTrashById(id),
-      libraryData.assets.getById(id),
-    ]);
-    if (trash) return { id, state: 'trash', asset: trash };
-    if (active) return { id, state: 'active', asset: active };
-    return { id, state: 'missing', asset: null };
+    try {
+      const trash = await libraryData.assets.getTrashById(id);
+      if (trash) return { id, state: 'trash', asset: trash, error: null };
+      const active = await libraryData.assets.getById(id);
+      if (active) return { id, state: 'active', asset: active, error: null };
+      return { id, state: 'missing', asset: null, error: null };
+    } catch (error) {
+      return {
+        id,
+        state: 'error',
+        asset: null,
+        error: errorMessage(error, 'Current asset state could not be loaded.'),
+      };
+    }
   }
 
   onMount(() => {
@@ -123,6 +131,8 @@
                   <V2Badge tone="bad" text="Trash" />
                 {:else if item.state === 'active'}
                   <V2Badge tone="ok" text="Available" />
+                {:else if item.state === 'error'}
+                  <V2Badge tone="bad" text="Lookup failed" />
                 {:else}
                   <V2Badge tone="warn" text="Unavailable" />
                 {/if}
@@ -133,6 +143,7 @@
               <small>{item.id}</small>
               {#if item.state === 'trash'}<small>Currently in Immich trash</small>{/if}
               {#if item.state === 'missing'}<small>No longer available from active assets or trash</small>{/if}
+              {#if item.state === 'error'}<small title={item.error ?? ''}>{item.error}</small>{/if}
             </div>
           </article>
         {/each}
