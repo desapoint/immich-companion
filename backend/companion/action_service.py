@@ -589,6 +589,14 @@ class AssetActionService:
             raise ActionPlanConflictError("Action plan has expired")
         if existing.destructive and not self._settings.allow_destructive_actions:
             raise DestructiveActionsDisabledError("Trash actions are disabled")
+        if (
+            existing.operation == "stack"
+            and existing.relation_work.get("__stack_conflicts")
+            and "__stack_resolution" not in existing.relation_work
+        ):
+            raise ActionPlanConflictError(
+                "Existing stack conflicts require an explicit reviewed resolution"
+            )
 
         selection = AssetSelectionRequest.model_validate(existing.selection)
         resolution = await self.resolve_selection(selection)
