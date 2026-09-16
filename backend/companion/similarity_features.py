@@ -24,10 +24,13 @@ from companion.integrity import DetectedFormat
 from companion.raw_isolation import decode_raw_isolated
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
-SIMILARITY_FEATURE_VERSION = 2
+SIMILARITY_FEATURE_VERSION = 3
 PIXEL_NORMALIZATION_VERSION = 1
 LUMINANCE_VECTOR_SIDE = 16
-LUMINANCE_VECTOR_LENGTH = LUMINANCE_VECTOR_SIDE**2
+LUMINANCE_PLANE_LENGTH = LUMINANCE_VECTOR_SIDE**2
+# Feature v3 stores normalized visible luminance followed by the raw alpha plane.
+LUMINANCE_VECTOR_LENGTH = LUMINANCE_PLANE_LENGTH * 2
+ALPHA_STRUCTURAL_PENALTY = 0.25
 COLOR_HISTOGRAM_BINS = 16
 COLOR_HISTOGRAM_LENGTH = COLOR_HISTOGRAM_BINS * 3
 PIXEL_HASH_ROWS_PER_CHUNK = 64
@@ -38,6 +41,8 @@ SIMILARITY_CONFIG_FINGERPRINT = hashlib.sha256(
             "feature_version": SIMILARITY_FEATURE_VERSION,
             "pixel_normalization_version": PIXEL_NORMALIZATION_VERSION,
             "luminance_side": LUMINANCE_VECTOR_SIDE,
+            "luminance_planes": ("premultiplied_srgb", "alpha"),
+            "alpha_structural_penalty": ALPHA_STRUCTURAL_PENALTY,
             "histogram_bins": COLOR_HISTOGRAM_BINS,
             "weights": {"structural": 0.65, "perceptual": 0.25, "color": 0.10},
         },
@@ -152,8 +157,33 @@ def _srgb_image(image: Image.Image) -> Image.Image:
     return Image.merge("RGBA", (*rgb.split(), alpha))
 
 
+def _alpha_channel(image: Image.Image) -> Image.Image:
+    """Return an explicit alpha plane, treating non-alpha images as fully opaque."""
+
+    if "A" in image.getbands() or "transparency" in image.info:
+        return image.convert("RGBA").getchannel("A")
+    return Image.new("L", image.size, 255)
+
+
+def _visible_rgb(image: Image.Image) -> Image.Image:
+    """Premultiply RGB by alpha so invisible colors cannot influence appearance."""
+
+    rgb = image.convert("RGB")
+    if "A" not in image.getbands() and "transparency" not in image.info:
+        return rgb
+    alpha = image.convert("RGBA").getchannel("A")
+    return Image.composite(rgb, Image.new("RGB", image.size, (0, 0, 0)), alpha)
+
+
+def _appearance_rgba(image: Image.Image) -> Image.Image:
+    """Canonical visible color plus alpha used by appearance-only evidence."""
+
+    visible = _visible_rgb(image)
+    return Image.merge("RGBA", (*visible.split(), _alpha_channel(image)))
+
+
 def _normalized_luminance(image: Image.Image) -> bytes:
-    grayscale = ImageOps.grayscale(image).resize(
+    grayscale = ImageOps.grayscale(_visible_rgb(image)).resize(
         (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
         Image.Resampling.LANCZOS,
     )
@@ -162,15 +192,29 @@ def _normalized_luminance(image: Image.Image) -> bytes:
     variance = sum((value - mean) ** 2 for value in values) / len(values)
     deviation = math.sqrt(variance)
     if deviation < 1e-6:
-        return bytes([128] * LUMINANCE_VECTOR_LENGTH)
+        return bytes([128] * LUMINANCE_PLANE_LENGTH)
     return bytes(
         round((max(-3.0, min(3.0, (value - mean) / deviation)) + 3.0) / 6.0 * 255)
         for value in values
     )
 
 
+def _alpha_vector(image: Image.Image) -> bytes:
+    alpha = _alpha_channel(image).resize(
+        (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
+        Image.Resampling.LANCZOS,
+    )
+    return bytes(alpha.get_flattened_data())
+
+
+def _appearance_luminance_vector(image: Image.Image) -> bytes:
+    return _normalized_luminance(image) + _alpha_vector(image)
+
+
 def _difference_hash(image: Image.Image) -> str:
-    grayscale = ImageOps.grayscale(image).resize((9, 8), Image.Resampling.LANCZOS)
+    grayscale = ImageOps.grayscale(_visible_rgb(image)).resize(
+        (9, 8), Image.Resampling.LANCZOS
+    )
     pixels = list(grayscale.get_flattened_data())
     value = 0
     for row in range(8):
@@ -181,7 +225,7 @@ def _difference_hash(image: Image.Image) -> str:
 
 
 def _color_histogram(image: Image.Image) -> bytes:
-    sample = image.convert("RGB").resize(
+    sample = _visible_rgb(image).resize(
         (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
         Image.Resampling.LANCZOS,
     )
@@ -237,7 +281,7 @@ def _build_feature(
 ) -> VisualFeatureResult:
     normalized = _srgb_image(image)
     width, height = normalized.size
-    thumbnail = normalized.convert("RGBA").resize(
+    thumbnail = _appearance_rgba(normalized).resize(
         (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
         Image.Resampling.LANCZOS,
     )
@@ -267,7 +311,7 @@ def _build_feature(
         feature_version=SIMILARITY_FEATURE_VERSION,
         width=width,
         height=height,
-        luminance_vector=_normalized_luminance(normalized),
+        luminance_vector=_appearance_luminance_vector(normalized),
         perceptual_hash=_difference_hash(normalized),
         color_histogram=_color_histogram(normalized),
         thumbnail_sha256=thumbnail_sha256,
@@ -446,6 +490,23 @@ def extract_visual_features(
     return feature
 
 
+def _luminance_and_alpha(
+    feature: VisualFeatureResult,
+) -> tuple[bytes, bytes | None]:
+    """Split v3 appearance evidence while retaining comparison of older generations."""
+
+    if feature.feature_version >= 3:
+        if len(feature.luminance_vector) != LUMINANCE_VECTOR_LENGTH:
+            raise ValueError("Visual luminance vector dimensions are incompatible.")
+        return (
+            feature.luminance_vector[:LUMINANCE_PLANE_LENGTH],
+            feature.luminance_vector[LUMINANCE_PLANE_LENGTH:],
+        )
+    if not feature.luminance_vector:
+        raise ValueError("Visual luminance vector dimensions are incompatible.")
+    return feature.luminance_vector, None
+
+
 def compare_visual_features(
     left: VisualFeatureResult,
     right: VisualFeatureResult,
@@ -454,13 +515,24 @@ def compare_visual_features(
 
     if left.model_version != right.model_version or left.feature_version != right.feature_version:
         raise ValueError("Visual feature versions are incompatible.")
+    left_luminance, left_alpha = _luminance_and_alpha(left)
+    right_luminance, right_alpha = _luminance_and_alpha(right)
+    if len(left_luminance) != len(right_luminance):
+        raise ValueError("Visual luminance vector dimensions are incompatible.")
     luminance_mae, luminance_rmse, luminance_ssim = _normalized_luminance_evidence(
-        left.luminance_vector,
-        right.luminance_vector,
+        left_luminance,
+        right_luminance,
     )
     structural = 1 - sum(
-        abs(a - b) for a, b in zip(left.luminance_vector, right.luminance_vector, strict=True)
-    ) / (len(left.luminance_vector) * 255)
+        abs(a - b) for a, b in zip(left_luminance, right_luminance, strict=True)
+    ) / (len(left_luminance) * 255)
+    if left_alpha is not None or right_alpha is not None:
+        if left_alpha is None or right_alpha is None or len(left_alpha) != len(right_alpha):
+            raise ValueError("Visual alpha vector dimensions are incompatible.")
+        alpha_difference = sum(
+            abs(a - b) for a, b in zip(left_alpha, right_alpha, strict=True)
+        ) / (len(left_alpha) * 255)
+        structural = max(0.0, structural - ALPHA_STRUCTURAL_PENALTY * alpha_difference)
     hash_distance = (int(left.perceptual_hash, 16) ^ int(right.perceptual_hash, 16)).bit_count()
     perceptual = 1 - hash_distance / 64
     color = min(
