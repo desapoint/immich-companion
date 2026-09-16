@@ -1,4 +1,5 @@
 import type { LiveLibraryDataSource } from '../liveContracts';
+import { withDuplicateStackConflictReview } from '../duplicateStackConflictReviewRepository';
 import { createAlbumRepository } from './albumRepository';
 import { createAssetApiProfile } from './assetRepository';
 import { createDuplicateRepository } from './duplicateRepository';
@@ -16,6 +17,7 @@ import { createTaskRepository } from './taskRepository';
 export function createApiLibraryDataSource(): LiveLibraryDataSource {
   const assetProfile = createAssetApiProfile();
   const tasks = createTaskRepository();
+  const duplicates = withDuplicateStackConflictReview(createDuplicateRepository(tasks), assetProfile.assets);
   return {
     kind: 'api',
     initialize: async () => undefined,
@@ -23,7 +25,7 @@ export function createApiLibraryDataSource(): LiveLibraryDataSource {
     albums: createAlbumRepository(),
     tags: createTagRepository(),
     savedSearches: createLocalSavedSearchRepository(),
-    duplicates: createDuplicateRepository(tasks),
+    duplicates,
     media: assetProfile.media,
     navigation: assetProfile.navigation,
     sync: createSyncRepository(),
