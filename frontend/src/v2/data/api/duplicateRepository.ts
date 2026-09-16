@@ -448,7 +448,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       decisions: Object.entries(scoped.decisions).map(([asset_id, disposition]) => ({ asset_id, disposition, source: 'manual', status: 'pending' })),
       stack_primary_asset_id: scoped.stacks[0]?.primaryAssetId ?? (Object.values(scoped.decisions).includes('stack') ? primary : null),
       stack_resolution: 'move_selected',
-      metadata_keeper_asset_id: Object.values(scoped.decisions).includes('delete') && survivors.length > 1 ? primary : null,
+      metadata_keeper_asset_id: Object.values(scoped.decisions).includes('delete') && survivors.length === 1 ? survivors[0] : null,
       status: Object.keys(scoped.decisions).length === memberIds.length ? 'completed' : 'pending',
     }));
     workspace = { ...workspace, drafts: [...workspace.drafts.filter((candidate) => candidate.group_id !== groupId), draft] };
