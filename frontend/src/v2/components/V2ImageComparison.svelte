@@ -55,6 +55,7 @@
   let referenceNatural = $state({ width: 0, height: 0 });
   let selectedSelection = $state({ key: '', index: 0 });
   let referenceSelection = $state({ key: '', index: 0 });
+  let viewportObserver: ResizeObserver | null = null;
   const selectedSources = $derived(mediaResourceSources(selectedResource));
   const referenceSources = $derived(mediaResourceSources(referenceResource));
   const selectedKey = $derived(selectedSources.join('\u0000'));
@@ -83,25 +84,28 @@
 
   function changeMode(next: string): void {
     mode = next as ComparisonMode;
-    requestAnimationFrame(() => camera.fit());
   }
 
   function setViewport(node: HTMLElement | null): void {
+    viewportObserver?.disconnect();
+    viewportObserver = null;
     camera.setViewport(node);
+    if (node && typeof ResizeObserver !== 'undefined') {
+      viewportObserver = new ResizeObserver(() => camera.remapViewport());
+      viewportObserver.observe(node);
+    }
   }
 
   function selectedLoaded(event: Event): void {
     const image = event.currentTarget as HTMLImageElement;
     selectedNatural = { width: image.naturalWidth, height: image.naturalHeight };
     syncNaturalSize();
-    requestAnimationFrame(() => camera.fit());
   }
 
   function referenceLoaded(event: Event): void {
     const image = event.currentTarget as HTMLImageElement;
     referenceNatural = { width: image.naturalWidth, height: image.naturalHeight };
     syncNaturalSize();
-    requestAnimationFrame(() => camera.fit());
   }
 
   function shouldIgnore(target: EventTarget | null): boolean {
@@ -140,19 +144,14 @@
 
   $effect(() => {
     selectedSrc;
-    referenceSrc;
     selectedNatural = { width: 0, height: 0 };
-    referenceNatural = { width: 0, height: 0 };
   });
 
   $effect(() => {
-    const currentMode = mode;
-    void currentMode;
-    requestAnimationFrame(() => camera.fit());
+    referenceSrc;
+    referenceNatural = { width: 0, height: 0 };
   });
 </script>
-
-<svelte:window onresize={() => requestAnimationFrame(() => camera.fit())} />
 
 <div class="v2-compare-component">
   <div class="v2-compare-component-tools">

@@ -6,6 +6,11 @@ export type ViewportSize = {
 };
 
 export type Pan = { x: number; y: number };
+export type NormalizedFocus = { x: number; y: number };
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
 
 export function fitScale(viewportW: number, viewportH: number, naturalW: number, naturalH: number): number {
   if (!viewportW || !viewportH || !naturalW || !naturalH) return 1;
@@ -37,6 +42,23 @@ export function clampPan(panX: number, panY: number, size: ViewportSize | null):
     x: maxX === 0 ? 0 : Math.max(-maxX, Math.min(maxX, panX)),
     y: maxY === 0 ? 0 : Math.max(-maxY, Math.min(maxY, panY)),
   };
+}
+
+export function normalizedFocusFromPan(panX: number, panY: number, size: ViewportSize | null): NormalizedFocus {
+  if (!size || !size.imageW || !size.imageH) return { x: 0.5, y: 0.5 };
+  return {
+    x: clamp01(0.5 - panX / size.imageW),
+    y: clamp01(0.5 - panY / size.imageH),
+  };
+}
+
+export function panForNormalizedFocus(focus: NormalizedFocus, size: ViewportSize | null): Pan {
+  if (!size) return { x: 0, y: 0 };
+  return clampPan(
+    (0.5 - clamp01(focus.x)) * size.imageW,
+    (0.5 - clamp01(focus.y)) * size.imageH,
+    size,
+  );
 }
 
 export function anchoredPan(
