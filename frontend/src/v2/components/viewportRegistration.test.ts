@@ -63,6 +63,28 @@ describe('ViewportRegistrationController', () => {
     expect(applyViewport.mock.calls).toEqual([[firstViewport], [secondViewport]]);
   });
 
+  it('handles the real mode lifecycle of unmounting before mounting the next viewport', () => {
+    const firstViewport = {} as HTMLElement;
+    const secondViewport = {} as HTMLElement;
+    const applyViewport = vi.fn();
+    const firstObserver = observerDouble();
+    const secondObserver = observerDouble();
+    const observers = [firstObserver, secondObserver];
+    const controller = new ViewportRegistrationController(
+      applyViewport,
+      vi.fn(),
+      () => observers.shift() ?? observerDouble(),
+    );
+
+    controller.set(firstViewport);
+    controller.set(null);
+    controller.set(secondViewport);
+
+    expect(firstObserver.disconnect).toHaveBeenCalledTimes(1);
+    expect(secondObserver.observe).toHaveBeenCalledWith(secondViewport);
+    expect(applyViewport.mock.calls).toEqual([[firstViewport], [null], [secondViewport]]);
+  });
+
   it('clears the camera viewport and observer on teardown', () => {
     const viewport = {} as HTMLElement;
     const applyViewport = vi.fn();
