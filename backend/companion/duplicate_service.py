@@ -21,6 +21,7 @@ from companion.action_service import (
 )
 from companion.asset_repository import AssetRepository
 from companion.config import Settings
+from companion.contained_duplicate_resolution import _is_contained_resolution_step
 from companion.discovery import (
     DiscoveredGroup,
     GroupDiscoveryProvider,
@@ -73,6 +74,7 @@ from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
+    ImmichDuplicateResolution,
 )
 from companion.integrity import decode_immich_sha1
 from companion.integrity_repository import (
@@ -199,6 +201,50 @@ def _reviewed_delete_supported(group: ExactDuplicateGroup) -> bool:
     """Return whether reviewed member deletion is valid for the current group."""
 
     return group.status != "ineligible" and len(group.members) >= 2
+
+
+def _metadata_keeper_for_plan(
+    discovery_source: str,
+    saved_keeper_id: UUID | None,
+    keep_ids: list[UUID],
+    trash_ids: list[UUID],
+) -> UUID | None:
+    """Choose metadata target without inventing one for multi-survivor similarity groups."""
+
+    if not trash_ids:
+        return None
+    if (
+        discovery_source == DiscoverySource.COMPANION_SIMILARITY.value
+        and len(keep_ids) > 1
+    ):
+        return None
+    if saved_keeper_id in keep_ids:
+        return saved_keeper_id
+    return keep_ids[0] if len(keep_ids) == 1 else None
+
+
+def _contained_native_resolution(
+    planned: dict[str, Any],
+) -> ImmichDuplicateResolution | None:
+    """Return the native Immich resolution for a hidden contained child step."""
+
+    if (
+        not _is_contained_resolution_step(planned)
+        or planned.get("discovery_source") != DiscoverySource.IMMICH_DUPLICATE.value
+    ):
+        return None
+    keep_ids = [UUID(value) for value in planned.get("keep_asset_ids", [])]
+    trash_ids = [UUID(value) for value in planned.get("trash_asset_ids", [])]
+    if len(keep_ids) != 1 or not trash_ids:
+        return None
+    provider_group_id = planned.get("provider_group_id")
+    if provider_group_id is None:
+        raise ValueError("Contained Immich duplicate group has no provider identifier")
+    return ImmichDuplicateResolution(
+        duplicate_id=UUID(str(provider_group_id)),
+        keep_asset_ids=keep_ids,
+        trash_asset_ids=trash_ids,
+    )
 
 
 def _normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
@@ -2158,18 +2204,12 @@ class CrossSourceDuplicateService:
                     stack_primary_id = preferred if preferred in stack_ids else stack_ids[0]
             else:
                 stack_primary_id = None
-            metadata_keeper_id = (
-                getattr(record, "metadata_keeper_asset_id", None) if record else None
+            metadata_keeper_id = _metadata_keeper_for_plan(
+                group.discovery_source,
+                getattr(record, "metadata_keeper_asset_id", None) if record else None,
+                keep_ids,
+                trash_ids,
             )
-            if trash_ids:
-                if metadata_keeper_id not in keep_ids:
-                    metadata_keeper_id = keep_ids[0] if len(keep_ids) == 1 else None
-                if keep_ids and metadata_keeper_id is None:
-                    raise ActionPlanConflictError(
-                        "Choose which surviving asset keeps duplicate metadata"
-                    )
-            else:
-                metadata_keeper_id = None
             keeper_id = metadata_keeper_id or stack_primary_id
             if action == "resolve" and keeper_id is None:
                 raise ActionPlanConflictError("A primary asset must be chosen from the group")
@@ -2540,7 +2580,14 @@ class CrossSourceDuplicateService:
                 ]
                 try:
                     if group_trash_ids:
-                        await self._immich.trash_assets(group_trash_ids)
+                        try:
+                            native_resolution = _contained_native_resolution(planned)
+                        except (TypeError, ValueError) as error:
+                            raise ImmichApiError("resolve contained duplicate group") from error
+                        if native_resolution is not None:
+                            await self._immich.resolve_duplicate_groups([native_resolution])
+                        else:
+                            await self._immich.trash_assets(group_trash_ids)
                         refreshed = [
                             await self._immich.get_asset(asset_id)
                             for asset_id in group_trash_ids
