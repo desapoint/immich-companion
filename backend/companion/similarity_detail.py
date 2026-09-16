@@ -14,14 +14,17 @@ from PIL import Image, ImageFilter, UnidentifiedImageError
 
 from companion.image_decode import MAX_DECODED_PIXELS
 from companion.integrity import DetectedFormat
-from companion.similarity_features import _srgb_image
+from companion.similarity_features import _appearance_rgba, _srgb_image
 
-DETAIL_FEATURE_VERSION = 2
+DETAIL_FEATURE_VERSION = 3
 DETAIL_SAMPLE_SIDE = 512
-DETAIL_SAMPLE_BYTES = DETAIL_SAMPLE_SIDE * DETAIL_SAMPLE_SIDE * 3
+DETAIL_SAMPLE_BYTES = DETAIL_SAMPLE_SIDE * DETAIL_SAMPLE_SIDE * 4
 DETAIL_TILE_SIDE = 16
 DETAIL_SCALES = ((512, 0.6), (256, 0.3), (128, 0.1))
 DETAIL_GRID_SIDE = DETAIL_SAMPLE_SIDE // DETAIL_TILE_SIDE
+# Alpha is compared separately from premultiplied color so changing visibility
+# remains meaningful even when the visible color itself is black.
+DETAIL_ALPHA_DIFFERENCE_WEIGHT = 0.25
 # A region tile must contain enough changed pixels to look like real interior
 # content, rather than antialiasing/compression changes scattered around edges.
 DETAIL_REGION_TILE_THRESHOLD = 0.20
@@ -71,7 +74,9 @@ class _DetailAnalysis:
 def _sample(image: Image.Image) -> DetailFeature:
     normalized = _srgb_image(image)
     width, height = normalized.size
-    reduced = normalized.convert("RGB").resize(
+    # Premultiply before resizing so transparent hidden RGB cannot bleed into
+    # neighboring visible pixels during resampling. Preserve alpha separately.
+    reduced = _appearance_rgba(normalized).resize(
         (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), Image.Resampling.LANCZOS
     )
     return DetailFeature(width, height, zlib.compress(reduced.tobytes(), level=3))
@@ -122,8 +127,10 @@ def _detail_images(
     if len(left_bytes) != DETAIL_SAMPLE_BYTES or len(right_bytes) != DETAIL_SAMPLE_BYTES:
         raise ValueError("Detail sample dimensions are incompatible")
     # A tiny blur reduces JPEG/HEIC ringing while retaining clothing and face details.
-    left_image = Image.frombytes("RGB", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), left_bytes)
-    right_image = Image.frombytes("RGB", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), right_bytes)
+    # The stored RGB channels are premultiplied, so blurring RGBA keeps transparent
+    # edge colors from being promoted into fully visible color evidence.
+    left_image = Image.frombytes("RGBA", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), left_bytes)
+    right_image = Image.frombytes("RGBA", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), right_bytes)
     return (
         left_image.filter(ImageFilter.GaussianBlur(0.5)),
         right_image.filter(ImageFilter.GaussianBlur(0.5)),
@@ -192,8 +199,17 @@ def _analyze_detail_features(left: DetailFeature, right: DetailFeature) -> _Deta
             right_scale = right_image.resize((side, side), Image.Resampling.BOX)
         left_pixels = np.asarray(left_scale, dtype=np.int16)
         right_pixels = np.asarray(right_scale, dtype=np.int16)
-        differences = np.abs(left_pixels - right_pixels)
-        mean_difference = np.mean(differences, axis=2)
+        rgb_difference = np.mean(
+            np.abs(left_pixels[:, :, :3] - right_pixels[:, :, :3]), axis=2
+        )
+        alpha_difference = np.abs(left_pixels[:, :, 3] - right_pixels[:, :, 3])
+        # Premultiplied RGB reflects how much color is actually visible. The
+        # separate bounded alpha term ensures visibility changes remain visible
+        # even for black artwork without letting tiny alpha noise dominate.
+        mean_difference = np.maximum(
+            rgb_difference,
+            alpha_difference * DETAIL_ALPHA_DIFFERENCE_WEIGHT,
+        )
         changed = mean_difference >= 24
         fraction = float(np.mean(changed))
         weighted_changed += weight * fraction
