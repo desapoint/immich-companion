@@ -20,6 +20,7 @@ DETAIL_SAMPLE_SIDE = 512
 DETAIL_SAMPLE_BYTES = DETAIL_SAMPLE_SIDE * DETAIL_SAMPLE_SIDE * 3
 DETAIL_TILE_SIDE = 16
 DETAIL_SCALES = ((512, 0.6), (256, 0.3), (128, 0.1))
+DETAIL_GRID_SIDE = DETAIL_SAMPLE_SIDE // DETAIL_TILE_SIDE
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +34,26 @@ class DetailFeature:
 class DetailComparison:
     similarity_percent: float
     changed_percent: float
+
+
+@dataclass(frozen=True, slots=True)
+class DetailDiagnostics:
+    """Read-only explanation of the local evidence used by detail comparison."""
+
+    changed_percent: float
+    localized_changed_percent: float
+    rows: int
+    columns: int
+    tile_changed_percents: tuple[tuple[float, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DetailAnalysis:
+    changed_fraction: float
+    weighted_changed: float
+    weighted_difference: float
+    local_fraction: float
+    tiles: np.ndarray
 
 
 def _sample(image: Image.Image) -> DetailFeature:
@@ -79,9 +100,9 @@ def extract_detail_feature(
         return None
 
 
-def compare_detail_features(left: DetailFeature, right: DetailFeature) -> DetailComparison:
-    """Score bounded multi-scale differences without claiming pixel identity."""
-
+def _detail_images(
+    left: DetailFeature, right: DetailFeature
+) -> tuple[Image.Image, Image.Image]:
     if left.width <= 0 or left.height <= 0 or right.width <= 0 or right.height <= 0:
         raise ValueError("Detail features require positive dimensions")
     left_bytes = _decompress_sample(left.sample)
@@ -91,12 +112,21 @@ def compare_detail_features(left: DetailFeature, right: DetailFeature) -> Detail
     # A tiny blur reduces JPEG/HEIC ringing while retaining clothing and face details.
     left_image = Image.frombytes("RGB", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), left_bytes)
     right_image = Image.frombytes("RGB", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), right_bytes)
-    left_image = left_image.filter(ImageFilter.GaussianBlur(0.5))
-    right_image = right_image.filter(ImageFilter.GaussianBlur(0.5))
+    return (
+        left_image.filter(ImageFilter.GaussianBlur(0.5)),
+        right_image.filter(ImageFilter.GaussianBlur(0.5)),
+    )
+
+
+def _analyze_detail_features(left: DetailFeature, right: DetailFeature) -> _DetailAnalysis:
+    """Run the shared detail math once so scoring and diagnostics cannot drift."""
+
+    left_image, right_image = _detail_images(left, right)
     changed_fraction = 0.0
     weighted_changed = 0.0
     weighted_difference = 0.0
     local_fraction = 0.0
+    tiles = np.zeros((DETAIL_GRID_SIDE, DETAIL_GRID_SIDE), dtype=np.float64)
     for side, weight in DETAIL_SCALES:
         if side == DETAIL_SAMPLE_SIDE:
             left_scale, right_scale = left_image, right_image
@@ -114,16 +144,53 @@ def compare_detail_features(left: DetailFeature, right: DetailFeature) -> Detail
         if side == DETAIL_SAMPLE_SIDE:
             changed_fraction = fraction
             tiles = changed.reshape(
-                side // DETAIL_TILE_SIDE, DETAIL_TILE_SIDE,
-                side // DETAIL_TILE_SIDE, DETAIL_TILE_SIDE,
+                side // DETAIL_TILE_SIDE,
+                DETAIL_TILE_SIDE,
+                side // DETAIL_TILE_SIDE,
+                DETAIL_TILE_SIDE,
             ).mean(axis=(1, 3))
             local_fraction = float(np.mean(np.sort(tiles.ravel())[-4:]))
+    return _DetailAnalysis(
+        changed_fraction=changed_fraction,
+        weighted_changed=weighted_changed,
+        weighted_difference=weighted_difference,
+        local_fraction=local_fraction,
+        tiles=tiles,
+    )
+
+
+def compare_detail_features(left: DetailFeature, right: DetailFeature) -> DetailComparison:
+    """Score bounded multi-scale differences without claiming pixel identity."""
+
+    analysis = _analyze_detail_features(left, right)
     # The area term tracks broad changes; the top-four local tiles retain small
     # edits without allowing one isolated compression artifact to dominate.
-    similarity = 100 - 30 * weighted_changed - 2.6 * local_fraction - 6 * weighted_difference
+    similarity = (
+        100
+        - 30 * analysis.weighted_changed
+        - 2.6 * analysis.local_fraction
+        - 6 * analysis.weighted_difference
+    )
     return DetailComparison(
         similarity_percent=round(max(0.0, min(100.0, similarity)), 2),
-        changed_percent=round(changed_fraction * 100, 2),
+        changed_percent=round(analysis.changed_fraction * 100, 2),
+    )
+
+
+def detail_diagnostics(left: DetailFeature, right: DetailFeature) -> DetailDiagnostics:
+    """Expose the validator's local changed-pixel grid without changing its score."""
+
+    analysis = _analyze_detail_features(left, right)
+    tile_changed_percents = tuple(
+        tuple(round(float(value) * 100, 2) for value in row)
+        for row in analysis.tiles
+    )
+    return DetailDiagnostics(
+        changed_percent=round(analysis.changed_fraction * 100, 2),
+        localized_changed_percent=round(analysis.local_fraction * 100, 2),
+        rows=DETAIL_GRID_SIDE,
+        columns=DETAIL_GRID_SIDE,
+        tile_changed_percents=tile_changed_percents,
     )
 
 
