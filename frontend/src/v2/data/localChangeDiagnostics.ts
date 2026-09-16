@@ -1,4 +1,4 @@
-import { requestJson } from '../../../lib/api/http';
+import { requestJson } from '../../lib/api/http';
 
 export type LocalChangeDiagnostics = {
   available: boolean;
