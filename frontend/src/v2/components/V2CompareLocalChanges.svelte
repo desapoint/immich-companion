@@ -154,6 +154,14 @@
     return 'Detail sample';
   }
 
+  function diagnosticSummary(value: LocalChangeDiagnostics): string {
+    const changed = value.changedPercent?.toFixed(2) ?? '—';
+    const coherent = value.coherentChangedPercent?.toFixed(2) ?? '—';
+    const largest = value.largestChangedRegionPercent?.toFixed(2) ?? '—';
+    const regions = value.substantialRegionCount ?? '—';
+    return `Changed ${changed}% · coherent ${coherent}% · largest region ${largest}% · ${regions} regions`;
+  }
+
   $effect(() => {
     onviewport?.(viewport);
     if (!viewport) return () => onviewport?.(null);
@@ -194,7 +202,7 @@
     <div class="v2-local-change-status" role="alert">{error}</div>
   {:else if diagnostics?.available}
     <div class="v2-local-change-note">
-      Localized change {diagnostics.localizedChangedPercent?.toFixed(2) ?? '—'}% · {sourceLabel(diagnostics.source)} · diagnostic only
+      {diagnosticSummary(diagnostics)} · {sourceLabel(diagnostics.source)} · validator evidence
     </div>
   {:else}
     <div class="v2-local-change-status">Localized detail evidence is unavailable for this pair.</div>
