@@ -266,15 +266,22 @@
   function prev() { stepMember('previous'); }
   function next() { stepMember('next'); }
   function setDecision(decision: DuplicateDecision) {
+    if (disabled) return;
     if (decisionKey && decisionOptions.includes(decision)) {
       decisions = { ...decisions, [decisionKey]: decision };
       ondecisionchange?.(decisionKey, decision);
     }
   }
-  function clearDecision() { if (decisionKey && decisions[decisionKey]) ondecisionclear?.(decisionKey); }
-  function setStackPrimary() { if (decisionKey) onstackprimary?.(decisionKey); }
+  function clearDecision() {
+    if (disabled) return;
+    if (decisionKey && decisions[decisionKey]) ondecisionclear?.(decisionKey);
+  }
+  function setStackPrimary() {
+    if (disabled) return;
+    if (decisionKey) onstackprimary?.(decisionKey);
+  }
   async function setReference() {
-    if (!selectedAsset) return;
+    if (disabled || !selectedAsset) return;
     if (onreferencechange) {
       await onreferencechange(selectedAsset.id);
       return;
@@ -283,6 +290,7 @@
     showMember(reference);
   }
   async function revalidate() {
+    if (disabled) return;
     const assetId = assetIds[reference];
     if (assetId && onrevalidate) await onrevalidate(assetId);
   }
@@ -305,7 +313,7 @@
 <svelte:window onkeydown={handleShortcut}/>
 
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
-  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/></div><div class="v2-compare-header-actions"><V2Button disabled={!activeCount} onclick={prev}>← Previous</V2Button><V2Button disabled={!activeCount} onclick={next}>Next →</V2Button><V2Button disabled={!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
+  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/></div><div class="v2-compare-header-actions"><V2Button disabled={!activeCount} onclick={prev}>← Previous</V2Button><V2Button disabled={!activeCount} onclick={next}>Next →</V2Button><V2Button disabled={disabled||!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual">
     {#if loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if loadError}<div class="v2-compare-media-status" role="alert">{loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance {localDiagnostics} {localDiagnosticsLoading} {localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}</small></button>{/each}</div>
