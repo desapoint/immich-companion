@@ -13,9 +13,11 @@ from PIL import Image, ImageDraw
 
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
+    DETAIL_GRID_SIDE,
     DETAIL_SAMPLE_BYTES,
     DetailFeature,
     compare_detail_features,
+    detail_diagnostics,
     extract_detail_feature,
 )
 from companion.similarity_detail_service import SimilarityDetailMaintainer
@@ -64,6 +66,52 @@ def test_jpeg_transcode_of_same_scene_remains_high_similarity() -> None:
 
     assert original is not None and transcoded is not None
     assert compare_detail_features(original, transcoded).similarity_percent > 95
+
+
+def test_detail_diagnostics_reuse_scoring_mask_and_expose_grid() -> None:
+    original_image = _scene()
+    changed_image = original_image.copy()
+    ImageDraw.Draw(changed_image).rectangle((128, 192, 260, 330), fill=(15, 210, 210))
+
+    original = extract_detail_feature(BytesIO(_encoded(original_image)), "png")
+    changed = extract_detail_feature(BytesIO(_encoded(changed_image)), "png")
+
+    assert original is not None and changed is not None
+    identical = detail_diagnostics(original, original)
+    diagnostics = detail_diagnostics(original, changed)
+    score = compare_detail_features(original, changed)
+
+    assert identical.changed_percent == 0
+    assert identical.localized_changed_percent == 0
+    assert identical.rows == DETAIL_GRID_SIDE
+    assert identical.columns == DETAIL_GRID_SIDE
+    assert len(identical.tile_changed_percents) == DETAIL_GRID_SIDE
+    assert all(len(row) == DETAIL_GRID_SIDE for row in identical.tile_changed_percents)
+    assert all(value == 0 for row in identical.tile_changed_percents for value in row)
+
+    assert diagnostics.changed_percent == pytest.approx(score.changed_percent)
+    assert diagnostics.localized_changed_percent > diagnostics.changed_percent > 0
+    assert max(value for row in diagnostics.tile_changed_percents for value in row) >= 95
+
+
+def test_localized_diagnostics_distinguish_coherent_edit_from_jpeg_noise() -> None:
+    original_image = _scene()
+    changed_image = original_image.copy()
+    ImageDraw.Draw(changed_image).rectangle((145, 215, 240, 320), fill=(25, 100, 205))
+
+    original = extract_detail_feature(BytesIO(_encoded(original_image)), "png")
+    transcoded = extract_detail_feature(BytesIO(_encoded(original_image, "JPEG")), "jpeg")
+    changed = extract_detail_feature(BytesIO(_encoded(changed_image)), "png")
+
+    assert original is not None and transcoded is not None and changed is not None
+    transcode_diagnostics = detail_diagnostics(original, transcoded)
+    changed_diagnostics = detail_diagnostics(original, changed)
+
+    assert changed_diagnostics.localized_changed_percent > transcode_diagnostics.localized_changed_percent
+    assert changed_diagnostics.changed_percent > transcode_diagnostics.changed_percent
+    assert max(value for row in changed_diagnostics.tile_changed_percents for value in row) > max(
+        value for row in transcode_diagnostics.tile_changed_percents for value in row
+    )
 
 
 def test_small_costume_and_face_edits_remain_reviewable_at_95_percent() -> None:
