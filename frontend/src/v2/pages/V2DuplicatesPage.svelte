@@ -49,6 +49,7 @@
     stacksForGroup,
   } from '../state/duplicateStackResolution';
   import { libraryData } from '../data/currentDataSource.svelte';
+  import { clearDuplicateResolutionHistory } from '../data/api/duplicateResolutionHistory';
   import { duplicateGroupTitle, duplicateKindLabel } from '../data/duplicatePresentation';
   import { duplicateListMemberMeta, formatSimilarityPercent } from '../data/duplicateMember';
   import { duplicateSourceLabels } from '../data/duplicateSource';
@@ -66,7 +67,7 @@
   let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null),interactionError=$state('');
   let capabilities=$state<DuplicateCapabilities>({canRunDiscovery:false,canApplyDecisions:false,canViewHistory:false,reviewFilters:['All groups'],decisions:[]});
   let similarityThreshold=$state('95'),validationMode=$state<SimilarityValidationMode>('strict'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('8'),discoverySummary=$state('');
-  let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]);
+  let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]),historyClearTarget=$state<DuplicateHistoryRecord|null>(null);
   let cacheTelemetry=$state.raw<SimilarityCacheStatus|null>(null),cacheLoading=$state(false);
   let planPreparing=$state(false),groupLoads=$state(0),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
@@ -296,7 +297,7 @@
         pending:pending('Duplicate discovery'),
         outcome:(result)=>({tone:'ok',title:'Discovery completed',detail:`${result.groupCount} groups · ${result.candidateCount} candidates`,failures:[]}),
         onOutcome:(outcome)=>{discoverySummary=outcome.detail;stackWorkspace=createDuplicateStackWorkspace()},
-        reconcile:()=>{backgroundTaskStatus.updateDuplicateDiscovery({label:'Duplicate discovery · Refreshing results',detail:'Loading the newly completed duplicate groups…',completed:1,total:1,percent:99});return reconcileGroups('Duplicate discovery')},
+        reconcile:()=>{backgroundTaskStatus.updateDuplicateDiscovery({label:'Duplicate discovery · Refreshing results',detail:'Loading the newly completed duplicate groups for refresh…',completed:1,total:1,percent:99});return reconcileGroups('Duplicate discovery')},
         reconcileError:'Duplicate discovery completed, but the latest groups could not be loaded.',
       });
     }finally{backgroundTaskStatus.finishDuplicateDiscovery()}
@@ -316,6 +317,22 @@
       apply:(response)=>{history=response.items},
     });
     return result!==null;
+  }
+  async function clearHistoryResolution():Promise<void>{
+    const target=historyClearTarget;
+    if(!target||mutating||operations.reconciling)return;
+    operations.clearOutcome();interactionError='';
+    const cleared=await operations.run('Clear duplicate resolution',()=>clearDuplicateResolutionHistory(target.id),{
+      pending:pending('Clear duplicate resolution'),
+      outcome:()=>({tone:'ok',title:'Resolution cleared',detail:'Companion can review a currently discovered matching group again.',failures:[]}),
+      reconcile:async()=>{
+        const historyLoaded=await refreshHistory();
+        const groupsLoaded=await refreshGroups(true,false);
+        if(!historyLoaded||!groupsLoaded)throw new Error('The resolution was cleared, but the latest duplicate state could not be loaded.');
+      },
+      reconcileError:'Resolution was cleared, but the latest duplicate state could not be loaded.',
+    });
+    if(cleared!==null)historyClearTarget=null;
   }
 
   async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){interactionError=errorMessage(error,'Similarity cache status could not be loaded.')}finally{cacheLoading=false}}
@@ -347,7 +364,7 @@
     {#if !loading && total===0}<V2Card><span class="v2-muted">No duplicate groups match the selected source and state.</span></V2Card>{/if}
     {#if total>0}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={groups.length} noun="groups" onpage={setPage} onloadmore={loadMore}/>{/if}
   {:else if tab==='Rules & discovery'}<V2Toolbar sticky={false}><b>Rules & discovery</b><V2Badge text={capabilities.canRunDiscovery?'Available':'Unavailable'}/></V2Toolbar><V2Card title="Duplicate discovery"><V2Stack gap="md"><V2Checkbox label="Verify duplicate groups reported by Immich" checked={includeExact} onchange={(checked)=>includeExact=checked}/><V2Checkbox label="Find visually similar images" checked={includeSimilar} onchange={(checked)=>includeSimilar=checked}/>{#if includeSimilar}<V2Field label="Minimum visual similarity (%)" type="number" min={50} max={100} step={0.1} value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><V2DuplicateValidationSettings mode={validationMode} onchange={(mode)=>validationMode=mode}/><V2Field label="Comparison candidates per image" type="number" min={1} max={64} step={1} value={maxCandidates} onchange={(value)=>maxCandidates=value}/><span class="v2-small v2-muted">A higher candidate limit can find more matches but increases scan time. Running discovery explicitly revalidates group membership; changing the comparison reference does not.</span>{/if}<V2Button variant="primary" disabled={!discoveryReady||mutating} onclick={()=>void runDiscovery()}>{mutating?(operations.phase==='reconciling'?'Refreshing results…':'Running discovery…'):'Run duplicate discovery'}</V2Button>{#if !includeExact&&!includeSimilar}<span class="v2-small v2-muted">Select at least one discovery method.</span>{/if}{#if discoverySummary}<span class="v2-small v2-muted">{discoverySummary}</span>{/if}</V2Stack></V2Card><V2DuplicateCachePanel status={cacheTelemetry} loading={cacheLoading} onrefresh={()=>void refreshCacheStatus()} onclear={(cache)=>void clearCache(cache)}/>
-  {:else}<V2Toolbar sticky={false}><V2Badge text="Resolution history"/></V2Toolbar><V2Stack gap="sm">{#each history as row (row.id)}<V2Card><V2Inline justify="between" wrap={true}><V2Stack gap="xs"><b>{row.groupLabel}</b><span class="v2-small v2-muted">{new Date(row.occurredAt).toLocaleString()}</span></V2Stack><span>{row.summary}</span></V2Inline></V2Card>{:else}<V2Card><span class="v2-muted">No resolution history in this range.</span></V2Card>{/each}</V2Stack>{/if}
+  {:else}<V2Toolbar sticky={false}><V2Badge text="Resolution history"/></V2Toolbar><V2Stack gap="sm">{#each history as row (row.id)}<V2Card><V2Inline justify="between" align="center" wrap={true}><V2Stack gap="xs"><b>{row.groupLabel}</b><span class="v2-small v2-muted">{new Date(row.occurredAt).toLocaleString()}</span></V2Stack><V2Inline gap="sm" align="center" wrap={true}><span>{row.summary}</span><V2Button variant="danger" disabled={mutating||operations.reconciling} onclick={()=>historyClearTarget=row}>Clear resolution</V2Button></V2Inline></V2Inline></V2Card>{:else}<V2Card><span class="v2-muted">No resolution history in this range.</span></V2Card>{/each}</V2Stack>{/if}
   </V2Zone>
 </V2PageLayout>
 
@@ -357,6 +374,7 @@
 
 <V2DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} groupSimilarity={activeGroup?.groupSimilarity??null} assetIds={activeAssetIds} similarities={activeSimilarities} similarityEvidence={activeSimilarityEvidence} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} disabled={mutating} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} ondecisionclear={(assetId)=>clearDecision(group,assetId)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onrevalidate={activeGroup?.similarityValidationMode?revalidateFromReference:undefined} onclose={()=>{compare=false;persistSelection()}}/>
 {#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
+{#if historyClearTarget}<ConfirmDialog title="Clear this resolution?" message="This removes Companion's completed-resolution record so a currently discovered matching group can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear resolution" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearHistoryResolution()} onclose={()=>{if(!mutating)historyClearTarget=null}}/>{/if}
 
 <style>
   .v2-stack-primary-badge{position:absolute;z-index:3;top:8px;right:8px;display:inline-flex;align-items:center;gap:4px;padding:4px 7px;border:1px solid rgba(255,255,255,.36);border-radius:999px;background:rgba(8,13,19,.86);color:#fff;font-size:10px;font-weight:700;line-height:1;box-shadow:0 2px 8px rgba(0,0,0,.3)}
