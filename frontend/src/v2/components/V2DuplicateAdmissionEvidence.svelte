@@ -2,11 +2,12 @@
   import type { DuplicateMemberRecord, SimilarityValidationMode } from '../data/contracts';
   import { formatSimilarityPercent } from '../data/duplicateMember';
 
-  let { member, members, mode, threshold, oninspect }: {
+  let { member, members, mode, threshold, disabled = false, oninspect }: {
     member: DuplicateMemberRecord;
     members: DuplicateMemberRecord[];
     mode: SimilarityValidationMode | null;
     threshold: number | null;
+    disabled?: boolean;
     oninspect: (assetId: string) => void;
   } = $props();
 
@@ -27,7 +28,7 @@
   <small class="v2-admission-note">
     {formatSimilarityPercent(member.similarity)} vs reference — below {formatSimilarityPercent(threshold)} threshold.
     Linked through
-    <button type="button" onclick={() => oninspect(admittedBy.asset.id)}>
+    <button type="button" {disabled} onclick={() => { if (!disabled) oninspect(admittedBy.asset.id); }}>
       {admittedBy.asset.original_file_name}
     </button>
     at {formatSimilarityPercent(admissionScore)}.
@@ -37,5 +38,6 @@
 <style>
   .v2-admission-note{display:block;padding:7px 9px;border-radius:7px;background:color-mix(in srgb,var(--v2-accent) 9%,transparent);line-height:1.35}
   button{border:0;padding:0;background:transparent;color:var(--v2-accent);font:inherit;font-weight:700;text-decoration:underline;cursor:pointer}
+  button:disabled{cursor:default;opacity:.55}
   button:focus-visible{outline:2px solid var(--v2-accent);outline-offset:2px;border-radius:3px}
 </style>
