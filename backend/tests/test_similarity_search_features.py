@@ -9,6 +9,7 @@ from PIL import Image
 from companion.immich import ImmichAsset
 from companion.similarity_search_features import (
     MAX_SEARCH_PREVIEW_BYTES,
+    SEARCH_FEATURE_VERSION,
     extract_search_feature,
     search_source_identity,
 )
@@ -37,9 +38,11 @@ def test_search_feature_uses_small_preview_and_never_hashes_normalized_pixels() 
     feature = extract_search_feature(output.getvalue())
 
     assert feature is not None
+    assert SEARCH_FEATURE_VERSION == 3
+    assert feature.feature_version == 3
     assert feature.width == 64
     assert feature.height == 48
-    assert len(feature.luminance_vector) == 256
+    assert len(feature.luminance_vector) == 512
     assert len(feature.color_histogram) == 48
     assert len(feature.perceptual_hash) == 16
     assert feature.pixel_sha256 is None
