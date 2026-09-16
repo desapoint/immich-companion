@@ -78,6 +78,30 @@ def _execution_duplicate_groups(groups: list[dict[str, Any]]) -> list[dict[str, 
     return execution_groups
 
 
+def _contained_candidate_statement(
+    group_record: Any,
+    member_record: Any,
+    parent_union: set[UUID],
+    max_parent_size: int,
+) -> Any:
+    """Select candidate groups once without DISTINCT over JSON-bearing group rows."""
+
+    matching_member = (
+        select(member_record.group_id)
+        .where(
+            member_record.group_id == group_record.group_id,
+            member_record.asset_id.in_(list(parent_union)),
+        )
+        .exists()
+    )
+    return select(group_record).where(
+        group_record.discovery_source == IMMICH_DUPLICATE_SOURCE,
+        group_record.member_count >= 2,
+        group_record.member_count <= max_parent_size,
+        matching_member,
+    )
+
+
 def _expand_contained_duplicate_groups(
     groups: list[dict[str, Any]],
     candidates: list[Any],
@@ -283,20 +307,11 @@ async def expand_contained_duplicate_plan(
     parent_union = set().union(*parent_sets)
     max_parent_size = max(len(member_ids) for member_ids in parent_sets)
     async with database.sessions() as session:
-        group_statement = (
-            select(CompositeDuplicateGroupRecord)
-            .join(
-                CompositeDuplicateGroupMemberRecord,
-                CompositeDuplicateGroupMemberRecord.group_id
-                == CompositeDuplicateGroupRecord.group_id,
-            )
-            .where(
-                CompositeDuplicateGroupRecord.discovery_source == IMMICH_DUPLICATE_SOURCE,
-                CompositeDuplicateGroupRecord.member_count >= 2,
-                CompositeDuplicateGroupRecord.member_count <= max_parent_size,
-                CompositeDuplicateGroupMemberRecord.asset_id.in_(list(parent_union)),
-            )
-            .distinct()
+        group_statement = _contained_candidate_statement(
+            CompositeDuplicateGroupRecord,
+            CompositeDuplicateGroupMemberRecord,
+            parent_union,
+            max_parent_size,
         )
         candidates = list((await session.scalars(group_statement)).all())
         if not candidates:
