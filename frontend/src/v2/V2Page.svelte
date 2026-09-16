@@ -3,6 +3,7 @@
   import V2Shell from './components/V2Shell.svelte';
   import V2ToastViewport from './components/V2ToastViewport.svelte';
   import V2ImplementationWarning from './components/V2ImplementationWarning.svelte';
+  import V2StackConflictReviewHost from './components/V2StackConflictReviewHost.svelte';
   import V2AlbumsPage from './pages/V2AlbumsPage.svelte';
   import V2AssetsPage from './pages/V2AssetsPage.svelte';
   import V2DuplicatesPage from './pages/V2DuplicatesPage.svelte';
@@ -116,4 +117,5 @@
     />
   {/if}
 </V2Shell>
+<V2StackConflictReviewHost />
 <V2ToastViewport controller={toasts}/>
