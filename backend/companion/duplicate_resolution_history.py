@@ -47,63 +47,6 @@ def _derived_rows_to_clear(
     return stale
 
 
-async def completed_resolution(
-    database: DatabaseManager,
-    resolution_id: UUID,
-) -> DuplicateGroupReviewRecord | None:
-    """Return one original completed history row by its durable resolution id."""
-
-    async with database.sessions() as session:
-        return await session.scalar(
-            select(DuplicateGroupReviewRecord).where(
-                DuplicateGroupReviewRecord.id == resolution_id,
-                DuplicateGroupReviewRecord.review_status.in_(
-                    COMPLETED_DUPLICATE_REVIEW_STATUSES
-                ),
-                DuplicateGroupReviewRecord.draft_status == "completed",
-            )
-        )
-
-
-async def clear_all_completed_resolutions(database: DatabaseManager) -> int:
-    """Clear all completed history and every inherited suppression derived from it.
-
-    Pending/manual drafts and coverage placeholders are deliberately preserved. This only
-    resets Companion review/history state; it does not reverse any mutation already applied
-    in Immich.
-    """
-
-    async with database.sessions() as session, session.begin():
-        completed = list(
-            (
-                await session.scalars(
-                    select(DuplicateGroupReviewRecord)
-                    .where(
-                        DuplicateGroupReviewRecord.review_status.in_(
-                            COMPLETED_DUPLICATE_REVIEW_STATUSES
-                        ),
-                        DuplicateGroupReviewRecord.draft_status == "completed",
-                    )
-                    .with_for_update()
-                )
-            ).all()
-        )
-        inherited = list(
-            (
-                await session.scalars(
-                    select(DuplicateGroupReviewRecord)
-                    .where(DuplicateGroupReviewRecord.draft_status == "inherited")
-                    .with_for_update()
-                )
-            ).all()
-        )
-        for record in inherited:
-            await session.delete(record)
-        for record in completed:
-            await session.delete(record)
-        return len(completed)
-
-
 async def clear_completed_resolution(
     database: DatabaseManager,
     resolution_id: UUID,
