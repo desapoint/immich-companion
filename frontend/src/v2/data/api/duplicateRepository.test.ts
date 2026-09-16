@@ -302,6 +302,7 @@ describe('live V2 duplicate repository', () => {
     expect(calls.find((call) => call.path.endsWith('/workspace/group'))?.body).toMatchObject({
       group_id: group.group_id,
       member_fingerprint: group.member_fingerprint,
+      metadata_keeper_asset_id: ASSET_IDS[0],
       status: 'completed',
     });
     expect(calls.find((call) => call.path.endsWith('/cross-source/plan'))?.body).toMatchObject({

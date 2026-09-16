@@ -14,8 +14,6 @@ GROUP = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 def test_similarity_multiple_survivors_do_not_merge_metadata() -> None:
     assert (
         _metadata_keeper_for_plan(
-            "companion_similarity",
-            A,
             [A, B],
             [C],
         )
@@ -26,8 +24,6 @@ def test_similarity_multiple_survivors_do_not_merge_metadata() -> None:
 def test_similarity_single_survivor_is_metadata_target() -> None:
     assert (
         _metadata_keeper_for_plan(
-            "companion_similarity",
-            None,
             [A],
             [B, C],
         )
@@ -36,11 +32,11 @@ def test_similarity_single_survivor_is_metadata_target() -> None:
 
 
 def test_no_deletions_do_not_create_metadata_target() -> None:
-    assert _metadata_keeper_for_plan("companion_similarity", A, [A, B], []) is None
+    assert _metadata_keeper_for_plan([A, B], []) is None
 
 
-def test_existing_non_similarity_metadata_keeper_is_preserved() -> None:
-    assert _metadata_keeper_for_plan("immich_duplicate", B, [A, B], [C]) == B
+def test_multiple_survivors_never_create_metadata_target() -> None:
+    assert _metadata_keeper_for_plan([A, B], [C]) is None
 
 
 def test_contained_immich_single_keeper_builds_native_resolution() -> None:

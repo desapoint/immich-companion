@@ -204,23 +204,12 @@ def _reviewed_delete_supported(group: ExactDuplicateGroup) -> bool:
 
 
 def _metadata_keeper_for_plan(
-    discovery_source: str,
-    saved_keeper_id: UUID | None,
     keep_ids: list[UUID],
     trash_ids: list[UUID],
 ) -> UUID | None:
-    """Choose metadata target without inventing one for multi-survivor similarity groups."""
+    """Return the sole surviving metadata target for a destructive resolution."""
 
-    if not trash_ids:
-        return None
-    if (
-        discovery_source == DiscoverySource.COMPANION_SIMILARITY.value
-        and len(keep_ids) > 1
-    ):
-        return None
-    if saved_keeper_id in keep_ids:
-        return saved_keeper_id
-    return keep_ids[0] if len(keep_ids) == 1 else None
+    return keep_ids[0] if trash_ids and len(keep_ids) == 1 else None
 
 
 def _contained_native_resolution(
@@ -2031,17 +2020,14 @@ class CrossSourceDuplicateService:
             decision.asset_id for decision in request.decisions if decision.disposition != "delete"
         ]
         has_deletions = any(decision.disposition == "delete" for decision in request.decisions)
-        metadata_keeper_asset_id = request.metadata_keeper_asset_id
-        if has_deletions and len(survivor_ids) == 1:
-            metadata_keeper_asset_id = survivor_ids[0]
-        elif not has_deletions:
-            metadata_keeper_asset_id = None
-        if metadata_keeper_asset_id is not None:
-            keeper = decisions.get(metadata_keeper_asset_id)
-            if keeper is not None and keeper.disposition == "delete":
-                raise ActionPlanConflictError("The metadata keeper cannot be marked Delete")
-            if metadata_keeper_asset_id not in member_ids:
-                raise ActionPlanConflictError("The metadata keeper is not a group member")
+        metadata_keeper_asset_id = (
+            survivor_ids[0]
+            if request.status == "completed"
+            and len(decisions) == len(member_ids)
+            and has_deletions
+            and len(survivor_ids) == 1
+            else None
+        )
         record = await self._reviews.save_draft(
             discovery_source=group.discovery_source,
             provider_group_id=group.provider_group_id or group.group_id,
@@ -2205,8 +2191,6 @@ class CrossSourceDuplicateService:
             else:
                 stack_primary_id = None
             metadata_keeper_id = _metadata_keeper_for_plan(
-                group.discovery_source,
-                getattr(record, "metadata_keeper_asset_id", None) if record else None,
                 keep_ids,
                 trash_ids,
             )
