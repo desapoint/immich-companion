@@ -1,5 +1,6 @@
 """Shared stack planning and execution regression coverage."""
 
+import json
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -107,6 +108,9 @@ async def test_conflicts_report_selected_and_unselected_members() -> None:
     conflicts = await workflow.conflicts([ASSET_ONE, ASSET_TWO])
 
     assert len(conflicts) == 1
+    assert conflicts[0].primary_asset_id == ASSET_ONE
+    assert conflicts[0].member_asset_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
+    assert conflicts[0].selected_asset_ids == [ASSET_ONE, ASSET_TWO]
     assert conflicts[0].selected_count == 2
     assert conflicts[0].member_count == 3
     assert conflicts[0].includes_unselected is True
@@ -233,6 +237,50 @@ async def test_include_existing_merges_members_from_different_stacks() -> None:
         ("delete", STACK_ID, []),
         ("delete", STACK_TWO_ID, []),
     ]
+
+
+@pytest.mark.asyncio
+async def test_per_stack_resolution_can_keep_one_existing_stack_and_include_another() -> None:
+    immich = FakeImmich(
+        [
+            stack(ASSET_ONE, ASSET_THREE),
+            stack(ASSET_TWO, ASSET_FOUR, primary=ASSET_TWO, stack_id=STACK_TWO_ID),
+        ]
+    )
+    workflow = service(immich)
+
+    preparation = await workflow.prepare(
+        [ASSET_ONE, ASSET_TWO],
+        {
+            str(STACK_ID): "keep_existing",
+            str(STACK_TWO_ID): "include_existing",
+        },
+        ASSET_TWO,
+    )
+
+    assert preparation.asset_ids == [ASSET_TWO, ASSET_FOUR]
+    assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]
+    assert immich.calls == [("delete", STACK_TWO_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_serialized_per_stack_resolution_is_supported_for_duplicate_drafts() -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_THREE)])
+    workflow = service(immich)
+    resolution = json.dumps({str(STACK_ID): "include_existing"})
+
+    preparation = await workflow.prepare([ASSET_ONE, ASSET_TWO], resolution)
+
+    assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
+    assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_per_stack_resolution_requires_a_choice_for_every_conflict() -> None:
+    workflow = service(FakeImmich([stack(ASSET_ONE, ASSET_THREE)]))
+
+    with pytest.raises(StackSelectionError, match="needs a reviewed resolution"):
+        await workflow.prepare([ASSET_ONE, ASSET_TWO], {}, ASSET_TWO)
 
 
 @pytest.mark.asyncio
