@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from sqlalchemy.dialects import postgresql
 
 from companion.composite_duplicate_repository import (
@@ -5,13 +7,12 @@ from companion.composite_duplicate_repository import (
     CompositeDuplicateGroupRecord,
 )
 from companion.contained_duplicate_resolution import _contained_candidate_statement
-from companion.models import DuplicateGroupReviewRecord
 
 
 def test_contained_candidate_query_avoids_distinct_over_json_columns() -> None:
     member_ids = {
-        DuplicateGroupReviewRecord.id.type.python_type("11111111-1111-4111-8111-111111111111"),
-        DuplicateGroupReviewRecord.id.type.python_type("22222222-2222-4222-8222-222222222222"),
+        UUID("11111111-1111-4111-8111-111111111111"),
+        UUID("22222222-2222-4222-8222-222222222222"),
     }
     statement = _contained_candidate_statement(
         CompositeDuplicateGroupRecord,
