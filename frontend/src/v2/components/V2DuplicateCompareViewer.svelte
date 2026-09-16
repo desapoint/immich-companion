@@ -87,6 +87,7 @@
   let loading = $state(false);
   let loadError = $state('');
   let loadGeneration = 0;
+  let loadedAssetSetKey = '';
   let libraryNamesPromise: Promise<Map<string, string>> | null = null;
   let localDiagnostics = $state<LocalChangeDiagnostics | null>(null);
   let localDiagnosticsLoading = $state(false);
@@ -123,6 +124,10 @@
       for (const item of batch) if (item) items.push(item);
     }
     return items;
+  }
+
+  function assetSetKey(ids: readonly string[]): string {
+    return [...ids].sort().join('\u0000');
   }
 
   function diagnosticsPairKey(selectedId: string, referenceId: string): string {
@@ -191,7 +196,8 @@
     if (!open) return;
     const generation = ++loadGeneration;
     const ids = [...assetIds];
-    loading = true;
+    const requestedAssetSetKey = assetSetKey(ids);
+    loading = ids.length > 0 && loadedAssetSetKey !== requestedAssetSetKey;
     loadError = '';
     void (async () => {
       try {
@@ -199,6 +205,7 @@
         if (generation !== loadGeneration) return;
         assets = nextAssets;
         libraryNames = nextLibraryNames;
+        loadedAssetSetKey = assetSetKey(nextAssets.map((asset) => asset.id));
       } catch (error) {
         if (generation === loadGeneration) loadError = error instanceof Error ? error.message : 'Could not load comparison assets.';
       } finally {
