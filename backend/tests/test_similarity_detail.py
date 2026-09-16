@@ -41,6 +41,41 @@ def _scene() -> Image.Image:
     return image
 
 
+def _notification_shade_scene(version: int) -> Image.Image:
+    """Synthetic shared-UI screenshot whose notification content changes locally."""
+
+    image = Image.new("RGB", (432, 768), (58, 36, 77))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0, 0, 432, 260), fill=(96, 61, 124))
+    for x in (24, 104, 184, 264, 344):
+        draw.rounded_rectangle((x, 45, x + 56, 101), radius=20, fill=(132, 88, 165))
+    draw.rounded_rectangle((25, 130, 407, 160), radius=15, fill=(127, 85, 159))
+    draw.rectangle((0, 180, 432, 260), fill=(73, 48, 93))
+
+    card_colors = (
+        [(240, 238, 245), (224, 224, 235), (235, 235, 240)]
+        if version == 0
+        else [(240, 238, 245), (232, 232, 239), (240, 240, 244)]
+    )
+    icon_colors = (
+        [(65, 90, 180), (120, 60, 140), (40, 120, 100)]
+        if version == 0
+        else [(180, 70, 80), (50, 110, 175), (150, 90, 60)]
+    )
+    text_widths = [210, 250, 180] if version == 0 else [155, 275, 235]
+    y = 285
+    for index in range(3):
+        draw.rounded_rectangle((18, y, 414, y + 115), radius=18, fill=card_colors[index])
+        draw.rectangle((35, y + 25, 90, y + 70), fill=icon_colors[index])
+        draw.rectangle((110, y + 30, 110 + text_widths[index], y + 40), fill=(80, 80, 90))
+        draw.rectangle(
+            (110, y + 55, 110 + int(text_widths[index] * 0.75), y + 65),
+            fill=(110, 110, 120),
+        )
+        y += 130
+    return image
+
+
 def test_local_outfit_and_face_changes_lower_detail_score() -> None:
     original = _scene()
     outfit = original.copy()
@@ -83,6 +118,9 @@ def test_detail_diagnostics_reuse_scoring_mask_and_expose_grid() -> None:
 
     assert identical.changed_percent == 0
     assert identical.localized_changed_percent == 0
+    assert identical.coherent_changed_percent == 0
+    assert identical.largest_changed_region_percent == 0
+    assert identical.substantial_region_count == 0
     assert identical.rows == DETAIL_GRID_SIDE
     assert identical.columns == DETAIL_GRID_SIDE
     assert len(identical.tile_changed_percents) == DETAIL_GRID_SIDE
@@ -91,6 +129,9 @@ def test_detail_diagnostics_reuse_scoring_mask_and_expose_grid() -> None:
 
     assert diagnostics.changed_percent == pytest.approx(score.changed_percent)
     assert diagnostics.localized_changed_percent > diagnostics.changed_percent > 0
+    assert diagnostics.coherent_changed_percent > 0
+    assert diagnostics.largest_changed_region_percent > 0
+    assert diagnostics.substantial_region_count >= 1
     assert max(value for row in diagnostics.tile_changed_percents for value in row) >= 95
 
 
@@ -107,14 +148,34 @@ def test_localized_diagnostics_distinguish_coherent_edit_from_jpeg_noise() -> No
     transcode_diagnostics = detail_diagnostics(original, transcoded)
     changed_diagnostics = detail_diagnostics(original, changed)
 
+    assert transcode_diagnostics.coherent_changed_percent == 0
+    assert transcode_diagnostics.largest_changed_region_percent == 0
+    assert transcode_diagnostics.substantial_region_count == 0
     assert changed_diagnostics.localized_changed_percent > transcode_diagnostics.localized_changed_percent
     assert changed_diagnostics.changed_percent > transcode_diagnostics.changed_percent
+    assert changed_diagnostics.coherent_changed_percent > 0
+    assert changed_diagnostics.largest_changed_region_percent > 0
     assert max(value for row in changed_diagnostics.tile_changed_percents for value in row) > max(
         value for row in transcode_diagnostics.tile_changed_percents for value in row
     )
 
 
-def test_small_costume_and_face_edits_remain_reviewable_at_95_percent() -> None:
+def test_shared_ui_with_changed_notifications_falls_below_95_percent() -> None:
+    first = extract_detail_feature(BytesIO(_encoded(_notification_shade_scene(0))), "png")
+    second = extract_detail_feature(BytesIO(_encoded(_notification_shade_scene(1))), "png")
+
+    assert first is not None and second is not None
+    score = compare_detail_features(first, second)
+    diagnostics = detail_diagnostics(first, second)
+
+    assert score.similarity_percent < 95
+    assert diagnostics.changed_percent > 0
+    assert diagnostics.coherent_changed_percent > 1
+    assert diagnostics.largest_changed_region_percent > 0.5
+    assert diagnostics.substantial_region_count >= 2
+
+
+def test_coherent_face_and_swimsuit_edits_are_not_hidden_by_unchanged_background() -> None:
     original = Image.new("RGB", (1024, 1024), (90, 115, 145))
     draw = ImageDraw.Draw(original)
     draw.ellipse((300, 80, 720, 500), fill=(235, 190, 155))
@@ -138,8 +199,8 @@ def test_small_costume_and_face_edits_remain_reviewable_at_95_percent() -> None:
     assert DETAIL_FEATURE_VERSION == 2
     assert compare_detail_features(reference, reference).similarity_percent == 100
     assert compare_detail_features(reference, jpeg).similarity_percent >= 98.5
-    assert 95 <= scores[2].similarity_percent < scores[1].similarity_percent
-    assert scores[1].similarity_percent < scores[0].similarity_percent < 100
+    assert scores[2].similarity_percent < scores[1].similarity_percent < 95
+    assert 95 < scores[0].similarity_percent < 100
     assert 0 < scores[0].changed_percent < scores[1].changed_percent
 
 
