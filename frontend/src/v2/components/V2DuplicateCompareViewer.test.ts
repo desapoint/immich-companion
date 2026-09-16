@@ -38,9 +38,9 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Structure');
     expect(body).toContain('98.13%');
     expect(body).toContain('Perceptual hash');
-    expect(body).toContain('96.9%');
+    expect(body).toContain('96.90%');
     expect(body).toContain('Color');
-    expect(body).toContain('92.4%');
+    expect(body).toContain('92.40%');
     expect(body).toContain('Detail changed area');
     expect(body).toContain('2.35%');
     expect(body).toContain('Detail evidence');
