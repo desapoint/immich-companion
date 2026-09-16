@@ -142,6 +142,43 @@ describe('SyncStatusController', () => {
     release();
   });
 
+  it('keeps a cancelled task state when terminal reconciliation fails', async () => {
+    let handlers!: Parameters<TaskRepository['subscribe']>[0];
+    const retryingStatus: SyncCoordinatorStatus = {
+      ...activeStatus,
+      active: { ...run, status: 'retrying' },
+    };
+    const statusRequest = vi.fn()
+      .mockResolvedValueOnce(retryingStatus)
+      .mockRejectedValueOnce(new Error('status refresh failed'));
+    const controller = new SyncStatusController({
+      sync: { status: statusRequest },
+      tasks: { subscribe: (next) => { handlers = next; return { close: () => undefined }; } },
+    }, 60_000);
+
+    const release = controller.acquire();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(controller.status?.active?.status).toBe('retrying');
+
+    handlers.onTask({
+      ...task,
+      status: 'cancelled',
+      completedAt: '2026-09-09T00:01:00Z',
+    });
+
+    expect(controller.status?.active?.status).toBe('cancelled');
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(statusRequest).toHaveBeenCalledTimes(2);
+    expect(controller.status?.active?.status).toBe('cancelled');
+    expect(controller.error).toBe('status refresh failed');
+    release();
+  });
+
   it('refetches once when an asset sync task is not represented in current status', async () => {
     let handlers!: Parameters<TaskRepository['subscribe']>[0];
     const statusRequest = vi.fn(async () => emptyStatus);

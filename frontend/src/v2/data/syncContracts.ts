@@ -1,5 +1,5 @@
 export type SyncMode = 'incremental' | 'full';
-export type SyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering' | 'retrying';
+export type SyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering' | 'retrying' | 'cancelled';
 
 export interface SyncProgress {
   phase: string;

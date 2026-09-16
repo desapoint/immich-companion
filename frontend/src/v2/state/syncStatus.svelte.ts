@@ -29,6 +29,7 @@ function syncRunState(task: TaskRecord, fallback: SyncRunState): SyncRunState {
     case 'recovering':
     case 'completed':
     case 'failed':
+    case 'cancelled':
       return task.status;
     default:
       return fallback;

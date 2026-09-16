@@ -182,7 +182,17 @@
     if (run.status === 'queued') return 'Queued';
     if (run.status === 'retrying') return 'Retrying';
     if (run.status === 'recovering') return 'Recovering';
+    if (run.status === 'completed') return 'Completed';
+    if (run.status === 'failed') return 'Failed';
+    if (run.status === 'cancelled') return 'Cancelled';
     return 'Running';
+  }
+
+  function runTone(run: SyncRun | null): 'default' | 'ok' | 'warn' | 'bad' {
+    if (!run) return 'default';
+    if (run.status === 'failed') return 'bad';
+    if (run.status === 'cancelled') return 'warn';
+    return 'ok';
   }
 
   function connectionLabel(): string {
@@ -264,7 +274,7 @@
         {/if}
 
         <V2Card title="Current synchronization">
-          {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={currentRun ? 'ok' : 'default'} text={runLabel(currentRun)} /><V2Badge tone={syncStatus.connectionState === 'connected' ? 'ok' : syncStatus.connectionState === 'disconnected' ? 'warn' : 'default'} text={connectionLabel()} /></span>{/snippet}
+          {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={runTone(currentRun)} text={runLabel(currentRun)} /><V2Badge tone={syncStatus.connectionState === 'connected' ? 'ok' : syncStatus.connectionState === 'disconnected' ? 'warn' : 'default'} text={connectionLabel()} /></span>{/snippet}
           <V2Stack gap="sm">
             {#if currentRun}
               <div class="sync-run-summary">
@@ -281,7 +291,7 @@
             <div class="sync-run-actions">
               <V2Button variant="primary" disabled={busy || Boolean(currentRun)} onclick={() => void start('full')}>{#if pendingOperation === 'starting'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Starting…</span>{:else}Start global sync{/if}</V2Button>
               <V2Button disabled={busy || Boolean(currentRun)} onclick={() => void start('incremental')}>Start incremental sync</V2Button>
-              <V2Button variant="danger" disabled={busy || !currentRun} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button>
+              <V2Button variant="danger" disabled={busy || !currentRun || ['completed', 'failed', 'cancelled'].includes(currentRun.status)} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button>
               <V2Button disabled={busy || syncStatus.loading} onclick={() => void refreshStatus()}>Refresh</V2Button>
             </div>
           </V2Stack>
