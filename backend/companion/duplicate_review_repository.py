@@ -46,6 +46,42 @@ def _decision_member_uuids(decisions: Any) -> set[UUID]:
     return member_ids
 
 
+def _normalized_metadata_keeper_asset_id(
+    decisions: Any,
+    draft_status: Any,
+) -> UUID | None:
+    """Derive the sole metadata target from a complete destructive draft."""
+
+    if str(draft_status) != "completed" or not isinstance(decisions, list):
+        return None
+    survivor_ids: list[UUID] = []
+    has_deletions = False
+    for decision in decisions:
+        if not isinstance(decision, dict) or not decision.get("asset_id"):
+            return None
+        try:
+            asset_id = UUID(str(decision["asset_id"]))
+        except (TypeError, ValueError):
+            return None
+        if decision.get("disposition") == "delete":
+            has_deletions = True
+        else:
+            survivor_ids.append(asset_id)
+    return survivor_ids[0] if has_deletions and len(survivor_ids) == 1 else None
+
+
+def _normalize_record_metadata_keeper(
+    record: DuplicateGroupReviewRecord,
+) -> DuplicateGroupReviewRecord:
+    """Hide stale persisted metadata targets that violate the current survivor rule."""
+
+    record.metadata_keeper_asset_id = _normalized_metadata_keeper_asset_id(
+        list(record.member_decisions or []),
+        record.draft_status,
+    )
+    return record
+
+
 def _coverage_rows(
     groups: list[Any],
     members_by_group: dict[str, list[UUID]],
@@ -113,7 +149,10 @@ class DuplicateReviewRepository:
         )
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
-        return {record.stable_group_key: record for record in records}
+        return {
+            record.stable_group_key: _normalize_record_metadata_keeper(record)
+            for record in records
+        }
 
     async def list_drafts(self) -> list[DuplicateGroupReviewRecord]:
         """Return only review rows carrying member-level draft state."""
@@ -139,7 +178,8 @@ class DuplicateReviewRepository:
             )
         )
         async with self._database.sessions() as session:
-            return list((await session.scalars(statement)).all())
+            records = list((await session.scalars(statement)).all())
+        return [_normalize_record_metadata_keeper(record) for record in records]
 
     async def inherit_completed_groups(self, groups: list[Any]) -> int:
         """Suppress membership shrinkage without rewriting the original completed review.
@@ -172,7 +212,10 @@ class DuplicateReviewRepository:
             .order_by(DuplicateGroupReviewRecord.last_reviewed_at.desc())
         )
         async with self._database.sessions() as session:
-            completed = list((await session.scalars(statement)).all())
+            completed = [
+                _normalize_record_metadata_keeper(record)
+                for record in (await session.scalars(statement)).all()
+            ]
         if not completed:
             return 0
 
@@ -312,7 +355,7 @@ class DuplicateReviewRepository:
                     )
                 ).all()
             )
-        return records, total
+        return [_normalize_record_metadata_keeper(record) for record in records], total
 
     async def save(
         self,
@@ -423,6 +466,10 @@ class DuplicateReviewRepository:
         draft_status: str,
     ) -> DuplicateGroupReviewRecord:
         now = datetime.now(UTC)
+        metadata_keeper_asset_id = _normalized_metadata_keeper_asset_id(
+            member_decisions,
+            draft_status,
+        )
         values = {
             "discovery_source": discovery_source,
             "provider_group_id": provider_group_id,
@@ -464,6 +511,10 @@ class DuplicateReviewRepository:
         rows = [
             {
                 **draft,
+                "metadata_keeper_asset_id": _normalized_metadata_keeper_asset_id(
+                    draft.get("member_decisions"),
+                    draft.get("draft_status"),
+                ),
                 "last_seen_at": now,
                 "last_reviewed_at": now,
                 "updated_at": now,
@@ -619,6 +670,10 @@ class DuplicateReviewRepository:
             if record.manual_action == "mixed" and record.review_status == "manually_configured":
                 record.review_status = "reviewed_mixed"
             record.draft_status = "completed"
+            record.metadata_keeper_asset_id = _normalized_metadata_keeper_asset_id(
+                record.member_decisions,
+                record.draft_status,
+            )
             record.updated_at = now
 
             if _source_value(discovery_source) != COMPANION_SIMILARITY_SOURCE:
