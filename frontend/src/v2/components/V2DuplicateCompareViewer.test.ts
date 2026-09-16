@@ -3,6 +3,12 @@ import { describe, expect, it } from 'vitest';
 
 import V2DuplicateCompareViewer from './V2DuplicateCompareViewer.svelte';
 
+function buttonWithText(body: string, text: string): string {
+  return [...body.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)]
+    .map((match) => match[0])
+    .find((button) => button.includes(text)) ?? '';
+}
+
 describe('V2DuplicateCompareViewer', () => {
   it('uses the shared decision controls with a layout-stable stack primary action', () => {
     const { body } = render(V2DuplicateCompareViewer, {
@@ -57,5 +63,29 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Reference');
     expect(body.indexOf('data-decision="stack"')).toBeLessThan(body.indexOf('Clear selection'));
     expect(body).not.toContain('Technical group ID');
+  });
+
+  it('keeps inspection navigation enabled while write controls are disabled', () => {
+    const { body } = render(V2DuplicateCompareViewer, {
+      props: {
+        open: true,
+        groupTitle: 'Read-only comparison',
+        groupKind: 'similar',
+        assetIds: ['asset-1'],
+        decisions: { 'asset-1': 'stack' },
+        decisionOptions: ['keep', 'delete', 'stack'],
+        disabled: true,
+        onrevalidate: async () => {},
+        onclose: () => {},
+      },
+    });
+
+    expect(buttonWithText(body, '← Previous')).not.toContain('disabled');
+    expect(buttonWithText(body, 'Next →')).not.toContain('disabled');
+    expect(buttonWithText(body, 'Revalidate from reference')).toContain('disabled');
+    expect(buttonWithText(body, 'Clear selection')).toContain('disabled');
+    expect(buttonWithText(body, 'Keep')).toContain('disabled');
+    expect(buttonWithText(body, 'Delete')).toContain('disabled');
+    expect(buttonWithText(body, 'Stack')).toContain('disabled');
   });
 });
