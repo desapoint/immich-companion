@@ -13,11 +13,29 @@ function asset(id: string, stack: AssetRecord['stack'] = null): AssetRecord {
   return { id, original_file_name: `${id}.jpg`, stack } as AssetRecord;
 }
 
+const sourceStack = {
+  id: '11111111-1111-4111-8111-111111111111',
+  primaryAssetId: 'a',
+  assetCount: 3,
+  assets: ['a', 'c', 'd'],
+};
+
 function assets(): AssetRepository {
-  const source = { id: '11111111-1111-4111-8111-111111111111', primaryAssetId: 'a', assetCount: 3, assets: ['a', 'c', 'd'] };
-  const records = new Map([['a', asset('a', source)], ['b', asset('b')]]);
+  const records = new Map([['a', asset('a', sourceStack)], ['b', asset('b')]]);
   return {
     async getMany(ids) { return ids.flatMap((id) => records.get(id) ?? []); },
+  } as AssetRepository;
+}
+
+function changingAssets(topologies: Array<AssetRecord['stack']>): AssetRepository {
+  let read = 0;
+  return {
+    async getMany(ids) {
+      const topology = topologies[Math.min(read, topologies.length - 1)] ?? null;
+      read += 1;
+      const records = new Map([['a', asset('a', topology)], ['b', asset('b')]]);
+      return ids.flatMap((id) => records.get(id) ?? []);
+    },
   } as AssetRepository;
 }
 
@@ -70,5 +88,52 @@ describe('duplicate stack conflict review repository', () => {
     expect(calls).toHaveLength(2);
     expect(calls[1].stacks[0].stackResolution).toEqual({ '11111111-1111-4111-8111-111111111111': 'include_existing' });
     expect(plan.resolution.stacks[0].stackResolution).toEqual(calls[1].stacks[0].stackResolution);
+  });
+
+  it('reopens conflict review when source stack membership changes after the modal', async () => {
+    const calls: DuplicateResolutionPlan[] = [];
+    let reviewCount = 0;
+    const changedStack = { ...sourceStack, assets: ['a', 'c', 'e'] };
+    const repository = {
+      async prepareDecisions(value: DuplicateResolutionPlan, groupIds: readonly string[]) {
+        calls.push(value);
+        return prepared(value, groupIds);
+      },
+    } as unknown as DuplicateRepository;
+    unregister = registerStackConflictReviewer(async (targets) => {
+      reviewCount += 1;
+      return { [targets[0].id]: { '11111111-1111-4111-8111-111111111111': 'move_selected' } };
+    });
+
+    await withDuplicateStackConflictReview(
+      repository,
+      changingAssets([sourceStack, changedStack, changedStack]),
+    ).prepareDecisions(resolution(), ['group-1']);
+
+    expect(reviewCount).toBe(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it('replans when a reviewed conflict disappears before the immutable plan settles', async () => {
+    const calls: DuplicateResolutionPlan[] = [];
+    let reviewCount = 0;
+    const repository = {
+      async prepareDecisions(value: DuplicateResolutionPlan, groupIds: readonly string[]) {
+        calls.push(value);
+        return prepared(value, groupIds);
+      },
+    } as unknown as DuplicateRepository;
+    unregister = registerStackConflictReviewer(async (targets) => {
+      reviewCount += 1;
+      return { [targets[0].id]: { '11111111-1111-4111-8111-111111111111': 'move_selected' } };
+    });
+
+    await withDuplicateStackConflictReview(
+      repository,
+      changingAssets([sourceStack, null, null]),
+    ).prepareDecisions(resolution(), ['group-1']);
+
+    expect(reviewCount).toBe(1);
+    expect(calls).toHaveLength(2);
   });
 });
