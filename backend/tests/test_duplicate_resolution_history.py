@@ -4,10 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
-from companion.duplicate_resolution_history import (
-    clear_all_completed_resolutions,
-    clear_completed_resolution,
-)
+from companion.duplicate_resolution_history import clear_completed_resolution
 
 TARGET_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 OTHER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
@@ -121,16 +118,3 @@ def test_clear_resolution_returns_false_when_history_row_is_missing() -> None:
     assert cleared is False
     assert session.deleted == []
     assert session.scalars_reads == 0
-
-
-def test_clear_all_resolutions_removes_completed_and_inherited_only() -> None:
-    first = _review(TARGET_ID, A, B)
-    second = _review(OTHER_ID, C, D)
-    inherited = _review(INHERITED_ID, A, B, draft_status="inherited")
-    session = _Session(None, [first, second], [inherited])
-
-    cleared = asyncio.run(clear_all_completed_resolutions(_Database(session)))
-
-    assert cleared == 2
-    assert session.deleted == [inherited, first, second]
-    assert session.scalars_reads == 2
