@@ -281,7 +281,7 @@
       outcome:(result)=>mutationFeedback(`Review ${label}`,result),
       onOutcome:(_feedback,result)=>{const failedIds=new Set(result.failed.map((failure)=>failure.id));if(result.failed.length){const failedDecisions=Object.fromEntries(Object.entries(resolution.decisions).filter(([id])=>failedIds.has(id))) as Record<string,DuplicateDecision>;retryResolution={decisions:failedDecisions,stacks:resolution.stacks.filter((stack)=>stack.assetIds.some((id)=>failedIds.has(id)))};return}retryResolution=null;clearAppliedGroupState(item);if(compare&&group===groupId)compare=false},
       reconcile:async(result)=>{if(!result.failed.length)await refillAfterGroupReview(groupId,label)},
-      reconcileError:`${label} was reviewed, but the latest duplicate state could not be loaded.`,
+      reconcileError:`${label} was reviewed, but the latest groups could not be loaded.`,
     });
   }
   async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);pendingReview=null}
