@@ -115,7 +115,7 @@ class FakeActions:
         self.finished = (status, result)
 
     async def claim_plan(self, _plan_id):
-        raise AssertionError("A drifted stack plan must fail before it is claimed")
+        raise AssertionError("An invalid stack plan must fail before it is claimed")
 
 
 class FakeImmich:
@@ -144,8 +144,7 @@ class FakeSync:
         return None
 
 
-@pytest.mark.asyncio
-async def test_assets_stack_execution_rejects_source_topology_changed_after_review() -> None:
+def action_service() -> tuple[AssetActionService, FakeActions, FakeImmich]:
     assets = FakeAssets()
     actions = FakeActions()
     immich = FakeImmich()
@@ -156,6 +155,29 @@ async def test_assets_stack_execution_rejects_source_topology_changed_after_revi
         actions,  # type: ignore[arg-type]
         FakeSync(),  # type: ignore[arg-type]
     )
+    return service, actions, immich
+
+
+@pytest.mark.asyncio
+async def test_unresolved_assets_stack_preview_cannot_be_executed_directly() -> None:
+    service, _, immich = action_service()
+    preview = await service.plan(
+        AssetActionPlanRequest(
+            selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+            action="stack",
+            stack_primary_asset_id=ASSET_TWO,
+        )
+    )
+
+    with pytest.raises(ActionPlanConflictError, match="explicit reviewed resolution"):
+        await service.execute(AssetActionExecuteRequest(plan_id=preview.id, confirm=True))
+
+    assert immich.mutations == []
+
+
+@pytest.mark.asyncio
+async def test_assets_stack_execution_rejects_source_topology_changed_after_review() -> None:
+    service, actions, immich = action_service()
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
 
     preview = await service.plan(
