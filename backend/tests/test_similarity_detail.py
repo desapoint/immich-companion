@@ -103,6 +103,41 @@ def test_jpeg_transcode_of_same_scene_remains_high_similarity() -> None:
     assert compare_detail_features(original, transcoded).similarity_percent > 95
 
 
+def test_hidden_rgb_under_transparency_does_not_create_detail_change() -> None:
+    red_hidden = Image.new("RGBA", (128, 128), (255, 0, 0, 0))
+    cyan_hidden = Image.new("RGBA", (128, 128), (0, 220, 255, 0))
+
+    first = extract_detail_feature(BytesIO(_encoded(red_hidden)), "png")
+    second = extract_detail_feature(BytesIO(_encoded(cyan_hidden)), "png")
+
+    assert first is not None and second is not None
+    score = compare_detail_features(first, second)
+    diagnostics = detail_diagnostics(first, second)
+    assert score.similarity_percent == 100
+    assert score.changed_percent == 0
+    assert diagnostics.localized_changed_percent == 0
+    assert diagnostics.coherent_changed_percent == 0
+    assert diagnostics.substantial_region_count == 0
+
+
+def test_alpha_mask_change_remains_visible_even_for_black_pixels() -> None:
+    transparent = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    visible = transparent.copy()
+    ImageDraw.Draw(visible).rectangle((32, 32, 95, 95), fill=(0, 0, 0, 255))
+
+    first = extract_detail_feature(BytesIO(_encoded(transparent)), "png")
+    second = extract_detail_feature(BytesIO(_encoded(visible)), "png")
+
+    assert first is not None and second is not None
+    score = compare_detail_features(first, second)
+    diagnostics = detail_diagnostics(first, second)
+    assert score.similarity_percent < 100
+    assert score.changed_percent > 0
+    assert diagnostics.coherent_changed_percent > 0
+    assert diagnostics.largest_changed_region_percent > 0
+    assert diagnostics.substantial_region_count >= 1
+
+
 def test_detail_diagnostics_reuse_scoring_mask_and_expose_grid() -> None:
     original_image = _scene()
     changed_image = original_image.copy()
@@ -199,7 +234,7 @@ def test_coherent_face_and_swimsuit_edits_are_not_hidden_by_unchanged_background
     assert reference is not None and jpeg is not None and all(variants)
     scores = [compare_detail_features(reference, variant) for variant in variants]
 
-    assert DETAIL_FEATURE_VERSION == 2
+    assert DETAIL_FEATURE_VERSION == 3
     assert compare_detail_features(reference, reference).similarity_percent == 100
     assert compare_detail_features(reference, jpeg).similarity_percent >= 98.5
     assert scores[2].similarity_percent < scores[1].similarity_percent < 95
