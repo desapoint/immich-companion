@@ -166,7 +166,7 @@ class StackService:
         resolution: StackResolutionSelection | str | None,
         primary_asset_id: UUID | None = None,
     ) -> StackPreparation:
-        """Resolve each existing membership using the reviewed conflict choices."""
+        """Validate all reviewed choices, then reconcile each existing membership."""
 
         reviewed_resolution = self._normalize_resolution(resolution)
         primary_asset_id = primary_asset_id or asset_ids[0]
@@ -175,22 +175,43 @@ class StackService:
         selected = set(asset_ids)
         final_ids = list(asset_ids)
         affected_ids = list(asset_ids)
+        reviewed_stacks: list[
+            tuple[ImmichStack, list[UUID], list[UUID], StackResolution]
+        ] = []
+
+        # Build the complete reconciliation plan first. In particular, resolve every
+        # per-stack choice before changing any existing Immich stack so an incomplete
+        # map cannot partially mutate an earlier source stack and then fail later.
         for stack in await self._immich.list_stacks():
             member_ids = [member.id for member in stack.assets]
             selected_members = [identifier for identifier in member_ids if identifier in selected]
             if not selected_members:
                 continue
             stack_resolution = self._resolution_for_stack(reviewed_resolution, stack.id)
+            reviewed_stacks.append((stack, member_ids, selected_members, stack_resolution))
             for identifier in member_ids:
                 if identifier not in affected_ids:
                     affected_ids.append(identifier)
             if stack_resolution == "keep_existing":
                 final_ids = [identifier for identifier in final_ids if identifier not in member_ids]
-                continue
-            if stack_resolution == "include_existing":
+            elif stack_resolution == "include_existing":
                 for identifier in member_ids:
                     if identifier not in final_ids:
                         final_ids.append(identifier)
+
+        if primary_asset_id not in final_ids:
+            raise StackSelectionError(
+                "The chosen stack primary is unavailable with this conflict resolution"
+            )
+        self._require_stackable(final_ids)
+
+        # Only after the complete choice set and resulting destination are valid do we
+        # mutate source stacks. Remote API failures can still interrupt reconciliation,
+        # but validation failures are guaranteed to be non-mutating.
+        for stack, member_ids, selected_members, stack_resolution in reviewed_stacks:
+            if stack_resolution == "keep_existing":
+                continue
+            if stack_resolution == "include_existing":
                 await self._immich.delete_stack(stack.id)
                 continue
             remaining_members = [
@@ -204,11 +225,7 @@ class StackService:
                     await self._immich.update_stack_primary(stack.id, replacement_primary)
                 for identifier in selected_members:
                     await self._immich.remove_asset_from_stack(stack.id, identifier)
-        if primary_asset_id not in final_ids:
-            raise StackSelectionError(
-                "The chosen stack primary is unavailable with this conflict resolution"
-            )
-        self._require_stackable(final_ids)
+
         ordered_ids = [
             primary_asset_id,
             *(identifier for identifier in final_ids if identifier != primary_asset_id),
