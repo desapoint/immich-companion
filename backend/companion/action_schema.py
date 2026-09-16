@@ -42,6 +42,7 @@ AssetActionOperation = Literal[
     "remove_stack",
 ]
 StackResolution = Literal["keep_existing", "move_selected", "include_existing"]
+StackResolutionSelection = StackResolution | dict[str, StackResolution]
 ActionPlanStatus = Literal[
     "planned",
     "running",
@@ -170,7 +171,7 @@ class AssetActionPlanRequest(BaseModel):
     selection: AssetSelectionRequest
     action: AssetActionIntent
     relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=10_000)
-    stack_resolution: StackResolution | None = None
+    stack_resolution: StackResolutionSelection | None = None
     stack_primary_asset_id: UUID | None = None
 
     @model_validator(mode="after")
@@ -189,6 +190,12 @@ class AssetActionPlanRequest(BaseModel):
             raise ValueError("Relation IDs are only valid for album and tag actions")
         if self.stack_resolution is not None and self.action != "stack":
             raise ValueError("Stack resolution is only valid for stack actions")
+        if isinstance(self.stack_resolution, dict):
+            for stack_id in self.stack_resolution:
+                try:
+                    UUID(stack_id)
+                except (TypeError, ValueError) as error:
+                    raise ValueError("Stack resolution keys must be stack UUIDs") from error
         if self.stack_primary_asset_id is not None and self.action != "stack":
             raise ValueError("Stack primary is only valid for stack actions")
         if self.action == "stack" and self.stack_primary_asset_id is None:
@@ -208,6 +215,9 @@ class StackConflict(BaseModel):
     """Stack membership overlap found during a stack-action preview."""
 
     stack_id: UUID
+    primary_asset_id: UUID
+    member_asset_ids: list[UUID]
+    selected_asset_ids: list[UUID]
     selected_count: int
     member_count: int
     includes_unselected: bool
