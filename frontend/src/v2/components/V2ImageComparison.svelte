@@ -1,16 +1,18 @@
 <script lang="ts">
   import V2Button from './V2Button.svelte';
   import V2CompareDifference from './V2CompareDifference.svelte';
+  import V2CompareLocalChanges from './V2CompareLocalChanges.svelte';
   import V2CompareSideBySide from './V2CompareSideBySide.svelte';
   import V2CompareSwipe from './V2CompareSwipe.svelte';
   import V2CompareTransparency from './V2CompareTransparency.svelte';
   import V2Segmented from './V2Segmented.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
   import type { MediaResource } from '../data/contracts';
+  import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
   import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
   import { ViewerViewportController } from './viewerViewport.svelte';
 
-  export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference';
+  export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference' | 'Local changes';
 
   let {
     selectedResource,
@@ -24,6 +26,9 @@
     diffContrast = $bindable(180),
     diffBinary = $bindable(true),
     diffTolerance = $bindable(8),
+    localDiagnostics = null,
+    localDiagnosticsLoading = false,
+    localDiagnosticsError = '',
   }: {
     selectedResource: MediaResource;
     referenceResource: MediaResource;
@@ -36,6 +41,9 @@
     diffContrast?: number;
     diffBinary?: boolean;
     diffTolerance?: number;
+    localDiagnostics?: LocalChangeDiagnostics | null;
+    localDiagnosticsLoading?: boolean;
+    localDiagnosticsError?: string;
   } = $props();
 
   const camera = new ViewerViewportController();
@@ -148,7 +156,7 @@
 
 <div class="v2-compare-component">
   <div class="v2-compare-component-tools">
-    <V2Segmented items={['Side by side','Swipe','Transparency','Difference']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
+    <V2Segmented items={['Side by side','Swipe','Transparency','Difference','Local changes']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
     <div class="v2-compare-zoom-tools">
       <V2ZoomControl
         value={camera.zoom}
@@ -213,7 +221,7 @@
         onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
-    {:else}
+    {:else if mode === 'Difference'}
       <V2CompareDifference
         {selectedSrc}
         {referenceSrc}
@@ -224,6 +232,22 @@
         bind:diffContrast
         bind:diffBinary
         bind:diffTolerance
+        onselectedload={selectedLoaded}
+        onreferenceload={referenceLoaded}
+        onselectederror={selectedFailed}
+        onreferenceerror={referenceFailed}
+        onviewport={setViewport}
+      />
+    {:else}
+      <V2CompareLocalChanges
+        {selectedSrc}
+        {referenceSrc}
+        {selectedLabel}
+        {referenceLabel}
+        transform={camera.transform}
+        diagnostics={localDiagnostics}
+        loading={localDiagnosticsLoading}
+        error={localDiagnosticsError}
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
         onselectederror={selectedFailed}
