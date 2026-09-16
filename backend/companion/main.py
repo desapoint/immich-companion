@@ -176,6 +176,7 @@ from companion.relation_schema import (
 )
 from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
 from companion.similarity_cache import CachedPreview, SimilarityCacheManager
+from companion.similarity_detail_api import register_similarity_detail_routes
 from companion.similarity_detail_service import (
     SimilarityDetailMaintainer,
     SimilarityDetailRepository,
@@ -674,6 +675,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+    register_similarity_detail_routes(app, detail_repository)
 
     @app.exception_handler(ImmichApiError)
     async def immich_error_handler(_request, error: ImmichApiError) -> Response:

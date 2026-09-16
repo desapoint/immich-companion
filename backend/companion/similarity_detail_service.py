@@ -6,11 +6,12 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
 from tempfile import SpooledTemporaryFile
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -26,7 +27,9 @@ from companion.models import (
 )
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
+    DetailDiagnostics,
     DetailFeature,
+    detail_diagnostics,
     extract_detail_feature,
 )
 from companion.similarity_search_features import MAX_SEARCH_PREVIEW_BYTES
@@ -37,6 +40,14 @@ DETAIL_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
 # The published score is min(coarse, detail); a lower coarse score cannot be rescued.
 DETAIL_COARSE_SCORE_MARGIN = 0.0
 logger = logging.getLogger("uvicorn.error")
+
+DetailEvidenceSource = Literal["original", "transcoded", "preview"]
+
+
+@dataclass(frozen=True, slots=True)
+class StoredDetailDiagnostics:
+    diagnostics: DetailDiagnostics
+    source: DetailEvidenceSource
 
 
 class SimilarityDetailRepository:
@@ -67,6 +78,39 @@ class SimilarityDetailRepository:
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
         return {record.asset_id: record for record in records}
+
+    async def diagnostics(
+        self, selected_asset_id: UUID, reference_asset_id: UUID
+    ) -> StoredDetailDiagnostics | None:
+        """Compare two already-cached detail samples without generating new work."""
+
+        records = await self.get_current_many([selected_asset_id, reference_asset_id])
+        selected = records.get(selected_asset_id)
+        reference = records.get(reference_asset_id)
+        if selected is None or reference is None:
+            return None
+        selected_feature = DetailFeature(
+            width=selected.width,
+            height=selected.height,
+            sample=selected.sample,
+        )
+        reference_feature = DetailFeature(
+            width=reference.width,
+            height=reference.height,
+            sample=reference.sample,
+        )
+        origins = {selected.origin, reference.origin}
+        source: DetailEvidenceSource
+        if "preview_fallback" in origins:
+            source = "preview"
+        elif "transcoded_fullsize" in origins:
+            source = "transcoded"
+        else:
+            source = "original"
+        return StoredDetailDiagnostics(
+            diagnostics=detail_diagnostics(selected_feature, reference_feature),
+            source=source,
+        )
 
     async def save(
         self, source_identity: str, asset_id: UUID, feature: DetailFeature, origin: str
