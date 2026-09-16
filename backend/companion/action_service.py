@@ -59,6 +59,22 @@ def selection_digest(ids: list[UUID]) -> str:
     return sha256(value.encode()).hexdigest()
 
 
+def stack_conflict_snapshot(conflicts: list[StackConflict]) -> list[dict[str, object]]:
+    """Freeze the exact source-stack topology presented during review."""
+
+    return sorted(
+        [
+            {
+                "stack_id": str(conflict.stack_id),
+                "primary_asset_id": str(conflict.primary_asset_id),
+                "member_asset_ids": sorted(str(identifier) for identifier in conflict.member_asset_ids),
+            }
+            for conflict in conflicts
+        ],
+        key=lambda item: str(item["stack_id"]),
+    )
+
+
 class AssetActionService:
     """Plan, execute, synchronize, and verify supported Immich mutations."""
 
@@ -220,9 +236,11 @@ class AssetActionService:
                 }
             )
             stack_conflicts = await self._stacks.conflicts(resolution.ids)
+            conflict_snapshot = stack_conflict_snapshot(stack_conflicts)
             if stack_conflicts and request.stack_resolution is None:
                 relation_work = {
                     "__stack_conflicts": [item.model_dump(mode="json") for item in stack_conflicts],
+                    "__stack_conflict_snapshot": conflict_snapshot,
                     "__stack_primary_asset_id": str(primary_asset_id),
                 }
                 record = await self._actions.create_plan(
@@ -246,6 +264,7 @@ class AssetActionService:
                 "__stack_conflicts": [] if request.stack_resolution else [
                     item.model_dump(mode="json") for item in stack_conflicts
                 ],
+                "__stack_conflict_snapshot": conflict_snapshot,
                 "__stack_resolution": request.stack_resolution or "move_selected",
                 "__stack_primary_asset_id": str(primary_asset_id),
             }
@@ -583,6 +602,19 @@ class AssetActionService:
         ):
             await self._actions.finish_plan(existing.id, "drifted", {"error": "target_drift"})
             raise ActionPlanConflictError("The selected assets changed after review")
+        if existing.operation == "stack":
+            reviewed_stack_snapshot = existing.relation_work.get("__stack_conflict_snapshot")
+            if reviewed_stack_snapshot is not None:
+                current_stack_snapshot = await self._stacks.conflict_snapshot(resolution.ids)
+                if current_stack_snapshot != reviewed_stack_snapshot:
+                    await self._actions.finish_plan(
+                        existing.id,
+                        "drifted",
+                        {"error": "stack_topology_drift"},
+                    )
+                    raise ActionPlanConflictError(
+                        "Existing stack membership changed after review"
+                    )
 
         claimed = (
             existing
