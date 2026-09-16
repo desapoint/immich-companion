@@ -35,8 +35,30 @@ from companion.task_schema import TaskResult
 SIMILARITY_INDEX_TASK_TYPE = "similarity_index"
 SIMILARITY_FINGERPRINT_BATCH_SIZE = 25
 ORIGINAL_FALLBACK_MAX_BYTES = 128 * 1024 * 1024
+ALPHA_CAPABLE_MIME_TYPES = frozenset(
+    {
+        "image/png",
+        "image/webp",
+        "image/gif",
+        "image/tiff",
+        "image/avif",
+        "image/heic",
+        "image/heif",
+    }
+)
+ALPHA_CAPABLE_SUFFIXES = frozenset(
+    {".png", ".webp", ".gif", ".tif", ".tiff", ".avif", ".heic", ".heif"}
+)
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _source_may_have_alpha(source: ImmichAsset) -> bool:
+    """Return whether the original container can carry meaningful transparency."""
+
+    mime = (source.original_mime_type or "").split(";", 1)[0].strip().lower()
+    suffix = Path(source.original_file_name).suffix.lower()
+    return mime in ALPHA_CAPABLE_MIME_TYPES or suffix in ALPHA_CAPABLE_SUFFIXES
 
 
 class SimilarityIndexMaintainer:
@@ -173,6 +195,7 @@ class SimilarityIndexMaintainer:
             "preview_fingerprints_generated": 0,
             "original_fingerprints_generated": 0,
             "fallbacks_to_original": 0,
+            "alpha_preserving_original_fallbacks": 0,
             "deep_verifications_performed": 0,
             "failed_or_skipped_attempts": 0,
             "preview_bytes_downloaded": 0,
@@ -385,16 +408,28 @@ class SimilarityIndexMaintainer:
                     self._record_timings(timings)
                     self._count("preview_decodes")
             origin = "preview"
-            if feature is None:
+            alpha_original_required = (
+                feature is not None
+                and not feature.has_alpha
+                and _source_may_have_alpha(source)
+            )
+            if feature is None or alpha_original_required:
                 self._count("fallbacks_to_original")
+                if alpha_original_required:
+                    self._count("alpha_preserving_original_fallbacks")
                 try:
                     # Hold both limits: at most the configured number of original
-                    # streams and decodes, with each spool capped on disk.
+                    # streams and decodes, with each spool capped on disk. For an
+                    # alpha-capable source, a preview that lost alpha is not valid
+                    # v3 appearance evidence, so regenerate from the original.
                     async with self._fetch_slots, self._decode_slots:
                         feature, media_digest = await self._original_fallback(context, asset_id)
                     origin = "original"
                 except (ImmichApiError, ValueError, OSError) as error:
-                    reason = f"preview unavailable ({preview_error}); fallback failed: {error}"
+                    if alpha_original_required:
+                        reason = f"alpha-preserving original fallback failed: {error}"
+                    else:
+                        reason = f"preview unavailable ({preview_error}); fallback failed: {error}"
                     logger.warning(
                         "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
                         asset_id, attempt, reason,
