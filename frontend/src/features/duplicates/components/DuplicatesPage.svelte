@@ -7,10 +7,14 @@
   import DuplicateDispositionControls from '../../../lib/components/domain/DuplicateDispositionControls.svelte';
   import StackPrimaryControl from '../../../lib/components/domain/StackPrimaryControl.svelte';
   import Icon from '../../../lib/components/ui/Icon.svelte';
+  import LoadingSpinner from '../../../lib/components/ui/LoadingSpinner.svelte';
+  import LoadingOverlay from '../../../lib/components/ui/LoadingOverlay.svelte';
   import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
+  import Pagination from '../../../lib/components/ui/Pagination.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import { loadDuplicatePolicy, loadImmichLibraries, saveDuplicatePolicy } from '../../../lib/api/duplicatePolicyApi';
   import type { SelectOption } from '../../../lib/types/ui';
+  import type { StackResolution } from '../../../lib/types/stack';
   import { resolveStackPrimary } from '../../../lib/utils/duplicateReview';
   import GroupEvidencePills from './GroupEvidencePills.svelte';
   import DuplicateReviewFilters from './DuplicateReviewFilters.svelte';
@@ -37,7 +41,6 @@
     DuplicateBulkPreset,
     DuplicateDisposition,
     DuplicateGroupDraft,
-    DuplicateKeeperPolicy,
     DuplicatePlanAction,
     DuplicateResolutionPlan,
     DuplicateResult,
@@ -55,6 +58,11 @@
     type DuplicateReviewFilter,
     type DuplicateReviewProjection,
   } from '../state/duplicateReviewFilters';
+  import {
+    DEFAULT_DUPLICATE_PAGE_SIZE,
+    DUPLICATE_PAGE_SIZE_OPTIONS,
+    paginateDuplicateReviewEntries,
+  } from '../state/duplicateReviewPagination';
 
   interface Props {
     onpreview: (request: DuplicatePreviewRequest) => void;
@@ -71,12 +79,6 @@
 
   const terminalStatuses = new Set(['completed', 'failed', 'cancelled']);
   const draftSaveDelayMs = 250;
-  const keeperPolicyOptions: SelectOption[] = [
-    { value: 'most_recent', label: 'Most recently uploaded' },
-    { value: 'prefer_upload', label: 'Prefer uploads' },
-    { value: 'prefer_external', label: 'Prefer external files' },
-    { value: 'first', label: 'First Immich result' },
-  ];
   const exactActionOptions: SelectOption[] = [
     { value: 'resolve', label: 'Resolve exact files' },
     { value: 'keep_all', label: 'Keep all exact copies' },
@@ -88,8 +90,15 @@
     { value: 'mark_all_delete', label: 'Mark all for deletion' },
     { value: 'stack_all', label: 'Stack each group' },
   ];
+  const stackResolutionOptions: SelectOption[] = [
+    { value: 'move_selected', label: 'Move selected assets' },
+    { value: 'keep_existing', label: 'Keep existing stacks' },
+    { value: 'include_existing', label: 'Include every stack member' },
+  ];
   const defaultOptions: DuplicateAnalysisOptions = {
     keeper_policy: 'prefer_upload',
+    source_priority: [],
+    keeper_tiebreakers: [],
     external_library_ids: [],
     verify_upload_streams: false,
     automatic_handling_enabled: true,
@@ -112,10 +121,16 @@
   const draftSaveErrors = new SvelteMap<string, string>();
   let loading = $state(true);
   let busy = $state(false);
+  let operationLabel = $state<string | null>(null);
+  let pageChanging = $state(false);
+  let pageChangeTimer: ReturnType<typeof setTimeout> | null = null;
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
   let task = $state.raw<DuplicateTaskStatus | null>(null);
   let latestScan = $state.raw<SimilarityScanSummary | null>(null);
+  const excludedFingerprintCount = $derived(Number(task?.task_type === 'similarity_scan' && task.status === 'completed' ? task.result?.summary?.fingerprints_excluded_after_retry ?? 0 : 0));
+  const excludedFingerprintIds = $derived(task?.task_type === 'similarity_scan' && task.status === 'completed' && Array.isArray(task.result?.summary?.excluded_asset_ids) ? task.result.summary.excluded_asset_ids.filter((value): value is string => typeof value === 'string') : []);
+  const excludedFingerprintReasons = $derived(task?.task_type === 'similarity_scan' && task.status === 'completed' && task.result?.summary?.excluded_asset_reasons && typeof task.result.summary.excluded_asset_reasons === 'object' && !Array.isArray(task.result.summary.excluded_asset_reasons) ? task.result.summary.excluded_asset_reasons as Record<string, unknown> : {});
   let similarityThreshold = $state(95);
   let plan = $state.raw<DuplicateResolutionPlan | null>(null);
   let confirmOpen = $state(false);
@@ -128,6 +143,8 @@
   let applyRulesAfterAnalysis = false;
   const pendingRuleApplicationTaskKey = 'immich-companion:duplicates:pending-rule-application-task';
   let activeFilter = $state<DuplicateReviewFilter>('all');
+  let reviewPage = $state(1);
+  let reviewPageSize = $state(DEFAULT_DUPLICATE_PAGE_SIZE);
 
   const autoReadyGroups = $derived(
     result?.groups.filter(
@@ -160,6 +177,12 @@
   const reviewFilterCounts = $derived(countDuplicateReviewFilters(reviewEntries));
   const visibleReviewEntries = $derived(
     reviewEntries.filter((entry) => duplicateGroupMatchesFilter(entry, activeFilter)),
+  );
+  const pagedReview = $derived(
+    paginateDuplicateReviewEntries(visibleReviewEntries, reviewPage, reviewPageSize),
+  );
+  const overlayLabel = $derived(
+    operationLabel ?? (loading ? 'Loading duplicate groups…' : null),
   );
   const visibleGroupIds = $derived(new Set(visibleReviewEntries.map((entry) => entry.group.group_id)));
   const visibleSelectedCount = $derived(
@@ -218,6 +241,8 @@
   function jumpToGroup(groupId: string): void {
     if (!result?.groups.some((group) => group.group_id === groupId)) return;
     activeFilter = 'all';
+    const index = result.groups.findIndex((group) => group.group_id === groupId);
+    reviewPage = Math.floor(index / reviewPageSize) + 1;
     activeGroupId = groupId;
     void persistWorkspace();
     requestAnimationFrame(() => {
@@ -232,14 +257,14 @@
     loading = true;
     error = null;
     try {
-      const [loaded, latest, scanTasks] = await Promise.all([
+      const [loaded, latest, scanTasks, restored] = await Promise.all([
         loadDuplicateGroups(appliedOptions),
         loadLatestSimilarityScan(),
         loadSimilarityScanTasks(),
+        loadDuplicateWorkspace(),
       ]);
       result = loaded;
       latestScan = latest;
-      const restored = await loadDuplicateWorkspace();
       workspace = restored;
       groupDrafts = Object.fromEntries(restored.drafts.map((draft) => [draft.group_id, draft]));
       const liveIds = new SvelteSet(result.groups.map((group) => group.group_id));
@@ -266,6 +291,8 @@
         task = activeScan;
         busy = true;
         schedulePoll(activeScan.id, 'similarity');
+      } else if (!task && scanTasks[0]?.status === 'completed') {
+        task = scanTasks[0];
       } else if (
         loaded.analysis_task_id
         && (task?.id !== loaded.analysis_task_id || terminalStatuses.has(task.status))
@@ -281,6 +308,27 @@
     } finally {
       loading = false;
     }
+  }
+
+  function changeReviewPage(nextPage: number): void {
+    if (nextPage === pagedReview.page) return;
+    pageChanging = true;
+    reviewPage = nextPage;
+    if (pageChangeTimer) clearTimeout(pageChangeTimer);
+    pageChangeTimer = setTimeout(() => {
+      pageChanging = false;
+      pageChangeTimer = null;
+    }, 350);
+  }
+
+  function changeReviewPageSize(nextSize: number): void {
+    reviewPageSize = nextSize;
+    reviewPage = 1;
+  }
+
+  function changeReviewFilter(nextFilter: DuplicateReviewFilter): void {
+    activeFilter = nextFilter;
+    reviewPage = 1;
   }
 
   type DuplicateTaskKind = 'analysis' | 'similarity' | 'resolution';
@@ -302,7 +350,9 @@
         message = kind === 'analysis'
           ? 'Duplicate candidates were verified.'
           : kind === 'similarity'
-            ? 'The visual similarity scan completed and its matches are ready to review.'
+            ? Number(task.result?.summary?.fingerprints_excluded_after_retry ?? 0) > 0
+              ? `The visual similarity scan completed using current fingerprints. ${task.result?.summary?.fingerprints_excluded_after_retry} images still failed after one retry and were excluded; later scans will retry them.`
+              : 'The visual similarity scan completed and its matches are ready to review.'
             : 'The reviewed duplicate batch completed.';
         if (kind === 'analysis') {
           selected.clear();
@@ -438,6 +488,8 @@
     const hasDraftDecisions = (draft?.decisions.length ?? 0) > 0;
     const draftComplete = draft?.decisions.length === group.members.length;
     const stackDecisions = draft?.decisions.filter((decision) => decision.disposition === 'stack') ?? [];
+    const stackResolution = draft?.stack_resolution ?? 'move_selected';
+    const survivingDecisions = draft?.decisions.filter((decision) => decision.disposition !== 'delete') ?? [];
     const hasDeletions = hasDraftDecisions
       ? draft!.decisions.some((decision) => decision.disposition === 'delete')
       : action === 'resolve';
@@ -448,13 +500,26 @@
     if (hasDraftDecisions && !draftComplete) return 'Choose an action for every image.';
     if (requiresPrimary && selectedKeeper(group) === null) return 'Choose the surviving primary image.';
     if (stackDecisions.length === 1) return 'A stack needs at least two surviving images.';
+    if (hasDeletions && survivingDecisions.length > 1 && !draft?.metadata_keeper_asset_id) {
+      return 'Choose which surviving image keeps albums and tags.';
+    }
     if (hasDeletions && (!group.eligible || group.members.some((member) => member.is_offline))) {
       return 'Deleting duplicate members requires an eligible Immich group with every image online.';
     }
     if (stackDecisions.length && group.members.some((member) => (
       stackDecisions.some((decision) => decision.asset_id === member.id)
-      && (member.is_offline || member.is_stacked)
-    ))) return 'Stack members must be online and not already stacked.';
+      && member.is_offline
+    ))) return 'Stack members must be online.';
+    if (stackResolution === 'keep_existing') {
+      const unstackedIds = new Set(group.members.filter((member) => !member.is_stacked).map((member) => member.id));
+      const remainingStackMembers = stackDecisions.filter((decision) => unstackedIds.has(decision.asset_id));
+      if (remainingStackMembers.length < 2) {
+        return 'Keeping existing stacks leaves fewer than two images for the new stack.';
+      }
+      if (draft?.stack_primary_asset_id && !unstackedIds.has(draft.stack_primary_asset_id)) {
+        return 'Choose an unstacked main image when keeping existing stacks.';
+      }
+    }
     return null;
   }
 
@@ -466,6 +531,7 @@
     return left !== null
       && left.member_fingerprint === right.member_fingerprint
       && left.stack_primary_asset_id === right.stack_primary_asset_id
+      && left.stack_resolution === right.stack_resolution
       && left.metadata_keeper_asset_id === right.metadata_keeper_asset_id
       && left.status === right.status
       && JSON.stringify(left.decisions) === JSON.stringify(right.decisions);
@@ -493,6 +559,7 @@
         options: appliedOptions,
         decisions: draft.decisions,
         stack_primary_asset_id: draft.stack_primary_asset_id,
+        stack_resolution: draft.stack_resolution,
         metadata_keeper_asset_id: draft.metadata_keeper_asset_id,
         status: draft.status,
       });
@@ -575,9 +642,10 @@
     group: ExactDuplicateGroup,
     decisions: DuplicateGroupDraft['decisions'],
     stackPrimaryAssetId: string | null,
+    metadataKeeperAssetId = draftFor(group)?.metadata_keeper_asset_id ?? null,
+    stackResolution = draftFor(group)?.stack_resolution ?? 'move_selected',
   ): void {
     invalidatePlan();
-    const existing = draftFor(group);
     const stackIds = decisions
       .filter((decision) => decision.disposition === 'stack')
       .map((decision) => decision.asset_id);
@@ -586,13 +654,25 @@
       stackPrimaryAssetId,
       [group.effective_primary_asset_id, group.keeper_asset_id],
     );
+    const survivorIds = decisions
+      .filter((decision) => decision.disposition !== 'delete')
+      .map((decision) => decision.asset_id);
+    const hasDeletions = decisions.some((decision) => decision.disposition === 'delete');
+    const resolvedMetadataKeeper = !hasDeletions
+      ? null
+      : survivorIds.includes(metadataKeeperAssetId ?? '')
+        ? metadataKeeperAssetId
+        : survivorIds.length === 1
+          ? survivorIds[0]
+          : null;
     const draft: DuplicateGroupDraft = {
       group_id: group.group_id,
       discovery_source: group.discovery_source,
       member_fingerprint: group.member_fingerprint,
       decisions,
       stack_primary_asset_id: resolvedPrimary,
-      metadata_keeper_asset_id: existing?.metadata_keeper_asset_id ?? null,
+      stack_resolution: stackResolution,
+      metadata_keeper_asset_id: resolvedMetadataKeeper,
       status: 'pending',
       stale: false,
     };
@@ -628,6 +708,34 @@
     updateDraft(group, draft.decisions, assetId);
   }
 
+  function setStackResolution(group: ExactDuplicateGroup, resolution: StackResolution): void {
+    const draft = draftFor(group);
+    if (!draft) return;
+    updateDraft(
+      group,
+      draft.decisions,
+      draft.stack_primary_asset_id,
+      draft.metadata_keeper_asset_id,
+      resolution,
+    );
+  }
+
+  function setMetadataKeeper(group: ExactDuplicateGroup, assetId: string | null): void {
+    const draft = draftFor(group);
+    if (!draft || (assetId !== null && dispositionFor(group, assetId) === 'delete')) return;
+    updateDraft(group, draft.decisions, draft.stack_primary_asset_id, assetId);
+  }
+
+  function stackResolutionDescription(resolution: StackResolution): string {
+    if (resolution === 'keep_existing') {
+      return 'Already-stacked images stay where they are and are excluded from the new stack.';
+    }
+    if (resolution === 'include_existing') {
+      return 'Every member of an affected existing stack joins the new stack.';
+    }
+    return 'Chosen images leave existing stacks; unselected members stay together.';
+  }
+
   function applyGroupPreset(group: ExactDuplicateGroup, disposition: DuplicateDisposition): void {
     updateDraft(
       group,
@@ -644,15 +752,20 @@
   async function applyBulkAction(): Promise<void> {
     if (!result || !bulkTargetGroups.length) return;
     busy = true;
+    operationLabel = 'Updating selected groups…';
     error = null;
     try {
-      for (const group of bulkTargetGroups) {
+      for (const [index, group] of bulkTargetGroups.entries()) {
         if (bulkAction === 'keep_all') applyGroupPreset(group, 'keep');
         else if (bulkAction === 'mark_all_delete') applyGroupPreset(group, 'delete');
         else if (bulkAction === 'stack_all') applyGroupPreset(group, 'stack');
+        if (index % 25 === 24) {
+          await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        }
       }
     } finally {
       busy = false;
+      operationLabel = null;
     }
   }
 
@@ -660,6 +773,7 @@
     if (!groupIds.length) return;
     invalidatePlan();
     busy = true;
+    operationLabel = 'Clearing saved decisions…';
     error = null;
     message = null;
     try {
@@ -677,10 +791,12 @@
       error = reason instanceof Error ? reason.message : 'Could not clear saved decisions.';
     } finally {
       busy = false;
+      operationLabel = null;
     }
   }
 
   async function dismissStaleSelection(): Promise<void> {
+    operationLabel = 'Updating selection…';
     try {
       const restored = await saveDuplicateWorkspaceSelection({
         options: appliedOptions,
@@ -690,6 +806,8 @@
       restoreWorkspaceState(restored);
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not clear stale selection entries.';
+    } finally {
+      operationLabel = null;
     }
   }
 
@@ -717,11 +835,15 @@
         (draftFor(group)?.decisions ?? []).map((decision) => [decision.asset_id, decision.disposition]),
       ),
       stack_primary_asset_id: draftFor(group)?.stack_primary_asset_id ?? null,
+      stack_resolution: draftFor(group)?.stack_resolution ?? 'move_selected',
+      metadata_keeper_asset_id: draftFor(group)?.metadata_keeper_asset_id ?? null,
       recommendation_reason_codes: group.recommendation_reason_codes,
       members: group.members,
       initial_index: initialIndex,
       onmemberdispositionchange: (assetId, disposition) => setMemberDisposition(group, assetId, disposition),
       onstackprimarychange: (assetId) => setStackPrimary(group, assetId),
+      onstackresolutionchange: (resolution) => setStackResolution(group, resolution),
+      onmetadatakeeperchange: (assetId) => setMetadataKeeper(group, assetId),
       onsimilarityreferencechange: async (assetId) => {
         const updated = await switchDuplicateSimilarityReference(group.group_id, assetId);
         if (result) {
@@ -756,6 +878,7 @@
       return;
     }
     busy = true;
+    operationLabel = 'Preparing review actions…';
     error = null;
     message = null;
     const groupIds = groups.map((group) => group.group_id);
@@ -780,6 +903,7 @@
       error = reason instanceof Error ? reason.message : 'Could not prepare the duplicate plan.';
     } finally {
       busy = false;
+      operationLabel = null;
     }
   }
 
@@ -800,6 +924,7 @@
   async function executePlan(): Promise<void> {
     if (!plan) return;
     busy = true;
+    operationLabel = 'Starting reviewed actions…';
     error = null;
     try {
       const started = await executeDuplicateResolution(plan.id);
@@ -809,11 +934,9 @@
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not execute the duplicate plan.';
+    } finally {
+      operationLabel = null;
     }
-  }
-
-  function setPolicy(value: string): void {
-    options.keeper_policy = value as DuplicateKeeperPolicy;
   }
 
   async function persistAutomaticRules(): Promise<void> {
@@ -827,6 +950,7 @@
   async function applyRules(): Promise<void> {
     const nextOptions = configuredOptions();
     busy = true;
+    operationLabel = 'Applying duplicate rules…';
     error = null;
     message = null;
     appliedOptions = nextOptions;
@@ -836,6 +960,8 @@
         preselect_safe_groups: nextOptions.preselect_safe_groups,
         exact_file_action: nextOptions.exact_file_action,
         keeper_policy: nextOptions.keeper_policy,
+        source_priority: nextOptions.source_priority,
+        keeper_tiebreakers: nextOptions.keeper_tiebreakers,
         analyze_automatically: nextOptions.analyze_automatically,
         verify_upload_streams: nextOptions.verify_upload_streams,
         external_library_ids: nextOptions.external_library_ids,
@@ -857,11 +983,14 @@
       applyRulesAfterAnalysis = false;
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not apply duplicate rules.';
+    } finally {
+      operationLabel = null;
     }
   }
 
   async function scanForSimilarImages(): Promise<void> {
     busy = true;
+    operationLabel = 'Starting similarity scan…';
     error = null;
     message = null;
     try {
@@ -875,11 +1004,14 @@
     } catch (reason) {
       busy = false;
       error = reason instanceof Error ? reason.message : 'Could not start the similarity scan.';
+    } finally {
+      operationLabel = null;
     }
   }
 
   async function cancelSimilarityScan(): Promise<void> {
     if (!task || task.task_type !== 'similarity_scan') return;
+    operationLabel = 'Cancelling similarity scan…';
     error = null;
     try {
       task = await cancelDuplicateTask(task.id);
@@ -892,10 +1024,14 @@
       }
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Could not cancel the similarity scan.';
+    } finally {
+      operationLabel = null;
     }
   }
 
   function discoveryLabel(group: ExactDuplicateGroup): string {
+    if (group.discovery_sources?.includes('immich_duplicate')
+      && group.discovery_sources.includes('companion_similarity')) return 'Immich + similarity scan';
     if (group.discovery_source === 'immich_duplicate') return 'Immich duplicate';
     const score = group.discovery_metadata?.similarity_percent;
     return score ? `Companion scan · ${Number(score).toFixed(1)}%` : 'Companion similarity scan';
@@ -910,45 +1046,50 @@
 
   onMount(() => {
     void (async () => {
-      try {
-        const [policy, libraries] = await Promise.all([
-          loadDuplicatePolicy(),
-          loadImmichLibraries(),
-        ]);
-        options = { ...policy };
-        appliedOptions = { ...policy };
-        similarityThreshold = policy.similarity_threshold_percent;
+      let policyFailure: string | null = null;
+      const librariesPromise = loadImmichLibraries().then((libraries) => {
         libraryOptions = libraries.map((library) => ({
           value: library.id,
           label: `${library.name}${library.assetCount === null ? '' : ` · ${library.assetCount} assets`}`,
         }));
+        return null;
+      }).catch((reason: unknown) => {
+        return reason instanceof Error ? reason.message : 'Could not load Immich libraries.';
+      });
+      try {
+        const policy = await loadDuplicatePolicy();
+        options = { ...policy };
+        appliedOptions = { ...policy };
+        similarityThreshold = policy.similarity_threshold_percent;
       } catch (reason) {
-        error = reason instanceof Error ? reason.message : 'Could not load duplicate policy.';
+        policyFailure = reason instanceof Error ? reason.message : 'Could not load duplicate policy.';
       }
       await load();
+      const libraryFailure = await librariesPromise;
+      if (!error) error = policyFailure ?? libraryFailure;
     })();
     return () => {
       if (pollTimer) clearTimeout(pollTimer);
+      if (pageChangeTimer) clearTimeout(pageChangeTimer);
       flushAllDraftsBestEffort();
     };
   });
 </script>
 
-<section class="duplicates-page" aria-labelledby="duplicates-title">
+<section class="duplicates-page" aria-labelledby="duplicates-title" aria-busy={overlayLabel !== null}>
+  {#if overlayLabel}
+    <LoadingOverlay label={overlayLabel} />
+  {:else if pageChanging}
+    <div class="page-change-status" role="status" aria-live="polite">
+      <LoadingSpinner size="1rem" /> Showing page {pagedReview.page}…
+    </div>
+  {/if}
   <header class="page-intro">
     <div><span>Review workspace</span><h1 id="duplicates-title">Duplicates</h1></div>
     <p>Review Immich duplicate groups, verify exact file contents, choose which copy to keep, and resolve approved groups in one guarded batch.</p>
   </header>
 
   <section class="controls" aria-label="Duplicate rules">
-    <SelectField
-      id="duplicate-keeper-policy"
-      label="Keeper rule"
-      value={options.keeper_policy}
-      options={keeperPolicyOptions}
-      disabled={busy}
-      onchange={setPolicy}
-    />
     <SelectField id="duplicate-exact-policy" label="Exact-file default" value={options.exact_file_action} options={exactActionOptions} disabled={busy} onchange={(value) => options.exact_file_action = value as DuplicateAnalysisOptions['exact_file_action']} />
     <MultiSelectField id="duplicate-library-filter" label="External libraries" values={options.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable disabled={busy} onchange={(values) => options.external_library_ids = values} />
     <Checkbox checked={options.verify_upload_streams} label="Verify upload streams too" variant="switch" disabled={busy} onchange={(checked) => options.verify_upload_streams = checked} />
@@ -1020,6 +1161,13 @@
     {/if}
   {/if}
   {#if message}<p class="notice success" role="status">{message}</p>{/if}
+  {#if excludedFingerprintCount > 0}
+    <details class="notice warning">
+      <summary>{excludedFingerprintCount} images could not be fingerprinted after retry</summary>
+      <p>Candidate search used the current fingerprints. These images were not compared and will be retried on a later scan.</p>
+      {#if excludedFingerprintIds.length}<ul>{#each excludedFingerprintIds as id (id)}<li><code>{id}</code>{#if typeof excludedFingerprintReasons[id] === 'string'} — {excludedFingerprintReasons[id]}{/if}</li>{/each}</ul>{/if}
+    </details>
+  {/if}
 
   {#if result}
     <section class="summary" aria-label="Duplicate summary">
@@ -1031,7 +1179,7 @@
       <div><strong>{reviewFilterCounts.analyzing}</strong><span>Analyzing</span></div>
     </section>
 
-    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading} onchange={(filter) => activeFilter = filter} />
+    <DuplicateReviewFilters active={activeFilter} counts={reviewFilterCounts} disabled={loading} onchange={changeReviewFilter} />
 
     {#if workspace?.stale_selected_groups.length}
       <div class="notice stale-workspace" role="status">
@@ -1051,17 +1199,31 @@
       <button type="button" disabled={!selectedReady || busy} onclick={() => void reviewBatch()}>Review actions</button>
     </div>
 
-    {#if loading}
-      <p class="empty">Refreshing duplicate groups…</p>
-    {:else if !result.groups.length}
-      <p class="empty">Immich currently reports no duplicate groups.</p>
+    {#if !result.groups.length}
+      <p class="empty">No duplicate groups are currently available.</p>
     {:else if !visibleReviewEntries.length}
       <p class="empty">No duplicate groups match this review filter.</p>
     {:else}
+      <Pagination
+        currentPage={pagedReview.page}
+        totalPages={pagedReview.pages}
+        totalItems={visibleReviewEntries.length}
+        pageSize={reviewPageSize}
+        pageSizeOptions={DUPLICATE_PAGE_SIZE_OPTIONS}
+        allowPageSizeChange
+        hideWhenSinglePage
+        disabled={loading}
+        label="Duplicate groups pages"
+        onpagechange={changeReviewPage}
+        onpagesizechange={changeReviewPageSize}
+      />
       <div class="groups">
-        {#each visibleReviewEntries as entry (entry.group.group_id)}
+        {#each pagedReview.entries as entry (entry.group.group_id)}
           {@const group = entry.group}
           {@const blockedReason = actionabilityReason(group)}
+          {@const currentDraft = draftFor(group)}
+          {@const hasStackChoices = currentDraft?.decisions.some((decision) => decision.disposition === 'stack') ?? false}
+          {@const hasDeleteChoices = currentDraft?.decisions.some((decision) => decision.disposition === 'delete') ?? false}
           <article id={`duplicate-group-${group.group_id}`} class="group-card">
             <header>
               <div class="group-heading">
@@ -1079,6 +1241,20 @@
                 <button type="button" disabled={busy || blockedReason !== null} onclick={() => void reviewSingleGroup(group)}>Review actions</button>
               </div>
             </header>
+            {#if hasStackChoices}
+              <div class="stack-review-options">
+                <SelectField
+                  id={`duplicate-stack-resolution-${group.group_id}`}
+                  label="Existing stack handling"
+                  value={currentDraft?.stack_resolution ?? 'move_selected'}
+                  options={stackResolutionOptions}
+                  compact
+                  disabled={busy}
+                  onchange={(value) => setStackResolution(group, value as StackResolution)}
+                />
+                <p>{stackResolutionDescription(currentDraft?.stack_resolution ?? 'move_selected')}</p>
+              </div>
+            {/if}
             <div class="members">
               {#each group.members as member, memberIndex (member.id)}
                 <div
@@ -1116,6 +1292,19 @@
                       compact
                       onchange={() => setStackPrimary(group, member.id)}
                     />
+                    {#if hasDeleteChoices}
+                      <StackPrimaryControl
+                        eligible={dispositionFor(group, member.id) !== 'delete'}
+                        selected={currentDraft?.metadata_keeper_asset_id === member.id}
+                        disabled={busy}
+                        compact
+                        eligibleLabel="Keep albums and tags"
+                        ineligibleLabel="Deleted images cannot keep metadata"
+                        selectedLabel="Metadata keeper"
+                        selectedTitle="This image keeps albums and tags from deleted copies"
+                        onchange={() => setMetadataKeeper(group, member.id)}
+                      />
+                    {/if}
                   </div>
                 </div>
               {/each}
@@ -1123,9 +1312,20 @@
           </article>
         {/each}
       </div>
+      <Pagination
+        currentPage={pagedReview.page}
+        totalPages={pagedReview.pages}
+        totalItems={visibleReviewEntries.length}
+        pageSize={reviewPageSize}
+        pageSizeOptions={DUPLICATE_PAGE_SIZE_OPTIONS}
+        allowPageSizeChange
+        hideWhenSinglePage
+        disabled={loading}
+        label="Duplicate groups pages, bottom"
+        onpagechange={changeReviewPage}
+        onpagesizechange={changeReviewPageSize}
+      />
     {/if}
-  {:else if loading}
-    <p class="empty">Loading Immich duplicate groups…</p>
   {/if}
 </section>
 
@@ -1144,6 +1344,7 @@
 
 <style>
   .duplicates-page { display: grid; gap: 1.25rem; }
+  .page-change-status { position: fixed; z-index: 90; top: calc(var(--app-header-height, 0px) + .75rem); right: .75rem; display: flex; align-items: center; gap: .5rem; padding: .65rem .85rem; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); color: var(--color-ink-strong); background: var(--color-surface-raised); box-shadow: var(--shadow-card); font-size: .8rem; pointer-events: none; }
   .page-intro { display: grid; grid-template-columns: minmax(15rem, .75fr) minmax(18rem, 1fr); gap: 1.5rem; align-items: end; }
   .page-intro span { color: var(--color-accent-strong); font-size: .68rem; font-weight: 820; letter-spacing: .08em; text-transform: uppercase; }
   h1 { margin: .28rem 0 0; font-size: clamp(2rem, 5vw, 3.6rem); letter-spacing: -.055em; line-height: .98; }
@@ -1182,6 +1383,7 @@
   .resolution-failure-group small { color: var(--color-negative-ink); }
   .resume-resolution { justify-self: end; }
   .notice.success { color: var(--color-positive-ink); border-color: var(--color-positive-border); background: var(--color-positive-surface); }
+  .notice.warning { color: var(--color-warning-ink); border-color: var(--color-warning-border); background: var(--color-warning-surface); }
   .summary { display: grid; grid-template-columns: repeat(6, 1fr); overflow: hidden; }
   .summary div { display: grid; gap: .15rem; padding: .8rem 1rem; border-right: 1px solid var(--color-border-subtle); }
   .summary div:last-child { border: 0; }
@@ -1193,6 +1395,8 @@
   .groups { display: grid; gap: 1rem; }
   .group-card { overflow: hidden; scroll-margin-top: calc(var(--app-header-height) + 5rem); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-surface-raised); box-shadow: var(--shadow-card); }
   .group-card > header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: .75rem .9rem; border-bottom: 1px solid var(--color-border-subtle); }
+  .stack-review-options { display: grid; grid-template-columns: minmax(13rem, 18rem) 1fr; gap: .8rem; align-items: end; padding: .65rem .9rem; border-bottom: 1px solid var(--color-border-subtle); background: var(--color-surface-soft); }
+  .stack-review-options p { margin: 0 0 .25rem; color: var(--color-ink-muted); font-size: .68rem; line-height: 1.4; }
   .group-card header p { flex: 1; margin: 0; color: var(--color-ink-muted); font-size: .73rem; text-align: right; }
   .group-controls { display: flex; min-width: min(100%, 31rem); flex: 1; align-items: center; justify-content: flex-end; gap: .75rem; }
   .group-presets { display: inline-flex; flex: none; overflow: hidden; border: 1px solid var(--color-border-strong); border-radius: var(--radius-sm); }
@@ -1211,7 +1415,7 @@
   .blocked-reason { flex-basis: 100%; margin-top: .08rem; padding: .28rem .42rem; border-radius: var(--radius-sm); color: var(--color-warning-ink); background: var(--color-warning-surface); font-size: .62rem; font-weight: 760; line-height: 1.3; }
   .stale-workspace { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
   .discovery-source { padding: .18rem .4rem; border-radius: 999px; color: var(--color-accent-strong); background: var(--color-surface-soft); font-size: .6rem; font-weight: 780; }
-  .members { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .75rem; padding: .75rem; }
+  .members { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .75rem; padding: .75rem; }
   .member { display: grid; min-width: 0; overflow: hidden; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); background: var(--color-canvas); }
   .member.keep { border-color: var(--color-positive-border); box-shadow: inset 0 0 0 1px var(--color-positive-border); }
   .member.delete { border-color: var(--color-negative-border); box-shadow: inset 0 0 0 1px var(--color-negative-border); }
@@ -1229,6 +1433,6 @@
   .rule-recommendation { width: fit-content; padding: .16rem .38rem; border-radius: 999px; color: var(--color-positive-ink); background: var(--color-positive-surface); font-weight: 780; text-transform: capitalize; }
   .library-id { overflow: hidden; font-family: ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
   small { color: var(--color-ink-muted); font-size: .63rem; }
-  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } .batch-bar { flex-wrap: wrap; } }
-  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls, .resolution-failure-group { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
+  @media (max-width: 58rem) { .controls, .similarity-controls { grid-template-columns: 1fr 1fr; } .summary { grid-template-columns: repeat(3, 1fr); } .members { grid-template-columns: repeat(4, minmax(0, 1fr)); } .batch-bar { flex-wrap: wrap; } }
+  @media (max-width: 46rem) { .page-intro, .controls, .similarity-controls, .stack-review-options { grid-template-columns: 1fr; } .last-scan { padding: .75rem 0 0; border-top: 1px solid var(--color-border-subtle); border-left: 0; } .summary, .members { grid-template-columns: 1fr 1fr; } .group-card > header, .group-controls, .resolution-failure-group { align-items: stretch; flex-direction: column; } .group-card header p { text-align: left; } }
 </style>

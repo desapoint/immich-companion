@@ -82,6 +82,7 @@
   import AssetErrorState from './AssetErrorState.svelte';
   import AssetGrid from './AssetGrid.svelte';
   import LayoutModeSwitch from '../../../lib/components/ui/LayoutModeSwitch.svelte';
+  import LoadingOverlay from '../../../lib/components/ui/LoadingOverlay.svelte';
   import AssetLoadingState from './AssetLoadingState.svelte';
   import AssetPagination from './AssetPagination.svelte';
   import AssetResultStatus from './AssetResultStatus.svelte';
@@ -260,37 +261,41 @@
     const generation = ++assetLoadGeneration;
     infiniteLoading = false;
     searchController?.abort();
-    searchController = new AbortController();
+    const controller = new AbortController();
+    searchController = controller;
     loading = true;
     error = null;
     try {
-      results = await searchAssets(
+      const response = await searchAssets(
         expression,
         page,
         pageSize,
         sort,
-        searchController.signal,
+        controller.signal,
         selection.selectionId,
       );
-      if (results.pages > 0 && page > results.pages) {
-        page = results.pages;
+      if (controller.signal.aborted || generation !== assetLoadGeneration) return;
+      if (response.pages > 0 && page > response.pages) {
+        page = response.pages;
         await loadAssets();
         return;
       }
-      if (results.selection) {
+      results = response;
+      if (response.selection) {
         selection = setServerSelection(
           selection,
-          results.selection.id,
-          results.selection.revision,
-          results.selection.selected_count,
-          results.selection.selected_ids,
+          response.selection.id,
+          response.selection.revision,
+          response.selection.selected_count,
+          response.selection.selected_ids,
         );
       }
     } catch (requestError) {
+      if (controller.signal.aborted || generation !== assetLoadGeneration) return;
       if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
       error = requestError instanceof Error ? requestError.message : 'Asset search failed.';
     } finally {
-      if (!searchController.signal.aborted) loading = false;
+      if (generation === assetLoadGeneration) loading = false;
     }
   }
 
@@ -729,7 +734,7 @@
     viewerSelectedAsset = null;
     selectionAnchorIndex = null;
     void loadAssets();
-    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'auto' });
   }
 
   function changePageSize(nextPageSize: number): void {
@@ -740,7 +745,7 @@
     viewerSelectedAsset = null;
     selectionAnchorIndex = null;
     void loadAssets();
-    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'smooth' });
+    document.querySelector('.asset-workspace')?.scrollIntoView({ behavior: 'auto' });
   }
 
   function openViewer(index: number): void {
@@ -1420,7 +1425,10 @@
   });
 </script>
 
-<section class="asset-workspace" aria-label="Asset search workspace">
+<section class="asset-workspace" aria-label="Asset search workspace" aria-busy={loading}>
+  {#if loading && results}
+    <LoadingOverlay label="Loading asset page…" />
+  {/if}
   <AssetSearchToolbar {albums} {tags} disabled={loading} onsearch={applySearch} />
 
   <AssetResultStatus

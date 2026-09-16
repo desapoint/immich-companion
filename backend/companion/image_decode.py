@@ -6,11 +6,11 @@ import warnings
 from dataclasses import dataclass
 from typing import BinaryIO
 
-import rawpy
 from PIL import Image, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
 from companion.integrity import DetectedFormat
+from companion.raw_isolation import decode_raw_isolated
 
 MAX_DECODED_PIXELS = 64_000_000
 SUPPORTED_FORMATS = frozenset({"jpeg", "heic", "heif", "avif", "png", "webp", "gif", "tiff"})
@@ -29,32 +29,16 @@ class ImageDecodeResult:
 
 
 def _decode_raw(stream: BinaryIO) -> ImageDecodeResult:
-    """Decode a TIFF-signature RAW/DNG stream through LibRaw."""
+    """Decode a TIFF-signature RAW/DNG stream in an isolated LibRaw worker."""
 
-    try:
-        stream.seek(0)
-        with rawpy.imread(stream) as raw:
-            width = raw.sizes.width
-            height = raw.sizes.height
-            if width * height > MAX_DECODED_PIXELS:
-                return ImageDecodeResult(
-                    supported=True,
-                    valid=None,
-                    issue="image_decode_limit_exceeded",
-                )
-            pixels = raw.postprocess(
-                use_camera_wb=True,
-                no_auto_bright=True,
-                output_bps=8,
-            )
-        height, width = pixels.shape[:2]
-        return ImageDecodeResult(supported=True, valid=True, width=width, height=height)
-    except (rawpy.LibRawError, OSError, ValueError):
-        return ImageDecodeResult(
-            supported=True,
-            valid=False,
-            issue="image_decode_failed",
-        )
+    result = decode_raw_isolated(stream, max_decoded_pixels=MAX_DECODED_PIXELS)
+    return ImageDecodeResult(
+        supported=True,
+        valid=result.valid,
+        width=result.width,
+        height=result.height,
+        issue=result.issue,
+    )
 
 
 def decode_image(stream: BinaryIO, detected_format: DetectedFormat) -> ImageDecodeResult:

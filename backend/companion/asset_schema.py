@@ -77,6 +77,8 @@ SearchField = Literal[
     "favorite",
     "archived",
     "trashed",
+    "stack",
+    "stack_primary",
     "album",
     "tag",
 ]
@@ -88,6 +90,8 @@ SearchOperator = Literal[
     "before",
     "at_least",
     "at_most",
+    "greater_than",
+    "less_than",
     "in_album",
     "not_in_album",
     "in_any",
@@ -111,12 +115,20 @@ class SearchCondition(BaseModel):
             "filename": {"contains", "equals", "not_equals"},
             "type": {"equals", "not_equals"},
             "taken_at": {"after", "before"},
-            "width": {"equals", "at_least", "at_most"},
-            "height": {"equals", "at_least", "at_most"},
-            "aspect_ratio": {"equals", "at_least", "at_most"},
+            "width": {"equals", "at_least", "at_most", "greater_than", "less_than"},
+            "height": {"equals", "at_least", "at_most", "greater_than", "less_than"},
+            "aspect_ratio": {
+                "equals",
+                "at_least",
+                "at_most",
+                "greater_than",
+                "less_than",
+            },
             "favorite": {"equals"},
             "archived": {"equals"},
             "trashed": {"equals"},
+            "stack": {"equals"},
+            "stack_primary": {"equals"},
             "album": {
                 "in_album",
                 "not_in_album",
@@ -156,7 +168,13 @@ class SearchCondition(BaseModel):
                     normalized.append(identifier)
             self.value = normalized
             return self
-        if self.field in {"favorite", "archived", "trashed"} and not isinstance(self.value, bool):
+        if self.field in {
+            "favorite",
+            "archived",
+            "trashed",
+            "stack",
+            "stack_primary",
+        } and not isinstance(self.value, bool):
             raise ValueError(f"{self.field!r} requires a boolean value")
         if self.field in {"width", "height"} and (
             isinstance(self.value, bool) or not isinstance(self.value, int) or self.value < 1

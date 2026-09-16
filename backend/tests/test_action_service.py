@@ -59,12 +59,17 @@ class FakeAssets:
         self.applicability = applicability
         self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
         self.removed_batches: list[list[UUID]] = []
+        self.relation_ids: list[UUID] = []
+        self.flag_events: list[tuple[str, list[UUID]]] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
         return self.current
 
     async def applicable_action_ids(self, *_args, **_kwargs):
         return self.applicability.pop(0)
+
+    async def relation_ids_for_assets(self, *_args, **_kwargs):
+        return self.relation_ids
 
     async def stack_asset_ids(self, asset_id):
         return [asset_id]
@@ -77,6 +82,9 @@ class FakeAssets:
     async def remove_assets(self, asset_ids: list[UUID]) -> int:
         self.removed_batches.append(asset_ids)
         return len(asset_ids)
+
+    async def apply_asset_action_event(self, operation, asset_ids):
+        self.flag_events.append((operation, asset_ids))
 
 
 class FakeActions:
@@ -230,6 +238,7 @@ async def test_stack_creation_accepts_filtered_children_after_primary_verificati
 
     assert result.status == "completed"
     assert result.applied_ids == [ASSET_TWO, ASSET_ONE]
+    assert result.affected_ids == [ASSET_TWO, ASSET_ONE]
     assert stack_immich.calls[0] == ("stack", None, [ASSET_TWO, ASSET_ONE])
     assert actions.finished is not None
     assert actions.finished[0] == "completed"
@@ -261,6 +270,30 @@ class FakeSync:
 
     async def synchronize(self):
         self.calls += 1
+
+
+class DeferredSync(FakeSync):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[list[UUID]] = []
+
+    async def enqueue_asset_repair_during_sync(self, asset_ids):
+        self.queued.append(asset_ids)
+        return True
+
+
+class DeferredStackSync(FakeSync):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[tuple[list[UUID], bool]] = []
+        self.snapshots: list[list[UUID]] = []
+
+    async def enqueue_asset_repair_during_sync(self, asset_ids, *, include_stacks=False):
+        self.queued.append((asset_ids, include_stacks))
+        return True
+
+    async def apply_stack_snapshot_for_targets(self, asset_ids):
+        self.snapshots.append(asset_ids)
 
 
 class RuntimeSettings:
@@ -373,6 +406,21 @@ async def test_relation_action_skips_assets_already_in_the_requested_state(
 
 
 @pytest.mark.asyncio
+async def test_remove_all_relations_resolves_current_ids_before_planning() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    instance, actions, _, _ = service(resolution(), [{ASSET_ONE}, {ASSET_TWO}])
+    instance._assets.relation_ids = [RELATION_ID, RELATION_TWO]
+
+    plan = await instance.plan(
+        AssetActionPlanRequest(selection=selection, action="remove_tag")
+    )
+
+    assert plan.relation_ids == [RELATION_ID, RELATION_TWO]
+    assert actions.record is not None
+    assert actions.record.relation_ids == [str(RELATION_ID), str(RELATION_TWO)]
+
+
+@pytest.mark.asyncio
 async def test_remove_stack_keeps_original_selection_digest_after_expansion() -> None:
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
     instance, actions, _, sync = service(
@@ -386,6 +434,7 @@ async def test_remove_stack_keeps_original_selection_digest_after_expansion() ->
     result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
 
     assert result.verified is True
+    assert result.affected_ids == [ASSET_ONE, ASSET_TWO]
     assert actions.finished is not None
     assert sync.calls == 1
     assert actions.finished[0] == "completed"
@@ -451,6 +500,65 @@ async def test_uniform_true_state_chooses_only_unarchive_and_unfavorite() -> Non
 
     assert archive.operation == "unarchive"
     assert favorite.operation == "unfavorite"
+
+
+@pytest.mark.asyncio
+async def test_favorite_action_finishes_without_waiting_for_active_sync_repair() -> None:
+    selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
+    selected = {ASSET_ONE, ASSET_TWO}
+    instance, _, immich, sync = service(
+        resolution(), [selected, selected, set()], sync=DeferredSync()
+    )
+
+    plan = await instance.plan(
+        AssetActionPlanRequest(selection=selection, action="favorite_toggle")
+    )
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert result.status == "completed"
+    assert immich.calls == [("favorite", None, [ASSET_ONE, ASSET_TWO])]
+    assert sync.queued == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.calls == 0
+    assert instance._assets.flag_events == [("favorite", [ASSET_ONE, ASSET_TWO])]
+
+
+@pytest.mark.asyncio
+async def test_remove_stack_returns_after_immich_confirmation_with_repair_queued() -> None:
+    class StackImmich(FakeImmich):
+        active = True
+
+        async def list_stacks(self):
+            if not self.active:
+                return []
+            return [SimpleNamespace(
+                id=RELATION_ID,
+                primary_asset_id=ASSET_ONE,
+                assets=[SimpleNamespace(id=ASSET_ONE), SimpleNamespace(id=ASSET_TWO)],
+            )]
+
+        async def delete_stack(self, stack_id):
+            await super().delete_stack(stack_id)
+            self.active = False
+
+    selected = {ASSET_ONE, ASSET_TWO}
+    instance, _, _, sync = service(
+        resolution(), [selected, selected, set()], sync=DeferredStackSync()
+    )
+    immich = StackImmich()
+    instance._immich = immich  # type: ignore[assignment]
+    instance._stacks._immich = immich  # type: ignore[assignment]
+    plan = await instance.plan(AssetActionPlanRequest(
+        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+        action="remove_stack",
+    ))
+
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert result.status == "completed"
+    assert immich.calls == [("remove_stack", RELATION_ID, [])]
+    assert sync.queued == [([ASSET_ONE, ASSET_TWO], True)]
+    assert sync.snapshots == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.calls == 0
 
 
 @pytest.mark.asyncio

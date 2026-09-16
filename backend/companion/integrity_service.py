@@ -6,13 +6,14 @@ import asyncio
 import logging
 from dataclasses import replace
 from io import BytesIO
+from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from time import monotonic
 from typing import Any
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
-from companion.image_decode import decode_image
+from companion.image_decode import SUPPORTED_FORMATS, ImageDecodeResult
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import FileIntegrityAnalyzer
 from companion.integrity_repository import (
@@ -26,7 +27,7 @@ from companion.integrity_schema import (
     AssetIntegrityReport,
     AssetIntegrityState,
 )
-from companion.similarity_features import extract_visual_features
+from companion.similarity_features import decode_and_extract_features, extract_visual_features
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -143,10 +144,15 @@ class IntegrityTaskHandler:
         immich: ImmichApiClient,
         assets: AssetRepository,
         reports: IntegrityRepository,
+        *,
+        decode_cache_path: Path | None = None,
+        decode_cache_max_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._reports = reports
+        self._decode_cache_path = decode_cache_path
+        self._decode_cache_max_bytes = decode_cache_max_bytes
 
     async def _active_asset(self, asset_id: UUID) -> ImmichAsset:
         if not await self._assets.has_asset(asset_id):
@@ -230,10 +236,14 @@ class IntegrityTaskHandler:
         asset_id: UUID,
         *,
         publish_progress: bool = True,
+        source: ImmichAsset | None = None,
+        track_similarity_changes: bool = True,
     ) -> AssetIntegrityReport:
         """Run the shared bounded analyzer for one known synchronized asset."""
 
-        source = await self._active_asset(asset_id)
+        source = source or await self._active_asset(asset_id)
+        if source.id != asset_id or source.is_trashed or not await self._assets.has_asset(asset_id):
+            raise PermanentTaskError("The asset is no longer in the active workspace.")
         immich_content_checksum = source.checksum if source.library_id is None else None
         analyzer = FileIntegrityAnalyzer(source.original_mime_type, immich_content_checksum)
         started = monotonic()
@@ -253,7 +263,12 @@ class IntegrityTaskHandler:
         else:
             await context.ensure_active()
 
-        with SpooledTemporaryFile(max_size=INTEGRITY_SPOOL_MEMORY_BYTES) as spool:
+        with SpooledTemporaryFile(
+            max_size=INTEGRITY_SPOOL_MEMORY_BYTES,
+            dir=self._decode_cache_path,
+            suffix=".tmp",
+        ) as spool:
+            spool_complete = True
             try:
                 async with self._immich.stream_original(
                     asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
@@ -262,7 +277,12 @@ class IntegrityTaskHandler:
                     last_reported = monotonic()
                     async for chunk in original.chunks:
                         analyzer.update(chunk)
-                        spool.write(chunk)
+                        if spool_complete and analyzer.byte_size <= self._decode_cache_max_bytes:
+                            spool.write(chunk)
+                        elif spool_complete:
+                            spool_complete = False
+                            spool.seek(0)
+                            spool.truncate(0)
                         now = monotonic()
                         if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
                             continue
@@ -301,7 +321,17 @@ class IntegrityTaskHandler:
             )
             await context.ensure_active()
             result = analyzer.finalize()
-            decoded = await asyncio.to_thread(decode_image, spool, result.detected_format)
+            decoded, visual_feature = (
+                await asyncio.to_thread(
+                    decode_and_extract_features, spool, result.detected_format
+                )
+                if spool_complete
+                else (ImageDecodeResult(
+                    supported=result.detected_format in SUPPORTED_FORMATS,
+                    valid=None,
+                    issue="image_decode_cache_limit_exceeded",
+                ), None)
+            )
             result = result.with_decode(
                 supported=decoded.supported,
                 valid=decoded.valid,
@@ -311,14 +341,12 @@ class IntegrityTaskHandler:
                 immich_height=source.height,
                 issue=decoded.issue,
             )
-            visual_feature = None
             if decoded.valid is True:
-                visual_feature = await asyncio.to_thread(
-                    extract_visual_features,
-                    spool,
-                    result.detected_format,
-                )
-            elif decoded.issue == "image_decode_limit_exceeded":
+                pass
+            elif decoded.issue in {
+                "image_decode_limit_exceeded",
+                "image_decode_cache_limit_exceeded",
+            }:
                 visual_feature = await self._oversized_preview_feature(source)
                 if visual_feature is not None:
                     logger.warning(
@@ -375,6 +403,12 @@ class IntegrityTaskHandler:
                 source.original_file_name,
             )
             raise RetryableTaskError("The source changed during integrity analysis.")
+        # A lightweight synchronization payload may omit file size. Persist the
+        # verified detailed metadata so this feature becomes current in the
+        # catalog and is not reprocessed on every later library-wide pass.
+        await self._assets.refresh_asset(
+            current, track_similarity_changes=track_similarity_changes
+        )
         return await self._reports.save(current, result, visual_feature)
 
     @staticmethod

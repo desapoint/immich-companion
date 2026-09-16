@@ -1,37 +1,15 @@
 @import './tokens.css';
 
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
 html {
-  min-width: 20rem;
   background: var(--color-canvas);
   font-family: var(--font-sans);
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
 }
 
 body {
-  min-width: 20rem;
-  min-height: 100vh;
-  margin: 0;
   color: var(--color-ink-strong);
   background:
     radial-gradient(circle at 12% 0%, color-mix(in srgb, var(--color-accent-strong) 8%, transparent), transparent 24rem),
     var(--color-canvas);
-}
-
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
-
-button {
-  -webkit-user-select: none;
-  user-select: none;
 }
 
 :focus-visible {

@@ -134,6 +134,26 @@ describe('GroupEvidencePills', () => {
     expect(body).toContain('Pixel match');
   });
 
+  it('shows local changes and the source used for the final percentage', () => {
+    const { body } = render(GroupEvidencePills, {
+      props: {
+        member: {
+          ...member,
+          similarity: {
+            ...member.similarity!,
+            model_version: 'appearance-preview-v1',
+            detail_changed_percent: 8.75,
+            detail_source: 'transcoded',
+          },
+        },
+        analysisPending: false,
+      },
+    });
+
+    expect(body).toContain('8.8% sampled detail differs');
+    expect(body).toContain('Full-size converted detail');
+  });
+
   it('distinguishes pending stale evidence from a corruption result', () => {
     const { body } = render(GroupEvidencePills, {
       props: {

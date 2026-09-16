@@ -234,6 +234,130 @@ def test_asset_search_requires_companion_database_configuration() -> None:
     assert response.json()["detail"] == "The companion database is not configured."
 
 
+def test_managed_album_detail_is_read_directly_from_immich() -> None:
+    album_id = "44444444-4444-4444-8444-444444444444"
+    thumbnail_id = "11111111-1111-4111-8111-111111111111"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/albums/{album_id}"
+        return httpx.Response(
+            200,
+            json={
+                "id": album_id,
+                "albumName": "Family",
+                "description": "Summer archive",
+                "albumThumbnailAssetId": thumbnail_id,
+                "assetCount": 14,
+                "createdAt": "2026-08-20T12:01:00Z",
+                "updatedAt": "2026-08-20T12:02:00Z",
+            },
+        )
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get(f"/api/albums/manage/{album_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": album_id,
+        "name": "Family",
+        "description": "Summer archive",
+        "album_thumbnail_asset_id": thumbnail_id,
+        "asset_count": 14,
+        "created_at": "2026-08-20T12:01:00Z",
+        "updated_at": "2026-08-20T12:02:00Z",
+    }
+
+
+def test_managed_tag_detail_includes_its_live_hierarchy() -> None:
+    parent_id = "44444444-4444-4444-8444-444444444444"
+    tag_id = "55555555-5555-4555-8555-555555555555"
+    child_id = "66666666-6666-4666-8666-666666666666"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/tags"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": parent_id,
+                    "name": "Places",
+                    "value": "Places",
+                    "color": "#7ea6ff",
+                    "assetCount": 8,
+                },
+                {
+                    "id": tag_id,
+                    "name": "Montréal",
+                    "value": "Montréal",
+                    "color": "#68d391",
+                    "parentId": parent_id,
+                    "assetCount": 5,
+                },
+                {
+                    "id": child_id,
+                    "name": "Old Port",
+                    "value": "Old Port",
+                    "parentId": tag_id,
+                    "assetCount": 2,
+                },
+            ],
+        )
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.get(f"/api/tags/manage/{tag_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": tag_id,
+        "name": "Montréal",
+        "color": "#68d391",
+        "parent_id": parent_id,
+        "parent_path": ["Places"],
+        "asset_count": 5,
+        "child_count": 1,
+        "real_tag_ids": [tag_id, child_id],
+        "children": [],
+    }
+
+
+def test_managed_tag_update_only_forwards_color_to_immich() -> None:
+    tag_id = "55555555-5555-4555-8555-555555555555"
+    parent_id = "44444444-4444-4444-8444-444444444444"
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PATCH"
+        assert request.url.path == f"/api/tags/{tag_id}"
+        requests.append(json.loads(request.read()))
+        return httpx.Response(
+            200,
+            json={
+                "id": tag_id,
+                "name": "Montréal",
+                "value": "Places/Montréal",
+                "color": "#334455",
+                "parentId": parent_id,
+                "assetCount": 5,
+            },
+        )
+
+    with TestClient(create_app(settings(), httpx.MockTransport(handler))) as client:
+        response = client.patch(
+            f"/api/tags/manage/{tag_id}",
+            json={"color": "#334455"},
+        )
+        unsupported = client.patch(
+            f"/api/tags/manage/{tag_id}",
+            json={"parent_id": parent_id},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["color"] == "#334455"
+    assert response.json()["parent_id"] == parent_id
+    assert requests == [{"color": "#334455"}]
+    assert unsupported.status_code == 422
+
+
 def test_cross_source_duplicate_api_requires_companion_database() -> None:
     with TestClient(create_app(settings(), pong_transport())) as client:
         result = client.get("/api/assets/duplicates/cross-source")
@@ -242,10 +366,16 @@ def test_cross_source_duplicate_api_requires_companion_database() -> None:
             "/api/assets/duplicates/similarity-scan",
             json={},
         )
+        similarity_index = client.post("/api/assets/duplicates/similarity-index")
+        similarity_coverage = client.get(
+            "/api/assets/duplicates/similarity-index/coverage"
+        )
 
     assert result.status_code == 503
     assert start.status_code == 503
     assert similarity_scan.status_code == 503
+    assert similarity_index.status_code == 503
+    assert similarity_coverage.status_code == 503
 
 
 def test_restore_listing_is_paged_directly_from_immich() -> None:

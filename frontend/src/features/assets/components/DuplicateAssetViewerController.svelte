@@ -3,6 +3,7 @@
 
   import { getAssetDetail, getAssetIntegrity } from '../api/assetApi';
   import type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
+  import type { StackResolution } from '../../../lib/types/stack';
   import { resolveStackPrimary } from '../../../lib/utils/duplicateReview';
   import type { AssetDetail, AssetIntegrityState, AssetSummary, DuplicateReviewContext } from '../types/assets';
   import AssetViewerDialog from './AssetViewerDialog.svelte';
@@ -38,6 +39,8 @@
     selected_action: DuplicateReviewContext['selected_action'];
     member_decisions: Record<string, DuplicateDisposition>;
     stack_primary_asset_id: string | null;
+    stack_resolution: StackResolution;
+    metadata_keeper_asset_id: string | null;
     recommendation_reason_codes: string[];
     members: Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
@@ -46,6 +49,8 @@
     initial_index: number;
     onmemberdispositionchange?: (assetId: string, disposition: DuplicateDisposition) => void;
     onstackprimarychange?: (assetId: string) => void;
+    onstackresolutionchange?: (resolution: StackResolution) => void;
+    onmetadatakeeperchange?: (assetId: string | null) => void;
     onsimilarityreferencechange?: (assetId: string) => Promise<Array<DuplicatePreviewMember & {
       verification: 'matching' | 'mismatch' | 'unverified';
       content_checksum: string | null;
@@ -72,6 +77,8 @@
   let selectedAction = $state<DuplicatePreviewReview['selected_action']>('automatic');
   let memberDecisions = $state<Record<string, DuplicateDisposition>>({});
   let stackPrimaryAssetId = $state<string | null>(null);
+  let stackResolution = $state<StackResolution>('move_selected');
+  let metadataKeeperAssetId = $state<string | null>(null);
   let similarityLoading = $state(false);
   let similarityError = $state<string | null>(null);
   const selectedIds = new Set<string>();
@@ -120,6 +127,8 @@
     selected_keeper_asset_id: selectedKeeperId,
     selected_action: selectedAction,
     stack_primary_asset_id: stackPrimaryAssetId,
+    stack_resolution: stackResolution,
+    metadata_keeper_asset_id: metadataKeeperAssetId,
     recommendation_reason_codes: review.recommendation_reason_codes,
     members: members.map((member) => ({
       id: member.id,
@@ -170,6 +179,17 @@
 
   function chooseDisposition(assetId: string, disposition: DuplicateDisposition): void {
     memberDecisions = { ...memberDecisions, [assetId]: disposition };
+    const survivorIds = members
+      .filter((member) => memberDecisions[member.id] !== 'delete')
+      .map((member) => member.id);
+    const hasDeletions = members.some((member) => memberDecisions[member.id] === 'delete');
+    metadataKeeperAssetId = !hasDeletions
+      ? null
+      : survivorIds.includes(metadataKeeperAssetId ?? '')
+        ? metadataKeeperAssetId
+        : survivorIds.length === 1
+          ? survivorIds[0]
+          : null;
     stackPrimaryAssetId = resolveStackPrimary(
       members
         .filter((member) => memberDecisions[member.id] === 'stack')
@@ -184,6 +204,17 @@
     if (memberDecisions[assetId] !== 'stack') return;
     stackPrimaryAssetId = assetId;
     review.onstackprimarychange?.(assetId);
+  }
+
+  function chooseStackResolution(resolution: StackResolution): void {
+    stackResolution = resolution;
+    review.onstackresolutionchange?.(resolution);
+  }
+
+  function chooseMetadataKeeper(assetId: string): void {
+    if (memberDecisions[assetId] === 'delete') return;
+    metadataKeeperAssetId = assetId;
+    review.onmetadatakeeperchange?.(assetId);
   }
 
   async function chooseSimilarityReference(assetId: string): Promise<boolean> {
@@ -208,6 +239,8 @@
     selectedAction = review.selected_action;
     memberDecisions = { ...review.member_decisions };
     stackPrimaryAssetId = review.stack_primary_asset_id;
+    stackResolution = review.stack_resolution;
+    metadataKeeperAssetId = review.metadata_keeper_asset_id;
     void navigate(review.initial_index);
   });
 </script>
@@ -231,6 +264,8 @@
     {duplicateContext}
     onduplicatedisposition={chooseDisposition}
     onduplicatestackprimary={chooseStackPrimary}
+    onduplicatestackresolution={chooseStackResolution}
+    onduplicatemetadatakeeper={chooseMetadataKeeper}
     onduplicatesimilarityreference={chooseSimilarityReference}
     onduplicatepreviousgroup={review.onpreviousgroup}
     onduplicatenextgroup={review.onnextgroup}

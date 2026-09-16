@@ -11,8 +11,10 @@
   import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
   import DuplicateAssetViewerController from '../features/assets/components/DuplicateAssetViewerController.svelte';
   import type { DuplicatePreviewRequest } from '../features/duplicates/types/duplicates';
+  import V2Page from '../v2/V2Page.svelte';
 
   const currentPath = window.location.pathname;
+  const isV2 = currentPath === '/v2' || currentPath.startsWith('/v2/');
   let duplicatePreview = $state.raw<DuplicatePreviewRequest | null>(null);
 
   function openDuplicatePreview(request: DuplicatePreviewRequest): void {
@@ -21,33 +23,37 @@
 </script>
 
 <svelte:boundary>
-  <AppShell activePath={currentPath}>
-    {#if currentPath === '/assets' || currentPath.startsWith('/assets/')}
-      <AssetsPage />
-    {:else if currentPath === '/albums'}
-      <AlbumsPage />
-    {:else if currentPath === '/tags'}
-      <TagsPage />
-    {:else if currentPath === '/restore'}
-      <RestorePage />
-    {:else if currentPath === '/duplicates'}
-      <DuplicatesPage onpreview={openDuplicatePreview} />
-    {:else}
-      {#if currentPath === '/settings'}
-        <SettingsPage />
+  {#if isV2}
+    <V2Page />
+  {:else}
+    <AppShell activePath={currentPath}>
+      {#if currentPath === '/assets' || currentPath.startsWith('/assets/')}
+        <AssetsPage />
+      {:else if currentPath === '/albums'}
+        <AlbumsPage />
+      {:else if currentPath === '/tags'}
+        <TagsPage />
+      {:else if currentPath === '/restore'}
+        <RestorePage />
+      {:else if currentPath === '/duplicates'}
+        <DuplicatesPage onpreview={openDuplicatePreview} />
       {:else}
-        <StatusDashboard />
+        {#if currentPath === '/settings'}
+          <SettingsPage />
+        {:else}
+          <StatusDashboard />
+        {/if}
       {/if}
-    {/if}
-  </AppShell>
+    </AppShell>
 
-  {#if duplicatePreview}
-    {#key duplicatePreview.group_id}
-      <DuplicateAssetViewerController
-        review={duplicatePreview}
-        onclose={() => (duplicatePreview = null)}
-      />
-    {/key}
+    {#if duplicatePreview}
+      {#key duplicatePreview.group_id}
+        <DuplicateAssetViewerController
+          review={duplicatePreview}
+          onclose={() => (duplicatePreview = null)}
+        />
+      {/key}
+    {/if}
   {/if}
 
   {#snippet failed(error, reset)}

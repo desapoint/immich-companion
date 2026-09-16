@@ -63,6 +63,7 @@ def test_rejects_duplicate_and_self_pairs() -> None:
         ("maximum_aspect_difference", 1.1),
         ("maximum_neighbors_per_asset", 0),
         ("maximum_matches", 50_001),
+        ("validation_mode", "unsupported"),
     ],
 )
 def test_rejects_unsafe_scan_parameters(field: str, value: int | float) -> None:

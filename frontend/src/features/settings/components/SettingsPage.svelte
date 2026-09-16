@@ -4,8 +4,10 @@
   import Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import MultiSelectField from '../../../lib/components/ui/MultiSelectField.svelte';
   import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import OrderedPolicyList from './OrderedPolicyList.svelte';
   import type { SelectOption } from '../../../lib/types/ui';
   import { loadDuplicatePolicy, loadImmichLibraries, loadSyncRuntimeSettings, loadSyncSchedules, saveDuplicatePolicy, saveSyncRuntimeSettings, saveSyncSchedule } from '../api/settingsApi';
+  import { orderedSourcePriority, orderedTiebreakers, sourcePriorityItems as buildSourcePriorityItems, tiebreakerDefinitions, type OrderedPolicyItem } from '../state/duplicatePolicyOrder';
   import type { DuplicatePolicy, ImmichLibraryOption, SyncRuntimeSettings, SyncSchedule } from '../types/settings';
 
   const defaults: Record<string, string> = {
@@ -42,16 +44,19 @@
     { value: 'stack_all', label: 'Stack exact copies' },
     { value: 'review', label: 'Always review' },
   ];
-  const keeperOptions: SelectOption[] = [
-    { value: 'prefer_upload', label: 'Prefer Immich uploads' },
-    { value: 'prefer_external', label: 'Prefer external files' },
-    { value: 'most_recent', label: 'Most recently uploaded' },
-    { value: 'first', label: 'First Immich result' },
-  ];
   const libraryOptions = $derived<SelectOption[]>(libraries.map((library) => ({
     value: library.id,
     label: `${library.name}${library.assetCount === null ? '' : ` · ${library.assetCount} assets`}`,
   })));
+  const sourcePriorityItems = $derived.by((): OrderedPolicyItem[] => {
+    if (!duplicateDraft) return [];
+    return buildSourcePriorityItems(duplicateDraft.source_priority, libraries);
+  });
+  const tiebreakerItems = $derived.by((): OrderedPolicyItem[] => {
+    if (!duplicateDraft) return [];
+    const byId = new Map(tiebreakerDefinitions.map((item) => [item.id, item]));
+    return duplicateDraft.keeper_tiebreakers.flatMap((id) => byId.get(id) ?? []);
+  });
 
   function hydrate(items: SyncSchedule[]): void {
     schedules = items;
@@ -121,9 +126,13 @@
       hydrate(loadedSchedules);
       runtime = loadedRuntime;
       runtimeDraft = { ...loadedRuntime };
-      duplicatePolicy = loadedPolicy;
-      duplicateDraft = { ...loadedPolicy };
       libraries = loadedLibraries;
+      duplicatePolicy = loadedPolicy;
+      duplicateDraft = {
+        ...loadedPolicy,
+        source_priority: orderedSourcePriority(loadedPolicy, loadedLibraries),
+        keeper_tiebreakers: orderedTiebreakers(loadedPolicy),
+      };
     } catch (requestError) {
       error = requestError instanceof Error ? requestError.message : 'Could not load settings.';
     } finally {
@@ -162,12 +171,15 @@
         <div>
           <p class="eyebrow">Duplicate review</p>
           <h2 id="duplicate-policy-title">Automatic handling policy</h2>
-          <p class="hint">These defaults recompute automatic recommendations only. Saved manual group choices remain unchanged. Delete all is always manual.</p>
+          <p class="hint">These defaults recompute automatic recommendations only. Saved manual group choices remain unchanged. Source and tie-break priorities are evaluated from top to bottom.</p>
         </div>
         <div class="policy-fields">
           <SelectField id="duplicate-exact-action" label="Exact-file action" value={duplicateDraft.exact_file_action} options={exactActionOptions} onchange={(value) => duplicateDraft = { ...duplicateDraft!, exact_file_action: value as DuplicatePolicy['exact_file_action'] }} />
-          <SelectField id="duplicate-keeper-policy" label="Primary rule" value={duplicateDraft.keeper_policy} options={keeperOptions} onchange={(value) => duplicateDraft = { ...duplicateDraft!, keeper_policy: value as DuplicatePolicy['keeper_policy'] }} />
-          <MultiSelectField id="duplicate-library-policy" label="External libraries" values={duplicateDraft.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable onchange={(values) => duplicateDraft = { ...duplicateDraft!, external_library_ids: values }} />
+          <MultiSelectField id="duplicate-library-policy" label="Libraries included in review" values={duplicateDraft.external_library_ids} options={libraryOptions} placeholder="All external libraries" searchable onchange={(values) => duplicateDraft = { ...duplicateDraft!, external_library_ids: values }} />
+        </div>
+        <div class="priority-fields">
+          <OrderedPolicyList id="duplicate-source-priority" label="Source priority" items={sourcePriorityItems} disabled={duplicateSaving} onchange={(source_priority) => duplicateDraft = { ...duplicateDraft!, source_priority }} />
+          <OrderedPolicyList id="duplicate-tiebreakers" label="Same-source tie-breakers" items={tiebreakerItems} disabled={duplicateSaving} onchange={(keeper_tiebreakers) => duplicateDraft = { ...duplicateDraft!, keeper_tiebreakers: keeper_tiebreakers as DuplicatePolicy['keeper_tiebreakers'] }} />
         </div>
         <div class="policy-toggles">
           <Checkbox checked={duplicateDraft.automatic_handling_enabled} label="Enable automatic recommendations" variant="switch" onchange={(checked) => duplicateDraft = { ...duplicateDraft!, automatic_handling_enabled: checked }} />
@@ -222,6 +234,7 @@
   .runtime-card .hint { max-width: 48rem; line-height: 1.5; }
   .runtime-fields { display: grid; grid-template-columns: repeat(3, minmax(10rem, 1fr)); gap: .75rem; grid-column: 1 / -1; }
   .policy-fields { display: grid; grid-template-columns: repeat(2, minmax(12rem, 1fr)); gap: .75rem; }
+  .priority-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; align-items: start; }
   .policy-toggles { display: grid; grid-template-columns: repeat(2, minmax(12rem, 1fr)); gap: .75rem; }
   .card-heading { display: flex; justify-content: space-between; gap: 1rem; }
   .field { display: grid; gap: 0.45rem; color: var(--color-ink-muted); font-size: 0.78rem; font-weight: 700; }
@@ -234,5 +247,5 @@
   .hint, .state, .success { margin: 0; color: var(--color-ink-muted); font-size: 0.78rem; }
   .error { color: var(--color-danger, #b42318); }
   .success { color: var(--color-accent-strong); font-weight: 700; }
-  @media (max-width: 46rem) { .cards, .runtime-fields, .policy-fields, .policy-toggles { grid-template-columns: 1fr; } .runtime-card { grid-template-columns: 1fr; } }
+  @media (max-width: 46rem) { .cards, .runtime-fields, .policy-fields, .priority-fields, .policy-toggles { grid-template-columns: 1fr; } .runtime-card { grid-template-columns: 1fr; } }
 </style>

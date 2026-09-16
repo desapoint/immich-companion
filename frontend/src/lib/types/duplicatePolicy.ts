@@ -1,4 +1,5 @@
 export type DuplicateKeeperPolicy = 'most_recent' | 'prefer_upload' | 'prefer_external' | 'first';
+export type DuplicateKeeperTiebreaker = 'favorite' | 'resolution' | 'metadata_richness' | 'file_size' | 'oldest_capture' | 'uploaded_at';
 export type ExactFilePolicyAction = 'resolve' | 'keep_all' | 'stack_all' | 'review';
 
 export interface DuplicatePolicy {
@@ -6,6 +7,8 @@ export interface DuplicatePolicy {
   preselect_safe_groups: boolean;
   exact_file_action: ExactFilePolicyAction;
   keeper_policy: DuplicateKeeperPolicy;
+  source_priority: string[];
+  keeper_tiebreakers: DuplicateKeeperTiebreaker[];
   analyze_automatically: boolean;
   verify_upload_streams: boolean;
   external_library_ids: string[];

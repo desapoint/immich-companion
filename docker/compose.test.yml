@@ -133,8 +133,15 @@ services:
       DATABASE_TIMEOUT_SECONDS: "5"
       COMPANION_TEST_STATE_FILE: /run/immich-companion/bootstrap-state.json
       ALLOW_DESTRUCTIVE_ACTIONS: "true"
+      SIMILARITY_CACHE_DIR: /cache
+      SIMILARITY_PREVIEW_CACHE_MAX_BYTES: "67108864"
+      SIMILARITY_PREVIEW_CACHE_MAX_AGE_SECONDS: "86400"
+      SIMILARITY_PAIR_CACHE_MAX_BYTES: "16777216"
+      SIMILARITY_DECODE_CACHE_MAX_BYTES: "67108864"
+      SIMILARITY_HOT_CACHE_MAX_BYTES: "16777216"
     volumes:
       - companion-test-state:/run/immich-companion:ro
+      - companion-cache:/cache
     ports:
       - "${COMPANION_TEST_BIND:-0.0.0.0}:${COMPANION_TEST_PORT:-8090}:8080"
     depends_on:
@@ -157,3 +164,4 @@ volumes:
   immich-upload:
   companion-postgres:
   companion-test-state:
+  companion-cache:

@@ -56,6 +56,7 @@
     stackMembersForAsset,
   } from '../state/assetViewModel';
   import { resolveViewerMediaUrls } from '../state/viewerMedia';
+  import { comparisonTargetId, stepComparisonTargetId } from '../../../lib/utils/duplicateComparisonNavigation';
   import {
     anchoredScrollOffset,
     captureImageZoomAnchor,
@@ -81,6 +82,7 @@
     TagOption,
     ViewerScaleMode,
   } from '../types/assets';
+  import type { StackResolution } from '../../../lib/types/stack';
   import AssetInfoPanel from './AssetInfoPanel.svelte';
   import AssetIntegrityDialog from './AssetIntegrityDialog.svelte';
   import AssetActionConfirmDialog from './AssetActionConfirmDialog.svelte';
@@ -115,6 +117,8 @@
     duplicateContext?: DuplicateReviewContext | null;
     onduplicatedisposition?: (assetId: string, disposition: 'keep' | 'delete' | 'stack') => void;
     onduplicatestackprimary?: (assetId: string) => void;
+    onduplicatestackresolution?: (resolution: StackResolution) => void;
+    onduplicatemetadatakeeper?: (assetId: string) => void;
     onduplicatesimilarityreference?: (assetId: string) => boolean | void | Promise<boolean | void>;
     onduplicatepreviousgroup?: () => void;
     onduplicatenextgroup?: () => void;
@@ -174,6 +178,8 @@
     duplicateContext = null,
     onduplicatedisposition,
     onduplicatestackprimary,
+    onduplicatestackresolution,
+    onduplicatemetadatakeeper,
     onduplicatesimilarityreference,
     onduplicatepreviousgroup,
     onduplicatenextgroup,
@@ -504,6 +510,7 @@
       const changed = await onduplicatesimilarityreference(assetId);
       if (changed === false) return;
       comparisonReferenceId = assetId;
+      visibleAssetId = comparisonTargetId(comparisonMembers.map((member) => member.id), assetId, visibleAssetId);
     } finally {
       comparisonReferenceChanging = false;
     }
@@ -514,13 +521,12 @@
     if (members.length < 2) return;
     cancelReferenceFlicker();
     captureDuplicateComparisonView();
-    const currentMemberIndex = members.findIndex((asset) => asset.id === visibleAssetId);
-    const nextIndex = currentMemberIndex < 0
-      ? direction === 'next' ? 0 : members.length - 1
-      : direction === 'next'
-        ? (currentMemberIndex + 1) % members.length
-        : (currentMemberIndex - 1 + members.length) % members.length;
-    visibleAssetId = members[nextIndex].id;
+    visibleAssetId = stepComparisonTargetId(
+      members.map((member) => member.id),
+      comparisonReferenceId,
+      visibleAssetId,
+      direction,
+    );
   }
 
   async function navigate(direction: 'previous' | 'next'): Promise<void> {
@@ -552,7 +558,9 @@
   function previewComparison(assetId: string): void {
     cancelReferenceFlicker();
     captureDuplicateComparisonView();
-    visibleAssetId = assetId;
+    visibleAssetId = duplicateContext
+      ? comparisonTargetId(comparisonMembers.map((member) => member.id), comparisonReferenceId, assetId)
+      : assetId;
   }
 
   function selectViewedStackAsset(assetId: string): void {
@@ -568,14 +576,16 @@
   function restoreComparison(): void {
     cancelReferenceFlicker();
     captureDuplicateComparisonView();
-    visibleAssetId = duplicateContext ? comparisonReferenceId : currentAsset.id;
+    visibleAssetId = duplicateContext
+      ? comparisonTargetId(comparisonMembers.map((member) => member.id), comparisonReferenceId, comparisonReferenceId)
+      : currentAsset.id;
   }
 
   function commitComparison(assetId: string): void {
     cancelReferenceFlicker();
     captureDuplicateComparisonView();
     if (duplicateContext) {
-      visibleAssetId = assetId;
+      visibleAssetId = comparisonTargetId(comparisonMembers.map((member) => member.id), comparisonReferenceId, assetId);
       return;
     }
     const nextState = comparisonPreviewState(comparisonSource, currentAsset.id, assetId);
@@ -838,7 +848,11 @@
     comparisonReferenceId = availableIds.has(preferredReference)
       ? preferredReference
       : comparisonMembers[0]?.id ?? currentAsset.id;
-    visibleAssetId = currentAsset.id;
+    visibleAssetId = comparisonTargetId(
+      comparisonMembers.map((member) => member.id),
+      comparisonReferenceId,
+      currentAsset.id,
+    );
   });
 
   $effect(() => {
@@ -848,6 +862,11 @@
     )?.id;
     if (similarityReference && similarityReference !== comparisonReferenceId) {
       comparisonReferenceId = similarityReference;
+      visibleAssetId = comparisonTargetId(
+        comparisonMembers.map((member) => member.id),
+        similarityReference,
+        visibleAssetId,
+      );
     }
   });
 
@@ -1079,6 +1098,8 @@
         {duplicateContext}
         {onduplicatedisposition}
         {onduplicatestackprimary}
+        {onduplicatestackresolution}
+        {onduplicatemetadatakeeper}
         {onduplicatesimilarityreference}
         {onduplicatepreviousgroup}
         {onduplicatenextgroup}

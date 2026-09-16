@@ -3,19 +3,25 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import math
 import struct
 import warnings
 from dataclasses import dataclass
 from io import BytesIO
+from time import perf_counter
 from typing import BinaryIO
 
-import rawpy
 from PIL import Image, ImageCms, ImageOps, UnidentifiedImageError
 
-from companion.image_decode import MAX_DECODED_PIXELS, SUPPORTED_FORMATS
+from companion.image_decode import (
+    MAX_DECODED_PIXELS,
+    SUPPORTED_FORMATS,
+    ImageDecodeResult,
+)
 from companion.integrity import DetectedFormat
+from companion.raw_isolation import decode_raw_isolated
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
 SIMILARITY_FEATURE_VERSION = 2
@@ -25,6 +31,21 @@ LUMINANCE_VECTOR_LENGTH = LUMINANCE_VECTOR_SIDE**2
 COLOR_HISTOGRAM_BINS = 16
 COLOR_HISTOGRAM_LENGTH = COLOR_HISTOGRAM_BINS * 3
 PIXEL_HASH_ROWS_PER_CHUNK = 64
+SIMILARITY_CONFIG_FINGERPRINT = hashlib.sha256(
+    json.dumps(
+        {
+            "model": SIMILARITY_MODEL_VERSION,
+            "feature_version": SIMILARITY_FEATURE_VERSION,
+            "pixel_normalization_version": PIXEL_NORMALIZATION_VERSION,
+            "luminance_side": LUMINANCE_VECTOR_SIDE,
+            "histogram_bins": COLOR_HISTOGRAM_BINS,
+            "weights": {"structural": 0.65, "perceptual": 0.25, "color": 0.10},
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode(),
+    usedforsecurity=False,
+).hexdigest()
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -42,7 +63,7 @@ class VisualFeatureResult:
     color_histogram: bytes
     thumbnail_sha256: str
     pixel_normalization_version: int
-    pixel_sha256: str
+    pixel_sha256: str | None
     bit_depth: int
     channel_count: int
     has_alpha: bool
@@ -211,6 +232,8 @@ def _build_feature(
     has_camera_info: bool,
     has_gps: bool,
     has_orientation_metadata: bool,
+    include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
 ) -> VisualFeatureResult:
     normalized = _srgb_image(image)
     width, height = normalized.size
@@ -231,6 +254,14 @@ def _build_feature(
             icc_profile_present,
         )
     )
+    pixel_hash = None
+    if include_pixel_hash:
+        started = perf_counter()
+        pixel_hash = _pixel_sha256(normalized)
+        if timings is not None:
+            timings["normalized_pixel_hash_milliseconds"] = round(
+                (perf_counter() - started) * 1000
+            )
     return VisualFeatureResult(
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
@@ -241,7 +272,7 @@ def _build_feature(
         color_histogram=_color_histogram(normalized),
         thumbnail_sha256=thumbnail_sha256,
         pixel_normalization_version=PIXEL_NORMALIZATION_VERSION,
-        pixel_sha256=_pixel_sha256(normalized),
+        pixel_sha256=pixel_hash,
         bit_depth=bit_depth,
         channel_count=channel_count,
         has_alpha=has_alpha,
@@ -257,85 +288,116 @@ def _build_feature(
     )
 
 
-def _extract_raw_visual_features(stream: BinaryIO) -> VisualFeatureResult | None:
-    """Render a bounded DNG/RAW stream through LibRaw for similarity evidence."""
+def _extract_raw_visual_features(
+    stream: BinaryIO, *, include_pixel_hash: bool = True
+) -> tuple[ImageDecodeResult, VisualFeatureResult | None]:
+    """Render RAW/DNG through a fault-isolated LibRaw worker."""
 
+    result = decode_raw_isolated(
+        stream,
+        max_decoded_pixels=MAX_DECODED_PIXELS,
+        extract_features=True,
+        include_pixel_hash=include_pixel_hash,
+    )
+    decoded = ImageDecodeResult(
+        supported=True,
+        valid=result.valid,
+        width=result.width,
+        height=result.height,
+        issue=result.issue,
+    )
+    if result.feature is None:
+        return decoded, None
     try:
-        stream.seek(0)
-        with rawpy.imread(stream) as raw:
-            width = raw.sizes.width
-            height = raw.sizes.height
-            if width * height > MAX_DECODED_PIXELS:
-                logger.warning(
-                    "RAW similarity feature unavailable: decoded dimensions %sx%s exceed limit",
-                    width,
-                    height,
-                )
-                return None
-            pixels = raw.postprocess(
-                use_camera_wb=True,
-                no_auto_bright=True,
-                output_bps=8,
-            )
-        image = Image.fromarray(pixels, "RGB")
-        return _build_feature(
-            image,
-            bit_depth=8,
-            channel_count=3,
-            has_alpha=False,
-            color_space="RAW-sRGB",
-            orientation=None,
-            icc_profile_present=False,
-            has_exif=False,
-            has_capture_time=False,
-            has_camera_info=False,
-            has_gps=False,
-            has_orientation_metadata=False,
-        )
-    except (rawpy.LibRawError, OSError, ValueError) as error:
+        return decoded, VisualFeatureResult(**result.feature)
+    except TypeError as error:
         logger.warning(
-            "RAW similarity feature extraction failed: error_type=%s reason=%s",
-            type(error).__name__,
+            "RAW similarity worker returned invalid feature evidence: reason=%s",
             error,
         )
-        return None
+        return ImageDecodeResult(
+            supported=True,
+            valid=None,
+            width=result.width,
+            height=result.height,
+            issue="image_decode_raw_worker_failed",
+        ), None
 
 
-def extract_visual_features(
+def _feature_from_loaded_image(
+    source: Image.Image, *, include_pixel_hash: bool,
+    timings: dict[str, int] | None = None,
+) -> VisualFeatureResult:
+    exif = source.getexif()
+    orientation_value = exif.get(274)
+    orientation = orientation_value if isinstance(orientation_value, int) else None
+    return _build_feature(
+        source,
+        bit_depth=_bit_depth(source),
+        channel_count=len(source.getbands()),
+        has_alpha="A" in source.getbands() or "transparency" in source.info,
+        color_space=source.mode,
+        orientation=orientation,
+        icc_profile_present=bool(source.info.get("icc_profile")),
+        has_exif=bool(exif),
+        has_capture_time=any(exif.get(tag) for tag in (306, 36867, 36868)),
+        has_camera_info=bool(exif.get(271) or exif.get(272)),
+        has_gps=bool(exif.get(34853)),
+        has_orientation_metadata=orientation is not None,
+        include_pixel_hash=include_pixel_hash,
+        timings=timings,
+    )
+
+
+def decode_and_extract_features(
     stream: BinaryIO,
     detected_format: DetectedFormat,
-) -> VisualFeatureResult | None:
-    """Decode one trusted spool and return fixed-size features, or no feature."""
+    *,
+    include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
+) -> tuple[ImageDecodeResult, VisualFeatureResult | None]:
+    """Validate and extract from the same decoded original image."""
 
     if detected_format not in SUPPORTED_FORMATS:
-        return None
+        return ImageDecodeResult(supported=False, valid=None), None
     try:
+        decode_started = perf_counter()
         stream.seek(0)
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             with Image.open(stream) as source:
                 source.load()
-                exif = source.getexif()
-                orientation_value = exif.get(274)
-                orientation = orientation_value if isinstance(orientation_value, int) else None
-                has_capture_time = any(exif.get(tag) for tag in (306, 36867, 36868))
-                has_camera_info = bool(exif.get(271) or exif.get(272))
-                has_gps = bool(exif.get(34853))
-                has_orientation_metadata = orientation is not None
-                return _build_feature(
-                    source,
-                    bit_depth=_bit_depth(source),
-                    channel_count=len(source.getbands()),
-                    has_alpha="A" in source.getbands() or "transparency" in source.info,
-                    color_space=source.mode,
-                    orientation=orientation,
-                    icc_profile_present=bool(source.info.get("icc_profile")),
-                    has_exif=bool(exif),
-                    has_capture_time=has_capture_time,
-                    has_camera_info=has_camera_info,
-                    has_gps=has_gps,
-                    has_orientation_metadata=has_orientation_metadata,
+                width, height = source.size
+                try:
+                    orientation = source.getexif().get(274)
+                except (AttributeError, OSError, ValueError):
+                    orientation = None
+                if orientation in {5, 6, 7, 8}:
+                    width, height = height, width
+                decoded = ImageDecodeResult(
+                    supported=True, valid=True, width=width, height=height
                 )
+                if timings is not None:
+                    timings["decode_milliseconds"] = round(
+                        (perf_counter() - decode_started) * 1000
+                    )
+                try:
+                    feature_started = perf_counter()
+                    feature = _feature_from_loaded_image(
+                        source, include_pixel_hash=include_pixel_hash, timings=timings
+                    )
+                    if timings is not None:
+                        timings["feature_extraction_milliseconds"] = round(
+                            (perf_counter() - feature_started) * 1000
+                        )
+                except (OSError, SyntaxError, ValueError) as error:
+                    logger.warning(
+                        "Similarity feature extraction failed after decode: "
+                        "format=%s error_type=%s reason=%s",
+                        detected_format, type(error).__name__, error,
+                    )
+                    feature = None
+                return decoded, feature
     except (
         Image.DecompressionBombError,
         Image.DecompressionBombWarning,
@@ -344,19 +406,44 @@ def extract_visual_features(
             "Similarity feature extraction exceeded image safety limit: %s",
             error,
         )
-        return None
+        return ImageDecodeResult(
+            supported=True, valid=None, issue="image_decode_limit_exceeded"
+        ), None
     except (UnidentifiedImageError, OSError, SyntaxError, ValueError) as error:
         if detected_format == "tiff":
-            raw_feature = _extract_raw_visual_features(stream)
-            if raw_feature is not None:
-                return raw_feature
+            raw_started = perf_counter()
+            decoded, feature = _extract_raw_visual_features(
+                stream, include_pixel_hash=include_pixel_hash
+            )
+            if timings is not None:
+                timings["decode_milliseconds"] = round(
+                    (perf_counter() - raw_started) * 1000
+                )
+            return decoded, feature
         logger.warning(
             "Similarity feature extraction failed: format=%s error_type=%s reason=%s",
             detected_format,
             type(error).__name__,
             error,
         )
-        return None
+        return ImageDecodeResult(
+            supported=True, valid=False, issue="image_decode_failed"
+        ), None
+
+
+def extract_visual_features(
+    stream: BinaryIO,
+    detected_format: DetectedFormat,
+    *,
+    include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
+) -> VisualFeatureResult | None:
+    """Compatibility wrapper for callers that only need visual evidence."""
+
+    _, feature = decode_and_extract_features(
+        stream, detected_format, include_pixel_hash=include_pixel_hash, timings=timings
+    )
+    return feature
 
 
 def compare_visual_features(

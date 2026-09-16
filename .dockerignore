@@ -5,8 +5,7 @@
 .env
 .env.*
 AGENTS.md
-TASKS.md
-*.local
+.local
 docs
 generated_dataset
 

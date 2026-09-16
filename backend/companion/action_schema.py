@@ -45,6 +45,7 @@ StackResolution = Literal["keep_existing", "move_selected", "include_existing"]
 ActionPlanStatus = Literal[
     "planned",
     "running",
+    "partial",
     "completed",
     "failed",
     "drifted",
@@ -81,6 +82,7 @@ class SelectionSetView(BaseModel):
     """Reload-safe server-owned selection metadata."""
 
     id: UUID
+    entity_kind: Literal["asset", "album", "tag"] = "asset"
     revision: int
     selected_count: int
     status: Literal["active", "cancelled", "expired"]
@@ -132,6 +134,36 @@ class AssetSelectionResolution(BaseModel):
     summary: AssetSelectionSummary
 
 
+class AssetSelectionCapabilities(BaseModel):
+    """Aggregate UI capabilities without materializing every selected asset."""
+
+    count: int
+    all_favorite: bool
+    all_archived: bool
+    has_tags: bool
+    has_albums: bool
+    has_stack_members: bool
+    can_stack: bool
+    single_asset_id: UUID | None
+    can_set_stack_primary: bool
+    can_remove_complete_stack: bool
+
+
+class AssetSelectionRelationship(BaseModel):
+    """One relationship present on at least one asset in a selection."""
+
+    id: UUID
+    name: str
+    selected_asset_count: int
+
+
+class AssetSelectionRelationships(BaseModel):
+    """Union of removable relationships across a backend-resolved selection."""
+
+    albums: list[AssetSelectionRelationship]
+    tags: list[AssetSelectionRelationship]
+
+
 class AssetActionPlanRequest(BaseModel):
     """Request a reviewable action plan for a resolved selection."""
 
@@ -144,14 +176,17 @@ class AssetActionPlanRequest(BaseModel):
     @model_validator(mode="after")
     def validate_relation(self) -> AssetActionPlanRequest:
         self.relation_ids = list(dict.fromkeys(self.relation_ids))
-        relation_action = self.action in {
+        add_relation_action = self.action in {"add_album", "add_tag"}
+        non_relation_action = self.action not in {
             "add_album",
             "add_tag",
             "remove_album",
             "remove_tag",
         }
-        if relation_action != bool(self.relation_ids):
-            raise ValueError("Album and tag actions require one or more relation IDs")
+        if add_relation_action and not self.relation_ids:
+            raise ValueError("Adding albums or tags requires one or more relation IDs")
+        if non_relation_action and self.relation_ids:
+            raise ValueError("Relation IDs are only valid for album and tag actions")
         if self.stack_resolution is not None and self.action != "stack":
             raise ValueError("Stack resolution is only valid for stack actions")
         if self.stack_primary_asset_id is not None and self.action != "stack":
@@ -230,6 +265,7 @@ class AssetActionResult(BaseModel):
     applied_ids: list[UUID]
     skipped_ids: list[UUID]
     failed_ids: list[UUID]
+    affected_ids: list[UUID] = Field(default_factory=list)
     relation_results: list[AssetActionRelationResult] = Field(default_factory=list)
     verified: bool
     status: ActionPlanStatus

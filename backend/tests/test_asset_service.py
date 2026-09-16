@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -17,6 +18,8 @@ from companion.immich import (
     ImmichTag,
 )
 from companion.sync_schema import SyncRunStatus
+from companion.task_schema import TaskStatusView
+from companion.v2 import legacy_asset_service as asset_service_module
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
@@ -25,6 +28,110 @@ STACK_ID = UUID("55555555-5555-4555-8555-555555555555")
 TAG_ID = UUID("66666666-6666-4666-8666-666666666666")
 RUN_ID = UUID("77777777-7777-4777-8777-777777777777")
 OWNER_ID = UUID("88888888-8888-4888-8888-888888888888")
+
+
+@pytest.mark.asyncio
+async def test_relation_repair_is_queued_behind_active_sync_without_waiting() -> None:
+    class Coordinator:
+        def __init__(self) -> None:
+            self.submitted: list[tuple[str, dict[str, object], dict[str, object]]] = []
+            self.started = False
+
+        async def submit(self, task_type, payload, **options):
+            self.submitted.append((task_type, payload, options))
+            return SimpleNamespace(id=RUN_ID)
+
+        async def start(self):
+            self.started = True
+
+    coordinator = Coordinator()
+    service = object.__new__(AssetSyncService)
+    service._coordinator = coordinator  # type: ignore[assignment]
+
+    async def status():
+        return SimpleNamespace(active=SimpleNamespace(id=RUN_ID), pending=None)
+
+    service.status = status  # type: ignore[method-assign]
+    queued = await service.enqueue_relation_repair_during_sync([("tag", TAG_ID)])
+
+    assert queued is True
+    assert coordinator.submitted == [
+        (
+            "asset_relation_repair",
+            {"relations": [{"kind": "tag", "id": str(TAG_ID)}]},
+            {"priority": 95, "lane_key": "asset_sync", "max_concurrency": 1},
+        )
+    ]
+    assert coordinator.started is True
+
+
+@pytest.mark.asyncio
+async def test_asset_repair_is_queued_durably_during_active_sync() -> None:
+    class Coordinator:
+        def __init__(self) -> None:
+            self.submitted: list[tuple[str, dict[str, object], dict[str, object]]] = []
+            self.started = False
+
+        async def submit(self, task_type, payload, **options):
+            self.submitted.append((task_type, payload, options))
+
+        async def start(self):
+            self.started = True
+
+    coordinator = Coordinator()
+    service = object.__new__(AssetSyncService)
+    service._coordinator = coordinator  # type: ignore[assignment]
+
+    async def status():
+        return SimpleNamespace(active=SimpleNamespace(id=RUN_ID), pending=None)
+
+    service.status = status  # type: ignore[method-assign]
+    queued = await service.enqueue_asset_repair_during_sync([ASSET_ONE, ASSET_ONE])
+
+    assert queued is True
+    assert coordinator.submitted == [
+        (
+            "asset_repair",
+            {"asset_ids": [str(ASSET_ONE)], "include_stacks": False},
+            {"priority": 90, "lane_key": "asset_sync", "max_concurrency": 1},
+        )
+    ]
+    assert coordinator.started is True
+
+
+@pytest.mark.asyncio
+async def test_stack_snapshot_updates_only_action_affected_assets() -> None:
+    class Assets:
+        updated: tuple[list[UUID], dict[UUID, dict[str, object]]] | None = None
+
+        async def replace_asset_stack_snapshots(self, ids, payloads):
+            self.updated = (ids, payloads)
+
+    class Immich:
+        calls = 0
+
+        async def list_stacks(self):
+            self.calls += 1
+            return [SimpleNamespace(id=RUN_ID, assets=[SimpleNamespace(id=ASSET_ONE)])]
+
+    assets = Assets()
+    immich = Immich()
+    service = object.__new__(AssetSyncService)
+    service._immich = immich  # type: ignore[assignment]
+    service._assets = assets  # type: ignore[assignment]
+    service._stack_payload = lambda _stack: ({"id": str(RUN_ID)}, [ASSET_ONE])  # type: ignore[method-assign]
+
+    await service.apply_stack_snapshot_for_targets([ASSET_ONE, ASSET_TWO])
+
+    assert assets.updated == (
+        [ASSET_ONE, ASSET_TWO],
+        {ASSET_ONE: {"id": str(RUN_ID)}},
+    )
+    assert immich.calls == 1
+    await service.apply_stack_snapshot_for_targets(
+        [ASSET_ONE], [SimpleNamespace(id=RUN_ID, assets=[SimpleNamespace(id=ASSET_ONE)])]
+    )
+    assert immich.calls == 1
 
 
 def asset(asset_id: UUID, filename: str) -> ImmichAsset:
@@ -58,7 +165,7 @@ def stack_asset(asset_id: UUID, filename: str) -> ImmichStackAsset:
 
 
 class FakeImmich:
-    def __init__(self, assets: list[ImmichAsset], stack: ImmichStack) -> None:
+    def __init__(self, assets: list[ImmichAsset], stack: ImmichStack | None) -> None:
         self.assets = assets
         self.stack = stack
         self.calls: list[str] = []
@@ -94,13 +201,16 @@ class FakeImmich:
 
     async def iter_asset_pages(self, **_kwargs):
         self.calls.append("assets")
-        yield 1, ImmichAssetSearchPage.model_validate(
-            {
-                "count": len(self.assets),
-                "total": len(self.assets),
-                "items": self.assets,
-                "nextPage": None,
-            }
+        yield (
+            1,
+            ImmichAssetSearchPage.model_validate(
+                {
+                    "count": len(self.assets),
+                    "total": len(self.assets),
+                    "items": self.assets,
+                    "nextPage": None,
+                }
+            ),
         )
 
     async def count_assets(self, **_kwargs) -> int:
@@ -108,11 +218,12 @@ class FakeImmich:
 
     async def list_stacks(self) -> list[ImmichStack]:
         self.calls.append("stacks")
-        return [self.stack]
+        return [self.stack] if self.stack is not None else []
 
     async def iter_stacks(self):
         self.calls.append("stacks")
-        yield self.stack
+        if self.stack is not None:
+            yield self.stack
 
     async def iter_album_asset_ids(self, _album_id: UUID, **_kwargs):
         self.calls.append("album_memberships")
@@ -149,7 +260,9 @@ class FakeAssetRepository:
         self.calls.append("tag_catalog")
         return len(tags), 0
 
-    async def upsert_asset_batch(self, assets, _generation):
+    async def upsert_asset_batch(
+        self, assets, _generation, *, track_similarity_changes=True
+    ):
         self.calls.append("assets")
         self.asset_batch_sizes.append(len(assets))
         self.assets.extend(assets)
@@ -219,6 +332,11 @@ class FakeAssetRepository:
         self.calls.append("refresh_asset")
         self.assets.append(asset)
 
+    async def replace_asset_stack_snapshots(self, asset_ids, stack_payload_by_asset):
+        self.calls.append("replace_asset_stacks")
+        self.repaired_stack_ids = list(asset_ids)
+        self.repaired_stack_payloads = dict(stack_payload_by_asset)
+
 
 class IncrementalFakeAssetRepository(FakeAssetRepository):
     def __init__(self, window_start: datetime, window_end: datetime) -> None:
@@ -285,6 +403,70 @@ def run_status() -> SyncRunStatus:
         heartbeat_at=now,
         completed_at=None,
     )
+
+
+def test_legacy_complete_task_phase_is_reported_as_completed() -> None:
+    now = datetime.now(UTC)
+    task = TaskStatusView(
+        id=RUN_ID,
+        task_type="asset_sync",
+        status="completed",
+        priority=0,
+        deduplication_key=None,
+        lane_key="sync",
+        payload={"mode": "full", "generation": 3, "window_end": now.isoformat()},
+        checkpoint={"phase": "complete"},
+        counters={"assets_seen": 12},
+        progress={"phase": "complete", "completed": 12, "total": 12, "percent": 100},
+        result=None,
+        error=None,
+        attempt=1,
+        next_attempt_at=None,
+        lease_owner=None,
+        lease_expires_at=None,
+        created_at=now,
+        started_at=now,
+        heartbeat_at=now,
+        completed_at=now,
+    )
+
+    status = AssetSyncService._status_from_task(task)
+
+    assert status.phase == "completed"
+    assert status.progress is not None
+    assert status.progress.phase == "completed"
+
+
+def test_sync_memory_diagnostics_trace_only_during_sync(monkeypatch) -> None:
+    tracing = False
+    calls: list[str] = []
+
+    def start() -> None:
+        nonlocal tracing
+        tracing = True
+        calls.append("start")
+
+    def stop() -> None:
+        nonlocal tracing
+        tracing = False
+        calls.append("stop")
+
+    monkeypatch.setattr(asset_service_module.tracemalloc, "is_tracing", lambda: tracing)
+    monkeypatch.setattr(asset_service_module.tracemalloc, "start", start)
+    monkeypatch.setattr(asset_service_module.tracemalloc, "stop", stop)
+    service = AssetSyncService(
+        FakeImmich([], None),
+        FakeAssetRepository(),
+        FakeSyncRepository(),
+        Settings(sync_memory_diagnostics=True),
+    )
+
+    assert calls == []
+    owned_trace = service._start_sync_memory_diagnostics()
+    assert owned_trace is True
+    assert calls == ["start"]
+    service._stop_sync_memory_diagnostics(owned_trace)
+    assert calls == ["start", "stop"]
 
 
 def asset_counters() -> dict[str, int]:
@@ -457,22 +639,23 @@ async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> N
         page_size: int | None = None
         start_page: int | None = None
 
-        async def iter_asset_pages(
-            self, *, page_size, updated_after, updated_before, start_page
-        ):
+        async def iter_asset_pages(self, *, page_size, updated_after, updated_before, start_page):
             assert updated_after is None
             assert updated_before is None
             self.page_size = page_size
             self.start_page = start_page
             page_items = [media[:4], media[4:8], media[8:]]
             for page_number, items in enumerate(page_items, start=1):
-                yield page_number, ImmichAssetSearchPage.model_validate(
-                    {
-                        "count": len(items),
-                        "total": len(media),
-                        "items": items,
-                        "nextPage": str(page_number + 1) if page_number < 3 else None,
-                    }
+                yield (
+                    page_number,
+                    ImmichAssetSearchPage.model_validate(
+                        {
+                            "count": len(items),
+                            "total": len(media),
+                            "items": items,
+                            "nextPage": str(page_number + 1) if page_number < 3 else None,
+                        }
+                    ),
                 )
 
     immich = PagedImmich()
@@ -522,28 +705,32 @@ async def test_media_sync_resumes_inside_large_api_page() -> None:
     class ResumeImmich:
         start_page: int | None = None
 
-        async def iter_asset_pages(
-            self, *, page_size, updated_after, updated_before, start_page
-        ):
+        async def iter_asset_pages(self, *, page_size, updated_after, updated_before, start_page):
             assert page_size == 1000
             assert updated_after is None
             assert updated_before is None
             self.start_page = start_page
-            yield 2, ImmichAssetSearchPage.model_validate(
-                {
-                    "count": 4,
-                    "total": 5,
-                    "items": media[:4],
-                    "nextPage": "3",
-                }
+            yield (
+                2,
+                ImmichAssetSearchPage.model_validate(
+                    {
+                        "count": 4,
+                        "total": 5,
+                        "items": media[:4],
+                        "nextPage": "3",
+                    }
+                ),
             )
-            yield 3, ImmichAssetSearchPage.model_validate(
-                {
-                    "count": 1,
-                    "total": 5,
-                    "items": media[4:],
-                    "nextPage": None,
-                }
+            yield (
+                3,
+                ImmichAssetSearchPage.model_validate(
+                    {
+                        "count": 1,
+                        "total": 5,
+                        "items": media[4:],
+                        "nextPage": None,
+                    }
+                ),
             )
 
     immich = ResumeImmich()
@@ -639,7 +826,7 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
 
 
 @pytest.mark.asyncio
-async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurrently() -> None:
+async def test_tag_relationships_skip_empty_tags_and_use_runtime_concurrency() -> None:
     class ConcurrentTagImmich:
         def __init__(self) -> None:
             self.active = 0
@@ -656,10 +843,7 @@ async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurre
             yield [] if tag_id == tag_ids[0] else [ASSET_ONE]
             self.active -= 1
 
-    tag_ids = [
-        UUID(f"{index:08x}-0000-4000-8000-000000000000")
-        for index in range(1, 7)
-    ]
+    tag_ids = [UUID(f"{index:08x}-0000-4000-8000-000000000000") for index in range(1, 7)]
     tags = [
         ImmichTag(
             id=tag_id,
@@ -688,7 +872,7 @@ async def test_tag_relationships_skip_empty_tags_and_run_eight_searches_concurre
     )
 
     assert set(immich.calls) == set(tag_ids)
-    assert immich.maximum_active == 6
+    assert immich.maximum_active == 4
     assert counters["tag_memberships"] == 5
     assert counters["tag_relationships_scanned"] == 6
     assert counters["tag_empty_relationships"] == 1
@@ -716,6 +900,52 @@ async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traver
 
     assert counters == {"albums": 1, "tags": 1, "memberships": 2}
     assert assets.calls[-2:] == ["replace_album", "replace_tag"]
+
+
+@pytest.mark.asyncio
+async def test_targeted_asset_repair_persists_authoritative_stack_snapshots() -> None:
+    members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "member.png")]
+    stack = ImmichStack(
+        id=STACK_ID,
+        primaryAssetId=ASSET_TWO,
+        assets=[
+            stack_asset(ASSET_ONE, "primary.png"),
+            stack_asset(ASSET_TWO, "member.png"),
+        ],
+    )
+    immich = FakeImmich(members, stack)
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+
+    await service._repair_targets_now([ASSET_ONE, ASSET_TWO], include_stacks=True)
+
+    assert assets.repaired_stack_ids == [ASSET_ONE, ASSET_TWO]
+    assert assets.repaired_stack_payloads[ASSET_ONE]["primaryAssetId"] == str(ASSET_TWO)
+    assert assets.repaired_stack_payloads[ASSET_TWO]["primaryAssetId"] == str(ASSET_TWO)
+    assert assets.calls[-1] == "replace_asset_stacks"
+
+
+@pytest.mark.asyncio
+async def test_targeted_asset_repair_clears_removed_stack_snapshots() -> None:
+    immich = FakeImmich([asset(ASSET_ONE, "detached.png")], None)
+    assets = FakeAssetRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+
+    await service._repair_targets_now([ASSET_ONE], include_stacks=True)
+
+    assert assets.repaired_stack_ids == [ASSET_ONE]
+    assert assets.repaired_stack_payloads == {}
+    assert assets.calls[-1] == "replace_asset_stacks"
 
 
 @pytest.mark.asyncio

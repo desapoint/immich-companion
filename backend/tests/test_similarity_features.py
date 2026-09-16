@@ -9,6 +9,7 @@ from companion.similarity_features import (
     COLOR_HISTOGRAM_LENGTH,
     LUMINANCE_VECTOR_LENGTH,
     compare_visual_features,
+    decode_and_extract_features,
     extract_visual_features,
 )
 
@@ -28,6 +29,27 @@ def features(image: Image.Image):
     result = extract_visual_features(payload, "png")
     assert result is not None
     return result
+
+
+def test_verification_decodes_once_for_dimensions_features_and_pixel_hash(monkeypatch) -> None:
+    payload = BytesIO()
+    scene().save(payload, format="PNG")
+    original_open = Image.open
+    opens = 0
+
+    def counted_open(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(Image, "open", counted_open)
+    decoded, feature = decode_and_extract_features(payload, "png")
+
+    assert opens == 1
+    assert decoded.valid is True
+    assert (decoded.width, decoded.height) == (192, 128)
+    assert feature is not None
+    assert feature.pixel_sha256 is not None
 
 
 def test_visual_features_are_fixed_size_and_deterministic() -> None:

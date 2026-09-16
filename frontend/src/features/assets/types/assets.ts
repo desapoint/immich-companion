@@ -1,4 +1,7 @@
 import type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
+import type { StackResolution } from '../../../lib/types/stack';
+
+export type { StackResolution } from '../../../lib/types/stack';
 
 export type AssetType = 'IMAGE' | 'VIDEO' | 'AUDIO' | 'OTHER';
 
@@ -318,7 +321,7 @@ export interface AssetSelectionSyncResult {
 export interface AssetTaskStatus {
   id: string;
   task_type: string;
-  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'pause_requested' | 'paused' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
   payload: Record<string, unknown>;
   checkpoint: Record<string, unknown>;
   counters: Record<string, number>;
@@ -454,6 +457,8 @@ export interface DuplicateReviewContext {
   selected_keeper_asset_id: string | null;
   selected_action: 'automatic' | 'resolve' | 'keep_all' | 'stack_all' | 'mixed' | 'none';
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
+  metadata_keeper_asset_id: string | null;
   recommendation_reason_codes: string[];
   members: DuplicateReviewMember[];
   current_integrity: AssetIntegrityState | null;
@@ -497,8 +502,6 @@ export type AssetActionOperation =
   | 'set_stack_primary'
   | 'remove_from_stack'
   | 'remove_stack';
-
-export type StackResolution = 'keep_existing' | 'move_selected' | 'include_existing';
 
 export interface AssetActionPlan {
   id: string;

@@ -1,15 +1,54 @@
 """Coordinator lifecycle behavior that does not require a live PostgreSQL server."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
 
-from companion.task_coordinator import PermanentTaskError, RetryableTaskError, TaskCoordinator
+from companion.runtime_metrics import ProcessMemoryReclaim
+from companion.task_coordinator import (
+    PermanentTaskError,
+    RetryableTaskError,
+    TaskContext,
+    TaskCoordinator,
+    TaskPausedError,
+)
 from companion.task_schema import TaskResult, TaskStatusView
+from companion.v2 import task_coordinator as coordinator_module
 
 TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 WORKER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+
+
+@pytest.mark.asyncio
+async def test_active_task_listing_filters_before_limit() -> None:
+    class Session:
+        statement = None
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def scalars(self, statement):
+            self.statement = statement
+            return []
+
+    session = Session()
+
+    class Database:
+        def sessions(self):
+            return session
+
+    repository = coordinator_module.TaskRepository(Database())
+    assert await repository.list(active_only=True, limit=25) == []
+    sql = str(session.statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "task_records.status IN" in sql or "tasks.status IN" in sql
+    assert "'running'" in sql
+    assert "'cancel_requested'" in sql
+    assert "'completed'" not in sql
+    assert "LIMIT 25" in sql
 
 
 def task() -> TaskStatusView:
@@ -43,6 +82,11 @@ class FakeRepository:
         self.failures: list[dict[str, object]] = []
         self.completed: list[TaskResult] = []
         self.cancelled_types: list[tuple[str, str]] = []
+        self.paused: list[tuple[UUID, UUID]] = []
+        self.pause_requests: list[UUID] = []
+        self.resume_requests: list[UUID] = []
+        self.control = "running"
+        self.saved_checkpoints: list[dict[str, object]] = []
 
     async def fail(self, _task_id, _worker_id, error, **kwargs):
         self.failures.append({"error": error, **kwargs})
@@ -61,6 +105,27 @@ class FakeRepository:
         self.cancelled_types.append((task_type, reason))
         return 2
 
+    async def mark_paused(self, task_id, worker_id):
+        self.paused.append((task_id, worker_id))
+        return None
+
+    async def get(self, _task_id):
+        return task()
+
+    async def request_pause(self, task_id):
+        self.pause_requests.append(task_id)
+        return task().model_copy(update={"status": "pause_requested"})
+
+    async def resume(self, task_id):
+        self.resume_requests.append(task_id)
+        return task().model_copy(update={"status": "recovering"})
+
+    async def checkpoint(self, _task_id, _worker_id, **values):
+        self.saved_checkpoints.append(values)
+
+    async def control_state(self, _task_id, _worker_id):
+        return self.control
+
 
 class RetryHandler:
     task_type = "test"
@@ -74,6 +139,18 @@ class RetryHandler:
 class PermanentHandler(RetryHandler):
     async def execute(self, _context, _payload):
         raise PermanentTaskError("invalid")
+
+
+class PausedHandler(RetryHandler):
+    supports_pause = True
+
+    async def execute(self, _context, _payload):
+        raise TaskPausedError("paused")
+
+
+class SuccessfulHandler(RetryHandler):
+    async def execute(self, _context, _payload):
+        return TaskResult(counters={"processed": 3})
 
 
 @pytest.mark.asyncio
@@ -106,6 +183,87 @@ async def test_permanent_handler_is_not_retried() -> None:
     assert isinstance(failure["error"], PermanentTaskError)
     assert failure["retryable"] is False
     assert failure["next_attempt_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_paused_handler_releases_its_attempt_without_failure() -> None:
+    coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
+    repository = FakeRepository()
+    coordinator._repository = repository  # type: ignore[assignment]
+    coordinator.register_handler(PausedHandler())
+
+    await coordinator._execute(task(), WORKER_ID)
+
+    assert repository.paused == [(TASK_ID, WORKER_ID)]
+    assert repository.failures == []
+    assert repository.completed == []
+
+
+@pytest.mark.asyncio
+async def test_successful_handler_persists_post_task_memory_cleanup(monkeypatch) -> None:
+    coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
+    repository = FakeRepository()
+    coordinator._repository = repository  # type: ignore[assignment]
+    coordinator.register_handler(SuccessfulHandler())
+    monkeypatch.setattr(
+        coordinator_module,
+        "reclaim_process_memory",
+        lambda: ProcessMemoryReclaim(
+            before_rss_bytes=800,
+            after_rss_bytes=300,
+            peak_rss_bytes=900,
+            collected_objects=17,
+            allocator_trim_attempted=True,
+        ),
+    )
+
+    await coordinator._execute(task(), WORKER_ID)
+
+    assert repository.completed[0].counters == {
+        "processed": 3,
+        "rss_after_task_bytes": 800,
+        "rss_after_cleanup_bytes": 300,
+        "rss_peak_bytes": 900,
+        "memory_released_bytes": 500,
+        "memory_collected_objects": 17,
+        "allocator_trim_attempted": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_pause_and_resume_are_exposed_only_for_capable_handlers() -> None:
+    coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
+    repository = FakeRepository()
+    coordinator._repository = repository  # type: ignore[assignment]
+    coordinator.register_handler(PausedHandler())
+
+    assert (await coordinator.pause(TASK_ID)).status == "pause_requested"  # type: ignore[union-attr]
+    assert (await coordinator.resume(TASK_ID)).status == "recovering"  # type: ignore[union-attr]
+    assert repository.pause_requests == [TASK_ID]
+    assert repository.resume_requests == [TASK_ID]
+
+    coordinator.register_handler(PermanentHandler())
+    with pytest.raises(ValueError, match="does not support pausing"):
+        await coordinator.pause(TASK_ID)
+
+
+@pytest.mark.asyncio
+async def test_checkpoint_is_durable_before_pause_stops_the_handler() -> None:
+    repository = FakeRepository()
+    repository.control = "pause_requested"
+    context = TaskContext(repository, task(), WORKER_ID, timedelta(seconds=60))  # type: ignore[arg-type]
+
+    with pytest.raises(TaskPausedError):
+        await context.checkpoint(
+            checkpoint={"phase": "candidate_index", "candidate_assets_processed": 1_000},
+            counters={"candidate_assets_processed": 1_000},
+            progress={"completed": 1_000},
+        )
+
+    assert repository.saved_checkpoints[0]["checkpoint"] == {
+        "phase": "candidate_index",
+        "candidate_assets_processed": 1_000,
+    }
 
 
 @pytest.mark.asyncio

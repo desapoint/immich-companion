@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 SyncMode = Literal["incremental", "full"]
 SyncStatus = Literal["queued", "running", "completed", "failed", "recovering", "retrying"]
@@ -68,6 +68,13 @@ class SyncProgress(BaseModel):
     detail: str | None = None
     memory: SyncMemorySnapshot | None = None
 
+    @field_validator("phase", mode="before")
+    @classmethod
+    def normalize_legacy_complete_phase(cls, value: object) -> object:
+        """Accept progress persisted before the phase was renamed to completed."""
+
+        return "completed" if value == "complete" else value
+
     @model_validator(mode="after")
     def hide_unstarted_tag_catalog_work(self) -> SyncProgress:
         """Do not present tag-catalog totals before tag-oriented traversal begins."""
@@ -78,7 +85,10 @@ class SyncProgress(BaseModel):
             album_prefix, _, remainder = self.detail.partition(" album and ")
             if remainder.endswith(" tag associations"):
                 self.detail = f"{album_prefix} album associations"
-        elif self.detail.startswith("Album associations ") and " · tag associations 0/" in self.detail:
+        elif (
+            self.detail.startswith("Album associations ")
+            and " · tag associations 0/" in self.detail
+        ):
             self.detail = self.detail.split(" · tag associations 0/", 1)[0]
         return self
 
@@ -105,6 +115,14 @@ class SyncRunStatus(BaseModel):
     completed_at: datetime | None
     retry_at: datetime | None = None
     source: Literal["window", "stream", "mixed", "full"] = "window"
+
+    @field_validator("phase", mode="before")
+    @classmethod
+    def normalize_legacy_complete_phase(cls, value: object) -> object:
+        """Accept sync runs persisted before the phase was renamed to completed."""
+
+        return "completed" if value == "complete" else value
+
     progress: SyncProgress = Field(default_factory=lambda: SyncProgress(phase="queued"))
 
 

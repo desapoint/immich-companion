@@ -8,6 +8,16 @@ from typing import Protocol
 
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
+from companion.similarity_grouping import ValidatedSimilarityGroup
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryEvidence:
+    """Provider-specific provenance retained when logical groups coalesce."""
+
+    discovery_source: DiscoverySource
+    provider_group_id: str | None
+    metadata: Mapping[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,6 +29,20 @@ class DiscoveredGroup:
     provider_group_id: str | None
     assets: tuple[ImmichAsset, ...]
     provider_metadata: Mapping[str, str] = field(default_factory=dict)
+    discovery_evidence: tuple[DiscoveryEvidence, ...] = ()
+    similarity_validation: ValidatedSimilarityGroup | None = None
+
+    @property
+    def evidence(self) -> tuple[DiscoveryEvidence, ...]:
+        """Return explicit evidence or synthesize the originating provider entry."""
+
+        return self.discovery_evidence or (
+            DiscoveryEvidence(
+                discovery_source=self.discovery_source,
+                provider_group_id=self.provider_group_id,
+                metadata=self.provider_metadata,
+            ),
+        )
 
 
 class GroupDiscoveryProvider(Protocol):

@@ -1,5 +1,6 @@
-import type { DuplicateKeeperPolicy, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
+import type { DuplicateKeeperPolicy, DuplicateKeeperTiebreaker, ExactFilePolicyAction } from '../../../lib/types/duplicatePolicy';
 import type { DuplicateDecisionSource, DuplicateDecisionStatus, DuplicateDisposition } from '../../../lib/types/duplicateReview';
+import type { StackResolution } from '../../../lib/types/stack';
 
 export type { DuplicateKeeperPolicy } from '../../../lib/types/duplicatePolicy';
 export type DuplicateGroupStatus = 'exact' | 'unverified' | 'mismatch' | 'ineligible';
@@ -10,6 +11,8 @@ export type { DuplicateDisposition } from '../../../lib/types/duplicateReview';
 
 export interface DuplicateAnalysisOptions {
   keeper_policy: DuplicateKeeperPolicy;
+  source_priority: string[];
+  keeper_tiebreakers: DuplicateKeeperTiebreaker[];
   external_library_ids: string[];
   verify_upload_streams: boolean;
   automatic_handling_enabled: boolean;
@@ -64,6 +67,8 @@ export interface DuplicateSimilarityEvidence {
   dimensions_equal: boolean | null;
   exact_thumbnail_match: boolean | null;
   exact_pixel_match: boolean | null;
+  detail_changed_percent?: number | null;
+  detail_source?: 'original' | 'transcoded' | 'preview' | null;
   model_version: string | null;
   feature_version: number | null;
   comparison_version: number | null;
@@ -91,6 +96,7 @@ export interface DuplicatePreservationEvidence {
 export interface ExactDuplicateGroup {
   group_id: string;
   discovery_source: 'immich_duplicate' | 'companion_similarity';
+  discovery_sources?: Array<'immich_duplicate' | 'companion_similarity'>;
   provider_group_id: string | null;
   discovery_metadata?: Record<string, string>;
   classification: 'exact_file' | 'exact_pixels' | 'likely_same' | 'similar' | 'mismatch' | 'unverified' | 'unavailable' | 'ineligible';
@@ -128,11 +134,15 @@ export interface DuplicatePreviewRequest {
   selected_action: DuplicateActionSelection;
   member_decisions: Record<string, DuplicateDisposition>;
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
+  metadata_keeper_asset_id: string | null;
   recommendation_reason_codes: string[];
   members: DuplicateMember[];
   initial_index: number;
   onmemberdispositionchange?: (assetId: string, disposition: DuplicateDisposition) => void;
   onstackprimarychange?: (assetId: string) => void;
+  onstackresolutionchange?: (resolution: StackResolution) => void;
+  onmetadatakeeperchange?: (assetId: string | null) => void;
   onsimilarityreferencechange?: (assetId: string) => Promise<DuplicateMember[]>;
   onpreviousgroup?: () => void;
   onnextgroup?: () => void;
@@ -151,6 +161,7 @@ export interface DuplicateGroupDraft {
   member_fingerprint: string;
   decisions: DuplicateMemberDraftDecision[];
   stack_primary_asset_id: string | null;
+  stack_resolution: StackResolution;
   metadata_keeper_asset_id: string | null;
   status: 'pending' | 'completed';
   stale: boolean;
@@ -187,7 +198,7 @@ export interface DuplicateResult {
 export interface DuplicateTaskStatus {
   id: string;
   task_type: string;
-  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
+  status: 'queued' | 'running' | 'retrying' | 'recovering' | 'pause_requested' | 'paused' | 'cancel_requested' | 'cancelled' | 'completed' | 'failed';
   progress: {
     percent?: number | null;
     detail?: string | null;
@@ -227,11 +238,15 @@ export interface DuplicateResolutionPlan {
       keeper_asset_id: string;
       album_ids: string[];
       tag_ids: string[];
+      source_fingerprint?: string | null;
     } | null;
     follow_up: {
       type: 'stack';
       primary_asset_id: string;
       member_asset_ids: string[];
+      resolution: StackResolution;
+      source_fingerprint?: string | null;
+      conflict_fingerprint?: string | null;
     } | null;
     execution_state: 'pending' | 'duplicate_resolved' | 'follow_up_pending' | 'completed' | 'failed' | 'drifted';
     member_fingerprint: string;

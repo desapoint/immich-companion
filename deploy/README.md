@@ -31,6 +31,13 @@ no media mount and performs no direct database access.
    process RSS/high-water and traced Python current/peak allocations in each
    durable sync progress checkpoint. Leave it disabled normally because Python
    allocation tracing has runtime overhead.
+   The `immich-companion-cache` volume holds only disposable comparison
+   previews and decode workspace files; durable Appearance features and review
+   history remain in Companion PostgreSQL. Preview, pair-result, decode, and
+   hot-memory limits can be tuned with the corresponding
+   `IMMICH_COMPANION_*_CACHE_MAX_BYTES` values in the overlay. The defaults are
+   1.5 GiB, 256 MiB, 512 MiB, and 96 MiB. Cache health, usage, hit rates, and
+   separate clear controls are available on the Duplicates page.
    The overlay also caps Companion at `IMMICH_COMPANION_MEMORY_LIMIT` (1 GiB)
    with a `IMMICH_COMPANION_MEMORY_RESERVATION` hint (256 MiB). Keep a limit as
    defense in depth even though synchronization is batch-bounded; raise it only
