@@ -21,7 +21,7 @@ import type {
   MutationResult,
   PageResult,
   StackActionPlan,
-  StackResolution,
+  StackResolutionSelection,
   TrashAssetRecord,
   ViewerNavigationRepository,
 } from '../contracts';
@@ -49,7 +49,7 @@ type ApiAssetDetail={
 type ApiAssetPage={items:ApiAssetSummary[];total:number;page:number;page_size:number;pages:number};
 type ApiSelectionCapabilities={count:number;all_favorite:boolean;all_archived:boolean;has_tags:boolean;has_albums:boolean;has_stack_members:boolean;can_stack:boolean;single_asset_id:string|null;can_set_stack_primary:boolean;can_remove_complete_stack:boolean};
 type ApiSelectionRelationships={albums:Array<{id:string;name:string;selected_asset_count:number}>;tags:Array<{id:string;name:string;selected_asset_count:number}>};
-type ApiActionPlan={id:string;target_count:number;applicable_count:number;skipped_count:number;missing_ids:string[];stack_conflicts?:Array<{stack_id:string;selected_count:number;member_count:number;includes_unselected:boolean}>;stack_primary_asset_id?:string|null};
+type ApiActionPlan={id:string;target_count:number;applicable_count:number;skipped_count:number;missing_ids:string[];stack_conflicts?:Array<{stack_id:string;primary_asset_id:string;member_asset_ids:string[];selected_asset_ids:string[];selected_count:number;member_count:number;includes_unselected:boolean}>;stack_primary_asset_id?:string|null};
 type ApiActionResult={applied_ids:string[];failed_ids:string[];affected_ids?:string[]};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
 type ApiSelectionWorkspace={id:string;entity_kind?:'asset'|'album'|'tag';revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
@@ -142,7 +142,7 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
   async function fetchAssets(query:AssetSearchQuery,remember=true):Promise<PageResult<AssetRecord>>{const page=pageNumber(query);const response=await requestJson<ApiAssetPage>(fetcher,'/api/assets/search',{...json(searchBody(query,page)),signal:query.signal});const items=response.items.map(normalizeAsset);if(remember){const key=JSON.stringify({...query,page:undefined,cursor:undefined,signal:undefined});if(key!==lastKey){pages.clear();lastKey=key}lastQuery=query;lastTotal=response.total;pages.set(page,items)}return{items,total:response.total,pageSize:response.page_size,page:response.page,nextCursor:response.page<response.pages?String(response.page+1):null}}
   async function resolve(target:AssetSelectionTarget){return requestJson<ApiSelectionResolution>(fetcher,'/api/assets/selection/resolve',json(selectionBody(target)))}
   async function action(target:AssetSelectionTarget,intent:string,relationIds:string[]=[],primary?:string):Promise<MutationResult>{const plan=await requestJson<ApiActionPlan>(fetcher,'/api/assets/actions/plan',json({selection:selectionBody(target),action:intent,relation_ids:relationIds,...(intent==='stack'?{stack_resolution:'move_selected',stack_primary_asset_id:primary}:{} )}));const executed=await requestJson<ApiActionResult>(fetcher,'/api/assets/actions/execute',json({plan_id:plan.id,confirm:true}));return resultFromAction(executed)}
-  async function planStack(target:AssetSelectionTarget,primaryAssetId:string,resolution?:StackResolution):Promise<StackActionPlan>{const plan=await requestJson<ApiActionPlan>(fetcher,'/api/assets/actions/plan',json({selection:selectionBody(target),action:'stack',relation_ids:[],stack_primary_asset_id:primaryAssetId,...(resolution?{stack_resolution:resolution}:{})}));return{id:plan.id,targetCount:plan.target_count??plan.applicable_count,primaryAssetId:plan.stack_primary_asset_id??primaryAssetId,conflicts:(plan.stack_conflicts??[]).map((conflict)=>({stackId:conflict.stack_id,selectedCount:conflict.selected_count,memberCount:conflict.member_count,includesUnselected:conflict.includes_unselected}))}}
+  async function planStack(target:AssetSelectionTarget,primaryAssetId:string,resolution?:StackResolutionSelection):Promise<StackActionPlan>{const plan=await requestJson<ApiActionPlan>(fetcher,'/api/assets/actions/plan',json({selection:selectionBody(target),action:'stack',relation_ids:[],stack_primary_asset_id:primaryAssetId,...(resolution?{stack_resolution:resolution}:{})}));return{id:plan.id,targetCount:plan.target_count??plan.applicable_count,primaryAssetId:plan.stack_primary_asset_id??primaryAssetId,conflicts:(plan.stack_conflicts??[]).map((conflict)=>({stackId:conflict.stack_id,primaryAssetId:conflict.primary_asset_id,memberAssetIds:conflict.member_asset_ids,selectedAssetIds:conflict.selected_asset_ids,selectedCount:conflict.selected_count,memberCount:conflict.member_count,includesUnselected:conflict.includes_unselected}))}}
   async function executeStack(planId:string):Promise<MutationResult>{return resultFromAction(await requestJson<ApiActionResult>(fetcher,'/api/assets/actions/execute',json({plan_id:planId,confirm:true})))}
   const assets:AssetRepository={
     async getById(id){try{const item=await requestJson<ApiAssetSummary|null>(fetcher,`/api/assets/${encodeURIComponent(id)}/summary`);return item?normalizeAsset(item):undefined}catch(error){if(error instanceof AssetApiError&&error.status===404)return undefined;throw error}},
