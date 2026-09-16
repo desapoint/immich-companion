@@ -151,7 +151,10 @@ def test_localized_diagnostics_distinguish_coherent_edit_from_jpeg_noise() -> No
     assert transcode_diagnostics.coherent_changed_percent == 0
     assert transcode_diagnostics.largest_changed_region_percent == 0
     assert transcode_diagnostics.substantial_region_count == 0
-    assert changed_diagnostics.localized_changed_percent > transcode_diagnostics.localized_changed_percent
+    assert (
+        changed_diagnostics.localized_changed_percent
+        > transcode_diagnostics.localized_changed_percent
+    )
     assert changed_diagnostics.changed_percent > transcode_diagnostics.changed_percent
     assert changed_diagnostics.coherent_changed_percent > 0
     assert changed_diagnostics.largest_changed_region_percent > 0
