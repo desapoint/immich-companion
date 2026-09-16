@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { DuplicateMemberRecord, SimilarityValidationMode } from '../data/contracts';
+  import { formatSimilarityPercent } from '../data/duplicateMember';
 
   let { member, members, mode, threshold, oninspect }: {
     member: DuplicateMemberRecord;
@@ -24,12 +25,12 @@
 
 {#if belowReference && admittedBy && admissionScore !== null}
   <small class="v2-admission-note">
-    {member.similarity?.toFixed(1)}% vs reference — below {threshold?.toFixed(1)}% threshold.
+    {formatSimilarityPercent(member.similarity)} vs reference — below {formatSimilarityPercent(threshold)} threshold.
     Linked through
     <button type="button" onclick={() => oninspect(admittedBy.asset.id)}>
       {admittedBy.asset.original_file_name}
     </button>
-    at {admissionScore.toFixed(1)}%.
+    at {formatSimilarityPercent(admissionScore)}.
   </small>
 {/if}
 

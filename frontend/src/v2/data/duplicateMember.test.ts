@@ -21,9 +21,11 @@ describe('duplicate comparison member data', () => {
     expect(comparisonMemberData(asset(), null).similarity).toBe('Not calculated');
   });
 
-  it('shows no more than two similarity percentage decimals', () => {
+  it('shows exactly two similarity percentage decimals', () => {
     expect(formatSimilarityPercent(98.256)).toBe('98.26%');
-    expect(formatSimilarityPercent(98.2)).toBe('98.2%');
+    expect(formatSimilarityPercent(98.2)).toBe('98.20%');
+    expect(formatSimilarityPercent(99.98)).toBe('99.98%');
+    expect(formatSimilarityPercent(100)).toBe('100.00%');
     expect(comparisonMemberData(asset(), 98.256).similarity).toBe('98.26%');
     expect(formatSimilarityPercent(null)).toBe('Not calculated');
   });
