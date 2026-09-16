@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select
 
 from companion.database import DatabaseManager
 from companion.duplicate_schema import COMPLETED_DUPLICATE_REVIEW_STATUSES
@@ -102,3 +102,31 @@ async def clear_completed_resolution(
             await session.delete(record)
         await session.delete(target)
         return True
+
+
+async def clear_all_completed_resolutions(database: DatabaseManager) -> int:
+    """Atomically remove all completed resolution history and derived suppressions.
+
+    One DELETE statement removes completed resolution rows together with every inherited
+    projection derived from completed history. Drafts and internal coverage placeholders are
+    left untouched. As with the single-resolution reset, this never reverses mutations in
+    Immich.
+    """
+
+    async with database.sessions() as session, session.begin():
+        removed = await session.execute(
+            delete(DuplicateGroupReviewRecord)
+            .where(
+                or_(
+                    and_(
+                        DuplicateGroupReviewRecord.review_status.in_(
+                            COMPLETED_DUPLICATE_REVIEW_STATUSES
+                        ),
+                        DuplicateGroupReviewRecord.draft_status == "completed",
+                    ),
+                    DuplicateGroupReviewRecord.draft_status == "inherited",
+                )
+            )
+            .returning(DuplicateGroupReviewRecord.draft_status)
+        )
+        return sum(status == "completed" for status in removed.scalars().all())

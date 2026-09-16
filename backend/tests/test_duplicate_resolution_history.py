@@ -4,7 +4,10 @@ import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
-from companion.duplicate_resolution_history import clear_completed_resolution
+from companion.duplicate_resolution_history import (
+    clear_all_completed_resolutions,
+    clear_completed_resolution,
+)
 
 TARGET_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 OTHER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
@@ -54,6 +57,27 @@ class _Session:
 
     async def delete(self, record):
         self.deleted.append(record)
+
+    def begin(self):
+        return _AsyncContext()
+
+
+class _BulkExecuteResult:
+    def __init__(self, values):
+        self.values = values
+
+    def scalars(self):
+        return _Scalars(self.values)
+
+
+class _BulkSession:
+    def __init__(self, removed_statuses):
+        self.removed_statuses = removed_statuses
+        self.statements = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        return _BulkExecuteResult(self.removed_statuses)
 
     def begin(self):
         return _AsyncContext()
@@ -118,3 +142,26 @@ def test_clear_resolution_returns_false_when_history_row_is_missing() -> None:
     assert cleared is False
     assert session.deleted == []
     assert session.scalars_reads == 0
+
+
+def test_clear_all_resolutions_uses_one_bulk_delete_and_counts_completed_rows() -> None:
+    session = _BulkSession(["completed", "inherited", "completed"])
+
+    cleared = asyncio.run(clear_all_completed_resolutions(_Database(session)))
+
+    assert cleared == 2
+    assert len(session.statements) == 1
+    statement_sql = str(session.statements[0].compile(compile_kwargs={"literal_binds": True}))
+    assert "DELETE FROM duplicate_group_reviews" in statement_sql
+    assert "draft_status = 'completed'" in statement_sql
+    assert "draft_status = 'inherited'" in statement_sql
+    assert "RETURNING duplicate_group_reviews.draft_status" in statement_sql
+
+
+def test_clear_all_resolutions_removes_inherited_rows_when_history_is_empty() -> None:
+    session = _BulkSession(["inherited", "inherited"])
+
+    cleared = asyncio.run(clear_all_completed_resolutions(_Database(session)))
+
+    assert cleared == 0
+    assert len(session.statements) == 1

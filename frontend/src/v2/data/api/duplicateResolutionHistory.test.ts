@@ -62,36 +62,15 @@ describe('duplicate resolution history helpers', () => {
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
-  it('clears every history page without skipping rows after deletion', async () => {
-    let remaining = ['resolution-1', 'resolution-2'];
+  it('clears all history with one backend request', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (init?.method === 'DELETE') {
-        const id = decodeURIComponent(url.split('/').at(-1) ?? '');
-        remaining = remaining.filter((value) => value !== id);
-        return new Response(null, { status: 204 });
-      }
-      return jsonResponse({
-        items: remaining.map((id) => ({
-          id,
-          occurred_at: '2026-09-16T10:00:00Z',
-          discovery_source: 'immich_duplicate',
-          provider_group_id: id,
-          review_status: 'reviewed_resolve',
-          manual_action: 'resolve',
-          member_count: 2,
-          member_asset_ids: ['asset-a', 'asset-b'],
-        })),
-        total: remaining.length,
-        page: 1,
-        page_size: 200,
-        pages: remaining.length ? 1 : 0,
-      });
+      expect(String(input)).toBe('/api/assets/duplicates/history');
+      expect(init?.method).toBe('DELETE');
+      return jsonResponse({ cleared: 237 });
     });
     vi.stubGlobal('fetch', fetcher);
 
-    await expect(clearAllDuplicateResolutionHistory()).resolves.toBe(2);
-    expect(remaining).toEqual([]);
-    expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toHaveLength(2);
+    await expect(clearAllDuplicateResolutionHistory()).resolves.toBe(237);
+    expect(fetcher).toHaveBeenCalledTimes(1);
   });
 });

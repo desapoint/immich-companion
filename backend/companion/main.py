@@ -2004,6 +2004,20 @@ def create_app(
             "pages": (total + page_size - 1) // page_size,
         }
 
+    @app.delete("/api/assets/duplicates/history")
+    async def clear_all_duplicate_resolution_history() -> dict[str, int]:
+        if database is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        from companion.duplicate_resolution_history import clear_all_completed_resolutions
+
+        cleared = await clear_all_completed_resolutions(database)
+        if v2_duplicate_review_state_service is not None:
+            await v2_duplicate_review_state_service.refresh_after_change()
+        return {"cleared": cleared}
+
     @app.delete(
         "/api/assets/duplicates/history/{resolution_id}",
         status_code=status.HTTP_204_NO_CONTENT,

@@ -19,6 +19,10 @@ type DuplicateResolutionHistoryPage = {
   pages: number;
 };
 
+type DuplicateResolutionHistoryClearAllResult = {
+  cleared: number;
+};
+
 async function historyPage(page: number): Promise<DuplicateResolutionHistoryPage> {
   const params = new URLSearchParams({ page: String(page), page_size: '200' });
   return requestJson<DuplicateResolutionHistoryPage>(`/api/assets/duplicates/history?${params}`);
@@ -47,13 +51,9 @@ export async function clearDuplicateResolutionHistory(resolutionId: string): Pro
 }
 
 export async function clearAllDuplicateResolutionHistory(): Promise<number> {
-  let cleared = 0;
-  for (;;) {
-    const result = await historyPage(1);
-    if (!result.items.length) return cleared;
-    for (const item of result.items) {
-      await clearDuplicateResolutionHistory(item.id);
-      cleared += 1;
-    }
-  }
+  const result = await requestJson<DuplicateResolutionHistoryClearAllResult>(
+    '/api/assets/duplicates/history',
+    { method: 'DELETE' },
+  );
+  return result.cleared;
 }
