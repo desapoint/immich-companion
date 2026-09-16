@@ -6,6 +6,9 @@ export type LocalChangeDiagnostics = {
   referenceAssetId: string;
   changedPercent: number | null;
   localizedChangedPercent: number | null;
+  coherentChangedPercent: number | null;
+  largestChangedRegionPercent: number | null;
+  substantialRegionCount: number | null;
   rows: number;
   columns: number;
   cells: number[][];
@@ -18,6 +21,9 @@ type ApiLocalChangeDiagnostics = {
   reference_asset_id: string;
   changed_percent: number | null;
   localized_changed_percent: number | null;
+  coherent_changed_percent: number | null;
+  largest_changed_region_percent: number | null;
+  substantial_region_count: number | null;
   rows: number;
   columns: number;
   cells: number[][];
@@ -43,6 +49,9 @@ export async function loadLocalChangeDiagnostics(
     referenceAssetId: value.reference_asset_id,
     changedPercent: value.changed_percent,
     localizedChangedPercent: value.localized_changed_percent,
+    coherentChangedPercent: value.coherent_changed_percent,
+    largestChangedRegionPercent: value.largest_changed_region_percent,
+    substantialRegionCount: value.substantial_region_count,
     rows: value.rows,
     columns: value.columns,
     cells: value.cells,
