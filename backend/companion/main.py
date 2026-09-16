@@ -1644,7 +1644,10 @@ def create_app(
             raise HTTPException(status_code=409, detail=str(error)) from error
         return selection_view(record)
 
-    @app.post("/api/{kind}s/selections/{selection_id}/matching", response_model=SelectionSetView)
+    @app.post(
+        "/api/{kind}s/selections/{selection_id}/matching",
+        response_model=SelectionSetView,
+    )
     async def update_matching_relations(
         kind: RelationEntityKind,
         selection_id: UUID,
@@ -2000,6 +2003,27 @@ def create_app(
             "page_size": page_size,
             "pages": (total + page_size - 1) // page_size,
         }
+
+    @app.delete(
+        "/api/assets/duplicates/history/{resolution_id}",
+        status_code=status.HTTP_204_NO_CONTENT,
+    )
+    async def clear_duplicate_resolution_history(resolution_id: UUID) -> Response:
+        if database is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        from companion.duplicate_resolution_history import clear_completed_resolution
+
+        if not await clear_completed_resolution(database, resolution_id):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="The completed duplicate resolution was not found.",
+            )
+        if v2_duplicate_review_state_service is not None:
+            await v2_duplicate_review_state_service.refresh_after_change()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(
         "/api/assets/duplicates/cross-source/search",
