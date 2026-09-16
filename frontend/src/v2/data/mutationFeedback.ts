@@ -8,6 +8,7 @@ export type OperationFeedback = {
 };
 
 export function errorMessage(error: unknown, fallback = 'The request could not be completed.'): string {
+  if (error instanceof Error && error.name === 'StackConflictReviewCancelled') return '';
   if (error instanceof Error && error.message.trim()) return error.message;
   if (typeof error === 'string' && error.trim()) return error;
   return fallback;
