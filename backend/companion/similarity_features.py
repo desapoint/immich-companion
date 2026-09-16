@@ -44,6 +44,7 @@ SIMILARITY_CONFIG_FINGERPRINT = hashlib.sha256(
             "luminance_planes": ("premultiplied_srgb", "alpha"),
             "alpha_structural_penalty": ALPHA_STRUCTURAL_PENALTY,
             "histogram_bins": COLOR_HISTOGRAM_BINS,
+            "histogram_weighting": "premultiplied-alpha-visible-mass-v1",
             "weights": {"structural": 0.65, "perceptual": 0.25, "color": 0.10},
         },
         sort_keys=True,
@@ -225,17 +226,61 @@ def _difference_hash(image: Image.Image) -> str:
 
 
 def _color_histogram(image: Image.Image) -> bytes:
-    sample = _visible_rgb(image).resize(
+    alpha = _alpha_channel(image)
+    if alpha.getextrema() == (255, 255):
+        # Preserve the v2/v3 opaque-image histogram byte-for-byte.
+        sample = _visible_rgb(image).resize(
+            (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
+            Image.Resampling.LANCZOS,
+        )
+        pixels = list(sample.get_flattened_data())
+        channel_histograms = [[0] * COLOR_HISTOGRAM_BINS for _ in range(3)]
+        for pixel in pixels:
+            for channel, value in enumerate(pixel):
+                channel_histograms[channel][
+                    min(value * COLOR_HISTOGRAM_BINS // 256, 15)
+                ] += 1
+        scale = 255 / len(pixels)
+        return bytes(
+            round(count * scale)
+            for histogram in channel_histograms
+            for count in histogram
+        )
+
+    # Transparent color should contribute only in proportion to its visibility.
+    # The remainder of each pixel's mass is assigned to the neutral black bin,
+    # so hidden RGB cannot act like fully opaque color evidence. The sample is
+    # already premultiplied, which also prevents invisible edge color from
+    # bleeding into neighboring bins during the bounded resize.
+    sample = _appearance_rgba(image).resize(
         (LUMINANCE_VECTOR_SIDE, LUMINANCE_VECTOR_SIDE),
         Image.Resampling.LANCZOS,
     )
     pixels = list(sample.get_flattened_data())
-    channel_histograms = [[0] * COLOR_HISTOGRAM_BINS for _ in range(3)]
-    for pixel in pixels:
-        for channel, value in enumerate(pixel):
-            channel_histograms[channel][min(value * COLOR_HISTOGRAM_BINS // 256, 15)] += 1
+    channel_histograms = [[0.0] * COLOR_HISTOGRAM_BINS for _ in range(3)]
+    for red, green, blue, alpha_value in pixels:
+        visible_weight = alpha_value / 255
+        transparent_weight = 1 - visible_weight
+        for channel, value in enumerate((red, green, blue)):
+            histogram = channel_histograms[channel]
+            histogram[0] += transparent_weight
+            histogram[min(value * COLOR_HISTOGRAM_BINS // 256, 15)] += visible_weight
+
     scale = 255 / len(pixels)
-    return bytes(round(count * scale) for histogram in channel_histograms for count in histogram)
+    quantized: list[int] = []
+    for histogram in channel_histograms:
+        scaled = [count * scale for count in histogram]
+        values = [math.floor(value) for value in scaled]
+        remainder = 255 - sum(values)
+        fractions = sorted(
+            range(COLOR_HISTOGRAM_BINS),
+            key=lambda index: scaled[index] - values[index],
+            reverse=True,
+        )
+        for index in fractions[:remainder]:
+            values[index] += 1
+        quantized.extend(values)
+    return bytes(quantized)
 
 
 def _bit_depth(image: Image.Image) -> int:
