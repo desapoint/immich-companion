@@ -66,6 +66,14 @@
     }
   }
 
+  async function resolveAssets(ids: readonly string[]): Promise<HistoryAsset[]> {
+    const resolved: HistoryAsset[] = [];
+    for (let index = 0; index < ids.length; index += 8) {
+      resolved.push(...await Promise.all(ids.slice(index, index + 8).map(resolveAsset)));
+    }
+    return resolved;
+  }
+
   onMount(() => {
     let active = true;
     void (async () => {
@@ -73,7 +81,7 @@
       loadError = '';
       try {
         const loaded = await duplicateResolutionHistoryDetail(resolutionId);
-        const resolved = await Promise.all(loaded.member_asset_ids.map(resolveAsset));
+        const resolved = await resolveAssets(loaded.member_asset_ids);
         if (!active) return;
         detail = loaded;
         assets = resolved;
