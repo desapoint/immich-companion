@@ -3,17 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass
 from time import perf_counter
 from uuid import UUID
 
-from companion.action_schema import StackConflict, StackResolution
+from companion.action_schema import StackConflict, StackResolution, StackResolutionSelection
 from companion.asset_repository import AssetRepository
 from companion.asset_service import AssetSyncService
 from companion.immich import ImmichApiClient, ImmichStack
 
 logger = logging.getLogger(__name__)
+
+_STACK_RESOLUTIONS = {"keep_existing", "move_selected", "include_existing"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,17 +49,28 @@ class StackService:
         selected = set(asset_ids)
         conflicts: list[StackConflict] = []
         for stack in await self._immich.list_stacks():
-            selected_count = sum(member.id in selected for member in stack.assets)
-            if selected_count:
-                conflicts.append(
-                    StackConflict(
-                        stack_id=stack.id,
-                        selected_count=selected_count,
-                        member_count=len(stack.assets),
-                        includes_unselected=selected_count < len(stack.assets),
-                    )
+            member_ids = [member.id for member in stack.assets]
+            selected_ids = [identifier for identifier in member_ids if identifier in selected]
+            if not selected_ids:
+                continue
+            ordered_members = [
+                stack.primary_asset_id,
+                *(identifier for identifier in member_ids if identifier != stack.primary_asset_id),
+            ]
+            conflicts.append(
+                StackConflict(
+                    stack_id=stack.id,
+                    primary_asset_id=stack.primary_asset_id,
+                    member_asset_ids=ordered_members,
+                    selected_asset_ids=[
+                        identifier for identifier in ordered_members if identifier in selected
+                    ],
+                    selected_count=len(selected_ids),
+                    member_count=len(member_ids),
+                    includes_unselected=len(selected_ids) < len(member_ids),
                 )
-        return conflicts
+            )
+        return sorted(conflicts, key=lambda item: str(item.stack_id))
 
     async def conflict_snapshot(self, asset_ids: list[UUID]) -> list[dict[str, object]]:
         """Freeze exact existing-stack inputs for later drift validation."""
@@ -105,15 +119,56 @@ class StackService:
         self._require_stackable(remaining)
         return remaining
 
+    @staticmethod
+    def _normalize_resolution(
+        resolution: StackResolutionSelection | str | None,
+    ) -> StackResolutionSelection:
+        if resolution is None:
+            return "move_selected"
+        if isinstance(resolution, dict):
+            normalized: dict[str, StackResolution] = {}
+            for stack_id, choice in resolution.items():
+                try:
+                    UUID(str(stack_id))
+                except (TypeError, ValueError) as error:
+                    raise StackSelectionError("Stack resolution keys must be stack UUIDs") from error
+                if choice not in _STACK_RESOLUTIONS:
+                    raise StackSelectionError("Unknown stack conflict resolution")
+                normalized[str(stack_id)] = choice
+            return normalized
+        if resolution in _STACK_RESOLUTIONS:
+            return resolution  # type: ignore[return-value]
+        try:
+            decoded = json.loads(resolution)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise StackSelectionError("Invalid saved stack conflict resolution") from error
+        if not isinstance(decoded, dict):
+            raise StackSelectionError("Saved stack conflict resolution must be an object")
+        return StackService._normalize_resolution(decoded)
+
+    @staticmethod
+    def _resolution_for_stack(
+        resolution: StackResolutionSelection,
+        stack_id: UUID,
+    ) -> StackResolution:
+        if isinstance(resolution, dict):
+            choice = resolution.get(str(stack_id))
+            if choice is None:
+                raise StackSelectionError(
+                    "Every existing stack conflict needs a reviewed resolution"
+                )
+            return choice
+        return resolution
+
     async def prepare(
         self,
         asset_ids: list[UUID],
-        resolution: StackResolution | None,
+        resolution: StackResolutionSelection | str | None,
         primary_asset_id: UUID | None = None,
     ) -> StackPreparation:
-        """Resolve existing memberships using the reviewed conflict mode."""
+        """Resolve each existing membership using the reviewed conflict choices."""
 
-        resolution = resolution or "move_selected"
+        reviewed_resolution = self._normalize_resolution(resolution)
         primary_asset_id = primary_asset_id or asset_ids[0]
         if primary_asset_id not in asset_ids:
             raise StackSelectionError("The chosen stack primary is not selected")
@@ -125,13 +180,14 @@ class StackService:
             selected_members = [identifier for identifier in member_ids if identifier in selected]
             if not selected_members:
                 continue
+            stack_resolution = self._resolution_for_stack(reviewed_resolution, stack.id)
             for identifier in member_ids:
                 if identifier not in affected_ids:
                     affected_ids.append(identifier)
-            if resolution == "keep_existing":
+            if stack_resolution == "keep_existing":
                 final_ids = [identifier for identifier in final_ids if identifier not in member_ids]
                 continue
-            if resolution == "include_existing":
+            if stack_resolution == "include_existing":
                 for identifier in member_ids:
                     if identifier not in final_ids:
                         final_ids.append(identifier)
