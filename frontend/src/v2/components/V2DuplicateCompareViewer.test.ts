@@ -45,7 +45,8 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('2.35%');
     expect(body).toContain('Detail evidence');
     expect(body).toContain('Original');
-    expect(body).toContain('Use Difference mode');
+    expect(body).toContain('Difference shows displayed-pixel changes');
+    expect(body).toContain('Local changes shows the validator grid');
     expect(body).not.toContain('Similarity engine');
     expect(body).toContain('data-decision="stack"');
     expect(body).toContain('Stack 1');
