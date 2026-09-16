@@ -15,6 +15,9 @@ from companion.duplicate_schema import COMPLETED_DUPLICATE_REVIEW_STATUSES
 from companion.models import DuplicateGroupReviewRecord, DuplicateReviewWorkspaceRecord
 
 WORKSPACE_KEY = "default"
+COVERAGE_PENDING_DRAFT_STATUS = "coverage_pending"
+IMMICH_DUPLICATE_SOURCE = "immich_duplicate"
+COMPANION_SIMILARITY_SOURCE = "companion_similarity"
 
 
 def _review_member_ids(record: DuplicateGroupReviewRecord) -> set[str]:
@@ -23,6 +26,70 @@ def _review_member_ids(record: DuplicateGroupReviewRecord) -> set[str]:
         for decision in list(record.member_decisions or [])
         if isinstance(decision, dict) and decision.get("asset_id")
     }
+
+
+def _source_value(value: Any) -> str:
+    return str(getattr(value, "value", value))
+
+
+def _decision_member_uuids(decisions: Any) -> set[UUID]:
+    member_ids: set[UUID] = set()
+    if not isinstance(decisions, list):
+        return member_ids
+    for decision in decisions:
+        if not isinstance(decision, dict) or not decision.get("asset_id"):
+            continue
+        try:
+            member_ids.add(UUID(str(decision["asset_id"])))
+        except (TypeError, ValueError):
+            continue
+    return member_ids
+
+
+def _coverage_rows(
+    groups: list[Any],
+    members_by_group: dict[str, list[UUID]],
+    parent_member_sets: list[set[UUID]],
+    now: datetime,
+) -> list[dict[str, object]]:
+    """Build internal coverage rows only for groups fully contained by one parent."""
+
+    parents = [set(member_ids) for member_ids in parent_member_sets if len(member_ids) >= 2]
+    if not parents:
+        return []
+    rows: list[dict[str, object]] = []
+    for group in groups:
+        group_id = str(group.group_id)
+        ordered_ids = list(members_by_group.get(group_id, []))
+        member_ids = set(ordered_ids)
+        if len(member_ids) < 2 or not any(member_ids.issubset(parent) for parent in parents):
+            continue
+        fingerprint = str(group.member_fingerprint)
+        rows.append(
+            {
+                "discovery_source": IMMICH_DUPLICATE_SOURCE,
+                "provider_group_id": str(group.provider_group_id or group.group_id),
+                "stable_group_key": str(group.stable_group_key),
+                "member_set_key": fingerprint,
+                "member_fingerprint": fingerprint,
+                "member_decisions": [
+                    {
+                        "asset_id": str(asset_id),
+                        "disposition": "no_change",
+                        "primary": False,
+                        "status": "pending",
+                    }
+                    for asset_id in ordered_ids
+                ],
+                "stack_resolution": "move_selected",
+                "draft_status": COVERAGE_PENDING_DRAFT_STATUS,
+                "review_status": "pending",
+                "last_seen_at": now,
+                "last_reviewed_at": None,
+                "updated_at": now,
+            }
+        )
+    return rows
 
 
 class DuplicateReviewRepository:
@@ -57,6 +124,7 @@ class DuplicateReviewRepository:
                 ~DuplicateGroupReviewRecord.review_status.in_(
                     COMPLETED_DUPLICATE_REVIEW_STATUSES
                 ),
+                DuplicateGroupReviewRecord.draft_status != COVERAGE_PENDING_DRAFT_STATUS,
                 or_(
                     func.coalesce(
                         func.json_array_length(DuplicateGroupReviewRecord.member_decisions), 0
@@ -82,7 +150,9 @@ class DuplicateReviewRepository:
         them. Existing exact review rows always win, so a fresh draft is never hidden. The
         inherited row retains the original reviewed membership in ``member_decisions`` so
         another deletion remains covered, while ``draft_status`` keeps these projection
-        rows out of resolution history.
+        rows out of resolution history. Internal coverage placeholders are the sole exception:
+        they may be replaced by an actual completed lineage because they never represent a
+        user-authored review.
         """
 
         if not groups:
@@ -135,7 +205,8 @@ class DuplicateReviewRepository:
             existing_by_source[source] = await self.get_many(source, keys)
 
         for group, source, group_key, fingerprint, current_ids in normalized_groups:
-            if group_key in existing_by_source.get(source, {}):
+            existing = existing_by_source.get(source, {}).get(group_key)
+            if existing is not None and existing.draft_status != COVERAGE_PENDING_DRAFT_STATUS:
                 continue
             matches = [
                 (record, reviewed_ids)
@@ -182,8 +253,17 @@ class DuplicateReviewRepository:
                 values = candidates[offset : offset + 500]
                 statement = insert(DuplicateGroupReviewRecord).values(values)
                 await session.execute(
-                    statement.on_conflict_do_nothing(
-                        constraint="uq_duplicate_group_reviews_stable_key"
+                    statement.on_conflict_do_update(
+                        constraint="uq_duplicate_group_reviews_stable_key",
+                        set_={
+                            key: getattr(statement.excluded, key)
+                            for key in values[0]
+                            if key != "stable_group_key"
+                        },
+                        where=(
+                            DuplicateGroupReviewRecord.draft_status
+                            == COVERAGE_PENDING_DRAFT_STATUS
+                        ),
                     )
                 )
         return len(candidates)
@@ -271,6 +351,69 @@ class DuplicateReviewRepository:
         records = await self.get_many(discovery_source, [stable_group_key])
         return records[stable_group_key]
 
+    async def _freeze_contained_immich_groups(
+        self,
+        session: Any,
+        parent_member_sets: list[set[UUID]],
+        now: datetime,
+    ) -> int:
+        """Freeze current Immich groups fully contained by one similarity draft."""
+
+        parents = [set(member_ids) for member_ids in parent_member_sets if len(member_ids) >= 2]
+        if not parents:
+            return 0
+
+        from companion.composite_duplicate_repository import (
+            CompositeDuplicateGroupMemberRecord,
+            CompositeDuplicateGroupRecord,
+        )
+
+        parent_union = set().union(*parents)
+        max_parent_size = max(len(member_ids) for member_ids in parents)
+        group_statement = (
+            select(CompositeDuplicateGroupRecord)
+            .join(
+                CompositeDuplicateGroupMemberRecord,
+                CompositeDuplicateGroupMemberRecord.group_id
+                == CompositeDuplicateGroupRecord.group_id,
+            )
+            .where(
+                CompositeDuplicateGroupRecord.discovery_source == IMMICH_DUPLICATE_SOURCE,
+                CompositeDuplicateGroupRecord.member_count >= 2,
+                CompositeDuplicateGroupRecord.member_count <= max_parent_size,
+                CompositeDuplicateGroupMemberRecord.asset_id.in_(parent_union),
+            )
+            .distinct()
+        )
+        groups = list((await session.scalars(group_statement)).all())
+        if not groups:
+            return 0
+
+        group_ids = [str(group.group_id) for group in groups]
+        member_statement = (
+            select(CompositeDuplicateGroupMemberRecord)
+            .where(CompositeDuplicateGroupMemberRecord.group_id.in_(group_ids))
+            .order_by(
+                CompositeDuplicateGroupMemberRecord.group_id,
+                CompositeDuplicateGroupMemberRecord.position,
+            )
+        )
+        members = list((await session.scalars(member_statement)).all())
+        members_by_group: dict[str, list[UUID]] = {}
+        for member in members:
+            members_by_group.setdefault(str(member.group_id), []).append(member.asset_id)
+
+        rows = _coverage_rows(groups, members_by_group, parents, now)
+        if not rows:
+            return 0
+        statement = insert(DuplicateGroupReviewRecord).values(rows)
+        await session.execute(
+            statement.on_conflict_do_nothing(
+                constraint="uq_duplicate_group_reviews_stable_key"
+            )
+        )
+        return len(rows)
+
     async def save_draft(
         self,
         *,
@@ -309,6 +452,12 @@ class DuplicateReviewRepository:
                     set_={key: getattr(statement.excluded, key) for key in values},
                 )
             )
+            if _source_value(discovery_source) == COMPANION_SIMILARITY_SOURCE:
+                await self._freeze_contained_immich_groups(
+                    session,
+                    [_decision_member_uuids(member_decisions)],
+                    now,
+                )
         records = await self.get_many(discovery_source, [stable_group_key])
         return records[stable_group_key]
 
@@ -341,6 +490,17 @@ class DuplicateReviewRepository:
                         }
                         | {"last_seen_at": statement.excluded.last_seen_at},
                     )
+                )
+            parent_sets = {
+                frozenset(_decision_member_uuids(row.get("member_decisions")))
+                for row in rows
+                if _source_value(row.get("discovery_source")) == COMPANION_SIMILARITY_SOURCE
+            }
+            if parent_sets:
+                await self._freeze_contained_immich_groups(
+                    session,
+                    [set(member_ids) for member_ids in parent_sets],
+                    now,
                 )
 
     async def clear_decisions(
@@ -407,6 +567,7 @@ class DuplicateReviewRepository:
                 ~DuplicateGroupReviewRecord.review_status.in_(
                     COMPLETED_DUPLICATE_REVIEW_STATUSES
                 ),
+                DuplicateGroupReviewRecord.draft_status != COVERAGE_PENDING_DRAFT_STATUS,
                 resettable_state,
             )
             .values(
@@ -423,6 +584,11 @@ class DuplicateReviewRepository:
             )
         )
         async with self._database.sessions() as session, session.begin():
+            await session.execute(
+                delete(DuplicateGroupReviewRecord).where(
+                    DuplicateGroupReviewRecord.draft_status == COVERAGE_PENDING_DRAFT_STATUS
+                )
+            )
             result = await session.execute(statement)
             await session.execute(
                 delete(DuplicateReviewWorkspaceRecord).where(
@@ -451,6 +617,7 @@ class DuplicateReviewRepository:
             )
             if record is None:
                 return
+            now = datetime.now(UTC)
             record.member_decisions = [
                 {**decision, "status": "completed"}
                 for decision in list(record.member_decisions or [])
@@ -458,7 +625,36 @@ class DuplicateReviewRepository:
             if record.manual_action == "mixed" and record.review_status == "manually_configured":
                 record.review_status = "reviewed_mixed"
             record.draft_status = "completed"
-            record.updated_at = datetime.now(UTC)
+            record.updated_at = now
+
+            if _source_value(discovery_source) != COMPANION_SIMILARITY_SOURCE:
+                return
+            parent_member_ids = _review_member_ids(record)
+            if len(parent_member_ids) < 2:
+                return
+            coverage_statement = (
+                select(DuplicateGroupReviewRecord)
+                .where(
+                    DuplicateGroupReviewRecord.discovery_source == IMMICH_DUPLICATE_SOURCE,
+                    DuplicateGroupReviewRecord.draft_status == COVERAGE_PENDING_DRAFT_STATUS,
+                )
+                .with_for_update()
+            )
+            coverage_records = list((await session.scalars(coverage_statement)).all())
+            for coverage in coverage_records:
+                coverage_member_ids = _review_member_ids(coverage)
+                if len(coverage_member_ids) < 2 or not coverage_member_ids.issubset(
+                    parent_member_ids
+                ):
+                    continue
+                coverage.member_decisions = [
+                    {**decision, "status": "completed"}
+                    for decision in list(coverage.member_decisions or [])
+                ]
+                coverage.draft_status = "inherited"
+                coverage.review_status = record.review_status
+                coverage.last_reviewed_at = now
+                coverage.updated_at = now
 
     async def consume_workspace_groups(
         self,

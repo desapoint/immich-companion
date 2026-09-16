@@ -5,12 +5,19 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
-from companion.duplicate_review_repository import DuplicateReviewRepository
+from companion.duplicate_identity import member_set_key, stable_group_key
+from companion.duplicate_review_repository import (
+    COMPANION_SIMILARITY_SOURCE,
+    COVERAGE_PENDING_DRAFT_STATUS,
+    DuplicateReviewRepository,
+    _coverage_rows,
+)
 
 A = UUID("11111111-1111-4111-8111-111111111111")
 B = UUID("22222222-2222-4222-8222-222222222222")
 C = UUID("33333333-3333-4333-8333-333333333333")
 D = UUID("44444444-4444-4444-8444-444444444444")
+E = UUID("55555555-5555-4555-8555-555555555555")
 NOW = datetime(2026, 9, 14, tzinfo=UTC)
 
 
@@ -56,6 +63,31 @@ class _Database:
         return _AsyncContext(self.session)
 
 
+class _CompletionSession:
+    def __init__(self, parent, coverage):
+        self.parent = parent
+        self.coverage = coverage
+        self.coverage_reads = 0
+
+    async def scalar(self, _statement):
+        return self.parent
+
+    async def scalars(self, _statement):
+        self.coverage_reads += 1
+        return _Scalars(self.coverage)
+
+    def begin(self):
+        return _AsyncContext()
+
+
+class _CompletionDatabase:
+    def __init__(self, parent, coverage):
+        self.session = _CompletionSession(parent, coverage)
+
+    def sessions(self):
+        return _AsyncContext(self.session)
+
+
 def _review(*asset_ids: UUID, source: str = "immich_duplicate"):
     return SimpleNamespace(
         discovery_source=source,
@@ -79,6 +111,25 @@ def _review(*asset_ids: UUID, source: str = "immich_duplicate"):
     )
 
 
+def _coverage_review(*asset_ids: UUID):
+    return SimpleNamespace(
+        discovery_source="immich_duplicate",
+        member_decisions=[
+            {
+                "asset_id": str(asset_id),
+                "disposition": "no_change",
+                "primary": False,
+                "status": "pending",
+            }
+            for asset_id in asset_ids
+        ],
+        draft_status=COVERAGE_PENDING_DRAFT_STATUS,
+        review_status="pending",
+        last_reviewed_at=None,
+        updated_at=NOW,
+    )
+
+
 def _group(*asset_ids: UUID, source: str = "immich_duplicate"):
     return SimpleNamespace(
         discovery_source=source,
@@ -86,6 +137,15 @@ def _group(*asset_ids: UUID, source: str = "immich_duplicate"):
         group_id="group",
         asset_ids=asset_ids,
         evidence=(),
+    )
+
+
+def _coverage_group(name: str):
+    return SimpleNamespace(
+        group_id=name,
+        provider_group_id=f"provider-{name}",
+        stable_group_key=f"stable-{name}",
+        member_fingerprint=f"fingerprint-{name}",
     )
 
 
@@ -138,3 +198,66 @@ def test_separately_resolved_groups_are_not_union_suppressed() -> None:
 
     assert inherited == 0
     assert database.session.executed == []
+
+
+def test_similarity_coverage_freezes_only_fully_contained_immich_groups() -> None:
+    contained = _coverage_group("contained")
+    partial = _coverage_group("partial")
+
+    rows = _coverage_rows(
+        [contained, partial],
+        {
+            "contained": [A, B],
+            "partial": [D, E],
+        },
+        [{A, B, C, D}],
+        NOW,
+    )
+
+    assert [row["stable_group_key"] for row in rows] == ["stable-contained"]
+    assert rows[0]["draft_status"] == COVERAGE_PENDING_DRAFT_STATUS
+    assert [decision["asset_id"] for decision in rows[0]["member_decisions"]] == [
+        str(A),
+        str(B),
+    ]
+
+
+def test_similarity_completion_consumes_only_fully_contained_frozen_groups() -> None:
+    parent = _review(A, B, C, D, source=COMPANION_SIMILARITY_SOURCE)
+    parent.draft_status = "completed"
+    contained = _coverage_review(A, B)
+    partial = _coverage_review(D, E)
+    database = _CompletionDatabase(parent, [contained, partial])
+    repository = DuplicateReviewRepository(database)
+
+    asyncio.run(
+        repository.complete_draft(
+            COMPANION_SIMILARITY_SOURCE,
+            "similarity-parent",
+            "fingerprint",
+        )
+    )
+
+    assert contained.draft_status == "inherited"
+    assert contained.review_status == "reviewed_resolve"
+    assert all(decision["status"] == "completed" for decision in contained.member_decisions)
+    assert partial.draft_status == COVERAGE_PENDING_DRAFT_STATUS
+    assert partial.review_status == "pending"
+    assert database.session.coverage_reads == 1
+
+
+def test_coverage_placeholder_does_not_block_completed_lineage_inheritance() -> None:
+    repository, database = _repository(_review(A, B, C))
+    group = _group(A, B)
+    group_key = stable_group_key("immich_duplicate", member_set_key([A, B]))
+    placeholder = _coverage_review(A, B)
+
+    async def coverage_exact_review(_source, _keys):
+        return {group_key: placeholder}
+
+    repository.get_many = coverage_exact_review  # type: ignore[method-assign]
+
+    inherited = asyncio.run(repository.inherit_completed_groups([group]))
+
+    assert inherited == 1
+    assert len(database.session.executed) == 1
