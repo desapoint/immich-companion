@@ -20,6 +20,7 @@ import type {
 import type { TaskRecord, TaskRepository } from '../syncContracts';
 import { referenceFirstDuplicateMembers } from '../duplicatePresentation';
 import { matchesDuplicateSource } from '../duplicateSource';
+import { parseStackResolution, serializeStackResolution } from '../stackResolution';
 
 type AnalysisOptions = {
   keeper_policy: 'prefer_upload';
@@ -115,7 +116,8 @@ type ApiDuplicateDraft = {
     status?: 'pending' | 'completed';
   }>;
   stack_primary_asset_id: string | null;
-  stack_resolution: 'keep_existing' | 'move_selected' | 'include_existing';
+  stack_resolution: string;
+  metadata_keeper_asset_id?: string | null;
   status: 'pending' | 'completed';
   stale: boolean;
 };
@@ -168,7 +170,7 @@ type PlanResponse = {
   groups?: Array<{
     group_id: string;
     members: Array<{ asset_id: string; disposition: DuplicateDecision }>;
-    follow_up?: { primary_asset_id: string; member_asset_ids: string[] } | null;
+    follow_up?: { primary_asset_id: string; member_asset_ids: string[]; resolution?: string } | null;
   }>;
 };
 type ApiDiskCacheStatus = { path:string;healthy:boolean;used_bytes:number;max_bytes:number;free_bytes:number;entry_count:number;hits:number;misses:number;evictions:number;cleanup_failures:number };
@@ -402,6 +404,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
   const draftErrors = new Map<string, unknown>();
 
   const draftFor = (groupId: string): ApiDuplicateDraft | undefined => workspace.drafts.find((draft) => draft.group_id === groupId && !draft.stale);
+  const replaceDraft = (draft: ApiDuplicateDraft): void => {
+    workspace = { ...workspace, drafts: [...workspace.drafts.filter((candidate) => candidate.group_id !== draft.group_id), draft] };
+  };
 
   const materialize = (group: ApiDuplicateGroup): DuplicateGroupRecord => {
     const draft = draftFor(group.group_id);
@@ -424,7 +429,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       selected: workspace.selected_group_ids.includes(group.group_id),
       savedDecisions: savedDecisions(draft),
       stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
-      stackResolution: draft?.stack_resolution ?? 'move_selected',
+      stackResolution: parseStackResolution(draft?.stack_resolution ?? 'move_selected'),
       members: referenceFirstDuplicateMembers(
         group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member), admission: admissionEvidence(member) })),
         group.reference_asset_id,
@@ -447,11 +452,11 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       options: ANALYSIS_OPTIONS,
       decisions: Object.entries(scoped.decisions).map(([asset_id, disposition]) => ({ asset_id, disposition, source: 'manual', status: 'pending' })),
       stack_primary_asset_id: scoped.stacks[0]?.primaryAssetId ?? (Object.values(scoped.decisions).includes('stack') ? primary : null),
-      stack_resolution: 'move_selected',
+      stack_resolution: serializeStackResolution(scoped.stacks[0]?.stackResolution),
       metadata_keeper_asset_id: Object.values(scoped.decisions).includes('delete') && survivors.length === 1 ? survivors[0] : null,
       status: Object.keys(scoped.decisions).length === memberIds.length ? 'completed' : 'pending',
     }));
-    workspace = { ...workspace, drafts: [...workspace.drafts.filter((candidate) => candidate.group_id !== groupId), draft] };
+    replaceDraft(draft);
   };
 
   const saveDraft = (groupId: string, resolution: DuplicateResolutionPlan): Promise<void> => {
@@ -470,6 +475,23 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     await Promise.all([...draftQueues.values()]);
     const failure = draftErrors.values().next().value;
     if (failure !== undefined) throw failure;
+  };
+
+  const saveWorkspaceStackResolution = async (stack: DuplicateResolutionPlan['stacks'][number]): Promise<void> => {
+    if (stack.stackResolution === undefined) return;
+    const draft = draftFor(stack.groupId);
+    if (!draft) throw new Error(`Duplicate group ${stack.groupId} no longer has a current saved draft.`);
+    const updated = await requestJson<ApiDuplicateDraft>('/api/assets/duplicates/workspace/group', jsonRequest('PUT', {
+      group_id: stack.groupId,
+      member_fingerprint: draft.member_fingerprint,
+      options: ANALYSIS_OPTIONS,
+      decisions: draft.decisions,
+      stack_primary_asset_id: stack.primaryAssetId ?? draft.stack_primary_asset_id,
+      stack_resolution: serializeStackResolution(stack.stackResolution),
+      metadata_keeper_asset_id: draft.metadata_keeper_asset_id ?? null,
+      status: draft.status,
+    }));
+    replaceDraft(updated);
   };
 
   const saveSelection = async (groupIds: readonly string[], activeGroupId: string | null): Promise<void> => {
@@ -693,6 +715,8 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
       const uniqueGroupIds = [...new Set(groupIds)];
       if (!uniqueGroupIds.length) {
+        for (const stack of resolution.stacks) await saveWorkspaceStackResolution(stack);
+        const requestedStackResolution = new Map(resolution.stacks.map((stack) => [stack.groupId, stack.stackResolution]));
         const plan = await requestJson<PlanResponse>('/api/assets/duplicates/cross-source/plan', jsonRequest('POST', {
           options: ANALYSIS_OPTIONS,
           group_ids: [],
@@ -708,6 +732,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
             label: 'Frozen stack',
             assetIds: group.follow_up.member_asset_ids,
             primaryAssetId: group.follow_up.primary_asset_id,
+            ...(requestedStackResolution.get(group.group_id) !== undefined ? { stackResolution: requestedStackResolution.get(group.group_id) } : {}),
           }] : []),
         };
         return {
