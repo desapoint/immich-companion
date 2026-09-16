@@ -150,6 +150,38 @@ describe('duplicate automation rules', () => {
     expect(result.metadataKeeperAssetId).toBe(upload.id);
   });
 
+  it('does not nominate metadata keeper when a protected manual keep leaves multiple survivors', () => {
+    const manualKeep = asset({ width: 100, height: 100 });
+    const automaticKeep = asset({ width: 400, height: 400 });
+    const deleted = asset({ width: 200, height: 200 });
+    const existing: DuplicateAutomationExistingDecision[] = [
+      { assetId: manualKeep.id, disposition: 'keep', source: 'manual', status: 'pending' },
+    ];
+    const resolveRule: DuplicateAutomationUiRule = {
+      id: 1,
+      logic: 'all',
+      conditions: [{ id: 1, scope: 'group', field: 'classification', operator: 'is', value: 'exact file, exact pixels', count: 1 }],
+      target: 'whole_group',
+      action: 'resolve_keeper',
+      flow: 'stop_group',
+    };
+
+    const result = evaluateDuplicateAutomation(
+      group([manualKeep, automaticKeep, deleted]),
+      [resolveRule],
+      existing,
+      keeperRules,
+    );
+
+    expect(result.complete).toBe(true);
+    expect(result.metadataKeeperAssetId).toBeNull();
+    expect(result.decisions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ assetId: manualKeep.id, disposition: 'keep', source: 'manual' }),
+      expect.objectContaining({ assetId: automaticKeep.id, disposition: 'keep', source: 'automatic' }),
+      expect.objectContaining({ assetId: deleted.id, disposition: 'delete', source: 'automatic' }),
+    ]));
+  });
+
   it('supports aggregate member conditions', () => {
     const first = asset();
     const second = asset();
