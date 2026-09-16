@@ -45,4 +45,16 @@ def test_low_alpha_color_difference_scores_closer_than_same_opaque_colors() -> N
     translucent = compare_visual_features(_coarse(translucent_red), _coarse(translucent_cyan))
     opaque = compare_visual_features(_coarse(opaque_red), _coarse(opaque_cyan))
 
+    assert translucent.color_percent > 90
+    assert translucent.similarity_percent > 99
+    assert opaque.color_percent == 0
     assert translucent.similarity_percent > opaque.similarity_percent
+
+
+def test_partially_visible_histograms_still_normalize_to_full_channel_mass() -> None:
+    translucent = _coarse(Image.new("RGBA", (128, 128), (240, 40, 180, 96)))
+
+    assert len(translucent.color_histogram) == 48
+    for channel in range(3):
+        start = channel * 16
+        assert sum(translucent.color_histogram[start:start + 16]) == 255
