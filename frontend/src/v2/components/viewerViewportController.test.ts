@@ -54,7 +54,33 @@ describe('ViewerViewportController persistent camera', () => {
     expect(after.y).toBeCloseTo(before.y, 6);
   });
 
-  it('preserves the logical target when comparison mode replaces the viewport node', () => {
+  it.each([2, 4])('preserves the exact raw transform across same-geometry single-pane replacements at %ix zoom', (zoom) => {
+    const firstViewport = fakeViewport(840, 600);
+    const camera = new ViewerViewportController();
+    camera.setViewport(firstViewport.node);
+    camera.setNaturalSize(1600, 1200);
+    camera.setZoom(zoom);
+    camera.panBy(-233.25, 117.5);
+    const expected = {
+      zoom: camera.zoom,
+      panX: camera.panX,
+      panY: camera.panY,
+      transform: camera.transform,
+    };
+
+    for (let index = 0; index < 4; index += 1) {
+      const replacement = fakeViewport(840, 600);
+      camera.setViewport(null);
+      camera.setViewport(replacement.node);
+
+      expect(camera.zoom).toBe(expected.zoom);
+      expect(camera.panX).toBe(expected.panX);
+      expect(camera.panY).toBe(expected.panY);
+      expect(camera.transform).toBe(expected.transform);
+    }
+  });
+
+  it('preserves the logical target when comparison mode replaces the viewport with different geometry', () => {
     const sideBySide = fakeViewport(420, 600);
     const singlePane = fakeViewport(840, 600);
     const camera = new ViewerViewportController();
@@ -63,6 +89,7 @@ describe('ViewerViewportController persistent camera', () => {
     camera.setZoom(4);
     camera.panBy(-240, 120);
     const before = cameraFocus(camera, 420, 600);
+    const beforePan = { x: camera.panX, y: camera.panY };
 
     camera.setViewport(null);
     camera.setViewport(singlePane.node);
@@ -71,6 +98,30 @@ describe('ViewerViewportController persistent camera', () => {
     expect(camera.zoom).toBe(4);
     expect(after.x).toBeCloseTo(before.x, 6);
     expect(after.y).toBeCloseTo(before.y, 6);
+    expect(camera.panX).not.toBe(beforePan.x);
+    expect(camera.panY).not.toBe(beforePan.y);
+  });
+
+  it('falls back to focal remapping when natural image geometry changes while the viewport is detached', () => {
+    const firstViewport = fakeViewport(840, 600);
+    const replacementViewport = fakeViewport(840, 600);
+    const camera = new ViewerViewportController();
+    camera.setViewport(firstViewport.node);
+    camera.setNaturalSize(1600, 1200);
+    camera.setZoom(4);
+    camera.panBy(-240, 120);
+    const before = cameraFocus(camera, 840, 600);
+    const beforePan = { x: camera.panX, y: camera.panY };
+
+    camera.setViewport(null);
+    camera.setNaturalSize(1800, 1200);
+    camera.setViewport(replacementViewport.node);
+    const after = cameraFocus(camera, 840, 600);
+
+    expect(camera.zoom).toBe(4);
+    expect(after.x).toBeCloseTo(before.x, 6);
+    expect(after.y).toBeCloseTo(before.y, 6);
+    expect(camera.panX).not.toBe(beforePan.x);
   });
 
   it('preserves the focal position when a replacement source reports a new natural resolution', () => {
