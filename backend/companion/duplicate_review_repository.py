@@ -370,20 +370,14 @@ class DuplicateReviewRepository:
 
         parent_union = set().union(*parents)
         max_parent_size = max(len(member_ids) for member_ids in parents)
-        group_statement = (
-            select(CompositeDuplicateGroupRecord)
-            .join(
-                CompositeDuplicateGroupMemberRecord,
-                CompositeDuplicateGroupMemberRecord.group_id
-                == CompositeDuplicateGroupRecord.group_id,
-            )
-            .where(
-                CompositeDuplicateGroupRecord.discovery_source == IMMICH_DUPLICATE_SOURCE,
-                CompositeDuplicateGroupRecord.member_count >= 2,
-                CompositeDuplicateGroupRecord.member_count <= max_parent_size,
-                CompositeDuplicateGroupMemberRecord.asset_id.in_(parent_union),
-            )
-            .distinct()
+        candidate_group_ids = select(CompositeDuplicateGroupMemberRecord.group_id).where(
+            CompositeDuplicateGroupMemberRecord.asset_id.in_(parent_union)
+        )
+        group_statement = select(CompositeDuplicateGroupRecord).where(
+            CompositeDuplicateGroupRecord.discovery_source == IMMICH_DUPLICATE_SOURCE,
+            CompositeDuplicateGroupRecord.member_count >= 2,
+            CompositeDuplicateGroupRecord.member_count <= max_parent_size,
+            CompositeDuplicateGroupRecord.group_id.in_(candidate_group_ids),
         )
         groups = list((await session.scalars(group_statement)).all())
         if not groups:
