@@ -10,14 +10,11 @@ function browserResizeObserver(callback: ResizeObserverCallback): ResizeObserver
 /**
  * Own the lifecycle boundary between comparison-mode DOM nodes and the reactive camera.
  *
- * Comparison modes report their viewport from a Svelte effect. Calling camera methods
- * directly from that effect would make any reactive camera reads performed by the
- * callback dependencies of the child effect. The callback can then invalidate the same
- * effect while it is registering, causing effect_update_depth_exceeded.
- *
- * Registration is therefore deliberately executed inside untrack(), and repeated reports
- * of the same node are ignored. Resize observation is replaced atomically with the node so
- * mode changes cannot leave stale observers attached to an old viewport.
+ * Comparison modes report their viewport only from component mount/unmount lifecycle.
+ * Camera registration is additionally executed inside untrack() so future callers cannot
+ * accidentally make camera reads performed by the callback dependencies of a reactive
+ * caller. Repeated reports of the same node are ignored, and resize observation is replaced
+ * atomically with the node so mode changes cannot leave stale observers attached.
  */
 export class ViewportRegistrationController {
   #node: HTMLElement | null = null;
