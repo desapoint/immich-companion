@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
 
   let {
@@ -162,14 +163,15 @@
     return `Changed ${changed}% · coherent ${coherent}% · largest region ${largest}% · ${regions} regions`;
   }
 
-  $effect(() => {
+  onMount(() => {
     onviewport?.(viewport);
-    if (!viewport) return () => onviewport?.(null);
-    const observer = new ResizeObserver(scheduleRender);
-    observer.observe(viewport);
+    const observer = viewport && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(scheduleRender)
+      : null;
+    if (viewport) observer?.observe(viewport);
     scheduleRender();
     return () => {
-      observer.disconnect();
+      observer?.disconnect();
       if (renderFrame !== null) cancelAnimationFrame(renderFrame);
       onviewport?.(null);
     };

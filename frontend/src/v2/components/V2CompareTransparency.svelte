@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import V2RangeSlider from './V2RangeSlider.svelte';
 
   let {
@@ -41,7 +42,7 @@
     hoverTimer = setTimeout(() => (controlsOpen = false), 80);
   }
 
-  $effect(() => {
+  onMount(() => {
     onviewport?.(viewport);
     return () => onviewport?.(null);
   });

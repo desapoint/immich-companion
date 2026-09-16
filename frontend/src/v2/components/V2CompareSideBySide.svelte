@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+
   let {
     selectedSrc,
     referenceSrc,
@@ -24,7 +26,8 @@
   } = $props();
 
   let viewport = $state<HTMLElement | null>(null);
-  $effect(() => {
+
+  onMount(() => {
     onviewport?.(viewport);
     return () => onviewport?.(null);
   });

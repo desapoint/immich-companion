@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import V2Button from './V2Button.svelte';
   import V2CompareDifference from './V2CompareDifference.svelte';
   import V2CompareLocalChanges from './V2CompareLocalChanges.svelte';
@@ -11,6 +12,7 @@
   import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
   import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
   import { ViewerViewportController } from './viewerViewport.svelte';
+  import { ViewportRegistrationController } from './viewportRegistration';
 
   export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference' | 'Local changes';
 
@@ -47,6 +49,12 @@
   } = $props();
 
   const camera = new ViewerViewportController();
+  const viewportRegistration = new ViewportRegistrationController(
+    (node) => camera.setViewport(node),
+    () => camera.remapViewport(),
+  );
+  onDestroy(() => viewportRegistration.destroy());
+
   let dragging = $state(false);
   let dragPointer = $state<number | null>(null);
   let lastX = $state(0);
@@ -55,7 +63,6 @@
   let referenceNatural = $state({ width: 0, height: 0 });
   let selectedSelection = $state({ key: '', index: 0 });
   let referenceSelection = $state({ key: '', index: 0 });
-  let viewportObserver: ResizeObserver | null = null;
   const selectedSources = $derived(mediaResourceSources(selectedResource));
   const referenceSources = $derived(mediaResourceSources(referenceResource));
   const selectedKey = $derived(selectedSources.join('\u0000'));
@@ -87,13 +94,7 @@
   }
 
   function setViewport(node: HTMLElement | null): void {
-    viewportObserver?.disconnect();
-    viewportObserver = null;
-    camera.setViewport(node);
-    if (node && typeof ResizeObserver !== 'undefined') {
-      viewportObserver = new ResizeObserver(() => camera.remapViewport());
-      viewportObserver.observe(node);
-    }
+    viewportRegistration.set(node);
   }
 
   function selectedLoaded(event: Event): void {

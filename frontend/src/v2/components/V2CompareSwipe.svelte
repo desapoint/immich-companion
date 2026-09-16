@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
+
   let {
     selectedSrc,
     referenceSrc,
@@ -61,7 +63,7 @@
     try { (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId); } catch {}
   }
 
-  $effect(() => {
+  onMount(() => {
     onviewport?.(viewport);
     return () => onviewport?.(null);
   });
