@@ -1,0 +1,100 @@
+name: Fix cancelled sync state once
+
+on:
+  push:
+    branches:
+      - feat/v2-shell
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          ref: feat/v2-shell
+
+      - name: Apply cancelled sync state fix
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          contracts_path = Path('frontend/src/v2/data/syncContracts.ts')
+          text = contracts_path.read_text()
+          old = "export type SyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering' | 'retrying';"
+          new = "export type SyncRunState = 'queued' | 'running' | 'completed' | 'failed' | 'recovering' | 'retrying' | 'cancelled';"
+          if old not in text:
+              raise SystemExit('SyncRunState pattern not found')
+          contracts_path.write_text(text.replace(old, new, 1))
+
+          controller_path = Path('frontend/src/v2/state/syncStatus.svelte.ts')
+          text = controller_path.read_text()
+          old = """    case 'completed':\n    case 'failed':\n      return task.status;"""
+          new = """    case 'completed':\n    case 'failed':\n    case 'cancelled':\n      return task.status;"""
+          if old not in text:
+              raise SystemExit('syncRunState pattern not found')
+          controller_path.write_text(text.replace(old, new, 1))
+
+          test_path = Path('frontend/src/v2/state/syncStatus.test.ts')
+          text = test_path.read_text()
+          marker = """  it('refetches once when an asset sync task is not represented in current status', async () => {"""
+          test = """  it('keeps a cancelled task state when terminal reconciliation fails', async () => {\n    let handlers!: Parameters<TaskRepository['subscribe']>[0];\n    const retryingStatus: SyncCoordinatorStatus = {\n      ...activeStatus,\n      active: { ...run, status: 'retrying' },\n    };\n    const statusRequest = vi.fn()\n      .mockResolvedValueOnce(retryingStatus)\n      .mockRejectedValueOnce(new Error('status refresh failed'));\n    const controller = new SyncStatusController({\n      sync: { status: statusRequest },\n      tasks: { subscribe: (next) => { handlers = next; return { close: () => undefined }; } },\n    }, 60_000);\n\n    const release = controller.acquire();\n    await Promise.resolve();\n    await Promise.resolve();\n\n    expect(controller.status?.active?.status).toBe('retrying');\n\n    handlers.onTask({\n      ...task,\n      status: 'cancelled',\n      completedAt: '2026-09-09T00:01:00Z',\n    });\n\n    expect(controller.status?.active?.status).toBe('cancelled');\n\n    await Promise.resolve();\n    await Promise.resolve();\n\n    expect(statusRequest).toHaveBeenCalledTimes(2);\n    expect(controller.status?.active?.status).toBe('cancelled');\n    expect(controller.error).toBe('status refresh failed');\n    release();\n  });\n\n"""
+          if marker not in text:
+              raise SystemExit('sync status test insertion marker not found')
+          test_path.write_text(text.replace(marker, test + marker, 1))
+
+          settings_path = Path('frontend/src/v2/pages/V2SettingsPage.svelte')
+          text = settings_path.read_text()
+          old = """  function runLabel(run: SyncRun | null): string {\n    if (!run) return 'Idle';\n    if (run.status === 'queued') return 'Queued';\n    if (run.status === 'retrying') return 'Retrying';\n    if (run.status === 'recovering') return 'Recovering';\n    return 'Running';\n  }\n"""
+          new = """  function runLabel(run: SyncRun | null): string {\n    if (!run) return 'Idle';\n    if (run.status === 'queued') return 'Queued';\n    if (run.status === 'retrying') return 'Retrying';\n    if (run.status === 'recovering') return 'Recovering';\n    if (run.status === 'completed') return 'Completed';\n    if (run.status === 'failed') return 'Failed';\n    if (run.status === 'cancelled') return 'Cancelled';\n    return 'Running';\n  }\n\n  function runTone(run: SyncRun | null): 'default' | 'ok' | 'warn' | 'bad' {\n    if (!run) return 'default';\n    if (run.status === 'failed') return 'bad';\n    if (run.status === 'cancelled') return 'warn';\n    return 'ok';\n  }\n"""
+          if old not in text:
+              raise SystemExit('runLabel pattern not found')
+          text = text.replace(old, new, 1)
+          old_badge = """<V2Badge tone={currentRun ? 'ok' : 'default'} text={runLabel(currentRun)} />"""
+          new_badge = """<V2Badge tone={runTone(currentRun)} text={runLabel(currentRun)} />"""
+          if old_badge not in text:
+              raise SystemExit('sync status badge pattern not found')
+          text = text.replace(old_badge, new_badge, 1)
+          old_cancel = """<V2Button variant=\"danger\" disabled={busy || !currentRun} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button>"""
+          new_cancel = """<V2Button variant=\"danger\" disabled={busy || !currentRun || ['completed', 'failed', 'cancelled'].includes(currentRun.status)} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button>"""
+          if old_cancel not in text:
+              raise SystemExit('cancel sync button pattern not found')
+          settings_path.write_text(text.replace(old_cancel, new_cancel, 1))
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run focused sync status tests
+        working-directory: frontend
+        run: npm test -- --run src/v2/state/syncStatus.test.ts
+
+      - name: Check frontend
+        working-directory: frontend
+        run: npm run check
+
+      - name: Commit fix
+        shell: bash
+        run: |
+          rm .github/workflows/fix-cancelled-sync-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add frontend/src/v2/data/syncContracts.ts \
+                  frontend/src/v2/state/syncStatus.svelte.ts \
+                  frontend/src/v2/state/syncStatus.test.ts \
+                  frontend/src/v2/pages/V2SettingsPage.svelte \
+                  .github/workflows/fix-cancelled-sync-once.yml
+          git commit -m 'Handle cancelled sync task events immediately'
+          git push origin HEAD:feat/v2-shell
