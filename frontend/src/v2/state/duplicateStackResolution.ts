@@ -1,4 +1,4 @@
-import type { DuplicateGroupRecord, DuplicatePendingStack } from '../data/contracts';
+import type { DuplicateGroupRecord, DuplicatePendingStack, StackResolutionSelection } from '../data/contracts';
 
 export type DuplicateStackWorkspace = {
   activeByGroup: Record<string, string>;
@@ -60,6 +60,7 @@ export function assignAssetToActiveStack(workspace: DuplicateStackWorkspace, gro
         ...target,
         assetIds,
         primaryAssetId: target.primaryAssetId ?? assetId,
+        stackResolution: undefined,
       },
     },
   };
@@ -77,7 +78,7 @@ export function removeAssetFromPendingStack(workspace: DuplicateStackWorkspace, 
   return {
     ...workspace,
     assetToStack,
-    stacks: { ...workspace.stacks, [id]: { ...stack, assetIds, primaryAssetId } },
+    stacks: { ...workspace.stacks, [id]: { ...stack, assetIds, primaryAssetId, stackResolution: undefined } },
   };
 }
 
@@ -86,7 +87,13 @@ export function setPendingStackPrimary(workspace: DuplicateStackWorkspace, asset
   if (!id) return workspace;
   const stack = workspace.stacks[id];
   if (!stack?.assetIds.includes(assetId)) return workspace;
-  return { ...workspace, stacks: { ...workspace.stacks, [id]: { ...stack, primaryAssetId: assetId } } };
+  return { ...workspace, stacks: { ...workspace.stacks, [id]: { ...stack, primaryAssetId: assetId, stackResolution: undefined } } };
+}
+
+export function setPendingStackResolution(workspace: DuplicateStackWorkspace, id: string, stackResolution: StackResolutionSelection | undefined): DuplicateStackWorkspace {
+  const stack = workspace.stacks[id];
+  if (!stack) return workspace;
+  return { ...workspace, stacks: { ...workspace.stacks, [id]: { ...stack, stackResolution } } };
 }
 
 export function stackForAsset(workspace: DuplicateStackWorkspace, assetId: string): DuplicatePendingStack | null {
