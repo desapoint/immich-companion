@@ -192,9 +192,34 @@ class DuplicateSimilarityEvidence(BaseModel):
     exact_pixel_match: bool | None = None
     detail_changed_percent: float | None = None
     detail_source: Literal["original", "transcoded", "preview"] | None = None
+    validated_width: int | None = None
+    validated_height: int | None = None
+    reference_validated_width: int | None = None
+    reference_validated_height: int | None = None
     model_version: str | None = None
     feature_version: int | None = None
     comparison_version: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validated_dimensions_from_detail_source(cls, value: object) -> object:
+        """Preserve request-relative detail dimensions carried with the source string."""
+
+        if not isinstance(value, dict):
+            return value
+        detail_source = value.get("detail_source")
+        if detail_source is None:
+            return value
+        enriched = dict(value)
+        for field in (
+            "validated_width",
+            "validated_height",
+            "reference_validated_width",
+            "reference_validated_height",
+        ):
+            if enriched.get(field) is None:
+                enriched[field] = getattr(detail_source, field, None)
+        return enriched
 
 
 class DuplicateAdmissionEvidence(BaseModel):
@@ -351,6 +376,8 @@ class SimilarityIndexTaskStart(BaseModel):
 class SimilarityIndexCoverage(BaseModel):
     eligible_count: int = Field(ge=0)
     current_count: int = Field(ge=0)
+    bounded_count: int = Field(default=0, ge=0)
+    unavailable_count: int = Field(default=0, ge=0)
     missing_count: int = Field(ge=0)
     stale_count: int = Field(ge=0)
     complete: bool

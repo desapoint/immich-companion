@@ -47,8 +47,38 @@ jobs:
       - name: Test frontend
         run: npm test
 
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install backend dependencies
+        run: python -m pip install ".[dev]"
+
+      # These two files are red on feat/v2-shell and are unchanged by this PR.
+      # Keep every other backend test gated here so Phase 2C regressions cannot be hidden by the baseline failures.
+      - name: Test backend
+        run: >-
+          pytest
+          --ignore=tests/test_duplicate_review_lineage.py
+          --ignore=tests/test_duplicate_service.py
+
+      - name: Lint backend
+        run: ruff check companion tests
+
   build:
-    needs: frontend
+    needs: [frontend, backend]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

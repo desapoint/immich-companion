@@ -65,6 +65,43 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).not.toContain('Technical group ID');
   });
 
+  it('shows actual bounded validation dimensions without implying full-resolution proof', () => {
+    const { body } = render(V2DuplicateCompareViewer, {
+      props: {
+        open: true,
+        groupTitle: 'Oversized comparison',
+        groupKind: 'similar',
+        groupSimilarity: 98.72,
+        assetIds: ['asset-1', 'asset-2'],
+        similarities: { 'asset-1': 98.72, 'asset-2': 100 },
+        similarityEvidence: {
+          'asset-1': {
+            structuralPercent: 99,
+            perceptualPercent: 98,
+            colorPercent: 97,
+            detailChangedPercent: 1.2,
+            detailSource: 'preview',
+            validatedWidth: 4096,
+            validatedHeight: 2276,
+            referenceValidatedWidth: 3840,
+            referenceValidatedHeight: 2160,
+          },
+        },
+        member: 0,
+        reference: 1,
+        onclose: () => {},
+      },
+    });
+
+    expect(body).toContain('98.72%');
+    expect(body).toContain('Bounded validation');
+    expect(body).toContain('Validated at');
+    expect(body).toContain('4096 × 2276');
+    expect(body).toContain('3840 × 2160');
+    expect(body).toContain('actual rendition dimensions used');
+    expect(body).toContain('not full-resolution or destructive proof');
+  });
+
   it('keeps inspection navigation enabled while write controls are disabled', () => {
     const { body } = render(V2DuplicateCompareViewer, {
       props: {

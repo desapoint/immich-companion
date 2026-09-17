@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from time import perf_counter
 from typing import Literal
@@ -36,6 +36,31 @@ SIMILARITY_COMPARISON_VERSION = 6
 PAIR_DETAIL_BATCH_SIZE = 500
 PAIR_CACHE_ENTRY_ESTIMATE_BYTES = 512
 HOT_CACHE_ENTRY_ESTIMATE_BYTES = 1024
+
+
+class DetailSourceEvidence(str):
+    """Detail source plus request-relative rendition dimensions for API serialization."""
+
+    validated_width: int
+    validated_height: int
+    reference_validated_width: int
+    reference_validated_height: int
+
+    def __new__(
+        cls,
+        value: str,
+        *,
+        validated_width: int,
+        validated_height: int,
+        reference_validated_width: int,
+        reference_validated_height: int,
+    ) -> DetailSourceEvidence:
+        instance = str.__new__(cls, value)
+        instance.validated_width = validated_width
+        instance.validated_height = validated_height
+        instance.reference_validated_width = reference_validated_width
+        instance.reference_validated_height = reference_validated_height
+        return instance
 
 
 @dataclass(frozen=True, slots=True)
@@ -407,7 +432,27 @@ class SimilarityRepository:
                 )
             await self._trim_pair_cache()
         self._reference_latencies_ms.append((perf_counter() - started) * 1000)
-        return {original: current[pair] for original, pair in requested.items() if pair in current}
+
+        exposed: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+        for original, pair in requested.items():
+            evidence = current.get(pair)
+            if evidence is None:
+                continue
+            reference_detail = detail_records.get(original[0])
+            member_detail = detail_records.get(original[1])
+            if evidence.detail_source is not None and reference_detail and member_detail:
+                evidence = replace(
+                    evidence,
+                    detail_source=DetailSourceEvidence(
+                        evidence.detail_source,
+                        validated_width=member_detail.width,
+                        validated_height=member_detail.height,
+                        reference_validated_width=reference_detail.width,
+                        reference_validated_height=reference_detail.height,
+                    ),
+                )
+            exposed[original] = evidence
+        return exposed
 
     async def _trim_pair_cache(self) -> None:
         async with self._database.sessions() as session, session.begin():
