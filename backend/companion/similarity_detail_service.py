@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
+from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.integrity import detect_file_format
 from companion.models import (
@@ -189,6 +190,8 @@ class SimilarityDetailMaintainer:
             "detail_original_bytes": 0,
             "detail_transcoded_fallbacks": 0,
             "detail_preview_fallbacks": 0,
+            "detail_oversized_bounded_validations": 0,
+            "detail_oversized_original_decodes_avoided": 0,
         }
 
     async def _bounded_original(self, context: TaskContext, asset_id: UUID):
@@ -213,6 +216,22 @@ class SimilarityDetailMaintainer:
                 extract_detail_feature, spool, detect_file_format(bytes(prefix))
             )
 
+    @staticmethod
+    def _requires_bounded_validation(search: AssetSimilaritySearchFeatureRecord) -> bool:
+        return (
+            search.fingerprint_origin == "bounded"
+            or search.width * search.height > MAX_DECODED_PIXELS
+        )
+
+    async def _preview_detail(self, asset_id: UUID):
+        content = await self._immich.get_bounded_preview(
+            asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
+        )
+        return await asyncio.to_thread(
+            extract_detail_feature,
+            BytesIO(content), detect_file_format(content[:64]),
+        )
+
     async def _extract_one(
         self, context: TaskContext, asset_id: UUID,
         search: AssetSimilaritySearchFeatureRecord,
@@ -221,34 +240,39 @@ class SimilarityDetailMaintainer:
             await context.ensure_active()
             feature = None
             origin = "original"
-            with suppress(ImmichApiError, OSError, ValueError):
-                feature = await self._bounded_original(context, asset_id)
-            if feature is None:
+            bounded_required = self._requires_bounded_validation(search)
+            if bounded_required:
+                self.counters["detail_oversized_bounded_validations"] += 1
+                self.counters["detail_oversized_original_decodes_avoided"] += 1
                 try:
-                    content = await self._immich.get_bounded_fullsize(
-                        asset_id, max_bytes=self._max_bytes
-                    )
-                    feature = await asyncio.to_thread(
-                        extract_detail_feature,
-                        BytesIO(content), detect_file_format(content[:64]),
-                    )
-                    if feature is not None:
-                        origin = "transcoded_fullsize"
-                except (ImmichApiError, OSError, ValueError):
-                    pass
-            if feature is None:
-                try:
-                    content = await self._immich.get_bounded_preview(
-                        asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
-                    )
-                    feature = await asyncio.to_thread(
-                        extract_detail_feature,
-                        BytesIO(content), detect_file_format(content[:64]),
-                    )
+                    feature = await self._preview_detail(asset_id)
                     if feature is not None:
                         origin = "preview_fallback"
                 except (ImmichApiError, OSError, ValueError):
                     pass
+            else:
+                with suppress(ImmichApiError, OSError, ValueError):
+                    feature = await self._bounded_original(context, asset_id)
+                if feature is None:
+                    try:
+                        content = await self._immich.get_bounded_fullsize(
+                            asset_id, max_bytes=self._max_bytes
+                        )
+                        feature = await asyncio.to_thread(
+                            extract_detail_feature,
+                            BytesIO(content), detect_file_format(content[:64]),
+                        )
+                        if feature is not None:
+                            origin = "transcoded_fullsize"
+                    except (ImmichApiError, OSError, ValueError):
+                        pass
+                if feature is None:
+                    try:
+                        feature = await self._preview_detail(asset_id)
+                        if feature is not None:
+                            origin = "preview_fallback"
+                    except (ImmichApiError, OSError, ValueError):
+                        pass
             if feature is None:
                 self.counters["detail_features_unavailable"] += 1
                 logger.warning("Candidate detail unavailable: asset_id=%s", asset_id)
@@ -272,8 +296,6 @@ class SimilarityDetailMaintainer:
                 or sorted((feature.width, feature.height))
                 != sorted((live.width, live.height))
             ):
-                # Some servers can serve a reduced rendition for this endpoint.
-                # Keep its useful visual evidence without calling it full-size.
                 origin = "preview_fallback"
             saved = await self._details.save(search.source_identity, asset_id, feature, origin)
             if saved and origin == "transcoded_fullsize":
