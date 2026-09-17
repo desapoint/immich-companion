@@ -5,7 +5,9 @@ import {
   assetFolder,
   comparisonMemberData,
   duplicateListMemberMeta,
+  formatImageDimensions,
   formatSimilarityPercent,
+  similarityValidatedDimensions,
   similarityValidationEvidenceLabel,
   similarityValidationEvidenceTier,
   usesBoundedValidation,
@@ -48,7 +50,7 @@ describe('duplicate comparison member data', () => {
     const oversized = asset({ width: 16320, height: 12240, file_size_bytes: 50_000_000 });
     expect(FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT).toBe(64_000_000);
     expect(usesBoundedValidation(oversized)).toBe(false);
-    expect(duplicateListMemberMeta(oversized, 94.25)).toBe('Immich upload · 47.68 MB · 94.25% similarity');
+    expect(duplicateListMemberMeta(oversized, 94.25)).toBe('Immich upload · 47.7 MB · 94.25% similarity');
   });
 
   it('labels validation from persisted detail evidence rather than dimensions', () => {
@@ -61,6 +63,20 @@ describe('duplicate comparison member data', () => {
     expect(similarityValidationEvidenceLabel(94.25, { detailSource: null })).toBe('Search-only appearance');
     expect(similarityValidationEvidenceLabel(94.25, null)).toBe('Search-only appearance');
     expect(similarityValidationEvidenceLabel(null, { detailSource: 'preview' })).toBeNull();
+  });
+
+  it('formats actual validation dimensions independently for member and reference', () => {
+    const evidence = {
+      validatedWidth: 4096,
+      validatedHeight: 2276,
+      referenceValidatedWidth: 3840,
+      referenceValidatedHeight: 2160,
+    };
+    expect(similarityValidatedDimensions(evidence)).toBe('4096 × 2276');
+    expect(similarityValidatedDimensions(evidence, 'reference')).toBe('3840 × 2160');
+    expect(similarityValidatedDimensions({ ...evidence, validatedHeight: null })).toBeNull();
+    expect(formatImageDimensions(18_000, 10_000)).toBe('18000 × 10000');
+    expect(formatImageDimensions(null, 10_000)).toBeNull();
   });
 
   it('keeps normal-size and unknown-size assets from being treated as evidence of bounded validation', () => {
