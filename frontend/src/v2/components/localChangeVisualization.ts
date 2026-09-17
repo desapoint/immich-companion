@@ -9,13 +9,22 @@ export function clampLocalChangePercent(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
+export function localChangePassesVisibilityThreshold(actualChanged: number, minimumVisible: number): boolean {
+  return clampLocalChangePercent(actualChanged) >= clampLocalChangePercent(minimumVisible);
+}
+
 export function localChangeVisualPercent(actualChanged: number, emphasisFloor: number): number {
   const actual = clampLocalChangePercent(actualChanged);
   if (actual <= 0) return 0;
   return Math.max(actual, clampLocalChangePercent(emphasisFloor));
 }
 
-export function localChangeFillAlpha(actualChanged: number, emphasisFloor: number): number {
+export function localChangeFillAlpha(
+  actualChanged: number,
+  emphasisFloor: number,
+  minimumVisible = 0,
+): number {
+  if (!localChangePassesVisibilityThreshold(actualChanged, minimumVisible)) return 0;
   const visual = localChangeVisualPercent(actualChanged, emphasisFloor);
   return visual <= 0 ? 0 : 0.08 + (visual / 100) * 0.5;
 }
