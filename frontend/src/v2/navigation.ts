@@ -26,9 +26,25 @@ export function v2PagePath(key: V2PageKey): string {
   return `/v2/${key}`;
 }
 
+export function v2AssetViewerPath(assetId: string): string {
+  return `${v2PagePath('assets')}/${encodeURIComponent(assetId)}`;
+}
+
+export function v2AssetIdFromPath(pathname: string): string | null {
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/';
+  const match = /^\/v2\/assets\/([^/]+)$/.exec(normalizedPath);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
 export function v2PageFromPath(pathname: string): V2PageKey {
   const normalizedPath = pathname.replace(/\/+$/, '') || '/';
   if (normalizedPath === '/v2') return V2_DEFAULT_PAGE;
+  if (v2AssetIdFromPath(normalizedPath) !== null) return 'assets';
 
   const match = /^\/v2\/([^/]+)$/.exec(normalizedPath);
   return match && isV2PageKey(match[1]) ? match[1] : V2_DEFAULT_PAGE;
