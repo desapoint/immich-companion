@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { AssetRecord } from './contracts';
-import { assetFolder, comparisonMemberData, duplicateListMemberMeta, formatSimilarityPercent } from './duplicateMember';
+import {
+  FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT,
+  assetFolder,
+  comparisonMemberData,
+  duplicateListMemberMeta,
+  formatSimilarityPercent,
+  usesBoundedValidation,
+} from './duplicateMember';
 
 function asset(patch: Partial<AssetRecord> = {}): AssetRecord {
   return {
@@ -33,6 +40,21 @@ describe('duplicate comparison member data', () => {
   it('formats duplicate list member metadata with viewer file sizes', () => {
     expect(duplicateListMemberMeta(asset(), 99.98)).toBe('Immich upload · 1.00 MB · 99.98% similarity');
     expect(duplicateListMemberMeta(asset(), null)).toBe('Immich upload · 1.00 MB');
+  });
+
+  it('labels similarity for assets above the shared 64-megapixel full-resolution validation limit', () => {
+    const oversized = asset({ width: 16320, height: 12240, file_size_bytes: 50_000_000 });
+    expect(FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT).toBe(64_000_000);
+    expect(usesBoundedValidation(oversized)).toBe(true);
+    expect(duplicateListMemberMeta(oversized, 94.25)).toContain('94.25% similarity · bounded validation');
+    expect(duplicateListMemberMeta(oversized, null)).not.toContain('bounded validation');
+  });
+
+  it('keeps normal-size and unknown-size assets out of the bounded-validation label', () => {
+    expect(usesBoundedValidation(asset({ width: 8000, height: 8000 }))).toBe(false);
+    expect(usesBoundedValidation(asset({ width: 8001, height: 8000 }))).toBe(true);
+    expect(usesBoundedValidation(asset({ width: null, height: 12000 }))).toBe(false);
+    expect(usesBoundedValidation(asset({ width: 16000, height: null }))).toBe(false);
   });
 
   it('uses KB for files smaller than one MB', () => {
