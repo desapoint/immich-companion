@@ -2,14 +2,75 @@ import { describe, expect, it } from 'vitest';
 import {
   LOCAL_CHANGE_LABEL_FONT_PX,
   LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+  aggregateLocalChangeGrid,
   canRenderLocalChangeLabel,
   localChangeFillAlpha,
   localChangeFillColor,
+  localChangeGridSizeForLevel,
   localChangePassesVisibilityThreshold,
   localChangeVisualPercent,
 } from './localChangeVisualization';
 
 describe('localChangeVisualization', () => {
+  it('maps the grid-detail slider to the supported coarse-to-fine sizes', () => {
+    expect(localChangeGridSizeForLevel(0)).toBe(2);
+    expect(localChangeGridSizeForLevel(1)).toBe(4);
+    expect(localChangeGridSizeForLevel(2)).toBe(8);
+    expect(localChangeGridSizeForLevel(3)).toBe(16);
+    expect(localChangeGridSizeForLevel(4)).toBe(32);
+    expect(localChangeGridSizeForLevel(-20)).toBe(2);
+    expect(localChangeGridSizeForLevel(20)).toBe(32);
+    expect(localChangeGridSizeForLevel(Number.NaN)).toBe(32);
+  });
+
+  it('aggregates fine Local Changes cells into larger coarse cells by mean changed percentage', () => {
+    const aggregated = aggregateLocalChangeGrid([
+      [0, 10, 20, 30],
+      [10, 20, 30, 40],
+      [40, 50, 60, 70],
+      [50, 60, 70, 80],
+    ], 2, 2);
+
+    expect(aggregated).toEqual({
+      rows: 2,
+      columns: 2,
+      cells: [
+        [10, 30],
+        [50, 70],
+      ],
+    });
+  });
+
+  it('supports every manual grid size derived from the native 32 by 32 diagnostics grid', () => {
+    const source = Array.from({ length: 32 }, (_, row) =>
+      Array.from({ length: 32 }, (_, column) => (row + column) % 100),
+    );
+
+    for (const target of [2, 4, 8, 16, 32]) {
+      const aggregated = aggregateLocalChangeGrid(source, target, target);
+      expect(aggregated?.rows).toBe(target);
+      expect(aggregated?.columns).toBe(target);
+      expect(aggregated?.cells).toHaveLength(target);
+      expect(aggregated?.cells.every((row) => row.length === target)).toBe(true);
+    }
+  });
+
+  it('clamps source percentages before coarse aggregation', () => {
+    expect(aggregateLocalChangeGrid([
+      [-10, 50],
+      [150, Number.NaN],
+    ], 1, 1)?.cells).toEqual([[37.5]]);
+  });
+
+  it('rejects unsupported aggregation shapes instead of inventing cells', () => {
+    expect(aggregateLocalChangeGrid([
+      [0, 10, 20, 30],
+      [10, 20, 30, 40],
+      [40, 50, 60, 70],
+      [50, 60, 70, 80],
+    ], 3, 3)).toBeNull();
+  });
+
   it('keeps floor 0 identical to the current visual percentage', () => {
     expect(localChangeVisualPercent(5, 0)).toBe(5);
     expect(localChangeVisualPercent(50, 0)).toBe(50);
