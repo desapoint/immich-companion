@@ -6,6 +6,8 @@ import {
   V2_PAGE_KEYS,
   consumeV2AssetFilterHandoff,
   storeV2AssetFilterHandoff,
+  v2AssetIdFromPath,
+  v2AssetViewerPath,
   v2PageFromLegacyHash,
   v2PageFromPath,
   v2PagePath,
@@ -24,9 +26,26 @@ describe('V2 navigation paths', () => {
     expect(v2PageFromPath('/v2/')).toBe(V2_DEFAULT_PAGE);
   });
 
-  it('falls back safely for unknown and nested page paths', () => {
+  it('supports direct asset viewer URLs while keeping Assets as the active page', () => {
+    const assetId = '11111111-2222-4333-8444-555555555555';
+    const path = v2AssetViewerPath(assetId);
+    expect(path).toBe(`/v2/assets/${assetId}`);
+    expect(v2AssetIdFromPath(path)).toBe(assetId);
+    expect(v2AssetIdFromPath(`${path}/`)).toBe(assetId);
+    expect(v2PageFromPath(path)).toBe('assets');
+  });
+
+  it('encodes and decodes asset ids safely', () => {
+    const assetId = 'asset id/with?reserved#characters';
+    const path = v2AssetViewerPath(assetId);
+    expect(path).toBe('/v2/assets/asset%20id%2Fwith%3Freserved%23characters');
+    expect(v2AssetIdFromPath(path)).toBe(assetId);
+  });
+
+  it('falls back safely for unknown and unsupported nested page paths', () => {
     expect(v2PageFromPath('/v2/unknown')).toBe(V2_DEFAULT_PAGE);
-    expect(v2PageFromPath('/v2/assets/unexpected')).toBe(V2_DEFAULT_PAGE);
+    expect(v2PageFromPath('/v2/assets/one/two')).toBe(V2_DEFAULT_PAGE);
+    expect(v2AssetIdFromPath('/v2/assets/%E0%A4%A')).toBeNull();
   });
 
   it('recognizes valid legacy hash links for migration', () => {
