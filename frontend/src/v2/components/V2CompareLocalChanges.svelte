@@ -3,12 +3,16 @@
   import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
   import V2RangeSlider from './V2RangeSlider.svelte';
   import {
+    LOCAL_CHANGE_LABEL_FONT_PX,
+    LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
     canRenderLocalChangeLabel,
     clampLocalChangePercent,
     localChangeFillAlpha,
-    localChangeLabelFontSize,
+    localChangeFillColor,
     localChangePassesVisibilityThreshold,
   } from './localChangeVisualization';
+
+  type ImageRect = { x: number; y: number; width: number; height: number };
 
   let {
     selectedSrc,
@@ -49,12 +53,12 @@
   } = $props();
 
   let viewport = $state<HTMLElement | null>(null);
-  let canvas = $state<HTMLCanvasElement | null>(null);
-  let selectedImage = $state<HTMLImageElement | null>(null);
-  let referenceImage = $state<HTMLImageElement | null>(null);
+  let selectedNaturalWidth = $state(0);
+  let selectedNaturalHeight = $state(0);
+  let viewportWidth = $state(0);
+  let viewportHeight = $state(0);
   let controlsOpen = $state(false);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
-  let renderFrame: number | null = null;
 
   function showControls(): void {
     if (hoverTimer) clearTimeout(hoverTimer);
@@ -73,122 +77,32 @@
       : { panX: 0, panY: 0, zoom: 1 };
   }
 
-  function imageRect(
-    image: HTMLImageElement,
-    width: number,
-    height: number,
-    panX: number,
-    panY: number,
-    zoom: number,
-  ): { x: number; y: number; width: number; height: number } {
-    const fit = Math.min(width / image.naturalWidth, height / image.naturalHeight);
-    const drawWidth = image.naturalWidth * fit * zoom;
-    const drawHeight = image.naturalHeight * fit * zoom;
-    return {
-      x: (width - drawWidth) / 2 + panX,
-      y: (height - drawHeight) / 2 + panY,
-      width: drawWidth,
-      height: drawHeight,
-    };
+  function hasValidGrid(value: LocalChangeDiagnostics | null): value is LocalChangeDiagnostics {
+    return !!value
+      && value.available
+      && value.rows > 0
+      && value.columns > 0
+      && value.cells.length === value.rows
+      && value.cells.every((row) => row.length === value.columns);
   }
 
-  function drawGrid(
-    context: CanvasRenderingContext2D,
-    rect: { x: number; y: number; width: number; height: number },
-    value: LocalChangeDiagnostics,
-    emphasisFloor: number,
-    minimumVisible: number,
-    color: string,
-  ): void {
-    if (!value.available || value.rows < 1 || value.columns < 1) return;
-    if (value.cells.length !== value.rows || value.cells.some((row) => row.length !== value.columns)) return;
-    const cellWidth = rect.width / value.columns;
-    const cellHeight = rect.height / value.rows;
-    const fontSize = localChangeLabelFontSize(cellWidth, cellHeight);
-
-    context.save();
-    context.textAlign = 'center';
-    context.textBaseline = 'middle';
-    context.font = `700 ${fontSize}px system-ui, sans-serif`;
-    context.lineWidth = 1;
-    const maxLabelWidth = context.measureText('100%').width;
-    const labelsVisible = canRenderLocalChangeLabel({
-      cellWidth,
-      cellHeight,
-      measuredLabelWidth: maxLabelWidth,
-      fontSize,
-    });
-
-    for (let row = 0; row < value.rows; row += 1) {
-      for (let column = 0; column < value.columns; column += 1) {
-        const changed = clampLocalChangePercent(value.cells[row]?.[column] ?? 0);
-        const x = rect.x + column * cellWidth;
-        const y = rect.y + row * cellHeight;
-        const visible = localChangePassesVisibilityThreshold(changed, minimumVisible);
-        const alpha = localChangeFillAlpha(changed, emphasisFloor, minimumVisible);
-
-        if (alpha > 0) {
-          context.fillStyle = color;
-          context.globalAlpha = alpha;
-          context.fillRect(x, y, cellWidth, cellHeight);
-          context.globalAlpha = 1;
-        }
-        context.strokeStyle = 'rgba(255, 255, 255, 0.24)';
-        context.strokeRect(x + 0.5, y + 0.5, Math.max(0, cellWidth - 1), Math.max(0, cellHeight - 1));
-
-        if (labelsVisible && visible) {
-          context.save();
-          context.beginPath();
-          context.rect(x, y, cellWidth, cellHeight);
-          context.clip();
-          const label = `${Math.round(changed)}%`;
-          context.lineWidth = 2.5;
-          context.strokeStyle = 'rgba(0, 0, 0, 0.82)';
-          context.strokeText(label, x + cellWidth / 2, y + cellHeight / 2);
-          context.fillStyle = '#fff';
-          context.fillText(label, x + cellWidth / 2, y + cellHeight / 2);
-          context.restore();
-        }
-      }
-    }
-    context.restore();
-  }
-
-  function render(): void {
-    if (!viewport || !canvas || !selectedImage) return;
-    if (!selectedImage.complete || !selectedImage.naturalWidth || !selectedImage.naturalHeight) return;
-
+  function measureViewport(): void {
+    if (!viewport) return;
     const bounds = viewport.getBoundingClientRect();
-    const width = Math.max(1, Math.round(bounds.width));
-    const height = Math.max(1, Math.round(bounds.height));
-    if (canvas.width !== width) canvas.width = width;
-    if (canvas.height !== height) canvas.height = height;
-    const context = canvas.getContext('2d');
-    if (!context) return;
-
-    context.clearRect(0, 0, width, height);
-    const { panX, panY, zoom } = parseTransform(transform);
-    const rect = imageRect(selectedImage, width, height, panX, panY, zoom);
-    context.drawImage(selectedImage, rect.x, rect.y, rect.width, rect.height);
-    if (diagnostics) drawGrid(context, rect, diagnostics, emphasis, minimumDifference, highlightColor);
-  }
-
-  function scheduleRender(): void {
-    if (renderFrame !== null) cancelAnimationFrame(renderFrame);
-    renderFrame = requestAnimationFrame(() => {
-      renderFrame = null;
-      render();
-    });
+    viewportWidth = Math.max(0, bounds.width);
+    viewportHeight = Math.max(0, bounds.height);
   }
 
   function selectedLoaded(event: Event): void {
+    const image = event.currentTarget as HTMLImageElement;
+    selectedNaturalWidth = image.naturalWidth;
+    selectedNaturalHeight = image.naturalHeight;
+    measureViewport();
     onselectedload?.(event);
-    scheduleRender();
   }
 
   function referenceLoaded(event: Event): void {
     onreferenceload?.(event);
-    scheduleRender();
   }
 
   function sourceLabel(source: LocalChangeDiagnostics['source']): string {
@@ -206,32 +120,77 @@
     return `Changed ${changed}% · coherent ${coherent}% · largest region ${largest}% · ${regions} regions`;
   }
 
-  onMount(() => {
-    onviewport?.(viewport);
-    const observer = viewport && typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(scheduleRender)
-      : null;
-    if (viewport) observer?.observe(viewport);
-    scheduleRender();
-    return () => {
-      observer?.disconnect();
-      if (hoverTimer) clearTimeout(hoverTimer);
-      if (renderFrame !== null) cancelAnimationFrame(renderFrame);
-      onviewport?.(null);
+  let gridCells = $derived.by(() => {
+    if (!hasValidGrid(diagnostics)) return [];
+    return diagnostics.cells.flat().map(clampLocalChangePercent);
+  });
+
+  let gridRows = $derived(hasValidGrid(diagnostics) ? diagnostics.rows : 1);
+  let gridColumns = $derived(hasValidGrid(diagnostics) ? diagnostics.columns : 1);
+
+  let imageRect = $derived.by((): ImageRect | null => {
+    if (
+      viewportWidth <= 0
+      || viewportHeight <= 0
+      || selectedNaturalWidth <= 0
+      || selectedNaturalHeight <= 0
+    ) {
+      return null;
+    }
+
+    const fit = Math.min(
+      viewportWidth / selectedNaturalWidth,
+      viewportHeight / selectedNaturalHeight,
+    );
+    const { panX, panY, zoom } = parseTransform(transform);
+    const drawWidth = selectedNaturalWidth * fit * zoom;
+    const drawHeight = selectedNaturalHeight * fit * zoom;
+
+    return {
+      x: (viewportWidth - drawWidth) / 2 + panX,
+      y: (viewportHeight - drawHeight) / 2 + panY,
+      width: drawWidth,
+      height: drawHeight,
     };
   });
 
-  $effect(() => {
-    selectedSrc;
-    referenceSrc;
-    transform;
-    diagnostics;
-    loading;
-    error;
-    emphasis;
-    minimumDifference;
-    highlightColor;
-    scheduleRender();
+  let labelsVisible = $derived.by(() => {
+    if (!imageRect || gridCells.length === 0) return false;
+    return canRenderLocalChangeLabel({
+      cellWidth: imageRect.width / gridColumns,
+      cellHeight: imageRect.height / gridRows,
+      measuredLabelWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+      fontSize: LOCAL_CHANGE_LABEL_FONT_PX,
+    });
+  });
+
+  let gridStyle = $derived.by(() => {
+    const rect = imageRect ?? { x: 0, y: 0, width: 0, height: 0 };
+    return [
+      `left:${rect.x}px`,
+      `top:${rect.y}px`,
+      `width:${rect.width}px`,
+      `height:${rect.height}px`,
+      `grid-template-columns:repeat(${gridColumns},minmax(0,1fr))`,
+      `grid-template-rows:repeat(${gridRows},minmax(0,1fr))`,
+      `visibility:${imageRect ? 'visible' : 'hidden'}`,
+    ].join(';');
+  });
+
+  onMount(() => {
+    onviewport?.(viewport);
+    measureViewport();
+
+    const observer = viewport && typeof ResizeObserver !== 'undefined'
+      ? new ResizeObserver(measureViewport)
+      : null;
+    if (viewport) observer?.observe(viewport);
+
+    return () => {
+      observer?.disconnect();
+      if (hoverTimer) clearTimeout(hoverTimer);
+      onviewport?.(null);
+    };
   });
 </script>
 
@@ -246,9 +205,48 @@
   onfocusin={showControls}
   onfocusout={hideControlsSoon}
 >
-  <canvas bind:this={canvas} class="v2-local-change-canvas" aria-label="Selected image with localized validation grid"></canvas>
-  <img bind:this={selectedImage} class="v2-local-change-source" src={selectedSrc} alt={selectedLabel} onload={selectedLoaded} onerror={onselectederror}>
-  <img bind:this={referenceImage} class="v2-local-change-source" src={referenceSrc} alt={referenceLabel} onload={referenceLoaded} onerror={onreferenceerror}>
+  <img
+    class="v2-local-change-image"
+    style:transform={transform}
+    src={selectedSrc}
+    alt={selectedLabel}
+    onload={selectedLoaded}
+    onerror={onselectederror}
+  >
+
+  {#if gridCells.length > 0}
+    <div
+      class="v2-local-change-grid"
+      class:labels-visible={labelsVisible}
+      style={gridStyle}
+      aria-hidden="true"
+    >
+      {#each gridCells as changed}
+        <div
+          class="v2-local-change-cell"
+          style:background-color={localChangeFillColor(
+            highlightColor,
+            localChangeFillAlpha(changed, emphasis, minimumDifference),
+          )}
+        >
+          <span
+            class="v2-local-change-label"
+            class:difference-visible={localChangePassesVisibilityThreshold(changed, minimumDifference)}
+          >
+            {Math.round(changed)}%
+          </span>
+        </div>
+      {/each}
+    </div>
+  {/if}
+
+  <img
+    class="v2-local-change-reference-source"
+    src={referenceSrc}
+    alt={referenceLabel}
+    onload={referenceLoaded}
+    onerror={onreferenceerror}
+  >
 
   <div class="v2-compare-floating-controls v2-compare-hover v2-local-change-controls">
     <V2RangeSlider
@@ -300,15 +298,51 @@
 </div>
 
 <style>
-  .v2-local-change-canvas {
+  .mode-local-changes {
+    overflow:hidden;
+  }
+  .v2-local-change-image {
     position:absolute;
     inset:0;
     width:100%;
     height:100%;
-    display:block;
+    object-fit:contain;
+    transform-origin:center center;
+    will-change:transform;
+    user-select:none;
     pointer-events:none;
   }
-  .v2-local-change-source {
+  .v2-local-change-grid {
+    position:absolute;
+    z-index:2;
+    display:grid;
+    pointer-events:none;
+    contain:layout paint style;
+  }
+  .v2-local-change-cell {
+    position:relative;
+    min-width:0;
+    min-height:0;
+    overflow:hidden;
+    box-shadow:inset 0 0 0 .5px rgba(255,255,255,.24);
+  }
+  .v2-local-change-label {
+    position:absolute;
+    left:50%;
+    top:50%;
+    transform:translate(-50%, -50%);
+    visibility:hidden;
+    color:#fff;
+    font:700 11px/1.2 system-ui, sans-serif;
+    white-space:nowrap;
+    -webkit-text-stroke:2px rgba(0,0,0,.82);
+    text-shadow:0 1px 2px rgba(0,0,0,.95);
+    pointer-events:none;
+  }
+  .v2-local-change-grid.labels-visible .v2-local-change-label.difference-visible {
+    visibility:visible;
+  }
+  .v2-local-change-reference-source {
     position:absolute;
     width:1px;
     height:1px;
