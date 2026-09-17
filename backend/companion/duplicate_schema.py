@@ -351,6 +351,8 @@ class SimilarityIndexTaskStart(BaseModel):
 class SimilarityIndexCoverage(BaseModel):
     eligible_count: int = Field(ge=0)
     current_count: int = Field(ge=0)
+    bounded_count: int = Field(default=0, ge=0)
+    unavailable_count: int = Field(default=0, ge=0)
     missing_count: int = Field(ge=0)
     stale_count: int = Field(ge=0)
     complete: bool
