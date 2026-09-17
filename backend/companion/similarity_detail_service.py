@@ -333,9 +333,11 @@ class SimilarityDetailMaintainer:
 
     @staticmethod
     def _requires_bounded_validation(search: AssetSimilaritySearchFeatureRecord) -> bool:
-        return (
+        width = getattr(search, "width", None)
+        height = getattr(search, "height", None)
+        return bool(
             search.fingerprint_origin == "bounded"
-            or search.width * search.height > MAX_DECODED_PIXELS
+            or (width and height and width * height > MAX_DECODED_PIXELS)
         )
 
     @staticmethod
@@ -353,6 +355,8 @@ class SimilarityDetailMaintainer:
 
     @staticmethod
     def _same_source(live: ImmichAsset, search: AssetSimilaritySearchFeatureRecord) -> bool:
+        search_width = getattr(search, "width", None)
+        search_height = getattr(search, "height", None)
         return bool(
             live.asset_type == "IMAGE"
             and not live.is_trashed
@@ -363,7 +367,9 @@ class SimilarityDetailMaintainer:
             and (
                 not live.width
                 or not live.height
-                or (live.width == search.width and live.height == search.height)
+                or not search_width
+                or not search_height
+                or (live.width == search_width and live.height == search_height)
             )
         )
 
