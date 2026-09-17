@@ -6,11 +6,11 @@ bump it whenever fingerprint extraction, candidate selection, detailed validatio
 comparison/scoring, or grouping semantics change in a way that can alter results.
 
 The persisted runtime epoch is different. It is advanced by the user-facing rebuild
-action. Long-running writers capture an epoch before doing external work and verify that
-same epoch inside their commit transaction. This prevents work started before a rebuild
-from repopulating evidence after the rebuild boundary. The persisted descriptor is part
+or destroy action. Long-running writers capture an epoch before doing external work and
+verify that same epoch inside their commit transaction. This prevents work started before
+an evidence boundary from repopulating evidence after it. The persisted descriptor is part
 of that fence: a process from a different code generation may inspect status and perform
-a rebuild, but it may not produce durable evidence in an incompatible generation.
+an evidence reset, but it may not produce durable evidence in an incompatible generation.
 """
 
 from __future__ import annotations
@@ -59,10 +59,14 @@ class SimilarityEvidenceGenerationState:
 
 
 @dataclass(frozen=True, slots=True)
-class SimilarityEvidenceRebuildResult:
+class SimilarityEvidenceDestroyResult:
     state: SimilarityEvidenceGenerationState
     cancelled_task_count: int
     removed_counts: dict[str, int]
+
+
+@dataclass(frozen=True, slots=True)
+class SimilarityEvidenceRebuildResult(SimilarityEvidenceDestroyResult):
     task_id: UUID
 
 
@@ -238,6 +242,127 @@ class SimilarityEvidenceEpochRepository:
                 "the write belongs to an incompatible code generation."
             )
 
+    async def _invalidate(
+        self,
+        session: AsyncSession,
+        *,
+        update_rebuilt_at: bool,
+        reason_type: str,
+        reason_message: str,
+    ) -> tuple[int, dict[str, int]]:
+        """Advance the epoch, retire writers, and delete all derived Appearance evidence."""
+
+        current_descriptor = similarity_generation_fingerprint()
+        removed: dict[str, int] = {}
+        bound_task_types_sql = ", ".join(f"'{value}'" for value in EVIDENCE_BOUND_TASK_TYPES)
+
+        # Keep the historical advisory-lock key so destroy requests also serialize with
+        # rebuilds issued by an older process during a rolling deployment.
+        await session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(hashtext("
+                "'immich-companion:similarity-evidence-rebuild'))"
+            )
+        )
+        epoch, _code_generation, _recorded, _rebuilt_at = await self._ensure_state(
+            session, lock=True
+        )
+        next_epoch = epoch + 1
+        rebuilt_sql = ", rebuilt_at = now()" if update_rebuilt_at else ""
+        await session.execute(
+            text(
+                "UPDATE similarity_evidence_state SET "
+                "epoch = :epoch, code_generation = :code_generation, "
+                f"descriptor_fingerprint = :descriptor{rebuilt_sql}, "
+                "updated_at = now() WHERE id = 1"
+            ),
+            {
+                "epoch": next_epoch,
+                "code_generation": SIMILARITY_EVIDENCE_CODE_GENERATION,
+                "descriptor": current_descriptor,
+            },
+        )
+
+        # This is intentionally a hard task boundary instead of the normal cooperative
+        # cancel transition. Revoking leases prevents an old worker from completing its
+        # task record, while generation-guarded writes reject already-running stale work.
+        cancelled = await session.execute(
+            text(
+                "UPDATE tasks SET status = 'cancelled', completed_at = now(), "
+                "next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL "
+                f"WHERE task_type IN ({bound_task_types_sql}) "
+                "AND status IN "
+                "('queued', 'running', 'retrying', 'recovering', "
+                " 'pause_requested', 'paused', 'cancel_requested')"
+            )
+        )
+        cancelled_task_count = int(cancelled.rowcount or 0)
+        await session.execute(
+            text(
+                "UPDATE task_attempts SET status = 'cancelled', completed_at = now(), "
+                "details = json_build_object("
+                "'type', :reason_type, 'message', :reason_message) "
+                "WHERE status = 'running' AND task_id IN ("
+                "SELECT id FROM tasks "
+                f"WHERE task_type IN ({bound_task_types_sql}) "
+                "AND status = 'cancelled' AND completed_at = now())"
+            ),
+            {"reason_type": reason_type, "reason_message": reason_message},
+        )
+        await session.execute(
+            text(
+                "SELECT pg_notify(:channel, id::text) FROM tasks "
+                f"WHERE task_type IN ({bound_task_types_sql}) "
+                "AND status = 'cancelled' AND completed_at = now()"
+            ),
+            {"channel": TASK_UPDATE_CHANNEL},
+        )
+
+        # The composite duplicate projection is derived output. Remove it too so the UI
+        # cannot keep displaying groups backed by invalidated similarity evidence. Review
+        # decisions/history live in separate durable tables and are deliberately preserved.
+        composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
+        removed["composite_groups"] = int(composite.rowcount or 0)
+        await session.execute(
+            text(
+                "UPDATE composite_duplicate_sync_state SET "
+                "group_count = 0, member_count = 0, evidence_count = 0, "
+                "last_success_at = NULL WHERE id = 1"
+            )
+        )
+
+        for label, table_name in (
+            ("scan_pairs", "similarity_scan_pairs"),
+            ("scans", "similarity_scans"),
+            ("pair_results", "asset_similarity_edges"),
+            ("detail_features", "asset_similarity_detail_features"),
+            ("bounded_state", "asset_similarity_bounded_state"),
+            ("search_features", "asset_similarity_search_features"),
+            ("pending_asset_changes", "similarity_asset_changes"),
+        ):
+            result = await session.execute(text(f"DELETE FROM {table_name}"))
+            removed[label] = int(result.rowcount or 0)
+
+        return cancelled_task_count, removed
+
+    async def destroy(self) -> SimilarityEvidenceDestroyResult:
+        """Invalidate all durable Appearance evidence without queuing replacement work."""
+
+        async with self._database.sessions() as session, session.begin():
+            cancelled_task_count, removed = await self._invalidate(
+                session,
+                update_rebuilt_at=False,
+                reason_type="evidence_destroy",
+                reason_message="Retired by similarity evidence destroy",
+            )
+
+        state = await self.status()
+        return SimilarityEvidenceDestroyResult(
+            state=state,
+            cancelled_task_count=cancelled_task_count,
+            removed_counts=removed,
+        )
+
     async def rebuild(
         self, scan_payload: dict[str, object]
     ) -> SimilarityEvidenceRebuildResult:
@@ -245,98 +370,15 @@ class SimilarityEvidenceEpochRepository:
 
         if not scan_payload:
             raise ValueError("A replacement similarity scan payload is required")
-        current_descriptor = similarity_generation_fingerprint()
-        removed: dict[str, int] = {}
         replacement_task_id = uuid4()
         replacement_dedupe_key = _scan_request_key(scan_payload)
-        bound_task_types_sql = ", ".join(f"'{value}'" for value in EVIDENCE_BOUND_TASK_TYPES)
         async with self._database.sessions() as session, session.begin():
-            # Serialize rebuild requests across replicas. Writers coordinate through the
-            # singleton row below using FOR SHARE/FOR UPDATE.
-            await session.execute(
-                text(
-                    "SELECT pg_advisory_xact_lock(hashtext("
-                    "'immich-companion:similarity-evidence-rebuild'))"
-                )
+            cancelled_task_count, removed = await self._invalidate(
+                session,
+                update_rebuilt_at=True,
+                reason_type="evidence_rebuild",
+                reason_message="Retired by similarity evidence rebuild",
             )
-            epoch, _code_generation, _recorded, _rebuilt_at = await self._ensure_state(
-                session, lock=True
-            )
-            next_epoch = epoch + 1
-            await session.execute(
-                text(
-                    "UPDATE similarity_evidence_state SET "
-                    "epoch = :epoch, code_generation = :code_generation, "
-                    "descriptor_fingerprint = :descriptor, rebuilt_at = now(), "
-                    "updated_at = now() WHERE id = 1"
-                ),
-                {
-                    "epoch": next_epoch,
-                    "code_generation": SIMILARITY_EVIDENCE_CODE_GENERATION,
-                    "descriptor": current_descriptor,
-                },
-            )
-
-            # This is intentionally a hard task boundary instead of the normal
-            # cooperative cancel transition. Revoking leases makes it impossible for an
-            # old worker to complete its task record, while generation-guarded writes
-            # reject work already past its last TaskContext cancellation check.
-            cancelled = await session.execute(
-                text(
-                    "UPDATE tasks SET status = 'cancelled', completed_at = now(), "
-                    "next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL "
-                    f"WHERE task_type IN ({bound_task_types_sql}) "
-                    "AND status IN "
-                    "('queued', 'running', 'retrying', 'recovering', "
-                    " 'pause_requested', 'paused', 'cancel_requested')"
-                )
-            )
-            cancelled_task_count = int(cancelled.rowcount or 0)
-            await session.execute(
-                text(
-                    "UPDATE task_attempts SET status = 'cancelled', completed_at = now(), "
-                    "details = json_build_object("
-                    "'type', 'evidence_rebuild', "
-                    "'message', 'Retired by similarity evidence rebuild') "
-                    "WHERE status = 'running' AND task_id IN ("
-                    "SELECT id FROM tasks "
-                    f"WHERE task_type IN ({bound_task_types_sql}) "
-                    "AND status = 'cancelled' AND completed_at = now())"
-                )
-            )
-            await session.execute(
-                text(
-                    "SELECT pg_notify(:channel, id::text) FROM tasks "
-                    f"WHERE task_type IN ({bound_task_types_sql}) "
-                    "AND status = 'cancelled' AND completed_at = now()"
-                ),
-                {"channel": TASK_UPDATE_CHANNEL},
-            )
-
-            # The composite duplicate projection is derived output. Remove it too so the
-            # UI cannot keep displaying groups backed by the invalidated similarity scan.
-            # Review decisions/history live in separate durable tables and are preserved.
-            composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
-            removed["composite_groups"] = int(composite.rowcount or 0)
-            await session.execute(
-                text(
-                    "UPDATE composite_duplicate_sync_state SET "
-                    "group_count = 0, member_count = 0, evidence_count = 0, "
-                    "last_success_at = NULL WHERE id = 1"
-                )
-            )
-
-            for label, table_name in (
-                ("scan_pairs", "similarity_scan_pairs"),
-                ("scans", "similarity_scans"),
-                ("pair_results", "asset_similarity_edges"),
-                ("detail_features", "asset_similarity_detail_features"),
-                ("bounded_state", "asset_similarity_bounded_state"),
-                ("search_features", "asset_similarity_search_features"),
-                ("pending_asset_changes", "similarity_asset_changes"),
-            ):
-                result = await session.execute(text(f"DELETE FROM {table_name}"))
-                removed[label] = int(result.rowcount or 0)
 
             # The replacement scan is created before the destructive transaction can
             # commit. If task creation fails, the epoch advance and every deletion roll

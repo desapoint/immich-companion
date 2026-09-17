@@ -37,10 +37,15 @@ class SimilarityEvidenceGenerationResponse(BaseModel):
     rebuilt_at: datetime | None = None
 
 
-class SimilarityEvidenceRebuildResponse(BaseModel):
-    """Atomic invalidation plus the durable replacement similarity-scan task."""
+class SimilarityEvidenceDestroyResponse(BaseModel):
+    """Destructive generation invalidation without replacement scan submission."""
 
     generation: SimilarityEvidenceGenerationResponse
     cancelled_task_count: int = Field(ge=0)
     removed_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class SimilarityEvidenceRebuildResponse(SimilarityEvidenceDestroyResponse):
+    """Atomic invalidation plus the durable replacement similarity-scan task."""
+
     task_id: UUID
