@@ -1590,103 +1590,119 @@ def create_app(
         catalog = await require_immich().list_tag_catalog()
         return matching_tag_ids(catalog, request.query, request.include_hierarchy)
 
-    @app.post("/api/{kind}s/selections", response_model=SelectionSetView)
-    async def create_relation_selection(kind: RelationEntityKind) -> SelectionSetView:
-        record = await require_relation_selections().create(
-            kind, runtime_settings.action_plan_ttl_seconds
-        )
-        return selection_view(record)
+    def register_relation_selection_routes(kind: RelationEntityKind) -> None:
+        plural = f"{kind}s"
 
-    @app.post("/api/{kind}s/selections/{selection_id}/members", response_model=SelectionSetView)
-    async def update_relation_selection(
-        kind: RelationEntityKind,
-        selection_id: UUID,
-        request: RelationSelectionMembersRequest,
-    ) -> SelectionSetView:
-        try:
-            record = await require_relation_selections().update(
-                selection_id,
-                kind,
-                request.ids,
-                selected=request.selected,
-                revision=request.revision,
+        @app.post(
+            f"/api/{plural}/selections",
+            response_model=SelectionSetView,
+            name=f"create_{kind}_selection",
+        )
+        async def create_relation_selection() -> SelectionSetView:
+            record = await require_relation_selections().create(
+                kind, runtime_settings.action_plan_ttl_seconds
             )
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return selection_view(record)
+            return selection_view(record)
 
-    @app.post(
-        "/api/{kind}s/selections/{selection_id}/membership",
-        response_model=SelectionSetMembershipResponse,
-    )
-    async def relation_selection_membership(
-        kind: RelationEntityKind,
-        selection_id: UUID,
-        request: RelationSelectionMembershipRequest,
-    ) -> SelectionSetMembershipResponse:
-        repository = require_relation_selections()
-        record = await repository.get(selection_id, kind)
-        if record is None:
-            raise HTTPException(status_code=404, detail="Selection set was not found.")
-        return SelectionSetMembershipResponse(
-            selection=selection_view(record),
-            selected_ids=await repository.membership(selection_id, kind, request.ids),
+        @app.post(
+            f"/api/{plural}/selections/{{selection_id}}/members",
+            response_model=SelectionSetView,
+            name=f"update_{kind}_selection",
         )
+        async def update_relation_selection(
+            selection_id: UUID,
+            request: RelationSelectionMembersRequest,
+        ) -> SelectionSetView:
+            try:
+                record = await require_relation_selections().update(
+                    selection_id,
+                    kind,
+                    request.ids,
+                    selected=request.selected,
+                    revision=request.revision,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            return selection_view(record)
 
-    @app.post("/api/{kind}s/selections/{selection_id}/select-all", response_model=SelectionSetView)
-    async def select_all_relations(
-        kind: RelationEntityKind,
-        selection_id: UUID,
-        request: RelationSelectAllRequest,
-    ) -> SelectionSetView:
-        try:
+        @app.post(
+            f"/api/{plural}/selections/{{selection_id}}/membership",
+            response_model=SelectionSetMembershipResponse,
+            name=f"{kind}_selection_membership",
+        )
+        async def relation_selection_membership(
+            selection_id: UUID,
+            request: RelationSelectionMembershipRequest,
+        ) -> SelectionSetMembershipResponse:
+            repository = require_relation_selections()
+            record = await repository.get(selection_id, kind)
+            if record is None:
+                raise HTTPException(status_code=404, detail="Selection set was not found.")
+            return SelectionSetMembershipResponse(
+                selection=selection_view(record),
+                selected_ids=await repository.membership(selection_id, kind, request.ids),
+            )
+
+        @app.post(
+            f"/api/{plural}/selections/{{selection_id}}/select-all",
+            response_model=SelectionSetView,
+            name=f"select_all_{kind}_relations",
+        )
+        async def select_all_relations(
+            selection_id: UUID,
+            request: RelationSelectAllRequest,
+        ) -> SelectionSetView:
+            try:
+                ids = await matching_relation_ids(kind, request)
+                record = await require_relation_selections().replace(selection_id, kind, ids)
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            return selection_view(record)
+
+        @app.post(
+            f"/api/{plural}/selections/{{selection_id}}/matching",
+            response_model=SelectionSetView,
+            name=f"update_matching_{kind}_relations",
+        )
+        async def update_matching_relations(
+            selection_id: UUID,
+            request: RelationMatchingSelectionRequest,
+        ) -> SelectionSetView:
+            try:
+                ids = await matching_relation_ids(kind, request)
+                record = await require_relation_selections().update_matching(
+                    selection_id,
+                    kind,
+                    ids,
+                    selected=request.selected,
+                    revision=request.revision,
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            return selection_view(record)
+
+        @app.post(
+            f"/api/{plural}/selections/{{selection_id}}/matching-status",
+            response_model=RelationMatchingSelectionState,
+            name=f"{kind}_matching_selection_state",
+        )
+        async def relation_matching_selection_state(
+            selection_id: UUID,
+            request: RelationSelectAllRequest,
+        ) -> RelationMatchingSelectionState:
             ids = await matching_relation_ids(kind, request)
-            record = await require_relation_selections().replace(selection_id, kind, ids)
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return selection_view(record)
-
-    @app.post(
-        "/api/{kind}s/selections/{selection_id}/matching",
-        response_model=SelectionSetView,
-    )
-    async def update_matching_relations(
-        kind: RelationEntityKind,
-        selection_id: UUID,
-        request: RelationMatchingSelectionRequest,
-    ) -> SelectionSetView:
-        try:
-            ids = await matching_relation_ids(kind, request)
-            record = await require_relation_selections().update_matching(
-                selection_id,
-                kind,
-                ids,
-                selected=request.selected,
-                revision=request.revision,
+            try:
+                selected_count = await require_relation_selections().matching_count(
+                    selection_id, kind, ids
+                )
+            except ValueError as error:
+                raise HTTPException(status_code=409, detail=str(error)) from error
+            return RelationMatchingSelectionState(
+                matching_count=len(set(ids)), selected_matching_count=selected_count
             )
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return selection_view(record)
 
-    @app.post(
-        "/api/{kind}s/selections/{selection_id}/matching-status",
-        response_model=RelationMatchingSelectionState,
-    )
-    async def relation_matching_selection_state(
-        kind: RelationEntityKind,
-        selection_id: UUID,
-        request: RelationSelectAllRequest,
-    ) -> RelationMatchingSelectionState:
-        ids = await matching_relation_ids(kind, request)
-        try:
-            selected_count = await require_relation_selections().matching_count(
-                selection_id, kind, ids
-            )
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        return RelationMatchingSelectionState(
-            matching_count=len(set(ids)), selected_matching_count=selected_count
-        )
+    register_relation_selection_routes("album")
+    register_relation_selection_routes("tag")
 
     def collection_plan_view(record) -> CollectionDeletePlan:
         work = record.relation_work or {}
