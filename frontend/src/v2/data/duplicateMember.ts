@@ -2,6 +2,8 @@ import type { AssetRecord } from './contracts';
 import { formatBytes } from '../../lib/utils/fileSize';
 import { duplicateAssetSourceLabel } from './duplicatePresentation';
 
+export const FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT = 64_000_000;
+
 export type ComparisonMemberData = {
   name: string;
   source: string;
@@ -29,12 +31,23 @@ export function formatSimilarityPercent(value: number | null): string {
   return value === null ? 'Not calculated' : `${similarityNumberFormat.format(value)}%`;
 }
 
+export function usesBoundedValidation(
+  asset: Pick<AssetRecord, 'width' | 'height'> | null | undefined,
+): boolean {
+  return Boolean(
+    asset?.width
+    && asset?.height
+    && asset.width * asset.height > FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT
+  );
+}
+
 export function duplicateListMemberMeta(
-  asset: Pick<AssetRecord, 'library_id' | 'file_size_bytes'>,
+  asset: Pick<AssetRecord, 'library_id' | 'file_size_bytes' | 'width' | 'height'>,
   similarityPercent: number | null,
 ): string {
   const parts = [duplicateAssetSourceLabel(asset.library_id), formatBytes(asset.file_size_bytes)];
   if (similarityPercent !== null) parts.push(`${formatSimilarityPercent(similarityPercent)} similarity`);
+  if (similarityPercent !== null && usesBoundedValidation(asset)) parts.push('bounded validation');
   return parts.join(' · ');
 }
 
