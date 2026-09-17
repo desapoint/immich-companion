@@ -103,7 +103,7 @@ class SimilaritySearchRepository:
 
         if feature.pixel_sha256 is not None:
             raise ValueError("Search evidence must not contain an exact-pixel hash")
-        if origin not in {"preview", "original"}:
+        if origin not in {"preview", "bounded", "original"}:
             raise ValueError("Unsupported search fingerprint origin")
         values = {
             "asset_id": asset.id,
