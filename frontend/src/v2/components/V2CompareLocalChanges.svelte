@@ -1,6 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
+  import {
+    canRenderLocalChangeLabel,
+    clampLocalChangePercent,
+    localChangeFillAlpha,
+    localChangeLabelFontSize,
+  } from './localChangeVisualization';
 
   let {
     selectedSrc,
@@ -11,6 +17,7 @@
     diagnostics = null,
     loading = false,
     error = '',
+    emphasis = $bindable(0),
     onselectedload,
     onreferenceload,
     onselectederror,
@@ -25,6 +32,7 @@
     diagnostics?: LocalChangeDiagnostics | null;
     loading?: boolean;
     error?: string;
+    emphasis?: number;
     onselectedload?: (event: Event) => void;
     onreferenceload?: (event: Event) => void;
     onselectederror?: () => void;
@@ -68,25 +76,33 @@
     context: CanvasRenderingContext2D,
     rect: { x: number; y: number; width: number; height: number },
     value: LocalChangeDiagnostics,
+    emphasisFloor: number,
   ): void {
     if (!value.available || value.rows < 1 || value.columns < 1) return;
     if (value.cells.length !== value.rows || value.cells.some((row) => row.length !== value.columns)) return;
     const cellWidth = rect.width / value.columns;
     const cellHeight = rect.height / value.rows;
-    const fontSize = Math.max(7, Math.min(12, cellWidth * 0.32, cellHeight * 0.3));
+    const fontSize = localChangeLabelFontSize(cellWidth, cellHeight);
 
     context.save();
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.font = `700 ${fontSize}px system-ui, sans-serif`;
     context.lineWidth = 1;
+    const maxLabelWidth = context.measureText('100%').width;
+    const labelsVisible = canRenderLocalChangeLabel({
+      cellWidth,
+      cellHeight,
+      measuredLabelWidth: maxLabelWidth,
+      fontSize,
+    });
 
     for (let row = 0; row < value.rows; row += 1) {
       for (let column = 0; column < value.columns; column += 1) {
-        const changed = Math.max(0, Math.min(100, value.cells[row]?.[column] ?? 0));
+        const changed = clampLocalChangePercent(value.cells[row]?.[column] ?? 0);
         const x = rect.x + column * cellWidth;
         const y = rect.y + row * cellHeight;
-        const alpha = changed <= 0 ? 0 : 0.08 + (changed / 100) * 0.5;
+        const alpha = localChangeFillAlpha(changed, emphasisFloor);
 
         if (alpha > 0) {
           context.fillStyle = `rgba(0, 220, 255, ${alpha})`;
@@ -95,17 +111,19 @@
         context.strokeStyle = 'rgba(255, 255, 255, 0.24)';
         context.strokeRect(x + 0.5, y + 0.5, Math.max(0, cellWidth - 1), Math.max(0, cellHeight - 1));
 
-        context.save();
-        context.beginPath();
-        context.rect(x, y, cellWidth, cellHeight);
-        context.clip();
-        const label = `${Math.round(changed)}%`;
-        context.lineWidth = 2.5;
-        context.strokeStyle = 'rgba(0, 0, 0, 0.82)';
-        context.strokeText(label, x + cellWidth / 2, y + cellHeight / 2);
-        context.fillStyle = '#fff';
-        context.fillText(label, x + cellWidth / 2, y + cellHeight / 2);
-        context.restore();
+        if (labelsVisible) {
+          context.save();
+          context.beginPath();
+          context.rect(x, y, cellWidth, cellHeight);
+          context.clip();
+          const label = `${Math.round(changed)}%`;
+          context.lineWidth = 2.5;
+          context.strokeStyle = 'rgba(0, 0, 0, 0.82)';
+          context.strokeText(label, x + cellWidth / 2, y + cellHeight / 2);
+          context.fillStyle = '#fff';
+          context.fillText(label, x + cellWidth / 2, y + cellHeight / 2);
+          context.restore();
+        }
       }
     }
     context.restore();
@@ -127,7 +145,7 @@
     const { panX, panY, zoom } = parseTransform(transform);
     const rect = imageRect(selectedImage, width, height, panX, panY, zoom);
     context.drawImage(selectedImage, rect.x, rect.y, rect.width, rect.height);
-    if (diagnostics) drawGrid(context, rect, diagnostics);
+    if (diagnostics) drawGrid(context, rect, diagnostics, emphasis);
   }
 
   function scheduleRender(): void {
@@ -184,6 +202,7 @@
     diagnostics;
     loading;
     error;
+    emphasis;
     scheduleRender();
   });
 </script>
@@ -197,6 +216,24 @@
   <canvas bind:this={canvas} class="v2-local-change-canvas" aria-label="Selected image with localized validation grid"></canvas>
   <img bind:this={selectedImage} class="v2-local-change-source" src={selectedSrc} alt={selectedLabel} onload={selectedLoaded} onerror={onselectederror}>
   <img bind:this={referenceImage} class="v2-local-change-source" src={referenceSrc} alt={referenceLabel} onload={referenceLoaded} onerror={onreferenceerror}>
+
+  <div class="v2-local-change-controls v2-compare-floating-controls">
+    <label class="v2-local-change-emphasis">
+      <span class="v2-local-change-control-heading">
+        <span>Minimum highlight intensity</span>
+        <strong>{Math.round(emphasis)}%</strong>
+      </span>
+      <input
+        type="range"
+        min="0"
+        max="100"
+        step="1"
+        bind:value={emphasis}
+        aria-label="Minimum highlight intensity"
+      >
+    </label>
+    <p>Display only. Actual percentages stay unchanged, and 0% cells remain clear.</p>
+  </div>
 
   {#if loading}
     <div class="v2-local-change-status" role="status">Calculating localized changes…</div>
@@ -226,6 +263,45 @@
     height:1px;
     opacity:0;
     pointer-events:none;
+  }
+  .v2-local-change-controls {
+    position:absolute;
+    top:14px;
+    left:14px;
+    z-index:9;
+    width:min(300px, calc(100% - 28px));
+    border:1px solid #385467;
+    border-radius:12px;
+    padding:9px 10px 8px;
+    background:rgba(0,0,0,.84);
+    color:#e8f8ff;
+    box-sizing:border-box;
+  }
+  .v2-local-change-emphasis {
+    display:grid;
+    gap:6px;
+    cursor:pointer;
+  }
+  .v2-local-change-control-heading {
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:12px;
+    font-size:11px;
+    font-weight:700;
+  }
+  .v2-local-change-control-heading strong {
+    font-variant-numeric:tabular-nums;
+  }
+  .v2-local-change-emphasis input {
+    width:100%;
+    margin:0;
+  }
+  .v2-local-change-controls p {
+    margin:6px 0 0;
+    color:#bcd4df;
+    font-size:10px;
+    line-height:1.35;
   }
   .v2-local-change-note,
   .v2-local-change-status {

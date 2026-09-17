@@ -26,4 +26,21 @@ describe('V2ImageComparison', () => {
     expect(body).toContain('src="/selected/fullsize"');
     expect(body).toContain('src="/reference/fullsize"');
   });
+
+  it('renders the Local Changes emphasis control as display-only presentation state', () => {
+    const { body } = render(V2ImageComparison, {
+      props: {
+        selectedResource: resource('/selected/fullsize', ['/selected/preview']),
+        referenceResource: resource('/reference/fullsize', ['/reference/preview']),
+        mode: 'Local changes',
+      },
+    });
+
+    expect(body).toContain('Minimum highlight intensity');
+    expect(body).toContain('type="range"');
+    expect(body).toContain('min="0"');
+    expect(body).toContain('max="100"');
+    expect(body).toContain('Actual percentages stay unchanged');
+    expect(body).toContain('0% cells remain clear');
+  });
 });
