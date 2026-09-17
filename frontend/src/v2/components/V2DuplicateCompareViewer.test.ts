@@ -91,6 +91,8 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Property');
     expect(body).toContain('Selected');
     expect(body).toContain('Reference');
+    expect(body).toContain('v2-compare-header-zone');
+    expect(body).toContain('v2-compare-detail-scroll');
     expect(body).toContain('v2-compare-metadata-detail');
     expect(body.match(/<details[^>]*v2-compare-metadata-detail[^>]*>/)?.[0] ?? '').toContain('open');
     expect(body.indexOf('data-decision="stack"')).toBeLessThan(body.indexOf('Clear selection'));
@@ -172,6 +174,7 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Link depth');
     expect(body).toContain('Technical linked data');
     expect(body).toContain('fingerprint-123');
+    expect(body.indexOf('Metadata side by side')).toBeLessThan(body.indexOf('Why is this image in the group?'));
   });
 
   it('keeps inspection navigation enabled while write controls are disabled', () => {
