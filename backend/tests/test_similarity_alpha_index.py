@@ -9,10 +9,8 @@ from uuid import UUID
 import pytest
 from PIL import Image, ImageDraw
 
-from companion.similarity_index_service import (
-    SimilarityIndexMaintainer,
-    _source_may_have_alpha,
-)
+from companion.similarity_index_service import SimilarityIndexMaintainer
+from companion.similarity_transparency import source_can_have_alpha
 
 ASSET = UUID(int=1)
 MODIFIED = datetime(2026, 9, 16, tzinfo=UTC)
@@ -48,7 +46,7 @@ def _source(*, name: str = "transparent.png", mime: str = "image/png"):
     ],
 )
 def test_alpha_capable_source_detection(name: str, mime: str, expected: bool) -> None:
-    assert _source_may_have_alpha(_source(name=name, mime=mime)) is expected
+    assert source_can_have_alpha(_source(name=name, mime=mime)) is expected
 
 
 @pytest.mark.asyncio
