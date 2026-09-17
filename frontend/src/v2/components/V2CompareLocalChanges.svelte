@@ -333,10 +333,14 @@
     transform:translate(-50%, -50%);
     visibility:hidden;
     color:#fff;
-    font:700 11px/1.2 system-ui, sans-serif;
+    font:700 12px/1.2 system-ui, sans-serif;
     white-space:nowrap;
-    -webkit-text-stroke:2px rgba(0,0,0,.82);
-    text-shadow:0 1px 2px rgba(0,0,0,.95);
+    text-shadow:
+      -1px -1px 0 rgba(0,0,0,.9),
+      1px -1px 0 rgba(0,0,0,.9),
+      -1px 1px 0 rgba(0,0,0,.9),
+      1px 1px 0 rgba(0,0,0,.9),
+      0 1px 2px rgba(0,0,0,.95);
     pointer-events:none;
   }
   .v2-local-change-grid.labels-visible .v2-local-change-label.difference-visible {
