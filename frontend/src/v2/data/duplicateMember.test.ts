@@ -6,6 +6,8 @@ import {
   comparisonMemberData,
   duplicateListMemberMeta,
   formatSimilarityPercent,
+  similarityValidationEvidenceLabel,
+  similarityValidationEvidenceTier,
   usesBoundedValidation,
 } from './duplicateMember';
 
@@ -42,17 +44,28 @@ describe('duplicate comparison member data', () => {
     expect(duplicateListMemberMeta(asset(), null)).toBe('Immich upload · 1.00 MB');
   });
 
-  it('labels similarity for assets above the shared 64-megapixel full-resolution validation limit', () => {
+  it('does not infer bounded validation from source dimensions', () => {
     const oversized = asset({ width: 16320, height: 12240, file_size_bytes: 50_000_000 });
     expect(FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT).toBe(64_000_000);
-    expect(usesBoundedValidation(oversized)).toBe(true);
-    expect(duplicateListMemberMeta(oversized, 94.25)).toContain('94.25% similarity · bounded validation');
-    expect(duplicateListMemberMeta(oversized, null)).not.toContain('bounded validation');
+    expect(usesBoundedValidation(oversized)).toBe(false);
+    expect(duplicateListMemberMeta(oversized, 94.25)).toBe('Immich upload · 47.68 MB · 94.25% similarity');
   });
 
-  it('keeps normal-size and unknown-size assets out of the bounded-validation label', () => {
+  it('labels validation from persisted detail evidence rather than dimensions', () => {
+    expect(usesBoundedValidation({ detailSource: 'preview' })).toBe(true);
+    expect(usesBoundedValidation({ detailSource: 'original' })).toBe(false);
+    expect(similarityValidationEvidenceTier(94.25, { detailSource: 'preview' })).toBe('bounded');
+    expect(similarityValidationEvidenceLabel(94.25, { detailSource: 'preview' })).toBe('Bounded validation');
+    expect(similarityValidationEvidenceLabel(94.25, { detailSource: 'original' })).toBe('Full-resolution validation');
+    expect(similarityValidationEvidenceLabel(94.25, { detailSource: 'transcoded' })).toBe('Full-resolution validation');
+    expect(similarityValidationEvidenceLabel(94.25, { detailSource: null })).toBe('Search-only appearance');
+    expect(similarityValidationEvidenceLabel(94.25, null)).toBe('Search-only appearance');
+    expect(similarityValidationEvidenceLabel(null, { detailSource: 'preview' })).toBeNull();
+  });
+
+  it('keeps normal-size and unknown-size assets from being treated as evidence of bounded validation', () => {
     expect(usesBoundedValidation(asset({ width: 8000, height: 8000 }))).toBe(false);
-    expect(usesBoundedValidation(asset({ width: 8001, height: 8000 }))).toBe(true);
+    expect(usesBoundedValidation(asset({ width: 8001, height: 8000 }))).toBe(false);
     expect(usesBoundedValidation(asset({ width: null, height: 12000 }))).toBe(false);
     expect(usesBoundedValidation(asset({ width: 16000, height: null }))).toBe(false);
   });

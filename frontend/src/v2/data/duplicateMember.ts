@@ -1,8 +1,10 @@
-import type { AssetRecord } from './contracts';
+import type { AssetRecord, DuplicateSimilarityEvidence } from './contracts';
 import { formatBytes } from '../../lib/utils/fileSize';
 import { duplicateAssetSourceLabel } from './duplicatePresentation';
 
 export const FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT = 64_000_000;
+
+export type SimilarityValidationEvidenceTier = 'bounded' | 'full-resolution' | 'search-only';
 
 export type ComparisonMemberData = {
   name: string;
@@ -31,14 +33,35 @@ export function formatSimilarityPercent(value: number | null): string {
   return value === null ? 'Not calculated' : `${similarityNumberFormat.format(value)}%`;
 }
 
+export function similarityValidationEvidenceTier(
+  similarityPercent: number | null,
+  evidence: Pick<DuplicateSimilarityEvidence, 'detailSource'> | null | undefined,
+): SimilarityValidationEvidenceTier | null {
+  if (similarityPercent === null) return null;
+  if (evidence?.detailSource === 'preview') return 'bounded';
+  if (evidence?.detailSource === 'original' || evidence?.detailSource === 'transcoded') return 'full-resolution';
+  return 'search-only';
+}
+
+export function similarityValidationEvidenceLabel(
+  similarityPercent: number | null,
+  evidence: Pick<DuplicateSimilarityEvidence, 'detailSource'> | null | undefined,
+): string | null {
+  const tier = similarityValidationEvidenceTier(similarityPercent, evidence);
+  if (tier === 'bounded') return 'Bounded validation';
+  if (tier === 'full-resolution') return 'Full-resolution validation';
+  if (tier === 'search-only') return 'Search-only appearance';
+  return null;
+}
+
 export function usesBoundedValidation(
-  asset: Pick<AssetRecord, 'width' | 'height'> | null | undefined,
+  value:
+    | Pick<AssetRecord, 'width' | 'height'>
+    | Pick<DuplicateSimilarityEvidence, 'detailSource'>
+    | null
+    | undefined,
 ): boolean {
-  return Boolean(
-    asset?.width
-    && asset?.height
-    && asset.width * asset.height > FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT
-  );
+  return Boolean(value && 'detailSource' in value && value.detailSource === 'preview');
 }
 
 export function duplicateListMemberMeta(
@@ -47,7 +70,6 @@ export function duplicateListMemberMeta(
 ): string {
   const parts = [duplicateAssetSourceLabel(asset.library_id), formatBytes(asset.file_size_bytes)];
   if (similarityPercent !== null) parts.push(`${formatSimilarityPercent(similarityPercent)} similarity`);
-  if (similarityPercent !== null && usesBoundedValidation(asset)) parts.push('bounded validation');
   return parts.join(' · ');
 }
 
