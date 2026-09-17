@@ -1,5 +1,6 @@
 <script lang="ts">
   import { ViewerViewportController } from './viewerViewport.svelte';
+  import { ViewportRegistrationController } from './viewportRegistration';
 
   let {
     src,
@@ -13,11 +14,40 @@
     onerror?: () => void;
   } = $props();
 
-  let viewport = $state<HTMLElement | null>(null);
   let dragging = $state(false);
   let dragPointer = $state<number | null>(null);
   let lastX = $state(0);
   let lastY = $state(0);
+
+  function createViewportRegistration(activeController: ViewerViewportController): ViewportRegistrationController {
+    return new ViewportRegistrationController(
+      (node) => activeController.setViewport(node),
+      () => activeController.remapViewport(),
+    );
+  }
+
+  // Keep DOM registration lifecycle-owned. Calling ViewerViewportController.setViewport()
+  // directly from a $effect can subscribe that effect to camera $state read inside the
+  // method, then invalidate the same effect while it registers and recurse until Svelte
+  // throws effect_update_depth_exceeded.
+  function registerViewport(node: HTMLElement, initialController: ViewerViewportController) {
+    let activeController = initialController;
+    let registration = createViewportRegistration(activeController);
+    registration.set(node);
+
+    return {
+      update(nextController: ViewerViewportController) {
+        if (nextController === activeController) return;
+        registration.destroy();
+        activeController = nextController;
+        registration = createViewportRegistration(activeController);
+        registration.set(node);
+      },
+      destroy() {
+        registration.destroy();
+      },
+    };
+  }
 
   function pointerDown(event: PointerEvent): void {
     if (event.button !== 0) return;
@@ -54,15 +84,10 @@
     controller.setNaturalSize(image.naturalWidth, image.naturalHeight);
     requestAnimationFrame(() => controller.fit());
   }
-
-  $effect(() => {
-    controller.setViewport(viewport);
-    return () => controller.setViewport(null);
-  });
 </script>
 
 <div
-  bind:this={viewport}
+  use:registerViewport={controller}
   class="v2-image-viewport"
   class:panning={dragging}
   role="region"
