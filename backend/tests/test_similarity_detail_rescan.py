@@ -8,6 +8,10 @@ import pytest
 
 import companion.similarity_repository as similarity_repository_module
 from companion.similarity_detail_service import SimilarityDetailMaintainer
+from companion.similarity_generation import (
+    SIMILARITY_EVIDENCE_CODE_GENERATION,
+    similarity_generation_fingerprint,
+)
 from companion.similarity_repository import SimilarityRepository
 
 LEFT = UUID(int=1)
@@ -23,7 +27,11 @@ class _ExecuteResult:
     rowcount = 0
 
     def first(self):
-        return (1,)
+        return (
+            1,
+            SIMILARITY_EVIDENCE_CODE_GENERATION,
+            similarity_generation_fingerprint(),
+        )
 
 
 class _Session:
