@@ -59,6 +59,7 @@
   let dragPointer = $state<number | null>(null);
   let lastX = $state(0);
   let lastY = $state(0);
+  let localEmphasis = $state(0);
   let selectedNatural = $state({ width: 0, height: 0 });
   let referenceNatural = $state({ width: 0, height: 0 });
   let selectedSelection = $state({ key: '', index: 0 });
@@ -110,7 +111,7 @@
   }
 
   function shouldIgnore(target: EventTarget | null): boolean {
-    return target instanceof Element && !!target.closest('button,input,label,.v2-compare-swipe-hit,.v2-compare-floating-controls');
+    return target instanceof Element && !!target.closest('button,input,label,.v2-compare-swipe-hit,.v2-compare-floating-controls,.v2-local-change-controls');
   }
 
   function panStart(event: PointerEvent): void {
@@ -248,6 +249,7 @@
         diagnostics={localDiagnostics}
         loading={localDiagnosticsLoading}
         error={localDiagnosticsError}
+        bind:emphasis={localEmphasis}
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
         onselectederror={selectedFailed}
