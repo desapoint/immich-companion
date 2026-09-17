@@ -40,6 +40,9 @@ describe('V2ImageComparison', () => {
     expect(body).toContain('v2-range-slider');
     expect(body).toContain('Color');
     expect(body).toContain('Local changes highlight color');
+    expect(body).toContain('Grid detail');
+    expect(body).toContain('Local changes grid detail');
+    expect(body).toContain('32×32');
     expect(body).toContain('Minimum difference visible');
     expect(body).toContain('Minimum visible local difference');
     expect(body).toContain('Minimum highlight intensity');
