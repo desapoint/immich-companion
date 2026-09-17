@@ -11,6 +11,7 @@ from uuid import UUID
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
+from companion.evidence_logging import install_pending_evidence_logging_policy
 from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichAsset
 from companion.models import Base
@@ -24,6 +25,10 @@ from companion.similarity_search_features import (
 SourceAlphaState = Literal["confirmed_opaque", "confirmed_alpha", "unknown_alpha"]
 SearchAvailability = Literal["available", "unavailable"]
 DetailAvailability = Literal["unavailable"]
+
+# Freshness gaps are expected while evidence is being generated. Install the
+# narrow logging policy before any similarity/integrity freshness checks run.
+install_pending_evidence_logging_policy()
 
 # Bump this whenever decoder/rendition/transparency handling changes in a way
 # that could make previously unavailable bounded evidence usable.
