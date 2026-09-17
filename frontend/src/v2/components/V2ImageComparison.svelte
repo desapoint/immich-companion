@@ -60,6 +60,9 @@
   let lastX = $state(0);
   let lastY = $state(0);
   let localEmphasis = $state(0);
+  let localMinimumDifference = $state(0);
+  let localHighlightColor = $state('#00DCFF');
+  let localHighlightColorPosition = $state(120);
   let selectedNatural = $state({ width: 0, height: 0 });
   let referenceNatural = $state({ width: 0, height: 0 });
   let selectedSelection = $state({ key: '', index: 0 });
@@ -111,7 +114,7 @@
   }
 
   function shouldIgnore(target: EventTarget | null): boolean {
-    return target instanceof Element && !!target.closest('button,input,label,.v2-compare-swipe-hit,.v2-compare-floating-controls,.v2-local-change-controls');
+    return target instanceof Element && !!target.closest('button,input,label,.v2-compare-swipe-hit,.v2-compare-floating-controls');
   }
 
   function panStart(event: PointerEvent): void {
@@ -250,6 +253,9 @@
         loading={localDiagnosticsLoading}
         error={localDiagnosticsError}
         bind:emphasis={localEmphasis}
+        bind:minimumDifference={localMinimumDifference}
+        bind:highlightColor={localHighlightColor}
+        bind:highlightColorPosition={localHighlightColorPosition}
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
         onselectederror={selectedFailed}

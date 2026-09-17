@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
+  import V2RangeSlider from './V2RangeSlider.svelte';
   import {
     canRenderLocalChangeLabel,
     clampLocalChangePercent,
     localChangeFillAlpha,
     localChangeLabelFontSize,
+    localChangePassesVisibilityThreshold,
   } from './localChangeVisualization';
 
   let {
@@ -18,6 +20,9 @@
     loading = false,
     error = '',
     emphasis = $bindable(0),
+    minimumDifference = $bindable(0),
+    highlightColor = $bindable('#00DCFF'),
+    highlightColorPosition = $bindable(120),
     onselectedload,
     onreferenceload,
     onselectederror,
@@ -33,6 +38,9 @@
     loading?: boolean;
     error?: string;
     emphasis?: number;
+    minimumDifference?: number;
+    highlightColor?: string;
+    highlightColorPosition?: number;
     onselectedload?: (event: Event) => void;
     onreferenceload?: (event: Event) => void;
     onselectederror?: () => void;
@@ -44,7 +52,19 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
   let selectedImage = $state<HTMLImageElement | null>(null);
   let referenceImage = $state<HTMLImageElement | null>(null);
+  let controlsOpen = $state(false);
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined;
   let renderFrame: number | null = null;
+
+  function showControls(): void {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    controlsOpen = true;
+  }
+
+  function hideControlsSoon(): void {
+    if (hoverTimer) clearTimeout(hoverTimer);
+    hoverTimer = setTimeout(() => (controlsOpen = false), 80);
+  }
 
   function parseTransform(value: string): { panX: number; panY: number; zoom: number } {
     const match = value.match(/translate\((-?[\d.]+)px,\s*(-?[\d.]+)px\)\s*scale\((-?[\d.]+)\)/);
@@ -77,6 +97,8 @@
     rect: { x: number; y: number; width: number; height: number },
     value: LocalChangeDiagnostics,
     emphasisFloor: number,
+    minimumVisible: number,
+    color: string,
   ): void {
     if (!value.available || value.rows < 1 || value.columns < 1) return;
     if (value.cells.length !== value.rows || value.cells.some((row) => row.length !== value.columns)) return;
@@ -102,16 +124,19 @@
         const changed = clampLocalChangePercent(value.cells[row]?.[column] ?? 0);
         const x = rect.x + column * cellWidth;
         const y = rect.y + row * cellHeight;
-        const alpha = localChangeFillAlpha(changed, emphasisFloor);
+        const visible = localChangePassesVisibilityThreshold(changed, minimumVisible);
+        const alpha = localChangeFillAlpha(changed, emphasisFloor, minimumVisible);
 
         if (alpha > 0) {
-          context.fillStyle = `rgba(0, 220, 255, ${alpha})`;
+          context.fillStyle = color;
+          context.globalAlpha = alpha;
           context.fillRect(x, y, cellWidth, cellHeight);
+          context.globalAlpha = 1;
         }
         context.strokeStyle = 'rgba(255, 255, 255, 0.24)';
         context.strokeRect(x + 0.5, y + 0.5, Math.max(0, cellWidth - 1), Math.max(0, cellHeight - 1));
 
-        if (labelsVisible) {
+        if (labelsVisible && visible) {
           context.save();
           context.beginPath();
           context.rect(x, y, cellWidth, cellHeight);
@@ -145,7 +170,7 @@
     const { panX, panY, zoom } = parseTransform(transform);
     const rect = imageRect(selectedImage, width, height, panX, panY, zoom);
     context.drawImage(selectedImage, rect.x, rect.y, rect.width, rect.height);
-    if (diagnostics) drawGrid(context, rect, diagnostics, emphasis);
+    if (diagnostics) drawGrid(context, rect, diagnostics, emphasis, minimumDifference, highlightColor);
   }
 
   function scheduleRender(): void {
@@ -190,6 +215,7 @@
     scheduleRender();
     return () => {
       observer?.disconnect();
+      if (hoverTimer) clearTimeout(hoverTimer);
       if (renderFrame !== null) cancelAnimationFrame(renderFrame);
       onviewport?.(null);
     };
@@ -203,36 +229,61 @@
     loading;
     error;
     emphasis;
+    minimumDifference;
+    highlightColor;
     scheduleRender();
   });
 </script>
 
 <div
   class="v2-compare-overlay mode-local-changes"
+  class:controls-open={controlsOpen}
   bind:this={viewport}
   role="group"
   aria-label="Localized change comparison"
+  onmouseenter={showControls}
+  onmouseleave={hideControlsSoon}
+  onfocusin={showControls}
+  onfocusout={hideControlsSoon}
 >
   <canvas bind:this={canvas} class="v2-local-change-canvas" aria-label="Selected image with localized validation grid"></canvas>
   <img bind:this={selectedImage} class="v2-local-change-source" src={selectedSrc} alt={selectedLabel} onload={selectedLoaded} onerror={onselectederror}>
   <img bind:this={referenceImage} class="v2-local-change-source" src={referenceSrc} alt={referenceLabel} onload={referenceLoaded} onerror={onreferenceerror}>
 
-  <div class="v2-local-change-controls">
-    <label class="v2-local-change-emphasis">
-      <span class="v2-local-change-control-heading">
-        <span>Minimum highlight intensity</span>
-        <strong>{Math.round(emphasis)}%</strong>
-      </span>
-      <input
-        type="range"
-        min="0"
-        max="100"
-        step="1"
-        bind:value={emphasis}
-        aria-label="Minimum highlight intensity"
-      >
-    </label>
-    <p>Display only. Actual percentages stay unchanged, and 0% cells remain clear.</p>
+  <div class="v2-compare-floating-controls v2-compare-hover v2-local-change-controls">
+    <V2RangeSlider
+      label="Color"
+      min={0}
+      max={255}
+      bind:value={highlightColor}
+      bind:numericValue={highlightColorPosition}
+      track="spectrum"
+      width={160}
+      swatch={highlightColor}
+      ariaLabel="Local changes highlight color"
+    />
+    <V2RangeSlider
+      label="Minimum difference visible"
+      min={0}
+      max={100}
+      step={1}
+      bind:value={minimumDifference}
+      suffix="%"
+      track="fill"
+      width={112}
+      ariaLabel="Minimum visible local difference"
+    />
+    <V2RangeSlider
+      label="Minimum highlight intensity"
+      min={0}
+      max={100}
+      step={1}
+      bind:value={emphasis}
+      suffix="%"
+      track="fill"
+      width={112}
+      ariaLabel="Minimum highlight intensity"
+    />
   </div>
 
   {#if loading}
@@ -265,43 +316,14 @@
     pointer-events:none;
   }
   .v2-local-change-controls {
-    position:absolute;
-    top:14px;
-    left:14px;
-    z-index:9;
-    width:min(300px, calc(100% - 28px));
-    border:1px solid #385467;
-    border-radius:12px;
-    padding:9px 10px 8px;
-    background:rgba(0,0,0,.84);
-    color:#e8f8ff;
+    width:min(760px, calc(100% - 28px));
+    min-width:0;
+    max-width:calc(100% - 28px);
+    flex-wrap:wrap;
+    justify-content:center;
+    border-radius:14px;
+    padding:9px 12px;
     box-sizing:border-box;
-  }
-  .v2-local-change-emphasis {
-    display:grid;
-    gap:6px;
-    cursor:pointer;
-  }
-  .v2-local-change-control-heading {
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap:12px;
-    font-size:11px;
-    font-weight:700;
-  }
-  .v2-local-change-control-heading strong {
-    font-variant-numeric:tabular-nums;
-  }
-  .v2-local-change-emphasis input {
-    width:100%;
-    margin:0;
-  }
-  .v2-local-change-controls p {
-    margin:6px 0 0;
-    color:#bcd4df;
-    font-size:10px;
-    line-height:1.35;
   }
   .v2-local-change-note,
   .v2-local-change-status {

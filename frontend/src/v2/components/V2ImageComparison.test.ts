@@ -27,7 +27,7 @@ describe('V2ImageComparison', () => {
     expect(body).toContain('src="/reference/fullsize"');
   });
 
-  it('renders the Local Changes emphasis control as display-only presentation state', () => {
+  it('uses shared hover controls for Local Changes presentation settings', () => {
     const { body } = render(V2ImageComparison, {
       props: {
         selectedResource: resource('/selected/fullsize', ['/selected/preview']),
@@ -36,11 +36,13 @@ describe('V2ImageComparison', () => {
       },
     });
 
+    expect(body).toContain('v2-compare-floating-controls v2-compare-hover v2-local-change-controls');
+    expect(body).toContain('v2-range-slider');
+    expect(body).toContain('Color');
+    expect(body).toContain('Local changes highlight color');
+    expect(body).toContain('Minimum difference visible');
+    expect(body).toContain('Minimum visible local difference');
     expect(body).toContain('Minimum highlight intensity');
-    expect(body).toContain('type="range"');
-    expect(body).toContain('min="0"');
-    expect(body).toContain('max="100"');
-    expect(body).toContain('Actual percentages stay unchanged');
-    expect(body).toContain('0% cells remain clear');
+    expect(body).toContain('#00DCFF');
   });
 });

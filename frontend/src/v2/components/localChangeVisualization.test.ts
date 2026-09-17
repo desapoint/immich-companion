@@ -4,6 +4,7 @@ import {
   canRenderLocalChangeLabel,
   localChangeFillAlpha,
   localChangeLabelFontSize,
+  localChangePassesVisibilityThreshold,
   localChangeVisualPercent,
 } from './localChangeVisualization';
 
@@ -22,17 +23,31 @@ describe('localChangeVisualization', () => {
     expect(localChangeVisualPercent(5, 100)).toBe(100);
   });
 
-  it('preserves the existing alpha mapping when the floor is zero', () => {
-    expect(localChangeFillAlpha(0, 0)).toBe(0);
-    expect(localChangeFillAlpha(5, 0)).toBeCloseTo(0.105);
-    expect(localChangeFillAlpha(50, 0)).toBeCloseTo(0.33);
-    expect(localChangeFillAlpha(100, 0)).toBeCloseTo(0.58);
+  it('preserves the existing alpha mapping when both presentation controls are zero', () => {
+    expect(localChangeFillAlpha(0, 0, 0)).toBe(0);
+    expect(localChangeFillAlpha(5, 0, 0)).toBeCloseTo(0.105);
+    expect(localChangeFillAlpha(50, 0, 0)).toBeCloseTo(0.33);
+    expect(localChangeFillAlpha(100, 0, 0)).toBeCloseTo(0.58);
   });
 
   it('uses emphasized display strength without changing zero cells', () => {
-    expect(localChangeFillAlpha(0, 100)).toBe(0);
+    expect(localChangeFillAlpha(0, 100, 0)).toBe(0);
+    expect(localChangeFillAlpha(5, 50, 0)).toBeCloseTo(localChangeFillAlpha(50, 0, 0));
+    expect(localChangeFillAlpha(80, 50, 0)).toBeCloseTo(localChangeFillAlpha(80, 0, 0));
+  });
+
+  it('suppresses differences below the minimum visible threshold without changing the measured value', () => {
+    expect(localChangePassesVisibilityThreshold(4.9, 5)).toBe(false);
+    expect(localChangePassesVisibilityThreshold(5, 5)).toBe(true);
+    expect(localChangePassesVisibilityThreshold(80, 5)).toBe(true);
+    expect(localChangeFillAlpha(4.9, 100, 5)).toBe(0);
+    expect(localChangeFillAlpha(5, 0, 5)).toBeCloseTo(0.105);
+  });
+
+  it('keeps the zero threshold equivalent to the previous visibility behavior', () => {
+    expect(localChangePassesVisibilityThreshold(0, 0)).toBe(true);
+    expect(localChangePassesVisibilityThreshold(1, 0)).toBe(true);
     expect(localChangeFillAlpha(5, 50)).toBeCloseTo(localChangeFillAlpha(50, 0));
-    expect(localChangeFillAlpha(80, 50)).toBeCloseTo(localChangeFillAlpha(80, 0));
   });
 
   it('never shrinks labels below the readable minimum', () => {
