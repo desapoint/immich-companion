@@ -124,6 +124,12 @@ export class ViewerViewportController {
   }
 
   private restoreViewportTransfer(transfer: ViewportTransfer, metrics: ViewportMetrics): void {
+    if (transfer.width === metrics.width && transfer.height === metrics.height) {
+      this.panX = transfer.panX;
+      this.panY = transfer.panY;
+      return;
+    }
+
     const previousSize = renderedSize(
       transfer.width,
       transfer.height,
