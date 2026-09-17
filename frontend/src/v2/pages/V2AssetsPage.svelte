@@ -46,7 +46,7 @@
   import { LatestRequestController } from '../state/latestRequest';
   import { AssetSelectionWorkspaceController } from '../state/assetSelectionWorkspace.svelte';
   import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
-  import { consumeV2AssetFilterHandoff } from '../navigation';
+  import { consumeV2AssetFilterHandoff, v2AssetIdFromPath, v2AssetViewerPath, v2PagePath } from '../navigation';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { AssetRecord, AssetSearchCriteria, AssetSearchQuery, AssetSelectionCapabilities, AssetSelectionTarget, SavedSearchRecord, StackActionPlan, StackResolution, ViewerNavigationWindow } from '../data/contracts';
@@ -146,7 +146,13 @@
   function invertSelection(){let next=selectionWorkspace.snapshot();for(const id of ids)next=toggleAssetSelected(next,id);selectionWorkspace.replaceVisible(next);reconcileStackPrimary();resetStackReview();scheduleSelectionCapabilities()}
   function toggleViewerSelection(id:string){const wasSelected=isAssetSelected(selection,id);selectionWorkspace.replaceVisible(toggleAssetSelected(selection,id));reconcileStackPrimary(wasSelected?null:id);resetStackReview();scheduleSelectionCapabilities()}
   function handleSelectionClick(id:string,event:MouseEvent){const wasSelected=isAssetSelected(selection,id);selectionWorkspace.replaceVisible(event.shiftKey?applyShiftAssetRange(selection,ids,id):toggleAssetSelected(selection,id));reconcileStackPrimary(wasSelected?null:id);resetStackReview();scheduleSelectionCapabilities()}
-  function openViewer(id:string,startStack=false){const index=items.findIndex((item)=>item.id===id);viewerAssetId=id;viewerStartStack=startStack;viewerLastId=id;viewerLastPosition=index<0?null:collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index+1:index+1;viewer=true}
+  function setViewerUrl(id:string|null,mode:'push'|'replace'='replace'){
+    const path=id?v2AssetViewerPath(id):v2PagePath('assets');
+    if(window.location.pathname===path&&!window.location.search&&!window.location.hash)return;
+    if(mode==='push')history.pushState(null,'',path);else history.replaceState(null,'',path);
+  }
+  function openViewer(id:string,startStack=false,updateUrl=true){const index=items.findIndex((item)=>item.id===id);viewerAssetId=id;viewerStartStack=startStack;viewerLastId=id;viewerLastPosition=index<0?null:collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index+1:index+1;viewer=true;if(updateUrl)setViewerUrl(id,'push')}
+  function syncViewerFromLocation(){const id=v2AssetIdFromPath(window.location.pathname);if(id){if(!viewer||viewerAssetId!==id)openViewer(id,false,false);return}if(viewer)closeViewer(false)}
   async function synchronizeViewerCollection(id:string,navigation:ViewerNavigationWindow):Promise<void>{
     viewerLastId=id;
     if(navigation.position!==null)viewerLastPosition=navigation.position;
@@ -159,7 +165,7 @@
     }
     while(!items.some((item)=>item.id===id)&&items.length<position&&nextCursor){const before=items.length;await refreshSearch(false);if(items.length===before)break}
   }
-  function handleViewerNavigate(id:string,navigation:ViewerNavigationWindow):Promise<void>{const sync=synchronizeViewerCollection(id,navigation);viewerCollectionSync=sync.catch(()=>{});return sync}
+  function handleViewerNavigate(id:string,navigation:ViewerNavigationWindow):Promise<void>{setViewerUrl(id,'replace');const sync=synchronizeViewerCollection(id,navigation);viewerCollectionSync=sync.catch(()=>{});return sync}
   async function reconcileViewerMutation():Promise<void>{
     const previouslyLoaded=items.length;
     if(collection.resultMode==='Pagination'){await refreshSearch(true);return}
@@ -167,8 +173,8 @@
     const targetLoaded=Math.min(previouslyLoaded,total);
     while(items.length<targetLoaded&&nextCursor){const before=items.length;if(!await refreshSearch(false)||items.length===before)break}
   }
-  function closeViewer(){viewer=false;viewerStartStack=false;const id=viewerLastId;const pending=viewerCollectionSync;void(async()=>{await pending;await tick();scrollViewedAssetIntoView(assetGrid,id)})()}
-  async function filterViewerRelationship(kind:'album'|'tag',id:string){viewer=false;viewerAssetId=null;viewerStartStack=false;tab='Browse';selectedSaved='';searchMode='Expert';rules=[{id:++seq,field:kind,op:'is',value:id}];groups=[];logic='AND';negated=false;await runSearch()}
+  function closeViewer(updateUrl=true){viewer=false;viewerStartStack=false;if(updateUrl)setViewerUrl(null,'replace');const id=viewerLastId;const pending=viewerCollectionSync;void(async()=>{await pending;await tick();scrollViewedAssetIntoView(assetGrid,id)})()}
+  async function filterViewerRelationship(kind:'album'|'tag',id:string){closeViewer();viewerAssetId=null;tab='Browse';selectedSaved='';searchMode='Expert';rules=[{id:++seq,field:kind,op:'is',value:id}];groups=[];logic='AND';negated=false;await runSearch()}
   function handleTileActivate(id:string,event:MouseEvent){if(interaction.consumeSuppressedClick(id))return;if(selectionActive||event.metaKey||event.ctrlKey||event.shiftKey){handleSelectionClick(id,event);return}openViewer(id)}
   async function setSelectedFavorite(){if(!selectionActive)return;const next=favoriteActionLabel==='Favorite',target=await preparedSelectionTarget();if(!target)return;const result=await mutations.run(next?'Favorite':'Unfavorite',(value)=>libraryData.assets.setFavorite(value,next),target);if(result){const changed=new Set(result.affectedIds);items=items.map((item)=>changed.has(item.id)?{...item,is_favorite:next}:item)}moreOpen=false}
   async function setSelectedArchived(){if(!selectionActive)return;const next=archiveActionLabel==='Archive',target=await preparedSelectionTarget();if(!target)return;const result=await mutations.run(next?'Archive':'Unarchive',(value)=>libraryData.assets.setArchived(value,next),target);if(result){const changed=new Set(result.affectedIds);items=items.map((item)=>changed.has(item.id)?{...item,is_archived:next}:item)}moreOpen=false}
@@ -194,10 +200,10 @@
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen&&target instanceof Element&&!target.closest('.v2-selection-more'))moreOpen=false}
   async function consumeFilterHandoff(){const handoff=consumeV2AssetFilterHandoff();if(!handoff)return false;simpleAdvanced={...emptyAssetAdvanced(),albumIds:(handoff.albumIds??[]).join(','),tagIds:(handoff.tagIds??[]).join(',')};searchMode='Simple';await runSearch();return true}
   async function retryPageError(){mutations.clearError();relations.clearError();removableRelations.error='';savedSearches.error='';selectionError='';searchRequests.clearError();await Promise.all([refreshSearch(true),searchAlbumOptions(relations.albumQuery),searchTagOptions(relations.tagQuery),savedSearches.refresh()])}
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true)}catch(error){searchRequests.setError(errorMessage(error,'The asset data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{if(capabilityTimer!==null)clearTimeout(capabilityTimer);void selectionWorkspace.flush();searchRequests.cancel();capabilityRequests.cancel();relations.destroy();removableRelations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true);syncViewerFromLocation()}catch(error){searchRequests.setError(errorMessage(error,'The asset data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{if(capabilityTimer!==null)clearTimeout(capabilityTimer);void selectionWorkspace.flush();searchRequests.cancel();capabilityRequests.cancel();relations.destroy();removableRelations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
 
-<svelte:window onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={finishSelectionInteraction} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(stackPlan){if(!mutations.busy)resetStackReview()}else if(trashConfirmOpen){if(!mutations.busy)trashConfirmOpen=false}else if(relationDialog)relationDialog=null;else if(removeRelationDialog){if(!mutations.busy)removeRelationDialog=null}else if(moreOpen)moreOpen=false;else if(saveSearchOpen){}else if(drawer)drawer=false;else if(viewer)closeViewer();else if(selectionActive)clearSelection()}}}/>
+<svelte:window onpopstate={syncViewerFromLocation} onclick={handleWindowClick} onpointermove={interaction.move} onpointerup={finishSelectionInteraction} onpointercancel={interaction.cancel} onkeydown={(event)=>{if(event.key==='Escape'){if(interaction.isDragging())interaction.cancel();else if(stackPlan){if(!mutations.busy)resetStackReview()}else if(trashConfirmOpen){if(!mutations.busy)trashConfirmOpen=false}else if(relationDialog)relationDialog=null;else if(removeRelationDialog){if(!mutations.busy)removeRelationDialog=null}else if(moreOpen)moreOpen=false;else if(saveSearchOpen){}else if(drawer)drawer=false;else if(viewer)closeViewer();else if(selectionActive)clearSelection()}}}/>
 
 <V2PageLayout title="Assets" description="Search, browse, select and mutate assets through the active V2 data source.">
   {#snippet tabs()}<V2Tabs items={['Browse','Saved searches']} active={tab} ariaLabel="Asset sections" onselect={(value)=>tab=value as AssetTab}/>{/snippet}
