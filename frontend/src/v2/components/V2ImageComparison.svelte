@@ -63,6 +63,7 @@
   let localMinimumDifference = $state(0);
   let localHighlightColor = $state('#00DCFF');
   let localHighlightColorPosition = $state(120);
+  let localGridDetailLevel = $state(4);
   let selectedNatural = $state({ width: 0, height: 0 });
   let referenceNatural = $state({ width: 0, height: 0 });
   let selectedSelection = $state({ key: '', index: 0 });
@@ -256,6 +257,7 @@
         bind:minimumDifference={localMinimumDifference}
         bind:highlightColor={localHighlightColor}
         bind:highlightColorPosition={localHighlightColorPosition}
+        bind:gridDetailLevel={localGridDetailLevel}
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
         onselectederror={selectedFailed}
