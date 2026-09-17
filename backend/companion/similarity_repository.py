@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from collections import OrderedDict, deque
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -30,6 +31,10 @@ from companion.similarity_features import (
     SIMILARITY_CONFIG_FINGERPRINT,
     VisualFeatureResult,
     compare_visual_features,
+)
+from companion.similarity_generation import (
+    SIMILARITY_EVIDENCE_CODE_GENERATION,
+    SimilarityEvidenceEpochRepository,
 )
 
 SIMILARITY_COMPARISON_VERSION = 6
@@ -118,6 +123,18 @@ def _source_key(record: SimilarityFeatureRecord) -> str:
     )
 
 
+def _pair_config_fingerprint(feature_config_fingerprint: str) -> str:
+    """Apply the broad generation kill-switch even to legacy coarse features."""
+
+    return hashlib.sha256(
+        (
+            f"{feature_config_fingerprint}:"
+            f"evidence-generation={SIMILARITY_EVIDENCE_CODE_GENERATION}"
+        ).encode(),
+        usedforsecurity=False,
+    ).hexdigest()
+
+
 def _feature(record: SimilarityFeatureRecord) -> VisualFeatureResult:
     return VisualFeatureResult(
         model_version=record.model_version,
@@ -179,6 +196,7 @@ class SimilarityRepository:
     ) -> None:
         self._database = database
         self._details = details
+        self._evidence_epoch = SimilarityEvidenceEpochRepository(database)
         self._pair_max_entries = max(1, pair_max_bytes // PAIR_CACHE_ENTRY_ESTIMATE_BYTES)
         self._pair_max_bytes = pair_max_bytes
         self._hot_max_entries = max(1, hot_max_bytes // HOT_CACHE_ENTRY_ESTIMATE_BYTES)
@@ -198,6 +216,7 @@ class SimilarityRepository:
         high: UUID,
         low_feature: SimilarityFeatureRecord,
         high_feature: SimilarityFeatureRecord,
+        evidence_epoch: int,
         detail_version: int = 0,
     ) -> tuple[object, ...]:
         return (
@@ -206,7 +225,9 @@ class SimilarityRepository:
             _source_key(low_feature),
             _source_key(high_feature),
             low_feature.config_fingerprint,
+            SIMILARITY_EVIDENCE_CODE_GENERATION,
             SIMILARITY_COMPARISON_VERSION,
+            evidence_epoch,
             detail_version,
         )
 
@@ -230,8 +251,15 @@ class SimilarityRepository:
         self,
         groups: list[list[UUID]],
         features: dict[UUID, SimilarityFeatureRecord],
+        *,
+        evidence_epoch: int | None = None,
     ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
         started = perf_counter()
+        expected_epoch = (
+            evidence_epoch
+            if evidence_epoch is not None
+            else await self._evidence_epoch.capture_epoch()
+        )
         requested = requested_reference_pairs(groups, set(features))
         if len(requested) > PAIR_DETAIL_BATCH_SIZE:
             ordered = list(requested)
@@ -240,7 +268,9 @@ class SimilarityRepository:
                 batch = ordered[offset : offset + PAIR_DETAIL_BATCH_SIZE]
                 combined.update(
                     await self.reference_edges(
-                        [[left, right] for left, right in batch], features
+                        [[left, right] for left, right in batch],
+                        features,
+                        evidence_epoch=expected_epoch,
                     )
                 )
             return combined
@@ -254,7 +284,8 @@ class SimilarityRepository:
         }
         if len(generation) != 1:
             raise ValueError("Similarity comparison requires one compatible feature generation")
-        model_version, feature_version, config_fingerprint = generation.pop()
+        model_version, feature_version, feature_config_fingerprint = generation.pop()
+        pair_config_fingerprint = _pair_config_fingerprint(feature_config_fingerprint)
 
         detail_records = (
             await self._details.get_current_many(
@@ -264,11 +295,12 @@ class SimilarityRepository:
         )
 
         def detail_version(low: UUID, high: UUID) -> int:
+            # Detail samples are independently tied to the current synchronized
+            # source by SimilarityDetailRepository. They can therefore refine
+            # either search-generation or legacy integrity coarse features.
             return (
                 DETAIL_FEATURE_VERSION
                 if low in detail_records and high in detail_records
-                and isinstance(features[low], AssetSimilaritySearchFeatureRecord)
-                and isinstance(features[high], AssetSimilaritySearchFeatureRecord)
                 else 0
             )
 
@@ -277,7 +309,12 @@ class SimilarityRepository:
         for low, high in canonical:
             hot = self._hot_get(
                 self._hot_key(
-                    low, high, features[low], features[high], detail_version(low, high)
+                    low,
+                    high,
+                    features[low],
+                    features[high],
+                    expected_epoch,
+                    detail_version(low, high),
                 )
             )
             if hot is None:
@@ -293,7 +330,7 @@ class SimilarityRepository:
             AssetSimilarityEdgeRecord.model_version == model_version,
             AssetSimilarityEdgeRecord.feature_version == feature_version,
             AssetSimilarityEdgeRecord.comparison_version == SIMILARITY_COMPARISON_VERSION,
-            AssetSimilarityEdgeRecord.config_fingerprint == config_fingerprint,
+            AssetSimilarityEdgeRecord.config_fingerprint == pair_config_fingerprint,
         )
         if uncached:
             async with self._database.sessions() as session:
@@ -318,8 +355,14 @@ class SimilarityRepository:
                 current[(low, high)] = evidence
                 self._hot_put(
                     self._hot_key(
-                        low, high, low_feature, high_feature, pair_detail_version
-                    ), evidence
+                        low,
+                        high,
+                        low_feature,
+                        high_feature,
+                        expected_epoch,
+                        pair_detail_version,
+                    ),
+                    evidence,
                 )
                 self._pair_hits += 1
                 continue
@@ -336,16 +379,17 @@ class SimilarityRepository:
                     DetailFeature(high_detail.width, high_detail.height, high_detail.sample),
                 )
                 detail_source = (
-                    "preview" if "preview_fallback" in {low_detail.origin, high_detail.origin}
-                    else "transcoded" if "transcoded_fullsize" in {
-                        low_detail.origin, high_detail.origin
-                    }
+                    "preview"
+                    if "preview_fallback" in {low_detail.origin, high_detail.origin}
+                    else "transcoded"
+                    if "transcoded_fullsize" in {low_detail.origin, high_detail.origin}
                     else "original"
                 )
             evidence = PairSimilarityEvidence(
                 similarity_percent=(
                     min(comparison.similarity_percent, detail_comparison.similarity_percent)
-                    if detail_comparison is not None else comparison.similarity_percent
+                    if detail_comparison is not None
+                    else comparison.similarity_percent
                 ),
                 structural_percent=comparison.structural_percent,
                 perceptual_percent=comparison.perceptual_percent,
@@ -377,8 +421,14 @@ class SimilarityRepository:
             current[(low, high)] = evidence
             self._hot_put(
                 self._hot_key(
-                    low, high, low_feature, high_feature, pair_detail_version
-                ), evidence
+                    low,
+                    high,
+                    low_feature,
+                    high_feature,
+                    expected_epoch,
+                    pair_detail_version,
+                ),
+                evidence,
             )
             values.append(
                 {
@@ -403,7 +453,7 @@ class SimilarityRepository:
                     "model_version": evidence.model_version,
                     "feature_version": evidence.feature_version,
                     "comparison_version": evidence.comparison_version,
-                    "config_fingerprint": config_fingerprint,
+                    "config_fingerprint": pair_config_fingerprint,
                     "calculated_at": datetime.now(UTC),
                 }
             )
@@ -418,6 +468,7 @@ class SimilarityRepository:
                 "comparison_version",
             }
             async with self._database.sessions() as session, session.begin():
+                await self._evidence_epoch.assert_current(session, expected_epoch)
                 await session.execute(
                     statement.on_conflict_do_update(
                         index_elements=[
@@ -496,6 +547,7 @@ class SimilarityRepository:
         return round(ordered[index], 2)
 
     async def cache_status(self) -> dict[str, object]:
+        legacy_pair_config = _pair_config_fingerprint(SIMILARITY_CONFIG_FINGERPRINT)
         async with self._database.sessions() as session:
             feature_count = int(
                 await session.scalar(
@@ -513,8 +565,7 @@ class SimilarityRepository:
                     select(func.count())
                     .select_from(AssetSimilarityEdgeRecord)
                     .where(
-                        AssetSimilarityEdgeRecord.config_fingerprint
-                        == SIMILARITY_CONFIG_FINGERPRINT
+                        AssetSimilarityEdgeRecord.config_fingerprint == legacy_pair_config
                     )
                 )
                 or 0

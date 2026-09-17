@@ -387,16 +387,19 @@ class SimilarityIndexMaintainer:
         source: ImmichAsset | None,
         reason: str,
         alpha_state: SourceAlphaState = "unknown_alpha",
+        evidence_epoch: int | None = None,
     ) -> None:
         if source is None or _failure_is_retryable(reason):
             return
         marker = getattr(self._features, "mark_unavailable", None)
         if marker is None:
             return
+        kwargs: dict[str, object] = {}
         if _accepts_parameter(marker, "source_alpha_state"):
-            persisted = await marker(source, reason, source_alpha_state=alpha_state)
-        else:
-            persisted = await marker(source, reason)
+            kwargs["source_alpha_state"] = alpha_state
+        if evidence_epoch is not None and _accepts_parameter(marker, "evidence_epoch"):
+            kwargs["evidence_epoch"] = evidence_epoch
+        persisted = await marker(source, reason, **kwargs)
         if persisted:
             self._count("deterministic_retries_suppressed")
 
@@ -409,8 +412,14 @@ class SimilarityIndexMaintainer:
         warning: bool = True,
         asset_id: UUID | None = None,
         attempt: str = "",
+        evidence_epoch: int | None = None,
     ) -> tuple[bool, str]:
-        await self._persist_deterministic_failure(source, reason, alpha_state)
+        await self._persist_deterministic_failure(
+            source,
+            reason,
+            alpha_state,
+            evidence_epoch,
+        )
         self._count("failed_or_skipped_attempts")
         if warning:
             logger.warning(
@@ -431,6 +440,8 @@ class SimilarityIndexMaintainer:
     async def _fingerprint_unbounded(
         self, context: TaskContext, asset_id: UUID, source: ImmichAsset | None, *, attempt: str
     ) -> tuple[bool, str | None]:
+        epoch_getter = getattr(self._features, "current_evidence_epoch", None)
+        evidence_epoch = await epoch_getter() if epoch_getter is not None else None
         try:
             if source is None:
                 self._count("failed_or_skipped_attempts")
@@ -455,6 +466,7 @@ class SimilarityIndexMaintainer:
                     warning=False,
                     asset_id=asset_id,
                     attempt=attempt,
+                    evidence_epoch=evidence_epoch,
                 )
 
             # Dimension preflight happens before any original stream is opened.
@@ -503,6 +515,7 @@ class SimilarityIndexMaintainer:
                         alpha_state=alpha_state,
                         asset_id=asset_id,
                         attempt=attempt,
+                        evidence_epoch=evidence_epoch,
                     )
                 origin = "bounded"
                 media_digest = sha256(preview, usedforsecurity=False).hexdigest()
@@ -537,6 +550,7 @@ class SimilarityIndexMaintainer:
                             alpha_state=alpha_state,
                             asset_id=asset_id,
                             attempt=attempt,
+                            evidence_epoch=evidence_epoch,
                         )
                 else:
                     media_digest = sha256(preview, usedforsecurity=False).hexdigest()
@@ -553,16 +567,12 @@ class SimilarityIndexMaintainer:
                 return False, "Immich source changed while search evidence was generated"
             started = perf_counter()
             saver = self._features.save
+            kwargs = {"origin": origin}
             if _accepts_parameter(saver, "source_alpha_state"):
-                saved_feature = await saver(
-                    source,
-                    media_digest,
-                    feature,
-                    origin=origin,
-                    source_alpha_state=alpha_state,
-                )
-            else:
-                saved_feature = await saver(source, media_digest, feature, origin=origin)
+                kwargs["source_alpha_state"] = alpha_state
+            if evidence_epoch is not None and _accepts_parameter(saver, "evidence_epoch"):
+                kwargs["evidence_epoch"] = evidence_epoch
+            saved_feature = await saver(source, media_digest, feature, **kwargs)
             if saved_feature:
                 self._measure("db_persistence", started)
                 if origin == "preview":
@@ -583,6 +593,7 @@ class SimilarityIndexMaintainer:
                 reason,
                 asset_id=asset_id,
                 attempt=attempt,
+                evidence_epoch=evidence_epoch,
             )
 
     @staticmethod

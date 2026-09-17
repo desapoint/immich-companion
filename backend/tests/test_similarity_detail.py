@@ -321,10 +321,14 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
     maintainer = SimilarityDetailMaintainer(
         immich, repository, max_bytes=10_000_000  # type: ignore[arg-type]
     )
-    await maintainer.ensure(Context(), [ASSET], {ASSET: search})  # type: ignore[arg-type]
+    await maintainer.ensure(  # type: ignore[arg-type]
+        Context(), [ASSET], {ASSET: search}, evidence_epoch=1
+    )
     assert maintainer.counters["detail_features_generated"] == 1
     maintainer.reset_counters()
-    await maintainer.ensure(Context(), [ASSET], {ASSET: search})  # type: ignore[arg-type]
+    await maintainer.ensure(  # type: ignore[arg-type]
+        Context(), [ASSET], {ASSET: search}, evidence_epoch=1
+    )
 
     assert repository.origins == ["transcoded_fullsize"]
     assert (immich.original_calls, immich.fullsize_calls) == (1, 1)
@@ -378,7 +382,9 @@ async def test_reduced_fullsize_response_is_labeled_lower_grade() -> None:
 
     repository = Repository()
     maintainer = SimilarityDetailMaintainer(Immich(), repository)  # type: ignore[arg-type]
-    await maintainer.ensure(Context(), [ASSET], {ASSET: search})  # type: ignore[arg-type]
+    await maintainer.ensure(  # type: ignore[arg-type]
+        Context(), [ASSET], {ASSET: search}, evidence_epoch=1
+    )
 
     assert repository.origin == "preview_fallback"
     assert maintainer.counters["detail_transcoded_fallbacks"] == 0
@@ -447,12 +453,22 @@ async def test_detail_stage_caps_streams_and_preserves_pause() -> None:
     maintainer = SimilarityDetailMaintainer(
         immich, repository, slots=2  # type: ignore[arg-type]
     )
-    await maintainer.ensure(context, ids, {asset_id: search for asset_id in ids})  # type: ignore[arg-type]
+    await maintainer.ensure(  # type: ignore[arg-type]
+        context,
+        ids,
+        {asset_id: search for asset_id in ids},
+        evidence_epoch=1,
+    )
     assert immich.peak <= 2
     assert len(repository.saved) == 4
 
     repository.saved.clear()
     context.paused = True
     with pytest.raises(TaskPausedError):
-        await maintainer.ensure(context, ids, {asset_id: search for asset_id in ids})  # type: ignore[arg-type]
+        await maintainer.ensure(  # type: ignore[arg-type]
+            context,
+            ids,
+            {asset_id: search for asset_id in ids},
+            evidence_epoch=1,
+        )
     assert repository.saved == {}

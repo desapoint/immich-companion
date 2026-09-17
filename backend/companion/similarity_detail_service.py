@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
@@ -39,7 +40,17 @@ from companion.similarity_detail import (
     detail_diagnostics,
     extract_detail_feature,
 )
-from companion.similarity_search_features import MAX_SEARCH_PREVIEW_BYTES
+from companion.similarity_generation import (
+    SimilarityEvidenceEpochRepository,
+    SimilarityEvidenceGenerationState,
+    SimilarityEvidenceRebuildResult,
+)
+from companion.similarity_search_features import (
+    MAX_SEARCH_PREVIEW_BYTES,
+    SEARCH_CONFIG_FINGERPRINT,
+    SEARCH_FEATURE_VERSION,
+    SEARCH_MODEL_VERSION,
+)
 from companion.similarity_transparency import (
     bounded_rendition_is_detail_safe,
     classify_source_alpha,
@@ -55,6 +66,13 @@ logger = logging.getLogger("uvicorn.error")
 DetailEvidenceSource = Literal["original", "transcoded", "preview"]
 
 
+def _accepts_parameter(callable_object: object, parameter: str) -> bool:
+    try:
+        return parameter in inspect.signature(callable_object).parameters
+    except (TypeError, ValueError):
+        return True
+
+
 @dataclass(frozen=True, slots=True)
 class StoredDetailDiagnostics:
     diagnostics: DetailDiagnostics
@@ -66,6 +84,16 @@ class SimilarityDetailRepository:
 
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
+        self._evidence_epoch = SimilarityEvidenceEpochRepository(database)
+
+    async def current_evidence_epoch(self) -> int:
+        return await self._evidence_epoch.capture_epoch()
+
+    async def generation_status(self) -> SimilarityEvidenceGenerationState:
+        return await self._evidence_epoch.status()
+
+    async def rebuild_evidence(self) -> SimilarityEvidenceRebuildResult:
+        return await self._evidence_epoch.rebuild()
 
     async def get_current_many(
         self, asset_ids: list[UUID]
@@ -79,11 +107,27 @@ class SimilarityDetailRepository:
                 AssetSimilaritySearchFeatureRecord.asset_id
                 == AssetSimilarityDetailFeatureRecord.asset_id,
             )
+            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
             .where(
                 AssetSimilarityDetailFeatureRecord.asset_id.in_(set(asset_ids)),
                 AssetSimilarityDetailFeatureRecord.source_identity
                 == AssetSimilaritySearchFeatureRecord.source_identity,
                 AssetSimilarityDetailFeatureRecord.feature_version == DETAIL_FEATURE_VERSION,
+                AssetRecord.asset_type == "IMAGE",
+                AssetRecord.is_trashed.is_(False),
+                AssetRecord.is_offline.is_(False),
+                AssetSimilaritySearchFeatureRecord.model_version == SEARCH_MODEL_VERSION,
+                AssetSimilaritySearchFeatureRecord.feature_version == SEARCH_FEATURE_VERSION,
+                AssetSimilaritySearchFeatureRecord.config_fingerprint
+                == SEARCH_CONFIG_FINGERPRINT,
+                AssetSimilaritySearchFeatureRecord.source_file_modified_at
+                == AssetRecord.file_modified_at,
+                AssetSimilaritySearchFeatureRecord.source_file_size_bytes.is_not_distinct_from(
+                    AssetRecord.file_size_bytes
+                ),
+                AssetSimilaritySearchFeatureRecord.source_checksum.is_not_distinct_from(
+                    AssetRecord.checksum
+                ),
             )
         )
         async with self._database.sessions() as session:
@@ -105,6 +149,7 @@ class SimilarityDetailRepository:
                 AssetSimilaritySearchFeatureRecord.asset_id
                 == AssetSimilarityBoundedStateRecord.asset_id,
             )
+            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
             .where(
                 AssetSimilarityBoundedStateRecord.asset_id.in_(set(asset_ids)),
                 AssetSimilarityBoundedStateRecord.capability_version
@@ -119,6 +164,21 @@ class SimilarityDetailRepository:
                 == AssetSimilaritySearchFeatureRecord.source_identity,
                 AssetSimilarityBoundedStateRecord.detail_feature_version
                 == DETAIL_FEATURE_VERSION,
+                AssetRecord.asset_type == "IMAGE",
+                AssetRecord.is_trashed.is_(False),
+                AssetRecord.is_offline.is_(False),
+                AssetSimilaritySearchFeatureRecord.model_version == SEARCH_MODEL_VERSION,
+                AssetSimilaritySearchFeatureRecord.feature_version == SEARCH_FEATURE_VERSION,
+                AssetSimilaritySearchFeatureRecord.config_fingerprint
+                == SEARCH_CONFIG_FINGERPRINT,
+                AssetSimilaritySearchFeatureRecord.source_file_modified_at
+                == AssetRecord.file_modified_at,
+                AssetSimilaritySearchFeatureRecord.source_file_size_bytes.is_not_distinct_from(
+                    AssetRecord.file_size_bytes
+                ),
+                AssetSimilaritySearchFeatureRecord.source_checksum.is_not_distinct_from(
+                    AssetRecord.checksum
+                ),
             )
         )
         async with self._database.sessions() as session:
@@ -142,10 +202,18 @@ class SimilarityDetailRepository:
         return None
 
     async def mark_unavailable(
-        self, source_identity: str, asset_id: UUID, reason: str
+        self,
+        source_identity: str,
+        asset_id: UUID,
+        reason: str,
+        *,
+        evidence_epoch: int | None = None,
     ) -> bool:
         """Persist a deterministic bounded-detail failure against its source identity."""
 
+        expected_epoch = (
+            evidence_epoch if evidence_epoch is not None else await self.current_evidence_epoch()
+        )
         statement = (
             update(AssetSimilarityBoundedStateRecord)
             .where(
@@ -166,6 +234,7 @@ class SimilarityDetailRepository:
             )
         )
         async with self._database.sessions() as session, session.begin():
+            await self._evidence_epoch.assert_current(session, expected_epoch)
             result = await session.execute(statement)
         return bool(result.rowcount)
 
@@ -203,7 +272,13 @@ class SimilarityDetailRepository:
         )
 
     async def save(
-        self, source_identity: str, asset_id: UUID, feature: DetailFeature, origin: str
+        self,
+        source_identity: str,
+        asset_id: UUID,
+        feature: DetailFeature,
+        origin: str,
+        *,
+        evidence_epoch: int | None = None,
     ) -> bool:
         if origin not in {
             "original",
@@ -213,6 +288,9 @@ class SimilarityDetailRepository:
             "bounded_preview",
         }:
             raise ValueError("Unsupported detail evidence origin")
+        expected_epoch = (
+            evidence_epoch if evidence_epoch is not None else await self.current_evidence_epoch()
+        )
         values: dict[str, Any] = {
             "asset_id": asset_id,
             "source_identity": source_identity,
@@ -224,6 +302,7 @@ class SimilarityDetailRepository:
             "analyzed_at": datetime.now(UTC),
         }
         async with self._database.sessions() as session, session.begin():
+            await self._evidence_epoch.assert_current(session, expected_epoch)
             search = await session.get(
                 AssetSimilaritySearchFeatureRecord, asset_id, with_for_update=True
             )
@@ -307,6 +386,7 @@ class SimilarityDetailMaintainer:
             "unavailable_bounded_validations": 0,
             "alpha_uncertain_bounded_evidence": 0,
             "deterministic_retries_suppressed": 0,
+            "detail_unavailable_retried": 0,
         }
 
     async def _bounded_original(self, context: TaskContext, asset_id: UUID):
@@ -383,10 +463,25 @@ class SimilarityDetailMaintainer:
         return state or "unknown_alpha"
 
     async def _persist_detail_unavailable(
-        self, asset_id: UUID, search: AssetSimilaritySearchFeatureRecord, reason: str
+        self,
+        asset_id: UUID,
+        search: AssetSimilaritySearchFeatureRecord,
+        reason: str,
+        evidence_epoch: int,
     ) -> None:
         marker = getattr(self._details, "mark_unavailable", None)
-        if marker is not None and await marker(search.source_identity, asset_id, reason):
+        if marker is None:
+            return
+        if _accepts_parameter(marker, "evidence_epoch"):
+            persisted = await marker(
+                search.source_identity,
+                asset_id,
+                reason,
+                evidence_epoch=evidence_epoch,
+            )
+        else:
+            persisted = await marker(search.source_identity, asset_id, reason)
+        if persisted:
             self.counters["deterministic_retries_suppressed"] += 1
 
     async def _extract_bounded(
@@ -454,6 +549,7 @@ class SimilarityDetailMaintainer:
         context: TaskContext,
         asset_id: UUID,
         search: AssetSimilaritySearchFeatureRecord,
+        evidence_epoch: int,
     ) -> bool:
         async with self._slots:
             await context.ensure_active()
@@ -482,7 +578,9 @@ class SimilarityDetailMaintainer:
                     self.counters["detail_features_unavailable"] += 1
                     self.counters["unavailable_bounded_validations"] += 1
                     if reason == "alpha_preserving_bounded_rendition_unavailable":
-                        await self._persist_detail_unavailable(asset_id, search, reason)
+                        await self._persist_detail_unavailable(
+                            asset_id, search, reason, evidence_epoch
+                        )
                         logger.warning(
                             "Candidate bounded detail unavailable: asset_id=%s reason=%s",
                             asset_id,
@@ -530,7 +628,17 @@ class SimilarityDetailMaintainer:
                 != sorted((live.width, live.height))
             ):
                 origin = "preview_fallback"
-            saved = await self._details.save(search.source_identity, asset_id, feature, origin)
+            saver = self._details.save
+            if _accepts_parameter(saver, "evidence_epoch"):
+                saved = await saver(
+                    search.source_identity,
+                    asset_id,
+                    feature,
+                    origin,
+                    evidence_epoch=evidence_epoch,
+                )
+            else:
+                saved = await saver(search.source_identity, asset_id, feature, origin)
             if saved and origin == "transcoded_fullsize":
                 self.counters["detail_transcoded_fallbacks"] += 1
             elif saved and origin in {"preview_fallback", "bounded_preview"}:
@@ -547,8 +655,17 @@ class SimilarityDetailMaintainer:
         search_features: dict[UUID, AssetSimilaritySearchFeatureRecord],
         *,
         on_progress: Callable[[int, int], Awaitable[None]] | None = None,
+        evidence_epoch: int | None = None,
     ) -> None:
+        expected_epoch = (
+            evidence_epoch
+            if evidence_epoch is not None
+            else await self._details.current_evidence_epoch()
+        )
         ordered = sorted(set(asset_ids), key=lambda item: item.int)
+        retry_unavailable = (
+            getattr(getattr(context, "task", None), "task_type", None) == "similarity_scan"
+        )
         for offset in range(0, len(ordered), DETAIL_WORK_BATCH_SIZE):
             await context.ensure_active()
             page = ordered[offset : offset + DETAIL_WORK_BATCH_SIZE]
@@ -558,17 +675,37 @@ class SimilarityDetailMaintainer:
             unavailable = (
                 await unavailable_getter(page) if unavailable_getter is not None else {}
             )
-            self.counters["deterministic_retries_suppressed"] += len(unavailable)
+            unavailable_without_detail = {
+                asset_id: reason
+                for asset_id, reason in unavailable.items()
+                if asset_id not in current
+            }
+            if retry_unavailable:
+                # A full user-requested scan is the explicit regeneration boundary:
+                # retry source-current deterministic failures instead of carrying
+                # their old terminal marker into the new scan generation.
+                self.counters["detail_unavailable_retried"] += len(
+                    unavailable_without_detail
+                )
+            else:
+                self.counters["deterministic_retries_suppressed"] += len(
+                    unavailable_without_detail
+                )
             pending = [
                 asset_id
                 for asset_id in page
                 if asset_id not in current
-                and asset_id not in unavailable
+                and (retry_unavailable or asset_id not in unavailable)
                 and asset_id in search_features
             ]
             tasks = [
                 asyncio.create_task(
-                    self._extract_one(context, asset_id, search_features[asset_id])
+                    self._extract_one(
+                        context,
+                        asset_id,
+                        search_features[asset_id],
+                        expected_epoch,
+                    )
                 )
                 for asset_id in pending
             ]
