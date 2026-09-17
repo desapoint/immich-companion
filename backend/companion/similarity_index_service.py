@@ -373,7 +373,7 @@ class SimilarityIndexMaintainer:
             final,
             completed + retry_completed,
             unavailable_result,
-            attempted | retry_attempted,
+            retry_attempted if self._legacy_coverage_contract else attempted | retry_attempted,
             failures if not final.complete or final.unavailable_count else {},
         )
 

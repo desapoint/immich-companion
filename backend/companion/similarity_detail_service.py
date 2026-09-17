@@ -336,7 +336,7 @@ class SimilarityDetailMaintainer:
         width = getattr(search, "width", None)
         height = getattr(search, "height", None)
         return bool(
-            search.fingerprint_origin == "bounded"
+            getattr(search, "fingerprint_origin", "preview") == "bounded"
             or (width and height and width * height > MAX_DECODED_PIXELS)
         )
 
