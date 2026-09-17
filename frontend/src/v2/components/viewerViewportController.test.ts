@@ -102,6 +102,52 @@ describe('ViewerViewportController persistent camera', () => {
     expect(camera.panY).not.toBe(beforePan.y);
   });
 
+  it('keeps a letterboxed image at the same relative edge placement across mode changes', () => {
+    const sideBySide = fakeViewport(420, 600);
+    const singlePane = fakeViewport(840, 600);
+    const camera = new ViewerViewportController();
+    camera.setViewport(sideBySide.node);
+    camera.setNaturalSize(600, 1600);
+    camera.panBy(90, 0);
+
+    const sideSize = renderedSize(420, 600, 600, 1600, camera.zoom)!;
+    const sideTravel = Math.abs(sideSize.imageW - sideSize.viewportW) / 2;
+    const initialPlacement = camera.panX / sideTravel;
+
+    camera.setViewport(null);
+    camera.setViewport(singlePane.node);
+
+    const singleSize = renderedSize(840, 600, 600, 1600, camera.zoom)!;
+    const singleTravel = Math.abs(singleSize.imageW - singleSize.viewportW) / 2;
+    expect(camera.panX / singleTravel).toBeCloseTo(initialPlacement, 6);
+
+    camera.setViewport(null);
+    camera.setViewport(sideBySide.node);
+
+    expect(camera.panX).toBeCloseTo(90, 6);
+    expect(camera.panY).toBe(0);
+  });
+
+  it('does not walk a letterboxed image toward center after repeated comparison mode cycles', () => {
+    const sideBySide = fakeViewport(420, 600);
+    const singlePane = fakeViewport(840, 600);
+    const camera = new ViewerViewportController();
+    camera.setViewport(sideBySide.node);
+    camera.setNaturalSize(1600, 600);
+    camera.panBy(0, 200);
+    const expectedPanY = camera.panY;
+
+    for (let index = 0; index < 8; index += 1) {
+      camera.setViewport(null);
+      camera.setViewport(singlePane.node);
+      camera.setViewport(null);
+      camera.setViewport(sideBySide.node);
+    }
+
+    expect(camera.panX).toBe(0);
+    expect(camera.panY).toBeCloseTo(expectedPanY, 6);
+  });
+
   it('falls back to focal remapping when natural image geometry changes while the viewport is detached', () => {
     const firstViewport = fakeViewport(840, 600);
     const replacementViewport = fakeViewport(840, 600);
