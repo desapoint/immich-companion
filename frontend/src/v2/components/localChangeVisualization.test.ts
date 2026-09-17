@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
-  LOCAL_CHANGE_LABEL_MIN_FONT_PX,
+  LOCAL_CHANGE_LABEL_FONT_PX,
+  LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
   canRenderLocalChangeLabel,
   localChangeFillAlpha,
-  localChangeLabelFontSize,
+  localChangeFillColor,
   localChangePassesVisibilityThreshold,
   localChangeVisualPercent,
 } from './localChangeVisualization';
@@ -50,33 +51,42 @@ describe('localChangeVisualization', () => {
     expect(localChangeFillAlpha(5, 50)).toBeCloseTo(localChangeFillAlpha(50, 0));
   });
 
-  it('never shrinks labels below the readable minimum', () => {
-    expect(localChangeLabelFontSize(8, 8)).toBe(LOCAL_CHANGE_LABEL_MIN_FONT_PX);
-    expect(localChangeLabelFontSize(200, 200)).toBe(12);
+  it('combines the selected highlight color with the existing alpha mapping', () => {
+    expect(localChangeFillColor('#00DCFF', 0)).toBe('rgba(0, 220, 255, 0)');
+    expect(localChangeFillColor('#00DCFF', 0.58)).toBe('rgba(0, 220, 255, 0.58)');
+    expect(localChangeFillColor('#FF0000', 0.33)).toBe('rgba(255, 0, 0, 0.33)');
+    expect(localChangeFillColor('invalid', 2)).toBe('rgba(0, 220, 255, 1)');
   });
 
-  it('suppresses labels when the CSS-space cell cannot contain readable text', () => {
+  it('uses one fixed readable label size and hides labels when a cell cannot contain it', () => {
+    expect(LOCAL_CHANGE_LABEL_FONT_PX).toBe(11);
     expect(canRenderLocalChangeLabel({
-      cellWidth: 28,
-      cellHeight: 15,
-      measuredLabelWidth: 24,
-      fontSize: 10,
+      cellWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX + 7,
+      cellHeight: 20,
+      measuredLabelWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+      fontSize: LOCAL_CHANGE_LABEL_FONT_PX,
     })).toBe(false);
 
     expect(canRenderLocalChangeLabel({
-      cellWidth: 40,
+      cellWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX + 8,
       cellHeight: 20,
-      measuredLabelWidth: 24,
-      fontSize: 10,
+      measuredLabelWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+      fontSize: LOCAL_CHANGE_LABEL_FONT_PX,
     })).toBe(true);
   });
 
   it('requires readable height independently of available width', () => {
     expect(canRenderLocalChangeLabel({
       cellWidth: 100,
-      cellHeight: 12,
-      measuredLabelWidth: 24,
-      fontSize: 10,
+      cellHeight: 17,
+      measuredLabelWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+      fontSize: LOCAL_CHANGE_LABEL_FONT_PX,
     })).toBe(false);
+    expect(canRenderLocalChangeLabel({
+      cellWidth: 100,
+      cellHeight: 18,
+      measuredLabelWidth: LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+      fontSize: LOCAL_CHANGE_LABEL_FONT_PX,
+    })).toBe(true);
   });
 });
