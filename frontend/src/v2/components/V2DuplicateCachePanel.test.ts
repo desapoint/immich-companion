@@ -41,7 +41,7 @@ const status: SimilarityCacheStatus = {
 };
 
 describe('V2DuplicateCachePanel', () => {
-  it('exposes the destructive evidence rebuild separately from disposable cache clearing', () => {
+  it('keeps disposable cache controls separate from evidence generation', () => {
     const { body } = render(V2DuplicateCachePanel, {
       props: {
         status,
@@ -50,11 +50,23 @@ describe('V2DuplicateCachePanel', () => {
       },
     });
 
-    expect(body).toContain('Similarity evidence generation');
-    expect(body).toContain('Rebuild similarity evidence');
-    expect(body).toContain('hard boundary for search fingerprints');
-    expect(body).toContain('Review decisions and resolution history are preserved.');
+    expect(body).toContain('Disposable similarity cache');
     expect(body).toContain('Clear pair results');
-    expect(body).toContain('Clearing disposable previews or pair results does not remove durable Appearance features');
+    expect(body).toContain('do not advance the evidence epoch');
+    expect(body).not.toContain('Start new evidence epoch');
+  });
+
+  it('still exposes cache refresh when telemetry is unavailable', () => {
+    const { body } = render(V2DuplicateCachePanel, {
+      props: {
+        status: null,
+        onrefresh: () => {},
+        onclear: () => {},
+      },
+    });
+
+    expect(body).toContain('Cache telemetry is unavailable');
+    expect(body).toContain('Evidence-epoch controls remain available separately');
+    expect(body).toContain('Refresh cache status');
   });
 });
