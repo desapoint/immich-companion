@@ -516,7 +516,10 @@ class SimilarityDetailMaintainer:
                         pass
             if feature is None:
                 self.counters["detail_features_unavailable"] += 1
-                logger.warning("Candidate detail unavailable after attempted analysis: asset_id=%s", asset_id)
+                logger.warning(
+                    "Candidate detail unavailable after attempted analysis: asset_id=%s",
+                    asset_id,
+                )
                 return False
 
             await context.ensure_active()

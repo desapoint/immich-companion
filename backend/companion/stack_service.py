@@ -131,7 +131,9 @@ class StackService:
                 try:
                     UUID(str(stack_id))
                 except (TypeError, ValueError) as error:
-                    raise StackSelectionError("Stack resolution keys must be stack UUIDs") from error
+                    raise StackSelectionError(
+                        "Stack resolution keys must be stack UUIDs"
+                    ) from error
                 if choice not in _STACK_RESOLUTIONS:
                     raise StackSelectionError("Unknown stack conflict resolution")
                 normalized[str(stack_id)] = choice

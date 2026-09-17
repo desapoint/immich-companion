@@ -173,7 +173,9 @@ class SimilarityIndexMaintainer:
             self._record_timings(timings)
             self._count("original_decodes")
             if decoded.valid is not True or feature is None:
-                raise ValueError(decoded.issue or "original could not produce coarse visual evidence")
+                raise ValueError(
+                    decoded.issue or "original could not produce coarse visual evidence"
+                )
             return feature, digest.hexdigest()
 
     async def _fingerprint_page(
@@ -343,7 +345,10 @@ class SimilarityIndexMaintainer:
                     "completed": 0,
                     "total": retry_total,
                     "percent": progress_ceiling,
-                    "detail": f"Retrying {retry_total} transient library fingerprint failures once…",
+                    "detail": (
+                        f"Retrying {retry_total} transient library fingerprint "
+                        "failures once…"
+                    ),
                 },
             )
             retry_after: UUID | None = None

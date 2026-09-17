@@ -67,7 +67,9 @@ def stack_conflict_snapshot(conflicts: list[StackConflict]) -> list[dict[str, ob
             {
                 "stack_id": str(conflict.stack_id),
                 "primary_asset_id": str(conflict.primary_asset_id),
-                "member_asset_ids": sorted(str(identifier) for identifier in conflict.member_asset_ids),
+                "member_asset_ids": sorted(
+                    str(identifier) for identifier in conflict.member_asset_ids
+                ),
             }
             for conflict in conflicts
         ],

@@ -60,7 +60,7 @@ class Context:
 
 
 @pytest.mark.asyncio
-async def test_oversized_alpha_capable_source_indexes_search_only_preview_without_original() -> None:
+async def test_oversized_alpha_capable_source_uses_search_only_preview() -> None:
     preview = encoded_jpeg()
     source = oversized_source()
 

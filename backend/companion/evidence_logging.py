@@ -26,6 +26,9 @@ def install_pending_evidence_logging_policy() -> None:
     """Downgrade freshness diagnostics; attempted-analysis failures remain warnings."""
 
     target = logging.getLogger("uvicorn.error")
-    if any(getattr(item, "marker", None) == _PendingEvidenceFilter.marker for item in target.filters):
+    if any(
+        getattr(item, "marker", None) == _PendingEvidenceFilter.marker
+        for item in target.filters
+    ):
         return
     target.addFilter(_PendingEvidenceFilter())
