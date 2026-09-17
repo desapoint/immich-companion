@@ -24,7 +24,7 @@ function member(id: string, name: string, similarity: number, admittedByAssetId:
 }
 
 describe('V2DuplicateAdmissionEvidence', () => {
-  it('disables the reference-changing linked-admission control while writes are blocked', () => {
+  it('links the admitting source to its deep-linked Assets viewer in a new tab', () => {
     const linked = member('asset-1', 'linked.jpg', 90, 'asset-2');
     const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
@@ -33,31 +33,14 @@ describe('V2DuplicateAdmissionEvidence', () => {
         members: [linked, admittedBy],
         mode: 'linked',
         threshold: 95,
-        disabled: true,
-        oninspect: () => {},
       },
     });
 
     expect(body).toContain('Linked through');
     expect(body).toContain('bridge.jpg');
-    expect(body).toMatch(/<button\b[^>]*disabled[^>]*>\s*bridge\.jpg\s*<\/button>/);
-  });
-
-  it('keeps the linked-admission control available when writes are allowed', () => {
-    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2');
-    const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
-    const { body } = render(V2DuplicateAdmissionEvidence, {
-      props: {
-        member: linked,
-        members: [linked, admittedBy],
-        mode: 'linked',
-        threshold: 95,
-        oninspect: () => {},
-      },
-    });
-
-    const button = body.match(/<button\b[^>]*>\s*bridge\.jpg\s*<\/button>/)?.[0] ?? '';
-    expect(button).not.toContain('disabled');
+    expect(body).toContain('href="/v2/assets/asset-2"');
+    expect(body).toContain('target="_blank"');
+    expect(body).toContain('rel="noopener noreferrer"');
   });
 
   it('labels bounded evidence with its original and actual validation dimensions', () => {
@@ -82,7 +65,6 @@ describe('V2DuplicateAdmissionEvidence', () => {
         members: [bounded],
         mode: 'reference',
         threshold: 95,
-        oninspect: () => {},
       },
     });
 
@@ -112,7 +94,6 @@ describe('V2DuplicateAdmissionEvidence', () => {
         members: [bounded],
         mode: 'reference',
         threshold: 95,
-        oninspect: () => {},
       },
     });
 
