@@ -190,7 +190,7 @@ async def test_alpha_capable_opaque_oversized_source_uses_same_family_fullsize()
     maintainer = SimilarityDetailMaintainer(immich, details)  # type: ignore[arg-type]
 
     saved = await maintainer._extract_one(
-        Context(), ASSET_ID, search  # type: ignore[arg-type]
+        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
     )
 
     assert saved is True
@@ -244,7 +244,7 @@ async def test_confirmed_alpha_oversized_source_requires_alpha_preserving_bounde
     details = Details()
     maintainer = SimilarityDetailMaintainer(Immich(), details)  # type: ignore[arg-type]
     assert await maintainer._extract_one(
-        Context(), ASSET_ID, search  # type: ignore[arg-type]
+        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
     )
     assert details.saved_origin == "bounded_fullsize"
     assert maintainer.counters["bounded_candidate_validations"] == 1
@@ -300,7 +300,7 @@ async def test_unknown_alpha_flattened_bounded_media_is_not_promoted_to_detail()
     maintainer = SimilarityDetailMaintainer(immich, details)  # type: ignore[arg-type]
 
     assert not await maintainer._extract_one(
-        Context(), ASSET_ID, search  # type: ignore[arg-type]
+        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
     )
     assert immich.original_calls == 0
     assert details.unavailable_reason == "alpha_preserving_bounded_rendition_unavailable"

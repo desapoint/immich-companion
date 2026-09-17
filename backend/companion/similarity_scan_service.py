@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import heapq
+import inspect
 import json
 from hashlib import sha256
 from time import perf_counter
@@ -56,6 +57,21 @@ SIMILARITY_SCORE_BATCH_SIZE = 500
 
 class SimilarityScanAlreadyRunningError(RuntimeError):
     """Raised when an incompatible whole-library scan is already active."""
+
+
+def _accepts_parameter(callable_object: object, parameter: str) -> bool:
+    """Keep lightweight adapters compatible while real repositories carry epochs."""
+
+    try:
+        return parameter in inspect.signature(callable_object).parameters
+    except (TypeError, ValueError):
+        return True
+
+
+def _epoch_kwargs(callable_object: object, evidence_epoch: int | None) -> dict[str, int]:
+    if evidence_epoch is None or not _accepts_parameter(callable_object, "evidence_epoch"):
+        return {}
+    return {"evidence_epoch": evidence_epoch}
 
 
 def _request_key(request: SimilarityScanRequest) -> str:
@@ -175,6 +191,7 @@ class SimilarityScanTaskHandler:
         )
         candidate_stats = SimilarityCandidateStats()
         scan_id = None
+        evidence_epoch: int | None = None
         index_counters: dict[str, int] = {}
         excluded_ids: list[UUID] = []
         fingerprint_failure_reasons: dict[UUID, str] = {}
@@ -206,6 +223,8 @@ class SimilarityScanTaskHandler:
 
         try:
             await context.ensure_active()
+            epoch_getter = getattr(self._scans, "current_evidence_epoch", None)
+            evidence_epoch = await epoch_getter() if epoch_getter is not None else None
             task = getattr(context, "task", None)
             task_id = getattr(task, "id", None)
             scan_id = await self._scans.prepare(parameters, scan_id=task_id)
@@ -405,16 +424,17 @@ class SimilarityScanTaskHandler:
                 edges = await self._similarity.reference_edges(
                     [[pair.asset_id_low, pair.asset_id_high] for pair in batch],
                     feature_by_id,
+                    **_epoch_kwargs(self._similarity.reference_edges, evidence_epoch),
                 )
                 pair_scoring_milliseconds += round((perf_counter() - phase_started) * 1000)
                 if self._detailer is not None:
                     shortlisted = [
-                        pair for pair in batch
+                        pair
+                        for pair in batch
                         if (edge := edges.get((pair.asset_id_low, pair.asset_id_high)))
                         is not None
-                        and edge.similarity_percent >= max(
-                            50.0, request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
-                        )
+                        and edge.similarity_percent
+                        >= max(50.0, request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN)
                     ]
                     detail_pairs_eligible += len(shortlisted)
                     detail_pairs_skipped_below_threshold += len(batch) - len(shortlisted)
@@ -462,11 +482,13 @@ class SimilarityScanTaskHandler:
                         await self._detailer.ensure(
                             context,
                             [
-                                asset_id for pair in shortlisted
+                                asset_id
+                                for pair in shortlisted
                                 for asset_id in (pair.asset_id_low, pair.asset_id_high)
                             ],
                             feature_by_id,
                             on_progress=detail_progress,
+                            **_epoch_kwargs(self._detailer.ensure, evidence_epoch),
                         )
                         detail_stage_milliseconds += round(
                             (perf_counter() - detail_started) * 1000
@@ -476,6 +498,10 @@ class SimilarityScanTaskHandler:
                             await self._similarity.reference_edges(
                                 [[pair.asset_id_low, pair.asset_id_high] for pair in shortlisted],
                                 feature_by_id,
+                                **_epoch_kwargs(
+                                    self._similarity.reference_edges,
+                                    evidence_epoch,
+                                ),
                             )
                         )
                         pair_scoring_milliseconds += round(
@@ -561,11 +587,13 @@ class SimilarityScanTaskHandler:
                     "detail": f"Publishing {len(matches)} retained review pairs…",
                 },
             )
+            await context.ensure_active()
             await self._scans.complete(
                 scan_id,
                 asset_count=len(features),
                 candidate_count=total,
                 pairs=matches,
+                **_epoch_kwargs(self._scans.complete, evidence_epoch),
             )
         except TaskCancelledError:
             if scan_id is not None:

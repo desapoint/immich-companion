@@ -19,6 +19,7 @@ from companion.similarity_bounded_state import (
     synchronized_source_identity,
 )
 from companion.similarity_features import VisualFeatureResult
+from companion.similarity_generation import SimilarityEvidenceEpochRepository
 from companion.similarity_search_features import (
     SEARCH_CONFIG_FINGERPRINT,
     SEARCH_FEATURE_VERSION,
@@ -32,6 +33,10 @@ class SimilaritySearchRepository:
 
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
+        self._evidence_epoch = SimilarityEvidenceEpochRepository(database)
+
+    async def current_evidence_epoch(self) -> int:
+        return await self._evidence_epoch.capture_epoch()
 
     @staticmethod
     def _current():
@@ -206,13 +211,17 @@ class SimilaritySearchRepository:
         *,
         origin: str = "preview",
         source_alpha_state: SourceAlphaState = "unknown_alpha",
+        evidence_epoch: int | None = None,
     ) -> bool:
-        """Commit only if the synchronized source still matches the fetched source."""
+        """Commit only if the source and runtime evidence epoch are still current."""
 
         if feature.pixel_sha256 is not None:
             raise ValueError("Search evidence must not contain an exact-pixel hash")
         if origin not in {"preview", "bounded", "original"}:
             raise ValueError("Unsupported search fingerprint origin")
+        expected_epoch = (
+            evidence_epoch if evidence_epoch is not None else await self.current_evidence_epoch()
+        )
         source_identity = search_source_identity(asset, media_sha256, origin=origin)
         values = {
             "asset_id": asset.id,
@@ -241,6 +250,7 @@ class SimilaritySearchRepository:
             search_reason=None,
         )
         async with self._database.sessions() as session, session.begin():
+            await self._evidence_epoch.assert_current(session, expected_epoch)
             current = await session.get(AssetRecord, asset.id, with_for_update=True)
             if not self._source_matches(current, asset):
                 return False
@@ -274,9 +284,13 @@ class SimilaritySearchRepository:
         reason: str,
         *,
         source_alpha_state: SourceAlphaState = "unknown_alpha",
+        evidence_epoch: int | None = None,
     ) -> bool:
-        """Persist a deterministic source/config-scoped failure so scans do not loop."""
+        """Persist a deterministic failure only inside the captured runtime epoch."""
 
+        expected_epoch = (
+            evidence_epoch if evidence_epoch is not None else await self.current_evidence_epoch()
+        )
         values = self._state_values(
             asset,
             source_identity=synchronized_source_identity(asset),
@@ -285,6 +299,7 @@ class SimilaritySearchRepository:
             search_reason=reason,
         )
         async with self._database.sessions() as session, session.begin():
+            await self._evidence_epoch.assert_current(session, expected_epoch)
             current = await session.get(AssetRecord, asset.id, with_for_update=True)
             if not self._source_matches(current, asset):
                 return False

@@ -1,4 +1,4 @@
-"""Read-only HTTP surface for cached localized similarity evidence."""
+"""HTTP surface for cached localized similarity evidence and generation control."""
 
 from __future__ import annotations
 
@@ -6,7 +6,12 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, status
 
-from companion.similarity_detail_schema import SimilarityLocalDiagnosticsResponse
+from companion.duplicate_schema import SimilarityScanRequest
+from companion.similarity_detail_schema import (
+    SimilarityEvidenceGenerationResponse,
+    SimilarityEvidenceRebuildResponse,
+    SimilarityLocalDiagnosticsResponse,
+)
 from companion.similarity_detail_service import SimilarityDetailRepository
 
 
@@ -14,7 +19,7 @@ def register_similarity_detail_routes(
     app: FastAPI,
     repository: SimilarityDetailRepository | None,
 ) -> None:
-    """Register diagnostics without creating or refreshing any detail samples."""
+    """Register diagnostics and explicit whole-generation invalidation."""
 
     def require_repository() -> SimilarityDetailRepository:
         if repository is None:
@@ -57,4 +62,48 @@ def register_similarity_detail_routes(
             columns=diagnostics.columns,
             cells=[list(row) for row in diagnostics.tile_changed_percents],
             source=stored.source,
+        )
+
+    @app.get(
+        "/api/v2/duplicates/similarity-evidence/generation",
+        response_model=SimilarityEvidenceGenerationResponse,
+    )
+    async def similarity_evidence_generation() -> SimilarityEvidenceGenerationResponse:
+        generation = await require_repository().generation_status()
+        return SimilarityEvidenceGenerationResponse(
+            epoch=generation.epoch,
+            code_generation=generation.code_generation,
+            recorded_descriptor_fingerprint=generation.recorded_descriptor_fingerprint,
+            current_descriptor_fingerprint=generation.current_descriptor_fingerprint,
+            descriptor_current=generation.descriptor_current,
+            rebuilt_at=generation.rebuilt_at,
+        )
+
+    @app.post(
+        "/api/v2/duplicates/similarity-evidence/rebuild",
+        response_model=SimilarityEvidenceRebuildResponse,
+    )
+    async def rebuild_similarity_evidence(
+        scan_request: SimilarityScanRequest,
+    ) -> SimilarityEvidenceRebuildResponse:
+        detail_repository = require_repository()
+        # The epoch repository owns the atomic transaction that invalidates old evidence
+        # and inserts the replacement similarity-scan task. Keeping both operations there
+        # prevents a lost HTTP response or browser shutdown from stranding an empty epoch.
+        result = await detail_repository._evidence_epoch.rebuild(  # noqa: SLF001
+            scan_request.model_dump(mode="json")
+        )
+        generation = result.state
+        return SimilarityEvidenceRebuildResponse(
+            generation=SimilarityEvidenceGenerationResponse(
+                epoch=generation.epoch,
+                code_generation=generation.code_generation,
+                recorded_descriptor_fingerprint=generation.recorded_descriptor_fingerprint,
+                current_descriptor_fingerprint=generation.current_descriptor_fingerprint,
+                descriptor_current=generation.descriptor_current,
+                rebuilt_at=generation.rebuilt_at,
+            ),
+            cancelled_task_count=result.cancelled_task_count,
+            removed_counts=result.removed_counts,
+            task_id=result.task_id,
         )

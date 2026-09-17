@@ -12,12 +12,16 @@ from companion.similarity_features import (
     VisualFeatureResult,
     extract_visual_features,
 )
+from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 
 SEARCH_MODEL_VERSION = "appearance-preview-v1"
 SEARCH_FEATURE_VERSION = 3
 MAX_SEARCH_PREVIEW_BYTES = 16 * 1024 * 1024
 SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
-    f"preview-search-v3:{SIMILARITY_CONFIG_FINGERPRINT}".encode(),
+    (
+        f"preview-search-v3:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
+        f"{SIMILARITY_CONFIG_FINGERPRINT}"
+    ).encode(),
     usedforsecurity=False,
 ).hexdigest()
 

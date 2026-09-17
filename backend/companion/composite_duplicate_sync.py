@@ -12,6 +12,7 @@ from companion.composite_duplicate_repository import (
     CompositeDuplicateSnapshotAssetMissingError,
 )
 from companion.discovery.base import GroupDiscoveryProvider
+from companion.similarity_generation import SimilarityEvidenceEpochRepository
 from companion.task_coordinator import PermanentTaskError, TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult
 
@@ -35,9 +36,24 @@ class CompositeDuplicateRebuildTaskHandler:
     ) -> None:
         self._discovery = discovery
         self._repository = repository
+        # The persisted composite projection includes the latest similarity scan. Capture
+        # the same database-backed epoch used by similarity writers so a rebuild cannot
+        # publish groups discovered before a manual evidence reset. Lightweight test
+        # repositories without a database keep the legacy contract.
+        self._database = getattr(repository, "_database", None)
+        self._evidence_epochs = (
+            SimilarityEvidenceEpochRepository(self._database)
+            if self._database is not None
+            else None
+        )
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         del payload
+        evidence_epoch = (
+            await self._evidence_epochs.capture_epoch()
+            if self._evidence_epochs is not None
+            else None
+        )
         await context.checkpoint(
             checkpoint={"phase": "discovering"},
             counters={},
@@ -68,7 +84,20 @@ class CompositeDuplicateRebuildTaskHandler:
             },
         )
         try:
-            metadata = await self._repository.replace_snapshot(groups)
+            if (
+                self._evidence_epochs is not None
+                and self._database is not None
+                and evidence_epoch is not None
+            ):
+                # Keep the epoch's shared row lock open across the independent snapshot
+                # transaction. A rebuild needs an exclusive lock on the same row, so
+                # either this old projection commits first and is then cleared, or the
+                # rebuild wins and this publication is rejected as stale.
+                async with self._database.sessions() as session, session.begin():
+                    await self._evidence_epochs.assert_current(session, evidence_epoch)
+                    metadata = await self._repository.replace_snapshot(groups)
+            else:
+                metadata = await self._repository.replace_snapshot(groups)
         except CompositeDuplicateSnapshotAssetMissingError as error:
             raise PermanentTaskError(str(error)) from error
         counters = {

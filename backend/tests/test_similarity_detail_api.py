@@ -1,5 +1,6 @@
-"""HTTP contract for cached localized similarity diagnostics."""
+"""HTTP contract for cached localized similarity diagnostics and evidence rebuilds."""
 
+from types import SimpleNamespace
 from uuid import UUID
 
 from fastapi import FastAPI
@@ -11,6 +12,7 @@ from companion.similarity_detail_service import StoredDetailDiagnostics
 
 SELECTED = UUID("11111111-1111-4111-8111-111111111111")
 REFERENCE = UUID("22222222-2222-4222-8222-222222222222")
+REBUILD_TASK = UUID("33333333-3333-4333-8333-333333333333")
 
 
 def _path() -> str:
@@ -18,6 +20,19 @@ def _path() -> str:
         "/api/v2/duplicates/similarity-local-changes"
         f"?selected_asset_id={SELECTED}&reference_asset_id={REFERENCE}"
     )
+
+
+def _scan_payload() -> dict[str, object]:
+    return {
+        "similarity_threshold": 94.0,
+        "validation_mode": "strict",
+        "anchor_asset_id": None,
+        "scope": "all_eligible_assets",
+        "maximum_perceptual_distance": 12,
+        "maximum_aspect_difference": 0.05,
+        "maximum_neighbors_per_asset": 24,
+        "maximum_matches": 5000,
+    }
 
 
 def test_local_change_route_is_unavailable_without_database() -> None:
@@ -102,4 +117,53 @@ def test_local_change_route_serializes_cached_grid_and_source() -> None:
         "columns": 2,
         "cells": [[0.0, 25.0], [75.0, 100.0]],
         "source": "transcoded",
+    }
+
+
+def test_rebuild_route_passes_scan_payload_into_atomic_epoch_transaction() -> None:
+    payload = _scan_payload()
+
+    class EpochRepository:
+        async def rebuild(self, scan_payload):
+            assert scan_payload == payload
+            state = SimpleNamespace(
+                epoch=5,
+                code_generation=2,
+                recorded_descriptor_fingerprint="a" * 64,
+                current_descriptor_fingerprint="a" * 64,
+                descriptor_current=True,
+                rebuilt_at=None,
+            )
+            return SimpleNamespace(
+                state=state,
+                cancelled_task_count=3,
+                removed_counts={"scans": 2},
+                task_id=REBUILD_TASK,
+            )
+
+    class Repository:
+        _evidence_epoch = EpochRepository()
+
+    app = FastAPI()
+    register_similarity_detail_routes(app, Repository())  # type: ignore[arg-type]
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v2/duplicates/similarity-evidence/rebuild",
+            json=payload,
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "generation": {
+            "epoch": 5,
+            "code_generation": 2,
+            "recorded_descriptor_fingerprint": "a" * 64,
+            "current_descriptor_fingerprint": "a" * 64,
+            "descriptor_current": True,
+            "rebuilt_at": None,
+        },
+        "cancelled_task_count": 3,
+        "removed_counts": {"scans": 2},
+        "task_id": str(REBUILD_TASK),
     }

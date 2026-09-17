@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, insert, or_, select, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
+from companion.similarity_generation import SimilarityEvidenceEpochRepository
 from companion.similarity_grouping import (
     SIMILARITY_GROUPING_VERSION,
     SimilarityValidationMode,
@@ -111,6 +112,10 @@ class SimilarityScanRepository:
 
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
+        self._evidence_epoch = SimilarityEvidenceEpochRepository(database)
+
+    async def current_evidence_epoch(self) -> int:
+        return await self._evidence_epoch.capture_epoch()
 
     async def prepare(
         self,
@@ -172,10 +177,16 @@ class SimilarityScanRepository:
         asset_count: int,
         candidate_count: int,
         pairs: list[SimilarityScanPair],
+        evidence_epoch: int | None = None,
     ) -> None:
         normalized = normalize_scan_pairs(pairs)
         if asset_count < 0 or candidate_count < len(normalized):
             raise ValueError("Similarity scan counts are inconsistent")
+        expected_epoch = (
+            evidence_epoch
+            if evidence_epoch is not None
+            else await self.current_evidence_epoch()
+        )
         completed_at = datetime.now(UTC)
         values = [
             {
@@ -201,6 +212,7 @@ class SimilarityScanRepository:
             for pair in normalized
         ]
         async with self._database.sessions() as session, session.begin():
+            await self._evidence_epoch.assert_current(session, expected_epoch)
             record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
             if record is None or record.status != "running":
                 raise ValueError("Similarity scan is not running")
@@ -317,6 +329,7 @@ class SimilarityScanRepository:
     ) -> None:
         """Replace only pairs incident to one changed asset in the active generation."""
 
+        expected_epoch = await self.current_evidence_epoch()
         normalized = normalize_scan_pairs(pairs)
         values = [
             {
@@ -342,6 +355,7 @@ class SimilarityScanRepository:
             for pair in normalized
         ]
         async with self._database.sessions() as session, session.begin():
+            await self._evidence_epoch.assert_current(session, expected_epoch)
             record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
             if record is None or record.status != "completed":
                 return

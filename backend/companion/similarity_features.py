@@ -22,6 +22,7 @@ from companion.image_decode import (
 )
 from companion.integrity import DetectedFormat
 from companion.raw_isolation import decode_raw_isolated
+from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
 SIMILARITY_FEATURE_VERSION = 3
@@ -39,6 +40,7 @@ SIMILARITY_CONFIG_FINGERPRINT = hashlib.sha256(
         {
             "model": SIMILARITY_MODEL_VERSION,
             "feature_version": SIMILARITY_FEATURE_VERSION,
+            "evidence_code_generation": SIMILARITY_EVIDENCE_CODE_GENERATION,
             "pixel_normalization_version": PIXEL_NORMALIZATION_VERSION,
             "luminance_side": LUMINANCE_VECTOR_SIDE,
             "luminance_planes": ("premultiplied_srgb", "alpha"),
