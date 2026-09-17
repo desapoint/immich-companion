@@ -217,7 +217,7 @@
   <img bind:this={selectedImage} class="v2-local-change-source" src={selectedSrc} alt={selectedLabel} onload={selectedLoaded} onerror={onselectederror}>
   <img bind:this={referenceImage} class="v2-local-change-source" src={referenceSrc} alt={referenceLabel} onload={referenceLoaded} onerror={onreferenceerror}>
 
-  <div class="v2-local-change-controls v2-compare-floating-controls">
+  <div class="v2-local-change-controls">
     <label class="v2-local-change-emphasis">
       <span class="v2-local-change-control-heading">
         <span>Minimum highlight intensity</span>

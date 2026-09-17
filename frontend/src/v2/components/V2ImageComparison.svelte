@@ -111,7 +111,7 @@
   }
 
   function shouldIgnore(target: EventTarget | null): boolean {
-    return target instanceof Element && !!target.closest('button,input,label,.v2-compare-swipe-hit,.v2-compare-floating-controls');
+    return target instanceof Element && !!target.closest('button,input,label,.v2-compare-swipe-hit,.v2-compare-floating-controls,.v2-local-change-controls');
   }
 
   function panStart(event: PointerEvent): void {
