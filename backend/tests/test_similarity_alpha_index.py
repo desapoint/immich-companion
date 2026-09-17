@@ -33,6 +33,8 @@ def _source(*, name: str = "transparent.png", mime: str = "image/png"):
         file_modified_at=MODIFIED,
         file_size_bytes=4096,
         checksum=None,
+        width=64,
+        height=64,
     )
 
 
@@ -79,10 +81,20 @@ async def test_opaque_preview_for_alpha_capable_source_falls_back_to_original() 
     class Features:
         saved_origin = None
         saved_feature = None
+        saved_alpha_state = None
 
-        async def save(self, _source, _digest, feature, *, origin="preview"):
+        async def save(
+            self,
+            _source,
+            _digest,
+            feature,
+            *,
+            origin="preview",
+            source_alpha_state="unknown_alpha",
+        ):
             self.saved_origin = origin
             self.saved_feature = feature
+            self.saved_alpha_state = source_alpha_state
             return True
 
     class Context:
@@ -107,4 +119,5 @@ async def test_opaque_preview_for_alpha_capable_source_falls_back_to_original() 
     assert features.saved_origin == "original"
     assert features.saved_feature is not None
     assert features.saved_feature.has_alpha is True
+    assert features.saved_alpha_state == "confirmed_alpha"
     assert maintainer.metrics()["alpha_preserving_original_fallbacks"] == 1
