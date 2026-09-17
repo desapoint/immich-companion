@@ -5,10 +5,12 @@
   import {
     LOCAL_CHANGE_LABEL_FONT_PX,
     LOCAL_CHANGE_LABEL_MAX_WIDTH_PX,
+    aggregateLocalChangeGrid,
     canRenderLocalChangeLabel,
     clampLocalChangePercent,
     localChangeFillAlpha,
     localChangeFillColor,
+    localChangeGridSizeForLevel,
     localChangePassesVisibilityThreshold,
   } from './localChangeVisualization';
 
@@ -27,6 +29,7 @@
     minimumDifference = $bindable(0),
     highlightColor = $bindable('#00DCFF'),
     highlightColorPosition = $bindable(120),
+    gridDetailLevel = $bindable(4),
     onselectedload,
     onreferenceload,
     onselectederror,
@@ -45,6 +48,7 @@
     minimumDifference?: number;
     highlightColor?: string;
     highlightColorPosition?: number;
+    gridDetailLevel?: number;
     onselectedload?: (event: Event) => void;
     onreferenceload?: (event: Event) => void;
     onselectederror?: () => void;
@@ -120,13 +124,24 @@
     return `Changed ${changed}% · coherent ${coherent}% · largest region ${largest}% · ${regions} regions`;
   }
 
-  let gridCells = $derived.by(() => {
-    if (!hasValidGrid(diagnostics)) return [];
-    return diagnostics.cells.flat().map(clampLocalChangePercent);
+  let gridDetailSize = $derived(localChangeGridSizeForLevel(gridDetailLevel));
+
+  let displayGrid = $derived.by(() => {
+    if (!hasValidGrid(diagnostics)) return null;
+
+    return aggregateLocalChangeGrid(diagnostics.cells, gridDetailSize, gridDetailSize) ?? {
+      rows: diagnostics.rows,
+      columns: diagnostics.columns,
+      cells: diagnostics.cells.map((row) => row.map(clampLocalChangePercent)),
+    };
   });
 
-  let gridRows = $derived(hasValidGrid(diagnostics) ? diagnostics.rows : 1);
-  let gridColumns = $derived(hasValidGrid(diagnostics) ? diagnostics.columns : 1);
+  let gridCells = $derived(displayGrid?.cells.flat() ?? []);
+  let gridRows = $derived(displayGrid?.rows ?? 1);
+  let gridColumns = $derived(displayGrid?.columns ?? 1);
+  let gridDetailLabel = $derived(
+    displayGrid ? `${displayGrid.columns}×${displayGrid.rows}` : `${gridDetailSize}×${gridDetailSize}`,
+  );
 
   let imageRect = $derived.by((): ImageRect | null => {
     if (
@@ -261,6 +276,17 @@
       ariaLabel="Local changes highlight color"
     />
     <V2RangeSlider
+      label="Grid detail"
+      min={0}
+      max={4}
+      step={1}
+      bind:value={gridDetailLevel}
+      valueLabel={gridDetailLabel}
+      track="fill"
+      width={112}
+      ariaLabel="Local changes grid detail"
+    />
+    <V2RangeSlider
       label="Minimum difference visible"
       min={0}
       max={100}
@@ -354,7 +380,7 @@
     pointer-events:none;
   }
   .v2-local-change-controls {
-    width:min(760px, calc(100% - 28px));
+    width:min(920px, calc(100% - 28px));
     min-width:0;
     max-width:calc(100% - 28px);
     flex-wrap:wrap;
