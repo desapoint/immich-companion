@@ -169,6 +169,61 @@ async def test_oversized_candidate_detail_uses_preview_without_original_or_fulls
     assert maintainer.counters["detail_oversized_original_decodes_avoided"] == 1
 
 
+@pytest.mark.asyncio
+async def test_oversized_preview_decode_failure_is_not_retried_by_maintenance() -> None:
+    source = oversized_source()
+
+    class Immich:
+        preview_calls = 0
+
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            assert asset_id == ASSET_ID
+            self.preview_calls += 1
+            return b"not-an-image"
+
+        @asynccontextmanager
+        async def stream_original(self, _asset_id):
+            pytest.fail("Known-oversized original must not be used as failure fallback")
+            yield  # pragma: no cover
+
+    class Assets:
+        async def get_immich_assets(self, asset_ids):
+            return {asset_id: source for asset_id in asset_ids}
+
+    class Features:
+        async def coverage(self):
+            return 1, 0, 1, 0
+
+        async def list_work(self, *, after_asset_id, limit):
+            return [ASSET_ID] if after_asset_id is None else []
+
+    class MaintenanceContext(Context):
+        def __init__(self) -> None:
+            self.task = SimpleNamespace(checkpoint={})
+            self.checkpoints: list[dict[str, object]] = []
+
+        async def checkpoint(self, **values) -> None:
+            self.checkpoints.append(values)
+
+    immich = Immich()
+    maintainer = SimilarityIndexMaintainer(
+        immich,  # type: ignore[arg-type]
+        Assets(),  # type: ignore[arg-type]
+        Features(),  # type: ignore[arg-type]
+    )
+
+    coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(
+        MaintenanceContext()  # type: ignore[arg-type]
+    )
+
+    assert coverage.complete is False
+    assert completed == 0
+    assert unavailable == 1
+    assert attempted == {ASSET_ID}
+    assert "bounded preview could not produce coarse visual evidence" in reasons[ASSET_ID]
+    assert immich.preview_calls == 1
+
+
 def test_deterministic_decode_limit_failure_is_not_retried() -> None:
     assert _failure_is_retryable("image_decode_limit_exceeded") is False
     assert _failure_is_retryable("original exceeds similarity fallback size limit") is False
