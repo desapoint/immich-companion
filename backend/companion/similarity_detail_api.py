@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, status
 
 from companion.duplicate_schema import SimilarityScanRequest
 from companion.similarity_detail_schema import (
+    SimilarityEvidenceDestroyResponse,
     SimilarityEvidenceGenerationResponse,
     SimilarityEvidenceRebuildResponse,
     SimilarityLocalDiagnosticsResponse,
@@ -28,6 +29,16 @@ def register_similarity_detail_routes(
                 detail="The companion database is not configured.",
             )
         return repository
+
+    def generation_response(generation) -> SimilarityEvidenceGenerationResponse:
+        return SimilarityEvidenceGenerationResponse(
+            epoch=generation.epoch,
+            code_generation=generation.code_generation,
+            recorded_descriptor_fingerprint=generation.recorded_descriptor_fingerprint,
+            current_descriptor_fingerprint=generation.current_descriptor_fingerprint,
+            descriptor_current=generation.descriptor_current,
+            rebuilt_at=generation.rebuilt_at,
+        )
 
     @app.get(
         "/api/v2/duplicates/similarity-local-changes",
@@ -70,13 +81,19 @@ def register_similarity_detail_routes(
     )
     async def similarity_evidence_generation() -> SimilarityEvidenceGenerationResponse:
         generation = await require_repository().generation_status()
-        return SimilarityEvidenceGenerationResponse(
-            epoch=generation.epoch,
-            code_generation=generation.code_generation,
-            recorded_descriptor_fingerprint=generation.recorded_descriptor_fingerprint,
-            current_descriptor_fingerprint=generation.current_descriptor_fingerprint,
-            descriptor_current=generation.descriptor_current,
-            rebuilt_at=generation.rebuilt_at,
+        return generation_response(generation)
+
+    @app.post(
+        "/api/v2/duplicates/similarity-evidence/destroy",
+        response_model=SimilarityEvidenceDestroyResponse,
+    )
+    async def destroy_similarity_evidence() -> SimilarityEvidenceDestroyResponse:
+        detail_repository = require_repository()
+        result = await detail_repository._evidence_epoch.destroy()  # noqa: SLF001
+        return SimilarityEvidenceDestroyResponse(
+            generation=generation_response(result.state),
+            cancelled_task_count=result.cancelled_task_count,
+            removed_counts=result.removed_counts,
         )
 
     @app.post(
@@ -93,16 +110,8 @@ def register_similarity_detail_routes(
         result = await detail_repository._evidence_epoch.rebuild(  # noqa: SLF001
             scan_request.model_dump(mode="json")
         )
-        generation = result.state
         return SimilarityEvidenceRebuildResponse(
-            generation=SimilarityEvidenceGenerationResponse(
-                epoch=generation.epoch,
-                code_generation=generation.code_generation,
-                recorded_descriptor_fingerprint=generation.recorded_descriptor_fingerprint,
-                current_descriptor_fingerprint=generation.current_descriptor_fingerprint,
-                descriptor_current=generation.descriptor_current,
-                rebuilt_at=generation.rebuilt_at,
-            ),
+            generation=generation_response(result.state),
             cancelled_task_count=result.cancelled_task_count,
             removed_counts=result.removed_counts,
             task_id=result.task_id,
