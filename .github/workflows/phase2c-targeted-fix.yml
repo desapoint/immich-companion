@@ -1,0 +1,50 @@
+name: Phase 2C targeted compatibility fix
+
+on:
+  push:
+    branches:
+      - work/v2-oversized-bounded-similarity
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message == 'Add one-shot Phase 2C compatibility fixer'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: work/v2-oversized-bounded-similarity
+          fetch-depth: 0
+
+      - name: Apply exact compatibility edits
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          detail = Path('backend/companion/similarity_detail_service.py')
+          text = detail.read_text()
+          old = '            search.fingerprint_origin == "bounded"\n'
+          new = '            getattr(search, "fingerprint_origin", "preview") == "bounded"\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one fingerprint_origin occurrence, found {text.count(old)}')
+          detail.write_text(text.replace(old, new))
+
+          index = Path('backend/companion/similarity_index_service.py')
+          text = index.read_text()
+          old = '            attempted | retry_attempted,\n'
+          new = '            retry_attempted if self._legacy_coverage_contract else attempted | retry_attempted,\n'
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one attempted return occurrence, found {text.count(old)}')
+          index.write_text(text.replace(old, new))
+          PY
+
+      - name: Commit compatibility edits
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/companion/similarity_detail_service.py backend/companion/similarity_index_service.py
+          git diff --cached --check
+          git commit -m "Fix Phase 2C legacy compatibility edges"
+          git push origin HEAD:work/v2-oversized-bounded-similarity
