@@ -16,6 +16,7 @@ from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import detect_file_format
 from companion.integrity_service import INTEGRITY_TASK_TYPE
+from companion.similarity_bounded_state import SourceAlphaState
 from companion.similarity_features import decode_and_extract_features
 from companion.similarity_search_features import (
     MAX_SEARCH_PREVIEW_BYTES,
@@ -25,6 +26,7 @@ from companion.similarity_search_features import (
     extract_search_feature,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
+from companion.similarity_transparency import classify_source_alpha, source_can_have_alpha
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -36,24 +38,11 @@ from companion.task_schema import TaskResult
 SIMILARITY_INDEX_TASK_TYPE = "similarity_index"
 SIMILARITY_FINGERPRINT_BATCH_SIZE = 25
 ORIGINAL_FALLBACK_MAX_BYTES = 128 * 1024 * 1024
-ALPHA_CAPABLE_MIME_TYPES = frozenset(
-    {
-        "image/png",
-        "image/webp",
-        "image/gif",
-        "image/tiff",
-        "image/avif",
-        "image/heic",
-        "image/heif",
-    }
-)
-ALPHA_CAPABLE_SUFFIXES = frozenset(
-    {".png", ".webp", ".gif", ".tif", ".tiff", ".avif", ".heic", ".heif"}
-)
 NON_RETRYABLE_FAILURE_MARKERS = (
     "image_decode_limit_exceeded",
     "original exceeds similarity fallback size limit",
-    "bounded preview could not produce coarse visual evidence",
+    "bounded_preview_decode_failed",
+    "unsupported similarity representation",
     "asset is trashed",
     "asset is offline",
     "not IMAGE",
@@ -62,12 +51,11 @@ NON_RETRYABLE_FAILURE_MARKERS = (
 logger = logging.getLogger("uvicorn.error")
 
 
-def _source_may_have_alpha(source: ImmichAsset) -> bool:
-    """Return whether the original container can carry meaningful transparency."""
+class SimilarityIndexCoverageDetails(SimilarityIndexCoverage):
+    """Coverage including bounded and explicitly unavailable evidence."""
 
-    mime = (source.original_mime_type or "").split(";", 1)[0].strip().lower()
-    suffix = Path(source.original_file_name).suffix.lower()
-    return mime in ALPHA_CAPABLE_MIME_TYPES or suffix in ALPHA_CAPABLE_SUFFIXES
+    bounded_count: int = 0
+    unavailable_count: int = 0
 
 
 def _source_exceeds_decode_limit(source: ImmichAsset) -> bool:
@@ -83,7 +71,7 @@ def _source_exceeds_decode_limit(source: ImmichAsset) -> bool:
 
 
 def _failure_is_retryable(reason: str | None) -> bool:
-    """Avoid repeating deterministic policy/geometry failures in the same task."""
+    """Return False only for deterministic source/config-scoped failures."""
 
     if not reason:
         return True
@@ -156,7 +144,7 @@ class SimilarityIndexMaintainer:
                     if total > self._fallback_max_bytes:
                         raise ValueError("original exceeds similarity fallback size limit")
                     if len(prefix) < 64:
-                        prefix.extend(chunk[:64 - len(prefix)])
+                        prefix.extend(chunk[: 64 - len(prefix)])
                     digest.update(chunk)
                     spool.write(chunk)
             self._measure("original_fetch", started)
@@ -197,11 +185,13 @@ class SimilarityIndexMaintainer:
                     task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def coverage(self) -> SimilarityIndexCoverage:
-        eligible, current, missing, stale = await self._features.coverage()
-        return SimilarityIndexCoverage(
+    async def coverage(self) -> SimilarityIndexCoverageDetails:
+        eligible, current, bounded, unavailable, missing, stale = await self._features.coverage()
+        return SimilarityIndexCoverageDetails(
             eligible_count=eligible,
             current_count=current,
+            bounded_count=bounded,
+            unavailable_count=unavailable,
             missing_count=missing,
             stale_count=stale,
             complete=missing == 0 and stale == 0,
@@ -216,17 +206,20 @@ class SimilarityIndexMaintainer:
         *,
         progress_ceiling: float = 100.0,
     ) -> tuple[SimilarityIndexCoverage, int, int, set[UUID], dict[UUID, str]]:
-        """Fingerprint missing assets, retry transient failures once, and report failures."""
+        """Fingerprint pending assets, retry transient failures once, persist deterministic ones."""
 
         initial = await self.coverage()
         self._metrics = {
             "fingerprints_reused": initial.current_count,
             "preview_fingerprints_generated": 0,
             "bounded_fingerprints_generated": 0,
+            "bounded_search_fingerprints_generated": 0,
             "original_fingerprints_generated": 0,
             "fallbacks_to_original": 0,
             "alpha_preserving_original_fallbacks": 0,
             "oversized_original_decodes_avoided": 0,
+            "alpha_uncertain_bounded_evidence": 0,
+            "deterministic_retries_suppressed": 0,
             "deep_verifications_performed": 0,
             "failed_or_skipped_attempts": 0,
             "preview_bytes_downloaded": 0,
@@ -244,10 +237,10 @@ class SimilarityIndexMaintainer:
         )
         total = initial.missing_count + initial.stale_count
         completed = 0
-        unavailable = 0
-        non_retryable_failures: dict[UUID, str] = {}
+        attempted: set[UUID] = set()
+        failures: dict[UUID, str] = {}
         if total == 0 and saved.get("phase") in {"candidate_index", "scoring"}:
-            return initial, 0, 0, set(), {}
+            return initial, 0, initial.unavailable_count, set(), {}
         await context.checkpoint(
             checkpoint={
                 "phase": "similarity_fingerprinting",
@@ -256,9 +249,10 @@ class SimilarityIndexMaintainer:
             counters={
                 "eligible_images": initial.eligible_count,
                 "current_fingerprints": initial.current_count,
+                "bounded_fingerprints": initial.bounded_count,
                 "fingerprints_pending": total,
                 "fingerprints_completed": 0,
-                "fingerprints_unavailable": 0,
+                "fingerprints_unavailable": initial.unavailable_count,
             },
             progress={
                 "phase": "similarity_fingerprinting",
@@ -268,7 +262,7 @@ class SimilarityIndexMaintainer:
                 "detail": (
                     f"Preparing {total} missing or stale library fingerprints…"
                     if total
-                    else "Every eligible synchronized image has a current fingerprint."
+                    else "Every eligible image is current or explicitly unavailable."
                 ),
             },
         )
@@ -282,25 +276,26 @@ class SimilarityIndexMaintainer:
                 break
             results = await self._fingerprint_page(context, page, attempt="initial")
             for asset_id, (succeeded, reason) in zip(page, results, strict=True):
+                attempted.add(asset_id)
                 if succeeded:
                     completed += 1
-                else:
-                    unavailable += 1
-                    if not _failure_is_retryable(reason) and reason is not None:
-                        non_retryable_failures[asset_id] = reason
+                elif reason is not None:
+                    failures[asset_id] = reason
             after = page[-1]
-            done = min(total, completed + unavailable)
+            done = min(total, len(attempted))
+            current_coverage = await self.coverage()
             await context.checkpoint(
                 checkpoint={
                     "phase": "similarity_fingerprinting",
                     "cursor": str(after),
                 },
                 counters={
-                    "eligible_images": initial.eligible_count,
-                    "current_fingerprints": initial.current_count + completed,
+                    "eligible_images": current_coverage.eligible_count,
+                    "current_fingerprints": current_coverage.current_count,
+                    "bounded_fingerprints": current_coverage.bounded_count,
                     "fingerprints_pending": max(0, total - done),
                     "fingerprints_completed": completed,
-                    "fingerprints_unavailable": unavailable,
+                    "fingerprints_unavailable": current_coverage.unavailable_count,
                 },
                 progress={
                     "phase": "similarity_fingerprinting",
@@ -311,14 +306,8 @@ class SimilarityIndexMaintainer:
                 },
             )
         retry_coverage = await self.coverage()
-        retry_total = max(
-            0,
-            retry_coverage.missing_count
-            + retry_coverage.stale_count
-            - len(non_retryable_failures),
-        )
+        retry_total = retry_coverage.missing_count + retry_coverage.stale_count
         retry_attempted: set[UUID] = set()
-        retry_failures: dict[UUID, str] = dict(non_retryable_failures)
         retry_completed = 0
         if retry_total:
             await context.checkpoint(
@@ -326,10 +315,10 @@ class SimilarityIndexMaintainer:
                 counters={
                     "eligible_images": retry_coverage.eligible_count,
                     "current_fingerprints": retry_coverage.current_count,
+                    "bounded_fingerprints": retry_coverage.bounded_count,
                     "fingerprints_pending": retry_total,
                     "fingerprints_completed": completed,
-                    "fingerprints_unavailable": retry_coverage.missing_count
-                    + retry_coverage.stale_count,
+                    "fingerprints_unavailable": retry_coverage.unavailable_count,
                 },
                 progress={
                     "phase": "similarity_fingerprinting",
@@ -349,51 +338,57 @@ class SimilarityIndexMaintainer:
                 if not page:
                     break
                 retry_after = page[-1]
-                retry_page = [asset_id for asset_id in page if asset_id not in non_retryable_failures]
-                if not retry_page:
-                    continue
-                results = await self._fingerprint_page(context, retry_page, attempt="retry")
-                for asset_id, (succeeded, reason) in zip(retry_page, results, strict=True):
+                results = await self._fingerprint_page(context, page, attempt="retry")
+                for asset_id, (succeeded, reason) in zip(page, results, strict=True):
                     retry_attempted.add(asset_id)
+                    attempted.add(asset_id)
                     if succeeded:
                         retry_completed += 1
-                        retry_failures.pop(asset_id, None)
+                        failures.pop(asset_id, None)
                     elif reason is not None:
-                        retry_failures[asset_id] = reason
-                await context.checkpoint(
-                    checkpoint={
-                        "phase": "similarity_fingerprint_retry",
-                        "cursor": str(retry_after),
-                    },
-                    counters={
-                        "eligible_images": retry_coverage.eligible_count,
-                        "current_fingerprints": retry_coverage.current_count + retry_completed,
-                        "fingerprints_pending": max(0, retry_total - len(retry_attempted)),
-                        "fingerprints_completed": completed + retry_completed,
-                        "fingerprints_unavailable": max(
-                            0,
-                            retry_coverage.missing_count
-                            + retry_coverage.stale_count
-                            - retry_completed,
-                        ),
-                    },
-                    progress={
-                        "phase": "similarity_fingerprinting",
-                        "completed": len(retry_attempted),
-                        "total": retry_total,
-                        "percent": progress_ceiling,
-                        "detail": f"Retried {len(retry_attempted)} of {retry_total} transient fingerprints.",
-                    },
-                )
+                        failures[asset_id] = reason
         final = await self.coverage()
-        all_attempted = retry_attempted | set(non_retryable_failures)
         return (
             final,
             completed + retry_completed,
-            final.missing_count + final.stale_count,
-            all_attempted,
-            retry_failures if not final.complete else {},
+            final.unavailable_count,
+            attempted | retry_attempted,
+            failures if not final.complete or final.unavailable_count else {},
         )
+
+    async def _persist_deterministic_failure(
+        self,
+        source: ImmichAsset | None,
+        reason: str,
+        alpha_state: SourceAlphaState = "unknown_alpha",
+    ) -> None:
+        if source is None or _failure_is_retryable(reason):
+            return
+        if await self._features.mark_unavailable(
+            source, reason, source_alpha_state=alpha_state
+        ):
+            self._count("deterministic_retries_suppressed")
+
+    async def _failure(
+        self,
+        source: ImmichAsset | None,
+        reason: str,
+        *,
+        alpha_state: SourceAlphaState = "unknown_alpha",
+        warning: bool = True,
+        asset_id: UUID | None = None,
+        attempt: str = "",
+    ) -> tuple[bool, str]:
+        await self._persist_deterministic_failure(source, reason, alpha_state)
+        self._count("failed_or_skipped_attempts")
+        if warning:
+            logger.warning(
+                "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
+                asset_id or (source.id if source else None),
+                attempt,
+                reason,
+            )
+        return False, reason
 
     async def _fingerprint(
         self, context: TaskContext, asset_id: UUID, source: ImmichAsset | None, *, attempt: str
@@ -413,36 +408,43 @@ class SimilarityIndexMaintainer:
                 async with self._fetch_slots:
                     started = perf_counter()
                     source = await self._immich.get_asset(asset_id)
-                    await self._assets.refresh_asset(
-                        source, track_similarity_changes=False
-                    )
+                    await self._assets.refresh_asset(source, track_similarity_changes=False)
                     self._measure("metadata_preparation", started)
-            preview = None
-            preview_error: Exception | None = None
-            async with self._fetch_slots:
-                if not (source.is_trashed or source.is_offline or source.asset_type != "IMAGE"):
-                    started = perf_counter()
-                    try:
-                        preview = await self._immich.get_bounded_preview(
-                            asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
-                        )
-                        self._count("preview_bytes_downloaded", len(preview))
-                    except ImmichApiError as error:
-                        preview_error = error
-                    finally:
-                        self._measure("preview_fetch", started)
             if source.is_trashed or source.is_offline or source.asset_type != "IMAGE":
                 reason = (
-                    "asset is trashed" if source.is_trashed else
-                    "asset is offline" if source.is_offline else
-                    f"asset type is {source.asset_type}, not IMAGE"
+                    "asset is trashed"
+                    if source.is_trashed
+                    else "asset is offline"
+                    if source.is_offline
+                    else f"asset type is {source.asset_type}, not IMAGE"
                 )
-                logger.warning(
-                    "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                    asset_id, attempt, reason,
+                return await self._failure(
+                    source,
+                    reason,
+                    warning=False,
+                    asset_id=asset_id,
+                    attempt=attempt,
                 )
-                self._count("failed_or_skipped_attempts")
-                return False, reason
+
+            # Dimension preflight happens before any original stream is opened.
+            oversized_source = _source_exceeds_decode_limit(source)
+            if oversized_source:
+                self._count("oversized_original_decodes_avoided")
+
+            preview: bytes | None = None
+            preview_error: ImmichApiError | None = None
+            async with self._fetch_slots:
+                started = perf_counter()
+                try:
+                    preview = await self._immich.get_bounded_preview(
+                        asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
+                    )
+                    self._count("preview_bytes_downloaded", len(preview))
+                except ImmichApiError as error:
+                    preview_error = error
+                finally:
+                    self._measure("preview_fetch", started)
+
             feature = None
             if preview is not None:
                 async with self._decode_slots:
@@ -454,51 +456,60 @@ class SimilarityIndexMaintainer:
                     self._measure("decode_feature_wall", started)
                     self._record_timings(timings)
                     self._count("preview_decodes")
+
+            alpha_state = classify_source_alpha(source, bounded_content=preview)
             origin = "preview"
-            oversized_source = _source_exceeds_decode_limit(source)
-            alpha_original_required = (
-                feature is not None
-                and not feature.has_alpha
-                and _source_may_have_alpha(source)
-            )
             if oversized_source:
                 if feature is None:
                     reason = (
-                        f"bounded preview could not produce coarse visual evidence"
-                        f" ({preview_error})"
+                        f"bounded_rendition_unavailable: {preview_error}"
+                        if preview_error is not None
+                        else "bounded_preview_decode_failed"
                     )
-                    logger.warning(
-                        "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                        asset_id, attempt, reason,
+                    return await self._failure(
+                        source,
+                        reason,
+                        alpha_state=alpha_state,
+                        asset_id=asset_id,
+                        attempt=attempt,
                     )
-                    self._count("failed_or_skipped_attempts")
-                    return False, reason
                 origin = "bounded"
                 media_digest = sha256(preview, usedforsecurity=False).hexdigest()
-                self._count("oversized_original_decodes_avoided")
-                if alpha_original_required:
-                    self._count("bounded_alpha_uncertain_fingerprints")
-            elif feature is None or alpha_original_required:
-                self._count("fallbacks_to_original")
-                if alpha_original_required:
-                    self._count("alpha_preserving_original_fallbacks")
-                try:
-                    async with self._fetch_slots, self._decode_slots:
-                        feature, media_digest = await self._original_fallback(context, asset_id)
-                    origin = "original"
-                except (ImmichApiError, ValueError, OSError) as error:
-                    if alpha_original_required:
-                        reason = f"alpha-preserving original fallback failed: {error}"
-                    else:
-                        reason = f"preview unavailable ({preview_error}); fallback failed: {error}"
-                    logger.warning(
-                        "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                        asset_id, attempt, reason,
-                    )
-                    self._count("failed_or_skipped_attempts")
-                    return False, reason
+                if alpha_state == "unknown_alpha":
+                    self._count("alpha_uncertain_bounded_evidence")
             else:
-                media_digest = sha256(preview, usedforsecurity=False).hexdigest()
+                alpha_original_required = (
+                    feature is not None
+                    and source_can_have_alpha(source)
+                    and alpha_state == "unknown_alpha"
+                )
+                if feature is None or alpha_original_required:
+                    self._count("fallbacks_to_original")
+                    if alpha_original_required:
+                        self._count("alpha_preserving_original_fallbacks")
+                    try:
+                        async with self._fetch_slots, self._decode_slots:
+                            feature, media_digest = await self._original_fallback(context, asset_id)
+                        origin = "original"
+                        alpha_state = (
+                            "confirmed_alpha" if feature.has_alpha else "confirmed_opaque"
+                        )
+                    except (ImmichApiError, ValueError, OSError) as error:
+                        reason = (
+                            f"alpha-preserving original fallback failed: {error}"
+                            if alpha_original_required
+                            else f"preview unavailable ({preview_error}); fallback failed: {error}"
+                        )
+                        return await self._failure(
+                            source,
+                            reason,
+                            alpha_state=alpha_state,
+                            asset_id=asset_id,
+                            attempt=attempt,
+                        )
+                else:
+                    media_digest = sha256(preview, usedforsecurity=False).hexdigest()
+
             await context.ensure_active()
             async with self._fetch_slots:
                 started = perf_counter()
@@ -506,42 +517,40 @@ class SimilarityIndexMaintainer:
                 self._measure("metadata_preparation", started)
             if not self._same_source(source, current):
                 if not current.is_trashed:
-                    await self._assets.refresh_asset(
-                        current, track_similarity_changes=False
-                    )
-                reason = "Immich source changed while search evidence was generated"
+                    await self._assets.refresh_asset(current, track_similarity_changes=False)
                 self._count("failed_or_skipped_attempts")
-                return False, reason
+                return False, "Immich source changed while search evidence was generated"
             started = perf_counter()
-            if await self._features.save(source, media_digest, feature, origin=origin):
+            if await self._features.save(
+                source,
+                media_digest,
+                feature,
+                origin=origin,
+                source_alpha_state=alpha_state,
+            ):
                 self._measure("db_persistence", started)
-                self._count(
-                    "preview_fingerprints_generated"
-                    if origin == "preview"
-                    else "bounded_fingerprints_generated"
-                    if origin == "bounded"
-                    else "original_fingerprints_generated"
-                )
+                if origin == "preview":
+                    self._count("preview_fingerprints_generated")
+                elif origin == "bounded":
+                    self._count("bounded_fingerprints_generated")
+                    self._count("bounded_search_fingerprints_generated")
+                else:
+                    self._count("original_fingerprints_generated")
                 return True, None
             self._measure("db_persistence", started)
-            reason = "synchronized source changed while preview evidence was being generated"
-            logger.warning(
-                "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                asset_id, attempt, reason,
-            )
             self._count("failed_or_skipped_attempts")
-            return False, reason
+            return False, "synchronized source changed while preview evidence was being generated"
         except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
             reason = f"{type(error).__name__}: {error}"
-            logger.warning(
-                "Library fingerprint unavailable: asset_id=%s attempt=%s reason=%s",
-                asset_id, attempt, reason,
+            return await self._failure(
+                source,
+                reason,
+                asset_id=asset_id,
+                attempt=attempt,
             )
-            self._count("failed_or_skipped_attempts")
-            return False, reason
 
     @staticmethod
-    def _same_source(left, right) -> bool:
+    def _same_source(left: ImmichAsset, right: ImmichAsset) -> bool:
         return (
             left.id == right.id
             and right.asset_type == "IMAGE"
@@ -550,6 +559,8 @@ class SimilarityIndexMaintainer:
             and left.file_modified_at == right.file_modified_at
             and left.file_size_bytes == right.file_size_bytes
             and left.checksum == right.checksum
+            and left.width == right.width
+            and left.height == right.height
         )
 
     async def fingerprint_changed_asset(self, context: TaskContext, asset_id: UUID) -> bool:
@@ -583,6 +594,8 @@ class SimilarityIndexTaskHandler:
 
     async def execute(self, context: TaskContext, _payload: dict[str, object]) -> TaskResult:
         coverage, completed, unavailable, _, failures = await self._maintainer.maintain(context)
+        bounded_count = getattr(coverage, "bounded_count", 0)
+        unavailable_count = getattr(coverage, "unavailable_count", unavailable)
         return TaskResult(
             summary={
                 "coverage": coverage.model_dump(mode="json"),
@@ -594,6 +607,8 @@ class SimilarityIndexTaskHandler:
             counters={
                 "eligible_images": coverage.eligible_count,
                 "current_fingerprints": coverage.current_count,
+                "bounded_fingerprints": bounded_count,
+                "unavailable_fingerprints": unavailable_count,
                 "missing_fingerprints": coverage.missing_count,
                 "stale_fingerprints": coverage.stale_count,
                 "fingerprints_completed": completed,
