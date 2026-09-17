@@ -1,0 +1,87 @@
+name: Phase 2C lint fix
+
+on:
+  push:
+    branches:
+      - work/v2-oversized-bounded-similarity
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    if: github.event.head_commit.message == 'Add one-shot Phase 2C lint fixer'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: work/v2-oversized-bounded-similarity
+          fetch-depth: 0
+
+      - name: Apply formatting-only lint fixes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          replacements = {
+              'backend/companion/action_service.py': [
+                  (
+                      '                "member_asset_ids": sorted(str(identifier) for identifier in conflict.member_asset_ids),\n',
+                      '                "member_asset_ids": sorted(\n                    str(identifier) for identifier in conflict.member_asset_ids\n                ),\n',
+                  ),
+              ],
+              'backend/companion/evidence_logging.py': [
+                  (
+                      '    if any(getattr(item, "marker", None) == _PendingEvidenceFilter.marker for item in target.filters):\n',
+                      '    if any(\n        getattr(item, "marker", None) == _PendingEvidenceFilter.marker\n        for item in target.filters\n    ):\n',
+                  ),
+              ],
+              'backend/companion/similarity_detail_service.py': [
+                  (
+                      '                logger.warning("Candidate detail unavailable after attempted analysis: asset_id=%s", asset_id)\n',
+                      '                logger.warning(\n                    "Candidate detail unavailable after attempted analysis: asset_id=%s",\n                    asset_id,\n                )\n',
+                  ),
+              ],
+              'backend/companion/similarity_index_service.py': [
+                  (
+                      '                raise ValueError(decoded.issue or "original could not produce coarse visual evidence")\n',
+                      '                raise ValueError(\n                    decoded.issue or "original could not produce coarse visual evidence"\n                )\n',
+                  ),
+                  (
+                      '                    "detail": f"Retrying {retry_total} transient library fingerprint failures once…",\n',
+                      '                    "detail": (\n                        f"Retrying {retry_total} transient library fingerprint "\n                        "failures once…"\n                    ),\n',
+                  ),
+              ],
+              'backend/companion/stack_service.py': [
+                  (
+                      '                    raise StackSelectionError("Stack resolution keys must be stack UUIDs") from error\n',
+                      '                    raise StackSelectionError(\n                        "Stack resolution keys must be stack UUIDs"\n                    ) from error\n',
+                  ),
+              ],
+              'backend/tests/test_oversized_bounded_validation.py': [
+                  (
+                      'async def test_oversized_alpha_capable_source_indexes_search_only_preview_without_original() -> None:\n',
+                      'async def test_oversized_alpha_capable_source_uses_search_only_preview() -> None:\n',
+                  ),
+              ],
+          }
+
+          for filename, edits in replacements.items():
+              path = Path(filename)
+              text = path.read_text()
+              for old, new in edits:
+                  count = text.count(old)
+                  if count != 1:
+                      raise SystemExit(f'{filename}: expected one match, found {count}: {old!r}')
+                  text = text.replace(old, new)
+              path.write_text(text)
+          PY
+
+      - name: Commit lint fixes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add backend/companion backend/tests/test_oversized_bounded_validation.py
+          git diff --cached --check
+          git commit -m "Fix backend lint findings"
+          git push origin HEAD:work/v2-oversized-bounded-similarity
