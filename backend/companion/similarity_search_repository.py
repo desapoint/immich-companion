@@ -11,6 +11,13 @@ from sqlalchemy.dialects.postgresql import insert
 from companion.database import DatabaseManager
 from companion.immich import ImmichAsset
 from companion.models import AssetRecord, AssetSimilaritySearchFeatureRecord
+from companion.similarity_bounded_state import (
+    BOUNDED_CAPABILITY_VERSION,
+    BOUNDED_POLICY_FINGERPRINT,
+    AssetSimilarityBoundedStateRecord,
+    SourceAlphaState,
+    synchronized_source_identity,
+)
 from companion.similarity_features import VisualFeatureResult
 from companion.similarity_search_features import (
     SEARCH_CONFIG_FINGERPRINT,
@@ -41,6 +48,24 @@ class SimilaritySearchRepository:
         )
 
     @staticmethod
+    def _state_current():
+        state = AssetSimilarityBoundedStateRecord
+        asset = AssetRecord
+        return and_(
+            state.asset_id.is_not(None),
+            state.model_version == SEARCH_MODEL_VERSION,
+            state.feature_version == SEARCH_FEATURE_VERSION,
+            state.config_fingerprint == SEARCH_CONFIG_FINGERPRINT,
+            state.capability_version == BOUNDED_CAPABILITY_VERSION,
+            state.policy_fingerprint == BOUNDED_POLICY_FINGERPRINT,
+            state.source_file_modified_at == asset.file_modified_at,
+            state.source_file_size_bytes.is_not_distinct_from(asset.file_size_bytes),
+            state.source_checksum.is_not_distinct_from(asset.checksum),
+            state.source_width.is_not_distinct_from(asset.width),
+            state.source_height.is_not_distinct_from(asset.height),
+        )
+
+    @staticmethod
     def _eligible():
         return (
             AssetRecord.asset_type == "IMAGE",
@@ -48,48 +73,130 @@ class SimilaritySearchRepository:
             AssetRecord.is_offline.is_(False),
         )
 
-    async def coverage(self) -> tuple[int, int, int, int]:
+    async def coverage(self) -> tuple[int, int, int, int, int, int]:
+        current = self._current()
+        state_current = self._state_current()
+        unavailable = and_(
+            state_current,
+            AssetSimilarityBoundedStateRecord.search_status == "unavailable",
+        )
+        missing = and_(
+            AssetSimilaritySearchFeatureRecord.asset_id.is_(None),
+            AssetSimilarityBoundedStateRecord.asset_id.is_(None),
+        )
         statement = (
             select(
                 func.count(),
-                func.count().filter(self._current()),
-                func.count().filter(AssetSimilaritySearchFeatureRecord.asset_id.is_(None)),
+                func.count().filter(current),
+                func.count().filter(
+                    and_(
+                        current,
+                        AssetSimilaritySearchFeatureRecord.fingerprint_origin == "bounded",
+                    )
+                ),
+                func.count().filter(unavailable),
+                func.count().filter(missing),
             )
             .select_from(AssetRecord)
             .outerjoin(
                 AssetSimilaritySearchFeatureRecord,
                 AssetSimilaritySearchFeatureRecord.asset_id == AssetRecord.id,
             )
+            .outerjoin(
+                AssetSimilarityBoundedStateRecord,
+                AssetSimilarityBoundedStateRecord.asset_id == AssetRecord.id,
+            )
             .where(*self._eligible())
         )
         async with self._database.sessions() as session:
-            eligible, current, missing = (await session.execute(statement)).one()
-        return int(eligible), int(current), int(missing), int(eligible - current - missing)
+            eligible, current_count, bounded, unavailable_count, missing_count = (
+                await session.execute(statement)
+            ).one()
+        stale = eligible - current_count - unavailable_count - missing_count
+        return (
+            int(eligible),
+            int(current_count),
+            int(bounded),
+            int(unavailable_count),
+            int(missing_count),
+            int(max(0, stale)),
+        )
 
     async def list_work(
         self, *, after_asset_id: UUID | None = None, limit: int = 100
     ) -> list[UUID]:
         if limit < 1:
             raise ValueError("limit must be positive")
+        current_unavailable = and_(
+            self._state_current(),
+            AssetSimilarityBoundedStateRecord.search_status == "unavailable",
+        )
         statement = (
             select(AssetRecord.id)
             .outerjoin(
                 AssetSimilaritySearchFeatureRecord,
                 AssetSimilaritySearchFeatureRecord.asset_id == AssetRecord.id,
             )
+            .outerjoin(
+                AssetSimilarityBoundedStateRecord,
+                AssetSimilarityBoundedStateRecord.asset_id == AssetRecord.id,
+            )
             .where(
                 *self._eligible(),
                 *([AssetRecord.id > after_asset_id] if after_asset_id is not None else []),
-                or_(
-                    AssetSimilaritySearchFeatureRecord.asset_id.is_(None),
-                    ~self._current(),
-                ),
+                ~or_(self._current(), current_unavailable),
             )
             .order_by(AssetRecord.id)
             .limit(limit)
         )
         async with self._database.sessions() as session:
             return list((await session.scalars(statement)).all())
+
+    @staticmethod
+    def _state_values(
+        asset: ImmichAsset,
+        *,
+        source_identity: str,
+        alpha_state: SourceAlphaState,
+        search_status: str,
+        search_reason: str | None,
+    ) -> dict[str, object]:
+        return {
+            "asset_id": asset.id,
+            "model_version": SEARCH_MODEL_VERSION,
+            "feature_version": SEARCH_FEATURE_VERSION,
+            "config_fingerprint": SEARCH_CONFIG_FINGERPRINT,
+            "capability_version": BOUNDED_CAPABILITY_VERSION,
+            "policy_fingerprint": BOUNDED_POLICY_FINGERPRINT,
+            "source_file_modified_at": asset.file_modified_at,
+            "source_file_size_bytes": asset.file_size_bytes,
+            "source_checksum": asset.checksum,
+            "source_width": asset.width,
+            "source_height": asset.height,
+            "source_identity": source_identity,
+            "alpha_state": alpha_state,
+            "search_status": search_status,
+            "search_reason": search_reason,
+            "detail_status": None,
+            "detail_reason": None,
+            "detail_source_identity": None,
+            "detail_feature_version": None,
+            "updated_at": datetime.now(UTC),
+        }
+
+    @staticmethod
+    def _source_matches(current: AssetRecord | None, asset: ImmichAsset) -> bool:
+        return bool(
+            current is not None
+            and current.asset_type == "IMAGE"
+            and not current.is_trashed
+            and not current.is_offline
+            and current.file_modified_at == asset.file_modified_at
+            and current.file_size_bytes == asset.file_size_bytes
+            and current.checksum == asset.checksum
+            and current.width == asset.width
+            and current.height == asset.height
+        )
 
     async def save(
         self,
@@ -98,6 +205,7 @@ class SimilaritySearchRepository:
         feature: VisualFeatureResult,
         *,
         origin: str = "preview",
+        source_alpha_state: SourceAlphaState = "unknown_alpha",
     ) -> bool:
         """Commit only if the synchronized source still matches the fetched source."""
 
@@ -105,6 +213,7 @@ class SimilaritySearchRepository:
             raise ValueError("Search evidence must not contain an exact-pixel hash")
         if origin not in {"preview", "bounded", "original"}:
             raise ValueError("Unsupported search fingerprint origin")
+        source_identity = search_source_identity(asset, media_sha256, origin=origin)
         values = {
             "asset_id": asset.id,
             "model_version": SEARCH_MODEL_VERSION,
@@ -113,7 +222,7 @@ class SimilaritySearchRepository:
             "source_file_modified_at": asset.file_modified_at,
             "source_file_size_bytes": asset.file_size_bytes,
             "source_checksum": asset.checksum,
-            "source_identity": search_source_identity(asset, media_sha256, origin=origin),
+            "source_identity": source_identity,
             "media_sha256": media_sha256,
             "fingerprint_origin": origin,
             "width": asset.width or feature.width,
@@ -124,17 +233,16 @@ class SimilaritySearchRepository:
             "thumbnail_sha256": feature.thumbnail_sha256,
             "analyzed_at": datetime.now(UTC),
         }
+        state_values = self._state_values(
+            asset,
+            source_identity=source_identity,
+            alpha_state=source_alpha_state,
+            search_status="available",
+            search_reason=None,
+        )
         async with self._database.sessions() as session, session.begin():
             current = await session.get(AssetRecord, asset.id, with_for_update=True)
-            if (
-                current is None
-                or current.asset_type != "IMAGE"
-                or current.is_trashed
-                or current.is_offline
-                or current.file_modified_at != asset.file_modified_at
-                or current.file_size_bytes != asset.file_size_bytes
-                or current.checksum != asset.checksum
-            ):
+            if not self._source_matches(current, asset):
                 return False
             statement = insert(AssetSimilaritySearchFeatureRecord).values(values)
             await session.execute(
@@ -147,7 +255,65 @@ class SimilaritySearchRepository:
                     },
                 )
             )
+            state_statement = insert(AssetSimilarityBoundedStateRecord).values(state_values)
+            await session.execute(
+                state_statement.on_conflict_do_update(
+                    index_elements=[AssetSimilarityBoundedStateRecord.asset_id],
+                    set_={
+                        key: getattr(state_statement.excluded, key)
+                        for key in state_values
+                        if key != "asset_id"
+                    },
+                )
+            )
         return True
+
+    async def mark_unavailable(
+        self,
+        asset: ImmichAsset,
+        reason: str,
+        *,
+        source_alpha_state: SourceAlphaState = "unknown_alpha",
+    ) -> bool:
+        """Persist a deterministic source/config-scoped failure so scans do not loop."""
+
+        values = self._state_values(
+            asset,
+            source_identity=synchronized_source_identity(asset),
+            alpha_state=source_alpha_state,
+            search_status="unavailable",
+            search_reason=reason,
+        )
+        async with self._database.sessions() as session, session.begin():
+            current = await session.get(AssetRecord, asset.id, with_for_update=True)
+            if not self._source_matches(current, asset):
+                return False
+            statement = insert(AssetSimilarityBoundedStateRecord).values(values)
+            await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[AssetSimilarityBoundedStateRecord.asset_id],
+                    set_={
+                        key: getattr(statement.excluded, key)
+                        for key in values
+                        if key != "asset_id"
+                    },
+                )
+            )
+        return True
+
+    async def unavailable_reason(self, asset_id: UUID) -> str | None:
+        statement = (
+            select(AssetSimilarityBoundedStateRecord.search_reason)
+            .join(AssetRecord, AssetRecord.id == AssetSimilarityBoundedStateRecord.asset_id)
+            .where(
+                AssetRecord.id == asset_id,
+                *self._eligible(),
+                self._state_current(),
+                AssetSimilarityBoundedStateRecord.search_status == "unavailable",
+            )
+        )
+        async with self._database.sessions() as session:
+            return await session.scalar(statement)
 
     async def get(self, asset_id: UUID) -> AssetSimilaritySearchFeatureRecord | None:
         async with self._database.sessions() as session:
