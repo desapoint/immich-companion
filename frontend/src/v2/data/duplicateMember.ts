@@ -5,6 +5,7 @@ import { duplicateAssetSourceLabel } from './duplicatePresentation';
 export const FULL_RESOLUTION_VALIDATION_PIXEL_LIMIT = 64_000_000;
 
 export type SimilarityValidationEvidenceTier = 'bounded' | 'full-resolution' | 'search-only';
+export type SimilarityValidationSide = 'member' | 'reference';
 
 export type ComparisonMemberData = {
   name: string;
@@ -31,6 +32,24 @@ const similarityNumberFormat = new Intl.NumberFormat('en-US', { minimumFractionD
 
 export function formatSimilarityPercent(value: number | null): string {
   return value === null ? 'Not calculated' : `${similarityNumberFormat.format(value)}%`;
+}
+
+export function formatImageDimensions(
+  width: number | null | undefined,
+  height: number | null | undefined,
+): string | null {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || (width ?? 0) <= 0 || (height ?? 0) <= 0) return null;
+  return `${Math.trunc(width as number)} × ${Math.trunc(height as number)}`;
+}
+
+export function similarityValidatedDimensions(
+  evidence: Pick<DuplicateSimilarityEvidence, 'validatedWidth' | 'validatedHeight' | 'referenceValidatedWidth' | 'referenceValidatedHeight'> | null | undefined,
+  side: SimilarityValidationSide = 'member',
+): string | null {
+  if (!evidence) return null;
+  return side === 'reference'
+    ? formatImageDimensions(evidence.referenceValidatedWidth, evidence.referenceValidatedHeight)
+    : formatImageDimensions(evidence.validatedWidth, evidence.validatedHeight);
 }
 
 export function similarityValidationEvidenceTier(
@@ -95,7 +114,7 @@ export function comparisonMemberData(
     source: duplicateAssetSourceLabel(libraryId, libraryId ? library : undefined),
     size: formatBytes(sizeBytes),
     sizeBytes,
-    dims: asset?.width && asset?.height ? `${asset.width} × ${asset.height}` : '—',
+    dims: formatImageDimensions(asset?.width, asset?.height) ?? '—',
     taken: formatDate(asset?.file_created_at),
     codec: asset?.original_mime_type ?? 'Unknown type',
     library,
