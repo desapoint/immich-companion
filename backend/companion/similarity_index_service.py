@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 from hashlib import sha256
 from pathlib import Path
@@ -78,6 +79,15 @@ def _failure_is_retryable(reason: str | None) -> bool:
     return not any(marker in reason for marker in NON_RETRYABLE_FAILURE_MARKERS)
 
 
+def _accepts_parameter(callable_object: object, parameter: str) -> bool:
+    """Allow rolling upgrades and lightweight adapters to use the legacy contract."""
+
+    try:
+        return parameter in inspect.signature(callable_object).parameters
+    except (TypeError, ValueError):
+        return True
+
+
 class SimilarityIndexMaintainer:
     """Select and commit only missing or stale synchronized image features."""
 
@@ -105,6 +115,7 @@ class SimilarityIndexMaintainer:
         self._fallback_max_bytes = fallback_max_bytes
         self._decode_cache_path = decode_cache_path
         self._metrics: dict[str, int] = {}
+        self._legacy_coverage_contract = False
 
     def _measure(self, phase: str, started: float) -> None:
         key = f"{phase}_milliseconds"
@@ -186,7 +197,14 @@ class SimilarityIndexMaintainer:
             await asyncio.gather(*tasks, return_exceptions=True)
 
     async def coverage(self) -> SimilarityIndexCoverageDetails:
-        eligible, current, bounded, unavailable, missing, stale = await self._features.coverage()
+        raw_coverage = await self._features.coverage()
+        if len(raw_coverage) == 4:
+            self._legacy_coverage_contract = True
+            eligible, current, missing, stale = raw_coverage
+            bounded = 0
+            unavailable = 0
+        else:
+            eligible, current, bounded, unavailable, missing, stale = raw_coverage
         return SimilarityIndexCoverageDetails(
             eligible_count=eligible,
             current_count=current,
@@ -348,10 +366,13 @@ class SimilarityIndexMaintainer:
                     elif reason is not None:
                         failures[asset_id] = reason
         final = await self.coverage()
+        unavailable_result = (
+            len(failures) if self._legacy_coverage_contract else final.unavailable_count
+        )
         return (
             final,
             completed + retry_completed,
-            final.unavailable_count,
+            unavailable_result,
             attempted | retry_attempted,
             failures if not final.complete or final.unavailable_count else {},
         )
@@ -364,9 +385,14 @@ class SimilarityIndexMaintainer:
     ) -> None:
         if source is None or _failure_is_retryable(reason):
             return
-        if await self._features.mark_unavailable(
-            source, reason, source_alpha_state=alpha_state
-        ):
+        marker = getattr(self._features, "mark_unavailable", None)
+        if marker is None:
+            return
+        if _accepts_parameter(marker, "source_alpha_state"):
+            persisted = await marker(source, reason, source_alpha_state=alpha_state)
+        else:
+            persisted = await marker(source, reason)
+        if persisted:
             self._count("deterministic_retries_suppressed")
 
     async def _failure(
@@ -521,13 +547,18 @@ class SimilarityIndexMaintainer:
                 self._count("failed_or_skipped_attempts")
                 return False, "Immich source changed while search evidence was generated"
             started = perf_counter()
-            if await self._features.save(
-                source,
-                media_digest,
-                feature,
-                origin=origin,
-                source_alpha_state=alpha_state,
-            ):
+            saver = self._features.save
+            if _accepts_parameter(saver, "source_alpha_state"):
+                saved_feature = await saver(
+                    source,
+                    media_digest,
+                    feature,
+                    origin=origin,
+                    source_alpha_state=alpha_state,
+                )
+            else:
+                saved_feature = await saver(source, media_digest, feature, origin=origin)
+            if saved_feature:
                 self._measure("db_persistence", started)
                 if origin == "preview":
                     self._count("preview_fingerprints_generated")
