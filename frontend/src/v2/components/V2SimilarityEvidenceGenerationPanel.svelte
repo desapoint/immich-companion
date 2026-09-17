@@ -18,10 +18,12 @@
     descriptor_current: boolean;
     rebuilt_at: string|null;
   };
-  type ApiRebuildResult = {
+  type ApiDestroyResult = {
     generation: ApiGeneration;
     cancelled_task_count: number;
     removed_counts: Record<string,number>;
+  };
+  type ApiRebuildResult = ApiDestroyResult & {
     task_id: string;
   };
   type ApiTask = {
@@ -36,6 +38,8 @@
   let generation=$state<ApiGeneration|null>(null);
   let generationLoading=$state(false);
   let generationError=$state('');
+  let destroyOpen=$state(false);
+  let destroying=$state(false);
   let rebuildOpen=$state(false);
   let rebuilding=$state(false);
   let rebuildMessage=$state('');
@@ -82,8 +86,32 @@
     }
   }
 
+  async function destroyEvidence():Promise<void>{
+    if(rebuilding||destroying)return;
+    destroying=true;
+    rebuildError='';
+    rebuildMessage='Destroying the current similarity evidence…';
+    try{
+      const result=await requestJson<ApiDestroyResult>(
+        '/api/v2/duplicates/similarity-evidence/destroy',
+        jsonRequest('POST',{}),
+      );
+      generation=result.generation;
+      const message=`Evidence epoch ${result.generation.epoch} created. Similarity evidence was destroyed; no scan was queued.`;
+      sessionStorage.removeItem(REBUILD_TASK_KEY);
+      sessionStorage.setItem(REBUILD_MESSAGE_KEY,message);
+      destroyOpen=false;
+      window.location.reload();
+    }catch(error){
+      rebuildError=error instanceof Error?error.message:'Similarity evidence could not be destroyed.';
+      destroyOpen=false;
+      destroying=false;
+      await loadGeneration();
+    }
+  }
+
   async function rebuildEvidence():Promise<void>{
-    if(rebuilding)return;
+    if(rebuilding||destroying)return;
     rebuilding=true;
     rebuildError='';
     rebuildMessage='Invalidating the current evidence generation…';
@@ -132,7 +160,7 @@
     <V2Inline gap="sm" wrap={true}>
       {#if generation}
         <V2Badge text={`Current epoch ${generation.epoch}`}/>
-        <V2Badge text={`Next rebuild ${generation.epoch+1}`}/>
+        <V2Badge text={`Next epoch ${generation.epoch+1}`}/>
         <V2Badge text={`Code generation ${generation.code_generation}`}/>
         {#if !generation.descriptor_current}<V2Badge tone="warn" text="Generation changed"/>{/if}
       {:else if generationLoading}
@@ -142,16 +170,37 @@
       {/if}
     </V2Inline>
     <small class="v2-muted">The evidence epoch is the hard boundary for search fingerprints, detailed validation, pair scores, completed similarity scans, unavailable markers, and the derived duplicate projection. Review decisions and resolution history are preserved.</small>
+    <small class="v2-muted">Destroy only leaves the evidence empty until a later similarity scan. Rebuild uses the same fingerprint pipeline, but queues that scan immediately with the currently saved discovery settings.</small>
     {#if generation?.rebuilt_at}<small class="v2-muted">Last rebuilt {new Date(generation.rebuilt_at).toLocaleString()}.</small>{/if}
     {#if generationError}<small class="v2-rebuild-error">Generation status: {generationError}</small>{/if}
     {#if rebuildMessage}<small class="v2-rebuild-ok">{rebuildMessage}</small>{/if}
     {#if rebuildError}<small class="v2-rebuild-error">{rebuildError}</small>{/if}
     <V2Inline gap="sm" wrap={true}>
-      <V2Button variant="danger" disabled={rebuilding||generationLoading} onclick={()=>rebuildOpen=true}>{rebuilding?'Rebuilding similarity evidence…':'Start new evidence epoch & rebuild'}</V2Button>
-      <V2Button disabled={rebuilding||generationLoading} onclick={()=>void loadGeneration()}>{generationLoading?'Refreshing epoch…':'Refresh epoch status'}</V2Button>
+      <V2Button variant="danger" disabled={rebuilding||destroying||generationLoading} onclick={()=>destroyOpen=true}>{destroying?'Destroying similarity evidence…':'Destroy evidence only'}</V2Button>
+      <V2Button variant="danger" disabled={rebuilding||destroying||generationLoading} onclick={()=>rebuildOpen=true}>{rebuilding?'Rebuilding similarity evidence…':'Start new evidence epoch & rebuild'}</V2Button>
+      <V2Button disabled={rebuilding||destroying||generationLoading} onclick={()=>void loadGeneration()}>{generationLoading?'Refreshing epoch…':'Refresh epoch status'}</V2Button>
     </V2Inline>
   </V2Stack>
 </V2Card>
+
+{#if destroyOpen}
+  <V2ConfirmDialog
+    title={generation?`Destroy evidence in epoch ${generation.epoch}?`:'Destroy current similarity evidence?'}
+    message={generation?`This advances the evidence epoch from ${generation.epoch} to ${generation.epoch+1} and destroys all current similarity evidence without starting a replacement scan.`:'This creates the next evidence epoch and destroys all current similarity evidence without starting a replacement scan.'}
+    confirmLabel="Destroy evidence only"
+    destructive={true}
+    pending={destroying}
+    onconfirm={()=>void destroyEvidence()}
+    onclose={()=>destroyOpen=false}
+  >
+    {#snippet detail()}
+      <V2Stack gap="sm">
+        <span>Active similarity scan/index work is cancelled. Search fingerprints, detailed validation, pair scores, completed similarity scans, unavailable markers, and the derived duplicate projection are invalidated.</span>
+        <span>Review decisions and resolution history are not deleted. No replacement scan is queued; the next manual similarity scan will rebuild the missing fingerprints before candidate indexing.</span>
+      </V2Stack>
+    {/snippet}
+  </V2ConfirmDialog>
+{/if}
 
 {#if rebuildOpen}
   <V2ConfirmDialog
