@@ -8,13 +8,26 @@
   import V2KeyboardShortcuts, { type KeyboardShortcut } from './V2KeyboardShortcuts.svelte';
   import V2LazyAssetMedia from './V2LazyAssetMedia.svelte';
   import V2Section from './V2Section.svelte';
-  import V2Stack from './V2Stack.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
-  import { comparisonMemberData, formatSimilarityPercent, similarityValidatedDimensions, usesBoundedValidation, type ComparisonMemberData } from '../data/duplicateMember';
+  import {
+    comparisonMemberData,
+    formatSimilarityPercent,
+    similarityValidatedDimensions,
+    similarityValidationEvidenceLabel,
+    usesBoundedValidation,
+    type ComparisonMemberData,
+  } from '../data/duplicateMember';
   import { comparisonTargetId, stepComparisonTargetId } from '../../lib/utils/duplicateComparisonNavigation';
   import { duplicateKindLabel } from '../data/duplicatePresentation';
   import { libraryData } from '../data/currentDataSource.svelte';
-  import type { AssetRecord, DuplicateDecision, DuplicateSimilarityEvidence, MediaResource } from '../data/contracts';
+  import type {
+    AssetRecord,
+    DuplicateDecision,
+    DuplicateMemberRecord,
+    DuplicateSimilarityEvidence,
+    MediaResource,
+    SimilarityValidationMode,
+  } from '../data/contracts';
   import { loadLocalChangeDiagnostics, type LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
   import { formatByteDifference } from '../../lib/utils/fileSize';
   import { loadImmichLibraries } from '../../lib/api/duplicatePolicyApi';
@@ -24,6 +37,9 @@
     groupTitle,
     groupKind,
     groupSimilarity = null,
+    groupMembers = [],
+    validationMode = null,
+    similarityThreshold = null,
     assetIds = [],
     similarities = {},
     similarityEvidence = {},
@@ -45,6 +61,9 @@
     groupTitle: string;
     groupKind: string;
     groupSimilarity?: number | null;
+    groupMembers?: DuplicateMemberRecord[];
+    validationMode?: SimilarityValidationMode | null;
+    similarityThreshold?: number | null;
     assetIds?: string[];
     similarities?: Record<string, number | null>;
     similarityEvidence?: Record<string, DuplicateSimilarityEvidence | null>;
@@ -152,6 +171,20 @@
     };
   }
 
+  function validationModeLabel(value: SimilarityValidationMode | null): string {
+    if (value === 'linked') return 'Linked';
+    if (value === 'reference') return 'Reference';
+    if (value === 'strict') return 'Strict';
+    return 'Not available';
+  }
+
+  function detailSourceLabel(value: DuplicateSimilarityEvidence['detailSource']): string {
+    if (value === 'original') return 'Original';
+    if (value === 'transcoded') return 'Full-size conversion';
+    if (value === 'preview') return 'Bounded preview';
+    return 'Unavailable';
+  }
+
   const activeCount = $derived(assetIds.length);
   const assetById = $derived(new Map(assets.map((asset) => [asset.id, asset])));
   const memberData = $derived(assetIds.map((id) => comparisonMemberData(assetById.get(id), similarities[id] ?? null, libraryNames)));
@@ -162,13 +195,28 @@
   const selectedResource = $derived(comparisonResource(selectedAsset));
   const referenceResource = $derived(comparisonResource(referenceAsset));
   const decisionKey = $derived(assetIds[member] ?? '');
+  const selectedSimilarity = $derived(similarities[decisionKey] ?? null);
   const selectedEvidence = $derived(similarityEvidence[decisionKey] ?? null);
+  const selectedGroupMember = $derived(groupMembers.find((candidate) => candidate.asset.id === decisionKey));
+  const selectedAdmission = $derived(selectedGroupMember?.admission ?? null);
+  const admittedByMember = $derived(groupMembers.find((candidate) => candidate.asset.id === selectedAdmission?.admittedByAssetId));
+  const bestGroupMatchMember = $derived(groupMembers.find((candidate) => candidate.asset.id === selectedAdmission?.bestGroupMatchAssetId));
   const boundedValidation = $derived(usesBoundedValidation(selectedEvidence));
   const selectedValidatedDimensions = $derived(similarityValidatedDimensions(selectedEvidence));
   const referenceValidatedDimensions = $derived(similarityValidatedDimensions(selectedEvidence, 'reference'));
+  const validationEvidenceLabel = $derived(similarityValidationEvidenceLabel(selectedSimilarity, selectedEvidence));
   const matchLabel = $derived(duplicateKindLabel(groupKind));
   const groupSimilarityLabel = $derived(formatSimilarityPercent(groupSimilarity));
+  const groupSimilarityTitle = $derived(validationMode === 'linked' ? 'Group minimum' : 'Group similarity');
+  const modeLabel = $derived(validationModeLabel(validationMode));
+  const thresholdLabel = $derived(similarityThreshold === null ? 'Unavailable' : formatSimilarityPercent(similarityThreshold));
+  const belowThreshold = $derived(similarityThreshold !== null && selectedSimilarity !== null && selectedSimilarity < similarityThreshold);
+  const hasLinkedAdmission = $derived(validationMode === 'linked' && selectedAdmission !== null);
+  const showLinkedSummary = $derived(hasLinkedAdmission && (selectedSimilarity === null || belowThreshold) && selectedAdmission?.admittedByAssetId !== null);
+  const admittedByLabel = $derived(admittedByMember?.asset.original_file_name ?? selectedAdmission?.admittedByAssetId ?? 'Unavailable');
+  const bestGroupMatchLabel = $derived(bestGroupMatchMember?.asset.original_file_name ?? selectedAdmission?.bestGroupMatchAssetId ?? 'Unavailable');
   const sizeDifferenceLabel = $derived(formatByteDifference(selectedData.sizeBytes === null || referenceData.sizeBytes === null ? null : selectedData.sizeBytes - referenceData.sizeBytes));
+  const sameResolution = $derived(selectedData.dims === referenceData.dims);
   const sameUploadSource = $derived(Boolean(selectedAsset && referenceAsset && !selectedAsset.library_id && !referenceAsset.library_id));
   const sameExternalLibrary = $derived(Boolean(selectedData.libraryId && selectedData.libraryId === referenceData.libraryId));
   const sameSourceCollection = $derived(sameUploadSource || sameExternalLibrary);
@@ -333,7 +381,158 @@
   <div class="v2-compare-main"><section class="v2-compare-visual">
     {#if loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if loadError}<div class="v2-compare-media-status" role="alert">{loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance {localDiagnostics} {localDiagnosticsLoading} {localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}{@const evidence=similarityEvidence[assetId]??null}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}{usesBoundedValidation(evidence)?' · Bounded validation':''}</small></button>{/each}</div>
-  </section><aside class="v2-compare-data"><V2Section title="Quick comparison"><V2Card><V2Stack gap="sm"><V2Inline justify="between"><span>Match type</span><b>{matchLabel}</b></V2Inline><V2Inline justify="between"><span>Group similarity</span><b>{groupSimilarityLabel}</b></V2Inline><V2Inline justify="between"><span>Similarity to reference</span><b>{selectedData.similarity}</b></V2Inline>{#if boundedValidation}<V2Inline justify="between"><span>Validation evidence</span><V2Badge tone="warn" text="Bounded"/></V2Inline><span class="v2-small v2-muted">At least one side cannot be fully decoded within Companion's 64-megapixel safety limit, or its original/full-size detail evidence was unavailable. Similarity therefore uses bounded Immich-generated visual evidence. The metadata table shows original dimensions and the actual rendition dimensions used when they are known. Bounded validation is review evidence, not full-resolution or destructive proof.</span>{/if}{#if selectedEvidence}<V2Inline justify="between"><span>Structure <small class="v2-muted">· 65% weight</small></span><b>{percent(selectedEvidence.structuralPercent)}</b></V2Inline><V2Inline justify="between"><span>Perceptual hash <small class="v2-muted">· 25% weight</small></span><b>{percent(selectedEvidence.perceptualPercent)}</b></V2Inline><V2Inline justify="between"><span>Color <small class="v2-muted">· 10% weight</small></span><b>{percent(selectedEvidence.colorPercent)}</b></V2Inline>{#if selectedEvidence.detailChangedPercent!==null&&selectedEvidence.detailChangedPercent!==undefined}<V2Inline justify="between"><span>Detail changed area <small class="v2-muted">· sampled</small></span><b>{percent(selectedEvidence.detailChangedPercent)}</b></V2Inline><V2Inline justify="between"><span>Detail evidence</span><V2Badge tone={selectedEvidence.detailSource==='preview'?'warn':'ok'} text={selectedEvidence.detailSource==='original'?'Original':selectedEvidence.detailSource==='transcoded'?'Full-size conversion':'Bounded preview'}/></V2Inline><span class="v2-small v2-muted">The final similarity includes this candidate detail check. Difference shows displayed-pixel changes; Local changes shows the validator grid.</span>{/if}{:else}<V2Inline justify="between"><span>Visual score details</span><b>Not calculated</b></V2Inline>{/if}<V2Inline justify="between"><span>Peak local change <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?optionalPercent(localDiagnostics.localizedChangedPercent):'Unavailable'}</b></V2Inline><V2Inline justify="between"><span>Coherent changed area <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?optionalPercent(localDiagnostics.coherentChangedPercent):'Unavailable'}</b></V2Inline><V2Inline justify="between"><span>Largest changed region <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?optionalPercent(localDiagnostics.largestChangedRegionPercent):'Unavailable'}</b></V2Inline><V2Inline justify="between"><span>Substantial regions <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?(localDiagnostics.substantialRegionCount??'—'):'Unavailable'}</b></V2Inline><span class="v2-small v2-muted">The detail validator uses this local grid and coherent-region topology when scoring candidate similarity. The Local changes view explains that evidence; it is not a separate mismatch rule.</span><V2Inline justify="between"><span>File size difference</span><b>{sizeDifferenceLabel}</b></V2Inline><V2Inline justify="between"><span>Resolution</span><b>{selectedData.dims===referenceData.dims?'Same':'Different'}</b></V2Inline>{#if sameSourceCollection}<V2Inline justify="between"><span>{folderScopeLabel}</span><V2Badge tone={!foldersComparable?'warn':sameFolder?'ok':'warn'} text={!foldersComparable?'Unavailable':sameFolder?'Same':'Different'}/></V2Inline>{/if}<V2Inline justify="between"><span>Difference source</span><V2Badge tone="ok" text="Layered displayed pixels"/></V2Inline></V2Stack></V2Card></V2Section><V2Section title="Metadata side by side"><div class="v2-compare-grid" role="table" aria-label="Selected and reference asset metadata"><div class="v2-compare-grid-heading v2-compare-grid-property" role="columnheader">Property</div><div class="v2-compare-grid-heading" role="columnheader"><span>Selected</span><small title={selectedData.name}>{selectedData.name}</small></div><div class="v2-compare-grid-heading" role="columnheader"><span>Reference</span><small title={referenceData.name}>{referenceData.name}</small></div>{#each metadataRows as row (row.label)}<div class="v2-compare-grid-label" role="rowheader">{row.label}</div><div class:changed={row.changed} class="v2-compare-grid-value" role="cell">{row.selected}</div><div class:changed={row.changed} class="v2-compare-grid-value" role="cell">{row.reference}</div>{/each}</div></V2Section></aside></div>
+  </section>
+
+  <aside class="v2-compare-data">
+    <V2Section title="Quick comparison">
+      <V2Card>
+        <div class="v2-compare-summary">
+          <V2Inline justify="between"><span>Match type</span><b>{matchLabel}</b></V2Inline>
+          <V2Inline justify="between"><span>Validation mode</span><b>{modeLabel}</b></V2Inline>
+          <V2Inline justify="between"><span>{groupSimilarityTitle}</span><b>{groupSimilarityLabel}</b></V2Inline>
+          <V2Inline justify="between"><span>Similarity to reference</span><b class:warn-value={belowThreshold}>{selectedData.similarity}</b></V2Inline>
+
+          {#if selectedEvidence}
+            <div class="v2-compare-score-line" aria-label="Similarity score components">
+              <span>Structure <b>{percent(selectedEvidence.structuralPercent)}</b></span>
+              <span>Hash <b>{percent(selectedEvidence.perceptualPercent)}</b></span>
+              <span>Color <b>{percent(selectedEvidence.colorPercent)}</b></span>
+            </div>
+          {:else}
+            <V2Inline justify="between"><span>Visual score details</span><b>Not calculated</b></V2Inline>
+          {/if}
+
+          {#if showLinkedSummary && selectedAdmission}
+            <div class="v2-compare-link-summary">
+              <b>Included through {admittedByLabel}</b>
+              <span>{formatSimilarityPercent(selectedAdmission.admissionSimilarityPercent)} admission similarity</span>
+            </div>
+          {/if}
+
+          <div class="v2-compare-chips">
+            {#if boundedValidation}<span class="v2-compare-chip warn">Bounded validation</span>{/if}
+            {#if similarityThreshold !== null && selectedSimilarity !== null}
+              <span class="v2-compare-chip" class:warn={belowThreshold} class:ok={!belowThreshold}>{belowThreshold?'Below':'Above'} {thresholdLabel} threshold</span>
+            {:else if validationMode === 'linked' && selectedSimilarity === null}
+              <span class="v2-compare-chip warn">Reference score unavailable</span>
+            {/if}
+            <span class="v2-compare-chip">{sizeDifferenceLabel}</span>
+            <span class="v2-compare-chip" class:warn={!sameResolution} class:ok={sameResolution}>{sameResolution?'Same':'Different'} resolution</span>
+            {#if sameSourceCollection}
+              <span class="v2-compare-chip" class:warn={!foldersComparable||!sameFolder} class:ok={foldersComparable&&sameFolder}>{!foldersComparable?'Folder unavailable':sameFolder?'Same folder':'Different folder'}</span>
+            {/if}
+          </div>
+        </div>
+      </V2Card>
+    </V2Section>
+
+    {#if hasLinkedAdmission && selectedAdmission}
+      <details class="v2-compare-detail">
+        <summary>Why is this image in the group?</summary>
+        <div class="v2-compare-detail-body">
+          <div class="v2-compare-key-values">
+            <span>Validation mode</span><b>{modeLabel}</b>
+            <span>Threshold</span><b>{thresholdLabel}</b>
+            <span>Similarity to reference</span><b class:warn-value={belowThreshold}>{selectedData.similarity}</b>
+            <span>Admitted through</span><b class="v2-compare-link-value">{admittedByLabel}</b>
+            <span>Admission similarity</span><b>{formatSimilarityPercent(selectedAdmission.admissionSimilarityPercent)}</b>
+            <span>Link depth</span><b>{selectedAdmission.linkDepth}</b>
+            <span>Best group match</span><b class="v2-compare-link-value">{bestGroupMatchLabel}</b>
+            <span>Best group similarity</span><b>{formatSimilarityPercent(selectedAdmission.bestGroupMatchSimilarityPercent)}</b>
+          </div>
+          <p class="v2-compare-detail-note">“Admitted through” is the comparison edge that allowed this member into a linked group. “Best group match” is the strongest known relationship in the group and can be a different image.</p>
+        </div>
+      </details>
+    {/if}
+
+    <details class="v2-compare-detail">
+      <summary>Similarity &amp; validation details</summary>
+      <div class="v2-compare-detail-body">
+        <div class="v2-compare-key-values">
+          <span>Similarity to reference</span><b>{selectedData.similarity}</b>
+          {#if selectedEvidence}
+            <span>Structure <small class="v2-muted">· 65% weight</small></span><b>{percent(selectedEvidence.structuralPercent)}</b>
+            <span>Perceptual hash <small class="v2-muted">· 25% weight</small></span><b>{percent(selectedEvidence.perceptualPercent)}</b>
+            <span>Color <small class="v2-muted">· 10% weight</small></span><b>{percent(selectedEvidence.colorPercent)}</b>
+            <span>Validation evidence</span><b>{validationEvidenceLabel ?? 'Unavailable'}</b>
+            {#if selectedEvidence.detailChangedPercent!==null&&selectedEvidence.detailChangedPercent!==undefined}
+              <span>Detail changed area <small class="v2-muted">· sampled</small></span><b>{percent(selectedEvidence.detailChangedPercent)}</b>
+              <span>Detail evidence</span><b>{detailSourceLabel(selectedEvidence.detailSource)}</b>
+            {/if}
+            <span>Selected original dimensions</span><b>{selectedData.dims}</b>
+            <span>Reference original dimensions</span><b>{referenceData.dims}</b>
+            {#if selectedValidatedDimensions || referenceValidatedDimensions}
+              <span>Validated at</span><b>{selectedValidatedDimensions ?? 'Unavailable'}</b>
+              <span>Reference validated at</span><b>{referenceValidatedDimensions ?? 'Unavailable'}</b>
+            {/if}
+          {:else}
+            <span>Visual score details</span><b>Not calculated</b>
+          {/if}
+        </div>
+        {#if boundedValidation}
+          <p class="v2-compare-detail-note">At least one side cannot be fully decoded within Companion's 64-megapixel safety limit, or its original/full-size detail evidence was unavailable. Similarity therefore uses bounded Immich-generated visual evidence. The metadata table shows original dimensions and the actual rendition dimensions used when they are known. Bounded validation is review evidence, not full-resolution or destructive proof.</p>
+        {/if}
+        {#if selectedEvidence?.detailChangedPercent!==null&&selectedEvidence?.detailChangedPercent!==undefined}
+          <p class="v2-compare-detail-note">The final similarity includes this candidate detail check. Difference shows displayed-pixel changes; Local changes shows the validator grid.</p>
+        {/if}
+      </div>
+    </details>
+
+    <details class="v2-compare-detail">
+      <summary>Local-change validator</summary>
+      <div class="v2-compare-detail-body">
+        <div class="v2-compare-key-values">
+          <span>Peak local change <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?optionalPercent(localDiagnostics.localizedChangedPercent):'Unavailable'}</b>
+          <span>Coherent changed area <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?optionalPercent(localDiagnostics.coherentChangedPercent):'Unavailable'}</b>
+          <span>Largest changed region <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?optionalPercent(localDiagnostics.largestChangedRegionPercent):'Unavailable'}</b>
+          <span>Substantial regions <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading?'Calculating…':localDiagnostics?.available?(localDiagnostics.substantialRegionCount??'—'):'Unavailable'}</b>
+        </div>
+        <p class="v2-compare-detail-note">The detail validator uses this local grid and coherent-region topology when scoring candidate similarity. The Local changes view explains that evidence; it is not a separate mismatch rule.</p>
+      </div>
+    </details>
+
+    <details class="v2-compare-detail">
+      <summary>File differences</summary>
+      <div class="v2-compare-detail-body">
+        <div class="v2-compare-key-values">
+          <span>File size difference</span><b>{sizeDifferenceLabel}</b>
+          <span>Resolution</span><b>{sameResolution?'Same':'Different'}</b>
+          {#if sameSourceCollection}<span>{folderScopeLabel}</span><b>{!foldersComparable?'Unavailable':sameFolder?'Same':'Different'}</b>{/if}
+          <span>Difference source</span><b>Layered displayed pixels</b>
+        </div>
+      </div>
+    </details>
+
+    <details class="v2-compare-detail v2-compare-metadata-detail" open>
+      <summary>Metadata side by side</summary>
+      <div class="v2-compare-detail-body v2-compare-metadata-body">
+        <div class="v2-compare-grid" role="table" aria-label="Selected and reference asset metadata">
+          <div class="v2-compare-grid-heading v2-compare-grid-property" role="columnheader">Property</div>
+          <div class="v2-compare-grid-heading" role="columnheader"><span>Selected</span><small title={selectedData.name}>{selectedData.name}</small></div>
+          <div class="v2-compare-grid-heading" role="columnheader"><span>Reference</span><small title={referenceData.name}>{referenceData.name}</small></div>
+          {#each metadataRows as row (row.label)}
+            <div class="v2-compare-grid-label" role="rowheader">{row.label}</div>
+            <div class:changed={row.changed} class="v2-compare-grid-value" role="cell">{row.selected}</div>
+            <div class:changed={row.changed} class="v2-compare-grid-value" role="cell">{row.reference}</div>
+          {/each}
+        </div>
+      </div>
+    </details>
+
+    {#if selectedAdmission}
+      <details class="v2-compare-detail">
+        <summary>Technical linked data</summary>
+        <div class="v2-compare-detail-body">
+          <div class="v2-compare-key-values">
+            <span>Model version</span><b class="v2-compare-technical-value">{selectedAdmission.modelVersion}</b>
+            <span>Feature version</span><b>{selectedAdmission.featureVersion}</b>
+            <span>Comparison version</span><b>{selectedAdmission.comparisonVersion}</b>
+            <span>Config fingerprint</span><b class="v2-compare-technical-value">{selectedAdmission.configFingerprint}</b>
+          </div>
+        </div>
+      </details>
+    {/if}
+  </aside></div>
   {#snippet footer()}<span class="v2-compare-footer-label"><b>{selectedData.name}</b> <span class="v2-small v2-muted">Choose disposition</span></span><div class="v2-compare-footer-actions"><div class="v2-compare-footer-decisions"><V2DuplicateDecisionControls decision={decisions[decisionKey]} {stackLabel} isPrimary={stackPrimary} decisions={decisionOptions} {disabled} ondecision={setDecision} onprimary={setStackPrimary}/></div><span class="v2-compare-clear-selection"><V2Button disabled={disabled||!decisions[decisionKey]} onclick={clearDecision}>Clear selection</V2Button></span></div>{/snippet}
 </V2ViewerShell>
 
@@ -349,5 +548,31 @@
   .v2-compare-clear-selection{display:inline-flex;flex:0 0 auto;align-self:center;white-space:nowrap}
   .v2-thumb-media{position:relative;display:block;width:92px;height:92px;overflow:hidden;border-radius:5px}
   .v2-compare-media-status{display:grid;place-items:center;width:100%;height:100%;padding:var(--v2-space-4);color:var(--v2-muted);background:var(--v2-image-workzone);text-align:center}
-  @media(max-width:720px){.v2-compare-group-title{max-width:calc(100vw - 8rem)}.v2-compare-header-actions{justify-content:flex-start}.v2-compare-footer-actions{flex:1 1 100%;width:100%}.v2-compare-footer-decisions{flex:1 1 18rem;min-width:0}}
+  .v2-compare-data{overflow-x:hidden}
+  .v2-compare-summary{display:grid;gap:var(--v2-space-2);min-width:0}
+  .v2-compare-score-line{display:flex;gap:6px 10px;flex-wrap:wrap;padding-top:8px;border-top:1px solid var(--v2-line);color:var(--v2-muted);font-size:11px}
+  .v2-compare-score-line b{color:var(--v2-text)}
+  .v2-compare-link-summary{display:grid;gap:2px;padding:8px 9px;border:1px solid color-mix(in srgb,var(--v2-accent) 35%,var(--v2-line));border-radius:8px;background:color-mix(in srgb,var(--v2-accent) 8%,transparent);font-size:11px;overflow-wrap:anywhere}
+  .v2-compare-link-summary span{color:var(--v2-muted)}
+  .v2-compare-chips{display:flex;gap:6px;flex-wrap:wrap}
+  .v2-compare-chip{display:inline-flex;align-items:center;min-width:0;padding:3px 7px;border:1px solid var(--v2-line);border-radius:999px;background:color-mix(in srgb,var(--v2-surface) 82%,var(--v2-accent-2));color:var(--v2-muted);font-size:10px;line-height:1.2}
+  .v2-compare-chip.ok{border-color:color-mix(in srgb,#38a169 55%,var(--v2-line));color:#8be0ad}
+  .v2-compare-chip.warn{border-color:color-mix(in srgb,#c59a35 60%,var(--v2-line));color:#e3c66f}
+  .warn-value{color:#e3c66f}
+  .v2-compare-detail{min-width:0;border:1px solid var(--v2-line);border-radius:9px;background:var(--v2-surface);overflow:hidden}
+  .v2-compare-detail summary{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0;padding:10px 11px;cursor:pointer;color:var(--v2-text);font-weight:700;list-style:none;user-select:none}
+  .v2-compare-detail summary::-webkit-details-marker{display:none}
+  .v2-compare-detail summary::after{content:'▸';flex:0 0 auto;color:var(--v2-muted);transition:transform .12s ease}
+  .v2-compare-detail[open] summary::after{transform:rotate(90deg)}
+  .v2-compare-detail[open] summary{border-bottom:1px solid var(--v2-line)}
+  .v2-compare-detail-body{min-width:0;padding:10px 11px}
+  .v2-compare-key-values{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 10px;align-items:baseline;min-width:0}
+  .v2-compare-key-values>span{min-width:0;color:var(--v2-muted);overflow-wrap:anywhere}
+  .v2-compare-key-values>b{min-width:0;max-width:13rem;color:var(--v2-text);text-align:right;overflow-wrap:anywhere}
+  .v2-compare-link-value{color:var(--v2-accent)!important}
+  .v2-compare-detail-note{margin:10px 0 0;padding:8px 9px;border-left:3px solid color-mix(in srgb,var(--v2-accent) 45%,var(--v2-line));background:color-mix(in srgb,var(--v2-accent) 6%,transparent);color:var(--v2-muted);font-size:11px;line-height:1.45}
+  .v2-compare-metadata-body{overflow:hidden}
+  .v2-compare-metadata-body :global(.v2-compare-grid){width:100%;max-width:100%;overflow:hidden}
+  .v2-compare-technical-value{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;word-break:break-all}
+  @media(max-width:720px){.v2-compare-group-title{max-width:calc(100vw - 8rem)}.v2-compare-header-actions{justify-content:flex-start}.v2-compare-footer-actions{flex:1 1 100%;width:100%}.v2-compare-footer-decisions{flex:1 1 18rem;min-width:0}.v2-compare-key-values{grid-template-columns:1fr}.v2-compare-key-values>b{text-align:left;max-width:none}}
 </style>

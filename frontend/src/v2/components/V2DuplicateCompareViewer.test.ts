@@ -1,12 +1,42 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
+import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../data/contracts';
 import V2DuplicateCompareViewer from './V2DuplicateCompareViewer.svelte';
 
 function buttonWithText(body: string, text: string): string {
   return [...body.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)]
     .map((match) => match[0])
     .find((button) => button.includes(text)) ?? '';
+}
+
+function admission(overrides: Partial<DuplicateAdmissionEvidence> = {}): DuplicateAdmissionEvidence {
+  return {
+    admittedByAssetId: 'asset-2',
+    admissionSimilarityPercent: 91.36,
+    bestGroupMatchAssetId: 'asset-3',
+    bestGroupMatchSimilarityPercent: 94.08,
+    linkDepth: 2,
+    modelVersion: 'appearance-v3',
+    featureVersion: 5,
+    comparisonVersion: 3,
+    configFingerprint: 'fingerprint-123',
+    ...overrides,
+  };
+}
+
+function groupMember(
+  id: string,
+  name: string,
+  similarity: number | null,
+  admissionEvidence: DuplicateAdmissionEvidence | null = null,
+): DuplicateMemberRecord {
+  return {
+    asset: { id, original_file_name: name } as DuplicateMemberRecord['asset'],
+    similarity,
+    similarityEvidence: null,
+    admission: admissionEvidence,
+  };
 }
 
 describe('V2DuplicateCompareViewer', () => {
@@ -61,6 +91,8 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Property');
     expect(body).toContain('Selected');
     expect(body).toContain('Reference');
+    expect(body).toContain('v2-compare-metadata-detail');
+    expect(body.match(/<details[^>]*v2-compare-metadata-detail[^>]*>/)?.[0] ?? '').toContain('open');
     expect(body.indexOf('data-decision="stack"')).toBeLessThan(body.indexOf('Clear selection'));
     expect(body).not.toContain('Technical group ID');
   });
@@ -100,6 +132,46 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('3840 × 2160');
     expect(body).toContain('actual rendition dimensions used');
     expect(body).toContain('not full-resolution or destructive proof');
+  });
+
+  it('explains linked admission even when similarity to the reference was not calculated', () => {
+    const linked = groupMember('asset-1', 'linked.png', null, admission({
+      admissionSimilarityPercent: 82.34,
+      bestGroupMatchSimilarityPercent: 83.07,
+      linkDepth: 3,
+    }));
+    const bridge = groupMember('asset-2', 'bridge.heic', 82.34);
+    const best = groupMember('asset-3', 'best-match.heic', 83.07);
+    const { body } = render(V2DuplicateCompareViewer, {
+      props: {
+        open: true,
+        groupTitle: 'Linked comparison',
+        groupKind: 'similar',
+        groupSimilarity: 82.22,
+        groupMembers: [linked, bridge, best],
+        validationMode: 'linked',
+        similarityThreshold: 82,
+        assetIds: ['asset-1', 'asset-2', 'asset-3'],
+        similarities: { 'asset-1': null, 'asset-2': 82.34, 'asset-3': 83.07 },
+        member: 0,
+        reference: 1,
+        onclose: () => {},
+      },
+    });
+
+    expect(body).toContain('Group minimum');
+    expect(body).toContain('Not calculated');
+    expect(body).toContain('Included through bridge.heic');
+    expect(body).toContain('82.34% admission similarity');
+    expect(body).toContain('Why is this image in the group?');
+    expect(body).toContain('Admitted through');
+    expect(body).toContain('bridge.heic');
+    expect(body).toContain('Best group match');
+    expect(body).toContain('best-match.heic');
+    expect(body).toContain('83.07%');
+    expect(body).toContain('Link depth');
+    expect(body).toContain('Technical linked data');
+    expect(body).toContain('fingerprint-123');
   });
 
   it('keeps inspection navigation enabled while write controls are disabled', () => {
