@@ -92,10 +92,8 @@ export class ViewerViewportController {
     };
   }
 
-  private canRestoreExactTransfer(transfer: ViewportTransfer, metrics: ViewportMetrics): boolean {
-    return transfer.width === metrics.width
-      && transfer.height === metrics.height
-      && transfer.naturalWidth === this.naturalWidth
+  private canRestoreViewportTransfer(transfer: ViewportTransfer): boolean {
+    return transfer.naturalWidth === this.naturalWidth
       && transfer.naturalHeight === this.naturalHeight
       && transfer.zoom === this.zoom;
   }
@@ -106,9 +104,62 @@ export class ViewerViewportController {
     this.panY = next.y;
   }
 
-  private restoreViewportTransfer(transfer: ViewportTransfer): void {
-    this.panX = transfer.panX;
-    this.panY = transfer.panY;
+  private transferAxisPlacement(
+    pan: number,
+    previousViewport: number,
+    previousImage: number,
+    nextViewport: number,
+    nextImage: number,
+    focalPan: number,
+  ): number {
+    const letterboxed = previousImage < previousViewport || nextImage < nextViewport;
+    if (!letterboxed) return focalPan;
+
+    const previousTravel = Math.abs(previousImage - previousViewport) / 2;
+    const nextTravel = Math.abs(nextImage - nextViewport) / 2;
+    if (previousTravel === 0 || nextTravel === 0) return 0;
+
+    const placement = Math.max(-1, Math.min(1, pan / previousTravel));
+    return placement * nextTravel;
+  }
+
+  private restoreViewportTransfer(transfer: ViewportTransfer, metrics: ViewportMetrics): void {
+    const previousSize = renderedSize(
+      transfer.width,
+      transfer.height,
+      transfer.naturalWidth,
+      transfer.naturalHeight,
+      transfer.zoom,
+    );
+    const nextSize = this.sizeFor(metrics);
+    if (!previousSize || !nextSize) {
+      this.restoreFocus(this.pendingFocus ?? { x: 0.5, y: 0.5 }, metrics);
+      return;
+    }
+
+    const focus = normalizedFocusFromPan(transfer.panX, transfer.panY, previousSize);
+    const focalPan = panForNormalizedFocus(focus, nextSize);
+    const transferred = clampPan(
+      this.transferAxisPlacement(
+        transfer.panX,
+        previousSize.viewportW,
+        previousSize.imageW,
+        nextSize.viewportW,
+        nextSize.imageW,
+        focalPan.x,
+      ),
+      this.transferAxisPlacement(
+        transfer.panY,
+        previousSize.viewportH,
+        previousSize.imageH,
+        nextSize.viewportH,
+        nextSize.imageH,
+        focalPan.y,
+      ),
+      nextSize,
+    );
+    this.panX = transferred.x;
+    this.panY = transferred.y;
   }
 
   private clearPendingViewportTransfer(): void {
@@ -141,9 +192,9 @@ export class ViewerViewportController {
     if (this.pendingFocus) {
       if (
         this.pendingViewportTransfer
-        && this.canRestoreExactTransfer(this.pendingViewportTransfer, metrics)
+        && this.canRestoreViewportTransfer(this.pendingViewportTransfer)
       ) {
-        this.restoreViewportTransfer(this.pendingViewportTransfer);
+        this.restoreViewportTransfer(this.pendingViewportTransfer, metrics);
       } else {
         this.restoreFocus(this.pendingFocus, metrics);
       }
