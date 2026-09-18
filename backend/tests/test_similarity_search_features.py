@@ -10,6 +10,7 @@ from companion.immich import ImmichAsset
 from companion.similarity_search_features import (
     SEARCH_FEATURE_VERSION,
     extract_search_feature,
+    extract_search_feature_from_image,
     search_source_identity,
 )
 
@@ -37,13 +38,25 @@ def test_search_feature_uses_normalized_visual_input_without_exact_pixel_hash() 
     feature = extract_search_feature(output.getvalue())
 
     assert feature is not None
-    assert SEARCH_FEATURE_VERSION == 5
+    assert SEARCH_FEATURE_VERSION == 6
     assert feature.feature_version == 3
     assert feature.width == 64
     assert feature.height == 48
     assert len(feature.luminance_vector) == 512
     assert len(feature.color_histogram) == 48
     assert len(feature.perceptual_hash) == 16
+    assert feature.pixel_sha256 is None
+
+
+def test_search_feature_can_use_normalized_pixels_without_reencoding() -> None:
+    image = Image.new("RGBA", (64, 48), (30, 90, 150, 128))
+
+    feature = extract_search_feature_from_image(image)
+
+    assert feature is not None
+    assert feature.width == 64
+    assert feature.height == 48
+    assert feature.has_alpha is True
     assert feature.pixel_sha256 is None
 
 
