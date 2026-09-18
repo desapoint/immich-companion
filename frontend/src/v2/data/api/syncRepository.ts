@@ -52,6 +52,7 @@ type ApiSchedule = {
   cron_expression: string | null;
   deduplication_policy: string;
   next_run_at: string;
+  last_run_at: string | null;
   task_type: string;
   payload: Record<string, unknown>;
   priority: number;
@@ -122,6 +123,7 @@ function normalizeSchedule(value: ApiSchedule): SyncSchedule {
     cronExpression: value.cron_expression,
     deduplicationPolicy: value.deduplication_policy,
     nextRunAt: value.next_run_at,
+    lastRunAt: value.last_run_at ?? null,
     taskType: value.task_type,
     payload: value.payload ?? {},
     priority: value.priority,

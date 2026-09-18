@@ -64,8 +64,24 @@
     writeV2Density(next);
   }
 
+  async function refreshScheduleRunTimes(): Promise<void> {
+    try {
+      const latest = await libraryData.sync.schedules();
+      if (!active) return;
+      const byName = new Map(latest.map((item) => [item.name, item]));
+      const mergeRunTime = (item: SyncSchedule): SyncSchedule => {
+        const live = byName.get(item.name);
+        return live ? { ...item, lastRunAt: live.lastRunAt, nextRunAt: live.nextRunAt } : item;
+      };
+      schedules = schedules.map(mergeRunTime);
+      savedSchedules = savedSchedules.map(mergeRunTime);
+    } catch {
+      // Sync status can still refresh when schedule metadata is temporarily unavailable.
+    }
+  }
+
   async function refreshStatus(): Promise<void> {
-    await syncStatus.refresh();
+    await Promise.all([syncStatus.refresh(), refreshScheduleRunTimes()]);
   }
 
   async function loadLiveConfiguration(): Promise<void> {
@@ -95,7 +111,7 @@
     success = null;
     try {
       await libraryData.sync.start(mode);
-      await syncStatus.refresh();
+      await refreshStatus();
       if (active) success = `${mode === 'full' ? 'Global' : 'Incremental'} synchronization started.`;
     } catch (value) {
       if (active) error = message(value, 'Could not start synchronization.');
@@ -204,6 +220,28 @@
 
   function formatNumber(value: number | null | undefined): string {
     return typeof value === 'number' ? value.toLocaleString() : '—';
+  }
+
+  function scheduleLastRunAt(schedule: SyncSchedule): string | null {
+    const mode = schedule.payload.mode;
+    let latest = schedule.lastRunAt;
+    let latestTime = latest ? Date.parse(latest) : Number.NEGATIVE_INFINITY;
+    if (mode !== 'full' && mode !== 'incremental') return latest;
+
+    for (const run of [
+      syncStatus.status?.active,
+      syncStatus.status?.pending,
+      syncStatus.status?.lastSuccess,
+      syncStatus.status?.lastFailure,
+    ]) {
+      if (!run?.startedAt || run.mode !== mode) continue;
+      const startedAt = Date.parse(run.startedAt);
+      if (Number.isFinite(startedAt) && startedAt > latestTime) {
+        latest = run.startedAt;
+        latestTime = startedAt;
+      }
+    }
+    return latest;
   }
 
   onMount(() => {
@@ -328,7 +366,7 @@
                   {#snippet actions()}<V2Badge tone={incrementalSchedule.enabled ? 'ok' : 'default'} text={incrementalSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
                   <V2Stack gap="sm">
                     <V2Checkbox label="Enable incremental sync schedule" checked={incrementalSchedule.enabled} onchange={(checked) => updateSchedule(incrementalSchedule.name, { enabled: checked })} />
-                    <V2CronField id="settings-incremental-cron" label="Incremental synchronization" enabled={incrementalSchedule.enabled} value={incrementalSchedule.cronExpression ?? ''} onchange={(value) => updateSchedule(incrementalSchedule.name, { cronExpression: value })} />
+                    <V2CronField id="settings-incremental-cron" label="Incremental synchronization" enabled={incrementalSchedule.enabled} lastRunAt={scheduleLastRunAt(incrementalSchedule)} value={incrementalSchedule.cronExpression ?? ''} onchange={(value) => updateSchedule(incrementalSchedule.name, { cronExpression: value })} />
                   </V2Stack>
                 </V2Card>
               {/if}
@@ -337,7 +375,7 @@
                   {#snippet actions()}<V2Badge tone={fullSchedule.enabled ? 'ok' : 'default'} text={fullSchedule.enabled ? 'Enabled' : 'Disabled'} />{/snippet}
                   <V2Stack gap="sm">
                     <V2Checkbox label="Enable global full-sync schedule" checked={fullSchedule.enabled} onchange={(checked) => updateSchedule(fullSchedule.name, { enabled: checked })} />
-                    <V2CronField id="settings-global-cron" label="Global full synchronization" enabled={fullSchedule.enabled} value={fullSchedule.cronExpression ?? ''} onchange={(value) => updateSchedule(fullSchedule.name, { cronExpression: value })} />
+                    <V2CronField id="settings-global-cron" label="Global full synchronization" enabled={fullSchedule.enabled} lastRunAt={scheduleLastRunAt(fullSchedule)} value={fullSchedule.cronExpression ?? ''} onchange={(value) => updateSchedule(fullSchedule.name, { cronExpression: value })} />
                   </V2Stack>
                 </V2Card>
               {/if}
