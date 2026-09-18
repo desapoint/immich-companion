@@ -23,6 +23,7 @@ from companion.similarity_scan_repository import (
 LOW = UUID("11111111-1111-4111-8111-111111111111")
 HIGH = UUID("22222222-2222-4222-8222-222222222222")
 THIRD = UUID("33333333-3333-4333-8333-333333333333")
+FOURTH = UUID("44444444-4444-4444-8444-444444444444")
 SCAN_ONE = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SCAN_TWO = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
@@ -69,6 +70,7 @@ def snapshot(
     pairs: tuple[SimilarityScanPair, ...] | None = None,
     *,
     validation_mode: Literal["reference", "linked", "strict"] = "strict",
+    max_link_depth: int = 2,
     anchor_asset_id: UUID | None = None,
 ) -> SimilarityScanSnapshot:
     current_pairs = pairs or (scan_pair(),)
@@ -85,6 +87,7 @@ def snapshot(
             maximum_neighbors_per_asset=8,
             maximum_matches=5000,
             validation_mode=validation_mode,
+            max_link_depth=max_link_depth,
             anchor_asset_id=anchor_asset_id,
         ),
         asset_count=len(
@@ -130,6 +133,7 @@ async def test_similarity_provider_publishes_latest_pair_with_scan_provenance() 
     assert groups[0].assets[0].id == LOW
     assert groups[0].provider_metadata["scan_id"] == str(SCAN_ONE)
     assert groups[0].provider_metadata["similarity_percent"] == "98.5"
+    assert groups[0].provider_metadata["max_link_depth"] == "2"
     assert assets.requested == [LOW, HIGH]
 
 
@@ -201,6 +205,43 @@ async def test_similarity_provider_does_not_collapse_non_transitive_chain() -> N
         (LOW, HIGH),
         (HIGH, THIRD),
     ]
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_applies_persisted_link_depth_limit() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (
+            scan_pair(LOW, HIGH, 99),
+            scan_pair(HIGH, THIRD, 98),
+            scan_pair(THIRD, FOURTH, 97),
+        ),
+        validation_mode="linked",
+        max_link_depth=1,
+        anchor_asset_id=LOW,
+    )
+    provider = SimilarityDuplicateProvider(
+        FakeScans(current),
+        FakeAssets({
+            LOW: asset(LOW),
+            HIGH: asset(HIGH),
+            THIRD: asset(THIRD),
+            FOURTH: asset(FOURTH),
+        }),
+    )
+
+    group = (await provider.discover())[0]
+
+    assert tuple(member.id for member in group.assets) == (LOW, HIGH, THIRD)
+    assert group.provider_metadata["max_link_depth"] == "1"
+    assert group.similarity_validation is not None
+    evidence = {
+        item.asset_id: item
+        for item in group.similarity_validation.admission_evidence
+    }
+    assert evidence[HIGH].link_depth == 0
+    assert evidence[THIRD].link_depth == 1
+    assert FOURTH not in evidence
 
 
 @pytest.mark.asyncio
