@@ -123,7 +123,7 @@ function normalizeSchedule(value: ApiSchedule): SyncSchedule {
     cronExpression: value.cron_expression,
     deduplicationPolicy: value.deduplication_policy,
     nextRunAt: value.next_run_at,
-    lastRunAt: value.last_run_at,
+    lastRunAt: value.last_run_at ?? null,
     taskType: value.task_type,
     payload: value.payload ?? {},
     priority: value.priority,
