@@ -52,6 +52,7 @@ export interface SyncSchedule {
   cronExpression: string | null;
   deduplicationPolicy: string;
   nextRunAt: string;
+  lastRunAt: string | null;
   taskType: string;
   payload: Record<string, unknown>;
   priority: number;
