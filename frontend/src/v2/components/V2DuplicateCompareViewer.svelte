@@ -226,7 +226,7 @@
   const hasIndirectLinkedAdmission = $derived(
     validationMode === 'linked'
       && selectedAdmission !== null
-      && selectedAdmission.linkDepth > 1
+      && selectedAdmission.linkDepth > 0
       && selectedAdmission.admittedByAssetId !== null,
   );
   const intermediateImageCount = $derived(selectedAdmission ? linkedIntermediateCount(selectedAdmission.linkDepth) : 0);
