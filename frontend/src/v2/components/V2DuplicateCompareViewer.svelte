@@ -17,7 +17,7 @@
     usesBoundedValidation,
     type ComparisonMemberData,
   } from '../data/duplicateMember';
-  import { comparisonTargetId, stepComparisonTargetId } from '../../lib/utils/duplicateComparisonNavigation';
+  import { stepComparisonTargetId, viewerSelectionTargetId } from '../../lib/utils/duplicateComparisonNavigation';
   import { duplicateKindLabel } from '../data/duplicatePresentation';
   import { libraryData } from '../data/currentDataSource.svelte';
   import type {
@@ -327,7 +327,7 @@
   });
 
   function showMember(index: number) {
-    const target = comparisonTargetId(assetIds, assetIds[reference] ?? '', assetIds[index] ?? '');
+    const target = viewerSelectionTargetId(assetIds, assetIds[index] ?? '');
     member = Math.max(0, assetIds.indexOf(target));
   }
   function stepMember(direction: 'previous' | 'next') {
