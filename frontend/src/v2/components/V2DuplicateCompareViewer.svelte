@@ -328,9 +328,12 @@
     return () => controller.abort();
   });
 
-  function showMember(index: number) {
-    const target = viewerSelectionTargetId(assetIds, assetIds[index] ?? '');
+  function showMemberById(assetId: string) {
+    const target = viewerSelectionTargetId(assetIds, assetId);
     member = Math.max(0, assetIds.indexOf(target));
+  }
+  function showMember(index: number) {
+    showMemberById(assetIds[index] ?? '');
   }
   function stepMember(direction: 'previous' | 'next') {
     if (!activeCount) return;
@@ -463,7 +466,18 @@
               <span>Validation mode</span><b>{modeLabel}</b>
               <span>Threshold</span><b>{thresholdLabel}</b>
               <span>Similarity to reference</span><b class:warn-value={belowThreshold}>{selectedData.similarity}</b>
-              <span>Admitted through</span><b class="v2-compare-link-value">{admittedByLabel}</b>
+              <span>Admitted through</span>
+              {#if admittedByMember && assetIds.includes(admittedByMember.asset.id)}
+                <button
+                  type="button"
+                  class="v2-compare-link-value v2-compare-member-link"
+                  title={`Select ${admittedByLabel} in the comparison viewer`}
+                  aria-label={`Select admitted-through asset ${admittedByLabel} in the comparison viewer`}
+                  onclick={()=>showMemberById(admittedByMember.asset.id)}
+                >{admittedByLabel}</button>
+              {:else}
+                <b class="v2-compare-link-value">{admittedByLabel}</b>
+              {/if}
               <span>Admission similarity</span><b>{formatSimilarityPercent(selectedAdmission.admissionSimilarityPercent)}</b>
               <span>Images in between</span><b>{intermediateImageCount}</b>
               <span>Best group match</span><b class="v2-compare-link-value">{bestGroupMatchLabel}</b>
@@ -587,9 +601,12 @@
   .v2-compare-key-values>span{min-width:0;color:var(--v2-muted);overflow-wrap:anywhere}
   .v2-compare-key-values>b{min-width:0;max-width:13rem;color:var(--v2-text);text-align:right;overflow-wrap:anywhere}
   .v2-compare-link-value{color:var(--v2-accent)!important}
+  .v2-compare-member-link{min-width:0;max-width:13rem;margin:0;padding:0;border:0;background:transparent;font:inherit;font-weight:700;text-align:right;text-decoration:underline;overflow-wrap:anywhere;cursor:pointer}
+  .v2-compare-member-link:hover{color:color-mix(in srgb,var(--v2-accent) 75%,white)!important}
+  .v2-compare-member-link:focus-visible{outline:2px solid var(--v2-accent);outline-offset:2px;border-radius:3px}
   .v2-compare-detail-note{margin:10px 0 0;padding:8px 9px;border-left:3px solid color-mix(in srgb,var(--v2-accent) 45%,var(--v2-line));background:color-mix(in srgb,var(--v2-accent) 6%,transparent);color:var(--v2-muted);font-size:11px;line-height:1.45}
   .v2-compare-metadata-body{overflow:hidden}
   .v2-compare-metadata-body :global(.v2-compare-grid){width:100%;max-width:100%;overflow:hidden}
   .v2-compare-technical-value{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:10px;word-break:break-all}
-  @media(max-width:720px){.v2-compare-group-title{max-width:calc(100vw - 8rem)}.v2-compare-header-actions{justify-content:flex-start}.v2-compare-footer-actions{flex:1 1 100%;width:100%}.v2-compare-footer-decisions{flex:1 1 18rem;min-width:0}.v2-compare-data{display:flex;overflow:visible}.v2-compare-header-zone,.v2-compare-detail-scroll{overflow:visible;scrollbar-gutter:auto}.v2-compare-detail-scroll>.v2-compare-detail{flex:0 0 auto}.v2-compare-key-values{grid-template-columns:1fr}.v2-compare-key-values>b{text-align:left;max-width:none}}
+  @media(max-width:720px){.v2-compare-group-title{max-width:calc(100vw - 8rem)}.v2-compare-header-actions{justify-content:flex-start}.v2-compare-footer-actions{flex:1 1 100%;width:100%}.v2-compare-footer-decisions{flex:1 1 18rem;min-width:0}.v2-compare-data{display:flex;overflow:visible}.v2-compare-header-zone,.v2-compare-detail-scroll{overflow:visible;scrollbar-gutter:auto}.v2-compare-detail-scroll>.v2-compare-detail{flex:0 0 auto}.v2-compare-key-values{grid-template-columns:1fr}.v2-compare-key-values>b{text-align:left;max-width:none}.v2-compare-member-link{text-align:left;max-width:none}}
 </style>
