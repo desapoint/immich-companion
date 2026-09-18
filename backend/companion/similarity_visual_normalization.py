@@ -15,7 +15,7 @@ import pyvips
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.task_coordinator import TaskContext
 
-MAX_VISUAL_DIMENSION = 6000
+MAX_VISUAL_DIMENSION = 2048
 DEFAULT_VISUAL_SOURCE_MAX_BYTES = 128 * 1024 * 1024
 VISUAL_NORMALIZATION_VERSION = 3
 PYVIPS_VERSION = getattr(pyvips, "__version__", "unknown")
