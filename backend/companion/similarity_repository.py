@@ -23,11 +23,11 @@ from companion.similarity_detail import (
 )
 from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_features import VisualFeatureResult, compare_visual_features
-from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 from companion.similarity_generation import (
     SIMILARITY_EVIDENCE_CODE_GENERATION,
     SimilarityEvidenceEpochRepository,
 )
+from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 
 SIMILARITY_COMPARISON_VERSION = 6
 PAIR_DETAIL_BATCH_SIZE = 500
@@ -150,6 +150,7 @@ def _feature(record: SimilarityFeatureRecord) -> VisualFeatureResult:
         has_orientation_metadata=False,
         metadata_richness=0,
     )
+
 
 def _public(record: AssetSimilarityEdgeRecord) -> PairSimilarityEvidence:
     return PairSimilarityEvidence(
