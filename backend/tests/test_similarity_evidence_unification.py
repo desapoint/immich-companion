@@ -11,6 +11,7 @@ import pytest
 from companion.discovery import DiscoveredGroup
 from companion.duplicate_service import CrossSourceDuplicateService
 from companion.group_decision import DiscoverySource
+from companion.similarity_generation import StaleSimilarityEvidenceEpochError
 from companion.similarity_repository import (
     DetailSourceEvidence,
     PairSimilarityEvidence,
@@ -52,6 +53,40 @@ class _ScanEvidence:
     ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
         self.calls.append((scan_id, asset_ids, source_identities or {}))
         return {(LEFT, RIGHT): self.evidence}
+
+
+class _StaleSimilarity:
+    def __init__(self) -> None:
+        self.calls: list[tuple[list[list[UUID]], dict[UUID, object]]] = []
+
+    async def reference_edges(self, groups, features):
+        self.calls.append((groups, features))
+        raise StaleSimilarityEvidenceEpochError(
+            "Similarity evidence generation does not match this process"
+        )
+
+
+@pytest.mark.asyncio
+async def test_duplicate_review_live_edge_read_tolerates_stale_generation() -> None:
+    similarity = _StaleSimilarity()
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        similarity=similarity,  # type: ignore[arg-type]
+    )
+
+    result = await service._current_reference_edges(  # noqa: SLF001
+        [[LEFT, RIGHT]],
+        {},
+    )
+
+    assert result is None
+    assert similarity.calls == [([[LEFT, RIGHT]], {})]
 
 
 @pytest.mark.asyncio

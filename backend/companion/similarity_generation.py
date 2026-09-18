@@ -21,10 +21,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import text
+from sqlalchemy import func, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from companion.database import DatabaseManager
+from companion.models import TaskLaneRecord, TaskRecord
 from companion.task_coordinator import TaskCancelledError
 from companion.v2.legacy_task_coordinator import TASK_UPDATE_CHANNEL
 
@@ -372,34 +374,37 @@ class SimilarityEvidenceEpochRepository:
             # commit. If task creation fails, the epoch advance and every deletion roll
             # back with it. A lost HTTP response or closed browser therefore cannot leave
             # the library with invalidated evidence and no durable rebuild work.
-            await session.execute(
-                text(
-                    "INSERT INTO task_lanes (lane_key, max_concurrency) "
-                    "VALUES (:lane_key, 1) "
-                    "ON CONFLICT (lane_key) DO UPDATE SET "
-                    "max_concurrency = GREATEST(task_lanes.max_concurrency, 1), "
-                    "updated_at = now()"
-                ),
-                {"lane_key": _REPLACEMENT_SCAN_LANE_KEY},
+            lane_statement = insert(TaskLaneRecord).values(
+                lane_key=_REPLACEMENT_SCAN_LANE_KEY,
+                max_concurrency=1,
             )
             await session.execute(
-                text(
-                    "INSERT INTO tasks "
-                    "(id, task_type, payload, priority, status, deduplication_key, "
-                    "lane_key, checkpoint, counters, progress, attempt, next_attempt_at) "
-                    "VALUES (:id, :task_type, CAST(:payload AS json), :priority, 'queued', "
-                    ":dedupe_key, :lane_key, CAST('{}' AS json), CAST('{}' AS json), "
-                    "CAST('{}' AS json), 0, :next_attempt_at)"
-                ),
-                {
-                    "id": replacement_task_id,
-                    "task_type": _REPLACEMENT_SCAN_TASK_TYPE,
-                    "payload": json.dumps(scan_payload, sort_keys=True, separators=(",", ":")),
-                    "priority": _REPLACEMENT_SCAN_PRIORITY,
-                    "dedupe_key": replacement_dedupe_key,
-                    "lane_key": _REPLACEMENT_SCAN_LANE_KEY,
-                    "next_attempt_at": datetime.now(UTC),
-                },
+                lane_statement.on_conflict_do_update(
+                    index_elements=[TaskLaneRecord.lane_key],
+                    set_={
+                        "max_concurrency": func.greatest(
+                            TaskLaneRecord.max_concurrency,
+                            lane_statement.excluded.max_concurrency,
+                        ),
+                        "updated_at": func.now(),
+                    },
+                )
+            )
+            await session.execute(
+                insert(TaskRecord).values(
+                    id=replacement_task_id,
+                    task_type=_REPLACEMENT_SCAN_TASK_TYPE,
+                    payload=scan_payload,
+                    priority=_REPLACEMENT_SCAN_PRIORITY,
+                    status="queued",
+                    deduplication_key=replacement_dedupe_key,
+                    lane_key=_REPLACEMENT_SCAN_LANE_KEY,
+                    checkpoint={},
+                    counters={},
+                    progress={},
+                    attempt=0,
+                    next_attempt_at=datetime.now(UTC),
+                )
             )
             await session.execute(
                 text("SELECT pg_notify(:channel, :payload)"),

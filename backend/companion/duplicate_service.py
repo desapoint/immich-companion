@@ -90,6 +90,7 @@ from companion.models import (
     AssetSimilaritySearchFeatureRecord,
 )
 from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
+from companion.similarity_generation import StaleSimilarityEvidenceEpochError
 from companion.similarity_repository import (
     PairSimilarityEvidence,
     SimilarityRepository,
@@ -611,6 +612,27 @@ class CrossSourceDuplicateService:
             ),
         )
 
+    async def _current_reference_edges(
+        self,
+        groups: list[list[UUID]],
+        features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+    ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence] | None:
+        """Return current live edges, or None when the evidence generation is stale."""
+
+        if self._similarity is None:
+            return {}
+        try:
+            return await self._similarity.reference_edges(groups, features)
+        except StaleSimilarityEvidenceEpochError:
+            # Code-generation changes intentionally fence durable Appearance writers until
+            # rebuild. Duplicate review is read-only, so surface the page without treating
+            # evidence from the incompatible generation as current.
+            logger.info(
+                "Similarity evidence generation is stale; serving duplicate review "
+                "without Appearance evidence until rebuild."
+            )
+            return None
+
     async def _persisted_scan_edges(
         self,
         groups: list[DiscoveredGroup],
@@ -722,23 +744,24 @@ class CrossSourceDuplicateService:
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
             similarity_groups = [self._stable_similarity_source(group) for group in groups]
-            live_edges = await self._similarity.reference_edges(
+            live_edges = await self._current_reference_edges(
                 [[asset.id for asset in group.assets] for group in similarity_groups],
                 search_features,
             )
-            scan_edges = await self._persisted_scan_edges(
-                similarity_groups,
-                search_features,
-                live_edges,
-            )
-            edges = {**live_edges, **scan_edges}
-            result = self._apply_similarity(
-                result,
-                similarity_groups,
-                edges,
-                search_features,
-                preservation,
-            )
+            if live_edges is not None:
+                scan_edges = await self._persisted_scan_edges(
+                    similarity_groups,
+                    search_features,
+                    live_edges,
+                )
+                edges = {**live_edges, **scan_edges}
+                result = self._apply_similarity(
+                    result,
+                    similarity_groups,
+                    edges,
+                    search_features,
+                    preservation,
+                )
         if self._reviews is not None:
             result = await self._apply_review_states(result)
         return groups, reports, preservation, result

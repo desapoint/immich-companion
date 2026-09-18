@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 import companion.similarity_generation as generation_module
 import companion.similarity_repository as repository_module
@@ -43,7 +43,8 @@ class _EpochSession:
         yield self
 
     async def execute(self, statement, parameters=None):
-        sql = str(statement)
+        compiled = statement.compile(dialect=postgresql.dialect())
+        sql = str(compiled)
         parameters = parameters or {}
         self.database.statements.append(sql)
         if "SELECT epoch, code_generation, descriptor_fingerprint, rebuilt_at" in sql:
@@ -75,7 +76,10 @@ class _EpochSession:
             self.database.task_update_sql = sql
             return _Result(rowcount=4)
         if "INSERT INTO tasks" in sql:
-            self.database.queued_task_parameters = dict(parameters)
+            self.database.queued_task_parameters = {
+                **dict(compiled.params),
+                **dict(parameters),
+            }
             return _Result(rowcount=1)
         if sql.lstrip().startswith("DELETE FROM"):
             return _Result(rowcount=1)
@@ -245,7 +249,7 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
     assert any("INSERT INTO tasks" in sql for sql in database.statements)
     assert database.queued_task_parameters is not None
     assert database.queued_task_parameters["task_type"] == "similarity_scan"
-    assert json.loads(str(database.queued_task_parameters["payload"])) == scan_payload
+    assert database.queued_task_parameters["payload"] == scan_payload
     assert database.queued_task_parameters["id"] == result.task_id
     assert result.removed_counts == {
         "composite_groups": 1,
@@ -257,6 +261,21 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
         "search_features": 1,
         "pending_asset_changes": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_rebuild_recovers_an_incompatible_recorded_generation() -> None:
+    database = _EpochDatabase()
+    database.code_generation = generation_module.SIMILARITY_EVIDENCE_CODE_GENERATION - 1
+    database.descriptor = "0" * 64
+    repository = SimilarityEvidenceEpochRepository(database)  # type: ignore[arg-type]
+
+    result = await repository.rebuild(_scan_payload())
+
+    assert result.state.descriptor_current is True
+    assert result.state.code_generation == generation_module.SIMILARITY_EVIDENCE_CODE_GENERATION
+    assert database.queued_task_parameters is not None
+    assert database.queued_task_parameters["task_type"] == "similarity_scan"
 
 
 @pytest.mark.asyncio
