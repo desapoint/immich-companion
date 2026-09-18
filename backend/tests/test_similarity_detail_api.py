@@ -27,6 +27,7 @@ def _scan_payload() -> dict[str, object]:
     return {
         "similarity_threshold": 94.0,
         "validation_mode": "strict",
+        "max_link_depth": 2,
         "anchor_asset_id": None,
         "scope": "all_eligible_assets",
         "maximum_perceptual_distance": 12,
