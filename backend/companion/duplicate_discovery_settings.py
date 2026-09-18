@@ -67,4 +67,4 @@ class DuplicateDiscoverySettingsRepository:
             for key, item in value.model_dump().items():
                 setattr(record, key, item)
             await session.flush()
-        return DuplicateDiscoverySettings.model_validate(value)
+        return DuplicateDiscoverySettings(**value.model_dump())
