@@ -6,7 +6,7 @@ type ApiDuplicateDiscoverySettings = {
   include_similar: boolean;
   similarity_threshold: number;
   validation_mode: SimilarityValidationMode;
-  max_link_depth: number;
+  max_link_depth?: number;
   max_candidates: number;
 };
 
