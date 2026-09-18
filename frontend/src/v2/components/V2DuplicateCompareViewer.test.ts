@@ -171,7 +171,11 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Best group match');
     expect(body).toContain('best-match.heic');
     expect(body).toContain('83.07%');
-    expect(body).toContain('Link depth');
+    expect(body).toContain('Images in between');
+    expect(body).toContain('>2</b>');
+    expect(body).toContain('does not count either endpoint');
+    expect(body).toContain('Changing the comparison reference does not rewrite the stored admission chain');
+    expect(body).not.toContain('Link depth');
     expect(body).toContain('Technical linked data');
     expect(body).toContain('fingerprint-123');
     expect(body.indexOf('Metadata side by side')).toBeLessThan(body.indexOf('Why is this image in the group?'));

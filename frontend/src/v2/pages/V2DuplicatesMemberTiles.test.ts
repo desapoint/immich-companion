@@ -8,7 +8,7 @@ const admissionSource = readFileSync(
 );
 
 describe('V2 duplicate member tiles', () => {
-  it('keeps the linked-depth pill as a sibling overlay rather than nesting it in the compare button', () => {
+  it('keeps the linked intermediate-count pill as a sibling overlay rather than nesting it in the compare button', () => {
     expect(pageSource).toContain('class="v2-duplicate-image-wrap"');
     expect(pageSource).toContain('</button><V2DuplicateAdmissionEvidence {member} members={item.members} mode={item.similarityValidationMode}/></div>');
     expect(pageSource).not.toContain('threshold={item.similarityThresholdPercent}');

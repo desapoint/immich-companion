@@ -34,6 +34,10 @@ export function formatSimilarityPercent(value: number | null): string {
   return value === null ? 'Not calculated' : `${similarityNumberFormat.format(value)}%`;
 }
 
+export function linkedIntermediateCount(linkDepth: number): number {
+  return Math.max(0, linkDepth - 1);
+}
+
 export function formatImageDimensions(
   width: number | null | undefined,
   height: number | null | undefined,

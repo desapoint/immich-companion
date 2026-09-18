@@ -7,6 +7,7 @@ import {
   duplicateListMemberMeta,
   formatImageDimensions,
   formatSimilarityPercent,
+  linkedIntermediateCount,
   similarityValidatedDimensions,
   similarityValidationEvidenceLabel,
   similarityValidationEvidenceTier,
@@ -39,6 +40,13 @@ describe('duplicate comparison member data', () => {
     expect(formatSimilarityPercent(100)).toBe('100.00%');
     expect(comparisonMemberData(asset(), 98.256).similarity).toBe('98.26%');
     expect(formatSimilarityPercent(null)).toBe('Not calculated');
+  });
+
+  it('counts only images between the reference and a linked member', () => {
+    expect(linkedIntermediateCount(0)).toBe(0);
+    expect(linkedIntermediateCount(1)).toBe(0);
+    expect(linkedIntermediateCount(2)).toBe(1);
+    expect(linkedIntermediateCount(3)).toBe(2);
   });
 
   it('formats duplicate list member metadata with viewer file sizes', () => {
