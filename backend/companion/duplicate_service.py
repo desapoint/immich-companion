@@ -853,6 +853,7 @@ class CrossSourceDuplicateService:
                     )
                 preservation = (
                     DuplicatePreservationEvidence(
+                        origin=preservation_feature.origin,
                         pixel_normalization_version=(
                             preservation_feature.pixel_normalization_version
                         ),
