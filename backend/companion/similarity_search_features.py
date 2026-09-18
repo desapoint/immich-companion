@@ -1,4 +1,4 @@
-"""Preview-derived, non-verifying search fingerprints for the whole library."""
+"""Normalized, non-verifying search fingerprints for the whole image library."""
 
 from __future__ import annotations
 
