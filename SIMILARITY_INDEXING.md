@@ -55,18 +55,20 @@ create a full Python/Pillow raster just to resize it. This lets large JPEG,
 HEIC/HEIF/AVIF, TIFF, and other libvips-supported sources use libvips' bounded,
 demand-driven processing.
 
-RAW also enters through libvips. A packaged libvips may expose a direct LibRaw
-loader or route RAW through its ImageMagick delegate. Companion does not choose
-a separate RAW normalization implementation in this Appearance pipeline.
+RAW also enters through libvips. The production image installs the distro
+libvips runtime with its ImageMagick loader plus the dcraw delegate. A future
+libvips build may expose the direct LibRaw loader instead. Companion does not
+choose a separate RAW normalization implementation in this Appearance pipeline.
 
 If the original is larger than the 128 MiB source budget, unavailable, or not
 decodable by the packaged libvips stack, Companion may use Immich's generated
 preview as explicitly lower-grade visual evidence. Companion does not request
 Immich's optional `fullsize` image for normal similarity normalization.
 
-The runtime pins pyvips and its binary libvips package. The active pyvips and
-libvips versions are included in the visual-normalization fingerprint so an
-engine change invalidates incompatible cached Appearance evidence.
+The Python binding is pinned, while libvips comes from the container's distro
+package. Both the active pyvips and libvips versions are included in the
+visual-normalization fingerprint so an engine change invalidates incompatible
+cached Appearance evidence.
 
 ## Cache completeness and scoring
 
