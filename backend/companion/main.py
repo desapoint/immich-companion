@@ -557,6 +557,7 @@ def create_app(
             include_preservation=True,
             discovery=duplicate_discovery,
             similarity_indexer=similarity_index_maintainer,
+            shared_original_cache_path=similarity_cache.decode_path,
         )
         task_coordinator.register_handler(
             FollowUpTaskHandler(

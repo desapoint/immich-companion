@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID
@@ -1258,6 +1259,105 @@ async def test_duplicate_analysis_ensures_visual_cache_for_review_images() -> No
     assert result.counters["visual_assets"] == 2
     assert result.counters["visual_unavailable"] == 0
 
+
+@pytest.mark.asyncio
+async def test_duplicate_analysis_shares_one_original_when_both_evidence_families_are_stale(
+    tmp_path,
+) -> None:
+    content = b"\xff\xd8\xff\xd9"
+    candidate = asset(
+        EXTERNAL_1,
+        external=True,
+        checksum="path",
+        filename="shared.jpg",
+        size=len(content),
+    )
+    candidate_group = group(candidate)
+
+    class SharedImmich(FakeImmich):
+        def __init__(self, candidate_group):
+            super().__init__(candidate_group)
+            self.stream_calls = 0
+
+        @asynccontextmanager
+        async def stream_original(self, asset_id, *, chunk_size):
+            assert asset_id == EXTERNAL_1
+            assert chunk_size > 0
+            self.stream_calls += 1
+
+            async def chunks():
+                yield content[:2]
+                yield content[2:]
+
+            yield SimpleNamespace(content_length=len(content), chunks=chunks())
+
+    class SharedIndexer:
+        def __init__(self):
+            self.ensured = []
+
+        async def has_current(self, asset_id):
+            assert asset_id == EXTERNAL_1
+            return False
+
+        async def ensure_asset(
+            self,
+            _context,
+            asset_id,
+            *,
+            source=None,
+            original_path=None,
+            original_source_bytes=None,
+        ):
+            assert source is candidate
+            assert original_path is not None
+            assert original_path.read_bytes() == content
+            assert original_source_bytes == len(content)
+            self.ensured.append(asset_id)
+            return True
+
+    class SharedIntegrity(FakeIntegrity):
+        async def analyze(
+            self,
+            _context,
+            asset_id,
+            *,
+            publish_progress=True,
+            source=None,
+            original_path=None,
+            original_source_bytes=None,
+        ):
+            assert publish_progress is False
+            assert source is candidate
+            assert original_path is not None
+            assert original_path.read_bytes() == content
+            assert original_source_bytes == len(content)
+            self.calls.append(asset_id)
+            self.sources.append(source)
+
+    immich = SharedImmich(candidate_group)
+    indexer = SharedIndexer()
+    integrity = SharedIntegrity()
+    handler = CrossSourceDuplicateTaskHandler(
+        immich,
+        FakeAssets(),
+        FakeReports([]),
+        integrity,
+        include_preservation=True,
+        similarity_indexer=indexer,  # type: ignore[arg-type]
+        shared_original_cache_path=tmp_path,
+    )
+
+    result = await handler.execute(
+        TaskContext(),
+        DuplicateAnalysisOptions().model_dump(mode="json"),
+    )
+
+    assert immich.stream_calls == 1
+    assert indexer.ensured == [EXTERNAL_1]
+    assert integrity.calls == [EXTERNAL_1]
+    assert result.counters["shared_original_downloads"] == 1
+    assert result.counters["shared_original_bytes"] == len(content)
+    assert list(tmp_path.iterdir()) == []
 
 @pytest.mark.asyncio
 async def test_preservation_verification_fetches_only_discovered_candidates() -> None:
