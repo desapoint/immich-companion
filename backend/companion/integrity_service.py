@@ -321,6 +321,7 @@ class IntegrityTaskHandler:
             )
             await context.ensure_active()
             result = analyzer.finalize()
+            visual_feature_origin = "original"
             decoded, visual_feature = (
                 await asyncio.to_thread(
                     decode_and_extract_features, spool, result.detected_format
@@ -349,6 +350,7 @@ class IntegrityTaskHandler:
             }:
                 visual_feature = await self._oversized_preview_feature(source)
                 if visual_feature is not None:
+                    visual_feature_origin = "preview"
                     logger.warning(
                         "Similarity feature using bounded preview: asset_id=%s filename=%s original_dimensions=%sx%s",
                         source.id,
@@ -409,7 +411,12 @@ class IntegrityTaskHandler:
         await self._assets.refresh_asset(
             current, track_similarity_changes=track_similarity_changes
         )
-        return await self._reports.save(current, result, visual_feature)
+        return await self._reports.save(
+            current,
+            result,
+            visual_feature,
+            visual_feature_origin=visual_feature_origin,
+        )
 
     @staticmethod
     async def _checkpoint(
