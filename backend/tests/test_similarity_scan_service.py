@@ -158,78 +158,60 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
 
 
 @pytest.mark.asyncio
-async def test_shortlisted_pairs_receive_detail_score_before_publication() -> None:
-    class Detailer:
-        counters = {"detail_features_generated": 2}
-        ready = False
-        ensured = []
-
-        def reset_counters(self):
-            return None
-
-        async def ensure(self, context, asset_ids, features, *, on_progress=None):
-            self.ready = True
-            self.ensured.append(set(asset_ids))
-            if on_progress is not None:
-                await on_progress(len(set(asset_ids)), len(set(asset_ids)))
-
-    class DetailAwareSimilarity(FakeSimilarity):
+async def test_scan_uses_complete_cached_evidence_in_one_scoring_pass() -> None:
+    class CachedDetailSimilarity(FakeSimilarity):
         async def reference_edges(self, groups, _features):
-            return {
-                (left, right): evidence(93.0 if detailer.ready else 99.0)
-                for left, right in groups
-            }
+            self.calls.append(groups)
+            return {(left, right): evidence(93.0) for left, right in groups}
 
-    detailer = Detailer()
+    similarity = CachedDetailSimilarity()
     scans = FakeScans()
     context = FakeContext()
     handler = SimilarityScanTaskHandler(
         FakeFeatures([feature(1, 0), feature(2, 0)]),
-        DetailAwareSimilarity(), scans, detailer=detailer,  # type: ignore[arg-type]
-    )
-    result = await handler.execute(
-        context, SimilarityScanRequest(similarity_threshold=90).model_dump(mode="json")
+        similarity,
+        scans,
     )
 
-    assert detailer.ensured == [{UUID(int=1), UUID(int=2)}]
+    result = await handler.execute(
+        context,
+        SimilarityScanRequest(similarity_threshold=90).model_dump(mode="json"),
+    )
+
+    assert len(similarity.calls) == 1
     assert scans.completed[1]["pairs"][0].evidence.similarity_percent == 93.0
-    assert result.counters["detail_features_generated"] == 2
-    assert any(
-        item["progress"]["detail"].startswith("Checking candidate image detail")
+    assert "detail_stage_milliseconds" not in result.counters
+    assert all(
+        not item["progress"]["detail"].startswith("Checking candidate image detail")
         for item in context.checkpoints
         if item["progress"]["phase"] == "similarity_scoring"
     )
 
 
 @pytest.mark.asyncio
-async def test_below_threshold_pair_does_not_download_original_detail() -> None:
+async def test_below_threshold_pair_is_filtered_without_detail_generation_stage() -> None:
     class BelowThresholdSimilarity(FakeSimilarity):
         async def reference_edges(self, groups, _features):
+            self.calls.append(groups)
             return {(left, right): evidence(94.0) for left, right in groups}
 
-    class Detailer:
-        counters = {}
-        calls = 0
-
-        def reset_counters(self):
-            return None
-
-        async def ensure(self, *_args, **_kwargs):
-            self.calls += 1
-
-    detailer = Detailer()
+    similarity = BelowThresholdSimilarity()
     scans = FakeScans()
     handler = SimilarityScanTaskHandler(
         FakeFeatures([feature(1, 0), feature(2, 0)]),
-        BelowThresholdSimilarity(), scans, detailer=detailer,  # type: ignore[arg-type]
+        similarity,
+        scans,
     )
 
-    result = await handler.execute(FakeContext(), SimilarityScanRequest().model_dump(mode="json"))
+    result = await handler.execute(
+        FakeContext(),
+        SimilarityScanRequest(similarity_threshold=95).model_dump(mode="json"),
+    )
 
-    assert detailer.calls == 0
+    assert len(similarity.calls) == 1
     assert scans.completed[1]["pairs"] == []
-    assert result.counters["detail_pairs_eligible"] == 0
-    assert result.counters["detail_pairs_skipped_below_threshold"] == 1
+    assert "detail_pairs_eligible" not in result.counters
+    assert "detail_pairs_skipped_below_threshold" not in result.counters
 
 
 @pytest.mark.asyncio
