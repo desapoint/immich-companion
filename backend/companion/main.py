@@ -514,6 +514,7 @@ def create_app(
             similarity_repository,
             duplicate_discovery,
             stack_service,
+            search_features=search_feature_repository,
         )
         if asset_repository is not None
         and integrity_repository is not None
