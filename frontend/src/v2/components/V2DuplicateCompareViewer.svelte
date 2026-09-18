@@ -50,6 +50,7 @@
     decisionOptions = [],
     stackLabel = 'Stack',
     stackPrimary = false,
+    selectedForReview = false,
     disabled = false,
     canPreviousGroup = false,
     canNextGroup = false,
@@ -78,6 +79,7 @@
     decisionOptions?: DuplicateDecision[];
     stackLabel?: string;
     stackPrimary?: boolean;
+    selectedForReview?: boolean;
     disabled?: boolean;
     canPreviousGroup?: boolean;
     canNextGroup?: boolean;
@@ -361,8 +363,8 @@
   function setDecision(decision: DuplicateDecision) {
     if (disabled) return;
     if (decisionKey && decisionOptions.includes(decision)) {
-      decisions = { ...decisions, [decisionKey]: decision };
-      ondecisionchange?.(decisionKey, decision);
+      if (ondecisionchange) ondecisionchange(decisionKey, decision);
+      else decisions = { ...decisions, [decisionKey]: decision };
     }
   }
   function clearDecision() {
@@ -408,7 +410,7 @@
 <svelte:window onkeydown={handleShortcut}/>
 
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
-  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/>{#if boundedValidation}<V2Badge tone="warn" text="Bounded validation"/>{/if}</div><div class="v2-compare-header-actions"><V2Button disabled={!canPreviousGroup||groupNavigationLoading} title="Previous duplicate group (Shift+Left)" onclick={()=>void navigateGroup('previous')}>⇤ Previous group</V2Button><V2Button disabled={!activeCount} onclick={prev}>← Previous image</V2Button><V2Button disabled={!activeCount} onclick={next}>Next image →</V2Button><V2Button disabled={!canNextGroup||groupNavigationLoading} title="Next duplicate group (Shift+Right)" onclick={()=>void navigateGroup('next')}>Next group ⇥</V2Button><V2Button disabled={disabled||!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
+  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/>{#if selectedForReview}<V2Badge tone="ok" text="Selected for review"/>{/if}{#if boundedValidation}<V2Badge tone="warn" text="Bounded validation"/>{/if}</div><div class="v2-compare-header-actions"><V2Button disabled={!canPreviousGroup||groupNavigationLoading} title="Previous duplicate group (Shift+Left)" onclick={()=>void navigateGroup('previous')}>⇤ Previous group</V2Button><V2Button disabled={!activeCount} onclick={prev}>← Previous image</V2Button><V2Button disabled={!activeCount} onclick={next}>Next image →</V2Button><V2Button disabled={!canNextGroup||groupNavigationLoading} title="Next duplicate group (Shift+Right)" onclick={()=>void navigateGroup('next')}>Next group ⇥</V2Button><V2Button disabled={disabled||!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual">
     {#if loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if loadError}<div class="v2-compare-media-status" role="alert">{loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance {localDiagnostics} {localDiagnosticsLoading} {localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}{@const evidence=similarityEvidence[assetId]??null}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}{usesBoundedValidation(evidence)?' · Bounded validation':''}</small></button>{/each}</div>
