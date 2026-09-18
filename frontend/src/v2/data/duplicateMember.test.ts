@@ -44,9 +44,9 @@ describe('duplicate comparison member data', () => {
 
   it('counts only images between the reference and a linked member', () => {
     expect(linkedIntermediateCount(0)).toBe(0);
-    expect(linkedIntermediateCount(1)).toBe(0);
-    expect(linkedIntermediateCount(2)).toBe(1);
-    expect(linkedIntermediateCount(3)).toBe(2);
+    expect(linkedIntermediateCount(1)).toBe(1);
+    expect(linkedIntermediateCount(2)).toBe(2);
+    expect(linkedIntermediateCount(3)).toBe(3);
   });
 
   it('formats duplicate list member metadata with viewer file sizes', () => {

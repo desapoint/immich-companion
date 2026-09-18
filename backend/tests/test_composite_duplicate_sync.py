@@ -73,7 +73,7 @@ def validation() -> ValidatedSimilarityGroup:
                 admission_similarity_percent=94.0,
                 best_group_match_asset_id=ASSET_1,
                 best_group_match_similarity_percent=94.0,
-                link_depth=1,
+                link_depth=0,
             ),
         ),
     )

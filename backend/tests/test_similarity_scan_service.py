@@ -130,6 +130,7 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
     request = SimilarityScanRequest(
         similarity_threshold=95,
         validation_mode="linked",
+        max_link_depth=1,
         anchor_asset_id=UUID(int=2),
         maximum_matches=1,
     )
@@ -139,6 +140,7 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
     assert scans.failed is None
     assert scans.completed is not None
     assert scans.parameters.validation_mode == "linked"
+    assert scans.parameters.max_link_depth == 1
     assert scans.parameters.anchor_asset_id == UUID(int=2)
     assert scans.completed[0] == SCAN_ID
     assert scans.completed[1]["asset_count"] == 3

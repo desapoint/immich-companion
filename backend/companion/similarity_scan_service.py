@@ -119,6 +119,7 @@ def _missing_reference_groups(
         mode=request.validation_mode,
         threshold=request.similarity_threshold,
         preferred_anchor_asset_id=request.anchor_asset_id,
+        max_link_depth=request.max_link_depth,
     )
     retained_pairs = {
         canonical_pair(match.asset_id_low, match.asset_id_high) for match in matches
@@ -174,6 +175,7 @@ class SimilarityScanService:
             scan_id=run.id,
             similarity_threshold=run.parameters.similarity_threshold,
             validation_mode=run.parameters.validation_mode,
+            max_link_depth=run.parameters.max_link_depth,
             anchor_asset_id=run.parameters.anchor_asset_id,
             scope=run.parameters.scope,
             model_version=run.parameters.model_version,
@@ -218,6 +220,7 @@ class SimilarityScanTaskHandler:
             config_fingerprint=SEARCH_CONFIG_FINGERPRINT,
             grouping_version=SIMILARITY_GROUPING_VERSION,
             validation_mode=request.validation_mode,
+            max_link_depth=request.max_link_depth,
             anchor_asset_id=request.anchor_asset_id,
             scope=request.scope,
             similarity_threshold=request.similarity_threshold,
@@ -645,6 +648,7 @@ class SimilarityScanTaskHandler:
                 "scan_id": str(scan_id),
                 "similarity_threshold": request.similarity_threshold,
                 "validation_mode": request.validation_mode,
+                "max_link_depth": request.max_link_depth,
                 "anchor_asset_id": (
                     str(request.anchor_asset_id) if request.anchor_asset_id else None
                 ),

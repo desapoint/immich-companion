@@ -32,6 +32,7 @@ class SimilarityScanParameters:
     maximum_matches: int
     grouping_version: int = SIMILARITY_GROUPING_VERSION
     validation_mode: SimilarityValidationMode = "strict"
+    max_link_depth: int = 2
     anchor_asset_id: UUID | None = None
     config_fingerprint: str = SEARCH_CONFIG_FINGERPRINT
 
@@ -50,6 +51,8 @@ class SimilarityScanParameters:
             raise ValueError("Unsupported similarity scan scope")
         if self.validation_mode not in {"reference", "linked", "strict"}:
             raise ValueError("Unsupported similarity validation mode")
+        if not 0 <= self.max_link_depth <= 64:
+            raise ValueError("max_link_depth must be between 0 and 64")
 
 
 @dataclass(frozen=True, slots=True)
@@ -149,6 +152,7 @@ class SimilarityScanRepository:
             config_fingerprint=parameters.config_fingerprint,
             grouping_version=parameters.grouping_version,
             validation_mode=parameters.validation_mode,
+            max_link_depth=parameters.max_link_depth,
             anchor_asset_id=parameters.anchor_asset_id,
             scope=parameters.scope,
             similarity_threshold=parameters.similarity_threshold,
@@ -263,6 +267,7 @@ class SimilarityScanRepository:
             config_fingerprint=record.config_fingerprint,
             grouping_version=record.grouping_version,
             validation_mode=record.validation_mode,
+            max_link_depth=record.max_link_depth,
             anchor_asset_id=record.anchor_asset_id,
             scope=record.scope,
             similarity_threshold=record.similarity_threshold,

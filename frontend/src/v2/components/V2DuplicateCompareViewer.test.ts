@@ -19,7 +19,7 @@ function admission(overrides: Partial<DuplicateAdmissionEvidence> = {}): Duplica
     admissionSimilarityPercent: 91.36,
     bestGroupMatchAssetId: 'asset-3',
     bestGroupMatchSimilarityPercent: 94.08,
-    linkDepth: 2,
+    linkDepth: 1,
     modelVersion: 'appearance-v3',
     featureVersion: 5,
     comparisonVersion: 3,
@@ -143,7 +143,7 @@ describe('V2DuplicateCompareViewer', () => {
     const linked = groupMember('asset-1', 'linked.png', null, admission({
       admissionSimilarityPercent: 82.34,
       bestGroupMatchSimilarityPercent: 83.07,
-      linkDepth: 3,
+      linkDepth: 2,
     }));
     const bridge = groupMember('asset-2', 'bridge.heic', 82.34);
     const best = groupMember('asset-3', 'best-match.heic', 83.07);
@@ -198,7 +198,7 @@ describe('V2DuplicateCompareViewer', () => {
       admissionSimilarityPercent: 96,
       bestGroupMatchAssetId: 'asset-3',
       bestGroupMatchSimilarityPercent: 99,
-      linkDepth: 1,
+      linkDepth: 0,
     }));
     const reference = groupMember('asset-2', 'reference.heic', 100);
     const stronger = groupMember('asset-3', 'stronger.heic', 99);

@@ -21,7 +21,7 @@
   };
   const descriptions: Record<SimilarityValidationMode, string> = {
     reference: 'Each member must meet the threshold against the stable discovery anchor.',
-    linked: 'Members may qualify through an accepted member; the admitting relationship is retained.',
+    linked: 'Members may qualify through accepted members up to the configured link depth; the admitting relationship is retained.',
     strict: 'Every member must meet the threshold against every other member in its review group.',
   };
 </script>

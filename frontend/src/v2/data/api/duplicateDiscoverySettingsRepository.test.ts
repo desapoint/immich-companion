@@ -21,6 +21,7 @@ describe('duplicate discovery settings repository', () => {
       include_similar: true,
       similarity_threshold: 92.5,
       validation_mode: 'linked',
+      max_link_depth: 3,
       max_candidates: 16,
     }));
     vi.stubGlobal('fetch', fetcher);
@@ -30,12 +31,27 @@ describe('duplicate discovery settings repository', () => {
       includeSimilar: true,
       similarityThreshold: 92.5,
       validationMode: 'linked',
+      maxLinkDepth: 3,
       maxCandidates: 16,
     });
     expect(fetcher).toHaveBeenCalledWith(
       '/api/settings/duplicates/discovery',
       expect.objectContaining({ signal: undefined }),
     );
+  });
+
+  it('defaults older settings responses to a depth limit of two', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({
+      include_exact: true,
+      include_similar: true,
+      similarity_threshold: 95,
+      validation_mode: 'linked',
+      max_candidates: 8,
+    })));
+
+    await expect(duplicateDiscoverySettingsRepository.load()).resolves.toMatchObject({
+      maxLinkDepth: 2,
+    });
   });
 
   it('persists the complete discovery configuration', async () => {
@@ -46,6 +62,7 @@ describe('duplicate discovery settings repository', () => {
         include_similar: true,
         similarity_threshold: 97,
         validation_mode: 'strict',
+        max_link_depth: 2,
         max_candidates: 12,
       });
       return response({
@@ -53,6 +70,7 @@ describe('duplicate discovery settings repository', () => {
         include_similar: true,
         similarity_threshold: 97,
         validation_mode: 'strict',
+        max_link_depth: 2,
         max_candidates: 12,
       });
     });
@@ -63,9 +81,11 @@ describe('duplicate discovery settings repository', () => {
       includeSimilar: true,
       similarityThreshold: 97,
       validationMode: 'strict',
+      maxLinkDepth: 2,
       maxCandidates: 12,
     })).resolves.toMatchObject({
       similarityThreshold: 97,
+      maxLinkDepth: 2,
       maxCandidates: 12,
     });
   });

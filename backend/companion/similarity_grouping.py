@@ -7,7 +7,7 @@ from itertools import combinations
 from typing import Literal
 from uuid import UUID
 
-SIMILARITY_GROUPING_VERSION = 3
+SIMILARITY_GROUPING_VERSION = 4
 SimilarityValidationMode = Literal["reference", "linked", "strict"]
 
 
@@ -176,6 +176,7 @@ def validated_similarity_groups(
     mode: SimilarityValidationMode,
     threshold: float,
     preferred_anchor_asset_id: UUID | None = None,
+    max_link_depth: int = 2,
 ) -> tuple[ValidatedSimilarityGroup, ...]:
     """Validate bounded candidate components and retain deterministic admission evidence."""
 
@@ -183,6 +184,8 @@ def validated_similarity_groups(
         raise ValueError(f"Unsupported similarity validation mode: {mode}")
     if not 0 <= threshold <= 100:
         raise ValueError("threshold must be between 0 and 100")
+    if not 0 <= max_link_depth <= 64:
+        raise ValueError("max_link_depth must be between 0 and 64")
     scores: dict[tuple[UUID, UUID], float] = {}
     for edge in edges:
         if edge.similarity_percent >= threshold:
@@ -200,7 +203,7 @@ def validated_similarity_groups(
                 else min(group, key=lambda asset_id: asset_id.int)
             )
             parents = {
-                asset_id: (anchor, scores[_pair(anchor, asset_id)], 1)
+                asset_id: (anchor, scores[_pair(anchor, asset_id)], 0)
                 for asset_id in group
                 if asset_id != anchor
             }
@@ -228,7 +231,7 @@ def validated_similarity_groups(
                 }
             )
             parents = {
-                asset_id: (anchor, scores[_pair(anchor, asset_id)], 1)
+                asset_id: (anchor, scores[_pair(anchor, asset_id)], 0)
                 for asset_id in members
                 if asset_id != anchor
             }
@@ -247,23 +250,37 @@ def validated_similarity_groups(
                 key=lambda asset_id: asset_id.int,
             )
             for asset_id in direct_members:
-                parents[asset_id] = (anchor, scores[_pair(anchor, asset_id)], 1)
+                parents[asset_id] = (anchor, scores[_pair(anchor, asset_id)], 0)
                 accepted.add(asset_id)
 
-            while accepted != set(component):
-                choices = [
-                    (scores[_pair(parent, candidate)], parent, candidate)
-                    for parent in accepted
-                    for candidate in component - accepted
-                    if _pair(parent, candidate) in scores
-                ]
-                score, parent, candidate = min(
-                    choices,
-                    key=lambda item: (-item[0], item[1].int, item[2].int),
-                )
-                parent_depth = parents[parent][2] if parent in parents else 0
-                parents[candidate] = (parent, score, parent_depth + 1)
-                accepted.add(candidate)
+            # User-facing linked depth counts only transitive expansion layers:
+            # depth 0 = direct reference matches, depth 1 = matches reached through
+            # those direct matches, depth 2 = one additional expansion, and so on.
+            # Expand one complete frontier at a time so displayed depth is the
+            # shortest expansion depth rather than an artifact of greedy edge order.
+            frontier = set(direct_members)
+            for link_depth in range(1, max_link_depth + 1):
+                if not frontier:
+                    break
+                next_parents: dict[UUID, tuple[UUID, float, int]] = {}
+                for candidate in component - accepted:
+                    choices = [
+                        (scores[_pair(parent, candidate)], parent)
+                        for parent in frontier
+                        if _pair(parent, candidate) in scores
+                    ]
+                    if not choices:
+                        continue
+                    score, parent = min(
+                        choices,
+                        key=lambda item: (-item[0], item[1].int),
+                    )
+                    next_parents[candidate] = (parent, score, link_depth)
+                if not next_parents:
+                    break
+                parents.update(next_parents)
+                frontier = set(next_parents)
+                accepted.update(frontier)
             members = frozenset(accepted)
         if len(members) >= 2:
             results.append(

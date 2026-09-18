@@ -358,6 +358,7 @@ class CrossSourceDuplicateTaskStart(BaseModel):
 class SimilarityScanRequest(BaseModel):
     similarity_threshold: float = Field(default=95.0, ge=50, le=100)
     validation_mode: Literal["reference", "linked", "strict"] = "strict"
+    max_link_depth: int = Field(default=2, ge=0, le=64)
     anchor_asset_id: UUID | None = None
     scope: Literal["all_eligible_assets"] = "all_eligible_assets"
     maximum_perceptual_distance: int = Field(default=12, ge=0, le=64)
@@ -391,6 +392,7 @@ class SimilarityScanSummary(BaseModel):
     scan_id: UUID
     similarity_threshold: float
     validation_mode: Literal["reference", "linked", "strict"]
+    max_link_depth: int = Field(default=2, ge=0, le=64)
     anchor_asset_id: UUID | None = None
     scope: Literal["all_eligible_assets"]
     model_version: str
