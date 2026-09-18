@@ -37,6 +37,21 @@ def encoded_png(*, alpha: bool) -> bytes:
     return output.getvalue()
 
 
+def _bmff_box(box_type: bytes, payload: bytes) -> bytes:
+    return (8 + len(payload)).to_bytes(4, "big") + box_type + payload
+
+
+def encoded_heif_metadata(*, alpha: bool) -> bytes:
+    ftyp = _bmff_box(b"ftyp", b"heic\x00\x00\x00\x00heic")
+    meta_payload = b"\x00\x00\x00\x00" + _bmff_box(b"hdlr", b"pict")
+    if alpha:
+        meta_payload += _bmff_box(
+            b"auxC",
+            b"urn:mpeg:hevc:2015:auxid:1\x00",
+        )
+    return ftyp + _bmff_box(b"meta", meta_payload) + _bmff_box(b"mdat", b"")
+
+
 def oversized_source(**overrides: object) -> ImmichAsset:
     payload: dict[str, object] = {
         "id": str(ASSET_ID),
@@ -200,6 +215,80 @@ async def test_alpha_capable_opaque_oversized_source_uses_same_family_fullsize()
     assert details.saved_origin == "bounded_fullsize"
     assert maintainer.counters["bounded_candidate_validations"] == 1
     assert maintainer.counters["detail_oversized_original_decodes_avoided"] == 1
+
+
+@pytest.mark.asyncio
+async def test_opaque_oversized_heic_uses_original_metadata_probe_then_jpeg_fullsize() -> None:
+    source = oversized_source(
+        originalFileName="oversized.heic",
+        originalMimeType="image/heic",
+    )
+    original_prefix = encoded_heif_metadata(alpha=False)
+    fullsize = encoded_jpeg()
+    search = SimpleNamespace(
+        fingerprint_origin="bounded",
+        width=source.width,
+        height=source.height,
+        source_identity="bounded-heic-source",
+        source_file_modified_at=source.file_modified_at,
+        source_file_size_bytes=source.file_size_bytes,
+        source_checksum=source.checksum,
+    )
+
+    class Immich:
+        prefix_calls = 0
+        fullsize_calls = 0
+        preview_calls = 0
+
+        async def get_original_prefix(self, asset_id, *, max_bytes):
+            assert asset_id == ASSET_ID
+            assert len(original_prefix) < max_bytes
+            self.prefix_calls += 1
+            return original_prefix
+
+        async def get_bounded_fullsize(self, asset_id, *, max_bytes):
+            assert asset_id == ASSET_ID
+            assert len(fullsize) < max_bytes
+            self.fullsize_calls += 1
+            return fullsize
+
+        async def get_bounded_preview(self, *_args, **_kwargs):
+            self.preview_calls += 1
+            pytest.fail("Opaque HEIC metadata should make the full-size JPEG safe")
+
+        async def get_asset(self, _asset_id):
+            return source
+
+    class Details:
+        saved_origin = None
+
+        async def source_alpha_state(self, *_args):
+            return "unknown_alpha"
+
+        async def save(self, source_identity, asset_id, feature, origin):
+            assert source_identity == "bounded-heic-source"
+            assert asset_id == ASSET_ID
+            assert feature.width == 640
+            assert feature.height == 480
+            self.saved_origin = origin
+            return True
+
+        async def mark_unavailable(self, *_args):
+            pytest.fail("Opaque HEIC should no longer be stranded as unavailable")
+
+    immich = Immich()
+    details = Details()
+    maintainer = SimilarityDetailMaintainer(immich, details)  # type: ignore[arg-type]
+
+    assert await maintainer._extract_one(
+        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
+    )
+    assert immich.prefix_calls == 1
+    assert immich.fullsize_calls == 1
+    assert immich.preview_calls == 0
+    assert details.saved_origin == "bounded_fullsize"
+    assert maintainer.counters["detail_alpha_source_probe_confirmed_opaque"] == 1
+    assert maintainer.counters["bounded_candidate_validations"] == 1
 
 
 @pytest.mark.asyncio
@@ -381,6 +470,8 @@ def test_transparency_header_states_are_explicit() -> None:
     assert inspect_bounded_alpha(encoded_jpeg()) == "confirmed_opaque"
     assert inspect_bounded_alpha(encoded_png(alpha=False)) == "confirmed_opaque"
     assert inspect_bounded_alpha(encoded_png(alpha=True)) == "confirmed_alpha"
+    assert inspect_bounded_alpha(encoded_heif_metadata(alpha=False)) == "confirmed_opaque"
+    assert inspect_bounded_alpha(encoded_heif_metadata(alpha=True)) == "confirmed_alpha"
     assert inspect_bounded_alpha(b"not-an-image") == "unknown_alpha"
 
 
