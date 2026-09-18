@@ -216,11 +216,6 @@ class AssetImagePreservationFeatureRecord(Base):
     )
 
 
-# Transitional import alias only. Production similarity code must use
-# AssetSimilaritySearchFeatureRecord; this record is preservation/integrity evidence.
-AssetSimilarityFeatureRecord = AssetImagePreservationFeatureRecord
-
-
 class AssetSimilarityEdgeRecord(Base):
     """One sparse, versioned visual comparison between two active assets."""
 
