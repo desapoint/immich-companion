@@ -29,8 +29,8 @@ def test_every_discovery_setting_is_explicitly_classified_for_generation_impact(
         ORCHESTRATION_ONLY_DISCOVERY_FIELDS
     )
     assert (
-        MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS | ORCHESTRATION_ONLY_DISCOVERY_FIELDS
-        == set(DuplicateDiscoverySettings.model_fields)
+        set(DuplicateDiscoverySettings.model_fields)
+        == MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS | ORCHESTRATION_ONLY_DISCOVERY_FIELDS
     )
 
 
