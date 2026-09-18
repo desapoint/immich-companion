@@ -181,10 +181,7 @@ from companion.relation_schema import (
 from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
 from companion.similarity_cache import CachedPreview, SimilarityCacheManager
 from companion.similarity_detail_api import register_similarity_detail_routes
-from companion.similarity_detail_service import (
-    SimilarityDetailMaintainer,
-    SimilarityDetailRepository,
-)
+from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_index_service import (
     SimilarityIndexMaintainer,
     SimilarityIndexService,
@@ -298,17 +295,6 @@ def create_app(
         else None
     )
     detail_repository = SimilarityDetailRepository(database) if database is not None else None
-    detail_maintainer = (
-        SimilarityDetailMaintainer(
-            immich,
-            detail_repository,
-            max_bytes=runtime_settings.similarity_detail_max_bytes,
-            slots=runtime_settings.similarity_detail_slots,
-            cache_path=similarity_cache.decode_path,
-        )
-        if detail_repository is not None
-        else None
-    )
     similarity_repository = (
         SimilarityRepository(
             database,
