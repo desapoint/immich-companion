@@ -1,4 +1,4 @@
-"""Candidate-only, bounded original-resolution visual detail extraction."""
+"""Cached localized-detail evidence from the unified visual representation."""
 
 from __future__ import annotations
 
@@ -6,33 +6,24 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
-from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from tempfile import SpooledTemporaryFile
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
-from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
-from companion.integrity import detect_file_format
 from companion.models import (
     AssetRecord,
     AssetSimilarityDetailFeatureRecord,
     AssetSimilaritySearchFeatureRecord,
 )
-from companion.similarity_bounded_state import (
-    BOUNDED_CAPABILITY_VERSION,
-    BOUNDED_POLICY_FINGERPRINT,
-    AssetSimilarityBoundedStateRecord,
-    SourceAlphaState,
-)
+from companion.similarity_bounded_state import AssetSimilarityBoundedStateRecord
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
     DetailDiagnostics,
@@ -46,23 +37,18 @@ from companion.similarity_generation import (
     SimilarityEvidenceRebuildResult,
 )
 from companion.similarity_search_features import (
-    MAX_SEARCH_PREVIEW_BYTES,
     SEARCH_CONFIG_FINGERPRINT,
     SEARCH_FEATURE_VERSION,
     SEARCH_MODEL_VERSION,
+    search_source_identity,
 )
-from companion.similarity_transparency import (
-    bounded_rendition_is_detail_safe,
-    classify_source_alpha,
-    source_can_have_alpha,
+from companion.similarity_visual_normalization import (
+    SimilarityVisualNormalizer,
+    VisualNormalizationError,
 )
 from companion.task_coordinator import TaskContext
 
 DETAIL_WORK_BATCH_SIZE = 8
-DETAIL_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
-ORIGINAL_ALPHA_PROBE_BYTES = 2 * 1024 * 1024
-# The published score is min(coarse, detail); a lower coarse score cannot be rescued.
-DETAIL_COARSE_SCORE_MARGIN = 0.0
 logger = logging.getLogger("uvicorn.error")
 
 DetailEvidenceSource = Literal["original", "transcoded", "preview"]
@@ -135,110 +121,6 @@ class SimilarityDetailRepository:
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
         return {record.asset_id: record for record in records}
-
-    async def get_current_unavailable_many(self, asset_ids: list[UUID]) -> dict[UUID, str]:
-        """Return deterministic detail failures still valid for the current source."""
-
-        if not asset_ids:
-            return {}
-        statement = (
-            select(
-                AssetSimilarityBoundedStateRecord.asset_id,
-                AssetSimilarityBoundedStateRecord.detail_reason,
-            )
-            .join(
-                AssetSimilaritySearchFeatureRecord,
-                AssetSimilaritySearchFeatureRecord.asset_id
-                == AssetSimilarityBoundedStateRecord.asset_id,
-            )
-            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
-            .where(
-                AssetSimilarityBoundedStateRecord.asset_id.in_(set(asset_ids)),
-                AssetSimilarityBoundedStateRecord.capability_version
-                == BOUNDED_CAPABILITY_VERSION,
-                AssetSimilarityBoundedStateRecord.policy_fingerprint
-                == BOUNDED_POLICY_FINGERPRINT,
-                AssetSimilarityBoundedStateRecord.search_status == "available",
-                AssetSimilarityBoundedStateRecord.source_identity
-                == AssetSimilaritySearchFeatureRecord.source_identity,
-                AssetSimilarityBoundedStateRecord.detail_status == "unavailable",
-                AssetSimilarityBoundedStateRecord.detail_source_identity
-                == AssetSimilaritySearchFeatureRecord.source_identity,
-                AssetSimilarityBoundedStateRecord.detail_feature_version
-                == DETAIL_FEATURE_VERSION,
-                AssetRecord.asset_type == "IMAGE",
-                AssetRecord.is_trashed.is_(False),
-                AssetRecord.is_offline.is_(False),
-                AssetSimilaritySearchFeatureRecord.model_version == SEARCH_MODEL_VERSION,
-                AssetSimilaritySearchFeatureRecord.feature_version == SEARCH_FEATURE_VERSION,
-                AssetSimilaritySearchFeatureRecord.config_fingerprint
-                == SEARCH_CONFIG_FINGERPRINT,
-                AssetSimilaritySearchFeatureRecord.source_file_modified_at
-                == AssetRecord.file_modified_at,
-                AssetSimilaritySearchFeatureRecord.source_file_size_bytes.is_not_distinct_from(
-                    AssetRecord.file_size_bytes
-                ),
-                AssetSimilaritySearchFeatureRecord.source_checksum.is_not_distinct_from(
-                    AssetRecord.checksum
-                ),
-            )
-        )
-        async with self._database.sessions() as session:
-            rows = (await session.execute(statement)).all()
-        return {asset_id: reason or "detail unavailable" for asset_id, reason in rows}
-
-    async def source_alpha_state(
-        self, asset_id: UUID, source_identity: str
-    ) -> SourceAlphaState | None:
-        statement = select(AssetSimilarityBoundedStateRecord.alpha_state).where(
-            AssetSimilarityBoundedStateRecord.asset_id == asset_id,
-            AssetSimilarityBoundedStateRecord.source_identity == source_identity,
-            AssetSimilarityBoundedStateRecord.search_status == "available",
-            AssetSimilarityBoundedStateRecord.capability_version == BOUNDED_CAPABILITY_VERSION,
-            AssetSimilarityBoundedStateRecord.policy_fingerprint == BOUNDED_POLICY_FINGERPRINT,
-        )
-        async with self._database.sessions() as session:
-            value = await session.scalar(statement)
-        if value in {"confirmed_opaque", "confirmed_alpha", "unknown_alpha"}:
-            return cast(SourceAlphaState, value)
-        return None
-
-    async def mark_unavailable(
-        self,
-        source_identity: str,
-        asset_id: UUID,
-        reason: str,
-        *,
-        evidence_epoch: int | None = None,
-    ) -> bool:
-        """Persist a deterministic bounded-detail failure against its source identity."""
-
-        expected_epoch = (
-            evidence_epoch if evidence_epoch is not None else await self.current_evidence_epoch()
-        )
-        statement = (
-            update(AssetSimilarityBoundedStateRecord)
-            .where(
-                AssetSimilarityBoundedStateRecord.asset_id == asset_id,
-                AssetSimilarityBoundedStateRecord.source_identity == source_identity,
-                AssetSimilarityBoundedStateRecord.search_status == "available",
-                AssetSimilarityBoundedStateRecord.capability_version
-                == BOUNDED_CAPABILITY_VERSION,
-                AssetSimilarityBoundedStateRecord.policy_fingerprint
-                == BOUNDED_POLICY_FINGERPRINT,
-            )
-            .values(
-                detail_status="unavailable",
-                detail_reason=reason,
-                detail_source_identity=source_identity,
-                detail_feature_version=DETAIL_FEATURE_VERSION,
-                updated_at=datetime.now(UTC),
-            )
-        )
-        async with self._database.sessions() as session, session.begin():
-            await self._evidence_epoch.assert_current(session, expected_epoch)
-            result = await session.execute(statement)
-        return bool(result.rowcount)
 
     async def diagnostics(
         self, selected_asset_id: UUID, reference_asset_id: UUID
@@ -350,7 +232,7 @@ class SimilarityDetailRepository:
 
 
 class SimilarityDetailMaintainer:
-    """Download only shortlisted assets, with finite batches and durable reuse."""
+    """Reuse cached detail and repair rare gaps through the unified normalizer."""
 
     def __init__(
         self,
@@ -368,6 +250,11 @@ class SimilarityDetailMaintainer:
         self._max_bytes = max_bytes
         self._slots = asyncio.Semaphore(slots)
         self._cache_path = cache_path
+        self._normalizer = SimilarityVisualNormalizer(
+            immich,
+            max_bytes=max_bytes,
+            cache_path=cache_path,
+        )
         self.counters: dict[str, int] = {}
         self.reset_counters()
 
@@ -379,64 +266,17 @@ class SimilarityDetailMaintainer:
             "detail_features_generated": 0,
             "detail_features_unavailable": 0,
             "detail_original_bytes": 0,
-            "detail_transcoded_fallbacks": 0,
             "detail_preview_fallbacks": 0,
-            "detail_oversized_bounded_validations": 0,
-            "detail_oversized_original_decodes_avoided": 0,
-            "bounded_candidate_validations": 0,
-            "full_resolution_validations": 0,
-            "unavailable_bounded_validations": 0,
-            "alpha_uncertain_bounded_evidence": 0,
-            "deterministic_retries_suppressed": 0,
-            "detail_unavailable_retried": 0,
-            "detail_alpha_source_probes": 0,
-            "detail_alpha_source_probe_bytes": 0,
-            "detail_alpha_source_probe_confirmed_opaque": 0,
-            "detail_alpha_source_probe_confirmed_alpha": 0,
+            "detail_original_sources": 0,
+            "preview_fallback_validations": 0,
         }
-
-    async def _bounded_original(self, context: TaskContext, asset_id: UUID):
-        with SpooledTemporaryFile(
-            max_size=DETAIL_SPOOL_MEMORY_BYTES, dir=self._cache_path, suffix=".tmp"
-        ) as spool:
-            prefix = bytearray()
-            total = 0
-            async with self._immich.stream_original(asset_id) as media:
-                if media.content_length is not None and media.content_length > self._max_bytes:
-                    raise ValueError("original exceeds detail size limit")
-                async for chunk in media.chunks:
-                    await context.ensure_active()
-                    total += len(chunk)
-                    if total > self._max_bytes:
-                        raise ValueError("original exceeds detail size limit")
-                    if len(prefix) < 64:
-                        prefix.extend(chunk[: 64 - len(prefix)])
-                    spool.write(chunk)
-            self.counters["detail_original_bytes"] += total
-            return await asyncio.to_thread(
-                extract_detail_feature, spool, detect_file_format(bytes(prefix))
-            )
-
-    @staticmethod
-    def _requires_bounded_validation(search: AssetSimilaritySearchFeatureRecord) -> bool:
-        width = getattr(search, "width", None)
-        height = getattr(search, "height", None)
-        return bool(
-            getattr(search, "fingerprint_origin", "preview") == "bounded"
-            or (width and height and width * height > MAX_DECODED_PIXELS)
-        )
 
     @staticmethod
     async def _detail_from_content(content: bytes) -> DetailFeature | None:
         return await asyncio.to_thread(
             extract_detail_feature,
             BytesIO(content),
-            detect_file_format(content[:64]),
-        )
-
-    async def _preview_content(self, asset_id: UUID) -> bytes:
-        return await self._immich.get_bounded_preview(
-            asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
+            "png" if content.startswith(b"\\x89PNG") else "jpeg",
         )
 
     @staticmethod
@@ -459,121 +299,6 @@ class SimilarityDetailMaintainer:
             )
         )
 
-    async def _stored_alpha_state(
-        self, asset_id: UUID, search: AssetSimilaritySearchFeatureRecord
-    ) -> SourceAlphaState:
-        getter = getattr(self._details, "source_alpha_state", None)
-        if getter is None:
-            return "unknown_alpha"
-        state = await getter(asset_id, search.source_identity)
-        return state or "unknown_alpha"
-
-    async def _persist_detail_unavailable(
-        self,
-        asset_id: UUID,
-        search: AssetSimilaritySearchFeatureRecord,
-        reason: str,
-        evidence_epoch: int,
-    ) -> None:
-        marker = getattr(self._details, "mark_unavailable", None)
-        if marker is None:
-            return
-        if _accepts_parameter(marker, "evidence_epoch"):
-            persisted = await marker(
-                search.source_identity,
-                asset_id,
-                reason,
-                evidence_epoch=evidence_epoch,
-            )
-        else:
-            persisted = await marker(search.source_identity, asset_id, reason)
-        if persisted:
-            self.counters["deterministic_retries_suppressed"] += 1
-
-    async def _extract_bounded(
-        self,
-        asset_id: UUID,
-        live: ImmichAsset,
-        source_state: SourceAlphaState,
-    ) -> tuple[DetailFeature | None, str | None, str | None, SourceAlphaState]:
-        """Prefer the largest safe rendition and never promote flattened alpha evidence."""
-
-        if source_state == "unknown_alpha" and source_can_have_alpha(live):
-            prefix_reader = getattr(self._immich, "get_original_prefix", None)
-            if prefix_reader is not None:
-                try:
-                    original_prefix = await prefix_reader(
-                        asset_id,
-                        max_bytes=ORIGINAL_ALPHA_PROBE_BYTES,
-                    )
-                    self.counters["detail_alpha_source_probes"] += 1
-                    self.counters["detail_alpha_source_probe_bytes"] += len(original_prefix)
-                    probed_state = classify_source_alpha(
-                        live,
-                        bounded_content=original_prefix,
-                    )
-                    if probed_state != "unknown_alpha":
-                        source_state = probed_state
-                        self.counters[
-                            "detail_alpha_source_probe_confirmed_alpha"
-                            if probed_state == "confirmed_alpha"
-                            else "detail_alpha_source_probe_confirmed_opaque"
-                        ] += 1
-                except (ImmichApiError, OSError, ValueError):
-                    pass
-
-        fullsize_content: bytes | None = None
-        fullsize_error: Exception | None = None
-        try:
-            fullsize_content = await self._immich.get_bounded_fullsize(
-                asset_id, max_bytes=self._max_bytes
-            )
-        except (ImmichApiError, OSError, ValueError) as error:
-            fullsize_error = error
-
-        if fullsize_content is not None:
-            observed = classify_source_alpha(live, bounded_content=fullsize_content)
-            if source_state == "unknown_alpha" or observed == "confirmed_alpha":
-                source_state = observed
-            if bounded_rendition_is_detail_safe(source_state, fullsize_content):
-                feature = await self._detail_from_content(fullsize_content)
-                if feature is not None:
-                    return feature, "bounded_fullsize", None, source_state
-            elif source_state == "unknown_alpha":
-                self.counters["alpha_uncertain_bounded_evidence"] += 1
-
-        preview_content: bytes | None = None
-        preview_error: Exception | None = None
-        try:
-            preview_content = await self._preview_content(asset_id)
-        except (ImmichApiError, OSError, ValueError) as error:
-            preview_error = error
-
-        if preview_content is not None:
-            observed = classify_source_alpha(live, bounded_content=preview_content)
-            if source_state == "unknown_alpha" or observed == "confirmed_alpha":
-                source_state = observed
-            if bounded_rendition_is_detail_safe(source_state, preview_content):
-                feature = await self._detail_from_content(preview_content)
-                if feature is not None:
-                    return feature, "bounded_preview", None, source_state
-            else:
-                self.counters["alpha_uncertain_bounded_evidence"] += 1
-
-        if fullsize_content is not None or preview_content is not None:
-            return (
-                None,
-                None,
-                "alpha_preserving_bounded_rendition_unavailable",
-                source_state,
-            )
-        return (
-            None,
-            None,
-            f"bounded_rendition_unavailable: {fullsize_error or preview_error}",
-            source_state,
-        )
-
     async def _extract_one(
         self,
         context: TaskContext,
@@ -592,87 +317,58 @@ class SimilarityDetailMaintainer:
                 self.counters["detail_features_unavailable"] += 1
                 return False
 
-            feature: DetailFeature | None = None
-            origin = "original"
-            bounded_required = self._requires_bounded_validation(search)
-            if bounded_required:
-                self.counters["detail_oversized_bounded_validations"] += 1
-                self.counters["detail_oversized_original_decodes_avoided"] += 1
-                source_state = await self._stored_alpha_state(asset_id, search)
-                if source_state == "unknown_alpha":
-                    source_state = classify_source_alpha(live)
-                feature, bounded_origin, reason, _ = await self._extract_bounded(
-                    asset_id, live, source_state
-                )
-                if feature is None:
-                    self.counters["detail_features_unavailable"] += 1
-                    self.counters["unavailable_bounded_validations"] += 1
-                    if reason == "alpha_preserving_bounded_rendition_unavailable":
-                        await self._persist_detail_unavailable(
-                            asset_id, search, reason, evidence_epoch
-                        )
-                        logger.warning(
-                            "Candidate bounded detail unavailable: asset_id=%s reason=%s",
-                            asset_id,
-                            reason,
-                        )
-                    return False
-                origin = bounded_origin or "bounded_preview"
-                self.counters["bounded_candidate_validations"] += 1
-            else:
-                with suppress(ImmichApiError, OSError, ValueError):
-                    feature = await self._bounded_original(context, asset_id)
-                if feature is not None:
-                    self.counters["full_resolution_validations"] += 1
-                if feature is None:
-                    try:
-                        content = await self._immich.get_bounded_fullsize(
-                            asset_id, max_bytes=self._max_bytes
-                        )
-                        feature = await self._detail_from_content(content)
-                        if feature is not None:
-                            origin = "transcoded_fullsize"
-                    except (ImmichApiError, OSError, ValueError):
-                        pass
-                if feature is None:
-                    try:
-                        content = await self._preview_content(asset_id)
-                        feature = await self._detail_from_content(content)
-                        if feature is not None:
-                            origin = "preview_fallback"
-                    except (ImmichApiError, OSError, ValueError):
-                        pass
-            if feature is None:
+            try:
+                normalized = await self._normalizer.normalize(context, asset_id, live)
+            except (ImmichApiError, OSError, VisualNormalizationError) as error:
                 self.counters["detail_features_unavailable"] += 1
                 logger.warning(
-                    "Candidate detail unavailable after attempted analysis: asset_id=%s",
+                    "Normalized detail unavailable: asset_id=%s reason=%s",
                     asset_id,
+                    error,
                 )
                 return False
 
+            if getattr(search, "media_sha256", None) is not None:
+                expected_source_identity = search_source_identity(
+                    live,
+                    normalized.media_sha256,
+                    origin=normalized.search_origin,
+                )
+                if expected_source_identity != search.source_identity:
+                    self.counters["detail_features_unavailable"] += 1
+                    return False
+
+            feature = await self._detail_from_content(normalized.content)
+            if feature is None:
+                self.counters["detail_features_unavailable"] += 1
+                return False
+
             await context.ensure_active()
-            if origin == "transcoded_fullsize" and (
-                not live.width
-                or not live.height
-                or sorted((feature.width, feature.height))
-                != sorted((live.width, live.height))
-            ):
-                origin = "preview_fallback"
             saver = self._details.save
             if _accepts_parameter(saver, "evidence_epoch"):
                 saved = await saver(
                     search.source_identity,
                     asset_id,
                     feature,
-                    origin,
+                    normalized.detail_origin,
                     evidence_epoch=evidence_epoch,
                 )
             else:
-                saved = await saver(search.source_identity, asset_id, feature, origin)
-            if saved and origin == "transcoded_fullsize":
-                self.counters["detail_transcoded_fallbacks"] += 1
-            elif saved and origin in {"preview_fallback", "bounded_preview"}:
-                self.counters["detail_preview_fallbacks"] += 1
+                saved = await saver(
+                    search.source_identity,
+                    asset_id,
+                    feature,
+                    normalized.detail_origin,
+                )
+
+            if normalized.source_kind == "original":
+                self.counters["detail_original_sources"] += 1
+                self.counters["detail_original_bytes"] += normalized.source_bytes
+            else:
+                self.counters["preview_fallback_validations"] += 1
+                if saved:
+                    self.counters["detail_preview_fallbacks"] += 1
+
             self.counters[
                 "detail_features_generated" if saved else "detail_features_unavailable"
             ] += 1
@@ -687,46 +383,23 @@ class SimilarityDetailMaintainer:
         on_progress: Callable[[int, int], Awaitable[None]] | None = None,
         evidence_epoch: int | None = None,
     ) -> None:
+        """Repair only genuinely missing detail using the shared visual normalizer."""
+
         expected_epoch = (
             evidence_epoch
             if evidence_epoch is not None
             else await self._details.current_evidence_epoch()
         )
         ordered = sorted(set(asset_ids), key=lambda item: item.int)
-        retry_unavailable = (
-            getattr(getattr(context, "task", None), "task_type", None) == "similarity_scan"
-        )
         for offset in range(0, len(ordered), DETAIL_WORK_BATCH_SIZE):
             await context.ensure_active()
             page = ordered[offset : offset + DETAIL_WORK_BATCH_SIZE]
             current = await self._details.get_current_many(page)
             self.counters["detail_features_reused"] += len(current)
-            unavailable_getter = getattr(self._details, "get_current_unavailable_many", None)
-            unavailable = (
-                await unavailable_getter(page) if unavailable_getter is not None else {}
-            )
-            unavailable_without_detail = {
-                asset_id: reason
-                for asset_id, reason in unavailable.items()
-                if asset_id not in current
-            }
-            if retry_unavailable:
-                # A full user-requested scan is the explicit regeneration boundary:
-                # retry source-current deterministic failures instead of carrying
-                # their old terminal marker into the new scan generation.
-                self.counters["detail_unavailable_retried"] += len(
-                    unavailable_without_detail
-                )
-            else:
-                self.counters["deterministic_retries_suppressed"] += len(
-                    unavailable_without_detail
-                )
             pending = [
                 asset_id
                 for asset_id in page
-                if asset_id not in current
-                and (retry_unavailable or asset_id not in unavailable)
-                and asset_id in search_features
+                if asset_id not in current and asset_id in search_features
             ]
             tasks = [
                 asyncio.create_task(

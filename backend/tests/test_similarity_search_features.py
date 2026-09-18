@@ -1,4 +1,4 @@
-"""Preview search evidence never acts as original-file verification."""
+"""Normalized search evidence never acts as original-file verification."""
 
 from datetime import UTC, datetime
 from io import BytesIO
@@ -8,7 +8,6 @@ from PIL import Image
 
 from companion.immich import ImmichAsset
 from companion.similarity_search_features import (
-    MAX_SEARCH_PREVIEW_BYTES,
     SEARCH_FEATURE_VERSION,
     extract_search_feature,
     search_source_identity,
@@ -31,14 +30,14 @@ def _asset(*, modified: datetime | None = None) -> ImmichAsset:
     )
 
 
-def test_search_feature_uses_small_preview_and_never_hashes_normalized_pixels() -> None:
+def test_search_feature_uses_normalized_visual_input_without_exact_pixel_hash() -> None:
     output = BytesIO()
     Image.new("RGB", (64, 48), (30, 90, 150)).save(output, format="PNG")
 
     feature = extract_search_feature(output.getvalue())
 
     assert feature is not None
-    assert SEARCH_FEATURE_VERSION == 3
+    assert SEARCH_FEATURE_VERSION == 5
     assert feature.feature_version == 3
     assert feature.width == 64
     assert feature.height == 48
@@ -48,10 +47,9 @@ def test_search_feature_uses_small_preview_and_never_hashes_normalized_pixels() 
     assert feature.pixel_sha256 is None
 
 
-def test_search_feature_rejects_unbounded_or_invalid_preview() -> None:
+def test_search_feature_rejects_empty_or_invalid_normalized_media() -> None:
     assert extract_search_feature(b"") is None
     assert extract_search_feature(b"not an image") is None
-    assert extract_search_feature(b"x" * (MAX_SEARCH_PREVIEW_BYTES + 1)) is None
 
 
 def test_search_identity_is_not_original_hash_and_changes_with_source_or_preview() -> None:

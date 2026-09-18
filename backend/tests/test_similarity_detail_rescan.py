@@ -187,18 +187,12 @@ async def test_regenerated_detail_bypasses_search_only_hot_cache(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_full_rescan_retries_persisted_detail_unavailable() -> None:
+async def test_missing_detail_is_repaired_without_task_type_special_cases() -> None:
     class Details:
         async def get_current_many(self, _asset_ids):
             return {}
 
-        async def get_current_unavailable_many(self, _asset_ids):
-            return {LEFT: "previous bounded detail failure"}
-
     class Context:
-        def __init__(self, task_type: str) -> None:
-            self.task = SimpleNamespace(task_type=task_type)
-
         async def ensure_active(self):
             return None
 
@@ -216,25 +210,11 @@ async def test_full_rescan_retries_persisted_detail_unavailable() -> None:
     search_features = {LEFT: SimpleNamespace()}
 
     await maintainer.ensure(  # type: ignore[arg-type]
-        Context("similarity_scan"),
+        Context(),
         [LEFT],
         search_features,
         evidence_epoch=1,
     )
 
     assert extracted == [LEFT]
-    assert maintainer.counters["detail_unavailable_retried"] == 1
-    assert maintainer.counters["deterministic_retries_suppressed"] == 0
 
-    maintainer.reset_counters()
-    extracted.clear()
-    await maintainer.ensure(  # type: ignore[arg-type]
-        Context("similarity_maintenance"),
-        [LEFT],
-        search_features,
-        evidence_epoch=1,
-    )
-
-    assert extracted == []
-    assert maintainer.counters["detail_unavailable_retried"] == 0
-    assert maintainer.counters["deterministic_retries_suppressed"] == 1

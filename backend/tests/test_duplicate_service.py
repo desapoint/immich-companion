@@ -1221,6 +1221,45 @@ async def test_preservation_backfill_includes_upload_images_without_stream_verif
 
 
 @pytest.mark.asyncio
+async def test_duplicate_analysis_ensures_visual_cache_for_review_images() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+
+    class VisualIndexer:
+        ensured: list[UUID] = []
+
+        async def ensure_asset(self, _context, asset_id):
+            self.ensured.append(asset_id)
+            return True
+
+    indexer = VisualIndexer()
+    integrity = FakeIntegrity()
+    handler = CrossSourceDuplicateTaskHandler(
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        integrity,
+        include_preservation=True,
+        similarity_indexer=indexer,  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(
+        TaskContext(),
+        DuplicateAnalysisOptions().model_dump(mode="json"),
+    )
+
+    assert sorted(indexer.ensured, key=lambda item: item.int) == sorted(
+        [UPLOAD_1, EXTERNAL_1],
+        key=lambda item: item.int,
+    )
+    assert result.counters["visual_assets"] == 2
+    assert result.counters["visual_unavailable"] == 0
+
+
+@pytest.mark.asyncio
 async def test_preservation_verification_fetches_only_discovered_candidates() -> None:
     plausible = (
         asset(UPLOAD_1, external=False, checksum="upload", filename="plausible-one.jpg"),

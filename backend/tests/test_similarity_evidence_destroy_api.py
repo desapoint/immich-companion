@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from companion.similarity_detail_api import register_similarity_detail_routes
+from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 
 
 def test_destroy_route_invalidates_without_replacement_task() -> None:
@@ -13,7 +14,7 @@ def test_destroy_route_invalidates_without_replacement_task() -> None:
         async def destroy(self):
             state = SimpleNamespace(
                 epoch=6,
-                code_generation=2,
+                code_generation=SIMILARITY_EVIDENCE_CODE_GENERATION,
                 recorded_descriptor_fingerprint="b" * 64,
                 current_descriptor_fingerprint="b" * 64,
                 descriptor_current=True,
@@ -38,7 +39,7 @@ def test_destroy_route_invalidates_without_replacement_task() -> None:
     assert response.json() == {
         "generation": {
             "epoch": 6,
-            "code_generation": 2,
+            "code_generation": SIMILARITY_EVIDENCE_CODE_GENERATION,
             "recorded_descriptor_fingerprint": "b" * 64,
             "current_descriptor_fingerprint": "b" * 64,
             "descriptor_current": True,

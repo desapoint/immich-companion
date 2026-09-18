@@ -17,6 +17,7 @@ from companion.similarity_repository import (
     PairSimilarityEvidence,
 )
 from companion.similarity_scan_repository import SimilarityScanRepository
+from companion.similarity_search_features import SEARCH_FEATURE_VERSION, SEARCH_MODEL_VERSION
 
 LEFT = UUID(int=1)
 RIGHT = UUID(int=2)
@@ -31,8 +32,8 @@ def pair(score: float, *, detail_source: str | None = "transcoded") -> PairSimil
         color_percent=96.0,
         exact_thumbnail_match=False,
         exact_pixel_match=False,
-        model_version="appearance-preview-v1",
-        feature_version=3,
+        model_version=SEARCH_MODEL_VERSION,
+        feature_version=SEARCH_FEATURE_VERSION,
         comparison_version=6,
         detail_changed_percent=2.0 if detail_source is not None else None,
         detail_source=detail_source,
@@ -177,8 +178,8 @@ class _Database:
 async def test_scan_pair_reader_rejects_stale_source_identity() -> None:
     scan = SimpleNamespace(
         status="completed",
-        model_version="appearance-preview-v1",
-        feature_version=3,
+        model_version=SEARCH_MODEL_VERSION,
+        feature_version=SEARCH_FEATURE_VERSION,
         comparison_version=6,
     )
     row = SimpleNamespace(

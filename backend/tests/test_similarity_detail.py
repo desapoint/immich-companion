@@ -260,11 +260,11 @@ def test_oversized_detail_sample_is_rejected() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("converted_format", ["JPEG", "PNG"])
-async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
-    converted_format: str,
+@pytest.mark.parametrize("preview_format", ["JPEG", "PNG"])
+async def test_invalid_original_uses_preview_fallback_and_reuses_detail(
+    preview_format: str,
 ) -> None:
-    converted = _encoded(_scene(), converted_format)
+    preview = _encoded(_scene(), preview_format)
     search = SimpleNamespace(
         source_identity="a" * 64,
         source_file_modified_at=MODIFIED,
@@ -289,7 +289,7 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
 
     class Immich:
         original_calls = 0
-        fullsize_calls = 0
+        preview_calls = 0
 
         @asynccontextmanager
         async def stream_original(self, asset_id):
@@ -300,10 +300,13 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
 
             yield SimpleNamespace(content_length=12, chunks=chunks())
 
-        async def get_bounded_fullsize(self, asset_id, *, max_bytes):
-            self.fullsize_calls += 1
-            assert len(converted) < max_bytes
-            return converted
+        async def get_bounded_fullsize(self, *_args, **_kwargs):
+            pytest.fail("Unified normalizer must not use Immich full-size")
+
+        async def get_bounded_preview(self, asset_id, *, max_bytes):
+            self.preview_calls += 1
+            assert len(preview) < max_bytes
+            return preview
 
         async def get_asset(self, asset_id):
             return SimpleNamespace(
@@ -330,15 +333,15 @@ async def test_invalid_heic_uses_fullsize_conversion_and_reuses_detail(
         Context(), [ASSET], {ASSET: search}, evidence_epoch=1
     )
 
-    assert repository.origins == ["transcoded_fullsize"]
-    assert (immich.original_calls, immich.fullsize_calls) == (1, 1)
+    assert repository.origins == ["preview_fallback"]
+    assert (immich.original_calls, immich.preview_calls) == (1, 1)
     assert maintainer.counters["detail_features_reused"] == 1
     assert maintainer.counters["detail_features_generated"] == 0
     assert maintainer.counters["detail_original_bytes"] == 0
 
 
 @pytest.mark.asyncio
-async def test_reduced_fullsize_response_is_labeled_lower_grade() -> None:
+async def test_reduced_preview_response_is_labeled_lower_grade() -> None:
     reduced = _encoded(_scene().resize((192, 192)))
     search = SimpleNamespace(
         source_identity="a" * 64,
@@ -365,7 +368,7 @@ async def test_reduced_fullsize_response_is_labeled_lower_grade() -> None:
 
             yield SimpleNamespace(content_length=12, chunks=chunks())
 
-        async def get_bounded_fullsize(self, _asset_id, *, max_bytes):
+        async def get_bounded_preview(self, _asset_id, *, max_bytes):
             assert len(reduced) < max_bytes
             return reduced
 
@@ -381,13 +384,14 @@ async def test_reduced_fullsize_response_is_labeled_lower_grade() -> None:
             return None
 
     repository = Repository()
-    maintainer = SimilarityDetailMaintainer(Immich(), repository)  # type: ignore[arg-type]
+    maintainer = SimilarityDetailMaintainer(
+        Immich(), repository  # type: ignore[arg-type]
+    )
     await maintainer.ensure(  # type: ignore[arg-type]
         Context(), [ASSET], {ASSET: search}, evidence_epoch=1
     )
 
     assert repository.origin == "preview_fallback"
-    assert maintainer.counters["detail_transcoded_fallbacks"] == 0
     assert maintainer.counters["detail_preview_fallbacks"] == 1
 
 

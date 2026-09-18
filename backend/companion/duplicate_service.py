@@ -91,6 +91,7 @@ from companion.models import (
 )
 from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
 from companion.similarity_generation import StaleSimilarityEvidenceEpochError
+from companion.similarity_index_service import SimilarityIndexMaintainer
 from companion.similarity_repository import (
     PairSimilarityEvidence,
     SimilarityRepository,
@@ -3017,6 +3018,7 @@ class CrossSourceDuplicateTaskHandler:
         *,
         include_preservation: bool = False,
         discovery: GroupDiscoveryProvider | None = None,
+        similarity_indexer: SimilarityIndexMaintainer | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
@@ -3024,6 +3026,7 @@ class CrossSourceDuplicateTaskHandler:
         self._integrity = integrity
         self._include_preservation = include_preservation
         self._discovery = discovery or ImmichDuplicateProvider(immich)
+        self._similarity_indexer = similarity_indexer
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         options = DuplicateAnalysisOptions.model_validate(payload)
@@ -3067,10 +3070,33 @@ class CrossSourceDuplicateTaskHandler:
                 )
             )
         ]
+        visual_candidates = [
+            asset
+            for asset in candidates.values()
+            if asset.asset_type == "IMAGE" and not asset.is_offline
+        ]
+        visual_unavailable = 0
+        if self._similarity_indexer is not None:
+            for asset in visual_candidates:
+                await context.ensure_active()
+                if not await self._similarity_indexer.ensure_asset(context, asset.id):
+                    visual_unavailable += 1
+                    logger.warning(
+                        "Duplicate candidate visual evidence unavailable: "
+                        "asset_id=%s filename=%s",
+                        asset.id,
+                        asset.original_file_name,
+                    )
+
         unavailable = 0
         await context.checkpoint(
             checkpoint={"phase": "fingerprinting"},
-            counters={"files_attempted": 0, "files_unavailable": 0},
+            counters={
+                "files_attempted": 0,
+                "files_unavailable": 0,
+                "visual_assets": len(visual_candidates),
+                "visual_unavailable": visual_unavailable,
+            },
             progress={
                 "phase": "duplicate_fingerprints",
                 "completed": 0,
@@ -3105,7 +3131,12 @@ class CrossSourceDuplicateTaskHandler:
                 )
             await context.checkpoint(
                 checkpoint={"phase": "fingerprinting", "asset_id": str(asset.id)},
-                counters={"files_attempted": index, "files_unavailable": unavailable},
+                counters={
+                    "files_attempted": index,
+                    "files_unavailable": unavailable,
+                    "visual_assets": len(visual_candidates),
+                    "visual_unavailable": visual_unavailable,
+                },
                 progress={
                     "phase": "duplicate_fingerprints",
                     "completed": index,
@@ -3122,7 +3153,12 @@ class CrossSourceDuplicateTaskHandler:
             )
         await context.checkpoint(
             checkpoint={"phase": "complete"},
-            counters={"files_attempted": len(pending), "files_unavailable": unavailable},
+            counters={
+                "files_attempted": len(pending),
+                "files_unavailable": unavailable,
+                "visual_assets": len(visual_candidates),
+                "visual_unavailable": visual_unavailable,
+            },
             progress={
                 "phase": "complete",
                 "completed": len(pending),
@@ -3138,6 +3174,8 @@ class CrossSourceDuplicateTaskHandler:
                 "candidate_files": len(candidates),
                 "files_attempted": len(pending),
                 "files_unavailable": unavailable,
+                "visual_assets": len(visual_candidates),
+                "visual_unavailable": visual_unavailable,
             },
         )
 

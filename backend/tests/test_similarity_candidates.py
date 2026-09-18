@@ -14,7 +14,6 @@ from companion.discovery import (
 )
 from companion.duplicate_schema import SimilarityScanRequest
 from companion.similarity_features import compare_visual_features
-from companion.similarity_scan_service import DETAIL_COARSE_SCORE_MARGIN
 from companion.similarity_search_features import extract_search_feature
 
 
@@ -117,7 +116,7 @@ def test_identical_hash_capacity_stays_degree_bounded() -> None:
 
 
 @pytest.mark.parametrize(
-    ("edit", "color", "detail_eligible"),
+    ("edit", "color", "meets_similarity_threshold"),
     [
         ((472, 470, 492, 615), (30, 80, 180), True),
         ((405, 265, 620, 330), (35, 35, 45), True),
@@ -125,9 +124,9 @@ def test_identical_hash_capacity_stays_degree_bounded() -> None:
     ],
     ids=["swimsuit_strap", "face_accessory", "swimsuit_panel"],
 )
-def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
+def test_late_variant_remains_candidate_after_dense_search_cluster(
     edit: tuple[int, int, int, int], color: tuple[int, int, int],
-    detail_eligible: bool,
+    meets_similarity_threshold: bool,
 ) -> None:
     original = Image.new("RGB", (1024, 1024), (90, 115, 145))
     draw = ImageDraw.Draw(original)
@@ -136,7 +135,7 @@ def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
     variant = original.copy()
     ImageDraw.Draw(variant).rectangle(edit, fill=color)
 
-    def preview_visual(image: Image.Image):
+    def search_visual(image: Image.Image):
         reduced = image.resize((256, 256), Image.Resampling.LANCZOS)
         output = BytesIO()
         reduced.save(output, format="JPEG", quality=80)
@@ -144,8 +143,8 @@ def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
         assert visual is not None
         return visual
 
-    reference_visual = preview_visual(original)
-    variant_visual = preview_visual(variant)
+    reference_visual = search_visual(original)
+    variant_visual = search_visual(variant)
     reference_hash = int(reference_visual.perceptual_hash, 16)
     references = [feature(number, reference_hash) for number in range(1, 10)]
     late = feature(10, int(variant_visual.perceptual_hash, 16))
@@ -162,8 +161,8 @@ def test_late_detail_variant_remains_candidate_after_dense_preview_cluster(
     request = SimilarityScanRequest()
     assert (
         compare_visual_features(reference_visual, variant_visual).similarity_percent
-        >= request.similarity_threshold - DETAIL_COARSE_SCORE_MARGIN
-    ) is detail_eligible
+        >= request.similarity_threshold
+    ) is meets_similarity_threshold
     assert len(pairs) <= 10 * 8 // 2
     assert stats.peak_query_matches <= 8
 
