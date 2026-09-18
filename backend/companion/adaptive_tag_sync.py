@@ -62,6 +62,7 @@ async def reconcile_generation_asset_tags(
 
         details = await asyncio.gather(*(fetch(identifier) for identifier in wave))
         observed_by_tag: dict[UUID, list[UUID]] = defaultdict(list)
+        replacements: list[tuple[UUID, list[UUID]]] = []
         for detail in details:
             if detail is None or not detail.includes_tags:
                 fallback_assets += 1
@@ -69,11 +70,21 @@ async def reconcile_generation_asset_tags(
             tag_ids = list(
                 dict.fromkeys(UUID(str(tag["id"])) for tag in detail.tags if tag.get("id"))
             )
-            await repository.replace_asset_tag_memberships(detail.id, tag_ids)
+            replacements.append((detail.id, tag_ids))
             for tag_id in tag_ids:
                 observed_by_tag[tag_id].append(detail.id)
             links += len(tag_ids)
             payload_assets += 1
+
+        # Membership replacement is independent per asset. Run the already
+        # bounded wave concurrently so database round-trip latency does not
+        # accumulate serially across every asset in the wave.
+        await asyncio.gather(
+            *(
+                repository.replace_asset_tag_memberships(asset_id, tag_ids)
+                for asset_id, tag_ids in replacements
+            )
+        )
 
         # Stamp each tag's generation in one bounded write instead of opening a
         # transaction and re-reading the asset generation for every individual
