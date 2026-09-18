@@ -21,6 +21,7 @@ describe('duplicate discovery settings repository', () => {
       include_similar: true,
       similarity_threshold: 92.5,
       validation_mode: 'linked',
+      max_link_depth: 3,
       max_candidates: 16,
     }));
     vi.stubGlobal('fetch', fetcher);
@@ -30,6 +31,7 @@ describe('duplicate discovery settings repository', () => {
       includeSimilar: true,
       similarityThreshold: 92.5,
       validationMode: 'linked',
+      maxLinkDepth: 3,
       maxCandidates: 16,
     });
     expect(fetcher).toHaveBeenCalledWith(
@@ -46,6 +48,7 @@ describe('duplicate discovery settings repository', () => {
         include_similar: true,
         similarity_threshold: 97,
         validation_mode: 'strict',
+        max_link_depth: 2,
         max_candidates: 12,
       });
       return response({
@@ -53,6 +56,7 @@ describe('duplicate discovery settings repository', () => {
         include_similar: true,
         similarity_threshold: 97,
         validation_mode: 'strict',
+        max_link_depth: 2,
         max_candidates: 12,
       });
     });
@@ -63,6 +67,7 @@ describe('duplicate discovery settings repository', () => {
       includeSimilar: true,
       similarityThreshold: 97,
       validationMode: 'strict',
+      maxLinkDepth: 2,
       maxCandidates: 12,
     })).resolves.toMatchObject({
       similarityThreshold: 97,
