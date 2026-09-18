@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -155,13 +153,12 @@ class SimilarityVisualNormalizer:
         self._fetch_slots = fetch_slots
         self._decode_slots = decode_slots
 
-    @asynccontextmanager
-    async def _original_file(
+    async def _download_original(
         self,
         context: TaskContext,
         asset_id: UUID,
         asset: ImmichAsset,
-    ) -> AsyncIterator[tuple[Path, int]]:
+    ) -> tuple[Path, int]:
         """Spool encoded original bytes without ever materializing the raster in Python."""
 
         if asset.file_size_bytes is not None and asset.file_size_bytes > self._max_bytes:
@@ -194,10 +191,11 @@ class SimilarityVisualNormalizer:
                             )
                         spool.write(chunk)
             assert temporary_path is not None
-            yield temporary_path, total
-        finally:
+            return temporary_path, total
+        except BaseException:
             if temporary_path is not None:
                 temporary_path.unlink(missing_ok=True)
+            raise
 
     async def _run_vips(
         self,
@@ -231,16 +229,19 @@ class SimilarityVisualNormalizer:
         asset: ImmichAsset,
     ) -> NormalizedVisualImage:
         if self._fetch_slots is None:
-            source = self._original_file(context, asset_id, asset)
-            async with source as (path, source_bytes):
-                normalized, width, height, has_alpha = await self._run_vips(path=path)
+            path, source_bytes = await self._download_original(context, asset_id, asset)
         else:
             async with self._fetch_slots:
-                source = self._original_file(context, asset_id, asset)
-                async with source as (path, source_bytes):
-                    # Release the network slot before CPU-heavy libvips processing.
-                    pass
+                path, source_bytes = await self._download_original(
+                    context,
+                    asset_id,
+                    asset,
+                )
+
+        try:
             normalized, width, height, has_alpha = await self._run_vips(path=path)
+        finally:
+            path.unlink(missing_ok=True)
 
         return NormalizedVisualImage(
             content=normalized,
