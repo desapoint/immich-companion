@@ -378,6 +378,67 @@ class SimilarityScanRepository:
             record.asset_count = asset_count
             record.match_count = int(match_count or 0)
 
+    async def pair_evidence(
+        self,
+        scan_id: UUID,
+        asset_ids: list[UUID],
+        *,
+        source_identities: dict[UUID, str] | None = None,
+    ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
+        """Return persisted pair evidence from one completed scan for the requested assets.
+
+        When current search source identities are supplied, stale scan edges are omitted
+        instead of being presented as current comparison evidence.
+        """
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if len(unique_ids) < 2:
+            return {}
+        async with self._database.sessions() as session:
+            record = await session.get(SimilarityScanRecord, scan_id)
+            if record is None or record.status != "completed":
+                return {}
+            pair_statement = (
+                select(SimilarityScanPairRecord)
+                .where(
+                    SimilarityScanPairRecord.scan_id == scan_id,
+                    SimilarityScanPairRecord.asset_id_low.in_(unique_ids),
+                    SimilarityScanPairRecord.asset_id_high.in_(unique_ids),
+                )
+                .order_by(
+                    SimilarityScanPairRecord.asset_id_low,
+                    SimilarityScanPairRecord.asset_id_high,
+                )
+            )
+            pair_records = list((await session.scalars(pair_statement)).all())
+
+        evidence: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+        for pair in pair_records:
+            if source_identities is not None and (
+                source_identities.get(pair.asset_id_low) != pair.asset_low_source_sha256
+                or source_identities.get(pair.asset_id_high) != pair.asset_high_source_sha256
+            ):
+                continue
+            evidence[(pair.asset_id_low, pair.asset_id_high)] = PairSimilarityEvidence(
+                similarity_percent=pair.similarity_percent,
+                structural_percent=pair.structural_percent,
+                perceptual_percent=pair.perceptual_percent,
+                color_percent=pair.color_percent,
+                exact_thumbnail_match=pair.exact_thumbnail_match,
+                exact_pixel_match=pair.exact_pixel_match,
+                model_version=record.model_version,
+                feature_version=record.feature_version,
+                comparison_version=record.comparison_version,
+                normalized_luminance_mae=pair.normalized_luminance_mae,
+                normalized_luminance_rmse=pair.normalized_luminance_rmse,
+                normalized_luminance_ssim=pair.normalized_luminance_ssim,
+                aspect_ratio_difference=pair.aspect_ratio_difference,
+                dimensions_equal=pair.dimensions_equal,
+                detail_changed_percent=pair.detail_changed_percent,
+                detail_source=pair.detail_source,
+            )
+        return evidence
+
     async def completed_summary(self, scan_id: UUID) -> SimilarityScanRunSummary | None:
         async with self._database.sessions() as session:
             record = await session.get(SimilarityScanRecord, scan_id)
