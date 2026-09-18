@@ -469,7 +469,7 @@
               <span>Best group match</span><b class="v2-compare-link-value">{bestGroupMatchLabel}</b>
               <span>Best group similarity</span><b>{formatSimilarityPercent(selectedAdmission.bestGroupMatchSimilarityPercent)}</b>
             </div>
-            <p class="v2-compare-detail-note">“Images in between” counts only intermediate members between the current reference and this image; it does not count either endpoint. “Admitted through” is the comparison edge that allowed this member into a linked group. “Best group match” is the strongest known relationship in the group and can be a different image.</p>
+            <p class="v2-compare-detail-note">“Images in between” counts only intermediate members between the group admission reference and this image; it does not count either endpoint. Changing the comparison reference does not rewrite the stored admission chain. “Admitted through” is the comparison edge that allowed this member into a linked group. “Best group match” is the strongest known relationship in the group and can be a different image.</p>
           </div>
         </details>
       {/if}
