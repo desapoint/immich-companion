@@ -92,6 +92,7 @@
     { keys: '3', description: 'Transparency' },
     { keys: '4', description: 'Difference' },
     { keys: '5', description: 'Local changes' },
+    { keys: '6', description: 'Flicker' },
   ];
 
   let mode = $state<ComparisonMode>('Side by side');
@@ -374,7 +375,7 @@
     if (event.key === 'ArrowRight' && activeCount) { event.preventDefault(); next(); return; }
     if ((event.key === 'r' || event.key === 'R') && selectedAsset) { event.preventDefault(); void setReference(); return; }
     const modes: Record<string, ComparisonMode> = {
-      '1': 'Side by side', '2': 'Swipe', '3': 'Transparency', '4': 'Difference', '5': 'Local changes',
+      '1': 'Side by side', '2': 'Swipe', '3': 'Transparency', '4': 'Difference', '5': 'Local changes', '6': 'Flicker',
     };
     const nextMode = modes[event.key];
     if (nextMode) { event.preventDefault(); mode = nextMode; }
