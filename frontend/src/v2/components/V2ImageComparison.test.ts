@@ -27,6 +27,25 @@ describe('V2ImageComparison', () => {
     expect(body).toContain('src="/reference/fullsize"');
   });
 
+  it('renders Flicker with both layers loaded and the reference hidden until held', () => {
+    const { body } = render(V2ImageComparison, {
+      props: {
+        selectedResource: resource('/selected/fullsize', ['/selected/preview']),
+        referenceResource: resource('/reference/fullsize', ['/reference/preview']),
+        mode: 'Flicker',
+      },
+    });
+
+    expect(body).toContain('Flicker');
+    expect(body).toContain('mode-flicker');
+    expect(body).toContain('Hold to show reference');
+    expect(body).toContain('aria-pressed="false"');
+    expect(body).toContain('src="/selected/fullsize"');
+    expect(body).toContain('src="/reference/fullsize"');
+    expect(body).toContain('v2-flicker-reference');
+    expect(body).not.toContain('reference-visible');
+  });
+
   it('uses shared hover controls for Local Changes presentation settings', () => {
     const { body } = render(V2ImageComparison, {
       props: {
