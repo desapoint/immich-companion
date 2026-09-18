@@ -45,7 +45,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
     expect(body).toContain('href="/v2/assets/asset-2"');
     expect(body).toContain('target="_blank"');
     expect(body).toContain('rel="noopener noreferrer"');
-    expect(body).toContain('Linked through bridge.jpg; 1 image in between the reference and this image.');
+    expect(body).toContain('Linked through bridge.jpg; 1 image in between the group admission reference and this image.');
     expect(body).toMatch(/<span>1<\/span>/);
   });
 
@@ -60,7 +60,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
       },
     });
 
-    expect(body).toContain('2 images in between the reference and this image.');
+    expect(body).toContain('2 images in between the group admission reference and this image.');
     expect(body).toMatch(/<span>2<\/span>/);
   });
 
