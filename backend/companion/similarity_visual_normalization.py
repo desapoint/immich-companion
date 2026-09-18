@@ -56,16 +56,35 @@ class NormalizedVisualImage:
         return hashlib.sha256(self.content, usedforsecurity=False).hexdigest()
 
     @property
+    def source_was_bounded(self) -> bool:
+        return bool(
+            not self.source_width
+            or not self.source_height
+            or self.source_width > MAX_VISUAL_DIMENSION
+            or self.source_height > MAX_VISUAL_DIMENSION
+        )
+
+    @property
     def search_origin(self) -> str:
-        return "original" if self.source_kind == "original" else "bounded"
+        if self.source_kind == "original":
+            return "original"
+        return "bounded" if self.source_was_bounded else "preview"
 
     @property
     def detail_origin(self) -> str:
         if self.source_kind == "original":
             return "original"
-        if self.source_kind == "bounded_fullsize":
-            return "bounded_fullsize"
-        return "bounded_preview"
+        if self.source_was_bounded:
+            return (
+                "bounded_fullsize"
+                if self.source_kind == "bounded_fullsize"
+                else "bounded_preview"
+            )
+        return (
+            "transcoded_fullsize"
+            if self.source_kind == "bounded_fullsize"
+            else "preview_fallback"
+        )
 
 
 def source_requires_bounded_visual(asset: ImmichAsset) -> bool:
