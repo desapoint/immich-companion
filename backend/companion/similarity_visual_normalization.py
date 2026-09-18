@@ -139,12 +139,16 @@ class SimilarityVisualNormalizer:
         *,
         max_bytes: int = DEFAULT_VISUAL_SOURCE_MAX_BYTES,
         cache_path: Path | None = None,
+        fetch_slots: asyncio.Semaphore | None = None,
+        decode_slots: asyncio.Semaphore | None = None,
     ) -> None:
         if max_bytes < 1:
             raise ValueError("Visual source byte limit must be positive")
         self._immich = immich
         self._max_bytes = max_bytes
         self._cache_path = cache_path
+        self._fetch_slots = fetch_slots
+        self._decode_slots = decode_slots
 
     async def _original_content(
         self,
@@ -179,10 +183,17 @@ class SimilarityVisualNormalizer:
         source_kind: VisualSourceKind,
         asset: ImmichAsset,
     ) -> NormalizedVisualImage:
-        normalized, width, height, has_alpha, resized = await asyncio.to_thread(
-            _canonical_content,
-            content,
-        )
+        if self._decode_slots is None:
+            normalized, width, height, has_alpha, resized = await asyncio.to_thread(
+                _canonical_content,
+                content,
+            )
+        else:
+            async with self._decode_slots:
+                normalized, width, height, has_alpha, resized = await asyncio.to_thread(
+                    _canonical_content,
+                    content,
+                )
         return NormalizedVisualImage(
             content=normalized,
             source_kind=source_kind,
@@ -208,17 +219,28 @@ class SimilarityVisualNormalizer:
 
         if not source_requires_bounded_visual(asset):
             try:
-                original = await self._original_content(context, asset_id)
+                if self._fetch_slots is None:
+                    original = await self._original_content(context, asset_id)
+                else:
+                    async with self._fetch_slots:
+                        original = await self._original_content(context, asset_id)
                 return await self._normalize_content(original, "original", asset)
             except (ImmichApiError, OSError, VisualNormalizationError) as error:
                 errors.append(f"original: {error}")
 
-        for source_kind, getter in (
-            ("bounded_fullsize", self._immich.get_bounded_fullsize),
-            ("bounded_preview", self._immich.get_bounded_preview),
+        for source_kind, getter_name in (
+            ("bounded_fullsize", "get_bounded_fullsize"),
+            ("bounded_preview", "get_bounded_preview"),
         ):
+            getter = getattr(self._immich, getter_name, None)
+            if getter is None:
+                continue
             try:
-                content = await getter(asset_id, max_bytes=self._max_bytes)
+                if self._fetch_slots is None:
+                    content = await getter(asset_id, max_bytes=self._max_bytes)
+                else:
+                    async with self._fetch_slots:
+                        content = await getter(asset_id, max_bytes=self._max_bytes)
                 return await self._normalize_content(content, source_kind, asset)
             except (ImmichApiError, OSError, VisualNormalizationError) as error:
                 errors.append(f"{source_kind}: {error}")
