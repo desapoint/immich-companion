@@ -612,6 +612,27 @@ class CrossSourceDuplicateService:
             ),
         )
 
+    async def _current_reference_edges(
+        self,
+        groups: list[list[UUID]],
+        features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+    ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence] | None:
+        """Return current live edges, or None when the evidence generation is stale."""
+
+        if self._similarity is None:
+            return {}
+        try:
+            return await self._similarity.reference_edges(groups, features)
+        except StaleSimilarityEvidenceEpochError:
+            # Code-generation changes intentionally fence durable Appearance writers until
+            # rebuild. Duplicate review is read-only, so surface the page without treating
+            # evidence from the incompatible generation as current.
+            logger.info(
+                "Similarity evidence generation is stale; serving duplicate review "
+                "without Appearance evidence until rebuild."
+            )
+            return None
+
     async def _persisted_scan_edges(
         self,
         groups: list[DiscoveredGroup],
@@ -723,22 +744,11 @@ class CrossSourceDuplicateService:
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
             similarity_groups = [self._stable_similarity_source(group) for group in groups]
-            try:
-                live_edges = await self._similarity.reference_edges(
-                    [[asset.id for asset in group.assets] for group in similarity_groups],
-                    search_features,
-                )
-            except StaleSimilarityEvidenceEpochError:
-                # A code-generation bump intentionally makes existing Appearance evidence
-                # non-current until the user rebuilds it. Duplicate review is a read path,
-                # so keep the page available instead of letting the writer fence become a
-                # 500. Do not expose persisted scan/admission evidence from the stale
-                # generation as current while the rebuild control is being surfaced.
-                logger.info(
-                    "Similarity evidence generation is stale; serving duplicate review "
-                    "without Appearance evidence until rebuild."
-                )
-            else:
+            live_edges = await self._current_reference_edges(
+                [[asset.id for asset in group.assets] for group in similarity_groups],
+                search_features,
+            )
+            if live_edges is not None:
                 scan_edges = await self._persisted_scan_edges(
                     similarity_groups,
                     search_features,
