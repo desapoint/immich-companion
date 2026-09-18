@@ -1024,7 +1024,7 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
                     admission_similarity_percent=99.2,
                     best_group_match_asset_id=UPLOAD_1,
                     best_group_match_similarity_percent=99.2,
-                    link_depth=1,
+                    link_depth=0,
                 ),
             ),
         ),
