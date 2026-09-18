@@ -1,8 +1,11 @@
+import { readFileSync } from 'node:fs';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
 import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../data/contracts';
 import V2DuplicateCompareViewer from './V2DuplicateCompareViewer.svelte';
+
+const viewerSource = readFileSync(new URL('./V2DuplicateCompareViewer.svelte', import.meta.url), 'utf8');
 
 function buttonWithText(body: string, text: string): string {
   return [...body.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)]
@@ -168,6 +171,8 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Why is this image in the group?');
     expect(body).toContain('Admitted through');
     expect(body).toContain('bridge.heic');
+    expect(buttonWithText(body, 'bridge.heic')).toContain('v2-compare-member-link');
+    expect(buttonWithText(body, 'bridge.heic')).toContain('Select admitted-through asset bridge.heic in the comparison viewer');
     expect(body).toContain('Best group match');
     expect(body).toContain('best-match.heic');
     expect(body).toContain('83.07%');
@@ -179,6 +184,12 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Technical linked data');
     expect(body).toContain('fingerprint-123');
     expect(body.indexOf('Metadata side by side')).toBeLessThan(body.indexOf('Why is this image in the group?'));
+  });
+
+  it('wires the admitted-through control to select that asset in the current viewer', () => {
+    expect(viewerSource).toContain('onclick={()=>showMemberById(admittedByMember.asset.id)}');
+    expect(viewerSource).toContain('function showMemberById(assetId: string)');
+    expect(viewerSource).toContain('const target = viewerSelectionTargetId(assetIds, assetId)');
   });
 
   it('does not describe a direct reference admission as a linked membership', () => {
