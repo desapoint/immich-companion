@@ -30,26 +30,41 @@ function member(
 }
 
 describe('V2DuplicateAdmissionEvidence', () => {
-  it('links the admitting source to its deep-linked Assets viewer in a new tab', () => {
-    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2', 2);
+  it('renders linked admission as a compact depth pill that opens the admitting asset in a new tab', () => {
+    const linked = member('asset-1', 'linked.jpg', 99, 'asset-2', 2);
     const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
         member: linked,
         members: [linked, admittedBy],
         mode: 'linked',
-        threshold: 95,
       },
     });
 
-    expect(body).toContain('Linked through');
-    expect(body).toContain('bridge.jpg');
+    expect(body).toContain('v2-linked-admission-pill');
     expect(body).toContain('href="/v2/assets/asset-2"');
     expect(body).toContain('target="_blank"');
     expect(body).toContain('rel="noopener noreferrer"');
+    expect(body).toContain('Linked through bridge.jpg, depth 2');
+    expect(body).toMatch(/<span>2<\/span>/);
   });
 
-  it('does not call a direct reference admission a linked match', () => {
+  it('shows linked provenance from admission data even when the direct reference score is not below threshold', () => {
+    const linked = member('asset-1', 'linked.jpg', 99.5, 'asset-2', 3);
+    const admittedBy = member('asset-2', 'bridge.jpg', 99.7, null);
+    const { body } = render(V2DuplicateAdmissionEvidence, {
+      props: {
+        member: linked,
+        members: [linked, admittedBy],
+        mode: 'linked',
+      },
+    });
+
+    expect(body).toContain('depth 3');
+    expect(body).toMatch(/<span>3<\/span>/);
+  });
+
+  it('does not render a pill for a direct reference admission', () => {
     const direct = member('asset-1', 'direct.jpg', 90, 'asset-2', 1);
     const reference = member('asset-2', 'reference.jpg', 100, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
@@ -57,22 +72,40 @@ describe('V2DuplicateAdmissionEvidence', () => {
         member: direct,
         members: [direct, reference],
         mode: 'linked',
-        threshold: 95,
       },
     });
 
-    expect(body).not.toContain('Linked through');
+    expect(body).not.toContain('v2-linked-admission-pill');
     expect(body).not.toContain('reference.jpg');
   });
 
-  it('labels bounded evidence with its original and actual validation dimensions', () => {
-    const bounded = member('asset-1', 'large.jpg', 98.72, null);
-    bounded.asset = {
-      ...bounded.asset,
-      width: 18_000,
-      height: 10_000,
-    };
-    bounded.similarityEvidence = {
+  it('does not render a linked pill outside linked validation mode or without a resolvable admitting asset', () => {
+    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2', 2);
+    const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
+
+    const nonLinkedMode = render(V2DuplicateAdmissionEvidence, {
+      props: {
+        member: linked,
+        members: [linked, admittedBy],
+        mode: 'reference',
+      },
+    });
+    const missingParent = render(V2DuplicateAdmissionEvidence, {
+      props: {
+        member: linked,
+        members: [linked],
+        mode: 'linked',
+      },
+    });
+
+    expect(nonLinkedMode.body).not.toContain('v2-linked-admission-pill');
+    expect(missingParent.body).not.toContain('v2-linked-admission-pill');
+  });
+
+  it('keeps validation and similarity evidence out of the duplicate-list overlay', () => {
+    const linked = member('asset-1', 'linked.jpg', 98.72, 'asset-2', 2);
+    linked.asset = { ...linked.asset, width: 18_000, height: 10_000 };
+    linked.similarityEvidence = {
       structuralPercent: 99,
       perceptualPercent: 98,
       colorPercent: 97,
@@ -80,47 +113,20 @@ describe('V2DuplicateAdmissionEvidence', () => {
       validatedWidth: 4096,
       validatedHeight: 2276,
     };
-
+    const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
-        member: bounded,
-        members: [bounded],
-        mode: 'reference',
-        threshold: 95,
+        member: linked,
+        members: [linked, admittedBy],
+        mode: 'linked',
       },
     });
 
-    expect(body).toContain('98.72% similarity');
-    expect(body).toContain('Bounded validation');
-    expect(body).toContain('Original 18000 × 10000');
-    expect(body).toContain('Validated at 4096 × 2276');
-  });
-
-  it('does not invent validated dimensions when bounded evidence does not provide them', () => {
-    const bounded = member('asset-1', 'large.jpg', 98.72, null);
-    bounded.asset = {
-      ...bounded.asset,
-      width: 18_000,
-      height: 10_000,
-    };
-    bounded.similarityEvidence = {
-      structuralPercent: 99,
-      perceptualPercent: 98,
-      colorPercent: 97,
-      detailSource: 'preview',
-    };
-
-    const { body } = render(V2DuplicateAdmissionEvidence, {
-      props: {
-        member: bounded,
-        members: [bounded],
-        mode: 'reference',
-        threshold: 95,
-      },
-    });
-
-    expect(body).toContain('Bounded validation');
-    expect(body).toContain('Original 18000 × 10000');
+    expect(body).toContain('v2-linked-admission-pill');
+    expect(body).not.toContain('98.72% similarity');
+    expect(body).not.toContain('Bounded validation');
+    expect(body).not.toContain('Full-resolution validation');
+    expect(body).not.toContain('Search-only appearance');
     expect(body).not.toContain('Validated at');
   });
 });
