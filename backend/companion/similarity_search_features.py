@@ -13,13 +13,15 @@ from companion.similarity_features import (
     extract_visual_features,
 )
 from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
+from companion.similarity_visual_normalization import VISUAL_NORMALIZATION_FINGERPRINT
 
-SEARCH_MODEL_VERSION = "appearance-preview-v1"
-SEARCH_FEATURE_VERSION = 3
+SEARCH_MODEL_VERSION = "appearance-normalized-v1"
+SEARCH_FEATURE_VERSION = 4
 MAX_SEARCH_PREVIEW_BYTES = 16 * 1024 * 1024
 SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
     (
-        f"preview-search-v3:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
+        f"normalized-search-v4:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
+        f"visual={VISUAL_NORMALIZATION_FINGERPRINT}:"
         f"{SIMILARITY_CONFIG_FINGERPRINT}"
     ).encode(),
     usedforsecurity=False,
@@ -29,9 +31,9 @@ SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
 def extract_search_feature(
     preview: bytes, *, timings: dict[str, int] | None = None
 ) -> VisualFeatureResult | None:
-    """Decode a bounded Immich-generated preview without normalized-pixel hashing."""
+    """Decode the canonical normalized visual image without exact-pixel hashing."""
 
-    if not preview or len(preview) > MAX_SEARCH_PREVIEW_BYTES:
+    if not preview:
         return None
     # Pillow recognizes the encoded preview format; the JPEG hint only disables
     # the original-only TIFF/RAW fallback for generated media.
