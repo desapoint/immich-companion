@@ -16,10 +16,10 @@ from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 from companion.similarity_visual_normalization import VISUAL_NORMALIZATION_FINGERPRINT
 
 SEARCH_MODEL_VERSION = "appearance-normalized-v1"
-SEARCH_FEATURE_VERSION = 4
+SEARCH_FEATURE_VERSION = 5
 SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
     (
-        f"normalized-search-v4:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
+        f"normalized-search-v5:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
         f"visual={VISUAL_NORMALIZATION_FINGERPRINT}:"
         f"{SIMILARITY_CONFIG_FINGERPRINT}"
     ).encode(),

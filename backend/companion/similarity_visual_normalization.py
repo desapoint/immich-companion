@@ -1,41 +1,48 @@
-"""Single bounded visual source for all Appearance similarity evidence."""
+"""Single libvips normalization source for all Appearance similarity evidence."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import warnings
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from io import BytesIO
 from pathlib import Path
-from tempfile import SpooledTemporaryFile
+from tempfile import NamedTemporaryFile
 from typing import Literal
 from uuid import UUID
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+import pyvips
 
-from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.task_coordinator import TaskContext
 
 MAX_VISUAL_DIMENSION = 6000
 DEFAULT_VISUAL_SOURCE_MAX_BYTES = 128 * 1024 * 1024
-VISUAL_NORMALIZATION_VERSION = 1
+VISUAL_NORMALIZATION_VERSION = 2
+PYVIPS_VERSION = getattr(pyvips, "__version__", "unknown")
+LIBVIPS_VERSION = ".".join(str(pyvips.version(part)) for part in range(3))
 VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
     (
         f"visual-normalization-v{VISUAL_NORMALIZATION_VERSION}:"
+        f"engine=pyvips-{PYVIPS_VERSION}:libvips-{LIBVIPS_VERSION}:"
         f"max-dimension={MAX_VISUAL_DIMENSION}:"
-        f"decode-pixels={MAX_DECODED_PIXELS}:"
-        "alpha-output=png-rgba:opaque-output=jpeg-q95-444"
+        f"source-max-bytes={DEFAULT_VISUAL_SOURCE_MAX_BYTES}:"
+        "autorotate=on:resize=thumbnail-down:"
+        "alpha-output=png:opaque-output=jpeg-q95-444"
     ).encode(),
     usedforsecurity=False,
 ).hexdigest()
 
-VisualSourceKind = Literal["original", "bounded_fullsize", "bounded_preview"]
+# These are one-shot normalization pipelines. Retaining libvips operation graphs
+# between assets wastes memory and does not improve cache reuse for this workload.
+pyvips.cache_set_max(0)
+
+VisualSourceKind = Literal["original", "preview"]
 
 
 class VisualNormalizationError(ValueError):
-    """No bounded visual representation could be normalized safely."""
+    """No safe visual representation could be normalized."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,107 +64,79 @@ class NormalizedVisualImage:
         return hashlib.sha256(self.content, usedforsecurity=False).hexdigest()
 
     @property
-    def source_was_bounded(self) -> bool:
-        return bool(
-            not self.source_width
-            or not self.source_height
-            or self.source_width > MAX_VISUAL_DIMENSION
-            or self.source_height > MAX_VISUAL_DIMENSION
-        )
-
-    @property
     def search_origin(self) -> str:
-        if self.source_kind == "original":
-            return "original"
-        return "bounded" if self.source_was_bounded else "preview"
+        return self.source_kind
 
     @property
     def detail_origin(self) -> str:
-        if self.source_kind == "original":
-            return "original"
-        if self.source_was_bounded:
-            return (
-                "bounded_fullsize"
-                if self.source_kind == "bounded_fullsize"
-                else "bounded_preview"
-            )
-        if self.source_kind == "bounded_fullsize":
-            original_dimensions = (self.source_width, self.source_height)
-            normalized_dimensions = (self.width, self.height)
-            if (
-                all(original_dimensions)
-                and sorted(normalized_dimensions)
-                != sorted(original_dimensions)
-            ):
-                return "preview_fallback"
-            return "transcoded_fullsize"
-        return "preview_fallback"
+        return "original" if self.source_kind == "original" else "preview_fallback"
 
 
-def source_requires_bounded_visual(asset: ImmichAsset) -> bool:
-    """Avoid original decode when dimensions are unknown or exceed the visual box."""
-
-    return bool(
-        not asset.width
-        or not asset.height
-        or asset.width > MAX_VISUAL_DIMENSION
-        or asset.height > MAX_VISUAL_DIMENSION
-    )
+def _safe_suffix(asset: ImmichAsset) -> str:
+    suffix = Path(asset.original_file_name).suffix.lower()
+    if not suffix or len(suffix) > 16 or any(character in suffix for character in "/\\"):
+        return ".img"
+    return suffix
 
 
-def _canonical_content(content: bytes) -> tuple[bytes, int, int, bool, bool]:
-    """Orient and cap one safely decodable representation to the canonical visual box."""
+def _canonical_vips_image(
+    *,
+    path: Path | None = None,
+    content: bytes | None = None,
+) -> tuple[bytes, int, int, bool]:
+    """Use libvips to autorotate and fit one source inside the canonical visual box."""
 
-    if not content:
-        raise VisualNormalizationError("visual source is empty")
+    if (path is None) == (content is None):
+        raise ValueError("Provide exactly one visual source")
     try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("error", Image.DecompressionBombWarning)
-            with Image.open(BytesIO(content)) as source:
-                if source.width * source.height > MAX_DECODED_PIXELS:
-                    raise VisualNormalizationError("visual_source_decode_limit_exceeded")
-                source.load()
-                image = ImageOps.exif_transpose(source)
-                original_size = image.size
-                if image.width > MAX_VISUAL_DIMENSION or image.height > MAX_VISUAL_DIMENSION:
-                    image.thumbnail(
-                        (MAX_VISUAL_DIMENSION, MAX_VISUAL_DIMENSION),
-                        Image.Resampling.LANCZOS,
-                    )
-                has_alpha = "A" in image.getbands() or "transparency" in image.info
-                output = BytesIO()
-                if has_alpha:
-                    image.convert("RGBA").save(output, format="PNG")
-                else:
-                    image.convert("RGB").save(
-                        output,
-                        format="JPEG",
-                        quality=95,
-                        subsampling=0,
-                        optimize=False,
-                    )
-                return (
-                    output.getvalue(),
-                    image.width,
-                    image.height,
-                    has_alpha,
-                    image.size != original_size,
-                )
+        options = {
+            "height": MAX_VISUAL_DIMENSION,
+            "size": "down",
+            "no_rotate": False,
+            "fail_on": "error",
+        }
+        if path is not None:
+            image = pyvips.Image.thumbnail(str(path), MAX_VISUAL_DIMENSION, **options)
+        else:
+            assert content is not None
+            if not content:
+                raise VisualNormalizationError("visual source is empty")
+            image = pyvips.Image.thumbnail_buffer(
+                content,
+                MAX_VISUAL_DIMENSION,
+                **options,
+            )
+
+        if image.width < 1 or image.height < 1:
+            raise VisualNormalizationError("visual source has invalid dimensions")
+
+        # libvips keeps extra bands such as alpha while colourspace() converts
+        # the visible colour channels. This gives Pillow-based feature extraction
+        # one stable 8-bit sRGB encoded representation downstream.
+        image = image.colourspace("srgb")
+        has_alpha = image.hasalpha()
+        if has_alpha:
+            encoded = image.write_to_buffer(
+                ".png",
+                compression=6,
+                keep=0,
+            )
+        else:
+            encoded = image.write_to_buffer(
+                ".jpg",
+                Q=95,
+                subsample_mode="off",
+                keep=0,
+            )
+        return encoded, image.width, image.height, has_alpha
     except VisualNormalizationError:
         raise
-    except (
-        Image.DecompressionBombError,
-        Image.DecompressionBombWarning,
-        UnidentifiedImageError,
-        OSError,
-        SyntaxError,
-        ValueError,
-    ) as error:
+    except pyvips.Error as error:
         raise VisualNormalizationError(f"visual_source_decode_failed: {error}") from error
 
 
 class SimilarityVisualNormalizer:
-    """Fetch one safe source, then produce the canonical visual representation once."""
+    """Normalize originals with libvips; use an Immich preview only as fallback."""
 
     def __init__(
         self,
@@ -176,58 +155,129 @@ class SimilarityVisualNormalizer:
         self._fetch_slots = fetch_slots
         self._decode_slots = decode_slots
 
-    async def _original_content(
+    @asynccontextmanager
+    async def _original_file(
         self,
         context: TaskContext,
         asset_id: UUID,
-    ) -> bytes:
-        with SpooledTemporaryFile(
-            max_size=4 * 1024 * 1024,
-            dir=self._cache_path,
-            suffix=".tmp",
-        ) as spool:
-            total = 0
-            async with self._immich.stream_original(asset_id) as media:
-                if media.content_length is not None and media.content_length > self._max_bytes:
-                    raise VisualNormalizationError(
-                        "original exceeds visual source size limit"
-                    )
-                async for chunk in media.chunks:
-                    await context.ensure_active()
-                    total += len(chunk)
-                    if total > self._max_bytes:
+        asset: ImmichAsset,
+    ) -> AsyncIterator[tuple[Path, int]]:
+        """Spool encoded original bytes without ever materializing the raster in Python."""
+
+        if asset.file_size_bytes is not None and asset.file_size_bytes > self._max_bytes:
+            raise VisualNormalizationError("original exceeds visual source size limit")
+
+        temporary_path: Path | None = None
+        total = 0
+        try:
+            with NamedTemporaryFile(
+                prefix="immich-companion-visual-",
+                suffix=_safe_suffix(asset),
+                dir=self._cache_path,
+                delete=False,
+            ) as spool:
+                temporary_path = Path(spool.name)
+                async with self._immich.stream_original(asset_id) as media:
+                    if (
+                        media.content_length is not None
+                        and media.content_length > self._max_bytes
+                    ):
                         raise VisualNormalizationError(
                             "original exceeds visual source size limit"
                         )
-                    spool.write(chunk)
-            spool.seek(0)
-            return spool.read()
+                    async for chunk in media.chunks:
+                        await context.ensure_active()
+                        total += len(chunk)
+                        if total > self._max_bytes:
+                            raise VisualNormalizationError(
+                                "original exceeds visual source size limit"
+                            )
+                        spool.write(chunk)
+            assert temporary_path is not None
+            yield temporary_path, total
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
 
-    async def _normalize_content(
+    async def _run_vips(
         self,
-        content: bytes,
-        source_kind: VisualSourceKind,
+        *,
+        path: Path | None = None,
+        content: bytes | None = None,
+    ) -> tuple[bytes, int, int, bool]:
+        if self._decode_slots is None:
+            return await asyncio.to_thread(
+                _canonical_vips_image,
+                path=path,
+                content=content,
+            )
+        async with self._decode_slots:
+            return await asyncio.to_thread(
+                _canonical_vips_image,
+                path=path,
+                content=content,
+            )
+
+    @staticmethod
+    def _was_resized(asset: ImmichAsset, width: int, height: int) -> bool:
+        if not asset.width or not asset.height:
+            return False
+        return width < asset.width or height < asset.height
+
+    async def _normalize_original(
+        self,
+        context: TaskContext,
+        asset_id: UUID,
         asset: ImmichAsset,
     ) -> NormalizedVisualImage:
-        if self._decode_slots is None:
-            normalized, width, height, has_alpha, resized = await asyncio.to_thread(
-                _canonical_content,
-                content,
-            )
+        if self._fetch_slots is None:
+            source = self._original_file(context, asset_id, asset)
+            async with source as (path, source_bytes):
+                normalized, width, height, has_alpha = await self._run_vips(path=path)
         else:
-            async with self._decode_slots:
-                normalized, width, height, has_alpha, resized = await asyncio.to_thread(
-                    _canonical_content,
-                    content,
-                )
+            async with self._fetch_slots:
+                source = self._original_file(context, asset_id, asset)
+                async with source as (path, source_bytes):
+                    # Release the network slot before CPU-heavy libvips processing.
+                    pass
+            normalized, width, height, has_alpha = await self._run_vips(path=path)
+
         return NormalizedVisualImage(
             content=normalized,
-            source_kind=source_kind,
+            source_kind="original",
             width=width,
             height=height,
             source_width=asset.width,
             source_height=asset.height,
-            resized=resized,
+            resized=self._was_resized(asset, width, height),
+            has_alpha=has_alpha,
+            source_bytes=source_bytes,
+        )
+
+    async def _preview_content(self, asset_id: UUID) -> bytes:
+        getter = getattr(self._immich, "get_bounded_preview", None)
+        if getter is None:
+            raise VisualNormalizationError("Immich preview endpoint is unavailable")
+        if self._fetch_slots is None:
+            return await getter(asset_id, max_bytes=self._max_bytes)
+        async with self._fetch_slots:
+            return await getter(asset_id, max_bytes=self._max_bytes)
+
+    async def _normalize_preview(
+        self,
+        asset_id: UUID,
+        asset: ImmichAsset,
+    ) -> NormalizedVisualImage:
+        content = await self._preview_content(asset_id)
+        normalized, width, height, has_alpha = await self._run_vips(content=content)
+        return NormalizedVisualImage(
+            content=normalized,
+            source_kind="preview",
+            width=width,
+            height=height,
+            source_width=asset.width,
+            source_height=asset.height,
+            resized=self._was_resized(asset, width, height),
             has_alpha=has_alpha,
             source_bytes=len(content),
         )
@@ -238,43 +288,20 @@ class SimilarityVisualNormalizer:
         asset_id: UUID,
         asset: ImmichAsset,
     ) -> NormalizedVisualImage:
-        """Return the only visual input search/detail are allowed to consume."""
+        """Normalize the original with libvips, falling back only to Immich preview."""
 
         await context.ensure_active()
         errors: list[str] = []
 
-        original_within_budget = (
-            asset.file_size_bytes is None or asset.file_size_bytes <= self._max_bytes
-        )
-        if not source_requires_bounded_visual(asset) and original_within_budget:
-            try:
-                if self._fetch_slots is None:
-                    original = await self._original_content(context, asset_id)
-                else:
-                    async with self._fetch_slots:
-                        original = await self._original_content(context, asset_id)
-                return await self._normalize_content(original, "original", asset)
-            except (ImmichApiError, OSError, VisualNormalizationError) as error:
-                errors.append(f"original: {error}")
-        elif not source_requires_bounded_visual(asset):
-            errors.append("original: exceeds visual source size limit")
+        try:
+            return await self._normalize_original(context, asset_id, asset)
+        except (ImmichApiError, OSError, VisualNormalizationError) as error:
+            errors.append(f"original: {error}")
 
-        for source_kind, getter_name in (
-            ("bounded_fullsize", "get_bounded_fullsize"),
-            ("bounded_preview", "get_bounded_preview"),
-        ):
-            getter = getattr(self._immich, getter_name, None)
-            if getter is None:
-                continue
-            try:
-                if self._fetch_slots is None:
-                    content = await getter(asset_id, max_bytes=self._max_bytes)
-                else:
-                    async with self._fetch_slots:
-                        content = await getter(asset_id, max_bytes=self._max_bytes)
-                return await self._normalize_content(content, source_kind, asset)
-            except (ImmichApiError, OSError, VisualNormalizationError) as error:
-                errors.append(f"{source_kind}: {error}")
+        try:
+            return await self._normalize_preview(asset_id, asset)
+        except (ImmichApiError, OSError, VisualNormalizationError) as error:
+            errors.append(f"preview: {error}")
 
         await context.ensure_active()
         raise VisualNormalizationError(

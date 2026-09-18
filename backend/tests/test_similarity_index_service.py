@@ -362,9 +362,7 @@ async def test_safe_image_uses_original_visual_source_without_pixel_hash() -> No
     assert coverage.complete is True
     assert (completed, unavailable) == (1, 0)
     assert maintainer.metrics()["original_fingerprints_generated"] == 1
-    assert maintainer.metrics()["fallbacks_to_original"] == 0
     assert maintainer.metrics()["original_bytes_downloaded"] == len(PREVIEW)
-    assert maintainer.metrics()["deep_verifications_performed"] == 0
     assert "decode_milliseconds" in maintainer.metrics()
     assert "feature_extraction_milliseconds" in maintainer.metrics()
     assert maintainer.metrics()["normalized_pixel_hash_milliseconds"] == 0

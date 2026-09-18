@@ -31,7 +31,6 @@ from companion.similarity_visual_normalization import (
     DEFAULT_VISUAL_SOURCE_MAX_BYTES,
     SimilarityVisualNormalizer,
     VisualNormalizationError,
-    source_requires_bounded_visual,
 )
 from companion.task_coordinator import (
     PermanentTaskError,
@@ -47,9 +46,7 @@ VISUAL_SOURCE_MAX_BYTES = DEFAULT_VISUAL_SOURCE_MAX_BYTES
 NON_RETRYABLE_FAILURE_MARKERS = (
     "image_decode_limit_exceeded",
     "original exceeds similarity fallback size limit",
-    "bounded_preview_decode_failed",
     "normalized_visual_feature_decode_failed",
-    "visual_source_decode_limit_exceeded",
     "visual_source_decode_failed",
     "unsupported similarity representation",
     "asset is trashed",
@@ -198,15 +195,8 @@ class SimilarityIndexMaintainer:
         self._metrics = {
             "fingerprints_reused": initial.current_count,
             "preview_fingerprints_generated": 0,
-            "bounded_fingerprints_generated": 0,
-            "bounded_search_fingerprints_generated": 0,
             "original_fingerprints_generated": 0,
-            "fallbacks_to_original": 0,
-            "alpha_preserving_original_fallbacks": 0,
-            "oversized_original_decodes_avoided": 0,
-            "alpha_uncertain_bounded_evidence": 0,
             "deterministic_retries_suppressed": 0,
-            "deep_verifications_performed": 0,
             "failed_or_skipped_attempts": 0,
             "preview_bytes_downloaded": 0,
             "original_bytes_downloaded": 0,
@@ -438,10 +428,6 @@ class SimilarityIndexMaintainer:
                     evidence_epoch=evidence_epoch,
                 )
 
-            bounded_source = source_requires_bounded_visual(source)
-            if bounded_source:
-                self._count("oversized_original_decodes_avoided")
-
             started = perf_counter()
             normalized = await self._normalizer.normalize(context, asset_id, source)
             self._measure("visual_normalization", started)
@@ -536,8 +522,7 @@ class SimilarityIndexMaintainer:
                 self._count("original_bytes_downloaded", normalized.source_bytes)
                 self._count("original_decodes")
             else:
-                self._count("bounded_fingerprints_generated")
-                self._count("bounded_search_fingerprints_generated")
+                self._count("preview_fingerprints_generated")
                 self._count("preview_bytes_downloaded", normalized.source_bytes)
                 self._count("preview_decodes")
             return True, None

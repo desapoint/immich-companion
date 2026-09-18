@@ -45,7 +45,6 @@ from companion.similarity_search_features import (
 from companion.similarity_visual_normalization import (
     SimilarityVisualNormalizer,
     VisualNormalizationError,
-    source_requires_bounded_visual,
 )
 from companion.task_coordinator import TaskContext
 
@@ -267,12 +266,9 @@ class SimilarityDetailMaintainer:
             "detail_features_generated": 0,
             "detail_features_unavailable": 0,
             "detail_original_bytes": 0,
-            "detail_transcoded_fallbacks": 0,
             "detail_preview_fallbacks": 0,
-            "detail_oversized_bounded_validations": 0,
-            "detail_oversized_original_decodes_avoided": 0,
-            "bounded_candidate_validations": 0,
-            "full_resolution_validations": 0,
+            "detail_original_sources": 0,
+            "preview_fallback_validations": 0,
         }
 
     @staticmethod
@@ -365,17 +361,12 @@ class SimilarityDetailMaintainer:
                     normalized.detail_origin,
                 )
 
-            if source_requires_bounded_visual(live):
-                self.counters["detail_oversized_bounded_validations"] += 1
-                self.counters["detail_oversized_original_decodes_avoided"] += 1
             if normalized.source_kind == "original":
-                self.counters["full_resolution_validations"] += 1
+                self.counters["detail_original_sources"] += 1
                 self.counters["detail_original_bytes"] += normalized.source_bytes
             else:
-                self.counters["bounded_candidate_validations"] += 1
-                if saved and normalized.detail_origin == "transcoded_fullsize":
-                    self.counters["detail_transcoded_fallbacks"] += 1
-                elif saved:
+                self.counters["preview_fallback_validations"] += 1
+                if saved:
                     self.counters["detail_preview_fallbacks"] += 1
 
             self.counters[
