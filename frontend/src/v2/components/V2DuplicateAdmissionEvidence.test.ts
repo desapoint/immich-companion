@@ -30,7 +30,7 @@ function member(
 }
 
 describe('V2DuplicateAdmissionEvidence', () => {
-  it('renders linked admission as a compact depth pill that opens the admitting asset in a new tab', () => {
+  it('renders linked admission as a compact intermediate-count pill that opens the admitting asset in a new tab', () => {
     const linked = member('asset-1', 'linked.jpg', 99, 'asset-2', 2);
     const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
@@ -45,8 +45,8 @@ describe('V2DuplicateAdmissionEvidence', () => {
     expect(body).toContain('href="/v2/assets/asset-2"');
     expect(body).toContain('target="_blank"');
     expect(body).toContain('rel="noopener noreferrer"');
-    expect(body).toContain('Linked through bridge.jpg, depth 2');
-    expect(body).toMatch(/<span>2<\/span>/);
+    expect(body).toContain('Linked through bridge.jpg; 1 image in between the reference and this image.');
+    expect(body).toMatch(/<span>1<\/span>/);
   });
 
   it('shows linked provenance from admission data even when the direct reference score is not below threshold', () => {
@@ -60,8 +60,8 @@ describe('V2DuplicateAdmissionEvidence', () => {
       },
     });
 
-    expect(body).toContain('depth 3');
-    expect(body).toMatch(/<span>3<\/span>/);
+    expect(body).toContain('2 images in between the reference and this image.');
+    expect(body).toMatch(/<span>2<\/span>/);
   });
 
   it('does not render a pill for a direct reference admission', () => {
