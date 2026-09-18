@@ -510,8 +510,8 @@ def create_app(
             details=detail_repository,
             fetch_slots=runtime_settings.similarity_preview_fetch_slots,
             decode_slots=runtime_settings.similarity_preview_decode_slots,
-            fallback_max_bytes=runtime_settings.similarity_detail_max_bytes,
-            decode_cache_path=runtime_settings.similarity_cache_dir,
+            visual_source_max_bytes=runtime_settings.similarity_detail_max_bytes,
+            decode_cache_path=similarity_cache.decode_path,
             batch_size=runtime_settings.similarity_fingerprint_page_size,
             runtime_settings=similarity_runtime_settings_repository,
         )
