@@ -65,6 +65,7 @@ describe('V2DuplicateCompareViewer', () => {
         decisionOptions: ['keep', 'delete', 'stack'],
         stackLabel: 'Stack 1',
         stackPrimary: true,
+        selectedForReview: true,
         onclose: () => {},
       },
     });
@@ -90,6 +91,7 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('data-decision="stack"');
     expect(body).toContain('Stack 1');
     expect(body).toContain('Stack primary');
+    expect(body).toContain('Selected for review');
     expect(body).toContain('Clear selection');
     expect(body).toContain('Property');
     expect(body).toContain('Selected');
@@ -100,6 +102,13 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body.match(/<details[^>]*v2-compare-metadata-detail[^>]*>/)?.[0] ?? '').toContain('open');
     expect(body.indexOf('data-decision="stack"')).toBeLessThan(body.indexOf('Clear selection'));
     expect(body).not.toContain('Technical group ID');
+  });
+
+  it('lets the page handle a decision before mutating the bound decision map', () => {
+    expect(viewerSource).toContain('if (ondecisionchange) ondecisionchange(decisionKey, decision);');
+    expect(viewerSource).toContain('else decisions = { ...decisions, [decisionKey]: decision };');
+    expect(viewerSource.indexOf('if (ondecisionchange) ondecisionchange(decisionKey, decision);'))
+      .toBeLessThan(viewerSource.indexOf('else decisions = { ...decisions, [decisionKey]: decision };'));
   });
 
   it('shows actual bounded validation dimensions without implying full-resolution proof', () => {
