@@ -380,6 +380,11 @@ class SimilaritySearchRepository:
         statement = (
             select(AssetSimilaritySearchFeatureRecord)
             .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
+            .join(
+                AssetSimilarityDetailFeatureRecord,
+                AssetSimilarityDetailFeatureRecord.asset_id
+                == AssetSimilaritySearchFeatureRecord.asset_id,
+            )
             .where(
                 AssetSimilaritySearchFeatureRecord.asset_id.in_(
                     list(dict.fromkeys(asset_ids))
