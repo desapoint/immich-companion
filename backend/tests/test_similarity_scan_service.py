@@ -158,6 +158,60 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
 
 
 @pytest.mark.asyncio
+async def test_linked_scan_completes_missing_direct_reference_comparisons_after_grouping() -> None:
+    class LinkedChainSimilarity(FakeSimilarity):
+        scores = {
+            (1, 2): 98.0,
+            (1, 3): 70.0,
+            (2, 3): 97.0,
+        }
+
+        async def reference_edges(self, groups, _features):
+            self.calls.append(groups)
+            result = {}
+            for group in groups:
+                reference = group[0]
+                for member in group[1:]:
+                    pair = tuple(sorted((reference.int, member.int)))
+                    result[(reference, member)] = evidence(self.scores[pair])
+            return result
+
+    similarity = LinkedChainSimilarity()
+    scans = FakeScans()
+    context = FakeContext()
+    handler = SimilarityScanTaskHandler(
+        FakeFeatures([feature(1, 0), feature(2, 0), feature(3, 0)]),
+        similarity,
+        scans,
+    )
+
+    result = await handler.execute(
+        context,
+        SimilarityScanRequest(
+            similarity_threshold=95,
+            validation_mode="linked",
+            anchor_asset_id=UUID(int=1),
+        ).model_dump(mode="json"),
+    )
+
+    assert scans.completed is not None
+    retained = {
+        (pair.asset_id_low.int, pair.asset_id_high.int)
+        for pair in scans.completed[1]["pairs"]
+    }
+    assert retained == {(1, 2), (2, 3)}
+    assert similarity.calls[-1] == [[UUID(int=1), UUID(int=3)]]
+    assert result.counters["reference_pairs_required"] == 1
+    assert result.counters["reference_pairs_enriched"] == 1
+    enrichment = [
+        checkpoint["progress"]
+        for checkpoint in context.checkpoints
+        if checkpoint["progress"]["phase"] == "similarity_reference_enrichment"
+    ]
+    assert [item["completed"] for item in enrichment] == [0, 1]
+
+
+@pytest.mark.asyncio
 async def test_scan_uses_complete_cached_evidence_in_one_scoring_pass() -> None:
     class CachedDetailSimilarity(FakeSimilarity):
         async def reference_edges(self, groups, _features):
