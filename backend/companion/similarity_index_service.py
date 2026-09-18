@@ -97,11 +97,11 @@ class SimilarityIndexMaintainer:
         batch_size: int = SIMILARITY_FINGERPRINT_BATCH_SIZE,
         fetch_slots: int = 2,
         decode_slots: int = 2,
-        fallback_max_bytes: int = VISUAL_SOURCE_MAX_BYTES,
+        visual_source_max_bytes: int = VISUAL_SOURCE_MAX_BYTES,
         decode_cache_path: Path | None = None,
         runtime_settings: SimilarityRuntimeSettingsRepository | None = None,
     ) -> None:
-        if min(batch_size, fetch_slots, decode_slots, fallback_max_bytes) < 1:
+        if min(batch_size, fetch_slots, decode_slots, visual_source_max_bytes) < 1:
             raise ValueError("Fingerprint batch and pipeline slots must be positive")
         self._immich = immich
         self._assets = assets
@@ -112,14 +112,12 @@ class SimilarityIndexMaintainer:
         self._decode_slots = asyncio.Semaphore(decode_slots)
         self._normalizer = SimilarityVisualNormalizer(
             immich,
-            max_bytes=fallback_max_bytes,
+            max_bytes=visual_source_max_bytes,
             cache_path=decode_cache_path,
             fetch_slots=self._fetch_slots,
             decode_slots=self._decode_slots,
         )
         self._inflight_slots = asyncio.Semaphore(fetch_slots + decode_slots)
-        self._fallback_max_bytes = fallback_max_bytes
-        self._decode_cache_path = decode_cache_path
         self._runtime_settings = runtime_settings
         self._metrics: dict[str, int] = {}
         self._legacy_coverage_contract = False
