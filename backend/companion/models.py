@@ -152,7 +152,7 @@ class AssetSimilaritySearchFeatureRecord(Base):
 
 
 class AssetSimilarityDetailFeatureRecord(Base):
-    """Candidate-only local-detail evidence from an original or full-size transcode."""
+    """Cached localized-detail evidence derived from the canonical visual representation."""
 
     __tablename__ = "asset_similarity_detail_features"
 
