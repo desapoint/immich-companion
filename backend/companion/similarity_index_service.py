@@ -103,14 +103,16 @@ class SimilarityIndexMaintainer:
         self._assets = assets
         self._features = features
         self._details = details
+        self._batch_size = batch_size
+        self._fetch_slots = asyncio.Semaphore(fetch_slots)
+        self._decode_slots = asyncio.Semaphore(decode_slots)
         self._normalizer = SimilarityVisualNormalizer(
             immich,
             max_bytes=fallback_max_bytes,
             cache_path=decode_cache_path,
+            fetch_slots=self._fetch_slots,
+            decode_slots=self._decode_slots,
         )
-        self._batch_size = batch_size
-        self._fetch_slots = asyncio.Semaphore(fetch_slots)
-        self._decode_slots = asyncio.Semaphore(decode_slots)
         self._inflight_slots = asyncio.Semaphore(fetch_slots + decode_slots)
         self._fallback_max_bytes = fallback_max_bytes
         self._decode_cache_path = decode_cache_path
@@ -438,16 +440,16 @@ class SimilarityIndexMaintainer:
             if bounded_source:
                 self._count("oversized_original_decodes_avoided")
 
-            async with self._fetch_slots, self._decode_slots:
-                started = perf_counter()
-                normalized = await self._normalizer.normalize(context, asset_id, source)
-                self._measure("visual_normalization", started)
-                self._count("normalized_source_bytes", normalized.source_bytes)
-                if normalized.resized:
-                    self._count("normalized_images_resized")
+            started = perf_counter()
+            normalized = await self._normalizer.normalize(context, asset_id, source)
+            self._measure("visual_normalization", started)
+            self._count("normalized_source_bytes", normalized.source_bytes)
+            if normalized.resized:
+                self._count("normalized_images_resized")
 
-                timings: dict[str, int] = {}
-                started = perf_counter()
+            timings: dict[str, int] = {}
+            started = perf_counter()
+            async with self._decode_slots:
                 feature = await asyncio.to_thread(
                     extract_search_feature,
                     normalized.content,
@@ -458,8 +460,8 @@ class SimilarityIndexMaintainer:
                     BytesIO(normalized.content),
                     detect_file_format(normalized.content[:64]),
                 )
-                self._measure("decode_feature_wall", started)
-                self._record_timings(timings)
+            self._measure("decode_feature_wall", started)
+            self._record_timings(timings)
 
             if feature is None or detail is None:
                 return await self._failure(
