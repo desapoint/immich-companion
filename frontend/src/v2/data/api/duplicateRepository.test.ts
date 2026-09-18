@@ -634,10 +634,10 @@ describe('live V2 duplicate repository', () => {
     const progress: number[] = [];
     const repository = createDuplicateRepository(taskRepository);
 
-    await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
+    await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
 
     expect(progress).toEqual([25,98,99]);
-    expect(similarityBody).toMatchObject({validation_mode:'linked',anchor_asset_id:ASSET_IDS[1]});
+    expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1]});
   });
 
   it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{
