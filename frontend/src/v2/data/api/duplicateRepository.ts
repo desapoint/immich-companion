@@ -53,8 +53,22 @@ type ApiDuplicateMember = {
     structural_percent: number | null;
     perceptual_percent: number | null;
     color_percent: number | null;
+    normalized_luminance_mae?: number | null;
+    normalized_luminance_rmse?: number | null;
+    normalized_luminance_ssim?: number | null;
+    aspect_ratio_difference?: number | null;
+    dimensions_equal?: boolean | null;
+    exact_thumbnail_match?: boolean | null;
+    exact_pixel_match?: boolean | null;
     detail_changed_percent?: number | null;
     detail_source?: 'original' | 'transcoded' | 'preview' | null;
+    validated_width?: number | null;
+    validated_height?: number | null;
+    reference_validated_width?: number | null;
+    reference_validated_height?: number | null;
+    model_version?: string | null;
+    feature_version?: number | null;
+    comparison_version?: number | null;
   } | null;
   admission: {
     admitted_by_asset_id: string | null;
@@ -66,6 +80,24 @@ type ApiDuplicateMember = {
     feature_version: number;
     comparison_version: number;
     config_fingerprint: string;
+  } | null;
+  preservation: {
+    pixel_normalization_version: number;
+    pixel_sha256: string;
+    decoded_width: number;
+    decoded_height: number;
+    bit_depth: number;
+    channel_count: number;
+    has_alpha: boolean;
+    color_space: string;
+    orientation: number | null;
+    icc_profile_present: boolean;
+    has_exif: boolean;
+    has_capture_time: boolean;
+    has_camera_info: boolean;
+    has_gps: boolean;
+    has_orientation_metadata: boolean;
+    metadata_richness: number;
   } | null;
 };
 type ApiDuplicateKeeperSelectionResult = {
@@ -242,10 +274,38 @@ function similarityEvidence(member: ApiDuplicateMember) {
     structuralPercent: member.similarity.structural_percent,
     perceptualPercent: member.similarity.perceptual_percent,
     colorPercent: member.similarity.color_percent,
+    ...(member.similarity.normalized_luminance_mae !== undefined
+      ? { normalizedLuminanceMae: member.similarity.normalized_luminance_mae } : {}),
+    ...(member.similarity.normalized_luminance_rmse !== undefined
+      ? { normalizedLuminanceRmse: member.similarity.normalized_luminance_rmse } : {}),
+    ...(member.similarity.normalized_luminance_ssim !== undefined
+      ? { normalizedLuminanceSsim: member.similarity.normalized_luminance_ssim } : {}),
+    ...(member.similarity.aspect_ratio_difference !== undefined
+      ? { aspectRatioDifference: member.similarity.aspect_ratio_difference } : {}),
+    ...(member.similarity.dimensions_equal !== undefined
+      ? { dimensionsEqual: member.similarity.dimensions_equal } : {}),
+    ...(member.similarity.exact_thumbnail_match !== undefined
+      ? { exactThumbnailMatch: member.similarity.exact_thumbnail_match } : {}),
+    ...(member.similarity.exact_pixel_match !== undefined
+      ? { exactPixelMatch: member.similarity.exact_pixel_match } : {}),
     ...(member.similarity.detail_changed_percent !== undefined
       ? { detailChangedPercent: member.similarity.detail_changed_percent } : {}),
     ...(member.similarity.detail_source !== undefined
       ? { detailSource: member.similarity.detail_source } : {}),
+    ...(member.similarity.validated_width !== undefined
+      ? { validatedWidth: member.similarity.validated_width } : {}),
+    ...(member.similarity.validated_height !== undefined
+      ? { validatedHeight: member.similarity.validated_height } : {}),
+    ...(member.similarity.reference_validated_width !== undefined
+      ? { referenceValidatedWidth: member.similarity.reference_validated_width } : {}),
+    ...(member.similarity.reference_validated_height !== undefined
+      ? { referenceValidatedHeight: member.similarity.reference_validated_height } : {}),
+    ...(member.similarity.model_version !== undefined
+      ? { modelVersion: member.similarity.model_version } : {}),
+    ...(member.similarity.feature_version !== undefined
+      ? { featureVersion: member.similarity.feature_version } : {}),
+    ...(member.similarity.comparison_version !== undefined
+      ? { comparisonVersion: member.similarity.comparison_version } : {}),
   };
 }
 
@@ -261,6 +321,28 @@ function admissionEvidence(member: ApiDuplicateMember) {
     featureVersion: member.admission.feature_version,
     comparisonVersion: member.admission.comparison_version,
     configFingerprint: member.admission.config_fingerprint,
+  };
+}
+
+function preservationEvidence(member: ApiDuplicateMember) {
+  if (!member.preservation) return null;
+  return {
+    pixelNormalizationVersion: member.preservation.pixel_normalization_version,
+    pixelSha256: member.preservation.pixel_sha256,
+    decodedWidth: member.preservation.decoded_width,
+    decodedHeight: member.preservation.decoded_height,
+    bitDepth: member.preservation.bit_depth,
+    channelCount: member.preservation.channel_count,
+    hasAlpha: member.preservation.has_alpha,
+    colorSpace: member.preservation.color_space,
+    orientation: member.preservation.orientation,
+    iccProfilePresent: member.preservation.icc_profile_present,
+    hasExif: member.preservation.has_exif,
+    hasCaptureTime: member.preservation.has_capture_time,
+    hasCameraInfo: member.preservation.has_camera_info,
+    hasGps: member.preservation.has_gps,
+    hasOrientationMetadata: member.preservation.has_orientation_metadata,
+    metadataRichness: member.preservation.metadata_richness,
   };
 }
 
@@ -431,7 +513,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
       stackResolution: parseStackResolution(draft?.stack_resolution ?? 'move_selected'),
       members: referenceFirstDuplicateMembers(
-        group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member), admission: admissionEvidence(member) })),
+        group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member), admission: admissionEvidence(member), preservation: preservationEvidence(member) })),
         group.reference_asset_id,
       ),
     };
