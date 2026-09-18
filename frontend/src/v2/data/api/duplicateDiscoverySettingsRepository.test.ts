@@ -71,6 +71,7 @@ describe('duplicate discovery settings repository', () => {
       maxCandidates: 12,
     })).resolves.toMatchObject({
       similarityThreshold: 97,
+      maxLinkDepth: 2,
       maxCandidates: 12,
     });
   });
