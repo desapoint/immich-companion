@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from io import BytesIO
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -46,23 +47,25 @@ class Context:
 
 
 @pytest.mark.asyncio
-async def test_180mp_jpeg_uses_bounded_opaque_search_evidence_without_original() -> None:
+async def test_180mp_metadata_jpeg_uses_original_libvips_normalization() -> None:
     asset = source()
     preview = jpeg_preview()
 
     class Immich:
         original_calls = 0
 
-        async def get_bounded_preview(self, asset_id, *, max_bytes):
-            assert asset_id == ASSET_ID
-            assert len(preview) < max_bytes
-            return preview
+        async def get_bounded_preview(self, *_args, **_kwargs):
+            pytest.fail("Decodable original must not use preview fallback")
 
         @asynccontextmanager
-        async def stream_original(self, _asset_id):
+        async def stream_original(self, asset_id):
+            assert asset_id == ASSET_ID
             self.original_calls += 1
-            pytest.fail("180 MP source must be preflighted before original streaming")
-            yield  # pragma: no cover
+
+            async def chunks():
+                yield preview
+
+            yield SimpleNamespace(content_length=len(preview), chunks=chunks())
 
         async def get_asset(self, _asset_id):
             return asset
@@ -105,8 +108,7 @@ async def test_180mp_jpeg_uses_bounded_opaque_search_evidence_without_original()
 
     assert succeeded is True
     assert reason is None
-    assert immich.original_calls == 0
-    assert features.origin == "bounded"
+    assert immich.original_calls == 1
+    assert features.origin == "original"
     assert features.alpha_state == "confirmed_opaque"
-    assert maintainer.metrics()["oversized_original_decodes_avoided"] == 1
-    assert maintainer.metrics()["bounded_search_fingerprints_generated"] == 1
+    assert maintainer.metrics()["original_fingerprints_generated"] == 1
