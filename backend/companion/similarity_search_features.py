@@ -17,7 +17,6 @@ from companion.similarity_visual_normalization import VISUAL_NORMALIZATION_FINGE
 
 SEARCH_MODEL_VERSION = "appearance-normalized-v1"
 SEARCH_FEATURE_VERSION = 4
-MAX_SEARCH_PREVIEW_BYTES = 16 * 1024 * 1024
 SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
     (
         f"normalized-search-v4:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
