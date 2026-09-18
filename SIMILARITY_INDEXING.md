@@ -18,6 +18,10 @@ assets already encountered in Immich duplicate groups.
 6. Treat the asset as current only when the matching search and detail records
    are both current.
 7. Run candidate discovery and pair scoring entirely from cached evidence.
+8. After final groups are constructed, complete any missing direct
+   reference-to-member comparisons from the same cached search and detail
+   evidence before publishing the scan. These enrichment scores are review
+   evidence only and never change the already-finalized group membership.
 
 After the initial bootstrap, asset synchronization causes only new or changed
 images to require normalization. Deleted, trashed, offline, and non-image
@@ -134,6 +138,10 @@ A visual fingerprint or localized-detail match never becomes exact-file proof.
 - Search and localized-detail features are written from the same normalized
   pixels and source identity.
 - A search-only cache entry is not exposed as current.
-- Full scans and incremental scoring perform one cache-only scoring pass and no
+- Full scans and incremental scoring perform cache-only pair scoring and no
   second detail media stage.
+- Linked groups receive a post-group reference-completion pass so every
+  successfully indexed member has direct comparison evidence to the stable
+  reference, even when membership was admitted transitively through another
+  member. Below-threshold enrichment scores do not alter membership.
 - Localized Changes performs no media fetch, decode, or database mutation.
