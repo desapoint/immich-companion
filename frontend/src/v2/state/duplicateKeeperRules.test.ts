@@ -25,8 +25,8 @@ describe('duplicate keeper rules', () => {
     }
   });
 
-  it('labels raw link depth as hops from reference', () => {
-    expect(keeperFieldDefinition('link_depth').label).toBe('Admission hops from group reference');
+  it('labels linked depth with the same user-facing terminology as duplicate review', () => {
+    expect(keeperFieldDefinition('link_depth').label).toBe('Link depth');
   });
 
   it('keeps ranking operators out of hard requirements', () => {
