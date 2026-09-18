@@ -27,6 +27,12 @@ from companion.similarity_search_features import (
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.similarity_settings import SimilarityRuntimeSettingsRepository
+from companion.similarity_visual_normalization import (
+    DEFAULT_VISUAL_SOURCE_MAX_BYTES,
+    SimilarityVisualNormalizer,
+    VisualNormalizationError,
+    source_requires_bounded_visual,
+)
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -34,15 +40,10 @@ from companion.task_coordinator import (
     TaskCoordinator,
 )
 from companion.task_schema import TaskResult
-from companion.similarity_visual_normalization import (
-    SimilarityVisualNormalizer,
-    VisualNormalizationError,
-    source_requires_bounded_visual,
-)
 
 SIMILARITY_INDEX_TASK_TYPE = "similarity_index"
 SIMILARITY_FINGERPRINT_BATCH_SIZE = 25
-ORIGINAL_FALLBACK_MAX_BYTES = 128 * 1024 * 1024
+VISUAL_SOURCE_MAX_BYTES = DEFAULT_VISUAL_SOURCE_MAX_BYTES
 NON_RETRYABLE_FAILURE_MARKERS = (
     "image_decode_limit_exceeded",
     "original exceeds similarity fallback size limit",
@@ -96,7 +97,7 @@ class SimilarityIndexMaintainer:
         batch_size: int = SIMILARITY_FINGERPRINT_BATCH_SIZE,
         fetch_slots: int = 2,
         decode_slots: int = 2,
-        fallback_max_bytes: int = ORIGINAL_FALLBACK_MAX_BYTES,
+        fallback_max_bytes: int = VISUAL_SOURCE_MAX_BYTES,
         decode_cache_path: Path | None = None,
         runtime_settings: SimilarityRuntimeSettingsRepository | None = None,
     ) -> None:
