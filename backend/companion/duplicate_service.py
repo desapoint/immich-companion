@@ -3153,7 +3153,6 @@ class CrossSourceDuplicateTaskHandler:
                     if not await self._similarity_indexer.ensure_asset(
                         context,
                         asset.id,
-                        source=asset,
                     ):
                         visual_unavailable += 1
                         logger.warning(
