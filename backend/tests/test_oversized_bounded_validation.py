@@ -1,9 +1,9 @@
 """Unified libvips visual normalization regressions."""
 
+import shutil
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from io import BytesIO
-import shutil
 from types import SimpleNamespace
 from uuid import UUID
 
