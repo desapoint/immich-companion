@@ -783,6 +783,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         const started = await requestJson<TaskStart>('/api/assets/duplicates/similarity-scan', jsonRequest('POST', {
           similarity_threshold: options.similarityThreshold,
           validation_mode: options.validationMode,
+          max_link_depth: Math.min(64, Math.max(0, Math.round(options.maxLinkDepth))),
           anchor_asset_id: options.anchorAssetId,
           scope: 'all_eligible_assets',
           maximum_perceptual_distance: 12,
