@@ -370,6 +370,66 @@ class SimilarityEvidenceEpochRepository:
             removed_counts=removed,
         )
 
+    async def rebuild_in_session(
+        self,
+        session: AsyncSession,
+        scan_payload: dict[str, object],
+    ) -> tuple[int, dict[str, int], UUID]:
+        """Invalidate evidence and queue replacement work inside an existing transaction."""
+
+        if not scan_payload:
+            raise ValueError("A replacement similarity scan payload is required")
+        replacement_task_id = uuid4()
+        replacement_dedupe_key = _scan_request_key(scan_payload)
+        cancelled_task_count, removed = await self._invalidate(
+            session,
+            update_rebuilt_at=True,
+            reason_type="evidence_rebuild",
+            reason_message="Retired by similarity evidence rebuild",
+        )
+
+        # The replacement scan is created before the transaction can commit. Callers that
+        # persist membership-affecting discovery settings can therefore update those
+        # settings, invalidate stale evidence, and durably schedule replacement work as one
+        # atomic change.
+        lane_statement = insert(TaskLaneRecord).values(
+            lane_key=_REPLACEMENT_SCAN_LANE_KEY,
+            max_concurrency=1,
+        )
+        await session.execute(
+            lane_statement.on_conflict_do_update(
+                index_elements=[TaskLaneRecord.lane_key],
+                set_={
+                    "max_concurrency": func.greatest(
+                        TaskLaneRecord.max_concurrency,
+                        lane_statement.excluded.max_concurrency,
+                    ),
+                    "updated_at": func.now(),
+                },
+            )
+        )
+        await session.execute(
+            insert(TaskRecord).values(
+                id=replacement_task_id,
+                task_type=_REPLACEMENT_SCAN_TASK_TYPE,
+                payload=scan_payload,
+                priority=_REPLACEMENT_SCAN_PRIORITY,
+                status="queued",
+                deduplication_key=replacement_dedupe_key,
+                lane_key=_REPLACEMENT_SCAN_LANE_KEY,
+                checkpoint={},
+                counters={},
+                progress={},
+                attempt=0,
+                next_attempt_at=datetime.now(UTC),
+            )
+        )
+        await session.execute(
+            text("SELECT pg_notify(:channel, :payload)"),
+            {"channel": TASK_UPDATE_CHANNEL, "payload": str(replacement_task_id)},
+        )
+        return cancelled_task_count, removed, replacement_task_id
+
     async def rebuild(
         self, scan_payload: dict[str, object]
     ) -> SimilarityEvidenceRebuildResult:
@@ -377,56 +437,12 @@ class SimilarityEvidenceEpochRepository:
 
         if not scan_payload:
             raise ValueError("A replacement similarity scan payload is required")
-        replacement_task_id = uuid4()
-        replacement_dedupe_key = _scan_request_key(scan_payload)
         async with self._database.sessions() as session, session.begin():
-            cancelled_task_count, removed = await self._invalidate(
-                session,
-                update_rebuilt_at=True,
-                reason_type="evidence_rebuild",
-                reason_message="Retired by similarity evidence rebuild",
-            )
-
-            # The replacement scan is created before the destructive transaction can
-            # commit. If task creation fails, the epoch advance and every deletion roll
-            # back with it. A lost HTTP response or closed browser therefore cannot leave
-            # the library with invalidated evidence and no durable rebuild work.
-            lane_statement = insert(TaskLaneRecord).values(
-                lane_key=_REPLACEMENT_SCAN_LANE_KEY,
-                max_concurrency=1,
-            )
-            await session.execute(
-                lane_statement.on_conflict_do_update(
-                    index_elements=[TaskLaneRecord.lane_key],
-                    set_={
-                        "max_concurrency": func.greatest(
-                            TaskLaneRecord.max_concurrency,
-                            lane_statement.excluded.max_concurrency,
-                        ),
-                        "updated_at": func.now(),
-                    },
-                )
-            )
-            await session.execute(
-                insert(TaskRecord).values(
-                    id=replacement_task_id,
-                    task_type=_REPLACEMENT_SCAN_TASK_TYPE,
-                    payload=scan_payload,
-                    priority=_REPLACEMENT_SCAN_PRIORITY,
-                    status="queued",
-                    deduplication_key=replacement_dedupe_key,
-                    lane_key=_REPLACEMENT_SCAN_LANE_KEY,
-                    checkpoint={},
-                    counters={},
-                    progress={},
-                    attempt=0,
-                    next_attempt_at=datetime.now(UTC),
-                )
-            )
-            await session.execute(
-                text("SELECT pg_notify(:channel, :payload)"),
-                {"channel": TASK_UPDATE_CHANNEL, "payload": str(replacement_task_id)},
-            )
+            (
+                cancelled_task_count,
+                removed,
+                replacement_task_id,
+            ) = await self.rebuild_in_session(session, scan_payload)
 
         state = await self.status()
         return SimilarityEvidenceRebuildResult(
