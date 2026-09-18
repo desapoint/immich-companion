@@ -25,7 +25,8 @@ VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
     (
         f"visual-normalization-v{VISUAL_NORMALIZATION_VERSION}:"
         f"max-dimension={MAX_VISUAL_DIMENSION}:"
-        f"decode-pixels={MAX_DECODED_PIXELS}"
+        f"decode-pixels={MAX_DECODED_PIXELS}:"
+        "alpha-output=png-rgba:opaque-output=jpeg-q95-444"
     ).encode(),
     usedforsecurity=False,
 ).hexdigest()
@@ -242,7 +243,10 @@ class SimilarityVisualNormalizer:
         await context.ensure_active()
         errors: list[str] = []
 
-        if not source_requires_bounded_visual(asset):
+        original_within_budget = (
+            asset.file_size_bytes is None or asset.file_size_bytes <= self._max_bytes
+        )
+        if not source_requires_bounded_visual(asset) and original_within_budget:
             try:
                 if self._fetch_slots is None:
                     original = await self._original_content(context, asset_id)
@@ -252,6 +256,8 @@ class SimilarityVisualNormalizer:
                 return await self._normalize_content(original, "original", asset)
             except (ImmichApiError, OSError, VisualNormalizationError) as error:
                 errors.append(f"original: {error}")
+        elif not source_requires_bounded_visual(asset):
+            errors.append("original: exceeds visual source size limit")
 
         for source_kind, getter_name in (
             ("bounded_fullsize", "get_bounded_fullsize"),
