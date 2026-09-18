@@ -55,6 +55,7 @@ class SimilarityDuplicateProvider:
             mode=parameters.validation_mode,
             threshold=parameters.similarity_threshold,
             preferred_anchor_asset_id=parameters.anchor_asset_id,
+            max_link_depth=parameters.max_link_depth,
         )
         asset_ids = sorted(
             {asset_id for group in validated_groups for asset_id in group.asset_ids},
@@ -114,6 +115,7 @@ class SimilarityDuplicateProvider:
                         "cohesive_pair_count": str(validated.pair_count),
                         "grouping_version": str(SIMILARITY_GROUPING_VERSION),
                         "validation_mode": parameters.validation_mode,
+                        "max_link_depth": str(parameters.max_link_depth),
                         "anchor_asset_id": str(validated.anchor_asset_id),
                         "model_version": parameters.model_version,
                         "feature_version": str(parameters.feature_version),
