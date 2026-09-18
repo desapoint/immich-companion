@@ -667,5 +667,7 @@ class SimilarityScanTaskHandler:
                 ),
                 pairs_scored=total,
                 matches_retained=len(matches),
+                reference_pairs_required=reference_pairs_required,
+                reference_pairs_enriched=reference_pairs_enriched,
             ),
         )
