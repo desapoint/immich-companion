@@ -585,6 +585,25 @@ class CrossSourceDuplicateService:
     ]:
         return await self._snapshot_groups(await self._live_groups(), options)
 
+    @staticmethod
+    def _stable_similarity_source(group: DiscoveredGroup) -> DiscoveredGroup:
+        """Keep the immutable scan anchor as the default comparison reference."""
+
+        anchor = (
+            group.similarity_validation.anchor_asset_id
+            if group.similarity_validation is not None
+            else None
+        )
+        return replace(
+            group,
+            assets=tuple(
+                sorted(
+                    group.assets,
+                    key=lambda asset: (asset.id != anchor, asset.id.int),
+                )
+            ),
+        )
+
     async def _snapshot_groups(
         self,
         groups: list[DiscoveredGroup],
@@ -608,34 +627,37 @@ class CrossSourceDuplicateService:
             for asset in group.assets
             if asset.asset_type == "IMAGE" and not asset.is_offline
         ]
-        loaded_features = (
-            await self._reports.get_similarity_features(image_ids)
-            if self._similarity is not None
+        source_assets = {asset.id: asset for group in groups for asset in group.assets}
+
+        loaded_preservation = await self._reports.get_preservation_features(image_ids)
+        preservation = {
+            asset_id: feature
+            for asset_id, feature in loaded_preservation.items()
+            if preservation_feature_freshness(feature, source_assets[asset_id]) == "current"
+        }
+        search_features = (
+            await self._search_features.get_current_many(image_ids)
+            if self._similarity is not None and self._search_features is not None
             else {}
         )
-        source_assets = {asset.id: asset for group in groups for asset in group.assets}
-        features = {
-            asset_id: feature
-            for asset_id, feature in loaded_features.items()
-            if similarity_feature_freshness(feature, source_assets[asset_id]) == "current"
-        }
+
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
-            similarity_groups = [
-                replace(
-                    group,
-                    assets=tuple(sorted(group.assets, key=lambda asset: asset.id.int)),
-                )
-                for group in groups
-            ]
+            similarity_groups = [self._stable_similarity_source(group) for group in groups]
             edges = await self._similarity.reference_edges(
                 [[asset.id for asset in group.assets] for group in similarity_groups],
-                features,
+                search_features,
             )
-            result = self._apply_similarity(result, similarity_groups, edges, features)
+            result = self._apply_similarity(
+                result,
+                similarity_groups,
+                edges,
+                search_features,
+                preservation,
+            )
         if self._reviews is not None:
             result = await self._apply_review_states(result)
-        return groups, reports, features, result
+        return groups, reports, preservation, result
 
     async def similarity_reference(
         self,
@@ -644,7 +666,7 @@ class CrossSourceDuplicateService:
     ) -> ExactDuplicateGroup:
         """Return one live group relative to a requested member-owned reference."""
 
-        if self._similarity is None:
+        if self._similarity is None or self._search_features is None:
             raise RuntimeError("Duplicate similarity persistence is unavailable")
         source = next(
             (group for group in await self._live_groups() if group.group_id == group_id),
@@ -665,33 +687,42 @@ class CrossSourceDuplicateService:
         ]
         reports = await self._reports.get_many(report_ids)
         image_assets = [
-            asset for asset in source.assets if asset.asset_type == "IMAGE" and not asset.is_offline
+            asset
+            for asset in source.assets
+            if asset.asset_type == "IMAGE" and not asset.is_offline
         ]
-        loaded_features = await self._reports.get_similarity_features(
-            [asset.id for asset in image_assets]
-        )
-        features = {
-            asset.id: loaded_features[asset.id]
+        image_ids = [asset.id for asset in image_assets]
+        features = await self._search_features.get_current_many(image_ids)
+        loaded_preservation = await self._reports.get_preservation_features(image_ids)
+        preservation = {
+            asset.id: loaded_preservation[asset.id]
             for asset in image_assets
-            if asset.id in loaded_features
-            and similarity_feature_freshness(loaded_features[asset.id], asset) == "current"
+            if asset.id in loaded_preservation
+            and preservation_feature_freshness(loaded_preservation[asset.id], asset)
+            == "current"
         }
+
         ordered_ids = [
             request.reference_asset_id,
             *(asset.id for asset in source.assets if asset.id != request.reference_asset_id),
         ]
         result = self.assemble([source], reports, options, self._immich)
-        stable_source = replace(
-            source,
-            assets=tuple(sorted(source.assets, key=lambda asset: asset.id.int)),
-        )
+
+        stable_source = self._stable_similarity_source(source)
         stable_ids = [asset.id for asset in stable_source.assets]
         stable_edges = await self._similarity.reference_edges([stable_ids], features)
-        result = self._apply_similarity(result, [stable_source], stable_edges, features)
+        result = self._apply_similarity(
+            result,
+            [stable_source],
+            stable_edges,
+            features,
+            preservation,
+        )
         if ordered_ids == stable_ids:
             if self._reviews is not None:
                 result = await self._apply_review_states(result)
             return result.groups[0]
+
         edges = await self._similarity.reference_edges([ordered_ids], features)
         reordered_source = replace(
             source,
@@ -702,6 +733,7 @@ class CrossSourceDuplicateService:
             [reordered_source],
             edges,
             features,
+            preservation,
             update_group_contract=False,
         )
         if self._reviews is not None:
