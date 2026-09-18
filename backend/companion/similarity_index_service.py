@@ -27,6 +27,7 @@ from companion.similarity_search_features import (
     extract_search_feature,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
+from companion.similarity_settings import SimilarityRuntimeSettingsRepository
 from companion.similarity_transparency import classify_source_alpha, source_can_have_alpha
 from companion.task_coordinator import (
     PermanentTaskError,
@@ -102,6 +103,7 @@ class SimilarityIndexMaintainer:
         decode_slots: int = 2,
         fallback_max_bytes: int = ORIGINAL_FALLBACK_MAX_BYTES,
         decode_cache_path: Path | None = None,
+        runtime_settings: SimilarityRuntimeSettingsRepository | None = None,
     ) -> None:
         if min(batch_size, fetch_slots, decode_slots, fallback_max_bytes) < 1:
             raise ValueError("Fingerprint batch and pipeline slots must be positive")
@@ -114,6 +116,7 @@ class SimilarityIndexMaintainer:
         self._inflight_slots = asyncio.Semaphore(fetch_slots + decode_slots)
         self._fallback_max_bytes = fallback_max_bytes
         self._decode_cache_path = decode_cache_path
+        self._runtime_settings = runtime_settings
         self._metrics: dict[str, int] = {}
         self._legacy_coverage_contract = False
 
@@ -132,6 +135,11 @@ class SimilarityIndexMaintainer:
 
     def metrics(self) -> dict[str, int]:
         return dict(self._metrics)
+
+    async def _fingerprint_page_size(self) -> int:
+        if self._runtime_settings is None:
+            return self._batch_size
+        return (await self._runtime_settings.get()).fingerprint_page_size
 
     async def _original_fallback(self, context: TaskContext, asset_id: UUID):
         """Extract coarse evidence from a bounded original without integrity hashing."""
@@ -229,6 +237,7 @@ class SimilarityIndexMaintainer:
         """Fingerprint pending assets, retry transient failures once, persist deterministic ones."""
 
         initial = await self.coverage()
+        fingerprint_page_size = await self._fingerprint_page_size()
         self._metrics = {
             "fingerprints_reused": initial.current_count,
             "preview_fingerprints_generated": 0,
@@ -290,7 +299,7 @@ class SimilarityIndexMaintainer:
             await context.ensure_active()
             page = await self._features.list_work(
                 after_asset_id=after,
-                limit=self._batch_size,
+                limit=fingerprint_page_size,
             )
             if not page:
                 break
@@ -356,7 +365,7 @@ class SimilarityIndexMaintainer:
                 await context.ensure_active()
                 page = await self._features.list_work(
                     after_asset_id=retry_after,
-                    limit=self._batch_size,
+                    limit=fingerprint_page_size,
                 )
                 if not page:
                     break
