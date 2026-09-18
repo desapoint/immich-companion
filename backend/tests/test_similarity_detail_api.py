@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from companion.similarity_detail import DetailDiagnostics
 from companion.similarity_detail_api import register_similarity_detail_routes
 from companion.similarity_detail_service import StoredDetailDiagnostics
+from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 
 SELECTED = UUID("11111111-1111-4111-8111-111111111111")
 REFERENCE = UUID("22222222-2222-4222-8222-222222222222")
@@ -128,7 +129,7 @@ def test_rebuild_route_passes_scan_payload_into_atomic_epoch_transaction() -> No
             assert scan_payload == payload
             state = SimpleNamespace(
                 epoch=5,
-                code_generation=2,
+                code_generation=SIMILARITY_EVIDENCE_CODE_GENERATION,
                 recorded_descriptor_fingerprint="a" * 64,
                 current_descriptor_fingerprint="a" * 64,
                 descriptor_current=True,
@@ -157,7 +158,7 @@ def test_rebuild_route_passes_scan_payload_into_atomic_epoch_transaction() -> No
     assert response.json() == {
         "generation": {
             "epoch": 5,
-            "code_generation": 2,
+            "code_generation": SIMILARITY_EVIDENCE_CODE_GENERATION,
             "recorded_descriptor_fingerprint": "a" * 64,
             "current_descriptor_fingerprint": "a" * 64,
             "descriptor_current": True,
