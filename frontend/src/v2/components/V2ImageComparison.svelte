@@ -2,6 +2,7 @@
   import { onDestroy } from 'svelte';
   import V2Button from './V2Button.svelte';
   import V2CompareDifference from './V2CompareDifference.svelte';
+  import V2CompareFlicker from './V2CompareFlicker.svelte';
   import V2CompareLocalChanges from './V2CompareLocalChanges.svelte';
   import V2CompareSideBySide from './V2CompareSideBySide.svelte';
   import V2CompareSwipe from './V2CompareSwipe.svelte';
@@ -14,7 +15,7 @@
   import { ViewerViewportController } from './viewerViewport.svelte';
   import { ViewportRegistrationController } from './viewportRegistration';
 
-  export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference' | 'Local changes';
+  export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference' | 'Local changes' | 'Flicker';
 
   let {
     selectedResource,
@@ -161,7 +162,7 @@
 
 <div class="v2-compare-component">
   <div class="v2-compare-component-tools">
-    <V2Segmented items={['Side by side','Swipe','Transparency','Difference','Local changes']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
+    <V2Segmented items={['Side by side','Swipe','Transparency','Difference','Local changes','Flicker']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
     <div class="v2-compare-zoom-tools">
       <V2ZoomControl
         value={camera.zoom}
@@ -243,7 +244,7 @@
         onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
-    {:else}
+    {:else if mode === 'Local changes'}
       <V2CompareLocalChanges
         {selectedSrc}
         {referenceSrc}
@@ -258,6 +259,19 @@
         bind:highlightColor={localHighlightColor}
         bind:highlightColorPosition={localHighlightColorPosition}
         bind:gridDetailLevel={localGridDetailLevel}
+        onselectedload={selectedLoaded}
+        onreferenceload={referenceLoaded}
+        onselectederror={selectedFailed}
+        onreferenceerror={referenceFailed}
+        onviewport={setViewport}
+      />
+    {:else}
+      <V2CompareFlicker
+        {selectedSrc}
+        {referenceSrc}
+        {selectedLabel}
+        {referenceLabel}
+        transform={camera.transform}
         onselectedload={selectedLoaded}
         onreferenceload={referenceLoaded}
         onselectederror={selectedFailed}
