@@ -2,6 +2,7 @@
   import { Link2 } from '@lucide/svelte';
   import type { DuplicateMemberRecord, SimilarityValidationMode } from '../data/contracts';
   import { v2AssetViewerPath } from '../navigation';
+  import { linkedIntermediateCount } from '../data/duplicateMember';
 
   let { member, members, mode }: {
     member: DuplicateMemberRecord;
@@ -19,9 +20,10 @@
       && linkDepth > 1
       && admittedBy !== undefined,
   );
+  const intermediateCount = $derived(linkDepth === null ? 0 : linkedIntermediateCount(linkDepth));
   const linkLabel = $derived(
-    linkedAdmission && admittedBy && linkDepth !== null
-      ? `Linked through ${admittedBy.asset.original_file_name}, depth ${linkDepth}. Open linked asset in a new tab.`
+    linkedAdmission && admittedBy
+      ? `Linked through ${admittedBy.asset.original_file_name}; ${intermediateCount} ${intermediateCount === 1 ? 'image' : 'images'} in between the reference and this image. Open linked asset in a new tab.`
       : '',
   );
 </script>
@@ -36,7 +38,7 @@
     aria-label={linkLabel}
   >
     <span class="v2-linked-admission-icon" aria-hidden="true"><Link2 size={13} strokeWidth={2}/></span>
-    <span>{linkDepth}</span>
+    <span>{intermediateCount}</span>
   </a>
 {/if}
 
