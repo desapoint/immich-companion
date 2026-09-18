@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict
 from uuid import UUID
 
 from sqlalchemy import func, select, update
@@ -60,18 +61,26 @@ async def reconcile_generation_asset_tags(
                 raise
 
         details = await asyncio.gather(*(fetch(identifier) for identifier in wave))
+        observed_by_tag: dict[UUID, list[UUID]] = defaultdict(list)
         for detail in details:
             if detail is None or not detail.includes_tags:
                 fallback_assets += 1
                 continue
-            tag_ids = [UUID(str(tag["id"])) for tag in detail.tags if tag.get("id")]
+            tag_ids = list(
+                dict.fromkeys(UUID(str(tag["id"])) for tag in detail.tags if tag.get("id"))
+            )
             await repository.replace_asset_tag_memberships(detail.id, tag_ids)
             for tag_id in tag_ids:
-                # Re-use the repository's generation-aware membership write so
-                # staged validation remains retry-safe and authoritative.
-                await repository.apply_membership_event("tag", tag_id, detail.id, True)
+                observed_by_tag[tag_id].append(detail.id)
             links += len(tag_ids)
             payload_assets += 1
+
+        # Stamp each tag's generation in one bounded write instead of opening a
+        # transaction and re-reading the asset generation for every individual
+        # asset/tag link. This keeps staged validation authoritative while
+        # reducing database round trips from O(links) to O(tags per wave).
+        for tag_id, member_ids in observed_by_tag.items():
+            await repository.upsert_tag_memberships(tag_id, member_ids, generation)
     return links, payload_assets, fallback_assets
 
 
