@@ -612,7 +612,6 @@ def create_app(
             similarity_repository,
             similarity_scan_repository,
             similarity_index_maintainer,
-            detail_maintainer,
         )
         task_coordinator.register_handler(
             FollowUpTaskHandler(
@@ -644,7 +643,6 @@ def create_app(
             search_feature_repository,
             similarity_repository,
             similarity_scan_repository,
-            detail_maintainer,
         )
         task_coordinator.register_handler(
             FollowUpTaskHandler(
