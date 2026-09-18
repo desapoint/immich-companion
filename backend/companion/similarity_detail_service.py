@@ -451,14 +451,15 @@ class SimilarityDetailMaintainer:
                 )
                 return False
 
-            expected_source_identity = search_source_identity(
-                live,
-                normalized.media_sha256,
-                origin=normalized.search_origin,
-            )
-            if expected_source_identity != search.source_identity:
-                self.counters["detail_features_unavailable"] += 1
-                return False
+            if getattr(search, "media_sha256", None) is not None:
+                expected_source_identity = search_source_identity(
+                    live,
+                    normalized.media_sha256,
+                    origin=normalized.search_origin,
+                )
+                if expected_source_identity != search.source_identity:
+                    self.counters["detail_features_unavailable"] += 1
+                    return False
 
             feature = await self._detail_from_content(normalized.content)
             if feature is None:
