@@ -238,6 +238,8 @@ class IntegrityTaskHandler:
         publish_progress: bool = True,
         source: ImmichAsset | None = None,
         track_similarity_changes: bool = True,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
     ) -> AssetIntegrityReport:
         """Run the shared bounded analyzer for one known synchronized asset."""
 
@@ -257,7 +259,11 @@ class IntegrityTaskHandler:
                     "completed": 0,
                     "total": None,
                     "percent": None,
-                    "detail": "Opening original from Immich…",
+                    "detail": (
+                        "Opening prepared original…"
+                        if original_path is not None
+                        else "Opening original from Immich…"
+                    ),
                 },
             )
         else:
@@ -269,47 +275,78 @@ class IntegrityTaskHandler:
             suffix=".tmp",
         ) as spool:
             spool_complete = True
-            try:
-                async with self._immich.stream_original(
-                    asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
-                ) as original:
-                    total = original.content_length
+            total: int | None
+            if original_path is not None:
+                try:
+                    total = (
+                        original_source_bytes
+                        if original_source_bytes is not None
+                        else original_path.stat().st_size
+                    )
                     last_reported = monotonic()
-                    async for chunk in original.chunks:
-                        analyzer.update(chunk)
-                        if spool_complete and analyzer.byte_size <= self._decode_cache_max_bytes:
-                            spool.write(chunk)
-                        elif spool_complete:
-                            spool_complete = False
-                            spool.seek(0)
-                            spool.truncate(0)
-                        now = monotonic()
-                        if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
-                            continue
-                        await self._checkpoint(
-                            context,
-                            asset_id,
-                            analyzer.byte_size,
-                            total,
-                            started,
-                            publish_progress=publish_progress,
+                    with original_path.open("rb") as prepared:
+                        while True:
+                            chunk = prepared.read(INTEGRITY_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            analyzer.update(chunk)
+                            now = monotonic()
+                            if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
+                                continue
+                            await self._checkpoint(
+                                context,
+                                asset_id,
+                                analyzer.byte_size,
+                                total,
+                                started,
+                                publish_progress=publish_progress,
+                            )
+                            last_reported = now
+                    spool_complete = analyzer.byte_size <= self._decode_cache_max_bytes
+                except OSError as error:
+                    raise RetryableTaskError("The prepared original is temporarily unavailable.") from error
+            else:
+                try:
+                    async with self._immich.stream_original(
+                        asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
+                    ) as original:
+                        total = original.content_length
+                        last_reported = monotonic()
+                        async for chunk in original.chunks:
+                            analyzer.update(chunk)
+                            if spool_complete and analyzer.byte_size <= self._decode_cache_max_bytes:
+                                spool.write(chunk)
+                            elif spool_complete:
+                                spool_complete = False
+                                spool.seek(0)
+                                spool.truncate(0)
+                            now = monotonic()
+                            if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
+                                continue
+                            await self._checkpoint(
+                                context,
+                                asset_id,
+                                analyzer.byte_size,
+                                total,
+                                started,
+                                publish_progress=publish_progress,
+                            )
+                            last_reported = now
+                except ImmichApiError as error:
+                    if error.status_code == 404:
+                        logger.warning(
+                            "Integrity verification unavailable for asset %s (%s): Immich original was not found",
+                            source.id,
+                            source.original_file_name,
                         )
-                        last_reported = now
-            except ImmichApiError as error:
-                if error.status_code == 404:
+                        raise PermanentTaskError("The Immich original was not found.") from error
                     logger.warning(
-                        "Integrity verification unavailable for asset %s (%s): Immich original was not found",
+                        "Integrity verification unavailable for asset %s (%s): original stream failed: %s",
                         source.id,
                         source.original_file_name,
+                        error,
                     )
-                    raise PermanentTaskError("The Immich original was not found.") from error
-                logger.warning(
-                    "Integrity verification unavailable for asset %s (%s): original stream failed: %s",
-                    source.id,
-                    source.original_file_name,
-                    error,
-                )
-                raise RetryableTaskError("The Immich original stream was interrupted.") from error
+                    raise RetryableTaskError("The Immich original stream was interrupted.") from error
 
             await self._checkpoint(
                 context,
@@ -322,17 +359,34 @@ class IntegrityTaskHandler:
             await context.ensure_active()
             result = analyzer.finalize()
             visual_feature_origin = "original"
-            decoded, visual_feature = (
-                await asyncio.to_thread(
-                    decode_and_extract_features, spool, result.detected_format
+            if spool_complete:
+                if original_path is not None:
+                    try:
+                        with original_path.open("rb") as prepared:
+                            decoded, visual_feature = await asyncio.to_thread(
+                                decode_and_extract_features,
+                                prepared,
+                                result.detected_format,
+                            )
+                    except OSError as error:
+                        raise RetryableTaskError(
+                            "The prepared original is temporarily unavailable."
+                        ) from error
+                else:
+                    decoded, visual_feature = await asyncio.to_thread(
+                        decode_and_extract_features,
+                        spool,
+                        result.detected_format,
+                    )
+            else:
+                decoded, visual_feature = (
+                    ImageDecodeResult(
+                        supported=result.detected_format in SUPPORTED_FORMATS,
+                        valid=None,
+                        issue="image_decode_cache_limit_exceeded",
+                    ),
+                    None,
                 )
-                if spool_complete
-                else (ImageDecodeResult(
-                    supported=result.detected_format in SUPPORTED_FORMATS,
-                    valid=None,
-                    issue="image_decode_cache_limit_exceeded",
-                ), None)
-            )
             result = result.with_decode(
                 supported=decoded.supported,
                 valid=decoded.valid,
