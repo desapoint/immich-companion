@@ -17,7 +17,7 @@
   const linkedAdmission = $derived(
     mode === 'linked'
       && linkDepth !== null
-      && linkDepth > 1
+      && linkDepth > 0
       && admittedBy !== undefined,
   );
   const intermediateCount = $derived(linkDepth === null ? 0 : linkedIntermediateCount(linkDepth));
