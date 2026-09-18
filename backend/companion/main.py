@@ -89,6 +89,10 @@ from companion.discovery import (
     PersistedCompositeDuplicateProvider,
     SimilarityDuplicateProvider,
 )
+from companion.duplicate_discovery_settings import (
+    DuplicateDiscoverySettingsRepository,
+    DuplicateDiscoverySettingsUpdate,
+)
 from companion.duplicate_policy import DuplicatePolicy, DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
@@ -330,6 +334,9 @@ def create_app(
     )
     duplicate_policy_repository = (
         DuplicatePolicyRepository(database) if database is not None else None
+    )
+    duplicate_discovery_settings_repository = (
+        DuplicateDiscoverySettingsRepository(database) if database is not None else None
     )
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
@@ -1086,6 +1093,20 @@ def create_app(
     )
     async def start_immich_duplicate_sync() -> ImmichDuplicateSyncTaskStart:
         return await require_immich_duplicate_sync_service().start()
+
+    @app.get("/api/settings/duplicates/discovery")
+    async def duplicate_discovery_settings() -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (await duplicate_discovery_settings_repository.get()).model_dump()
+
+    @app.put("/api/settings/duplicates/discovery")
+    async def update_duplicate_discovery_settings(
+        request: DuplicateDiscoverySettingsUpdate,
+    ) -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (await duplicate_discovery_settings_repository.update(request)).model_dump()
 
     @app.get("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
     async def duplicate_policy_settings() -> DuplicatePolicy:
