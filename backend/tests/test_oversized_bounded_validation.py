@@ -390,9 +390,9 @@ def test_packaged_libvips_has_required_image_loaders() -> None:
         for operation in required
         if not pyvips.type_find("VipsOperation", operation)
     ]
-    direct_raw = bool(pyvips.type_find("VipsOperation", "dcrawload_buffer"))
+    direct_raw = bool(pyvips.type_find("VipsOperation", "dcrawload"))
     delegated_raw = bool(
-        pyvips.type_find("VipsOperation", "magickload_buffer")
+        pyvips.type_find("VipsOperation", "magickload")
         and shutil.which("dcraw")
     )
     assert missing == []

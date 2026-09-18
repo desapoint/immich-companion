@@ -72,6 +72,7 @@ CAMERA_RAW_SUFFIXES = frozenset(
 CAMERA_RAW_MIME_TOKENS = (
     "camera-raw",
     "digital-negative",
+    "x-raw",
     "dng",
     "cr2",
     "cr3",
