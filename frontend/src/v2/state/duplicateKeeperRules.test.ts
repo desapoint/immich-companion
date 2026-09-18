@@ -25,6 +25,10 @@ describe('duplicate keeper rules', () => {
     }
   });
 
+  it('labels raw link depth as hops from reference', () => {
+    expect(keeperFieldDefinition('link_depth').label).toBe('Hops from reference');
+  });
+
   it('keeps ranking operators out of hard requirements', () => {
     const definition = keeperFieldDefinition('file_size');
     const requireOperators = keeperOperatorOptions(definition.value, 'require').map((option) => option.value);
