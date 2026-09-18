@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { comparisonTargetId, stepComparisonTargetId } from './duplicateComparisonNavigation';
+import { comparisonTargetId, stepComparisonTargetId, viewerSelectionTargetId } from './duplicateComparisonNavigation';
 
 const ids = ['reference', 'second', 'third'];
 
@@ -9,6 +9,12 @@ describe('duplicate comparison navigation', () => {
     expect(comparisonTargetId(ids, 'reference', 'reference')).toBe('second');
     expect(comparisonTargetId(ids, 'second', 'second')).toBe('third');
     expect(comparisonTargetId(ids, 'reference', 'third')).toBe('third');
+  });
+
+  it('keeps list opening distinct while allowing the viewer to select the reference', () => {
+    expect(comparisonTargetId(ids, 'reference', 'reference')).toBe('second');
+    expect(viewerSelectionTargetId(ids, 'reference')).toBe('reference');
+    expect(viewerSelectionTargetId(ids, 'third')).toBe('third');
   });
 
   it('cycles through candidates without comparing the reference with itself', () => {
