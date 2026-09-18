@@ -1,4 +1,4 @@
-"""Oversized originals stay discoverable through explicitly bounded visual evidence."""
+"""Oversized images use one bounded visual source for every similarity stage."""
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -12,28 +12,29 @@ from PIL import Image
 from companion.immich import ImmichAsset
 from companion.similarity_bounded_state import synchronized_source_identity
 from companion.similarity_detail_service import SimilarityDetailMaintainer
-from companion.similarity_index_service import (
-    SimilarityIndexMaintainer,
-    _failure_is_retryable,
-)
+from companion.similarity_index_service import SimilarityIndexMaintainer, _failure_is_retryable
 from companion.similarity_transparency import inspect_bounded_alpha
+from companion.similarity_visual_normalization import (
+    DEFAULT_VISUAL_SOURCE_MAX_BYTES,
+    SimilarityVisualNormalizer,
+)
 
 ASSET_ID = UUID("11111111-1111-4111-8111-111111111111")
 MODIFIED = datetime(2026, 9, 16, tzinfo=UTC)
 
 
-def encoded_jpeg() -> bytes:
+def encoded_jpeg(size: tuple[int, int] = (640, 480)) -> bytes:
     output = BytesIO()
-    Image.new("RGB", (640, 480), (40, 80, 120)).save(output, format="JPEG")
+    Image.new("RGB", size, (40, 80, 120)).save(output, format="JPEG")
     return output.getvalue()
 
 
-def encoded_png(*, alpha: bool) -> bytes:
+def encoded_png(*, alpha: bool, size: tuple[int, int] = (1200, 800)) -> bytes:
     output = BytesIO()
     if alpha:
-        Image.new("RGBA", (1200, 800), (40, 80, 120, 128)).save(output, format="PNG")
+        Image.new("RGBA", size, (40, 80, 120, 128)).save(output, format="PNG")
     else:
-        Image.new("RGB", (1200, 800), (40, 80, 120)).save(output, format="PNG")
+        Image.new("RGB", size, (40, 80, 120)).save(output, format="PNG")
     return output.getvalue()
 
 
@@ -75,26 +76,66 @@ class Context:
 
 
 @pytest.mark.asyncio
-async def test_oversized_alpha_capable_source_uses_search_only_preview() -> None:
-    preview = encoded_jpeg()
-    source = oversized_source()
+async def test_oversized_source_normalizes_once_without_original_decode(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "companion.similarity_visual_normalization.MAX_VISUAL_DIMENSION",
+        600,
+    )
+    fullsize = encoded_jpeg((1200, 800))
+    source = oversized_source(width=1800, height=1200)
 
     class Immich:
         original_calls = 0
-
-        async def get_bounded_preview(self, asset_id, *, max_bytes):
-            assert asset_id == ASSET_ID
-            assert len(preview) < max_bytes
-            return preview
+        fullsize_calls = 0
+        preview_calls = 0
 
         @asynccontextmanager
         async def stream_original(self, _asset_id):
             self.original_calls += 1
-            pytest.fail("Known-oversized original must not be decoded for search indexing")
+            pytest.fail("Oversized visual analysis must never decode the original")
             yield  # pragma: no cover
+
+        async def get_bounded_fullsize(self, asset_id, *, max_bytes):
+            assert asset_id == ASSET_ID
+            assert len(fullsize) < max_bytes
+            self.fullsize_calls += 1
+            return fullsize
+
+        async def get_bounded_preview(self, *_args, **_kwargs):
+            self.preview_calls += 1
+            pytest.fail("Valid full-size bounded media should be preferred")
+
+    immich = Immich()
+    normalizer = SimilarityVisualNormalizer(immich)  # type: ignore[arg-type]
+    normalized = await normalizer.normalize(Context(), ASSET_ID, source)  # type: ignore[arg-type]
+
+    assert immich.original_calls == 0
+    assert immich.fullsize_calls == 1
+    assert immich.preview_calls == 0
+    assert normalized.source_kind == "bounded_fullsize"
+    assert normalized.search_origin == "bounded"
+    assert normalized.detail_origin == "bounded_fullsize"
+    assert (normalized.width, normalized.height) == (600, 400)
+    assert normalized.resized is True
+
+
+@pytest.mark.asyncio
+async def test_unified_index_writes_search_and_detail_from_same_normalized_media() -> None:
+    fullsize = encoded_jpeg()
+    source = oversized_source()
+
+    class Immich:
+        async def get_bounded_fullsize(self, _asset_id, *, max_bytes):
+            assert len(fullsize) < max_bytes
+            return fullsize
 
         async def get_asset(self, _asset_id):
             return source
+
+        @asynccontextmanager
+        async def stream_original(self, _asset_id):
+            pytest.fail("Oversized indexing must not read the original")
+            yield  # pragma: no cover
 
     class Assets:
         async def refresh_asset(self, *_args, **_kwargs):
@@ -103,6 +144,7 @@ async def test_oversized_alpha_capable_source_uses_search_only_preview() -> None
     class Features:
         origin = None
         alpha_state = None
+        media_sha256 = None
 
         async def save(
             self,
@@ -114,21 +156,34 @@ async def test_oversized_alpha_capable_source_uses_search_only_preview() -> None
             source_alpha_state="unknown_alpha",
         ):
             assert asset.id == ASSET_ID
-            assert len(media_sha256) == 64
             assert feature.pixel_sha256 is None
             self.origin = origin
             self.alpha_state = source_alpha_state
+            self.media_sha256 = media_sha256
             return True
 
         async def mark_unavailable(self, *_args, **_kwargs):
             return True
 
-    immich = Immich()
+    class Details:
+        source_identity = None
+        origin = None
+        feature = None
+
+        async def save(self, source_identity, asset_id, feature, origin):
+            assert asset_id == ASSET_ID
+            self.source_identity = source_identity
+            self.origin = origin
+            self.feature = feature
+            return True
+
     features = Features()
+    details = Details()
     maintainer = SimilarityIndexMaintainer(
-        immich,  # type: ignore[arg-type]
+        Immich(),  # type: ignore[arg-type]
         Assets(),  # type: ignore[arg-type]
         features,  # type: ignore[arg-type]
+        details=details,  # type: ignore[arg-type]
     )
 
     succeeded, reason = await maintainer._fingerprint_unbounded(
@@ -137,23 +192,89 @@ async def test_oversized_alpha_capable_source_uses_search_only_preview() -> None
 
     assert succeeded is True
     assert reason is None
-    assert immich.original_calls == 0
     assert features.origin == "bounded"
-    assert features.alpha_state == "unknown_alpha"
-    assert maintainer.metrics()["oversized_original_decodes_avoided"] == 1
-    assert maintainer.metrics()["alpha_uncertain_bounded_evidence"] == 1
+    assert features.alpha_state == "confirmed_opaque"
+    assert len(features.media_sha256) == 64
+    assert details.origin == "bounded_fullsize"
+    assert details.feature is not None
+    assert details.feature.width == 640
+    assert details.feature.height == 480
+    assert maintainer.metrics()["detail_features_generated"] == 1
     assert maintainer.metrics()["bounded_search_fingerprints_generated"] == 1
 
 
 @pytest.mark.asyncio
-async def test_alpha_capable_opaque_oversized_source_uses_same_family_fullsize() -> None:
+async def test_flattened_alpha_capable_bounded_media_still_generates_localized_detail() -> None:
+    flattened = encoded_jpeg()
+    source = oversized_source(originalMimeType="image/png")
+
+    class Immich:
+        async def get_bounded_fullsize(self, *_args, **_kwargs):
+            return flattened
+
+        async def get_asset(self, _asset_id):
+            return source
+
+        @asynccontextmanager
+        async def stream_original(self, _asset_id):
+            pytest.fail("Oversized alpha-capable source must remain bounded")
+            yield  # pragma: no cover
+
+    class Assets:
+        async def refresh_asset(self, *_args, **_kwargs):
+            return None
+
+    class Features:
+        source_identity = None
+
+        async def save(
+            self,
+            asset,
+            media_sha256,
+            _feature,
+            *,
+            origin="preview",
+            source_alpha_state="unknown_alpha",
+        ):
+            assert origin == "bounded"
+            assert source_alpha_state == "confirmed_opaque"
+            self.source_identity = (asset.id, media_sha256)
+            return True
+
+    class Details:
+        saved = False
+
+        async def save(self, _source_identity, _asset_id, _feature, origin):
+            assert origin == "bounded_fullsize"
+            self.saved = True
+            return True
+
+    details = Details()
+    maintainer = SimilarityIndexMaintainer(
+        Immich(),  # type: ignore[arg-type]
+        Assets(),  # type: ignore[arg-type]
+        Features(),  # type: ignore[arg-type]
+        details=details,  # type: ignore[arg-type]
+    )
+
+    succeeded, reason = await maintainer._fingerprint_unbounded(
+        Context(), ASSET_ID, source, attempt="test"  # type: ignore[arg-type]
+    )
+
+    assert succeeded is True
+    assert reason is None
+    assert details.saved is True
+
+
+@pytest.mark.asyncio
+async def test_detail_repair_uses_same_bounded_normalizer() -> None:
     fullsize = encoded_png(alpha=False)
     source = oversized_source()
     search = SimpleNamespace(
         fingerprint_origin="bounded",
         width=source.width,
         height=source.height,
-        source_identity="bounded-source",
+        source_identity="adapter-source",
         source_file_modified_at=source.file_modified_at,
         source_file_size_bytes=source.file_size_bytes,
         source_checksum=source.checksum,
@@ -161,24 +282,15 @@ async def test_alpha_capable_opaque_oversized_source_uses_same_family_fullsize()
 
     class Immich:
         original_calls = 0
-        preview_calls = 0
-        fullsize_calls = 0
 
         @asynccontextmanager
         async def stream_original(self, _asset_id):
             self.original_calls += 1
-            pytest.fail("Known-oversized detail validation must not decode the original")
+            pytest.fail("Oversized detail repair must not decode the original")
             yield  # pragma: no cover
 
-        async def get_bounded_fullsize(self, asset_id, *, max_bytes):
-            assert asset_id == ASSET_ID
-            assert len(fullsize) < max_bytes
-            self.fullsize_calls += 1
+        async def get_bounded_fullsize(self, *_args, **_kwargs):
             return fullsize
-
-        async def get_bounded_preview(self, *_args, **_kwargs):
-            self.preview_calls += 1
-            pytest.fail("Valid full-size bounded evidence should be preferred")
 
         async def get_asset(self, _asset_id):
             return source
@@ -186,19 +298,13 @@ async def test_alpha_capable_opaque_oversized_source_uses_same_family_fullsize()
     class Details:
         saved_origin = None
 
-        async def source_alpha_state(self, *_args):
-            return "unknown_alpha"
-
         async def save(self, source_identity, asset_id, feature, origin):
-            assert source_identity == "bounded-source"
+            assert source_identity == "adapter-source"
             assert asset_id == ASSET_ID
             assert feature.width == 1200
             assert feature.height == 800
             self.saved_origin = origin
             return True
-
-        async def mark_unavailable(self, *_args):
-            pytest.fail("Valid same-family opaque bounded evidence must not be unavailable")
 
     immich = Immich()
     details = Details()
@@ -210,263 +316,31 @@ async def test_alpha_capable_opaque_oversized_source_uses_same_family_fullsize()
 
     assert saved is True
     assert immich.original_calls == 0
-    assert immich.fullsize_calls == 1
-    assert immich.preview_calls == 0
     assert details.saved_origin == "bounded_fullsize"
     assert maintainer.counters["bounded_candidate_validations"] == 1
     assert maintainer.counters["detail_oversized_original_decodes_avoided"] == 1
 
 
 @pytest.mark.asyncio
-async def test_opaque_oversized_heic_uses_original_metadata_probe_then_jpeg_fullsize() -> None:
-    source = oversized_source(
-        originalFileName="oversized.heic",
-        originalMimeType="image/heic",
-    )
-    original_prefix = encoded_heif_metadata(alpha=False)
+async def test_visual_normalizer_keeps_128_mib_fetch_budget() -> None:
     fullsize = encoded_jpeg()
-    search = SimpleNamespace(
-        fingerprint_origin="bounded",
-        width=source.width,
-        height=source.height,
-        source_identity="bounded-heic-source",
-        source_file_modified_at=source.file_modified_at,
-        source_file_size_bytes=source.file_size_bytes,
-        source_checksum=source.checksum,
-    )
+    source = oversized_source()
+    seen_max_bytes = None
 
     class Immich:
-        prefix_calls = 0
-        fullsize_calls = 0
-        preview_calls = 0
-
-        async def get_original_prefix(self, asset_id, *, max_bytes):
-            assert asset_id == ASSET_ID
-            assert len(original_prefix) < max_bytes
-            self.prefix_calls += 1
-            return original_prefix
-
-        async def get_bounded_fullsize(self, asset_id, *, max_bytes):
-            assert asset_id == ASSET_ID
-            assert len(fullsize) < max_bytes
-            self.fullsize_calls += 1
+        async def get_bounded_fullsize(self, _asset_id, *, max_bytes):
+            nonlocal seen_max_bytes
+            seen_max_bytes = max_bytes
             return fullsize
 
-        async def get_bounded_preview(self, *_args, **_kwargs):
-            self.preview_calls += 1
-            pytest.fail("Opaque HEIC metadata should make the full-size JPEG safe")
+    normalizer = SimilarityVisualNormalizer(Immich())  # type: ignore[arg-type]
+    await normalizer.normalize(Context(), ASSET_ID, source)  # type: ignore[arg-type]
 
-        async def get_asset(self, _asset_id):
-            return source
-
-    class Details:
-        saved_origin = None
-
-        async def source_alpha_state(self, *_args):
-            return "unknown_alpha"
-
-        async def save(self, source_identity, asset_id, feature, origin):
-            assert source_identity == "bounded-heic-source"
-            assert asset_id == ASSET_ID
-            assert feature.width == 640
-            assert feature.height == 480
-            self.saved_origin = origin
-            return True
-
-        async def mark_unavailable(self, *_args):
-            pytest.fail("Opaque HEIC should no longer be stranded as unavailable")
-
-    immich = Immich()
-    details = Details()
-    maintainer = SimilarityDetailMaintainer(immich, details)  # type: ignore[arg-type]
-
-    assert await maintainer._extract_one(
-        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
-    )
-    assert immich.prefix_calls == 1
-    assert immich.fullsize_calls == 1
-    assert immich.preview_calls == 0
-    assert details.saved_origin == "bounded_fullsize"
-    assert maintainer.counters["detail_alpha_source_probe_confirmed_opaque"] == 1
-    assert maintainer.counters["bounded_candidate_validations"] == 1
+    assert DEFAULT_VISUAL_SOURCE_MAX_BYTES == 128 * 1024 * 1024
+    assert seen_max_bytes == 128 * 1024 * 1024
 
 
-@pytest.mark.asyncio
-async def test_confirmed_alpha_oversized_source_requires_alpha_preserving_bounded_media() -> None:
-    fullsize = encoded_png(alpha=True)
-    source = oversized_source()
-    search = SimpleNamespace(
-        fingerprint_origin="bounded",
-        width=source.width,
-        height=source.height,
-        source_identity="bounded-alpha-source",
-        source_file_modified_at=source.file_modified_at,
-        source_file_size_bytes=source.file_size_bytes,
-        source_checksum=source.checksum,
-    )
-
-    class Immich:
-        @asynccontextmanager
-        async def stream_original(self, _asset_id):
-            pytest.fail("Confirmed-alpha oversized validation must not decode the original")
-            yield  # pragma: no cover
-
-        async def get_bounded_fullsize(self, *_args, **_kwargs):
-            return fullsize
-
-        async def get_bounded_preview(self, *_args, **_kwargs):
-            pytest.fail("Alpha-preserving fullsize should win over preview")
-
-        async def get_asset(self, _asset_id):
-            return source
-
-    class Details:
-        saved_origin = None
-
-        async def source_alpha_state(self, *_args):
-            return "confirmed_alpha"
-
-        async def save(self, _source_identity, _asset_id, _feature, origin):
-            self.saved_origin = origin
-            return True
-
-    details = Details()
-    maintainer = SimilarityDetailMaintainer(Immich(), details)  # type: ignore[arg-type]
-    assert await maintainer._extract_one(
-        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
-    )
-    assert details.saved_origin == "bounded_fullsize"
-    assert maintainer.counters["bounded_candidate_validations"] == 1
-
-
-@pytest.mark.asyncio
-async def test_unknown_alpha_flattened_bounded_media_is_not_promoted_to_detail() -> None:
-    flattened = encoded_jpeg()
-    source = oversized_source()
-    search = SimpleNamespace(
-        fingerprint_origin="bounded",
-        width=source.width,
-        height=source.height,
-        source_identity="bounded-unknown-source",
-        source_file_modified_at=source.file_modified_at,
-        source_file_size_bytes=source.file_size_bytes,
-        source_checksum=source.checksum,
-    )
-
-    class Immich:
-        original_calls = 0
-
-        @asynccontextmanager
-        async def stream_original(self, _asset_id):
-            self.original_calls += 1
-            pytest.fail("Unknown-alpha oversized validation must not decode the original")
-            yield  # pragma: no cover
-
-        async def get_bounded_fullsize(self, *_args, **_kwargs):
-            return flattened
-
-        async def get_bounded_preview(self, *_args, **_kwargs):
-            return flattened
-
-        async def get_asset(self, _asset_id):
-            return source
-
-    class Details:
-        unavailable_reason = None
-
-        async def source_alpha_state(self, *_args):
-            return "unknown_alpha"
-
-        async def save(self, *_args, **_kwargs):
-            pytest.fail("Flattened unknown-alpha evidence must remain search-only")
-
-        async def mark_unavailable(self, _source_identity, _asset_id, reason):
-            self.unavailable_reason = reason
-            return True
-
-    immich = Immich()
-    details = Details()
-    maintainer = SimilarityDetailMaintainer(immich, details)  # type: ignore[arg-type]
-
-    assert not await maintainer._extract_one(
-        Context(), ASSET_ID, search, 1  # type: ignore[arg-type]
-    )
-    assert immich.original_calls == 0
-    assert details.unavailable_reason == "alpha_preserving_bounded_rendition_unavailable"
-    assert maintainer.counters["unavailable_bounded_validations"] == 1
-    assert maintainer.counters["deterministic_retries_suppressed"] == 1
-
-
-@pytest.mark.asyncio
-async def test_oversized_preview_decode_failure_persists_and_is_not_retried() -> None:
-    source = oversized_source()
-
-    class Immich:
-        preview_calls = 0
-
-        async def get_bounded_preview(self, asset_id, *, max_bytes):
-            assert asset_id == ASSET_ID
-            self.preview_calls += 1
-            return b"not-an-image"
-
-        @asynccontextmanager
-        async def stream_original(self, _asset_id):
-            pytest.fail("Known-oversized original must not be used as failure fallback")
-            yield  # pragma: no cover
-
-    class Assets:
-        async def get_immich_assets(self, asset_ids):
-            return {asset_id: source for asset_id in asset_ids}
-
-    class Features:
-        unavailable = False
-
-        async def coverage(self):
-            if self.unavailable:
-                return 1, 0, 0, 1, 0, 0
-            return 1, 0, 0, 0, 1, 0
-
-        async def list_work(self, *, after_asset_id, limit):
-            if self.unavailable:
-                return []
-            return [ASSET_ID] if after_asset_id is None else []
-
-        async def mark_unavailable(self, asset, reason, *, source_alpha_state):
-            assert asset.id == ASSET_ID
-            assert reason == "bounded_preview_decode_failed"
-            assert source_alpha_state == "unknown_alpha"
-            self.unavailable = True
-            return True
-
-    class MaintenanceContext(Context):
-        def __init__(self) -> None:
-            self.task = SimpleNamespace(checkpoint={})
-            self.checkpoints: list[dict[str, object]] = []
-
-        async def checkpoint(self, **values) -> None:
-            self.checkpoints.append(values)
-
-    immich = Immich()
-    maintainer = SimilarityIndexMaintainer(
-        immich,  # type: ignore[arg-type]
-        Assets(),  # type: ignore[arg-type]
-        Features(),  # type: ignore[arg-type]
-    )
-
-    coverage, completed, unavailable, attempted, reasons = await maintainer.maintain(
-        MaintenanceContext()  # type: ignore[arg-type]
-    )
-
-    assert coverage.complete is True
-    assert completed == 0
-    assert unavailable == 1
-    assert attempted == {ASSET_ID}
-    assert reasons[ASSET_ID] == "bounded_preview_decode_failed"
-    assert immich.preview_calls == 1
-    assert maintainer.metrics()["deterministic_retries_suppressed"] == 1
-
-
-def test_transparency_header_states_are_explicit() -> None:
+def test_transparency_header_states_remain_available_for_other_evidence_paths() -> None:
     assert inspect_bounded_alpha(encoded_jpeg()) == "confirmed_opaque"
     assert inspect_bounded_alpha(encoded_png(alpha=False)) == "confirmed_opaque"
     assert inspect_bounded_alpha(encoded_png(alpha=True)) == "confirmed_alpha"
@@ -483,8 +357,8 @@ def test_source_identity_invalidates_on_source_dimension_or_checksum_change() ->
     assert synchronized_source_identity(original) != synchronized_source_identity(changed)
 
 
-def test_deterministic_decode_limit_failure_is_not_retried() -> None:
+def test_normalized_decode_failures_are_deterministic() -> None:
     assert _failure_is_retryable("image_decode_limit_exceeded") is False
-    assert _failure_is_retryable("original exceeds similarity fallback size limit") is False
-    assert _failure_is_retryable("bounded_preview_decode_failed") is False
-    assert _failure_is_retryable("bounded_rendition_unavailable: HTTP 503") is True
+    assert _failure_is_retryable("normalized_visual_feature_decode_failed") is False
+    assert _failure_is_retryable("visual_source_decode_failed: invalid") is False
+    assert _failure_is_retryable("visual_normalization_unavailable: HTTP 503") is True
