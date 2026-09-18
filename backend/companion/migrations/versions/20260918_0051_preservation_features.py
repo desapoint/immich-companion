@@ -18,11 +18,11 @@ depends_on: str | Sequence[str] | None = None
 PRESERVATION_VERSION = 1
 PRESERVATION_CONFIG_FINGERPRINT = hashlib.sha256(
     (
-        "image-preservation-v1:"
-        "feature=1:"
-        "pixel-normalization=1:"
-        "metadata=exif-capture-camera-gps-orientation-icc-v1"
-    ).encode(),
+        b"image-preservation-v1:"
+        b"feature=1:"
+        b"pixel-normalization=1:"
+        b"metadata=exif-capture-camera-gps-orientation-icc-v1"
+    ),
     usedforsecurity=False,
 ).hexdigest()
 
