@@ -149,7 +149,8 @@ async def test_unchanged_membership_settings_do_not_schedule_rebuild() -> None:
 
 
 @pytest.mark.asyncio
-async def test_orchestration_only_setting_change_does_not_invalidate_similarity_generation() -> None:
+async def test_orchestration_only_setting_change_does_not_invalidate_similarity_generation(
+) -> None:
     database = _Database(_record())
     evidence_epoch = _EvidenceEpoch()
     repository = DuplicateDiscoverySettingsRepository(  # type: ignore[arg-type]
