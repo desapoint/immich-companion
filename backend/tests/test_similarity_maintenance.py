@@ -115,7 +115,7 @@ class FakeContext:
 
 
 @pytest.mark.asyncio
-async def test_incremental_below_threshold_pair_skips_original_detail() -> None:
+async def test_incremental_below_threshold_pair_stays_cache_only() -> None:
     asset_id, neighbor_id = UUID(int=1), UUID(int=2)
 
     class Features:
@@ -154,7 +154,10 @@ async def test_incremental_below_threshold_pair_skips_original_detail() -> None:
             assert asset_count == 2
 
     class Similarity:
+        calls = 0
+
         async def reference_edges(self, groups, _features):
+            self.calls += 1
             return {
                 (left, right): PairSimilarityEvidence(
                     similarity_percent=94, structural_percent=94,
@@ -166,15 +169,17 @@ async def test_incremental_below_threshold_pair_skips_original_detail() -> None:
                 for left, right in groups
             }
 
-    class Detailer:
-        async def ensure(self, *_args):
-            raise AssertionError("Below-threshold pair fetched original detail")
-
+    similarity = Similarity()
     handler = SimilarityMaintenanceTaskHandler(
-        FakeChanges([]), FakeIndexer(), Features(), Similarity(), Scans(), Detailer()
+        FakeChanges([]),
+        FakeIndexer(),
+        Features(),
+        similarity,
+        Scans(),
     )
 
     assert await handler._reconcile_asset(FakeContext(), asset_id) == 0
+    assert similarity.calls == 1
 
 
 @pytest.mark.asyncio
