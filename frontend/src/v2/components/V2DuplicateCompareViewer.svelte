@@ -51,6 +51,10 @@
     stackLabel = 'Stack',
     stackPrimary = false,
     disabled = false,
+    canPreviousGroup = false,
+    canNextGroup = false,
+    groupNavigationLoading = false,
+    ongroupnavigate,
     ondecisionchange,
     ondecisionclear,
     onstackprimary,
@@ -75,6 +79,10 @@
     stackLabel?: string;
     stackPrimary?: boolean;
     disabled?: boolean;
+    canPreviousGroup?: boolean;
+    canNextGroup?: boolean;
+    groupNavigationLoading?: boolean;
+    ongroupnavigate?: (direction: 'previous' | 'next') => void | Promise<void>;
     ondecisionchange?: (assetId: string, decision: DuplicateDecision) => void;
     ondecisionclear?: (assetId: string) => void;
     onstackprimary?: (assetId: string) => void;
@@ -85,8 +93,10 @@
 
   const shortcuts: KeyboardShortcut[] = [
     { keys: 'Esc', description: 'Close comparison' },
-    { keys: '←', description: 'Previous group member' },
-    { keys: '→', description: 'Next group member' },
+    { keys: '←', description: 'Previous image in group' },
+    { keys: '→', description: 'Next image in group' },
+    { keys: ['Shift', '←'], description: 'Previous duplicate group' },
+    { keys: ['Shift', '→'], description: 'Next duplicate group' },
     { keys: 'R', description: 'Set current asset as reference' },
     { keys: '1', description: 'Side by side' },
     { keys: '2', description: 'Swipe' },
@@ -342,6 +352,12 @@
   }
   function prev() { stepMember('previous'); }
   function next() { stepMember('next'); }
+  async function navigateGroup(direction: 'previous' | 'next') {
+    if (groupNavigationLoading || !ongroupnavigate) return;
+    if (direction === 'previous' && !canPreviousGroup) return;
+    if (direction === 'next' && !canNextGroup) return;
+    await ongroupnavigate(direction);
+  }
   function setDecision(decision: DuplicateDecision) {
     if (disabled) return;
     if (decisionKey && decisionOptions.includes(decision)) {
@@ -376,8 +392,10 @@
   }
   function handleShortcut(event: KeyboardEvent) {
     if (!open || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || editableTarget(event.target)) return;
-    if (event.key === 'ArrowLeft' && activeCount) { event.preventDefault(); prev(); return; }
-    if (event.key === 'ArrowRight' && activeCount) { event.preventDefault(); next(); return; }
+    if (event.shiftKey && event.key === 'ArrowLeft' && canPreviousGroup && !groupNavigationLoading) { event.preventDefault(); void navigateGroup('previous'); return; }
+    if (event.shiftKey && event.key === 'ArrowRight' && canNextGroup && !groupNavigationLoading) { event.preventDefault(); void navigateGroup('next'); return; }
+    if (!event.shiftKey && event.key === 'ArrowLeft' && activeCount) { event.preventDefault(); prev(); return; }
+    if (!event.shiftKey && event.key === 'ArrowRight' && activeCount) { event.preventDefault(); next(); return; }
     if ((event.key === 'r' || event.key === 'R') && selectedAsset) { event.preventDefault(); void setReference(); return; }
     const modes: Record<string, ComparisonMode> = {
       '1': 'Side by side', '2': 'Swipe', '3': 'Transparency', '4': 'Difference', '5': 'Local changes', '6': 'Flicker',
@@ -390,7 +408,7 @@
 <svelte:window onkeydown={handleShortcut}/>
 
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
-  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/>{#if boundedValidation}<V2Badge tone="warn" text="Bounded validation"/>{/if}</div><div class="v2-compare-header-actions"><V2Button disabled={!activeCount} onclick={prev}>← Previous</V2Button><V2Button disabled={!activeCount} onclick={next}>Next →</V2Button><V2Button disabled={disabled||!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
+  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/>{#if boundedValidation}<V2Badge tone="warn" text="Bounded validation"/>{/if}</div><div class="v2-compare-header-actions"><V2Button disabled={!canPreviousGroup||groupNavigationLoading} title="Previous duplicate group (Shift+Left)" onclick={()=>void navigateGroup('previous')}>⇤ Previous group</V2Button><V2Button disabled={!activeCount} onclick={prev}>← Previous image</V2Button><V2Button disabled={!activeCount} onclick={next}>Next image →</V2Button><V2Button disabled={!canNextGroup||groupNavigationLoading} title="Next duplicate group (Shift+Right)" onclick={()=>void navigateGroup('next')}>Next group ⇥</V2Button><V2Button disabled={disabled||!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual">
     {#if loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if loadError}<div class="v2-compare-media-status" role="alert">{loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance {localDiagnostics} {localDiagnosticsLoading} {localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}{@const evidence=similarityEvidence[assetId]??null}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}{usesBoundedValidation(evidence)?' · Bounded validation':''}</small></button>{/each}</div>
