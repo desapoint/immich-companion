@@ -516,6 +516,22 @@ def create_app(
     )
     if task_coordinator is not None and integrity_handler is not None:
         task_coordinator.register_handler(integrity_handler)
+    similarity_index_maintainer = (
+        SimilarityIndexMaintainer(
+            immich,
+            asset_repository,
+            search_feature_repository,
+            details=detail_repository,
+            fetch_slots=runtime_settings.similarity_preview_fetch_slots,
+            decode_slots=runtime_settings.similarity_preview_decode_slots,
+            fallback_max_bytes=runtime_settings.similarity_detail_max_bytes,
+            decode_cache_path=runtime_settings.similarity_cache_dir,
+            batch_size=runtime_settings.similarity_fingerprint_page_size,
+            runtime_settings=similarity_runtime_settings_repository,
+        )
+        if asset_repository is not None and search_feature_repository is not None
+        else None
+    )
     duplicate_service = (
         CrossSourceDuplicateService(
             runtime_settings,
@@ -554,6 +570,7 @@ def create_app(
             integrity_handler,
             include_preservation=True,
             discovery=duplicate_discovery,
+            similarity_indexer=similarity_index_maintainer,
         )
         task_coordinator.register_handler(
             FollowUpTaskHandler(
@@ -569,22 +586,6 @@ def create_app(
                 immich_duplicate_sync_service,
             )
         )
-    similarity_index_maintainer = (
-        SimilarityIndexMaintainer(
-            immich,
-            asset_repository,
-            search_feature_repository,
-            details=detail_repository,
-            fetch_slots=runtime_settings.similarity_preview_fetch_slots,
-            decode_slots=runtime_settings.similarity_preview_decode_slots,
-            fallback_max_bytes=runtime_settings.similarity_detail_max_bytes,
-            decode_cache_path=runtime_settings.similarity_cache_dir,
-            batch_size=runtime_settings.similarity_fingerprint_page_size,
-            runtime_settings=similarity_runtime_settings_repository,
-        )
-        if asset_repository is not None and search_feature_repository is not None
-        else None
-    )
     similarity_index_service = (
         SimilarityIndexService(task_coordinator, similarity_index_maintainer)
         if task_coordinator is not None and similarity_index_maintainer is not None
