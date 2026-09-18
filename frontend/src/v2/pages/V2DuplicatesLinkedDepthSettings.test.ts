@@ -9,7 +9,7 @@ describe('V2 duplicate linked depth setting', () => {
   });
 
   it('shows the limit only for linked validation with zero-based review semantics', () => {
-    expect(source).toContain("{#if validationMode==='linked'}<V2Field label="Maximum link depth"");
+    expect(source).toContain(`{#if validationMode==='linked'}<V2Field label="Maximum link depth"`);
     expect(source).toContain('0 keeps only direct matches to the group reference.');
     expect(source).toContain('This value matches the link-depth number shown on indirectly linked image pills.');
   });
