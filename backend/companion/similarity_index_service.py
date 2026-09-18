@@ -633,18 +633,18 @@ class SimilarityIndexMaintainer:
     ) -> bool:
         """Best-effort update for one synchronized change with transient retry only."""
 
-        known_source = source
         for attempt in ("incremental", "incremental_retry"):
             await context.ensure_active()
-            if known_source is None:
+            attempt_source = source
+            if attempt_source is None:
                 started = perf_counter()
                 known = await self._assets.get_immich_assets([asset_id])
                 self._measure("metadata_preparation", started)
-                known_source = known.get(asset_id)
+                attempt_source = known.get(asset_id)
             succeeded, reason = await self._fingerprint(
                 context,
                 asset_id,
-                known_source,
+                attempt_source,
                 attempt=attempt,
                 original_path=original_path,
                 original_source_bytes=original_source_bytes,
