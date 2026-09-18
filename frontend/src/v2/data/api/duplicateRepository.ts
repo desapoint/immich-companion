@@ -82,6 +82,7 @@ type ApiDuplicateMember = {
     config_fingerprint: string;
   } | null;
   preservation: {
+    origin: 'original' | 'preview';
     pixel_normalization_version: number;
     pixel_sha256: string;
     decoded_width: number;
@@ -327,6 +328,7 @@ function admissionEvidence(member: ApiDuplicateMember) {
 function preservationEvidence(member: ApiDuplicateMember) {
   if (!member.preservation) return null;
   return {
+    origin: member.preservation.origin,
     pixelNormalizationVersion: member.preservation.pixel_normalization_version,
     pixelSha256: member.preservation.pixel_sha256,
     decodedWidth: member.preservation.decoded_width,
