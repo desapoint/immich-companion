@@ -291,6 +291,68 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_handler_consumes_prepared_original_without_streaming_again(
+    tmp_path, monkeypatch
+) -> None:
+    current = asset()
+    reports = FakeReports()
+
+    class PreparedOnlyImmich(FakeImmich):
+        @asynccontextmanager
+        async def stream_original(self, _asset_id, *, chunk_size):
+            pytest.fail("Prepared original should prevent another Immich stream")
+            yield  # pragma: no cover
+
+    visual_feature = VisualFeatureResult(
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        width=1,
+        height=1,
+        luminance_vector=bytes([128] * 256),
+        perceptual_hash="0" * 16,
+        color_histogram=bytes([0] * 48),
+        thumbnail_sha256="2" * 64,
+        pixel_normalization_version=1,
+        pixel_sha256="3" * 64,
+        bit_depth=8,
+        channel_count=3,
+        has_alpha=False,
+        color_space="RGB",
+        orientation=None,
+        icc_profile_present=False,
+        has_exif=False,
+        has_capture_time=False,
+        has_camera_info=False,
+        has_gps=False,
+        has_orientation_metadata=False,
+        metadata_richness=0,
+    )
+    monkeypatch.setattr(
+        "companion.integrity_service.decode_and_extract_features",
+        lambda *_args: (
+            ImageDecodeResult(supported=True, valid=True, width=1, height=1),
+            visual_feature,
+        ),
+    )
+    prepared = tmp_path / "prepared.jpg"
+    prepared.write_bytes(b"\xff\xd8\xff\xd9")
+    handler = IntegrityTaskHandler(PreparedOnlyImmich(current), FakeAssets(), reports)
+
+    result = await handler.analyze(
+        FakeContext(),
+        ASSET_ID,
+        source=current,
+        publish_progress=False,
+        original_path=prepared,
+        original_source_bytes=4,
+    )
+
+    assert result.byte_size == 4
+    assert prepared.exists()
+    assert reports.saved[0][2] == visual_feature
+
+
+@pytest.mark.asyncio
 async def test_handler_does_not_save_when_source_changes_during_stream() -> None:
     reports = FakeReports()
     handler = IntegrityTaskHandler(
