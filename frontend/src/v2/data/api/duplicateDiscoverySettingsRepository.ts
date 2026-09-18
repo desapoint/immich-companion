@@ -25,7 +25,7 @@ function normalize(value: ApiDuplicateDiscoverySettings): DuplicateDiscoverySett
     includeSimilar: value.include_similar,
     similarityThreshold: value.similarity_threshold,
     validationMode: value.validation_mode,
-    maxLinkDepth: value.max_link_depth,
+    maxLinkDepth: value.max_link_depth ?? 2,
     maxCandidates: value.max_candidates,
   };
 }
