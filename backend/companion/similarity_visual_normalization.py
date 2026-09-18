@@ -319,6 +319,37 @@ class SimilarityVisualNormalizer:
             return False
         return width < asset.width or height < asset.height
 
+    async def _normalize_original_path(
+        self,
+        asset: ImmichAsset,
+        path: Path,
+        source_bytes: int,
+    ) -> NormalizedVisualImage:
+        """Normalize a caller-owned encoded original without acquiring or deleting it."""
+
+        if asset.file_size_bytes is not None and asset.file_size_bytes > self._max_bytes:
+            raise VisualNormalizationError("original exceeds visual source size limit")
+        if source_bytes > self._max_bytes:
+            raise VisualNormalizationError("original exceeds visual source size limit")
+
+        pixel_bytes, pixel_mode, media_sha256, width, height, has_alpha = await self._run_vips(
+            path=path,
+            raw_source=source_is_camera_raw(asset),
+        )
+        return NormalizedVisualImage(
+            pixel_bytes=pixel_bytes,
+            pixel_mode=pixel_mode,
+            media_sha256=media_sha256,
+            source_kind="original",
+            width=width,
+            height=height,
+            source_width=asset.width,
+            source_height=asset.height,
+            resized=self._was_resized(asset, width, height),
+            has_alpha=has_alpha,
+            source_bytes=source_bytes,
+        )
+
     async def _normalize_original(
         self,
         context: TaskContext,
@@ -336,26 +367,9 @@ class SimilarityVisualNormalizer:
                 )
 
         try:
-            pixel_bytes, pixel_mode, media_sha256, width, height, has_alpha = await self._run_vips(
-                path=path,
-                raw_source=source_is_camera_raw(asset),
-            )
+            return await self._normalize_original_path(asset, path, source_bytes)
         finally:
             path.unlink(missing_ok=True)
-
-        return NormalizedVisualImage(
-            pixel_bytes=pixel_bytes,
-            pixel_mode=pixel_mode,
-            media_sha256=media_sha256,
-            source_kind="original",
-            width=width,
-            height=height,
-            source_width=asset.width,
-            source_height=asset.height,
-            resized=self._was_resized(asset, width, height),
-            has_alpha=has_alpha,
-            source_bytes=source_bytes,
-        )
 
     async def _preview_content(self, asset_id: UUID) -> bytes:
         getter = getattr(self._immich, "get_bounded_preview", None)
@@ -394,14 +408,27 @@ class SimilarityVisualNormalizer:
         context: TaskContext,
         asset_id: UUID,
         asset: ImmichAsset,
+        *,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
     ) -> NormalizedVisualImage:
-        """Normalize the original with libvips, falling back only to Immich preview."""
+        """Normalize an original with libvips, falling back only to Immich preview.
+
+        A supplied original_path is caller-owned and is never downloaded or deleted here.
+        """
 
         await context.ensure_active()
         errors: list[str] = []
 
         try:
-            return await self._normalize_original(context, asset_id, asset)
+            if original_path is None:
+                return await self._normalize_original(context, asset_id, asset)
+            source_bytes = (
+                original_source_bytes
+                if original_source_bytes is not None
+                else original_path.stat().st_size
+            )
+            return await self._normalize_original_path(asset, original_path, source_bytes)
         except (ImmichApiError, OSError, VisualNormalizationError) as error:
             errors.append(f"original: {error}")
 
