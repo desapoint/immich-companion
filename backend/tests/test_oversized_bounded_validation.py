@@ -101,6 +101,9 @@ async def test_oversized_original_is_normalized_directly_with_libvips(monkeypatc
     assert normalized.detail_origin == "original"
     assert (normalized.width, normalized.height) == (600, 400)
     assert normalized.resized is True
+    assert normalized.pixel_mode == "RGB"
+    assert len(normalized.pixel_bytes) == 600 * 400 * 3
+    assert len(normalized.media_sha256) == 64
 
 
 @pytest.mark.asyncio
@@ -207,7 +210,8 @@ async def test_alpha_original_stays_alpha_through_libvips_normalization() -> Non
 
     assert normalized.source_kind == "original"
     assert normalized.has_alpha is True
-    assert normalized.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert normalized.pixel_mode == "RGBA"
+    assert len(normalized.pixel_bytes) == normalized.width * normalized.height * 4
 
 
 @pytest.mark.asyncio
@@ -361,7 +365,7 @@ async def test_dng_original_uses_explicit_raw_loader_route(monkeypatch) -> None:
         assert path is not None
         assert content is None
         seen_raw_source.append(raw_source)
-        return encoded_jpeg(), 640, 480, False
+        return b"\\x00" * (640 * 480 * 3), "RGB", "a" * 64, 640, 480, False
 
     monkeypatch.setattr(
         "companion.similarity_visual_normalization._canonical_vips_image",
