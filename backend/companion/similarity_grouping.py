@@ -233,8 +233,23 @@ def validated_similarity_groups(
                 if asset_id != anchor
             }
         else:
+            # A linked group starts with every member that qualifies directly
+            # against the reference. Only members that cannot meet the reference
+            # threshold may be admitted transitively through another accepted member.
             accepted = {anchor}
             parents: dict[UUID, tuple[UUID, float, int]] = {}
+            direct_members = sorted(
+                (
+                    asset_id
+                    for asset_id in component
+                    if asset_id != anchor and _pair(anchor, asset_id) in scores
+                ),
+                key=lambda asset_id: asset_id.int,
+            )
+            for asset_id in direct_members:
+                parents[asset_id] = (anchor, scores[_pair(anchor, asset_id)], 1)
+                accepted.add(asset_id)
+
             while accepted != set(component):
                 choices = [
                     (scores[_pair(parent, candidate)], parent, candidate)

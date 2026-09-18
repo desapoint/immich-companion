@@ -106,6 +106,21 @@ async def test_bounded_fullsize_uses_optional_generated_media_and_rejects_large_
 
 
 @pytest.mark.asyncio
+async def test_original_prefix_uses_range_and_never_buffers_beyond_limit() -> None:
+    body = b"0123456789abcdef"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == f"/api/assets/{ASSET_ONE}/original"
+        assert request.headers["range"] == "bytes=0-7"
+        # Deliberately ignore the Range request to prove the client still caps reads.
+        return httpx.Response(200, content=body)
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    assert await client.get_original_prefix(ASSET_ONE, max_bytes=8) == b"01234567"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_get_album_is_typed_and_uses_the_supported_api() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.headers["x-api-key"] == "private-test-key"

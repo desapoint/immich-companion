@@ -177,6 +177,38 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body.indexOf('Metadata side by side')).toBeLessThan(body.indexOf('Why is this image in the group?'));
   });
 
+  it('does not describe a direct reference admission as a linked membership', () => {
+    const direct = groupMember('asset-1', 'direct.png', 96, admission({
+      admittedByAssetId: 'asset-2',
+      admissionSimilarityPercent: 96,
+      bestGroupMatchAssetId: 'asset-3',
+      bestGroupMatchSimilarityPercent: 99,
+      linkDepth: 1,
+    }));
+    const reference = groupMember('asset-2', 'reference.heic', 100);
+    const stronger = groupMember('asset-3', 'stronger.heic', 99);
+    const { body } = render(V2DuplicateCompareViewer, {
+      props: {
+        open: true,
+        groupTitle: 'Direct comparison',
+        groupKind: 'similar',
+        groupSimilarity: 96,
+        groupMembers: [direct, reference, stronger],
+        validationMode: 'linked',
+        similarityThreshold: 95,
+        assetIds: ['asset-1', 'asset-2', 'asset-3'],
+        similarities: { 'asset-1': 96, 'asset-2': 100, 'asset-3': 99 },
+        member: 0,
+        reference: 1,
+        onclose: () => {},
+      },
+    });
+
+    expect(body).not.toContain('Included through');
+    expect(body).not.toContain('Why is this image in the group?');
+    expect(body).not.toContain('Technical linked data');
+  });
+
   it('keeps inspection navigation enabled while write controls are disabled', () => {
     const { body } = render(V2DuplicateCompareViewer, {
       props: {

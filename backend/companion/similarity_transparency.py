@@ -67,6 +67,54 @@ def bounded_media_format(content: bytes) -> str | None:
     return None
 
 
+
+def _complete_iso_bmff_box(content: bytes, wanted_type: bytes) -> bytes | None:
+    """Return a complete top-level ISO-BMFF box when it is present in this bounded prefix."""
+
+    offset = 0
+    while offset + 8 <= len(content):
+        size = int.from_bytes(content[offset : offset + 4], "big")
+        box_type = content[offset + 4 : offset + 8]
+        header_size = 8
+        if size == 1:
+            if offset + 16 > len(content):
+                return None
+            size = int.from_bytes(content[offset + 8 : offset + 16], "big")
+            header_size = 16
+        elif size == 0:
+            # A zero-sized box extends to EOF. A bounded prefix cannot prove it is complete.
+            return None
+        if size < header_size:
+            return None
+        end = offset + size
+        if end > len(content):
+            return None
+        if box_type == wanted_type:
+            return content[offset:end]
+        offset = end
+    return None
+
+
+def _inspect_heif_alpha(content: bytes) -> SourceAlphaState:
+    """Classify standards-based HEIF/HEIC/AVIF alpha from a complete metadata box."""
+
+    meta = _complete_iso_bmff_box(content, b"meta")
+    if meta is None:
+        return "unknown_alpha"
+    lowered = meta.lower()
+    # HEIF/HEIC and AVIF represent alpha as an auxiliary image. These are the
+    # standardized auxiliary type strings used by HEVC and AV1 image items.
+    alpha_markers = (
+        b"urn:mpeg:hevc:2015:auxid:1",
+        b"urn:mpeg:mpegb:cicp:systems:auxiliary:alpha",
+        b"auxiliary:alpha",
+    )
+    if any(marker in lowered for marker in alpha_markers):
+        return "confirmed_alpha"
+    # The complete item metadata is present and declares no alpha auxiliary image.
+    return "confirmed_opaque"
+
+
 def inspect_bounded_alpha(content: bytes) -> SourceAlphaState:
     """Inspect encoded metadata only; never materialize the image raster."""
 
@@ -106,6 +154,8 @@ def inspect_bounded_alpha(content: bytes) -> SourceAlphaState:
             if offset + 4 < len(content) and content[offset + 3] & 0x01:
                 return "confirmed_alpha"
             offset += len(marker)
+    if family == "heif":
+        return _inspect_heif_alpha(content)
     return "unknown_alpha"
 
 

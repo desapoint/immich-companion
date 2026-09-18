@@ -211,8 +211,15 @@
   const modeLabel = $derived(validationModeLabel(validationMode));
   const thresholdLabel = $derived(similarityThreshold === null ? 'Unavailable' : formatSimilarityPercent(similarityThreshold));
   const belowThreshold = $derived(similarityThreshold !== null && selectedSimilarity !== null && selectedSimilarity < similarityThreshold);
-  const hasLinkedAdmission = $derived(validationMode === 'linked' && selectedAdmission !== null);
-  const showLinkedSummary = $derived(hasLinkedAdmission && (selectedSimilarity === null || belowThreshold) && selectedAdmission?.admittedByAssetId !== null);
+  const hasIndirectLinkedAdmission = $derived(
+    validationMode === 'linked'
+      && selectedAdmission !== null
+      && selectedAdmission.linkDepth > 1
+      && selectedAdmission.admittedByAssetId !== null,
+  );
+  const showLinkedSummary = $derived(
+    hasIndirectLinkedAdmission && (selectedSimilarity === null || belowThreshold),
+  );
   const admittedByLabel = $derived(admittedByMember?.asset.original_file_name ?? selectedAdmission?.admittedByAssetId ?? 'Unavailable');
   const bestGroupMatchLabel = $derived(bestGroupMatchMember?.asset.original_file_name ?? selectedAdmission?.bestGroupMatchAssetId ?? 'Unavailable');
   const sizeDifferenceLabel = $derived(formatByteDifference(selectedData.sizeBytes === null || referenceData.sizeBytes === null ? null : selectedData.sizeBytes - referenceData.sizeBytes));
@@ -445,7 +452,7 @@
         </div>
       </details>
 
-      {#if hasLinkedAdmission && selectedAdmission}
+      {#if hasIndirectLinkedAdmission && selectedAdmission}
         <details class="v2-compare-detail">
           <summary>Why is this image in the group?</summary>
           <div class="v2-compare-detail-body">
@@ -522,7 +529,7 @@
         </div>
       </details>
 
-      {#if selectedAdmission}
+      {#if hasIndirectLinkedAdmission && selectedAdmission}
         <details class="v2-compare-detail">
           <summary>Technical linked data</summary>
           <div class="v2-compare-detail-body">

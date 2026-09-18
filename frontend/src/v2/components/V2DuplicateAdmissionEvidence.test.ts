@@ -4,7 +4,13 @@ import { describe, expect, it } from 'vitest';
 import type { DuplicateMemberRecord } from '../data/contracts';
 import V2DuplicateAdmissionEvidence from './V2DuplicateAdmissionEvidence.svelte';
 
-function member(id: string, name: string, similarity: number, admittedByAssetId: string | null): DuplicateMemberRecord {
+function member(
+  id: string,
+  name: string,
+  similarity: number,
+  admittedByAssetId: string | null,
+  linkDepth = 1,
+): DuplicateMemberRecord {
   return {
     asset: { id, original_file_name: name } as DuplicateMemberRecord['asset'],
     similarity,
@@ -14,7 +20,7 @@ function member(id: string, name: string, similarity: number, admittedByAssetId:
       admissionSimilarityPercent: 96,
       bestGroupMatchAssetId: admittedByAssetId,
       bestGroupMatchSimilarityPercent: 96,
-      linkDepth: 1,
+      linkDepth,
       modelVersion: 'test',
       featureVersion: 1,
       comparisonVersion: 1,
@@ -25,7 +31,7 @@ function member(id: string, name: string, similarity: number, admittedByAssetId:
 
 describe('V2DuplicateAdmissionEvidence', () => {
   it('links the admitting source to its deep-linked Assets viewer in a new tab', () => {
-    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2');
+    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2', 2);
     const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
@@ -41,6 +47,22 @@ describe('V2DuplicateAdmissionEvidence', () => {
     expect(body).toContain('href="/v2/assets/asset-2"');
     expect(body).toContain('target="_blank"');
     expect(body).toContain('rel="noopener noreferrer"');
+  });
+
+  it('does not call a direct reference admission a linked match', () => {
+    const direct = member('asset-1', 'direct.jpg', 90, 'asset-2', 1);
+    const reference = member('asset-2', 'reference.jpg', 100, null);
+    const { body } = render(V2DuplicateAdmissionEvidence, {
+      props: {
+        member: direct,
+        members: [direct, reference],
+        mode: 'linked',
+        threshold: 95,
+      },
+    });
+
+    expect(body).not.toContain('Linked through');
+    expect(body).not.toContain('reference.jpg');
   });
 
   it('labels bounded evidence with its original and actual validation dimensions', () => {
