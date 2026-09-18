@@ -390,7 +390,7 @@ async def test_original_fallback_rejects_declared_body_over_limit() -> None:
         OversizedOriginal(),  # type: ignore[arg-type]
         FakeAssets(),  # type: ignore[arg-type]
         features,  # type: ignore[arg-type]
-        fallback_max_bytes=len(PREVIEW),
+        visual_source_max_bytes=len(PREVIEW),
     )
     coverage, _, unavailable, _, reasons = await maintainer.maintain(FakeContext())
 
