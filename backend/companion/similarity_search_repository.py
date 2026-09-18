@@ -1,4 +1,4 @@
-"""Companion-owned persistence for preview search evidence only."""
+"""Companion-owned persistence for complete normalized visual evidence."""
 
 from __future__ import annotations
 
