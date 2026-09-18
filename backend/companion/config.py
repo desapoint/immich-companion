@@ -63,6 +63,7 @@ class Settings(BaseSettings):
     )
     similarity_preview_fetch_slots: int = Field(default=2, ge=1, le=8)
     similarity_preview_decode_slots: int = Field(default=2, ge=1, le=4)
+    similarity_fingerprint_page_size: int = Field(default=250, ge=25, le=2000)
     similarity_original_fallback_max_bytes: int = Field(
         default=128 * 1024 * 1024, ge=1024 * 1024, le=1024 * 1024 * 1024
     )
