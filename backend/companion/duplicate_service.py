@@ -90,6 +90,7 @@ from companion.models import (
     AssetSimilaritySearchFeatureRecord,
 )
 from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
+from companion.similarity_generation import StaleSimilarityEvidenceEpochError
 from companion.similarity_repository import (
     PairSimilarityEvidence,
     SimilarityRepository,
@@ -722,23 +723,35 @@ class CrossSourceDuplicateService:
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
             similarity_groups = [self._stable_similarity_source(group) for group in groups]
-            live_edges = await self._similarity.reference_edges(
-                [[asset.id for asset in group.assets] for group in similarity_groups],
-                search_features,
-            )
-            scan_edges = await self._persisted_scan_edges(
-                similarity_groups,
-                search_features,
-                live_edges,
-            )
-            edges = {**live_edges, **scan_edges}
-            result = self._apply_similarity(
-                result,
-                similarity_groups,
-                edges,
-                search_features,
-                preservation,
-            )
+            try:
+                live_edges = await self._similarity.reference_edges(
+                    [[asset.id for asset in group.assets] for group in similarity_groups],
+                    search_features,
+                )
+            except StaleSimilarityEvidenceEpochError:
+                # A code-generation bump intentionally makes existing Appearance evidence
+                # non-current until the user rebuilds it. Duplicate review is a read path,
+                # so keep the page available instead of letting the writer fence become a
+                # 500. Do not expose persisted scan/admission evidence from the stale
+                # generation as current while the rebuild control is being surfaced.
+                logger.info(
+                    "Similarity evidence generation is stale; serving duplicate review "
+                    "without Appearance evidence until rebuild."
+                )
+            else:
+                scan_edges = await self._persisted_scan_edges(
+                    similarity_groups,
+                    search_features,
+                    live_edges,
+                )
+                edges = {**live_edges, **scan_edges}
+                result = self._apply_similarity(
+                    result,
+                    similarity_groups,
+                    edges,
+                    search_features,
+                    preservation,
+                )
         if self._reviews is not None:
             result = await self._apply_review_states(result)
         return groups, reports, preservation, result
