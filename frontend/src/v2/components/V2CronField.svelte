@@ -10,6 +10,7 @@
     label = 'Schedule',
     value = $bindable('0 * * * *'),
     enabled = true,
+    lastRunAt = null,
     onchange,
     onvaliditychange,
   }: {
@@ -17,6 +18,7 @@
     label?: string;
     value?: string;
     enabled?: boolean;
+    lastRunAt?: string | null;
     onchange?: (value: string) => void;
     onvaliditychange?: (valid: boolean) => void;
   } = $props();
@@ -114,6 +116,7 @@
   function applyPreset(cron:string):void{emit(cron);hydrate(cron)}
   function description(cron:string):string{const parsed=parseCron(cron);if(parsed.mode==='Interval')return `Runs every ${parsed.interval} minutes.`;if(parsed.mode==='Hourly')return parsed.minute==='0'?'Runs at the start of every hour.':`Runs ${parsed.minute} minutes past every hour.`;if(parsed.mode==='Daily')return `Runs every day at ${parsed.time}.`;if(parsed.mode==='Weekly')return `Runs every ${weekdayOptions.find((day)=>day.value===parsed.weekday)?.label??'week'} at ${parsed.time}.`;if(parsed.mode==='Monthly')return `Runs on day ${parsed.monthday} of every month at ${parsed.time}.`;if(cron==='0 2 * * 1-5')return 'Runs every weekday at 02:00.';return valid?'Custom five-field cron expression.':'Invalid cron expression.'}
   function nextLabel(): string { if(!enabled)return 'Disabled'; if(!valid)return 'Unavailable until cron is valid'; if(!next)return 'No run found in the next 2 years'; return next.toLocaleString(); }
+  function lastRunLabel(): string { if(!lastRunAt)return 'Never'; const lastRun=new Date(lastRunAt); return Number.isNaN(lastRun.getTime())?'Unavailable':lastRun.toLocaleString(); }
 
   $effect(()=>{onvaliditychange?.(valid)});
   $effect(()=>{if(value!==lastValue){lastValue=value;hydrate(value)}});
@@ -125,4 +128,5 @@
   <div class="v2-cron-builder"><SelectField id={`${id}-mode`} label="Repeat" value={mode} options={['Interval','Hourly','Daily','Weekly','Monthly','Custom']} onchange={setMode}/>{#if mode==='Interval'}<SelectField id={`${id}-interval`} label="Every" value={interval} options={intervalOptions.map((item)=>({value:item,label:`${item} minutes`}))} onchange={(next)=>{interval=next;rebuild()}}/>{:else if mode==='Hourly'}<SelectField id={`${id}-minute`} label="Minute" value={minute} options={minuteOptions} onchange={(next)=>{minute=next;rebuild()}}/>{:else if mode==='Daily'}<label class="v2-field"><span class="v2-field-label">Time</span><input type="time" value={time} onchange={(event)=>{time=event.currentTarget.value||'00:00';rebuild()}}></label>{:else if mode==='Weekly'}<SelectField id={`${id}-weekday`} label="Day" value={weekday} options={weekdayOptions} onchange={(next)=>{weekday=next;rebuild()}}/><label class="v2-field"><span class="v2-field-label">Time</span><input type="time" value={time} onchange={(event)=>{time=event.currentTarget.value||'00:00';rebuild()}}></label>{:else if mode==='Monthly'}<label class="v2-field"><span class="v2-field-label">Day of month</span><input type="number" min="1" max="31" value={monthday} onchange={(event)=>{monthday=String(Math.min(31,Math.max(1,Number(event.currentTarget.value)||1)));rebuild()}}></label><label class="v2-field"><span class="v2-field-label">Time</span><input type="time" value={time} onchange={(event)=>{time=event.currentTarget.value||'00:00';rebuild()}}></label>{/if}</div>
   <label class="v2-field v2-cron-raw"><span class="v2-field-label">Cron expression</span><input id={id} value={value} aria-invalid={!valid} aria-describedby={`${id}-status`} spellcheck="false" autocomplete="off" oninput={(event)=>setRaw(event.currentTarget.value)}><small>Minute · Hour · Day of month · Month · Day of week</small></label>
   <div id={`${id}-status`} class="v2-cron-status" data-invalid={!valid || undefined} role={valid?'status':'alert'}>{#if !valid}<strong>⚠ {error}</strong><span>Fix this value before saving.</span>{:else}<strong>Next run</strong><span>{nextLabel()}</span>{/if}</div>
+  <div class="v2-cron-status"><strong>Last ran</strong><span>{lastRunLabel()}</span></div>
 </div>
