@@ -1,4 +1,4 @@
-"""Preview search evidence never acts as original-file verification."""
+"""Normalized search evidence never acts as original-file verification."""
 
 from datetime import UTC, datetime
 from io import BytesIO
@@ -37,7 +37,7 @@ def test_search_feature_uses_normalized_visual_input_without_exact_pixel_hash() 
     feature = extract_search_feature(output.getvalue())
 
     assert feature is not None
-    assert SEARCH_FEATURE_VERSION == 4
+    assert SEARCH_FEATURE_VERSION == 5
     assert feature.feature_version == 3
     assert feature.width == 64
     assert feature.height == 48
