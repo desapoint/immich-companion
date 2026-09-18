@@ -95,6 +95,24 @@ localized-detail evidence. Localized Changes is a read-only cache operation.
 Native Immich duplicate groups are also prepared through the same visual
 indexer before review, so they do not bypass the cache-completeness invariant.
 
+### Shared original acquisition during duplicate preparation
+
+Duplicate preparation resolves Appearance freshness and integrity/preservation
+freshness before doing media work. When both evidence families are stale or
+missing for the same asset, Companion streams the encoded Immich original once
+to a task-local file in the decode cache. The Appearance indexer and the
+integrity/preservation analyzer then consume that same caller-owned file
+sequentially.
+
+The two evidence contracts remain independent: Appearance still uses the
+bounded libvips normalization path and may fall back to an Immich preview,
+while integrity/preservation still hashes and validates the complete original
+and performs its preservation decode. The shared file only removes duplicate
+network acquisition; it is deleted after both consumers finish.
+
+If only one evidence family needs work, its existing single-consumer path is
+used. If both are already current, no original is downloaded.
+
 ## Separate original-file evidence
 
 The canonical visual image is Appearance evidence only. Original-byte and
