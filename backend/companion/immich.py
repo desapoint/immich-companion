@@ -855,6 +855,29 @@ class ImmichApiClient:
                 chunks.append(chunk)
             return b"".join(chunks)
 
+    async def get_original_prefix(self, asset_id: UUID, *, max_bytes: int) -> bytes:
+        """Read only a bounded original prefix for encoded metadata inspection."""
+
+        if max_bytes < 1:
+            raise ValueError("max_bytes must be positive")
+        async with self.stream_asset_media(
+            asset_id,
+            kind="original",
+            request_headers={"range": f"bytes=0-{max_bytes - 1}"},
+            chunk_size=min(max_bytes, 256 * 1024),
+        ) as media:
+            chunks: list[bytes] = []
+            total = 0
+            async for chunk in media.chunks:
+                remaining = max_bytes - total
+                if remaining <= 0:
+                    break
+                chunks.append(chunk[:remaining])
+                total += min(len(chunk), remaining)
+                if total >= max_bytes:
+                    break
+            return b"".join(chunks)
+
     @asynccontextmanager
     async def stream_original(
         self,
