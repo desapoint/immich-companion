@@ -297,6 +297,7 @@ class SimilarityScanRecord(Base):
     config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     grouping_version: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict")
+    max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     anchor_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     scope: Mapped[str] = mapped_column(
@@ -616,6 +617,7 @@ class DuplicateDiscoverySettingsRecord(Base):
     include_similar: Mapped[bool] = mapped_column(Boolean, nullable=False)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False)
     max_candidates: Mapped[int] = mapped_column(Integer, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
