@@ -46,7 +46,7 @@ export const keeperRuleFields: Array<{value:DuplicateKeeperRuleField;label:strin
   {value:'color_similarity',label:'Color similarity',kind:'number',rankable:true},
   {value:'detail_change',label:'Detail change',kind:'number',rankable:true},
   {value:'admission_similarity',label:'Admission similarity',kind:'number',rankable:true},
-  {value:'link_depth',label:'Admission hops from group reference',kind:'number',rankable:true},
+  {value:'link_depth',label:'Link depth',kind:'number',rankable:true},
   {value:'duration',label:'Duration',kind:'number',rankable:true},
   {value:'same_folder_as_reference',label:'Same folder as reference',kind:'boolean'},
   {value:'same_library_as_reference',label:'Same library as reference',kind:'boolean'},
