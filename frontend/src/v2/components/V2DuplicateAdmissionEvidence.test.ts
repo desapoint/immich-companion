@@ -50,7 +50,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
   });
 
   it('shows linked provenance from admission data even when the direct reference score is not below threshold', () => {
-    const linked = member('asset-1', 'linked.jpg', 99.5, 'asset-2', 1);
+    const linked = member('asset-1', 'linked.jpg', 99.5, 'asset-2', 2);
     const admittedBy = member('asset-2', 'bridge.jpg', 99.7, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
