@@ -3,6 +3,7 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from io import BytesIO
+import shutil
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -330,12 +331,13 @@ def test_packaged_libvips_has_required_image_loaders() -> None:
         for operation in required
         if not pyvips.type_find("VipsOperation", operation)
     ]
-    raw_path_available = bool(
-        pyvips.type_find("VipsOperation", "dcrawload_buffer")
-        or pyvips.type_find("VipsOperation", "magickload_buffer")
+    direct_raw = bool(pyvips.type_find("VipsOperation", "dcrawload_buffer"))
+    delegated_raw = bool(
+        pyvips.type_find("VipsOperation", "magickload_buffer")
+        and shutil.which("dcraw")
     )
     assert missing == []
-    assert raw_path_available is True
+    assert direct_raw or delegated_raw
 
 
 def test_source_identity_invalidates_on_source_dimension_or_checksum_change() -> None:
