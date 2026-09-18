@@ -5,30 +5,28 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
-from tempfile import SpooledTemporaryFile
 from time import perf_counter
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
 from companion.duplicate_schema import SimilarityIndexCoverage, SimilarityIndexTaskStart
-from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import detect_file_format
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.similarity_bounded_state import SourceAlphaState
-from companion.similarity_features import decode_and_extract_features
+from companion.similarity_detail import extract_detail_feature
+from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_search_features import (
-    MAX_SEARCH_PREVIEW_BYTES,
     SEARCH_CONFIG_FINGERPRINT,
     SEARCH_FEATURE_VERSION,
     SEARCH_MODEL_VERSION,
     extract_search_feature,
+    search_source_identity,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.similarity_settings import SimilarityRuntimeSettingsRepository
-from companion.similarity_transparency import classify_source_alpha, source_can_have_alpha
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -36,6 +34,11 @@ from companion.task_coordinator import (
     TaskCoordinator,
 )
 from companion.task_schema import TaskResult
+from companion.similarity_visual_normalization import (
+    SimilarityVisualNormalizer,
+    VisualNormalizationError,
+    source_requires_bounded_visual,
+)
 
 SIMILARITY_INDEX_TASK_TYPE = "similarity_index"
 SIMILARITY_FINGERPRINT_BATCH_SIZE = 25
@@ -58,18 +61,6 @@ class SimilarityIndexCoverageDetails(SimilarityIndexCoverage):
 
     bounded_count: int = 0
     unavailable_count: int = 0
-
-
-def _source_exceeds_decode_limit(source: ImmichAsset) -> bool:
-    """Preflight originals that the shared decoder policy will not fully materialize."""
-
-    return bool(
-        source.width is not None
-        and source.height is not None
-        and source.width > 0
-        and source.height > 0
-        and source.width * source.height > MAX_DECODED_PIXELS
-    )
 
 
 def _failure_is_retryable(reason: str | None) -> bool:
@@ -98,6 +89,7 @@ class SimilarityIndexMaintainer:
         assets: AssetRepository,
         features: SimilaritySearchRepository,
         *,
+        details: SimilarityDetailRepository | None = None,
         batch_size: int = SIMILARITY_FINGERPRINT_BATCH_SIZE,
         fetch_slots: int = 2,
         decode_slots: int = 2,
@@ -110,6 +102,12 @@ class SimilarityIndexMaintainer:
         self._immich = immich
         self._assets = assets
         self._features = features
+        self._details = details
+        self._normalizer = SimilarityVisualNormalizer(
+            immich,
+            max_bytes=fallback_max_bytes,
+            cache_path=decode_cache_path,
+        )
         self._batch_size = batch_size
         self._fetch_slots = asyncio.Semaphore(fetch_slots)
         self._decode_slots = asyncio.Semaphore(decode_slots)
@@ -140,51 +138,6 @@ class SimilarityIndexMaintainer:
         if self._runtime_settings is None:
             return self._batch_size
         return (await self._runtime_settings.get()).fingerprint_page_size
-
-    async def _original_fallback(self, context: TaskContext, asset_id: UUID):
-        """Extract coarse evidence from a bounded original without integrity hashing."""
-
-        with SpooledTemporaryFile(
-            max_size=4 * 1024 * 1024, dir=self._decode_cache_path, suffix=".tmp"
-        ) as spool:
-            digest = sha256(usedforsecurity=False)
-            prefix = bytearray()
-            total = 0
-            started = perf_counter()
-            async with self._immich.stream_original(asset_id) as original:
-                if (
-                    original.content_length is not None
-                    and original.content_length > self._fallback_max_bytes
-                ):
-                    raise ValueError("original exceeds similarity fallback size limit")
-                async for chunk in original.chunks:
-                    await context.ensure_active()
-                    total += len(chunk)
-                    if total > self._fallback_max_bytes:
-                        raise ValueError("original exceeds similarity fallback size limit")
-                    if len(prefix) < 64:
-                        prefix.extend(chunk[: 64 - len(prefix)])
-                    digest.update(chunk)
-                    spool.write(chunk)
-            self._measure("original_fetch", started)
-            self._count("original_bytes_downloaded", total)
-            started = perf_counter()
-            timings: dict[str, int] = {}
-            decoded, feature = await asyncio.to_thread(
-                decode_and_extract_features,
-                spool,
-                detect_file_format(bytes(prefix)),
-                include_pixel_hash=False,
-                timings=timings,
-            )
-            self._measure("decode_feature_wall", started)
-            self._record_timings(timings)
-            self._count("original_decodes")
-            if decoded.valid is not True or feature is None:
-                raise ValueError(
-                    decoded.issue or "original could not produce coarse visual evidence"
-                )
-            return feature, digest.hexdigest()
 
     async def _fingerprint_page(
         self, context: TaskContext, page: list[UUID], *, attempt: str
@@ -256,6 +209,9 @@ class SimilarityIndexMaintainer:
             "decode_milliseconds": 0,
             "feature_extraction_milliseconds": 0,
             "normalized_pixel_hash_milliseconds": 0,
+            "normalized_source_bytes": 0,
+            "normalized_images_resized": 0,
+            "detail_features_generated": 0,
         }
         task = getattr(context, "task", None)
         saved = dict(getattr(task, "checkpoint", {}) or {})
@@ -478,91 +434,45 @@ class SimilarityIndexMaintainer:
                     evidence_epoch=evidence_epoch,
                 )
 
-            # Dimension preflight happens before any original stream is opened.
-            oversized_source = _source_exceeds_decode_limit(source)
-            if oversized_source:
+            bounded_source = source_requires_bounded_visual(source)
+            if bounded_source:
                 self._count("oversized_original_decodes_avoided")
 
-            preview: bytes | None = None
-            preview_error: ImmichApiError | None = None
-            async with self._fetch_slots:
+            async with self._fetch_slots, self._decode_slots:
                 started = perf_counter()
-                try:
-                    preview = await self._immich.get_bounded_preview(
-                        asset_id, max_bytes=MAX_SEARCH_PREVIEW_BYTES
-                    )
-                    self._count("preview_bytes_downloaded", len(preview))
-                except ImmichApiError as error:
-                    preview_error = error
-                finally:
-                    self._measure("preview_fetch", started)
+                normalized = await self._normalizer.normalize(context, asset_id, source)
+                self._measure("visual_normalization", started)
+                self._count("normalized_source_bytes", normalized.source_bytes)
+                if normalized.resized:
+                    self._count("normalized_images_resized")
 
-            feature = None
-            if preview is not None:
-                async with self._decode_slots:
-                    started = perf_counter()
-                    timings: dict[str, int] = {}
-                    feature = await asyncio.to_thread(
-                        extract_search_feature, preview, timings=timings
-                    )
-                    self._measure("decode_feature_wall", started)
-                    self._record_timings(timings)
-                    self._count("preview_decodes")
-
-            alpha_state = classify_source_alpha(source, bounded_content=preview)
-            origin = "preview"
-            if oversized_source:
-                if feature is None:
-                    reason = (
-                        f"bounded_rendition_unavailable: {preview_error}"
-                        if preview_error is not None
-                        else "bounded_preview_decode_failed"
-                    )
-                    return await self._failure(
-                        source,
-                        reason,
-                        alpha_state=alpha_state,
-                        asset_id=asset_id,
-                        attempt=attempt,
-                        evidence_epoch=evidence_epoch,
-                    )
-                origin = "bounded"
-                media_digest = sha256(preview, usedforsecurity=False).hexdigest()
-                if alpha_state == "unknown_alpha":
-                    self._count("alpha_uncertain_bounded_evidence")
-            else:
-                alpha_original_required = (
-                    feature is not None
-                    and source_can_have_alpha(source)
-                    and alpha_state == "unknown_alpha"
+                timings: dict[str, int] = {}
+                started = perf_counter()
+                feature = await asyncio.to_thread(
+                    extract_search_feature,
+                    normalized.content,
+                    timings=timings,
                 )
-                if feature is None or alpha_original_required:
-                    self._count("fallbacks_to_original")
-                    if alpha_original_required:
-                        self._count("alpha_preserving_original_fallbacks")
-                    try:
-                        async with self._fetch_slots, self._decode_slots:
-                            feature, media_digest = await self._original_fallback(context, asset_id)
-                        origin = "original"
-                        alpha_state = (
-                            "confirmed_alpha" if feature.has_alpha else "confirmed_opaque"
-                        )
-                    except (ImmichApiError, ValueError, OSError) as error:
-                        reason = (
-                            f"alpha-preserving original fallback failed: {error}"
-                            if alpha_original_required
-                            else f"preview unavailable ({preview_error}); fallback failed: {error}"
-                        )
-                        return await self._failure(
-                            source,
-                            reason,
-                            alpha_state=alpha_state,
-                            asset_id=asset_id,
-                            attempt=attempt,
-                            evidence_epoch=evidence_epoch,
-                        )
-                else:
-                    media_digest = sha256(preview, usedforsecurity=False).hexdigest()
+                detail = await asyncio.to_thread(
+                    extract_detail_feature,
+                    BytesIO(normalized.content),
+                    detect_file_format(normalized.content[:64]),
+                )
+                self._measure("decode_feature_wall", started)
+                self._record_timings(timings)
+
+            if feature is None or detail is None:
+                return await self._failure(
+                    source,
+                    "normalized_visual_feature_decode_failed",
+                    asset_id=asset_id,
+                    attempt=attempt,
+                    evidence_epoch=evidence_epoch,
+                )
+
+            alpha_state: SourceAlphaState = (
+                "confirmed_alpha" if normalized.has_alpha else "confirmed_opaque"
+            )
 
             await context.ensure_active()
             async with self._fetch_slots:
@@ -573,28 +483,68 @@ class SimilarityIndexMaintainer:
                 if not current.is_trashed:
                     await self._assets.refresh_asset(current, track_similarity_changes=False)
                 self._count("failed_or_skipped_attempts")
-                return False, "Immich source changed while search evidence was generated"
-            started = perf_counter()
+                return False, "Immich source changed while visual evidence was generated"
+
             saver = self._features.save
-            kwargs = {"origin": origin}
+            kwargs = {"origin": normalized.search_origin}
             if _accepts_parameter(saver, "source_alpha_state"):
                 kwargs["source_alpha_state"] = alpha_state
             if evidence_epoch is not None and _accepts_parameter(saver, "evidence_epoch"):
                 kwargs["evidence_epoch"] = evidence_epoch
-            saved_feature = await saver(source, media_digest, feature, **kwargs)
-            if saved_feature:
-                self._measure("db_persistence", started)
-                if origin == "preview":
-                    self._count("preview_fingerprints_generated")
-                elif origin == "bounded":
-                    self._count("bounded_fingerprints_generated")
-                    self._count("bounded_search_fingerprints_generated")
-                else:
-                    self._count("original_fingerprints_generated")
-                return True, None
+
+            started = perf_counter()
+            saved_feature = await saver(
+                source,
+                normalized.media_sha256,
+                feature,
+                **kwargs,
+            )
             self._measure("db_persistence", started)
-            self._count("failed_or_skipped_attempts")
-            return False, "synchronized source changed while preview evidence was being generated"
+            if not saved_feature:
+                self._count("failed_or_skipped_attempts")
+                return False, "synchronized source changed while visual evidence was saved"
+
+            if self._details is not None:
+                source_identity = search_source_identity(
+                    source,
+                    normalized.media_sha256,
+                    origin=normalized.search_origin,
+                )
+                detail_kwargs: dict[str, object] = {}
+                if evidence_epoch is not None and _accepts_parameter(
+                    self._details.save, "evidence_epoch"
+                ):
+                    detail_kwargs["evidence_epoch"] = evidence_epoch
+                detail_saved = await self._details.save(
+                    source_identity,
+                    asset_id,
+                    detail,
+                    normalized.detail_origin,
+                    **detail_kwargs,
+                )
+                if not detail_saved:
+                    self._count("failed_or_skipped_attempts")
+                    return False, "localized detail changed while visual evidence was saved"
+                self._count("detail_features_generated")
+
+            if normalized.source_kind == "original":
+                self._count("original_fingerprints_generated")
+                self._count("original_bytes_downloaded", normalized.source_bytes)
+                self._count("original_decodes")
+            else:
+                self._count("bounded_fingerprints_generated")
+                self._count("bounded_search_fingerprints_generated")
+                self._count("preview_bytes_downloaded", normalized.source_bytes)
+                self._count("preview_decodes")
+            return True, None
+        except VisualNormalizationError as error:
+            return await self._failure(
+                source,
+                str(error),
+                asset_id=asset_id,
+                attempt=attempt,
+                evidence_epoch=evidence_epoch,
+            )
         except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
             reason = f"{type(error).__name__}: {error}"
             return await self._failure(
