@@ -3236,14 +3236,22 @@ class CrossSourceDuplicateTaskHandler:
                         )
 
                 try:
-                    await self._integrity.analyze(
-                        context,
-                        asset.id,
-                        publish_progress=False,
-                        source=asset,
-                        original_path=None if shared_failed else prepared_path,
-                        original_source_bytes=None if shared_failed else prepared_bytes,
-                    )
+                    if prepared_path is not None and not shared_failed:
+                        await self._integrity.analyze(
+                            context,
+                            asset.id,
+                            publish_progress=False,
+                            source=asset,
+                            original_path=prepared_path,
+                            original_source_bytes=prepared_bytes,
+                        )
+                    else:
+                        await self._integrity.analyze(
+                            context,
+                            asset.id,
+                            publish_progress=False,
+                            source=asset,
+                        )
                 except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
                     unavailable += 1
                     logger.warning(
