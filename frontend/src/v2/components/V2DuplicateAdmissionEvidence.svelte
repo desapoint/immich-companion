@@ -23,7 +23,7 @@
   const intermediateCount = $derived(linkDepth === null ? 0 : linkedIntermediateCount(linkDepth));
   const linkLabel = $derived(
     linkedAdmission && admittedBy
-      ? `Linked through ${admittedBy.asset.original_file_name}; ${intermediateCount} ${intermediateCount === 1 ? 'image' : 'images'} in between the reference and this image. Open linked asset in a new tab.`
+      ? `Linked through ${admittedBy.asset.original_file_name}; ${intermediateCount} ${intermediateCount === 1 ? 'image' : 'images'} in between the group admission reference and this image. Open linked asset in a new tab.`
       : '',
   );
 </script>
