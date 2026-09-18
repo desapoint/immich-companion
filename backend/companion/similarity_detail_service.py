@@ -8,11 +8,11 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from io import BytesIO
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
+from PIL import Image
 from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
@@ -29,7 +29,7 @@ from companion.similarity_detail import (
     DetailDiagnostics,
     DetailFeature,
     detail_diagnostics,
-    extract_detail_feature,
+    extract_detail_feature_from_image,
 )
 from companion.similarity_generation import (
     SimilarityEvidenceEpochRepository,
@@ -272,12 +272,19 @@ class SimilarityDetailMaintainer:
         }
 
     @staticmethod
-    async def _detail_from_content(content: bytes) -> DetailFeature | None:
-        return await asyncio.to_thread(
-            extract_detail_feature,
-            BytesIO(content),
-            "png" if content.startswith(b"\\x89PNG") else "jpeg",
-        )
+    async def _detail_from_normalized(normalized) -> DetailFeature | None:
+        def build() -> DetailFeature | None:
+            image = Image.frombytes(
+                normalized.pixel_mode,
+                (normalized.width, normalized.height),
+                normalized.pixel_bytes,
+            )
+            try:
+                return extract_detail_feature_from_image(image)
+            finally:
+                image.close()
+
+        return await asyncio.to_thread(build)
 
     @staticmethod
     def _same_source(live: ImmichAsset, search: AssetSimilaritySearchFeatureRecord) -> bool:
@@ -338,7 +345,7 @@ class SimilarityDetailMaintainer:
                     self.counters["detail_features_unavailable"] += 1
                     return False
 
-            feature = await self._detail_from_content(normalized.content)
+            feature = await self._detail_from_normalized(normalized)
             if feature is None:
                 self.counters["detail_features_unavailable"] += 1
                 return False
