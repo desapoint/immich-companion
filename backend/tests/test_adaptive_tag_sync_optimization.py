@@ -1,5 +1,6 @@
 """Regression coverage for bounded adaptive tag-sync writes."""
 
+import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -56,3 +57,38 @@ async def test_asset_oriented_tag_sync_batches_generation_writes_by_tag() -> Non
         (TAG_ONE, [ASSET_ONE, ASSET_TWO], 17),
         (TAG_TWO, [ASSET_ONE], 17),
     ]
+
+
+@pytest.mark.asyncio
+async def test_asset_membership_replacements_run_concurrently_within_wave() -> None:
+    class Immich:
+        async def get_asset(self, asset_id: UUID):
+            return SimpleNamespace(id=asset_id, includes_tags=True, tags=[])
+
+    class Repository:
+        def __init__(self) -> None:
+            self.active = 0
+            self.max_active = 0
+
+        async def replace_asset_tag_memberships(self, asset_id: UUID, tag_ids: list[UUID]):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            await asyncio.sleep(0)
+            self.active -= 1
+
+        async def upsert_tag_memberships(
+            self, tag_id: UUID, asset_ids: list[UUID], generation: int
+        ) -> int:
+            raise AssertionError("empty tag payloads should not trigger generation upserts")
+
+    repository = Repository()
+    result = await reconcile_generation_asset_tags(
+        Immich(),  # type: ignore[arg-type]
+        repository,  # type: ignore[arg-type]
+        [ASSET_ONE, ASSET_TWO],
+        generation=17,
+        concurrency=2,
+    )
+
+    assert result == (0, 2, 0)
+    assert repository.max_active == 2
