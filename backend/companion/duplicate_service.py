@@ -90,7 +90,12 @@ from companion.models import (
     AssetSimilaritySearchFeatureRecord,
 )
 from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
-from companion.similarity_repository import PairSimilarityEvidence, SimilarityRepository
+from companion.similarity_repository import (
+    PairSimilarityEvidence,
+    SimilarityRepository,
+    canonical_pair,
+)
+from companion.similarity_scan_repository import SimilarityScanRepository
 from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.stack_service import StackSelectionError, StackService
 from companion.task_coordinator import (
@@ -364,6 +369,7 @@ class CrossSourceDuplicateService:
         discovery: GroupDiscoveryProvider | None = None,
         stacks: StackService | None = None,
         search_features: SimilaritySearchRepository | None = None,
+        scan_evidence: SimilarityScanRepository | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -376,6 +382,7 @@ class CrossSourceDuplicateService:
         self._policy = policy
         self._similarity = similarity
         self._search_features = search_features
+        self._scan_evidence = scan_evidence
         self._discovery = discovery or ImmichDuplicateProvider(immich)
         self._stacks = stacks
 
@@ -604,6 +611,77 @@ class CrossSourceDuplicateService:
             ),
         )
 
+    async def _persisted_scan_edges(
+        self,
+        groups: list[DiscoveredGroup],
+        features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+        live_edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
+    ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
+        """Reuse the exact pair evidence that admitted members into the current scan.
+
+        Missing scan edges (for example a linked member below the anchor threshold)
+        deliberately fall back to the live current-pipeline comparison.
+        """
+
+        if self._scan_evidence is None:
+            return {}
+        source_identities = {
+            asset_id: feature.source_identity for asset_id, feature in features.items()
+        }
+        by_scan: dict[UUID, list[DiscoveredGroup]] = {}
+        for group in groups:
+            evidence = next(
+                (
+                    item
+                    for item in group.evidence
+                    if item.discovery_source is DiscoverySource.COMPANION_SIMILARITY
+                ),
+                None,
+            )
+            raw_scan_id = evidence.metadata.get("scan_id") if evidence is not None else None
+            if raw_scan_id is None:
+                continue
+            try:
+                scan_id = UUID(raw_scan_id)
+            except (TypeError, ValueError):
+                continue
+            by_scan.setdefault(scan_id, []).append(group)
+
+        exposed: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+        for scan_id, scan_groups in by_scan.items():
+            asset_ids = list(
+                dict.fromkeys(
+                    asset.id for group in scan_groups for asset in group.assets
+                )
+            )
+            persisted = await self._scan_evidence.pair_evidence(
+                scan_id,
+                asset_ids,
+                source_identities=source_identities,
+            )
+            for group in scan_groups:
+                if len(group.assets) < 2:
+                    continue
+                reference_id = group.assets[0].id
+                for member in group.assets[1:]:
+                    key = (reference_id, member.id)
+                    evidence = persisted.get(canonical_pair(*key))
+                    if evidence is None:
+                        continue
+                    live = live_edges.get(key)
+                    # Pair rows persist the validated source kind, while live detail
+                    # records carry request-relative rendition dimensions. Keep the
+                    # historical scan score but enrich it with those dimensions.
+                    if (
+                        live is not None
+                        and evidence.detail_source is not None
+                        and live.detail_source is not None
+                        and str(live.detail_source) == evidence.detail_source
+                    ):
+                        evidence = replace(evidence, detail_source=live.detail_source)
+                    exposed[key] = evidence
+        return exposed
+
     async def _snapshot_groups(
         self,
         groups: list[DiscoveredGroup],
@@ -644,10 +722,16 @@ class CrossSourceDuplicateService:
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
             similarity_groups = [self._stable_similarity_source(group) for group in groups]
-            edges = await self._similarity.reference_edges(
+            live_edges = await self._similarity.reference_edges(
                 [[asset.id for asset in group.assets] for group in similarity_groups],
                 search_features,
             )
+            scan_edges = await self._persisted_scan_edges(
+                similarity_groups,
+                search_features,
+                live_edges,
+            )
+            edges = {**live_edges, **scan_edges}
             result = self._apply_similarity(
                 result,
                 similarity_groups,
@@ -710,7 +794,13 @@ class CrossSourceDuplicateService:
 
         stable_source = self._stable_similarity_source(source)
         stable_ids = [asset.id for asset in stable_source.assets]
-        stable_edges = await self._similarity.reference_edges([stable_ids], features)
+        stable_live_edges = await self._similarity.reference_edges([stable_ids], features)
+        stable_scan_edges = await self._persisted_scan_edges(
+            [stable_source],
+            features,
+            stable_live_edges,
+        )
+        stable_edges = {**stable_live_edges, **stable_scan_edges}
         result = self._apply_similarity(
             result,
             [stable_source],
