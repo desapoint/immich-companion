@@ -32,7 +32,7 @@ from companion.v2.legacy_task_coordinator import TASK_UPDATE_CHANNEL
 
 # Required broad compatibility kill-switch. Bump for any semantic Appearance-pipeline
 # change that can alter fingerprints, candidates, validation, scores, or grouping.
-SIMILARITY_EVIDENCE_CODE_GENERATION = 2
+SIMILARITY_EVIDENCE_CODE_GENERATION = 3
 
 EVIDENCE_BOUND_TASK_TYPES = (
     "similarity_scan",
