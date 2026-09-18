@@ -7,8 +7,8 @@ from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID
 
-import pyvips
 import pytest
+import pyvips
 from PIL import Image
 
 from companion.immich import ImmichAsset
