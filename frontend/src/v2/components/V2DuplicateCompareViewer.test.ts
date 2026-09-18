@@ -174,6 +174,7 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).toContain('Images in between');
     expect(body).toContain('>2</b>');
     expect(body).toContain('does not count either endpoint');
+    expect(body).toContain('Changing the comparison reference does not rewrite the stored admission chain');
     expect(body).not.toContain('Link depth');
     expect(body).toContain('Technical linked data');
     expect(body).toContain('fingerprint-123');
