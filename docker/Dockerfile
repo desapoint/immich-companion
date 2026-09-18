@@ -16,7 +16,7 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     VIRTUAL_ENV=/opt/venv
 
 RUN apt-get update \
-    && apt-get install --yes --no-install-recommends libvips-dev dcraw \
+    && apt-get install --yes --no-install-recommends build-essential libvips-dev dcraw \
     && rm -rf /var/lib/apt/lists/* \
     && python -m venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
