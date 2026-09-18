@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import warnings
-from contextlib import suppress
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -50,6 +49,7 @@ class NormalizedVisualImage:
     source_height: int | None
     resized: bool
     has_alpha: bool
+    source_bytes: int
 
     @property
     def media_sha256(self) -> str:
@@ -192,6 +192,7 @@ class SimilarityVisualNormalizer:
             source_height=asset.height,
             resized=resized,
             has_alpha=has_alpha,
+            source_bytes=len(content),
         )
 
     async def normalize(
@@ -222,8 +223,7 @@ class SimilarityVisualNormalizer:
             except (ImmichApiError, OSError, VisualNormalizationError) as error:
                 errors.append(f"{source_kind}: {error}")
 
-        with suppress(Exception):
-            await context.ensure_active()
+        await context.ensure_active()
         raise VisualNormalizationError(
             "visual_normalization_unavailable: " + "; ".join(errors)
         )
