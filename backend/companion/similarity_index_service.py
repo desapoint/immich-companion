@@ -407,14 +407,35 @@ class SimilarityIndexMaintainer:
         return False, reason
 
     async def _fingerprint(
-        self, context: TaskContext, asset_id: UUID, source: ImmichAsset | None, *, attempt: str
+        self,
+        context: TaskContext,
+        asset_id: UUID,
+        source: ImmichAsset | None,
+        *,
+        attempt: str,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
     ) -> tuple[bool, str | None]:
         async with self._inflight_slots:
             await context.ensure_active()
-            return await self._fingerprint_unbounded(context, asset_id, source, attempt=attempt)
+            return await self._fingerprint_unbounded(
+                context,
+                asset_id,
+                source,
+                attempt=attempt,
+                original_path=original_path,
+                original_source_bytes=original_source_bytes,
+            )
 
     async def _fingerprint_unbounded(
-        self, context: TaskContext, asset_id: UUID, source: ImmichAsset | None, *, attempt: str
+        self,
+        context: TaskContext,
+        asset_id: UUID,
+        source: ImmichAsset | None,
+        *,
+        attempt: str,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
     ) -> tuple[bool, str | None]:
         epoch_getter = getattr(self._features, "current_evidence_epoch", None)
         evidence_epoch = await epoch_getter() if epoch_getter is not None else None
@@ -446,7 +467,13 @@ class SimilarityIndexMaintainer:
                 )
 
             started = perf_counter()
-            normalized = await self._normalizer.normalize(context, asset_id, source)
+            normalized = await self._normalizer.normalize(
+                context,
+                asset_id,
+                source,
+                original_path=original_path,
+                original_source_bytes=original_source_bytes,
+            )
             self._measure("visual_normalization", started)
             self._count("normalized_source_bytes", normalized.source_bytes)
             if normalized.resized:
@@ -568,24 +595,59 @@ class SimilarityIndexMaintainer:
             and left.height == right.height
         )
 
-    async def ensure_asset(self, context: TaskContext, asset_id: UUID) -> bool:
+    async def has_current(self, asset_id: UUID) -> bool:
+        """Return whether one asset already has complete current visual evidence."""
+
+        return await self._features.has_current(asset_id)
+
+    async def ensure_asset(
+        self,
+        context: TaskContext,
+        asset_id: UUID,
+        *,
+        source: ImmichAsset | None = None,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
+    ) -> bool:
         """Ensure one image has complete current search + localized-detail evidence."""
 
-        if await self._features.has_current(asset_id):
+        if await self.has_current(asset_id):
             self._count("fingerprints_reused")
             return True
-        return await self.fingerprint_changed_asset(context, asset_id)
+        return await self.fingerprint_changed_asset(
+            context,
+            asset_id,
+            source=source,
+            original_path=original_path,
+            original_source_bytes=original_source_bytes,
+        )
 
-    async def fingerprint_changed_asset(self, context: TaskContext, asset_id: UUID) -> bool:
+    async def fingerprint_changed_asset(
+        self,
+        context: TaskContext,
+        asset_id: UUID,
+        *,
+        source: ImmichAsset | None = None,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
+    ) -> bool:
         """Best-effort update for one synchronized change with transient retry only."""
 
+        known_source = source
         for attempt in ("incremental", "incremental_retry"):
             await context.ensure_active()
-            started = perf_counter()
-            known = await self._assets.get_immich_assets([asset_id])
-            self._measure("metadata_preparation", started)
+            if known_source is None:
+                started = perf_counter()
+                known = await self._assets.get_immich_assets([asset_id])
+                self._measure("metadata_preparation", started)
+                known_source = known.get(asset_id)
             succeeded, reason = await self._fingerprint(
-                context, asset_id, known.get(asset_id), attempt=attempt
+                context,
+                asset_id,
+                known_source,
+                attempt=attempt,
+                original_path=original_path,
+                original_source_bytes=original_source_bytes,
             )
             if succeeded:
                 return True
