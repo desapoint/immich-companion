@@ -21,12 +21,12 @@ from companion.image_decode import (
     ImageDecodeResult,
 )
 from companion.integrity import DetectedFormat
+from companion.preservation_features import PIXEL_NORMALIZATION_VERSION
 from companion.raw_isolation import decode_raw_isolated
 from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 
 SIMILARITY_MODEL_VERSION = "appearance-v1"
 SIMILARITY_FEATURE_VERSION = 3
-PIXEL_NORMALIZATION_VERSION = 1
 LUMINANCE_VECTOR_SIDE = 16
 LUMINANCE_PLANE_LENGTH = LUMINANCE_VECTOR_SIDE**2
 # Feature v3 stores normalized visible luminance followed by the raw alpha plane.

@@ -30,7 +30,7 @@ from companion.v2.legacy_task_coordinator import TASK_UPDATE_CHANNEL
 
 # Required broad compatibility kill-switch. Bump for any semantic Appearance-pipeline
 # change that can alter fingerprints, candidates, validation, scores, or grouping.
-SIMILARITY_EVIDENCE_CODE_GENERATION = 1
+SIMILARITY_EVIDENCE_CODE_GENERATION = 2
 
 EVIDENCE_BOUND_TASK_TYPES = (
     "similarity_scan",
@@ -82,12 +82,6 @@ def similarity_generation_descriptor() -> dict[str, object]:
         BOUNDED_POLICY_FINGERPRINT,
     )
     from companion.similarity_detail import DETAIL_FEATURE_VERSION
-    from companion.similarity_features import (
-        PIXEL_NORMALIZATION_VERSION,
-        SIMILARITY_CONFIG_FINGERPRINT,
-        SIMILARITY_FEATURE_VERSION,
-        SIMILARITY_MODEL_VERSION,
-    )
     from companion.similarity_grouping import SIMILARITY_GROUPING_VERSION
     from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION
     from companion.similarity_search_features import (
@@ -102,12 +96,6 @@ def similarity_generation_descriptor() -> dict[str, object]:
             "model": SEARCH_MODEL_VERSION,
             "feature": SEARCH_FEATURE_VERSION,
             "config": SEARCH_CONFIG_FINGERPRINT,
-        },
-        "legacy_visual": {
-            "model": SIMILARITY_MODEL_VERSION,
-            "feature": SIMILARITY_FEATURE_VERSION,
-            "pixel_normalization": PIXEL_NORMALIZATION_VERSION,
-            "config": SIMILARITY_CONFIG_FINGERPRINT,
         },
         "detail": {"feature": DETAIL_FEATURE_VERSION},
         "comparison": {"version": SIMILARITY_COMPARISON_VERSION},

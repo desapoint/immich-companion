@@ -168,22 +168,25 @@ class AssetSimilarityDetailFeatureRecord(Base):
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
-class AssetSimilarityFeatureRecord(Base):
-    """Latest compatible compact visual feature for one active asset."""
+class AssetImagePreservationFeatureRecord(Base):
+    """Original-analysis image evidence kept separate from Appearance discovery."""
 
-    __tablename__ = "asset_similarity_features"
+    __tablename__ = "asset_image_preservation_features"
 
     asset_id: Mapped[UUID] = mapped_column(
         Uuid,
         ForeignKey("assets.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
-    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    extractor_model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    extractor_feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    extractor_config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    preservation_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    preservation_config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source_file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     luminance_vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -208,9 +211,15 @@ class AssetSimilarityFeatureRecord(Base):
 
     __table_args__ = (
         Index(
-            "ix_asset_similarity_features_version",
-            model_version,
-            feature_version,
+            "ix_asset_image_preservation_features_extractor_version",
+            extractor_model_version,
+            extractor_feature_version,
+            extractor_config_fingerprint,
+        ),
+        Index(
+            "ix_asset_image_preservation_features_version",
+            preservation_version,
+            preservation_config_fingerprint,
         ),
     )
 
@@ -286,7 +295,7 @@ class SimilarityScanRecord(Base):
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
     comparison_version: Mapped[int] = mapped_column(Integer, nullable=False)
     config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
-    grouping_version: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    grouping_version: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict")
     anchor_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)

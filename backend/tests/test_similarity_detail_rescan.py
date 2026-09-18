@@ -55,33 +55,19 @@ class _Database:
         yield _Session()
 
 
-def _legacy_feature(asset_id: UUID, source_sha256: str):
+def _search_feature(asset_id: UUID, source_identity: str):
     return SimpleNamespace(
         asset_id=asset_id,
-        model_version="legacy-appearance-v1",
+        model_version="appearance-preview-v1",
         feature_version=1,
-        config_fingerprint="legacy-config",
-        source_sha256=source_sha256,
+        config_fingerprint="search-config",
+        source_identity=source_identity,
         width=100,
         height=100,
         luminance_vector=bytes([128] * 256),
         perceptual_hash="0" * 16,
         color_histogram=bytes([5] * 48),
-        thumbnail_sha256=source_sha256,
-        pixel_normalization_version=1,
-        pixel_sha256=source_sha256,
-        bit_depth=8,
-        channel_count=3,
-        has_alpha=False,
-        color_space="RGB",
-        orientation=None,
-        icc_profile_present=False,
-        has_exif=False,
-        has_capture_time=False,
-        has_camera_info=False,
-        has_gps=False,
-        has_orientation_metadata=False,
-        metadata_richness=0,
+        thumbnail_sha256=source_identity,
     )
 
 
@@ -118,13 +104,13 @@ def _detail_records():
 
 def _comparison_features():
     return {
-        LEFT: _legacy_feature(LEFT, "1" * 64),
-        RIGHT: _legacy_feature(RIGHT, "2" * 64),
+        LEFT: _search_feature(LEFT, "1" * 64),
+        RIGHT: _search_feature(RIGHT, "2" * 64),
     }
 
 
 @pytest.mark.asyncio
-async def test_current_detail_refines_legacy_duplicate_pair(monkeypatch) -> None:
+async def test_current_detail_refines_search_duplicate_pair(monkeypatch) -> None:
     class Details:
         async def get_current_many(self, _asset_ids):
             return _detail_records()

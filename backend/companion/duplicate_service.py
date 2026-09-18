@@ -79,16 +79,24 @@ from companion.immich import (
 from companion.integrity import decode_immich_sha1
 from companion.integrity_repository import (
     IntegrityRepository,
+    preservation_feature_freshness,
     report_freshness,
-    similarity_feature_freshness,
 )
 from companion.integrity_service import INTEGRITY_TASK_TYPE, IntegrityTaskHandler
 from companion.models import (
     ActionPlanRecord,
+    AssetImagePreservationFeatureRecord,
     AssetIntegrityReportRecord,
-    AssetSimilarityFeatureRecord,
+    AssetSimilaritySearchFeatureRecord,
 )
-from companion.similarity_repository import PairSimilarityEvidence, SimilarityRepository
+from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
+from companion.similarity_repository import (
+    PairSimilarityEvidence,
+    SimilarityRepository,
+    canonical_pair,
+)
+from companion.similarity_scan_repository import SimilarityScanRepository
+from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.stack_service import StackSelectionError, StackService
 from companion.task_coordinator import (
     PermanentTaskError,
@@ -360,6 +368,8 @@ class CrossSourceDuplicateService:
         similarity: SimilarityRepository | None = None,
         discovery: GroupDiscoveryProvider | None = None,
         stacks: StackService | None = None,
+        search_features: SimilaritySearchRepository | None = None,
+        scan_evidence: SimilarityScanRepository | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -371,6 +381,8 @@ class CrossSourceDuplicateService:
         self._reviews = reviews
         self._policy = policy
         self._similarity = similarity
+        self._search_features = search_features
+        self._scan_evidence = scan_evidence
         self._discovery = discovery or ImmichDuplicateProvider(immich)
         self._stacks = stacks
 
@@ -442,11 +454,11 @@ class CrossSourceDuplicateService:
 
         options = await self._options(options)
         groups, reports, features, result = await self._snapshot(options)
-        include_similarity = self._similarity is not None
+        include_preservation = self._similarity is not None
         candidates = self._verification_candidates(
             groups,
             options,
-            include_similarity=include_similarity,
+            include_preservation=include_preservation,
         )
         pending_count = len(
             self._pending_verification(
@@ -454,7 +466,7 @@ class CrossSourceDuplicateService:
                 reports,
                 features,
                 options,
-                include_similarity=include_similarity,
+                include_preservation=include_preservation,
             )
         )
         task_id: UUID | None = None
@@ -575,10 +587,100 @@ class CrossSourceDuplicateService:
     ) -> tuple[
         list[DiscoveredGroup],
         dict[UUID, AssetIntegrityReportRecord],
-        dict[UUID, AssetSimilarityFeatureRecord],
+        dict[UUID, AssetImagePreservationFeatureRecord],
         CrossSourceDuplicateResult,
     ]:
         return await self._snapshot_groups(await self._live_groups(), options)
+
+    @staticmethod
+    def _stable_similarity_source(group: DiscoveredGroup) -> DiscoveredGroup:
+        """Keep the immutable scan anchor as the default comparison reference."""
+
+        anchor = (
+            group.similarity_validation.anchor_asset_id
+            if group.similarity_validation is not None
+            else None
+        )
+        return replace(
+            group,
+            assets=tuple(
+                sorted(
+                    group.assets,
+                    key=lambda asset: (asset.id != anchor, asset.id.int),
+                )
+            ),
+        )
+
+    async def _persisted_scan_edges(
+        self,
+        groups: list[DiscoveredGroup],
+        features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+        live_edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
+    ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
+        """Reuse the exact pair evidence that admitted members into the current scan.
+
+        Missing scan edges (for example a linked member below the anchor threshold)
+        deliberately fall back to the live current-pipeline comparison.
+        """
+
+        if self._scan_evidence is None:
+            return {}
+        source_identities = {
+            asset_id: feature.source_identity for asset_id, feature in features.items()
+        }
+        by_scan: dict[UUID, list[DiscoveredGroup]] = {}
+        for group in groups:
+            evidence = next(
+                (
+                    item
+                    for item in group.evidence
+                    if item.discovery_source is DiscoverySource.COMPANION_SIMILARITY
+                ),
+                None,
+            )
+            raw_scan_id = evidence.metadata.get("scan_id") if evidence is not None else None
+            if raw_scan_id is None:
+                continue
+            try:
+                scan_id = UUID(raw_scan_id)
+            except (TypeError, ValueError):
+                continue
+            by_scan.setdefault(scan_id, []).append(group)
+
+        exposed: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+        for scan_id, scan_groups in by_scan.items():
+            asset_ids = list(
+                dict.fromkeys(
+                    asset.id for group in scan_groups for asset in group.assets
+                )
+            )
+            persisted = await self._scan_evidence.pair_evidence(
+                scan_id,
+                asset_ids,
+                source_identities=source_identities,
+            )
+            for group in scan_groups:
+                if len(group.assets) < 2:
+                    continue
+                reference_id = group.assets[0].id
+                for member in group.assets[1:]:
+                    key = (reference_id, member.id)
+                    evidence = persisted.get(canonical_pair(*key))
+                    if evidence is None:
+                        continue
+                    live = live_edges.get(key)
+                    # Pair rows persist the validated source kind, while live detail
+                    # records carry request-relative rendition dimensions. Keep the
+                    # historical scan score but enrich it with those dimensions.
+                    if (
+                        live is not None
+                        and evidence.detail_source is not None
+                        and live.detail_source is not None
+                        and str(live.detail_source) == evidence.detail_source
+                    ):
+                        evidence = replace(evidence, detail_source=live.detail_source)
+                    exposed[key] = evidence
+        return exposed
 
     async def _snapshot_groups(
         self,
@@ -587,7 +689,7 @@ class CrossSourceDuplicateService:
     ) -> tuple[
         list[DiscoveredGroup],
         dict[UUID, AssetIntegrityReportRecord],
-        dict[UUID, AssetSimilarityFeatureRecord],
+        dict[UUID, AssetImagePreservationFeatureRecord],
         CrossSourceDuplicateResult,
     ]:
         report_ids = [
@@ -603,34 +705,43 @@ class CrossSourceDuplicateService:
             for asset in group.assets
             if asset.asset_type == "IMAGE" and not asset.is_offline
         ]
-        loaded_features = (
-            await self._reports.get_similarity_features(image_ids)
-            if self._similarity is not None
+        source_assets = {asset.id: asset for group in groups for asset in group.assets}
+
+        loaded_preservation = await self._reports.get_preservation_features(image_ids)
+        preservation = {
+            asset_id: feature
+            for asset_id, feature in loaded_preservation.items()
+            if preservation_feature_freshness(feature, source_assets[asset_id]) == "current"
+        }
+        search_features = (
+            await self._search_features.get_current_many(image_ids)
+            if self._similarity is not None and self._search_features is not None
             else {}
         )
-        source_assets = {asset.id: asset for group in groups for asset in group.assets}
-        features = {
-            asset_id: feature
-            for asset_id, feature in loaded_features.items()
-            if similarity_feature_freshness(feature, source_assets[asset_id]) == "current"
-        }
+
         result = self.assemble(groups, reports, options, self._immich)
         if self._similarity is not None:
-            similarity_groups = [
-                replace(
-                    group,
-                    assets=tuple(sorted(group.assets, key=lambda asset: asset.id.int)),
-                )
-                for group in groups
-            ]
-            edges = await self._similarity.reference_edges(
+            similarity_groups = [self._stable_similarity_source(group) for group in groups]
+            live_edges = await self._similarity.reference_edges(
                 [[asset.id for asset in group.assets] for group in similarity_groups],
-                features,
+                search_features,
             )
-            result = self._apply_similarity(result, similarity_groups, edges, features)
+            scan_edges = await self._persisted_scan_edges(
+                similarity_groups,
+                search_features,
+                live_edges,
+            )
+            edges = {**live_edges, **scan_edges}
+            result = self._apply_similarity(
+                result,
+                similarity_groups,
+                edges,
+                search_features,
+                preservation,
+            )
         if self._reviews is not None:
             result = await self._apply_review_states(result)
-        return groups, reports, features, result
+        return groups, reports, preservation, result
 
     async def similarity_reference(
         self,
@@ -639,7 +750,7 @@ class CrossSourceDuplicateService:
     ) -> ExactDuplicateGroup:
         """Return one live group relative to a requested member-owned reference."""
 
-        if self._similarity is None:
+        if self._similarity is None or self._search_features is None:
             raise RuntimeError("Duplicate similarity persistence is unavailable")
         source = next(
             (group for group in await self._live_groups() if group.group_id == group_id),
@@ -660,33 +771,48 @@ class CrossSourceDuplicateService:
         ]
         reports = await self._reports.get_many(report_ids)
         image_assets = [
-            asset for asset in source.assets if asset.asset_type == "IMAGE" and not asset.is_offline
+            asset
+            for asset in source.assets
+            if asset.asset_type == "IMAGE" and not asset.is_offline
         ]
-        loaded_features = await self._reports.get_similarity_features(
-            [asset.id for asset in image_assets]
-        )
-        features = {
-            asset.id: loaded_features[asset.id]
+        image_ids = [asset.id for asset in image_assets]
+        features = await self._search_features.get_current_many(image_ids)
+        loaded_preservation = await self._reports.get_preservation_features(image_ids)
+        preservation = {
+            asset.id: loaded_preservation[asset.id]
             for asset in image_assets
-            if asset.id in loaded_features
-            and similarity_feature_freshness(loaded_features[asset.id], asset) == "current"
+            if asset.id in loaded_preservation
+            and preservation_feature_freshness(loaded_preservation[asset.id], asset)
+            == "current"
         }
+
         ordered_ids = [
             request.reference_asset_id,
             *(asset.id for asset in source.assets if asset.id != request.reference_asset_id),
         ]
         result = self.assemble([source], reports, options, self._immich)
-        stable_source = replace(
-            source,
-            assets=tuple(sorted(source.assets, key=lambda asset: asset.id.int)),
-        )
+
+        stable_source = self._stable_similarity_source(source)
         stable_ids = [asset.id for asset in stable_source.assets]
-        stable_edges = await self._similarity.reference_edges([stable_ids], features)
-        result = self._apply_similarity(result, [stable_source], stable_edges, features)
+        stable_live_edges = await self._similarity.reference_edges([stable_ids], features)
+        stable_scan_edges = await self._persisted_scan_edges(
+            [stable_source],
+            features,
+            stable_live_edges,
+        )
+        stable_edges = {**stable_live_edges, **stable_scan_edges}
+        result = self._apply_similarity(
+            result,
+            [stable_source],
+            stable_edges,
+            features,
+            preservation,
+        )
         if ordered_ids == stable_ids:
             if self._reviews is not None:
                 result = await self._apply_review_states(result)
             return result.groups[0]
+
         edges = await self._similarity.reference_edges([ordered_ids], features)
         reordered_source = replace(
             source,
@@ -697,6 +823,7 @@ class CrossSourceDuplicateService:
             [reordered_source],
             edges,
             features,
+            preservation,
             update_group_contract=False,
         )
         if self._reviews is not None:
@@ -704,11 +831,30 @@ class CrossSourceDuplicateService:
         return result.groups[0]
 
     @staticmethod
+    def _same_normalized_pixels(
+        left: AssetImagePreservationFeatureRecord | None,
+        right: AssetImagePreservationFeatureRecord | None,
+    ) -> bool:
+        """Compare exact decoded pixels only from current original preservation evidence."""
+
+        return bool(
+            left is not None
+            and right is not None
+            and left.origin == "original"
+            and right.origin == "original"
+            and left.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+            and right.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+            and left.pixel_sha256
+            and left.pixel_sha256 == right.pixel_sha256
+        )
+
+    @staticmethod
     def _apply_similarity(
         result: CrossSourceDuplicateResult,
         source_groups: list[DiscoveredGroup],
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
-        features: dict[UUID, AssetSimilarityFeatureRecord],
+        features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+        preservation_features: dict[UUID, AssetImagePreservationFeatureRecord],
         *,
         update_group_contract: bool = True,
     ) -> CrossSourceDuplicateResult:
@@ -737,10 +883,16 @@ class CrossSourceDuplicateService:
                 else {}
             )
             members: list[DuplicateMember] = []
+            reference_preservation = preservation_features.get(reference.id)
             for member in group.members:
                 source_member = source_members[member.id]
                 edge = edges.get((reference.id, member.id))
                 feature = features.get(member.id)
+                preservation_feature = preservation_features.get(member.id)
+                exact_pixel_match = CrossSourceDuplicateService._same_normalized_pixels(
+                    reference_preservation,
+                    preservation_feature,
+                )
                 if member.id == reference.id:
                     similarity = DuplicateSimilarityEvidence(
                         state="reference",
@@ -755,7 +907,7 @@ class CrossSourceDuplicateService:
                         aspect_ratio_difference=0.0 if feature is not None else None,
                         dimensions_equal=True if feature is not None else None,
                         exact_thumbnail_match=True if feature is not None else None,
-                        exact_pixel_match=True if feature is not None else None,
+                        exact_pixel_match=(exact_pixel_match if preservation_feature else None),
                         model_version=feature.model_version if feature is not None else None,
                         feature_version=feature.feature_version if feature is not None else None,
                     )
@@ -773,7 +925,7 @@ class CrossSourceDuplicateService:
                         aspect_ratio_difference=edge.aspect_ratio_difference,
                         dimensions_equal=edge.dimensions_equal,
                         exact_thumbnail_match=edge.exact_thumbnail_match,
-                        exact_pixel_match=edge.exact_pixel_match,
+                        exact_pixel_match=exact_pixel_match,
                         detail_changed_percent=edge.detail_changed_percent,
                         detail_source=edge.detail_source,
                         model_version=edge.model_version,
@@ -791,24 +943,29 @@ class CrossSourceDuplicateService:
                     )
                 preservation = (
                     DuplicatePreservationEvidence(
-                        pixel_normalization_version=feature.pixel_normalization_version,
-                        pixel_sha256=feature.pixel_sha256,
-                        decoded_width=feature.width,
-                        decoded_height=feature.height,
-                        bit_depth=feature.bit_depth,
-                        channel_count=feature.channel_count,
-                        has_alpha=feature.has_alpha,
-                        color_space=feature.color_space,
-                        orientation=feature.orientation,
-                        icc_profile_present=feature.icc_profile_present,
-                        has_exif=feature.has_exif,
-                        has_capture_time=feature.has_capture_time,
-                        has_camera_info=feature.has_camera_info,
-                        has_gps=feature.has_gps,
-                        has_orientation_metadata=feature.has_orientation_metadata,
-                        metadata_richness=feature.metadata_richness,
+                        origin=preservation_feature.origin,
+                        pixel_normalization_version=(
+                            preservation_feature.pixel_normalization_version
+                        ),
+                        pixel_sha256=preservation_feature.pixel_sha256,
+                        decoded_width=preservation_feature.width,
+                        decoded_height=preservation_feature.height,
+                        bit_depth=preservation_feature.bit_depth,
+                        channel_count=preservation_feature.channel_count,
+                        has_alpha=preservation_feature.has_alpha,
+                        color_space=preservation_feature.color_space,
+                        orientation=preservation_feature.orientation,
+                        icc_profile_present=preservation_feature.icc_profile_present,
+                        has_exif=preservation_feature.has_exif,
+                        has_capture_time=preservation_feature.has_capture_time,
+                        has_camera_info=preservation_feature.has_camera_info,
+                        has_gps=preservation_feature.has_gps,
+                        has_orientation_metadata=(
+                            preservation_feature.has_orientation_metadata
+                        ),
+                        metadata_richness=preservation_feature.metadata_richness,
                     )
-                    if feature is not None
+                    if preservation_feature is not None
                     else None
                 )
                 admission_source = admission_by_id.get(member.id)
@@ -1013,7 +1170,7 @@ class CrossSourceDuplicateService:
         groups: list[DiscoveredGroup],
         options: DuplicateAnalysisOptions,
         *,
-        include_similarity: bool = False,
+        include_preservation: bool = False,
     ) -> list[ImmichAsset]:
         candidates = {
             asset.id: asset
@@ -1023,7 +1180,7 @@ class CrossSourceDuplicateService:
             and (
                 asset.library_id is not None
                 or options.verify_upload_streams
-                or include_similarity
+                or include_preservation
                 and asset.asset_type == "IMAGE"
             )
         }
@@ -1034,26 +1191,26 @@ class CrossSourceDuplicateService:
         cls,
         groups: list[DiscoveredGroup],
         reports: dict[UUID, AssetIntegrityReportRecord],
-        features: dict[UUID, AssetSimilarityFeatureRecord],
+        features: dict[UUID, AssetImagePreservationFeatureRecord],
         options: DuplicateAnalysisOptions,
         *,
-        include_similarity: bool = False,
+        include_preservation: bool = False,
     ) -> list[ImmichAsset]:
         return [
             asset
             for asset in cls._verification_candidates(
                 groups,
                 options,
-                include_similarity=include_similarity,
+                include_preservation=include_preservation,
             )
             if (
                 (asset.library_id is not None or options.verify_upload_streams)
                 and report_freshness(reports.get(asset.id), asset) != "current"
             )
             or (
-                include_similarity
+                include_preservation
                 and asset.asset_type == "IMAGE"
-                and similarity_feature_freshness(features.get(asset.id), asset) != "current"
+                and preservation_feature_freshness(features.get(asset.id), asset) != "current"
             )
         ]
 
@@ -2822,7 +2979,7 @@ class CrossSourceDuplicateService:
 
 
 class CrossSourceDuplicateTaskHandler:
-    """Verify originals only for discovered duplicate and similarity groups."""
+    """Verify originals and populate preservation evidence for discovered groups."""
 
     task_type = CROSS_SOURCE_DUPLICATE_TASK_TYPE
     lane_key = INTEGRITY_TASK_TYPE
@@ -2835,14 +2992,14 @@ class CrossSourceDuplicateTaskHandler:
         reports: IntegrityRepository,
         integrity: IntegrityTaskHandler,
         *,
-        include_similarity: bool = False,
+        include_preservation: bool = False,
         discovery: GroupDiscoveryProvider | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._reports = reports
         self._integrity = integrity
-        self._include_similarity = include_similarity
+        self._include_preservation = include_preservation
         self._discovery = discovery or ImmichDuplicateProvider(immich)
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
@@ -2854,7 +3011,7 @@ class CrossSourceDuplicateTaskHandler:
                 if (
                     asset.library_id is not None
                     or options.verify_upload_streams
-                    or self._include_similarity
+                    or self._include_preservation
                     and asset.asset_type == "IMAGE"
                 ):
                     if asset.file_size_bytes is None:
@@ -2863,8 +3020,8 @@ class CrossSourceDuplicateTaskHandler:
 
         reports = await self._reports.get_many(list(candidates))
         features = (
-            await self._reports.get_similarity_features(list(candidates))
-            if self._include_similarity
+            await self._reports.get_preservation_features(list(candidates))
+            if self._include_preservation
             else {}
         )
         pending = [
@@ -2881,9 +3038,9 @@ class CrossSourceDuplicateTaskHandler:
                     and report_freshness(reports.get(asset.id), asset) != "current"
                 )
                 or (
-                    self._include_similarity
+                    self._include_preservation
                     and asset.asset_type == "IMAGE"
-                    and similarity_feature_freshness(features.get(asset.id), asset) != "current"
+                    and preservation_feature_freshness(features.get(asset.id), asset) != "current"
                 )
             )
         ]

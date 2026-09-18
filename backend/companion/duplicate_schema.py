@@ -235,6 +235,7 @@ class DuplicateAdmissionEvidence(BaseModel):
 
 
 class DuplicatePreservationEvidence(BaseModel):
+    origin: Literal["original", "preview"]
     pixel_normalization_version: int
     pixel_sha256: str
     decoded_width: int

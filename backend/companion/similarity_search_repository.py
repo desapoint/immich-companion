@@ -346,6 +346,28 @@ class SimilaritySearchRepository:
             records = list((await session.scalars(statement)).all())
         return {record.asset_id: record for record in records}
 
+    async def get_current_many(
+        self, asset_ids: list[UUID]
+    ) -> dict[UUID, AssetSimilaritySearchFeatureRecord]:
+        """Return only current active search fingerprints for the requested assets."""
+
+        if not asset_ids:
+            return {}
+        statement = (
+            select(AssetSimilaritySearchFeatureRecord)
+            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
+            .where(
+                AssetSimilaritySearchFeatureRecord.asset_id.in_(
+                    list(dict.fromkeys(asset_ids))
+                ),
+                *self._eligible(),
+                self._current(),
+            )
+        )
+        async with self._database.sessions() as session:
+            records = list((await session.scalars(statement)).all())
+        return {record.asset_id: record for record in records}
+
     async def has_current(self, asset_id: UUID) -> bool:
         statement = (
             select(AssetSimilaritySearchFeatureRecord.asset_id)

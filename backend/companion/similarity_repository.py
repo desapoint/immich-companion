@@ -15,27 +15,19 @@ from sqlalchemy import delete, func, select, tuple_
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
-from companion.models import (
-    AssetSimilarityEdgeRecord,
-    AssetSimilarityFeatureRecord,
-    AssetSimilaritySearchFeatureRecord,
-)
+from companion.models import AssetSimilarityEdgeRecord, AssetSimilaritySearchFeatureRecord
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
     DetailFeature,
     compare_detail_features,
 )
 from companion.similarity_detail_service import SimilarityDetailRepository
-from companion.similarity_features import (
-    PIXEL_NORMALIZATION_VERSION,
-    SIMILARITY_CONFIG_FINGERPRINT,
-    VisualFeatureResult,
-    compare_visual_features,
-)
+from companion.similarity_features import VisualFeatureResult, compare_visual_features
 from companion.similarity_generation import (
     SIMILARITY_EVIDENCE_CODE_GENERATION,
     SimilarityEvidenceEpochRepository,
 )
+from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 
 SIMILARITY_COMPARISON_VERSION = 6
 PAIR_DETAIL_BATCH_SIZE = 500
@@ -110,21 +102,17 @@ def requested_reference_pairs(
     }
 
 
-SimilarityFeatureRecord = AssetSimilarityFeatureRecord | AssetSimilaritySearchFeatureRecord
+SimilarityFeatureRecord = AssetSimilaritySearchFeatureRecord
 
 
 def _source_key(record: SimilarityFeatureRecord) -> str:
-    # Legacy pair-cache columns are named source_sha256. Search records carry
-    # a versioned source/preview identity, not an original-file SHA.
-    return (
-        record.source_identity
-        if isinstance(record, AssetSimilaritySearchFeatureRecord)
-        else record.source_sha256
-    )
+    """Return the authoritative search-evidence source identity."""
+
+    return record.source_identity
 
 
 def _pair_config_fingerprint(feature_config_fingerprint: str) -> str:
-    """Apply the broad generation kill-switch even to legacy coarse features."""
+    """Apply the broad generation kill-switch to one search-feature generation."""
 
     return hashlib.sha256(
         (
@@ -136,6 +124,8 @@ def _pair_config_fingerprint(feature_config_fingerprint: str) -> str:
 
 
 def _feature(record: SimilarityFeatureRecord) -> VisualFeatureResult:
+    """Adapt the current search fingerprint to the shared coarse comparator."""
+
     return VisualFeatureResult(
         model_version=record.model_version,
         feature_version=record.feature_version,
@@ -145,20 +135,20 @@ def _feature(record: SimilarityFeatureRecord) -> VisualFeatureResult:
         perceptual_hash=record.perceptual_hash,
         color_histogram=record.color_histogram,
         thumbnail_sha256=record.thumbnail_sha256,
-        pixel_normalization_version=getattr(record, "pixel_normalization_version", 0),
-        pixel_sha256=getattr(record, "pixel_sha256", None),
-        bit_depth=getattr(record, "bit_depth", 8),
-        channel_count=getattr(record, "channel_count", 3),
-        has_alpha=getattr(record, "has_alpha", False),
-        color_space=getattr(record, "color_space", "preview"),
-        orientation=getattr(record, "orientation", None),
-        icc_profile_present=getattr(record, "icc_profile_present", False),
-        has_exif=getattr(record, "has_exif", False),
-        has_capture_time=getattr(record, "has_capture_time", False),
-        has_camera_info=getattr(record, "has_camera_info", False),
-        has_gps=getattr(record, "has_gps", False),
-        has_orientation_metadata=getattr(record, "has_orientation_metadata", False),
-        metadata_richness=getattr(record, "metadata_richness", 0),
+        pixel_normalization_version=0,
+        pixel_sha256=None,
+        bit_depth=8,
+        channel_count=3,
+        has_alpha=False,
+        color_space="preview",
+        orientation=None,
+        icc_profile_present=False,
+        has_exif=False,
+        has_capture_time=False,
+        has_camera_info=False,
+        has_gps=False,
+        has_orientation_metadata=False,
+        metadata_richness=0,
     )
 
 
@@ -296,8 +286,7 @@ class SimilarityRepository:
 
         def detail_version(low: UUID, high: UUID) -> int:
             # Detail samples are independently tied to the current synchronized
-            # source by SimilarityDetailRepository. They can therefore refine
-            # either search-generation or legacy integrity coarse features.
+            # source and refine the authoritative search-generation comparison.
             return (
                 DETAIL_FEATURE_VERSION
                 if low in detail_records and high in detail_records
@@ -397,14 +386,9 @@ class SimilarityRepository:
                 exact_thumbnail_match=(
                     low_feature.thumbnail_sha256 == high_feature.thumbnail_sha256
                 ),
-                exact_pixel_match=(
-                    not isinstance(low_feature, AssetSimilaritySearchFeatureRecord)
-                    and not isinstance(high_feature, AssetSimilaritySearchFeatureRecord)
-                    and low_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
-                    and high_feature.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
-                    and bool(low_feature.pixel_sha256)
-                    and low_feature.pixel_sha256 == high_feature.pixel_sha256
-                ),
+                # Exact normalized-pixel identity is preservation evidence and is
+                # layered into duplicate responses by DuplicateService.
+                exact_pixel_match=False,
                 model_version=model_version,
                 feature_version=feature_version,
                 comparison_version=SIMILARITY_COMPARISON_VERSION,
@@ -547,15 +531,15 @@ class SimilarityRepository:
         return round(ordered[index], 2)
 
     async def cache_status(self) -> dict[str, object]:
-        legacy_pair_config = _pair_config_fingerprint(SIMILARITY_CONFIG_FINGERPRINT)
+        pair_config = _pair_config_fingerprint(SEARCH_CONFIG_FINGERPRINT)
         async with self._database.sessions() as session:
             feature_count = int(
                 await session.scalar(
                     select(func.count())
-                    .select_from(AssetSimilarityFeatureRecord)
+                    .select_from(AssetSimilaritySearchFeatureRecord)
                     .where(
-                        AssetSimilarityFeatureRecord.config_fingerprint
-                        == SIMILARITY_CONFIG_FINGERPRINT
+                        AssetSimilaritySearchFeatureRecord.config_fingerprint
+                        == SEARCH_CONFIG_FINGERPRINT
                     )
                 )
                 or 0
@@ -564,15 +548,13 @@ class SimilarityRepository:
                 await session.scalar(
                     select(func.count())
                     .select_from(AssetSimilarityEdgeRecord)
-                    .where(
-                        AssetSimilarityEdgeRecord.config_fingerprint == legacy_pair_config
-                    )
+                    .where(AssetSimilarityEdgeRecord.config_fingerprint == pair_config)
                 )
                 or 0
             )
         latencies = list(self._reference_latencies_ms)
         return {
-            "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
+            "config_fingerprint": SEARCH_CONFIG_FINGERPRINT,
             "feature_count": feature_count,
             "feature_estimated_bytes": feature_count * HOT_CACHE_ENTRY_ESTIMATE_BYTES,
             "pair_count": pair_count,

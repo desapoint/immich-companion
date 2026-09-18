@@ -514,6 +514,8 @@ def create_app(
             similarity_repository,
             duplicate_discovery,
             stack_service,
+            search_features=search_feature_repository,
+            scan_evidence=similarity_scan_repository,
         )
         if asset_repository is not None
         and integrity_repository is not None
@@ -534,7 +536,7 @@ def create_app(
             asset_repository,
             integrity_repository,
             integrity_handler,
-            include_similarity=True,
+            include_preservation=True,
             discovery=duplicate_discovery,
         )
         task_coordinator.register_handler(

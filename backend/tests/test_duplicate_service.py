@@ -32,7 +32,15 @@ from companion.duplicate_service import (
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichApiError, ImmichAsset, ImmichDuplicateGroup
 from companion.integrity import ANALYZER_VERSION
-from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
+from companion.models import (
+    AssetImagePreservationFeatureRecord,
+    AssetIntegrityReportRecord,
+    AssetSimilaritySearchFeatureRecord,
+)
+from companion.preservation_features import (
+    PRESERVATION_CONFIG_FINGERPRINT,
+    PRESERVATION_FEATURE_VERSION,
+)
 from companion.similarity_features import (
     SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
@@ -47,6 +55,11 @@ from companion.similarity_repository import (
     PairSimilarityEvidence,
     canonical_pair,
     requested_reference_pairs,
+)
+from companion.similarity_search_features import (
+    SEARCH_CONFIG_FINGERPRINT,
+    SEARCH_FEATURE_VERSION,
+    SEARCH_MODEL_VERSION,
 )
 from companion.task_coordinator import PermanentTaskError
 
@@ -144,15 +157,23 @@ def report(
     )
 
 
-def feature(identifier: UUID, *, digest: str | None = None) -> AssetSimilarityFeatureRecord:
-    return AssetSimilarityFeatureRecord(
+def feature(
+    identifier: UUID,
+    *,
+    digest: str | None = None,
+    pixel_digest: str | None = None,
+) -> AssetImagePreservationFeatureRecord:
+    return AssetImagePreservationFeatureRecord(
         asset_id=identifier,
-        model_version=SIMILARITY_MODEL_VERSION,
-        feature_version=SIMILARITY_FEATURE_VERSION,
-        config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+        extractor_model_version=SIMILARITY_MODEL_VERSION,
+        extractor_feature_version=SIMILARITY_FEATURE_VERSION,
+        extractor_config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+        preservation_version=PRESERVATION_FEATURE_VERSION,
+        preservation_config_fingerprint=PRESERVATION_CONFIG_FINGERPRINT,
         source_file_modified_at=MODIFIED,
         source_file_size_bytes=4,
         source_sha256=digest or str(identifier).replace("-", "") * 2,
+        origin="original",
         width=100,
         height=80,
         luminance_vector=bytes([128] * 256),
@@ -160,7 +181,7 @@ def feature(identifier: UUID, *, digest: str | None = None) -> AssetSimilarityFe
         color_histogram=bytes([5] * 48),
         thumbnail_sha256=(digest or "a" * 64),
         pixel_normalization_version=1,
-        pixel_sha256=(digest or "b" * 64),
+        pixel_sha256=(pixel_digest or digest or "b" * 64),
         bit_depth=8,
         channel_count=3,
         has_alpha=False,
@@ -173,6 +194,33 @@ def feature(identifier: UUID, *, digest: str | None = None) -> AssetSimilarityFe
         has_gps=False,
         has_orientation_metadata=False,
         metadata_richness=0,
+        analyzed_at=MODIFIED,
+    )
+
+
+def search_feature(
+    identifier: UUID,
+    *,
+    digest: str | None = None,
+) -> AssetSimilaritySearchFeatureRecord:
+    identity = digest or str(identifier).replace("-", "") * 2
+    return AssetSimilaritySearchFeatureRecord(
+        asset_id=identifier,
+        model_version=SEARCH_MODEL_VERSION,
+        feature_version=SEARCH_FEATURE_VERSION,
+        config_fingerprint=SEARCH_CONFIG_FINGERPRINT,
+        source_file_modified_at=MODIFIED,
+        source_file_size_bytes=4,
+        source_checksum=None,
+        source_identity=identity,
+        media_sha256=identity,
+        fingerprint_origin="preview",
+        width=100,
+        height=80,
+        luminance_vector=bytes([128] * 256),
+        perceptual_hash="0" * 16,
+        color_histogram=bytes([5] * 48),
+        thumbnail_sha256=(digest or "a" * 64),
         analyzed_at=MODIFIED,
     )
 
@@ -562,8 +610,20 @@ class FakeReports:
     async def get_many(self, _ids):
         return self.records
 
-    async def get_similarity_features(self, _ids):
+    async def get_preservation_features(self, _ids):
         return self.features
+
+
+class FakeSearchFeatures:
+    def __init__(self, features):
+        self.features = {item.asset_id: item for item in features}
+
+    async def get_current_many(self, asset_ids):
+        return {
+            asset_id: self.features[asset_id]
+            for asset_id in asset_ids
+            if asset_id in self.features
+        }
 
 
 class FakeSimilarity:
@@ -820,8 +880,8 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
-    upload_feature = feature(UPLOAD_1, digest="1" * 64)
-    external_feature = feature(EXTERNAL_1, digest="2" * 64)
+    upload_feature = feature(UPLOAD_1, digest="1" * 64, pixel_digest="f" * 64)
+    external_feature = feature(EXTERNAL_1, digest="2" * 64, pixel_digest="f" * 64)
     pair = PairSimilarityEvidence(
         similarity_percent=96.5,
         structural_percent=98.0,
@@ -851,6 +911,9 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
         FakeTasks(),
         SimpleNamespace(),
         similarity=similarity,
+        search_features=FakeSearchFeatures(
+            [search_feature(UPLOAD_1, digest="1" * 64), search_feature(EXTERNAL_1, digest="2" * 64)]
+        ),
     )
 
     result = await service.review()
@@ -961,6 +1024,9 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
             }
         ),
         discovery=Discovery(),
+        search_features=FakeSearchFeatures(
+            [search_feature(UPLOAD_1, digest="1" * 64), search_feature(EXTERNAL_1, digest="2" * 64)]
+        ),
     )
 
     result = await service.result()
@@ -1046,6 +1112,9 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
         FakeTasks(),
         SimpleNamespace(),
         similarity=similarity,
+        search_features=FakeSearchFeatures(
+            [search_feature(UPLOAD_1), search_feature(EXTERNAL_1)]
+        ),
     )
 
     original = (await service.result()).groups[0]
@@ -1090,7 +1159,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
 
 
 @pytest.mark.asyncio
-async def test_similarity_backfill_includes_upload_images_without_stream_verification() -> None:
+async def test_preservation_backfill_includes_upload_images_without_stream_verification() -> None:
     content = b"same"
     candidate_group = group(
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
@@ -1102,7 +1171,7 @@ async def test_similarity_backfill_includes_upload_images_without_stream_verific
         FakeAssets(),
         FakeReports([report(EXTERNAL_1, content)]),
         integrity,
-        include_similarity=True,
+        include_preservation=True,
     )
 
     await handler.execute(
@@ -1114,7 +1183,7 @@ async def test_similarity_backfill_includes_upload_images_without_stream_verific
 
 
 @pytest.mark.asyncio
-async def test_similarity_verification_fetches_only_discovered_candidates() -> None:
+async def test_preservation_verification_fetches_only_discovered_candidates() -> None:
     plausible = (
         asset(UPLOAD_1, external=False, checksum="upload", filename="plausible-one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="plausible-two.jpg"),
@@ -1131,7 +1200,7 @@ async def test_similarity_verification_fetches_only_discovered_candidates() -> N
         FakeAssets(),
         FakeReports([]),
         integrity,
-        include_similarity=True,
+        include_preservation=True,
         discovery=CandidateDiscovery(),  # type: ignore[arg-type]
     )
 
