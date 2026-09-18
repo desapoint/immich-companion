@@ -1,4 +1,4 @@
-"""Alpha-aware search evidence preserves transparency when previews flatten it."""
+"""Unified visual normalization preserves alpha for safely decoded originals."""
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -52,8 +52,7 @@ def test_alpha_capable_source_detection(name: str, mime: str, expected: bool) ->
 
 
 @pytest.mark.asyncio
-async def test_opaque_preview_for_alpha_capable_source_falls_back_to_original() -> None:
-    preview = _encoded(Image.new("RGB", (64, 64), (40, 80, 120)), "JPEG")
+async def test_safe_alpha_capable_source_uses_original_canonical_visual_input() -> None:
     original_image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
     ImageDraw.Draw(original_image).rectangle((16, 16, 47, 47), fill=(40, 80, 120, 160))
     original = _encoded(original_image, "PNG")
@@ -62,9 +61,8 @@ async def test_opaque_preview_for_alpha_capable_source_falls_back_to_original() 
     class Immich:
         original_calls = 0
 
-        async def get_bounded_preview(self, _asset_id, *, max_bytes):
-            assert len(preview) < max_bytes
-            return preview
+        async def get_bounded_preview(self, *_args, **_kwargs):
+            pytest.fail("Safe alpha-capable source should use the original visual input")
 
         @asynccontextmanager
         async def stream_original(self, _asset_id):
@@ -120,4 +118,4 @@ async def test_opaque_preview_for_alpha_capable_source_falls_back_to_original() 
     assert features.saved_feature is not None
     assert features.saved_feature.has_alpha is True
     assert features.saved_alpha_state == "confirmed_alpha"
-    assert maintainer.metrics()["alpha_preserving_original_fallbacks"] == 1
+    assert maintainer.metrics()["original_fingerprints_generated"] == 1
