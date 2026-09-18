@@ -1159,7 +1159,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
 
 
 @pytest.mark.asyncio
-async def test_similarity_backfill_includes_upload_images_without_stream_verification() -> None:
+async def test_preservation_backfill_includes_upload_images_without_stream_verification() -> None:
     content = b"same"
     candidate_group = group(
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
@@ -1171,7 +1171,7 @@ async def test_similarity_backfill_includes_upload_images_without_stream_verific
         FakeAssets(),
         FakeReports([report(EXTERNAL_1, content)]),
         integrity,
-        include_similarity=True,
+        include_preservation=True,
     )
 
     await handler.execute(
@@ -1183,7 +1183,7 @@ async def test_similarity_backfill_includes_upload_images_without_stream_verific
 
 
 @pytest.mark.asyncio
-async def test_similarity_verification_fetches_only_discovered_candidates() -> None:
+async def test_preservation_verification_fetches_only_discovered_candidates() -> None:
     plausible = (
         asset(UPLOAD_1, external=False, checksum="upload", filename="plausible-one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="plausible-two.jpg"),
@@ -1200,7 +1200,7 @@ async def test_similarity_verification_fetches_only_discovered_candidates() -> N
         FakeAssets(),
         FakeReports([]),
         integrity,
-        include_similarity=True,
+        include_preservation=True,
         discovery=CandidateDiscovery(),  # type: ignore[arg-type]
     )
 
