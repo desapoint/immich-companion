@@ -71,7 +71,8 @@ class NormalizedVisualImage:
 
 
 def _safe_suffix(asset: ImmichAsset) -> str:
-    suffix = Path(asset.original_file_name).suffix.lower()
+    filename = getattr(asset, "original_file_name", "") or ""
+    suffix = Path(filename).suffix.lower()
     if not suffix or len(suffix) > 16 or any(character in suffix for character in "/\\"):
         return ".img"
     return suffix
@@ -112,7 +113,7 @@ def _canonical_vips_image(
         # the visible colour channels. This gives Pillow-based feature extraction
         # one stable 8-bit sRGB encoded representation downstream.
         image = image.colourspace("srgb")
-        has_alpha = image.hasalpha()
+        has_alpha = bool(image.hasalpha())
         if has_alpha:
             encoded = image.write_to_buffer(
                 ".png",
