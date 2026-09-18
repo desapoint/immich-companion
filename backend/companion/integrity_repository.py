@@ -158,10 +158,6 @@ def preservation_feature_freshness(
     return "current"
 
 
-# Compatibility name for older callers/tests. New code should use the preservation name.
-similarity_feature_freshness = preservation_feature_freshness
-
-
 def public_report(record: AssetIntegrityReportRecord) -> AssetIntegrityReport:
     detected_format = "unknown" if record.detected_format == "other" else record.detected_format
     return AssetIntegrityReport(
@@ -423,37 +419,6 @@ class IntegrityRepository:
         )
         async with self._database.sessions() as session:
             return list((await session.scalars(statement)).all())
-
-    # Compatibility wrappers while downstream callers migrate terminology.
-    async def get_similarity_feature(self, asset_id: UUID) -> AssetImagePreservationFeatureRecord | None:
-        return await self.get_preservation_feature(asset_id)
-
-    async def get_similarity_features(
-        self, asset_ids: list[UUID]
-    ) -> dict[UUID, AssetImagePreservationFeatureRecord]:
-        return await self.get_preservation_features(asset_ids)
-
-    async def list_current_similarity_features(
-        self,
-    ) -> list[AssetImagePreservationFeatureRecord]:
-        return await self.list_current_preservation_features()
-
-    async def has_current_similarity_feature(self, asset_id: UUID) -> bool:
-        return await self.has_current_preservation_feature(asset_id)
-
-    async def count_current_similarity_features(self) -> int:
-        return await self.count_current_preservation_features()
-
-    async def similarity_feature_coverage(self) -> tuple[int, int, int, int]:
-        return await self.preservation_feature_coverage()
-
-    async def list_similarity_feature_work(
-        self, *, after_asset_id: UUID | None = None, limit: int = 100
-    ) -> list[UUID]:
-        return await self.list_preservation_feature_work(
-            after_asset_id=after_asset_id,
-            limit=limit,
-        )
 
     async def save(
         self,
