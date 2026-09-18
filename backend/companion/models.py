@@ -178,9 +178,11 @@ class AssetImagePreservationFeatureRecord(Base):
         ForeignKey("assets.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
-    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    extractor_model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    extractor_feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    extractor_config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    preservation_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    preservation_config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source_file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -209,9 +211,15 @@ class AssetImagePreservationFeatureRecord(Base):
 
     __table_args__ = (
         Index(
+            "ix_asset_image_preservation_features_extractor_version",
+            extractor_model_version,
+            extractor_feature_version,
+            extractor_config_fingerprint,
+        ),
+        Index(
             "ix_asset_image_preservation_features_version",
-            model_version,
-            feature_version,
+            preservation_version,
+            preservation_config_fingerprint,
         ),
     )
 
