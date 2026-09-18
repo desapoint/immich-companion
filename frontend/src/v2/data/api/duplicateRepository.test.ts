@@ -63,7 +63,7 @@ const group = {
       admission_similarity_percent: index ? 98.5 : null,
       best_group_match_asset_id: index ? ASSET_IDS[0] : ASSET_IDS[1],
       best_group_match_similarity_percent: 98.5,
-      link_depth: index ? 1 : 0,
+      link_depth: 0,
       model_version: 'appearance-v1',
       feature_version: 2,
       comparison_version: 4,
