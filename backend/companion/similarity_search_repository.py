@@ -10,7 +10,11 @@ from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
 from companion.immich import ImmichAsset
-from companion.models import AssetRecord, AssetSimilaritySearchFeatureRecord
+from companion.models import (
+    AssetRecord,
+    AssetSimilarityDetailFeatureRecord,
+    AssetSimilaritySearchFeatureRecord,
+)
 from companion.similarity_bounded_state import (
     BOUNDED_CAPABILITY_VERSION,
     BOUNDED_POLICY_FINGERPRINT,
@@ -18,6 +22,7 @@ from companion.similarity_bounded_state import (
     SourceAlphaState,
     synchronized_source_identity,
 )
+from companion.similarity_detail import DETAIL_FEATURE_VERSION
 from companion.similarity_features import VisualFeatureResult
 from companion.similarity_generation import SimilarityEvidenceEpochRepository
 from companion.similarity_search_features import (
@@ -53,6 +58,17 @@ class SimilaritySearchRepository:
         )
 
     @staticmethod
+    def _complete_current():
+        detail = AssetSimilarityDetailFeatureRecord
+        search = AssetSimilaritySearchFeatureRecord
+        return and_(
+            SimilaritySearchRepository._current(),
+            detail.asset_id == search.asset_id,
+            detail.source_identity == search.source_identity,
+            detail.feature_version == DETAIL_FEATURE_VERSION,
+        )
+
+    @staticmethod
     def _state_current():
         state = AssetSimilarityBoundedStateRecord
         asset = AssetRecord
@@ -79,7 +95,7 @@ class SimilaritySearchRepository:
         )
 
     async def coverage(self) -> tuple[int, int, int, int, int, int]:
-        current = self._current()
+        current = self._complete_current()
         state_current = self._state_current()
         unavailable = and_(
             state_current,
@@ -110,6 +126,10 @@ class SimilaritySearchRepository:
             .outerjoin(
                 AssetSimilarityBoundedStateRecord,
                 AssetSimilarityBoundedStateRecord.asset_id == AssetRecord.id,
+            )
+            .outerjoin(
+                AssetSimilarityDetailFeatureRecord,
+                AssetSimilarityDetailFeatureRecord.asset_id == AssetRecord.id,
             )
             .where(*self._eligible())
         )
@@ -146,10 +166,14 @@ class SimilaritySearchRepository:
                 AssetSimilarityBoundedStateRecord,
                 AssetSimilarityBoundedStateRecord.asset_id == AssetRecord.id,
             )
+            .outerjoin(
+                AssetSimilarityDetailFeatureRecord,
+                AssetSimilarityDetailFeatureRecord.asset_id == AssetRecord.id,
+            )
             .where(
                 *self._eligible(),
                 *([AssetRecord.id > after_asset_id] if after_asset_id is not None else []),
-                ~or_(self._current(), current_unavailable),
+                ~or_(self._complete_current(), current_unavailable),
             )
             .order_by(AssetRecord.id)
             .limit(limit)
@@ -361,7 +385,7 @@ class SimilaritySearchRepository:
                     list(dict.fromkeys(asset_ids))
                 ),
                 *self._eligible(),
-                self._current(),
+                self._complete_current(),
             )
         )
         async with self._database.sessions() as session:
@@ -372,7 +396,12 @@ class SimilaritySearchRepository:
         statement = (
             select(AssetSimilaritySearchFeatureRecord.asset_id)
             .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
-            .where(AssetRecord.id == asset_id, *self._eligible(), self._current())
+            .join(
+                AssetSimilarityDetailFeatureRecord,
+                AssetSimilarityDetailFeatureRecord.asset_id
+                == AssetSimilaritySearchFeatureRecord.asset_id,
+            )
+            .where(AssetRecord.id == asset_id, *self._eligible(), self._complete_current())
         )
         async with self._database.sessions() as session:
             return await session.scalar(statement) is not None
@@ -382,7 +411,12 @@ class SimilaritySearchRepository:
             select(func.count())
             .select_from(AssetSimilaritySearchFeatureRecord)
             .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
-            .where(*self._eligible(), self._current())
+            .join(
+                AssetSimilarityDetailFeatureRecord,
+                AssetSimilarityDetailFeatureRecord.asset_id
+                == AssetSimilaritySearchFeatureRecord.asset_id,
+            )
+            .where(*self._eligible(), self._complete_current())
         )
         async with self._database.sessions() as session:
             return int(await session.scalar(statement) or 0)
@@ -391,7 +425,12 @@ class SimilaritySearchRepository:
         statement = (
             select(AssetSimilaritySearchFeatureRecord)
             .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
-            .where(*self._eligible(), self._current())
+            .join(
+                AssetSimilarityDetailFeatureRecord,
+                AssetSimilarityDetailFeatureRecord.asset_id
+                == AssetSimilaritySearchFeatureRecord.asset_id,
+            )
+            .where(*self._eligible(), self._complete_current())
             .order_by(AssetSimilaritySearchFeatureRecord.asset_id)
         )
         async with self._database.sessions() as session:
