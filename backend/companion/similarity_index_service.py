@@ -556,7 +556,10 @@ class SimilarityIndexMaintainer:
 
             if normalized.source_kind == "original":
                 self._count("original_fingerprints_generated")
-                self._count("original_bytes_downloaded", normalized.source_bytes)
+                if original_path is None:
+                    self._count("original_bytes_downloaded", normalized.source_bytes)
+                else:
+                    self._count("shared_original_bytes_reused", normalized.source_bytes)
                 self._count("original_decodes")
             else:
                 self._count("preview_fingerprints_generated")
