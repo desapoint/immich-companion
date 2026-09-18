@@ -50,8 +50,6 @@ from companion.similarity_visual_normalization import (
 from companion.task_coordinator import TaskContext
 
 DETAIL_WORK_BATCH_SIZE = 8
-# The published score is min(coarse, detail); a lower coarse score cannot be rescued.
-DETAIL_COARSE_SCORE_MARGIN = 0.0
 logger = logging.getLogger("uvicorn.error")
 
 DetailEvidenceSource = Literal["original", "transcoded", "preview"]
