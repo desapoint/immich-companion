@@ -97,8 +97,8 @@ async def test_duplicate_review_prefers_persisted_scan_score_and_keeps_live_dime
     evidence = result[(LEFT, RIGHT)]
     assert evidence.similarity_percent == 96.25
     assert evidence.detail_source == "transcoded"
-    assert getattr(evidence.detail_source, "validated_width") == 1920
-    assert getattr(evidence.detail_source, "reference_validated_width") == 3840
+    assert evidence.detail_source.validated_width == 1920
+    assert evidence.detail_source.reference_validated_width == 3840
     assert scan_evidence.calls == [
         (
             SCAN_ID,
