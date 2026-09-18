@@ -54,11 +54,13 @@ from companion.similarity_search_features import (
 from companion.similarity_transparency import (
     bounded_rendition_is_detail_safe,
     classify_source_alpha,
+    source_can_have_alpha,
 )
 from companion.task_coordinator import TaskContext
 
 DETAIL_WORK_BATCH_SIZE = 8
 DETAIL_SPOOL_MEMORY_BYTES = 4 * 1024 * 1024
+ORIGINAL_ALPHA_PROBE_BYTES = 2 * 1024 * 1024
 # The published score is min(coarse, detail); a lower coarse score cannot be rescued.
 DETAIL_COARSE_SCORE_MARGIN = 0.0
 logger = logging.getLogger("uvicorn.error")
@@ -387,6 +389,10 @@ class SimilarityDetailMaintainer:
             "alpha_uncertain_bounded_evidence": 0,
             "deterministic_retries_suppressed": 0,
             "detail_unavailable_retried": 0,
+            "detail_alpha_source_probes": 0,
+            "detail_alpha_source_probe_bytes": 0,
+            "detail_alpha_source_probe_confirmed_opaque": 0,
+            "detail_alpha_source_probe_confirmed_alpha": 0,
         }
 
     async def _bounded_original(self, context: TaskContext, asset_id: UUID):
@@ -491,6 +497,30 @@ class SimilarityDetailMaintainer:
         source_state: SourceAlphaState,
     ) -> tuple[DetailFeature | None, str | None, str | None, SourceAlphaState]:
         """Prefer the largest safe rendition and never promote flattened alpha evidence."""
+
+        if source_state == "unknown_alpha" and source_can_have_alpha(live):
+            prefix_reader = getattr(self._immich, "get_original_prefix", None)
+            if prefix_reader is not None:
+                try:
+                    original_prefix = await prefix_reader(
+                        asset_id,
+                        max_bytes=ORIGINAL_ALPHA_PROBE_BYTES,
+                    )
+                    self.counters["detail_alpha_source_probes"] += 1
+                    self.counters["detail_alpha_source_probe_bytes"] += len(original_prefix)
+                    probed_state = classify_source_alpha(
+                        live,
+                        bounded_content=original_prefix,
+                    )
+                    if probed_state != "unknown_alpha":
+                        source_state = probed_state
+                        self.counters[
+                            "detail_alpha_source_probe_confirmed_alpha"
+                            if probed_state == "confirmed_alpha"
+                            else "detail_alpha_source_probe_confirmed_opaque"
+                        ] += 1
+                except (ImmichApiError, OSError, ValueError):
+                    pass
 
         fullsize_content: bytes | None = None
         fullsize_error: Exception | None = None
