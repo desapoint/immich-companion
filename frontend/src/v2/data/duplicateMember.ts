@@ -35,7 +35,7 @@ export function formatSimilarityPercent(value: number | null): string {
 }
 
 export function linkedIntermediateCount(linkDepth: number): number {
-  return Math.max(0, linkDepth - 1);
+  return Math.max(0, linkDepth);
 }
 
 export function formatImageDimensions(
