@@ -1,74 +1,48 @@
 <script lang="ts">
+  import { Link2 } from '@lucide/svelte';
   import type { DuplicateMemberRecord, SimilarityValidationMode } from '../data/contracts';
   import { v2AssetViewerPath } from '../navigation';
-  import {
-    formatImageDimensions,
-    formatSimilarityPercent,
-    similarityValidatedDimensions,
-    similarityValidationEvidenceLabel,
-    usesBoundedValidation,
-  } from '../data/duplicateMember';
 
-  let { member, members, mode, threshold }: {
+  let { member, members, mode }: {
     member: DuplicateMemberRecord;
     members: DuplicateMemberRecord[];
     mode: SimilarityValidationMode | null;
-    threshold: number | null;
   } = $props();
 
   const admittedBy = $derived(
     members.find((candidate) => candidate.asset.id === member.admission?.admittedByAssetId),
   );
-  const admissionScore = $derived(member.admission?.admissionSimilarityPercent ?? null);
-  const validationEvidenceLabel = $derived(
-    similarityValidationEvidenceLabel(member.similarity, member.similarityEvidence),
-  );
-  const boundedValidation = $derived(usesBoundedValidation(member.similarityEvidence));
-  const originalDimensions = $derived(formatImageDimensions(member.asset.width, member.asset.height));
-  const validatedDimensions = $derived(similarityValidatedDimensions(member.similarityEvidence));
-  const belowReference = $derived(
+  const linkDepth = $derived(member.admission?.linkDepth ?? null);
+  const linkedAdmission = $derived(
     mode === 'linked'
-      && (member.admission?.linkDepth ?? 0) > 1
-      && threshold !== null
-      && member.similarity !== null
-      && member.similarity < threshold
+      && linkDepth !== null
+      && linkDepth > 1
       && admittedBy !== undefined,
+  );
+  const linkLabel = $derived(
+    linkedAdmission && admittedBy && linkDepth !== null
+      ? `Linked through ${admittedBy.asset.original_file_name}, depth ${linkDepth}. Open linked asset in a new tab.`
+      : '',
   );
 </script>
 
-{#if validationEvidenceLabel}
-  <small class="v2-validation-evidence v2-muted">
-    {formatSimilarityPercent(member.similarity)} similarity · <b>{validationEvidenceLabel}</b>
-  </small>
-  {#if boundedValidation && (originalDimensions || validatedDimensions)}
-    <small class="v2-validation-dimensions v2-muted">
-      {#if originalDimensions}Original {originalDimensions}{/if}
-      {#if originalDimensions && validatedDimensions} · {/if}
-      {#if validatedDimensions}Validated at {validatedDimensions}{/if}
-    </small>
-  {/if}
-{/if}
-
-{#if belowReference && admittedBy && admissionScore !== null}
-  <small class="v2-admission-note">
-    {formatSimilarityPercent(member.similarity)} vs reference — below {formatSimilarityPercent(threshold)} threshold.
-    Linked through
-    <a
-      href={v2AssetViewerPath(admittedBy.asset.id)}
-      target="_blank"
-      rel="noopener noreferrer"
-      title="Open source asset in a new tab"
-    >
-      {admittedBy.asset.original_file_name}
-    </a>
-    at {formatSimilarityPercent(admissionScore)}.
-  </small>
+{#if linkedAdmission && admittedBy && linkDepth !== null}
+  <a
+    class="v2-linked-admission-pill"
+    href={v2AssetViewerPath(admittedBy.asset.id)}
+    target="_blank"
+    rel="noopener noreferrer"
+    title={linkLabel}
+    aria-label={linkLabel}
+  >
+    <span class="v2-linked-admission-icon" aria-hidden="true"><Link2 size={13} strokeWidth={2}/></span>
+    <span>{linkDepth}</span>
+  </a>
 {/if}
 
 <style>
-  .v2-validation-evidence,.v2-validation-dimensions{display:block;line-height:1.35}
-  .v2-validation-dimensions{font-size:.76rem}
-  .v2-admission-note{display:block;padding:7px 9px;border-radius:7px;background:color-mix(in srgb,var(--v2-accent) 9%,transparent);line-height:1.35}
-  a{color:var(--v2-accent);font:inherit;font-weight:700;text-decoration:underline}
-  a:focus-visible{outline:2px solid var(--v2-accent);outline-offset:2px;border-radius:3px}
+  .v2-linked-admission-pill{position:absolute;z-index:4;top:8px;left:8px;display:inline-flex;align-items:center;gap:4px;min-height:22px;padding:4px 7px;border:1px solid rgba(255,255,255,.36);border-radius:999px;background:rgba(8,13,19,.86);color:#fff;font-size:10px;font-weight:700;line-height:1;text-decoration:none;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+  .v2-linked-admission-pill:hover{border-color:rgba(255,255,255,.62);background:rgba(8,13,19,.96)}
+  .v2-linked-admission-pill:focus-visible{outline:2px solid var(--v2-accent);outline-offset:2px}
+  .v2-linked-admission-icon{display:inline-flex}
 </style>
