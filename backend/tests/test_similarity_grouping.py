@@ -128,3 +128,42 @@ def test_validation_is_deterministic_across_edge_order() -> None:
     assert validated_similarity_groups(
         edges, mode="linked", threshold=92
     ) == validated_similarity_groups(tuple(reversed(edges)), mode="linked", threshold=92)
+
+
+
+def test_linked_mode_keeps_direct_reference_matches_direct_even_with_stronger_cross_link() -> None:
+    groups = validated_similarity_groups(
+        (
+            edge(A, B, 96),
+            edge(A, C, 96),
+            edge(B, C, 99),
+        ),
+        mode="linked",
+        threshold=95,
+    )
+
+    assert len(groups) == 1
+    evidence = {item.asset_id: item for item in groups[0].admission_evidence}
+    assert evidence[B].admitted_by_asset_id == A
+    assert evidence[B].admission_similarity_percent == 96
+    assert evidence[B].link_depth == 1
+    assert evidence[C].admitted_by_asset_id == A
+    assert evidence[C].admission_similarity_percent == 96
+    assert evidence[C].link_depth == 1
+    assert evidence[C].best_group_match_asset_id == B
+    assert evidence[C].best_group_match_similarity_percent == 99
+
+
+def test_two_member_linked_group_never_has_an_indirect_admission() -> None:
+    groups = validated_similarity_groups(
+        (edge(A, B, 96),),
+        mode="linked",
+        threshold=95,
+    )
+
+    assert len(groups) == 1
+    evidence = {item.asset_id: item for item in groups[0].admission_evidence}
+    assert evidence[A].link_depth == 0
+    assert evidence[A].admitted_by_asset_id is None
+    assert evidence[B].link_depth == 1
+    assert evidence[B].admitted_by_asset_id == A
