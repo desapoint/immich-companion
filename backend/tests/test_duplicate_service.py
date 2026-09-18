@@ -46,6 +46,7 @@ from companion.similarity_features import (
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
 )
+from companion.similarity_generation import StaleSimilarityEvidenceEpochError
 from companion.similarity_grouping import (
     SimilarityAdmissionEvidence,
     ValidatedSimilarityGroup,
@@ -636,6 +637,14 @@ class FakeSimilarity:
         return self.evidence
 
 
+class FakeStaleSimilarity(FakeSimilarity):
+    async def reference_edges(self, groups, features):
+        self.calls.append((groups, features))
+        raise StaleSimilarityEvidenceEpochError(
+            "Similarity evidence generation does not match this process"
+        )
+
+
 class FakeReviews:
     def __init__(self, record=None):
         self.record = record
@@ -871,6 +880,35 @@ async def test_review_automatically_queues_missing_external_evidence_once() -> N
     assert first.analysis_task_id == UPLOAD_2
     assert second.analysis_task_id == UPLOAD_2
     assert len(tasks.submissions) == 1
+
+
+@pytest.mark.asyncio
+async def test_review_remains_available_when_similarity_generation_is_stale() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    similarity = FakeStaleSimilarity({})
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        FakeTasks(),
+        SimpleNamespace(),
+        similarity=similarity,
+        search_features=FakeSearchFeatures(
+            [search_feature(UPLOAD_1), search_feature(EXTERNAL_1)]
+        ),
+    )
+
+    result = await service.review()
+
+    assert result.group_count == 1
+    assert similarity.calls
+    assert all(member.similarity is None for member in result.groups[0].members)
 
 
 @pytest.mark.asyncio
