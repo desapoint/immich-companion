@@ -15,12 +15,12 @@ from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION, FileIntegrityResult
 from companion.integrity_schema import AssetIntegrityReport, IntegrityFreshness
 from companion.models import (\n    AssetImagePreservationFeatureRecord,\n    AssetIntegrityReportRecord,\n    AssetRecord,\n)
-from companion.similarity_features import (
-    SIMILARITY_CONFIG_FINGERPRINT,
-    SIMILARITY_FEATURE_VERSION,
-    SIMILARITY_MODEL_VERSION,
-    VisualFeatureResult,
+from companion.preservation_features import (
+    PRESERVATION_CONFIG_FINGERPRINT,
+    PRESERVATION_FEATURE_VERSION,
+    PRESERVATION_MODEL_VERSION,
 )
+from companion.similarity_features import VisualFeatureResult
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -107,20 +107,20 @@ def preservation_feature_freshness(
         )
         return "missing"
     if (
-        record.model_version != SIMILARITY_MODEL_VERSION
-        or record.feature_version != SIMILARITY_FEATURE_VERSION
-        or record.config_fingerprint != SIMILARITY_CONFIG_FINGERPRINT
+        record.model_version != PRESERVATION_MODEL_VERSION
+        or record.feature_version != PRESERVATION_FEATURE_VERSION
+        or record.config_fingerprint != PRESERVATION_CONFIG_FINGERPRINT
     ):
         logger.warning(
             "Preservation evidence pending: asset_id=%s filename=%s reason=feature_configuration stored_model=%s expected_model=%s stored_feature=%s expected_feature=%s stored_config=%s expected_config=%s",
             asset.id,
             asset.original_file_name,
             record.model_version,
-            SIMILARITY_MODEL_VERSION,
+            PRESERVATION_MODEL_VERSION,
             record.feature_version,
-            SIMILARITY_FEATURE_VERSION,
+            PRESERVATION_FEATURE_VERSION,
             record.config_fingerprint,
-            SIMILARITY_CONFIG_FINGERPRINT,
+            PRESERVATION_CONFIG_FINGERPRINT,
         )
         return "stale"
     live_size = source_file_size(asset)
@@ -234,10 +234,10 @@ class IntegrityRepository:
                 AssetRecord.asset_type == "IMAGE",
                 AssetRecord.is_trashed.is_(False),
                 AssetRecord.is_offline.is_(False),
-                AssetImagePreservationFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
-                AssetImagePreservationFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetImagePreservationFeatureRecord.model_version == PRESERVATION_MODEL_VERSION,
+                AssetImagePreservationFeatureRecord.feature_version == PRESERVATION_FEATURE_VERSION,
                 AssetImagePreservationFeatureRecord.config_fingerprint
-                == SIMILARITY_CONFIG_FINGERPRINT,
+                == PRESERVATION_CONFIG_FINGERPRINT,
                 AssetImagePreservationFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
                 AssetImagePreservationFeatureRecord.source_file_size_bytes
@@ -260,10 +260,10 @@ class IntegrityRepository:
                 AssetRecord.is_trashed.is_(False),
                 AssetRecord.is_offline.is_(False),
                 AssetRecord.file_size_bytes.is_not(None),
-                AssetImagePreservationFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
-                AssetImagePreservationFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetImagePreservationFeatureRecord.model_version == PRESERVATION_MODEL_VERSION,
+                AssetImagePreservationFeatureRecord.feature_version == PRESERVATION_FEATURE_VERSION,
                 AssetImagePreservationFeatureRecord.config_fingerprint
-                == SIMILARITY_CONFIG_FINGERPRINT,
+                == PRESERVATION_CONFIG_FINGERPRINT,
                 AssetImagePreservationFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
                 AssetImagePreservationFeatureRecord.source_file_size_bytes
@@ -291,10 +291,10 @@ class IntegrityRepository:
                     AssetRecord.asset_type == "IMAGE",
                     AssetRecord.is_trashed.is_(False),
                     AssetRecord.is_offline.is_(False),
-                    AssetImagePreservationFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
-                    AssetImagePreservationFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                    AssetImagePreservationFeatureRecord.model_version == PRESERVATION_MODEL_VERSION,
+                    AssetImagePreservationFeatureRecord.feature_version == PRESERVATION_FEATURE_VERSION,
                     AssetImagePreservationFeatureRecord.config_fingerprint
-                    == SIMILARITY_CONFIG_FINGERPRINT,
+                    == PRESERVATION_CONFIG_FINGERPRINT,
                     AssetImagePreservationFeatureRecord.source_file_modified_at
                     == AssetRecord.file_modified_at,
                     AssetImagePreservationFeatureRecord.source_file_size_bytes
@@ -326,10 +326,10 @@ class IntegrityRepository:
                 AssetRecord.asset_type == "IMAGE",
                 AssetRecord.is_trashed.is_(False),
                 AssetRecord.is_offline.is_(False),
-                AssetImagePreservationFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
-                AssetImagePreservationFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+                AssetImagePreservationFeatureRecord.model_version == PRESERVATION_MODEL_VERSION,
+                AssetImagePreservationFeatureRecord.feature_version == PRESERVATION_FEATURE_VERSION,
                 AssetImagePreservationFeatureRecord.config_fingerprint
-                == SIMILARITY_CONFIG_FINGERPRINT,
+                == PRESERVATION_CONFIG_FINGERPRINT,
                 AssetImagePreservationFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
                 AssetImagePreservationFeatureRecord.source_file_size_bytes
@@ -350,10 +350,10 @@ class IntegrityRepository:
         current_feature = and_(
             AssetImagePreservationFeatureRecord.asset_id.is_not(None),
             AssetRecord.file_size_bytes.is_not(None),
-            AssetImagePreservationFeatureRecord.model_version == SIMILARITY_MODEL_VERSION,
-            AssetImagePreservationFeatureRecord.feature_version == SIMILARITY_FEATURE_VERSION,
+            AssetImagePreservationFeatureRecord.model_version == PRESERVATION_MODEL_VERSION,
+            AssetImagePreservationFeatureRecord.feature_version == PRESERVATION_FEATURE_VERSION,
             AssetImagePreservationFeatureRecord.config_fingerprint
-            == SIMILARITY_CONFIG_FINGERPRINT,
+            == PRESERVATION_CONFIG_FINGERPRINT,
             AssetImagePreservationFeatureRecord.source_file_modified_at
             == AssetRecord.file_modified_at,
             AssetImagePreservationFeatureRecord.source_file_size_bytes
@@ -403,10 +403,10 @@ class IntegrityRepository:
                 or_(
                     AssetRecord.file_size_bytes.is_(None),
                     AssetImagePreservationFeatureRecord.asset_id.is_(None),
-                    AssetImagePreservationFeatureRecord.model_version != SIMILARITY_MODEL_VERSION,
-                    AssetImagePreservationFeatureRecord.feature_version != SIMILARITY_FEATURE_VERSION,
+                    AssetImagePreservationFeatureRecord.model_version != PRESERVATION_MODEL_VERSION,
+                    AssetImagePreservationFeatureRecord.feature_version != PRESERVATION_FEATURE_VERSION,
                     AssetImagePreservationFeatureRecord.config_fingerprint
-                    != SIMILARITY_CONFIG_FINGERPRINT,
+                    != PRESERVATION_CONFIG_FINGERPRINT,
                     AssetImagePreservationFeatureRecord.source_file_modified_at
                     != AssetRecord.file_modified_at,
                     AssetImagePreservationFeatureRecord.source_file_size_bytes.is_distinct_from(
@@ -473,9 +473,9 @@ class IntegrityRepository:
             else:
                 feature_values = {
                     "asset_id": asset.id,
-                    "model_version": visual_feature.model_version,
-                    "feature_version": visual_feature.feature_version,
-                    "config_fingerprint": SIMILARITY_CONFIG_FINGERPRINT,
+                    "model_version": PRESERVATION_MODEL_VERSION,
+                    "feature_version": PRESERVATION_FEATURE_VERSION,
+                    "config_fingerprint": PRESERVATION_CONFIG_FINGERPRINT,
                     "source_file_modified_at": asset.file_modified_at,
                     "source_file_size_bytes": result.byte_size,
                     "source_sha256": result.sha256_hex,
