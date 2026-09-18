@@ -1,4 +1,4 @@
-"""Candidate-only, bounded original-resolution visual detail extraction."""
+"""Cached localized-detail evidence from the unified visual representation."""
 
 from __future__ import annotations
 
@@ -235,7 +235,7 @@ class SimilarityDetailRepository:
 
 
 class SimilarityDetailMaintainer:
-    """Download only shortlisted assets, with finite batches and durable reuse."""
+    """Reuse cached detail and repair rare gaps through the unified normalizer."""
 
     def __init__(
         self,
@@ -275,14 +275,6 @@ class SimilarityDetailMaintainer:
             "detail_oversized_original_decodes_avoided": 0,
             "bounded_candidate_validations": 0,
             "full_resolution_validations": 0,
-            "unavailable_bounded_validations": 0,
-            "alpha_uncertain_bounded_evidence": 0,
-            "deterministic_retries_suppressed": 0,
-            "detail_unavailable_retried": 0,
-            "detail_alpha_source_probes": 0,
-            "detail_alpha_source_probe_bytes": 0,
-            "detail_alpha_source_probe_confirmed_opaque": 0,
-            "detail_alpha_source_probe_confirmed_alpha": 0,
         }
 
     @staticmethod
@@ -383,7 +375,10 @@ class SimilarityDetailMaintainer:
                 self.counters["detail_original_bytes"] += normalized.source_bytes
             else:
                 self.counters["bounded_candidate_validations"] += 1
-                self.counters["detail_preview_fallbacks"] += int(saved)
+                if saved and normalized.detail_origin == "transcoded_fullsize":
+                    self.counters["detail_transcoded_fallbacks"] += 1
+                elif saved:
+                    self.counters["detail_preview_fallbacks"] += 1
 
             self.counters[
                 "detail_features_generated" if saved else "detail_features_unavailable"
