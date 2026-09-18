@@ -281,13 +281,13 @@ async def test_eleven_persistent_failures_are_retried_once_and_reported(caplog) 
     assert completed == 0
     assert unavailable == 11
     assert attempted == set(failed_ids)
-    assert all("fallback failed" in reason for reason in reasons.values())
+    assert all("visual_normalization_unavailable" in reason for reason in reasons.values())
     assert immich.previewed == failed_ids * 2
     failure_records = [
         record for record in caplog.records if "Library fingerprint unavailable" in record.message
     ]
     assert len(failure_records) == 22
-    assert "attempt=retry reason=preview unavailable" in caplog.text
+    assert "attempt=retry reason=visual_normalization_unavailable" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -310,12 +310,12 @@ async def test_undecodable_preview_logs_its_retry_reason(caplog) -> None:
     result = await handler.execute(FakeContext(), {})
 
     reason = result.summary["unavailable_asset_reasons"][str(A)]
-    assert "fallback failed" in reason
+    assert "visual_normalization_unavailable" in reason
     assert f"asset_id={A} attempt=retry reason={reason}" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_invalid_preview_uses_bounded_original_without_pixel_hash() -> None:
+async def test_safe_image_uses_original_visual_source_without_pixel_hash() -> None:
     features = FakeFeatures([A])
 
     class OriginalImmich(FakeImmich):
@@ -341,7 +341,7 @@ async def test_invalid_preview_uses_bounded_original_without_pixel_hash() -> Non
     assert coverage.complete is True
     assert (completed, unavailable) == (1, 0)
     assert maintainer.metrics()["original_fingerprints_generated"] == 1
-    assert maintainer.metrics()["fallbacks_to_original"] == 1
+    assert maintainer.metrics()["fallbacks_to_original"] == 0
     assert maintainer.metrics()["original_bytes_downloaded"] == len(PREVIEW)
     assert maintainer.metrics()["deep_verifications_performed"] == 0
     assert "decode_milliseconds" in maintainer.metrics()
@@ -399,7 +399,7 @@ async def test_source_change_during_preview_rejects_feature() -> None:
     assert coverage.complete is False
     assert (completed, unavailable) == (0, 1)
     assert features.current == set()
-    assert reasons[A] == "Immich source changed while search evidence was generated"
+    assert reasons[A] == "Immich source changed while visual evidence was generated"
 
 
 @pytest.mark.asyncio
@@ -445,17 +445,25 @@ async def test_pause_during_concurrent_fetch_keeps_page_uncommitted() -> None:
 
 
 @pytest.mark.asyncio
-async def test_valid_preview_indexes_original_with_mismatched_declared_mime() -> None:
+async def test_safe_original_decode_does_not_trust_declared_mime() -> None:
     features = FakeFeatures([A])
 
     class MismatchedMimeImmich(FakeImmich):
+        original_calls = 0
+
         async def get_asset(self, asset_id):
             item = source(asset_id)
             item.original_mime_type = "image/heic"
             return item
 
-        async def stream_original(self, *args, **kwargs):
-            pytest.fail("Search indexing downloaded an original with mismatched MIME")
+        @asynccontextmanager
+        async def stream_original(self, _asset_id, **_kwargs):
+            self.original_calls += 1
+
+            async def chunks():
+                yield PREVIEW
+
+            yield SimpleNamespace(content_length=len(PREVIEW), chunks=chunks())
 
     immich = MismatchedMimeImmich()
     maintainer = SimilarityIndexMaintainer(
@@ -469,7 +477,8 @@ async def test_valid_preview_indexes_original_with_mismatched_declared_mime() ->
     assert coverage.complete is True
     assert (completed, unavailable) == (1, 0)
     assert reasons == {}
-    assert immich.previewed == [A]
+    assert immich.original_calls == 1
+    assert immich.previewed == []
 
 
 @pytest.mark.asyncio
