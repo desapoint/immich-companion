@@ -4,8 +4,8 @@ Revision ID: 20260918_0051
 Revises: 20260917_0050
 """
 
-from collections.abc import Sequence
 import hashlib
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
