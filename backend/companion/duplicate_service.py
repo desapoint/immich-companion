@@ -79,16 +79,19 @@ from companion.immich import (
 from companion.integrity import decode_immich_sha1
 from companion.integrity_repository import (
     IntegrityRepository,
+    preservation_feature_freshness,
     report_freshness,
-    similarity_feature_freshness,
 )
 from companion.integrity_service import INTEGRITY_TASK_TYPE, IntegrityTaskHandler
 from companion.models import (
     ActionPlanRecord,
+    AssetImagePreservationFeatureRecord,
     AssetIntegrityReportRecord,
-    AssetSimilarityFeatureRecord,
+    AssetSimilaritySearchFeatureRecord,
 )
+from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
 from companion.similarity_repository import PairSimilarityEvidence, SimilarityRepository
+from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.stack_service import StackSelectionError, StackService
 from companion.task_coordinator import (
     PermanentTaskError,
@@ -360,6 +363,7 @@ class CrossSourceDuplicateService:
         similarity: SimilarityRepository | None = None,
         discovery: GroupDiscoveryProvider | None = None,
         stacks: StackService | None = None,
+        search_features: SimilaritySearchRepository | None = None,
     ) -> None:
         self._settings = settings
         self._immich = immich
@@ -371,6 +375,7 @@ class CrossSourceDuplicateService:
         self._reviews = reviews
         self._policy = policy
         self._similarity = similarity
+        self._search_features = search_features
         self._discovery = discovery or ImmichDuplicateProvider(immich)
         self._stacks = stacks
 
@@ -575,7 +580,7 @@ class CrossSourceDuplicateService:
     ) -> tuple[
         list[DiscoveredGroup],
         dict[UUID, AssetIntegrityReportRecord],
-        dict[UUID, AssetSimilarityFeatureRecord],
+        dict[UUID, AssetImagePreservationFeatureRecord],
         CrossSourceDuplicateResult,
     ]:
         return await self._snapshot_groups(await self._live_groups(), options)
@@ -587,7 +592,7 @@ class CrossSourceDuplicateService:
     ) -> tuple[
         list[DiscoveredGroup],
         dict[UUID, AssetIntegrityReportRecord],
-        dict[UUID, AssetSimilarityFeatureRecord],
+        dict[UUID, AssetImagePreservationFeatureRecord],
         CrossSourceDuplicateResult,
     ]:
         report_ids = [
@@ -708,7 +713,7 @@ class CrossSourceDuplicateService:
         result: CrossSourceDuplicateResult,
         source_groups: list[DiscoveredGroup],
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
-        features: dict[UUID, AssetSimilarityFeatureRecord],
+        features: dict[UUID, AssetImagePreservationFeatureRecord],
         *,
         update_group_contract: bool = True,
     ) -> CrossSourceDuplicateResult:
@@ -1034,7 +1039,7 @@ class CrossSourceDuplicateService:
         cls,
         groups: list[DiscoveredGroup],
         reports: dict[UUID, AssetIntegrityReportRecord],
-        features: dict[UUID, AssetSimilarityFeatureRecord],
+        features: dict[UUID, AssetImagePreservationFeatureRecord],
         options: DuplicateAnalysisOptions,
         *,
         include_similarity: bool = False,
