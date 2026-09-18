@@ -80,11 +80,17 @@ class NormalizedVisualImage:
                 if self.source_kind == "bounded_fullsize"
                 else "bounded_preview"
             )
-        return (
-            "transcoded_fullsize"
-            if self.source_kind == "bounded_fullsize"
-            else "preview_fallback"
-        )
+        if self.source_kind == "bounded_fullsize":
+            original_dimensions = (self.source_width, self.source_height)
+            normalized_dimensions = (self.width, self.height)
+            if (
+                all(original_dimensions)
+                and sorted(normalized_dimensions)
+                != sorted(original_dimensions)
+            ):
+                return "preview_fallback"
+            return "transcoded_fullsize"
+        return "preview_fallback"
 
 
 def source_requires_bounded_visual(asset: ImmichAsset) -> bool:
