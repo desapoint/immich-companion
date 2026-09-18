@@ -224,6 +224,30 @@ describe('V2DuplicateCompareViewer', () => {
     expect(body).not.toContain('Technical linked data');
   });
 
+  it('renders duplicate-group navigation and wires Shift+Arrow keyboard shortcuts', () => {
+    const { body } = render(V2DuplicateCompareViewer, {
+      props: {
+        open: true,
+        groupTitle: 'Group navigation',
+        groupKind: 'similar',
+        assetIds: ['asset-1', 'asset-2'],
+        canPreviousGroup: true,
+        canNextGroup: true,
+        ongroupnavigate: async () => {},
+        onclose: () => {},
+      },
+    });
+
+    expect(buttonWithText(body, 'Previous group')).not.toContain('disabled');
+    expect(buttonWithText(body, 'Next group')).not.toContain('disabled');
+    expect(body).toContain('Previous duplicate group');
+    expect(body).toContain('Next duplicate group');
+    expect(viewerSource).toContain("event.shiftKey && event.key === 'ArrowLeft'");
+    expect(viewerSource).toContain("void navigateGroup('previous')");
+    expect(viewerSource).toContain("event.shiftKey && event.key === 'ArrowRight'");
+    expect(viewerSource).toContain("void navigateGroup('next')");
+  });
+
   it('keeps inspection navigation enabled while write controls are disabled', () => {
     const { body } = render(V2DuplicateCompareViewer, {
       props: {
@@ -239,8 +263,8 @@ describe('V2DuplicateCompareViewer', () => {
       },
     });
 
-    expect(buttonWithText(body, '← Previous')).not.toContain('disabled');
-    expect(buttonWithText(body, 'Next →')).not.toContain('disabled');
+    expect(buttonWithText(body, '← Previous image')).not.toContain('disabled');
+    expect(buttonWithText(body, 'Next image →')).not.toContain('disabled');
     expect(buttonWithText(body, 'Revalidate from reference')).toContain('disabled');
     expect(buttonWithText(body, 'Clear selection')).toContain('disabled');
     expect(buttonWithText(body, 'Keep')).toContain('disabled');

@@ -56,6 +56,7 @@
   import { duplicateListMemberMeta, formatSimilarityPercent } from '../data/duplicateMember';
   import { duplicateSourceLabels } from '../data/duplicateSource';
   import { comparisonTargetId } from '../../lib/utils/duplicateComparisonNavigation';
+  import { duplicateViewerGroupNavigationPlan, type DuplicateViewerGroupDirection } from '../state/duplicateViewerGroupNavigation';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
   import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateKeeperSelectionResult, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateSourceFilter, DuplicateState, SimilarityCacheKind, SimilarityCacheStatus, SimilarityValidationMode } from '../data/contracts';
 
@@ -71,16 +72,21 @@
   let similarityThreshold=$state('95'),validationMode=$state<SimilarityValidationMode>('strict'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('8'),discoverySummary=$state('');
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]),historyClearTarget=$state<DuplicateHistoryRecord|null>(null),historyClearAll=$state(false),historyDetailId=$state<string|null>(null);
   let cacheTelemetry=$state.raw<SimilarityCacheStatus|null>(null),cacheLoading=$state(false);
-  let planPreparing=$state(false),groupLoads=$state(0),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
+  let planPreparing=$state(false),groupLoads=$state(0),groupNavigationLoading=$state(false),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
   const reviewLoading=$derived(initialLoading||groupLoads>0||groupRequests.loading),loading=$derived(reviewLoading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing||presetApplying||selectingAll),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
-  const activeGroup=$derived(groups.find((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),activeCompareStack=$derived(stackForAsset(stackWorkspace,activeAssetIds[member]??'')),decisionCount=$derived(Object.keys(decisions).length);
+  const activeGroup=$derived(groups.find((item)=>item.id===group)),activeGroupIndex=$derived(groups.findIndex((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),activeCompareStack=$derived(stackForAsset(stackWorkspace,activeAssetIds[member]??'')),decisionCount=$derived(Object.keys(decisions).length);
   const activeSimilarities=$derived(Object.fromEntries(activeGroup?.members.map((item)=>[item.asset.id,item.similarity])??[]));
   const activeSimilarityEvidence=$derived(Object.fromEntries(activeGroup?.members.map((item)=>[item.asset.id,item.similarityEvidence])??[]));
   const reviewFilterOptions=$derived(capabilities.reviewFilters.map(String));
   const invalidStackCount=$derived(invalidPendingStacks(stackWorkspace).length);
   const discoveryReady=$derived(capabilities.canRunDiscovery&&(includeExact||includeSimilar));
+  const groupNavigationState=$derived({resultMode:collection.resultMode,page:collection.page,pageSize:collection.pageSize,total,loadedCount:groups.length,currentIndex:activeGroupIndex,hasNextCursor:Boolean(nextCursor)});
+  const previousGroupPlan=$derived(duplicateViewerGroupNavigationPlan('previous',groupNavigationState));
+  const nextGroupPlan=$derived(duplicateViewerGroupNavigationPlan('next',groupNavigationState));
+  const canPreviousGroup=$derived(compare&&!mutating&&!reviewLoading&&!groupNavigationLoading&&previousGroupPlan!==null);
+  const canNextGroup=$derived(compare&&!mutating&&!reviewLoading&&!groupNavigationLoading&&nextGroupPlan!==null);
   const draftTimers=new Map<string,ReturnType<typeof setTimeout>>();
   let selectionSave=Promise.resolve();
   let workspaceHydrated=false;
@@ -165,7 +171,30 @@
   function setSort(value:string){sort=value;collection.reset();interactionError='';void refreshGroups(true,true)}
   function setReviewFilter(value:string){reviewFilter=value as typeof reviewFilter;collection.reset();interactionError='';void refreshGroups(true,true)}
   function setSourceFilter(value:string){sourceFilter=value as DuplicateSourceFilter;if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-source-filter',sourceFilter);collection.reset();interactionError='';void refreshGroups(true,true)}
-  function openCompare(nextGroup:string,index:number){const item=groups.find((candidate)=>candidate.id===nextGroup),ids=item?.members.map((entry)=>entry.asset.id)??[];group=nextGroup;reference=Math.max(0,ids.indexOf(item?.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',ids[index]??'')));compare=true;persistSelection()}
+  function activateCompareGroup(item:DuplicateGroupRecord,index=0){const ids=item.members.map((entry)=>entry.asset.id);group=item.id;reference=Math.max(0,ids.indexOf(item.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',ids[index]??'')));compare=true;persistSelection()}
+  function openCompare(nextGroup:string,index:number){const item=groups.find((candidate)=>candidate.id===nextGroup);if(item)activateCompareGroup(item,index)}
+  async function navigateCompareGroup(direction:DuplicateViewerGroupDirection){
+    if(!compare||mutating||reviewLoading||groupNavigationLoading)return;
+    const plan=duplicateViewerGroupNavigationPlan(direction,{resultMode:collection.resultMode,page:collection.page,pageSize:collection.pageSize,total,loadedCount:groups.length,currentIndex:groups.findIndex((item)=>item.id===group),hasNextCursor:Boolean(nextCursor)});
+    if(!plan)return;
+    groupNavigationLoading=true;
+    try{
+      let target:DuplicateGroupRecord|undefined;
+      if(plan.kind==='loaded')target=groups[plan.index];
+      else if(plan.kind==='page'){
+        const previousPage=collection.page;
+        collection.setPage(plan.page);
+        const loaded=await refreshGroups(true,true);
+        if(!loaded){collection.setPage(previousPage);return}
+        target=plan.edge==='first'?groups[0]:groups[groups.length-1];
+      }else{
+        const before=groups.length;
+        await loadMore();
+        target=groups[plan.index]??groups[before];
+      }
+      if(target)activateCompareGroup(target,0);
+    }finally{groupNavigationLoading=false}
+  }
   async function switchReference(assetId:string){if(mutating||!activeGroup)return;const updated=await libraryData.duplicates.switchReference(activeGroup.id,assetId),ids=updated.members.map((entry)=>entry.asset.id);groups=groups.map((item)=>item.id===updated.id?updated:item);reference=Math.max(0,ids.indexOf(updated.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',assetId)))}
   function setDecision(groupId:string,assetId:string,decision:DuplicateDecision){if(mutating||!capabilities.decisions.includes(decision))return;const item=groups.find((entry)=>entry.id===groupId),wasComplete=item?groupComplete(item):false;const next={...decisions,[assetId]:decision};decisions=next;stackWorkspace=decision==='stack'?assignAssetToActiveStack(stackWorkspace,groupId,assetId):removeAssetFromPendingStack(stackWorkspace,assetId);if(item){if(!wasComplete&&groupComplete(item,next)&&!selectedGroups.includes(item.id)){selectedGroups=[...selectedGroups,item.id];persistSelection()}scheduleDraft(item)}}
   function clearDecision(groupId:string,assetId:string){if(mutating||!decisions[assetId])return;const next={...decisions};delete next[assetId];decisions=next;stackWorkspace=removeAssetFromPendingStack(stackWorkspace,assetId);selectedGroups=selectedGroups.filter((id)=>id!==groupId);persistSelection();const item=groups.find((entry)=>entry.id===groupId);if(!item)return;const resolution=groupResolution(item);if(Object.keys(resolution.decisions).length){scheduleDraft(item);return}const timer=draftTimers.get(item.id);if(timer)clearTimeout(timer);draftTimers.delete(item.id);void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>interactionError=errorMessage(error,'Duplicate choice could not be cleared.'))}
@@ -387,7 +416,7 @@
 {#if keeperRulesOpen}<V2DuplicateKeeperModal groupIds={groups.map((item)=>item.id)} initialScope={selectionScope==='All matching'?'all_matching':'current_page'} {reviewFilter} {sourceFilter} onclose={()=>keeperRulesOpen=false} onapplied={(result)=>void keeperRulesApplied(result)}/>{/if}
 {#if historyDetailId}<V2DuplicateHistoryDetail resolutionId={historyDetailId} onclose={()=>historyDetailId=null}/>{/if}
 
-<V2DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} groupSimilarity={activeGroup?.groupSimilarity??null} groupMembers={activeGroup?.members??[]} validationMode={activeGroup?.similarityValidationMode??null} similarityThreshold={activeGroup?.similarityThresholdPercent??null} assetIds={activeAssetIds} similarities={activeSimilarities} similarityEvidence={activeSimilarityEvidence} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} disabled={mutating} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} ondecisionclear={(assetId)=>clearDecision(group,assetId)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onrevalidate={activeGroup?.similarityValidationMode?revalidateFromReference:undefined} onclose={()=>{compare=false;persistSelection()}}/>
+<V2DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} groupSimilarity={activeGroup?.groupSimilarity??null} groupMembers={activeGroup?.members??[]} validationMode={activeGroup?.similarityValidationMode??null} similarityThreshold={activeGroup?.similarityThresholdPercent??null} assetIds={activeAssetIds} similarities={activeSimilarities} similarityEvidence={activeSimilarityEvidence} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} disabled={mutating} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} ongroupnavigate={navigateCompareGroup} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} ondecisionclear={(assetId)=>clearDecision(group,assetId)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onrevalidate={activeGroup?.similarityValidationMode?revalidateFromReference:undefined} onclose={()=>{compare=false;persistSelection()}}/>
 {#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
 {#if historyClearTarget}<ConfirmDialog title="Clear this resolution?" message="This removes Companion's completed-resolution record so a currently discovered matching group can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear resolution" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearHistoryResolution()} onclose={()=>{if(!mutating)historyClearTarget=null}}/>{/if}
 {#if historyClearAll}<ConfirmDialog title="Clear all resolution history?" message="This removes every completed duplicate-resolution record in Companion, including history outside the currently selected date range, so matching groups can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear all resolution history" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearAllHistoryResolutions()} onclose={()=>{if(!mutating)historyClearAll=false}}/>{/if}
