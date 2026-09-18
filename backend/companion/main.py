@@ -199,6 +199,10 @@ from companion.similarity_scan_service import (
     SimilarityScanTaskHandler,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
+from companion.similarity_settings import (
+    SimilarityRuntimeSettingsRepository,
+    SimilarityRuntimeSettingsUpdate,
+)
 from companion.stack_service import StackService
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
@@ -283,6 +287,11 @@ def create_app(
     integrity_repository = IntegrityRepository(database) if database is not None else None
     search_feature_repository = (
         SimilaritySearchRepository(database) if database is not None else None
+    )
+    similarity_runtime_settings_repository = (
+        SimilarityRuntimeSettingsRepository(database, runtime_settings)
+        if database is not None
+        else None
     )
     detail_repository = SimilarityDetailRepository(database) if database is not None else None
     detail_maintainer = (
@@ -562,6 +571,8 @@ def create_app(
             decode_slots=runtime_settings.similarity_preview_decode_slots,
             fallback_max_bytes=runtime_settings.similarity_original_fallback_max_bytes,
             decode_cache_path=runtime_settings.similarity_cache_dir,
+            batch_size=runtime_settings.similarity_fingerprint_page_size,
+            runtime_settings=similarity_runtime_settings_repository,
         )
         if asset_repository is not None and search_feature_repository is not None
         else None
@@ -1040,6 +1051,26 @@ def create_app(
         if database is None:
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
         return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
+
+    @app.get("/api/settings/duplicates/similarity-runtime")
+    async def similarity_runtime_settings() -> dict[str, object]:
+        if similarity_runtime_settings_repository is None:
+            raise HTTPException(
+                status_code=503,
+                detail="The companion database is not configured.",
+            )
+        return (await similarity_runtime_settings_repository.get()).model_dump()
+
+    @app.put("/api/settings/duplicates/similarity-runtime")
+    async def update_similarity_runtime_settings(
+        request: SimilarityRuntimeSettingsUpdate,
+    ) -> dict[str, object]:
+        if similarity_runtime_settings_repository is None:
+            raise HTTPException(
+                status_code=503,
+                detail="The companion database is not configured.",
+            )
+        return (await similarity_runtime_settings_repository.update(request)).model_dump()
 
     @app.get(
         "/api/settings/duplicates/immich-sync",
