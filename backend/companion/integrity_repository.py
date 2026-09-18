@@ -14,11 +14,14 @@ from companion.database import DatabaseManager
 from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION, FileIntegrityResult
 from companion.integrity_schema import AssetIntegrityReport, IntegrityFreshness
-from companion.models import (\n    AssetImagePreservationFeatureRecord,\n    AssetIntegrityReportRecord,\n    AssetRecord,\n)
+from companion.models import (
+    AssetImagePreservationFeatureRecord,
+    AssetIntegrityReportRecord,
+    AssetRecord,
+)
 from companion.preservation_features import (
     PRESERVATION_CONFIG_FINGERPRINT,
     PRESERVATION_FEATURE_VERSION,
-    PRESERVATION_MODEL_VERSION,
 )
 from companion.similarity_features import (
     SIMILARITY_CONFIG_FINGERPRINT,
@@ -235,9 +238,9 @@ class IntegrityRepository:
                 AssetRecord.is_trashed.is_(False),
                 AssetRecord.is_offline.is_(False),
                 AssetImagePreservationFeatureRecord.preservation_version
-                == PRESERVATION_FEATURE_VERSION,
-                AssetImagePreservationFeatureRecord.preservation_config_fingerprint
-                == PRESERVATION_CONFIG_FINGERPRINT,
+            == PRESERVATION_FEATURE_VERSION,
+            AssetImagePreservationFeatureRecord.preservation_config_fingerprint
+            == PRESERVATION_CONFIG_FINGERPRINT,
                 AssetImagePreservationFeatureRecord.source_file_modified_at
                 == AssetRecord.file_modified_at,
                 AssetImagePreservationFeatureRecord.source_file_size_bytes
@@ -292,9 +295,9 @@ class IntegrityRepository:
                     AssetRecord.is_trashed.is_(False),
                     AssetRecord.is_offline.is_(False),
                     AssetImagePreservationFeatureRecord.preservation_version
-                == PRESERVATION_FEATURE_VERSION,
-                AssetImagePreservationFeatureRecord.preservation_config_fingerprint
-                == PRESERVATION_CONFIG_FINGERPRINT,
+                    == PRESERVATION_FEATURE_VERSION,
+                    AssetImagePreservationFeatureRecord.preservation_config_fingerprint
+                    == PRESERVATION_CONFIG_FINGERPRINT,
                     AssetImagePreservationFeatureRecord.source_file_modified_at
                     == AssetRecord.file_modified_at,
                     AssetImagePreservationFeatureRecord.source_file_size_bytes
