@@ -23,9 +23,17 @@ from companion.duplicate_schema import (
 )
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.runtime_metrics import process_memory_snapshot
-from companion.similarity_grouping import SIMILARITY_GROUPING_VERSION
+from companion.similarity_grouping import (
+    SIMILARITY_GROUPING_VERSION,
+    SimilarityGroupingEdge,
+    validated_similarity_groups,
+)
 from companion.similarity_index_service import SimilarityIndexMaintainer
-from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, SimilarityRepository
+from companion.similarity_repository import (
+    SIMILARITY_COMPARISON_VERSION,
+    SimilarityRepository,
+    canonical_pair,
+)
 from companion.similarity_scan_repository import (
     SimilarityScanPair,
     SimilarityScanParameters,
@@ -89,6 +97,43 @@ def _feature_snapshot_key(features: list[Any]) -> str:
             ).encode()
         )
     return digest.hexdigest()
+
+
+def _missing_reference_groups(
+    matches: list[SimilarityScanPair],
+    request: SimilarityScanRequest,
+) -> list[list[UUID]]:
+    """Plan only final-group members that lack a retained direct reference edge."""
+
+    if not matches:
+        return []
+    validated = validated_similarity_groups(
+        tuple(
+            SimilarityGroupingEdge(
+                match.asset_id_low,
+                match.asset_id_high,
+                match.evidence.similarity_percent,
+            )
+            for match in matches
+        ),
+        mode=request.validation_mode,
+        threshold=request.similarity_threshold,
+        preferred_anchor_asset_id=request.anchor_asset_id,
+    )
+    retained_pairs = {
+        canonical_pair(match.asset_id_low, match.asset_id_high) for match in matches
+    }
+    missing_groups: list[list[UUID]] = []
+    for group in validated:
+        missing_members = [
+            asset_id
+            for asset_id in group.asset_ids
+            if asset_id != group.anchor_asset_id
+            and canonical_pair(group.anchor_asset_id, asset_id) not in retained_pairs
+        ]
+        if missing_members:
+            missing_groups.append([group.anchor_asset_id, *missing_members])
+    return missing_groups
 
 
 class SimilarityScanService:
@@ -467,6 +512,88 @@ class SimilarityScanTaskHandler:
                     },
                 )
             matches = [item[3] for item in accepted]
+            missing_reference_groups = _missing_reference_groups(matches, request)
+            reference_pairs_required = sum(
+                len(group) - 1 for group in missing_reference_groups
+            )
+            reference_pairs_enriched = 0
+            if reference_pairs_required:
+                await context.checkpoint(
+                    checkpoint={
+                        "phase": "reference_enrichment",
+                        "scan_id": str(scan_id),
+                        "feature_snapshot": snapshot_key,
+                        "candidate_assets_processed": len(ordered_features),
+                        "pairs_scored": total,
+                    },
+                    counters=telemetry(
+                        assets_with_current_features=len(features),
+                        candidate_pairs=total,
+                        candidate_pair_limit=(
+                            len(features) * request.maximum_neighbors_per_asset // 2
+                        ),
+                        pairs_scored=total,
+                        matches_retained=len(matches),
+                        reference_pairs_required=reference_pairs_required,
+                        reference_pairs_enriched=0,
+                    ),
+                    progress={
+                        "phase": "similarity_reference_enrichment",
+                        "completed": 0,
+                        "total": reference_pairs_required,
+                        "percent": 97.0,
+                        "detail": (
+                            "Completing direct reference comparisons for "
+                            f"{reference_pairs_required} linked group members…"
+                        ),
+                    },
+                )
+                await context.ensure_active()
+                enrichment_started = perf_counter()
+                enriched = await self._similarity.reference_edges(
+                    missing_reference_groups,
+                    feature_by_id,
+                    **_epoch_kwargs(self._similarity.reference_edges, evidence_epoch),
+                )
+                pair_scoring_milliseconds += round(
+                    (perf_counter() - enrichment_started) * 1000
+                )
+                reference_pairs_enriched = len(enriched)
+                if reference_pairs_enriched != reference_pairs_required:
+                    raise PermanentTaskError(
+                        "Similarity reference enrichment did not produce every "
+                        "final-group reference comparison."
+                    )
+                await context.checkpoint(
+                    checkpoint={
+                        "phase": "reference_enrichment",
+                        "scan_id": str(scan_id),
+                        "feature_snapshot": snapshot_key,
+                        "candidate_assets_processed": len(ordered_features),
+                        "pairs_scored": total,
+                    },
+                    counters=telemetry(
+                        assets_with_current_features=len(features),
+                        candidate_pairs=total,
+                        candidate_pair_limit=(
+                            len(features) * request.maximum_neighbors_per_asset // 2
+                        ),
+                        pairs_scored=total,
+                        matches_retained=len(matches),
+                        reference_pairs_required=reference_pairs_required,
+                        reference_pairs_enriched=reference_pairs_enriched,
+                    ),
+                    progress={
+                        "phase": "similarity_reference_enrichment",
+                        "completed": reference_pairs_enriched,
+                        "total": reference_pairs_required,
+                        "percent": 98.0,
+                        "detail": (
+                            "Completed direct reference comparisons for "
+                            f"{reference_pairs_enriched} linked group members"
+                        ),
+                    },
+                )
             await context.checkpoint(
                 checkpoint={
                     "phase": "finalizing",
@@ -483,6 +610,8 @@ class SimilarityScanTaskHandler:
                     ),
                     pairs_scored=total,
                     matches_retained=len(matches),
+                    reference_pairs_required=reference_pairs_required,
+                    reference_pairs_enriched=reference_pairs_enriched,
                 ),
                 progress={
                     "phase": "similarity_finalizing",
@@ -538,5 +667,7 @@ class SimilarityScanTaskHandler:
                 ),
                 pairs_scored=total,
                 matches_retained=len(matches),
+                reference_pairs_required=reference_pairs_required,
+                reference_pairs_enriched=reference_pairs_enriched,
             ),
         )
