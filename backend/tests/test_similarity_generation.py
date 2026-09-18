@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy.dialects import postgresql
 
 import companion.similarity_generation as generation_module
 import companion.similarity_repository as repository_module
@@ -43,7 +43,8 @@ class _EpochSession:
         yield self
 
     async def execute(self, statement, parameters=None):
-        sql = str(statement)
+        compiled = statement.compile(dialect=postgresql.dialect())
+        sql = str(compiled)
         parameters = parameters or {}
         self.database.statements.append(sql)
         if "SELECT epoch, code_generation, descriptor_fingerprint, rebuilt_at" in sql:
@@ -75,7 +76,6 @@ class _EpochSession:
             self.database.task_update_sql = sql
             return _Result(rowcount=4)
         if "INSERT INTO tasks" in sql:
-            compiled = statement.compile()
             self.database.queued_task_parameters = {
                 **dict(compiled.params),
                 **dict(parameters),
