@@ -40,6 +40,20 @@ describe('duplicate discovery settings repository', () => {
     );
   });
 
+  it('defaults older settings responses to a depth limit of two', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => response({
+      include_exact: true,
+      include_similar: true,
+      similarity_threshold: 95,
+      validation_mode: 'linked',
+      max_candidates: 8,
+    })));
+
+    await expect(duplicateDiscoverySettingsRepository.load()).resolves.toMatchObject({
+      maxLinkDepth: 2,
+    });
+  });
+
   it('persists the complete discovery configuration', async () => {
     const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(init?.method).toBe('PUT');
