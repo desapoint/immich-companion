@@ -9,6 +9,10 @@ describe('V2 duplicate viewer group navigation wiring', () => {
     expect(pageSource).toContain('duplicateViewerGroupNavigationPlan');
   });
 
+  it('passes the current group review-selection state into the comparison viewer', () => {
+    expect(pageSource).toContain('selectedForReview={selectedGroups.includes(group)}');
+  });
+
   it('loads adjacent pagination pages before activating the boundary group', () => {
     expect(pageSource).toContain("else if(plan.kind==='page')");
     expect(pageSource).toContain('collection.setPage(plan.page)');
