@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
 
   import { jsonRequest, requestJson } from '../../lib/api/http';
-  import { readDuplicateDiscoveryPreferences } from '../state/duplicateDiscoveryPreferences';
+  import { duplicateDiscoverySettingsRepository } from '../data/api/duplicateDiscoverySettingsRepository';
   import V2Badge from './V2Badge.svelte';
   import V2Button from './V2Button.svelte';
   import V2Card from './V2Card.svelte';
@@ -116,7 +116,7 @@
     rebuildError='';
     rebuildMessage='Invalidating the current evidence generation…';
     try{
-      const preferences=readDuplicateDiscoveryPreferences();
+      const preferences=await duplicateDiscoverySettingsRepository.load();
       const result=await requestJson<ApiRebuildResult>(
         '/api/v2/duplicates/similarity-evidence/rebuild',
         jsonRequest('POST',{

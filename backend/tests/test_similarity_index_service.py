@@ -109,6 +109,14 @@ class FakeAssets:
         self.refreshed.append(item.id)
 
 
+class FakeRuntimeSettings:
+    def __init__(self, fingerprint_page_size: int) -> None:
+        self.fingerprint_page_size = fingerprint_page_size
+
+    async def get(self):
+        return SimpleNamespace(fingerprint_page_size=self.fingerprint_page_size)
+
+
 class FakeContext:
     def __init__(self, checkpoint=None) -> None:
         self.task = SimpleNamespace(checkpoint=checkpoint or {})
@@ -195,6 +203,32 @@ async def test_sixty_thousand_asset_catalog_only_pages_the_120_required_features
         50,
         75,
         100,
+        120,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persisted_fingerprint_page_size_overrides_constructor_default() -> None:
+    required = [UUID(int=index) for index in range(1, 121)]
+    features = FakeFeatures(required)
+    maintainer = SimilarityIndexMaintainer(
+        FakeImmich(),  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+        batch_size=25,
+        runtime_settings=FakeRuntimeSettings(60),  # type: ignore[arg-type]
+    )
+
+    coverage, completed, unavailable, _, reasons = await maintainer.maintain(FakeContext())
+
+    assert coverage.complete is True
+    assert completed == 120
+    assert unavailable == 0
+    assert reasons == {}
+    assert [limit for _, limit in features.requested_pages] == [60, 60, 60]
+    assert [cursor.int if cursor else None for cursor, _ in features.requested_pages] == [
+        None,
+        60,
         120,
     ]
 

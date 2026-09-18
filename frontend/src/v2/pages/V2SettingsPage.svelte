@@ -3,6 +3,7 @@
   import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
   import V2ActiveTasksSettings from '../components/V2ActiveTasksSettings.svelte';
   import V2ImmichDuplicateSyncSettings from '../components/V2ImmichDuplicateSyncSettings.svelte';
+  import V2SimilarityRuntimeSettings from '../components/V2SimilarityRuntimeSettings.svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
@@ -293,6 +294,7 @@
     {:else if tab === 'Duplicates'}
       <V2Stack gap="md">
         <V2ImmichDuplicateSyncSettings />
+        <V2SimilarityRuntimeSettings />
         <V2Card title="Duplicate policy">
           {#snippet actions()}<V2Badge tone="warn" text="Policy UI pending" />{/snippet}
           <V2Notice tone="info">Immich duplicate synchronization is live. The remaining duplicate policy controls will move into this section separately.</V2Notice>

@@ -89,6 +89,10 @@ from companion.discovery import (
     PersistedCompositeDuplicateProvider,
     SimilarityDuplicateProvider,
 )
+from companion.duplicate_discovery_settings import (
+    DuplicateDiscoverySettingsRepository,
+    DuplicateDiscoverySettingsUpdate,
+)
 from companion.duplicate_policy import DuplicatePolicy, DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import (
@@ -199,6 +203,10 @@ from companion.similarity_scan_service import (
     SimilarityScanTaskHandler,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
+from companion.similarity_settings import (
+    SimilarityRuntimeSettingsRepository,
+    SimilarityRuntimeSettingsUpdate,
+)
 from companion.stack_service import StackService
 from companion.sync_repository import SyncRepository
 from companion.sync_schema import (
@@ -284,6 +292,11 @@ def create_app(
     search_feature_repository = (
         SimilaritySearchRepository(database) if database is not None else None
     )
+    similarity_runtime_settings_repository = (
+        SimilarityRuntimeSettingsRepository(database, runtime_settings)
+        if database is not None
+        else None
+    )
     detail_repository = SimilarityDetailRepository(database) if database is not None else None
     detail_maintainer = (
         SimilarityDetailMaintainer(
@@ -321,6 +334,9 @@ def create_app(
     )
     duplicate_policy_repository = (
         DuplicatePolicyRepository(database) if database is not None else None
+    )
+    duplicate_discovery_settings_repository = (
+        DuplicateDiscoverySettingsRepository(database) if database is not None else None
     )
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None
@@ -562,6 +578,8 @@ def create_app(
             decode_slots=runtime_settings.similarity_preview_decode_slots,
             fallback_max_bytes=runtime_settings.similarity_original_fallback_max_bytes,
             decode_cache_path=runtime_settings.similarity_cache_dir,
+            batch_size=runtime_settings.similarity_fingerprint_page_size,
+            runtime_settings=similarity_runtime_settings_repository,
         )
         if asset_repository is not None and search_feature_repository is not None
         else None
@@ -1041,6 +1059,26 @@ def create_app(
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
         return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
 
+    @app.get("/api/settings/duplicates/similarity-runtime")
+    async def similarity_runtime_settings() -> dict[str, object]:
+        if similarity_runtime_settings_repository is None:
+            raise HTTPException(
+                status_code=503,
+                detail="The companion database is not configured.",
+            )
+        return (await similarity_runtime_settings_repository.get()).model_dump()
+
+    @app.put("/api/settings/duplicates/similarity-runtime")
+    async def update_similarity_runtime_settings(
+        request: SimilarityRuntimeSettingsUpdate,
+    ) -> dict[str, object]:
+        if similarity_runtime_settings_repository is None:
+            raise HTTPException(
+                status_code=503,
+                detail="The companion database is not configured.",
+            )
+        return (await similarity_runtime_settings_repository.update(request)).model_dump()
+
     @app.get(
         "/api/settings/duplicates/immich-sync",
         response_model=ImmichDuplicateSyncStatus,
@@ -1055,6 +1093,20 @@ def create_app(
     )
     async def start_immich_duplicate_sync() -> ImmichDuplicateSyncTaskStart:
         return await require_immich_duplicate_sync_service().start()
+
+    @app.get("/api/settings/duplicates/discovery")
+    async def duplicate_discovery_settings() -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (await duplicate_discovery_settings_repository.get()).model_dump()
+
+    @app.put("/api/settings/duplicates/discovery")
+    async def update_duplicate_discovery_settings(
+        request: DuplicateDiscoverySettingsUpdate,
+    ) -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (await duplicate_discovery_settings_repository.update(request)).model_dump()
 
     @app.get("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
     async def duplicate_policy_settings() -> DuplicatePolicy:
