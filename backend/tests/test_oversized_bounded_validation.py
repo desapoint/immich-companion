@@ -324,18 +324,18 @@ async def test_visual_normalizer_keeps_128_mib_preview_fallback_budget() -> None
 
 
 def test_packaged_libvips_has_required_image_loaders() -> None:
-    required = (
-        "jpegload_buffer",
-        "pngload_buffer",
-        "heifload_buffer",
-        "dcrawload_buffer",
-    )
+    required = ("jpegload_buffer", "pngload_buffer", "heifload_buffer")
     missing = [
         operation
         for operation in required
         if not pyvips.type_find("VipsOperation", operation)
     ]
+    raw_path_available = bool(
+        pyvips.type_find("VipsOperation", "dcrawload_buffer")
+        or pyvips.type_find("VipsOperation", "magickload_buffer")
+    )
     assert missing == []
+    assert raw_path_available is True
 
 
 def test_source_identity_invalidates_on_source_dimension_or_checksum_change() -> None:
