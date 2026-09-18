@@ -7,7 +7,7 @@ from itertools import combinations
 from typing import Literal
 from uuid import UUID
 
-SIMILARITY_GROUPING_VERSION = 2
+SIMILARITY_GROUPING_VERSION = 3
 SimilarityValidationMode = Literal["reference", "linked", "strict"]
 
 
