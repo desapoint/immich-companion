@@ -58,6 +58,9 @@ class FakeFeatures:
         baseline_current = self.eligible_count - len(self.work)
         return self.eligible_count, baseline_current + len(self.current), missing, 0
 
+    async def has_current(self, asset_id):
+        return asset_id in self.current
+
     async def list_work(self, *, after_asset_id, limit):
         self.requested_pages.append((after_asset_id, limit))
         return [
@@ -153,6 +156,24 @@ async def test_library_index_fingerprints_assets_independent_of_immich_duplicate
     assert result.counters["current_fingerprints"] == 3
     assert result.counters["missing_fingerprints"] == 0
     assert result.summary["coverage"]["complete"] is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_asset_reuses_complete_visual_cache_without_media_fetch() -> None:
+    features = FakeFeatures([A])
+    features.current.add(A)
+    immich = FakeImmich()
+    maintainer = SimilarityIndexMaintainer(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+    )
+
+    assert await maintainer.ensure_asset(FakeContext(), A) is True
+
+    assert immich.previewed == []
+    assert immich.metadata_requested == []
+    assert maintainer.metrics()["fingerprints_reused"] == 1
 
 
 @pytest.mark.asyncio
