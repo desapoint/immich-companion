@@ -322,6 +322,42 @@ async def test_detail_repair_uses_same_bounded_normalizer() -> None:
 
 
 @pytest.mark.asyncio
+async def test_known_over_budget_original_skips_original_stream() -> None:
+    fullsize = encoded_jpeg()
+    source = oversized_source(
+        width=4000,
+        height=3000,
+        exifInfo={"fileSizeInByte": DEFAULT_VISUAL_SOURCE_MAX_BYTES + 1},
+    )
+
+    class Immich:
+        original_calls = 0
+        fullsize_calls = 0
+
+        @asynccontextmanager
+        async def stream_original(self, _asset_id):
+            self.original_calls += 1
+            pytest.fail("Known over-budget original must not be opened")
+            yield  # pragma: no cover
+
+        async def get_bounded_fullsize(self, _asset_id, *, max_bytes):
+            assert max_bytes == DEFAULT_VISUAL_SOURCE_MAX_BYTES
+            self.fullsize_calls += 1
+            return fullsize
+
+    immich = Immich()
+    normalizer = SimilarityVisualNormalizer(immich)  # type: ignore[arg-type]
+    normalized = await normalizer.normalize(
+        Context(), ASSET_ID, source  # type: ignore[arg-type]
+    )
+
+    assert immich.original_calls == 0
+    assert immich.fullsize_calls == 1
+    assert normalized.source_kind == "bounded_fullsize"
+    assert normalized.search_origin == "preview"
+
+
+@pytest.mark.asyncio
 async def test_visual_normalizer_keeps_128_mib_fetch_budget() -> None:
     fullsize = encoded_jpeg()
     source = oversized_source()
