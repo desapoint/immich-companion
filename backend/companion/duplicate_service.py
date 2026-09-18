@@ -741,11 +741,30 @@ class CrossSourceDuplicateService:
         return result.groups[0]
 
     @staticmethod
+    def _same_normalized_pixels(
+        left: AssetImagePreservationFeatureRecord | None,
+        right: AssetImagePreservationFeatureRecord | None,
+    ) -> bool:
+        """Compare exact decoded pixels only from current original preservation evidence."""
+
+        return bool(
+            left is not None
+            and right is not None
+            and left.origin == "original"
+            and right.origin == "original"
+            and left.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+            and right.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
+            and left.pixel_sha256
+            and left.pixel_sha256 == right.pixel_sha256
+        )
+
+    @staticmethod
     def _apply_similarity(
         result: CrossSourceDuplicateResult,
         source_groups: list[DiscoveredGroup],
         edges: dict[tuple[UUID, UUID], PairSimilarityEvidence],
-        features: dict[UUID, AssetImagePreservationFeatureRecord],
+        features: dict[UUID, AssetSimilaritySearchFeatureRecord],
+        preservation_features: dict[UUID, AssetImagePreservationFeatureRecord],
         *,
         update_group_contract: bool = True,
     ) -> CrossSourceDuplicateResult:
@@ -774,10 +793,16 @@ class CrossSourceDuplicateService:
                 else {}
             )
             members: list[DuplicateMember] = []
+            reference_preservation = preservation_features.get(reference.id)
             for member in group.members:
                 source_member = source_members[member.id]
                 edge = edges.get((reference.id, member.id))
                 feature = features.get(member.id)
+                preservation_feature = preservation_features.get(member.id)
+                exact_pixel_match = CrossSourceDuplicateService._same_normalized_pixels(
+                    reference_preservation,
+                    preservation_feature,
+                )
                 if member.id == reference.id:
                     similarity = DuplicateSimilarityEvidence(
                         state="reference",
@@ -792,7 +817,7 @@ class CrossSourceDuplicateService:
                         aspect_ratio_difference=0.0 if feature is not None else None,
                         dimensions_equal=True if feature is not None else None,
                         exact_thumbnail_match=True if feature is not None else None,
-                        exact_pixel_match=True if feature is not None else None,
+                        exact_pixel_match=(exact_pixel_match if preservation_feature else None),
                         model_version=feature.model_version if feature is not None else None,
                         feature_version=feature.feature_version if feature is not None else None,
                     )
@@ -810,7 +835,7 @@ class CrossSourceDuplicateService:
                         aspect_ratio_difference=edge.aspect_ratio_difference,
                         dimensions_equal=edge.dimensions_equal,
                         exact_thumbnail_match=edge.exact_thumbnail_match,
-                        exact_pixel_match=edge.exact_pixel_match,
+                        exact_pixel_match=exact_pixel_match,
                         detail_changed_percent=edge.detail_changed_percent,
                         detail_source=edge.detail_source,
                         model_version=edge.model_version,
@@ -828,24 +853,28 @@ class CrossSourceDuplicateService:
                     )
                 preservation = (
                     DuplicatePreservationEvidence(
-                        pixel_normalization_version=feature.pixel_normalization_version,
-                        pixel_sha256=feature.pixel_sha256,
-                        decoded_width=feature.width,
-                        decoded_height=feature.height,
-                        bit_depth=feature.bit_depth,
-                        channel_count=feature.channel_count,
-                        has_alpha=feature.has_alpha,
-                        color_space=feature.color_space,
-                        orientation=feature.orientation,
-                        icc_profile_present=feature.icc_profile_present,
-                        has_exif=feature.has_exif,
-                        has_capture_time=feature.has_capture_time,
-                        has_camera_info=feature.has_camera_info,
-                        has_gps=feature.has_gps,
-                        has_orientation_metadata=feature.has_orientation_metadata,
-                        metadata_richness=feature.metadata_richness,
+                        pixel_normalization_version=(
+                            preservation_feature.pixel_normalization_version
+                        ),
+                        pixel_sha256=preservation_feature.pixel_sha256,
+                        decoded_width=preservation_feature.width,
+                        decoded_height=preservation_feature.height,
+                        bit_depth=preservation_feature.bit_depth,
+                        channel_count=preservation_feature.channel_count,
+                        has_alpha=preservation_feature.has_alpha,
+                        color_space=preservation_feature.color_space,
+                        orientation=preservation_feature.orientation,
+                        icc_profile_present=preservation_feature.icc_profile_present,
+                        has_exif=preservation_feature.has_exif,
+                        has_capture_time=preservation_feature.has_capture_time,
+                        has_camera_info=preservation_feature.has_camera_info,
+                        has_gps=preservation_feature.has_gps,
+                        has_orientation_metadata=(
+                            preservation_feature.has_orientation_metadata
+                        ),
+                        metadata_richness=preservation_feature.metadata_richness,
                     )
-                    if feature is not None
+                    if preservation_feature is not None
                     else None
                 )
                 admission_source = admission_by_id.get(member.id)
