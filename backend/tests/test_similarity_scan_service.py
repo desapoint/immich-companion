@@ -71,8 +71,13 @@ class FakeSimilarity:
         if self.fail:
             raise RuntimeError("comparison unavailable")
         return {
-            (group[0], group[1]): evidence(99.0 if group == [UUID(int=1), UUID(int=2)] else 94.0)
+            (group[0], member): evidence(
+                99.0
+                if {group[0], member} == {UUID(int=1), UUID(int=2)}
+                else 94.0
+            )
             for group in groups
+            for member in group[1:]
         }
 
 
