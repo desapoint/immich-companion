@@ -574,6 +574,14 @@ class SimilarityIndexMaintainer:
             and left.height == right.height
         )
 
+    async def ensure_asset(self, context: TaskContext, asset_id: UUID) -> bool:
+        """Ensure one image has complete current search + localized-detail evidence."""
+
+        if await self._features.has_current(asset_id):
+            self._count("fingerprints_reused")
+            return True
+        return await self.fingerprint_changed_asset(context, asset_id)
+
     async def fingerprint_changed_asset(self, context: TaskContext, asset_id: UUID) -> bool:
         """Best-effort update for one synchronized change with transient retry only."""
 
