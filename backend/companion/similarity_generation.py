@@ -21,12 +21,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, text
+from sqlalchemy import func, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from companion.database import DatabaseManager
-from companion.models import TaskLaneRecord, TaskRecord
+from companion.models import TaskAttemptRecord, TaskLaneRecord, TaskRecord
 from companion.task_coordinator import TaskCancelledError
 from companion.v2.legacy_task_coordinator import TASK_UPDATE_CHANNEL
 
@@ -244,7 +244,6 @@ class SimilarityEvidenceEpochRepository:
 
         current_descriptor = similarity_generation_fingerprint()
         removed: dict[str, int] = {}
-        bound_task_types_sql = ", ".join(f"'{value}'" for value in EVIDENCE_BOUND_TASK_TYPES)
 
         # Keep the historical advisory-lock key so destroy requests also serialize with
         # rebuilds issued by an older process during a rolling deployment.
@@ -277,36 +276,54 @@ class SimilarityEvidenceEpochRepository:
         # cancel transition. Revoking leases prevents an old worker from completing its
         # task record, while generation-guarded writes reject already-running stale work.
         cancelled = await session.execute(
-            text(
-                "UPDATE tasks SET status = 'cancelled', completed_at = now(), "
-                "next_attempt_at = NULL, lease_owner = NULL, lease_expires_at = NULL "
-                f"WHERE task_type IN ({bound_task_types_sql}) "
-                "AND status IN "
-                "('queued', 'running', 'retrying', 'recovering', "
-                " 'pause_requested', 'paused', 'cancel_requested')"
+            update(TaskRecord)
+            .where(
+                TaskRecord.task_type.in_(EVIDENCE_BOUND_TASK_TYPES),
+                TaskRecord.status.in_(
+                    (
+                        "queued",
+                        "running",
+                        "retrying",
+                        "recovering",
+                        "pause_requested",
+                        "paused",
+                        "cancel_requested",
+                    )
+                ),
             )
+            .values(
+                status="cancelled",
+                completed_at=func.now(),
+                next_attempt_at=None,
+                lease_owner=None,
+                lease_expires_at=None,
+            )
+            .returning(TaskRecord.id)
         )
-        cancelled_task_count = int(cancelled.rowcount or 0)
-        await session.execute(
-            text(
-                "UPDATE task_attempts SET status = 'cancelled', completed_at = now(), "
-                "details = json_build_object("
-                "'type', :reason_type, 'message', :reason_message) "
-                "WHERE status = 'running' AND task_id IN ("
-                "SELECT id FROM tasks "
-                f"WHERE task_type IN ({bound_task_types_sql}) "
-                "AND status = 'cancelled' AND completed_at = now())"
-            ),
-            {"reason_type": reason_type, "reason_message": reason_message},
-        )
-        await session.execute(
-            text(
-                "SELECT pg_notify(:channel, id::text) FROM tasks "
-                f"WHERE task_type IN ({bound_task_types_sql}) "
-                "AND status = 'cancelled' AND completed_at = now()"
-            ),
-            {"channel": TASK_UPDATE_CHANNEL},
-        )
+        cancelled_task_ids = list(cancelled.scalars().all())
+        cancelled_task_count = len(cancelled_task_ids)
+
+        if cancelled_task_ids:
+            await session.execute(
+                update(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.status == "running",
+                    TaskAttemptRecord.task_id.in_(cancelled_task_ids),
+                )
+                .values(
+                    status="cancelled",
+                    completed_at=func.now(),
+                    details={
+                        "type": reason_type,
+                        "message": reason_message,
+                    },
+                )
+            )
+            for task_id in cancelled_task_ids:
+                await session.execute(
+                    text("SELECT pg_notify(:channel, :payload)"),
+                    {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
+                )
 
         # The composite duplicate projection is derived output. Remove it too so the UI
         # cannot keep displaying groups backed by invalidated similarity evidence. Review

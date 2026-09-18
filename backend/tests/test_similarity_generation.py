@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -20,10 +21,25 @@ from companion.similarity_scan_service import _epoch_kwargs
 from companion.task_coordinator import TaskCancelledError
 
 
+class _ScalarRows:
+    def __init__(self, values: list[UUID]) -> None:
+        self._values = values
+
+    def all(self) -> list[UUID]:
+        return self._values
+
+
 class _Result:
-    def __init__(self, *, row=None, rowcount: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        row=None,
+        rowcount: int = 0,
+        scalar_rows: list[UUID] | None = None,
+    ) -> None:
         self._row = row
         self.rowcount = rowcount
+        self._scalar_rows = scalar_rows or []
 
     def one(self):
         if self._row is None:
@@ -32,6 +48,9 @@ class _Result:
 
     def first(self):
         return self._row
+
+    def scalars(self) -> _ScalarRows:
+        return _ScalarRows(self._scalar_rows)
 
 
 class _EpochSession:
@@ -72,9 +91,23 @@ class _EpochSession:
             if "descriptor" in parameters:
                 self.database.descriptor = str(parameters["descriptor"])
             return _Result(rowcount=1)
-        if "UPDATE tasks SET status = 'cancelled'" in sql:
+        if sql.lstrip().startswith("UPDATE tasks SET"):
             self.database.task_update_sql = sql
-            return _Result(rowcount=4)
+            self.database.task_update_parameters = {
+                **dict(compiled.params),
+                **dict(parameters),
+            }
+            return _Result(
+                rowcount=len(self.database.cancelled_task_ids),
+                scalar_rows=self.database.cancelled_task_ids,
+            )
+        if sql.lstrip().startswith("UPDATE task_attempts SET"):
+            self.database.attempt_update_sql = sql
+            self.database.attempt_update_parameters = {
+                **dict(compiled.params),
+                **dict(parameters),
+            }
+            return _Result(rowcount=len(self.database.cancelled_task_ids))
         if "INSERT INTO tasks" in sql:
             self.database.queued_task_parameters = {
                 **dict(compiled.params),
@@ -93,7 +126,11 @@ class _EpochDatabase:
         self.descriptor = similarity_generation_fingerprint()
         self.rebuilt_at = None
         self.statements: list[str] = []
+        self.cancelled_task_ids = [UUID(int=value) for value in range(101, 105)]
         self.task_update_sql = ""
+        self.task_update_parameters: dict[str, object] = {}
+        self.attempt_update_sql = ""
+        self.attempt_update_parameters: dict[str, object] = {}
         self.queued_task_parameters: dict[str, object] | None = None
 
     @asynccontextmanager
@@ -237,14 +274,18 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
     assert result.state.epoch == 2
     assert result.state.descriptor_current is True
     assert result.cancelled_task_count == 4
-    assert "status = 'cancelled'" in database.task_update_sql
-    assert "lease_owner = NULL" in database.task_update_sql
-    assert "lease_expires_at = NULL" in database.task_update_sql
-    assert "composite_duplicate_rebuild" in database.task_update_sql
-    assert any(
-        "UPDATE task_attempts SET status = 'cancelled'" in sql
-        for sql in database.statements
-    )
+    assert database.task_update_sql.startswith("UPDATE tasks SET")
+    assert database.task_update_parameters["status"] == "cancelled"
+    assert database.task_update_parameters["lease_owner"] is None
+    assert database.task_update_parameters["lease_expires_at"] is None
+    assert database.attempt_update_sql.startswith("UPDATE task_attempts SET")
+    assert "json_build_object" not in database.attempt_update_sql
+    assert "::JSON" in database.attempt_update_sql
+    assert database.attempt_update_parameters["status"] == "cancelled"
+    assert database.attempt_update_parameters["details"] == {
+        "type": "evidence_rebuild",
+        "message": "Retired by similarity evidence rebuild",
+    }
     assert any("INSERT INTO task_lanes" in sql for sql in database.statements)
     assert any("INSERT INTO tasks" in sql for sql in database.statements)
     assert database.queued_task_parameters is not None
@@ -261,6 +302,22 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
         "search_features": 1,
         "pending_asset_changes": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_destroy_uses_typed_json_for_cancelled_attempt_details() -> None:
+    database = _EpochDatabase()
+    repository = SimilarityEvidenceEpochRepository(database)  # type: ignore[arg-type]
+
+    result = await repository.destroy()
+
+    assert result.cancelled_task_count == 4
+    assert database.attempt_update_parameters["details"] == {
+        "type": "evidence_destroy",
+        "message": "Retired by similarity evidence destroy",
+    }
+    assert "json_build_object" not in database.attempt_update_sql
+    assert "::JSON" in database.attempt_update_sql
 
 
 @pytest.mark.asyncio
