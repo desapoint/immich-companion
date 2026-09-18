@@ -13,6 +13,14 @@ export function comparisonTargetId(
   return referenceId;
 }
 
+export function viewerSelectionTargetId(
+  ids: string[],
+  requestedId: string,
+): string {
+  if (ids.includes(requestedId)) return requestedId;
+  return ids[0] ?? requestedId;
+}
+
 export function stepComparisonTargetId(
   ids: string[],
   referenceId: string,
