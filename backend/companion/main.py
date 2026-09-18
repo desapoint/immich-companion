@@ -536,7 +536,7 @@ def create_app(
             asset_repository,
             integrity_repository,
             integrity_handler,
-            include_similarity=True,
+            include_preservation=True,
             discovery=duplicate_discovery,
         )
         task_coordinator.register_handler(
