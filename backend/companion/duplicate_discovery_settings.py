@@ -16,6 +16,7 @@ class DuplicateDiscoverySettings(BaseModel):
     include_similar: bool = True
     similarity_threshold: float = Field(default=95.0, ge=50, le=100)
     validation_mode: Literal["reference", "linked", "strict"] = "strict"
+    max_link_depth: int = Field(default=2, ge=0, le=64)
     max_candidates: int = Field(default=8, ge=1, le=64)
 
 
@@ -48,6 +49,7 @@ class DuplicateDiscoverySettingsRepository:
                 include_similar=record.include_similar,
                 similarity_threshold=record.similarity_threshold,
                 validation_mode=record.validation_mode,
+                max_link_depth=record.max_link_depth,
                 max_candidates=record.max_candidates,
             )
 
