@@ -234,7 +234,7 @@ def test_coherent_face_and_swimsuit_edits_are_not_hidden_by_unchanged_background
     assert reference is not None and jpeg is not None and all(variants)
     scores = [compare_detail_features(reference, variant) for variant in variants]
 
-    assert DETAIL_FEATURE_VERSION == 3
+    assert DETAIL_FEATURE_VERSION == 4
     assert compare_detail_features(reference, reference).similarity_percent == 100
     assert compare_detail_features(reference, jpeg).similarity_percent >= 98.5
     assert scores[2].similarity_percent < scores[1].similarity_percent < 95

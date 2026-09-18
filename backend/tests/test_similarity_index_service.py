@@ -17,8 +17,8 @@ from companion.similarity_index_service import (
     SimilarityIndexMaintainer,
     SimilarityIndexService,
     SimilarityIndexTaskHandler,
+    _extract_normalized_evidence,
 )
-from companion.similarity_search_features import extract_search_feature
 from companion.task_coordinator import TaskPausedError
 
 A = UUID(int=1)
@@ -519,18 +519,21 @@ async def test_preview_fetch_and_decode_have_independent_bounded_slots(monkeypat
     active_decodes = 0
     peak_decodes = 0
 
-    def slow_decode(preview, *, timings=None):
+    def slow_decode(normalized):
         nonlocal active_decodes, peak_decodes
         with lock:
             active_decodes += 1
             peak_decodes = max(peak_decodes, active_decodes)
         time.sleep(0.01)
-        feature = extract_search_feature(preview, timings=timings)
+        evidence = _extract_normalized_evidence(normalized)
         with lock:
             active_decodes -= 1
-        return feature
+        return evidence
 
-    monkeypatch.setattr("companion.similarity_index_service.extract_search_feature", slow_decode)
+    monkeypatch.setattr(
+        "companion.similarity_index_service._extract_normalized_evidence",
+        slow_decode,
+    )
     immich = SlowImmich()
     maintainer = SimilarityIndexMaintainer(
         immich,  # type: ignore[arg-type]

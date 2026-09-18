@@ -17,7 +17,7 @@ from companion.task_coordinator import TaskContext
 
 MAX_VISUAL_DIMENSION = 2048
 DEFAULT_VISUAL_SOURCE_MAX_BYTES = 128 * 1024 * 1024
-VISUAL_NORMALIZATION_VERSION = 3
+VISUAL_NORMALIZATION_VERSION = 4
 PYVIPS_VERSION = getattr(pyvips, "__version__", "unknown")
 LIBVIPS_VERSION = ".".join(str(pyvips.version(part)) for part in range(3))
 VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
@@ -28,7 +28,7 @@ VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
         f"source-max-bytes={DEFAULT_VISUAL_SOURCE_MAX_BYTES}:"
         "autorotate=on:resize=thumbnail-down:"
         "raw-loader=explicit-dcraw-or-magick:"
-        "alpha-output=png:opaque-output=jpeg-q95-444"
+        "pixel-output=raw-srgb-uchar"
     ).encode(),
     usedforsecurity=False,
 ).hexdigest()
@@ -38,6 +38,7 @@ VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
 pyvips.cache_set_max(0)
 
 VisualSourceKind = Literal["original", "preview"]
+VisualPixelMode = Literal["RGB", "RGBA"]
 
 CAMERA_RAW_SUFFIXES = frozenset(
     {
@@ -94,9 +95,11 @@ class VisualNormalizationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class NormalizedVisualImage:
-    """Canonical Appearance input shared by search and localized detail."""
+    """Canonical decoded Appearance pixels shared by search and localized detail."""
 
-    content: bytes
+    pixel_bytes: bytes
+    pixel_mode: VisualPixelMode
+    media_sha256: str
     source_kind: VisualSourceKind
     width: int
     height: int
@@ -105,10 +108,6 @@ class NormalizedVisualImage:
     resized: bool
     has_alpha: bool
     source_bytes: int
-
-    @property
-    def media_sha256(self) -> str:
-        return hashlib.sha256(self.content, usedforsecurity=False).hexdigest()
 
     @property
     def search_origin(self) -> str:
@@ -140,8 +139,8 @@ def _canonical_vips_image(
     path: Path | None = None,
     content: bytes | None = None,
     raw_source: bool = False,
-) -> tuple[bytes, int, int, bool]:
-    """Use libvips to autorotate and fit one source inside the canonical visual box."""
+) -> tuple[bytes, VisualPixelMode, str, int, int, bool]:
+    """Use libvips to autorotate and expose canonical pixels without re-encoding."""
 
     if (path is None) == (content is None):
         raise ValueError("Provide exactly one visual source")
@@ -191,24 +190,37 @@ def _canonical_vips_image(
             raise VisualNormalizationError("visual source has invalid dimensions")
 
         # libvips keeps extra bands such as alpha while colourspace() converts
-        # the visible colour channels. This gives Pillow-based feature extraction
-        # one stable 8-bit sRGB encoded representation downstream.
+        # the visible colour channels. Export the bounded sRGB raster directly
+        # instead of JPEG/PNG encoding it only for Pillow to decode it again.
         image = image.colourspace("srgb")
+        if image.format != "uchar":
+            image = image.cast("uchar")
         has_alpha = bool(image.hasalpha())
-        if has_alpha:
-            encoded = image.write_to_buffer(
-                ".png",
-                compression=6,
-                keep=0,
+        pixel_mode: VisualPixelMode = "RGBA" if has_alpha else "RGB"
+        expected_bands = 4 if has_alpha else 3
+        if image.bands != expected_bands:
+            raise VisualNormalizationError(
+                f"normalized visual has unsupported band count: {image.bands}"
             )
-        else:
-            encoded = image.write_to_buffer(
-                ".jpg",
-                Q=95,
-                subsample_mode="off",
-                keep=0,
+        pixel_bytes = bytes(image.write_to_memory())
+        expected_bytes = image.width * image.height * expected_bands
+        if len(pixel_bytes) != expected_bytes:
+            raise VisualNormalizationError(
+                "normalized visual pixel buffer has incompatible dimensions"
             )
-        return encoded, image.width, image.height, has_alpha
+        digest = hashlib.sha256(usedforsecurity=False)
+        digest.update(
+            f"raw-srgb-v1:{pixel_mode}:{image.width}x{image.height}\n".encode()
+        )
+        digest.update(pixel_bytes)
+        return (
+            pixel_bytes,
+            pixel_mode,
+            digest.hexdigest(),
+            image.width,
+            image.height,
+            has_alpha,
+        )
     except VisualNormalizationError:
         raise
     except pyvips.Error as error:
@@ -285,7 +297,7 @@ class SimilarityVisualNormalizer:
         path: Path | None = None,
         content: bytes | None = None,
         raw_source: bool = False,
-    ) -> tuple[bytes, int, int, bool]:
+    ) -> tuple[bytes, VisualPixelMode, str, int, int, bool]:
         if self._decode_slots is None:
             return await asyncio.to_thread(
                 _canonical_vips_image,
@@ -324,7 +336,7 @@ class SimilarityVisualNormalizer:
                 )
 
         try:
-            normalized, width, height, has_alpha = await self._run_vips(
+            pixel_bytes, pixel_mode, media_sha256, width, height, has_alpha = await self._run_vips(
                 path=path,
                 raw_source=source_is_camera_raw(asset),
             )
@@ -332,7 +344,9 @@ class SimilarityVisualNormalizer:
             path.unlink(missing_ok=True)
 
         return NormalizedVisualImage(
-            content=normalized,
+            pixel_bytes=pixel_bytes,
+            pixel_mode=pixel_mode,
+            media_sha256=media_sha256,
             source_kind="original",
             width=width,
             height=height,
@@ -358,9 +372,13 @@ class SimilarityVisualNormalizer:
         asset: ImmichAsset,
     ) -> NormalizedVisualImage:
         content = await self._preview_content(asset_id)
-        normalized, width, height, has_alpha = await self._run_vips(content=content)
+        pixel_bytes, pixel_mode, media_sha256, width, height, has_alpha = await self._run_vips(
+            content=content
+        )
         return NormalizedVisualImage(
-            content=normalized,
+            pixel_bytes=pixel_bytes,
+            pixel_mode=pixel_mode,
+            media_sha256=media_sha256,
             source_kind="preview",
             width=width,
             height=height,

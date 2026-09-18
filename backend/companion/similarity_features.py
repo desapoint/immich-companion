@@ -440,6 +440,38 @@ def _feature_from_loaded_image(
     )
 
 
+def extract_visual_features_from_image(
+    source: Image.Image,
+    *,
+    include_pixel_hash: bool = True,
+    timings: dict[str, int] | None = None,
+) -> VisualFeatureResult | None:
+    """Extract evidence from an already-decoded image without an encode/decode round trip."""
+
+    if timings is not None:
+        timings["decode_milliseconds"] = 0
+    try:
+        started = perf_counter()
+        feature = _feature_from_loaded_image(
+            source,
+            include_pixel_hash=include_pixel_hash,
+            timings=timings,
+        )
+        if timings is not None:
+            timings["feature_extraction_milliseconds"] = round(
+                (perf_counter() - started) * 1000
+            )
+        return feature
+    except (OSError, SyntaxError, ValueError) as error:
+        logger.warning(
+            "Similarity feature extraction failed for normalized pixels: "
+            "error_type=%s reason=%s",
+            type(error).__name__,
+            error,
+        )
+        return None
+
+
 def decode_and_extract_features(
     stream: BinaryIO,
     detected_format: DetectedFormat,

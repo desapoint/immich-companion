@@ -16,7 +16,7 @@ from companion.image_decode import MAX_DECODED_PIXELS
 from companion.integrity import DetectedFormat
 from companion.similarity_features import _appearance_rgba, _srgb_image
 
-DETAIL_FEATURE_VERSION = 3
+DETAIL_FEATURE_VERSION = 4
 DETAIL_SAMPLE_SIDE = 512
 DETAIL_SAMPLE_BYTES = DETAIL_SAMPLE_SIDE * DETAIL_SAMPLE_SIDE * 4
 DETAIL_TILE_SIDE = 16
@@ -80,6 +80,17 @@ def _sample(image: Image.Image) -> DetailFeature:
         (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), Image.Resampling.LANCZOS
     )
     return DetailFeature(width, height, zlib.compress(reduced.tobytes(), level=3))
+
+
+def extract_detail_feature_from_image(image: Image.Image) -> DetailFeature | None:
+    """Build localized-detail evidence from already-decoded normalized pixels."""
+
+    if image.width * image.height > MAX_DECODED_PIXELS:
+        return None
+    try:
+        return _sample(image)
+    except (OSError, SyntaxError, ValueError):
+        return None
 
 
 def extract_detail_feature(
