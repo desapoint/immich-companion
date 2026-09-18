@@ -28,6 +28,7 @@
   const validatedDimensions = $derived(similarityValidatedDimensions(member.similarityEvidence));
   const belowReference = $derived(
     mode === 'linked'
+      && (member.admission?.linkDepth ?? 0) > 1
       && threshold !== null
       && member.similarity !== null
       && member.similarity < threshold
