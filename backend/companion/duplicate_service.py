@@ -3060,10 +3060,19 @@ class CrossSourceDuplicateTaskHandler:
                     asset.id,
                     chunk_size=INTEGRITY_CHUNK_SIZE,
                 ) as original:
+                    expected_stream_bytes = original.content_length
                     async for chunk in original.chunks:
                         await context.ensure_active()
                         prepared.write(chunk)
                         total += len(chunk)
+            if expected_stream_bytes is not None and total != expected_stream_bytes:
+                raise RetryableTaskError(
+                    "The shared original stream ended before its declared content length."
+                )
+            if asset.file_size_bytes is not None and total != asset.file_size_bytes:
+                raise RetryableTaskError(
+                    "The shared original size did not match synchronized Immich metadata."
+                )
             assert temporary_path is not None
             return temporary_path, total
         except BaseException:
@@ -3205,7 +3214,7 @@ class CrossSourceDuplicateTaskHandler:
                     )
                     shared_original_downloads += 1
                     shared_original_bytes += prepared_bytes
-                except (ImmichApiError, OSError) as error:
+                except (ImmichApiError, OSError, RetryableTaskError) as error:
                     shared_failed = True
                     logger.warning(
                         "Shared duplicate original acquisition failed; falling back "
