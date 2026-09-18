@@ -12,15 +12,14 @@ from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from companion.evidence_logging import install_pending_evidence_logging_policy
-from companion.image_decode import MAX_DECODED_PIXELS
 from companion.immich import ImmichAsset
 from companion.models import Base
 from companion.similarity_search_features import (
-    MAX_SEARCH_PREVIEW_BYTES,
     SEARCH_CONFIG_FINGERPRINT,
     SEARCH_FEATURE_VERSION,
     SEARCH_MODEL_VERSION,
 )
+from companion.similarity_visual_normalization import VISUAL_NORMALIZATION_FINGERPRINT
 
 SourceAlphaState = Literal["confirmed_opaque", "confirmed_alpha", "unknown_alpha"]
 SearchAvailability = Literal["available", "unavailable"]
@@ -32,12 +31,12 @@ install_pending_evidence_logging_policy()
 
 # Bump this whenever decoder/rendition/transparency handling changes in a way
 # that could make previously unavailable bounded evidence usable.
-BOUNDED_CAPABILITY_VERSION = 2
+BOUNDED_CAPABILITY_VERSION = 3
 BOUNDED_POLICY_FINGERPRINT = hashlib.sha256(
     (
         f"bounded-v{BOUNDED_CAPABILITY_VERSION}:"
         f"search={SEARCH_CONFIG_FINGERPRINT}:"
-        f"pixels={MAX_DECODED_PIXELS}:preview-bytes={MAX_SEARCH_PREVIEW_BYTES}"
+        f"visual={VISUAL_NORMALIZATION_FINGERPRINT}"
     ).encode(),
     usedforsecurity=False,
 ).hexdigest()
