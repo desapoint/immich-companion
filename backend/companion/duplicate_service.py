@@ -454,11 +454,11 @@ class CrossSourceDuplicateService:
 
         options = await self._options(options)
         groups, reports, features, result = await self._snapshot(options)
-        include_similarity = self._similarity is not None
+        include_preservation = self._similarity is not None
         candidates = self._verification_candidates(
             groups,
             options,
-            include_similarity=include_similarity,
+            include_preservation=include_preservation,
         )
         pending_count = len(
             self._pending_verification(
@@ -466,7 +466,7 @@ class CrossSourceDuplicateService:
                 reports,
                 features,
                 options,
-                include_similarity=include_similarity,
+                include_preservation=include_preservation,
             )
         )
         task_id: UUID | None = None
@@ -1170,7 +1170,7 @@ class CrossSourceDuplicateService:
         groups: list[DiscoveredGroup],
         options: DuplicateAnalysisOptions,
         *,
-        include_similarity: bool = False,
+        include_preservation: bool = False,
     ) -> list[ImmichAsset]:
         candidates = {
             asset.id: asset
@@ -1180,7 +1180,7 @@ class CrossSourceDuplicateService:
             and (
                 asset.library_id is not None
                 or options.verify_upload_streams
-                or include_similarity
+                or include_preservation
                 and asset.asset_type == "IMAGE"
             )
         }
@@ -1194,21 +1194,21 @@ class CrossSourceDuplicateService:
         features: dict[UUID, AssetImagePreservationFeatureRecord],
         options: DuplicateAnalysisOptions,
         *,
-        include_similarity: bool = False,
+        include_preservation: bool = False,
     ) -> list[ImmichAsset]:
         return [
             asset
             for asset in cls._verification_candidates(
                 groups,
                 options,
-                include_similarity=include_similarity,
+                include_preservation=include_preservation,
             )
             if (
                 (asset.library_id is not None or options.verify_upload_streams)
                 and report_freshness(reports.get(asset.id), asset) != "current"
             )
             or (
-                include_similarity
+                include_preservation
                 and asset.asset_type == "IMAGE"
                 and preservation_feature_freshness(features.get(asset.id), asset) != "current"
             )
@@ -2979,7 +2979,7 @@ class CrossSourceDuplicateService:
 
 
 class CrossSourceDuplicateTaskHandler:
-    """Verify originals only for discovered duplicate and similarity groups."""
+    """Verify originals and populate preservation evidence for discovered groups."""
 
     task_type = CROSS_SOURCE_DUPLICATE_TASK_TYPE
     lane_key = INTEGRITY_TASK_TYPE
@@ -2992,14 +2992,14 @@ class CrossSourceDuplicateTaskHandler:
         reports: IntegrityRepository,
         integrity: IntegrityTaskHandler,
         *,
-        include_similarity: bool = False,
+        include_preservation: bool = False,
         discovery: GroupDiscoveryProvider | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._reports = reports
         self._integrity = integrity
-        self._include_similarity = include_similarity
+        self._include_preservation = include_preservation
         self._discovery = discovery or ImmichDuplicateProvider(immich)
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
@@ -3011,7 +3011,7 @@ class CrossSourceDuplicateTaskHandler:
                 if (
                     asset.library_id is not None
                     or options.verify_upload_streams
-                    or self._include_similarity
+                    or self._include_preservation
                     and asset.asset_type == "IMAGE"
                 ):
                     if asset.file_size_bytes is None:
@@ -3021,7 +3021,7 @@ class CrossSourceDuplicateTaskHandler:
         reports = await self._reports.get_many(list(candidates))
         features = (
             await self._reports.get_preservation_features(list(candidates))
-            if self._include_similarity
+            if self._include_preservation
             else {}
         )
         pending = [
@@ -3038,7 +3038,7 @@ class CrossSourceDuplicateTaskHandler:
                     and report_freshness(reports.get(asset.id), asset) != "current"
                 )
                 or (
-                    self._include_similarity
+                    self._include_preservation
                     and asset.asset_type == "IMAGE"
                     and preservation_feature_freshness(features.get(asset.id), asset) != "current"
                 )
