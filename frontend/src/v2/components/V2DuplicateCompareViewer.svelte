@@ -12,6 +12,7 @@
   import {
     comparisonMemberData,
     formatSimilarityPercent,
+    linkedIntermediateCount,
     similarityValidatedDimensions,
     similarityValidationEvidenceLabel,
     usesBoundedValidation,
@@ -218,6 +219,7 @@
       && selectedAdmission.linkDepth > 1
       && selectedAdmission.admittedByAssetId !== null,
   );
+  const intermediateImageCount = $derived(selectedAdmission ? linkedIntermediateCount(selectedAdmission.linkDepth) : 0);
   const showLinkedSummary = $derived(
     hasIndirectLinkedAdmission && (selectedSimilarity === null || belowThreshold),
   );
@@ -463,11 +465,11 @@
               <span>Similarity to reference</span><b class:warn-value={belowThreshold}>{selectedData.similarity}</b>
               <span>Admitted through</span><b class="v2-compare-link-value">{admittedByLabel}</b>
               <span>Admission similarity</span><b>{formatSimilarityPercent(selectedAdmission.admissionSimilarityPercent)}</b>
-              <span>Link depth</span><b>{selectedAdmission.linkDepth}</b>
+              <span>Images in between</span><b>{intermediateImageCount}</b>
               <span>Best group match</span><b class="v2-compare-link-value">{bestGroupMatchLabel}</b>
               <span>Best group similarity</span><b>{formatSimilarityPercent(selectedAdmission.bestGroupMatchSimilarityPercent)}</b>
             </div>
-            <p class="v2-compare-detail-note">“Admitted through” is the comparison edge that allowed this member into a linked group. “Best group match” is the strongest known relationship in the group and can be a different image.</p>
+            <p class="v2-compare-detail-note">“Images in between” counts only intermediate members between the current reference and this image; it does not count either endpoint. “Admitted through” is the comparison edge that allowed this member into a linked group. “Best group match” is the strongest known relationship in the group and can be a different image.</p>
           </div>
         </details>
       {/if}
