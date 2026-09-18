@@ -6,20 +6,23 @@ import hashlib
 import json
 from io import BytesIO
 
+from PIL import Image
+
 from companion.immich import ImmichAsset
 from companion.similarity_features import (
     SIMILARITY_CONFIG_FINGERPRINT,
     VisualFeatureResult,
     extract_visual_features,
+    extract_visual_features_from_image,
 )
 from companion.similarity_generation import SIMILARITY_EVIDENCE_CODE_GENERATION
 from companion.similarity_visual_normalization import VISUAL_NORMALIZATION_FINGERPRINT
 
 SEARCH_MODEL_VERSION = "appearance-normalized-v1"
-SEARCH_FEATURE_VERSION = 5
+SEARCH_FEATURE_VERSION = 6
 SEARCH_CONFIG_FINGERPRINT = hashlib.sha256(
     (
-        f"normalized-search-v5:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
+        f"normalized-search-v6:generation={SIMILARITY_EVIDENCE_CODE_GENERATION}:"
         f"visual={VISUAL_NORMALIZATION_FINGERPRINT}:"
         f"{SIMILARITY_CONFIG_FINGERPRINT}"
     ).encode(),
@@ -38,6 +41,18 @@ def extract_search_feature(
     # the original-only TIFF/RAW fallback for generated media.
     return extract_visual_features(
         BytesIO(preview), "jpeg", include_pixel_hash=False, timings=timings
+    )
+
+
+def extract_search_feature_from_image(
+    image: Image.Image, *, timings: dict[str, int] | None = None
+) -> VisualFeatureResult | None:
+    """Extract search evidence directly from normalized sRGB pixels."""
+
+    return extract_visual_features_from_image(
+        image,
+        include_pixel_hash=False,
+        timings=timings,
     )
 
 
