@@ -31,7 +31,7 @@ install_pending_evidence_logging_policy()
 
 # Bump this whenever decoder/rendition/transparency handling changes in a way
 # that could make previously unavailable bounded evidence usable.
-BOUNDED_CAPABILITY_VERSION = 4
+BOUNDED_CAPABILITY_VERSION = 5
 BOUNDED_POLICY_FINGERPRINT = hashlib.sha256(
     (
         f"bounded-v{BOUNDED_CAPABILITY_VERSION}:"

@@ -55,10 +55,12 @@ create a full Python/Pillow raster just to resize it. This lets large JPEG,
 HEIC/HEIF/AVIF, TIFF, and other libvips-supported sources use libvips' bounded,
 demand-driven processing.
 
-RAW also enters through libvips. The production image installs the distro
-libvips runtime with its ImageMagick loader plus the dcraw delegate. A future
-libvips build may expose the direct LibRaw loader instead. Companion does not
-choose a separate RAW normalization implementation in this Appearance pipeline.
+RAW also enters through libvips. Companion explicitly recognizes common camera
+RAW suffixes/MIME hints so DNG cannot be accidentally treated as ordinary TIFF
+or reduced to an embedded JPEG by generic loader selection. When the packaged
+libvips exposes its direct LibRaw/dcraw loader, Companion uses it; otherwise it
+uses libvips' ImageMagick loader with the packaged dcraw delegate. This remains
+one libvips normalization API from Companion's point of view.
 
 If the original is larger than the 128 MiB source budget, unavailable, or not
 decodable by the packaged libvips stack, Companion may use Immich's generated
@@ -119,6 +121,8 @@ A visual fingerprint or localized-detail match never becomes exact-file proof.
   preview path.
 - JPEG, PNG, HEIF/AVIF, and a RAW-capable libvips loader path are present in the
   packaged runtime.
+- DNG and other camera RAW sources are deliberately routed through that RAW path
+  instead of generic TIFF/filename autodetection.
 - Alpha survives normalization when the source representation contains alpha.
 - Search and localized-detail features are written from the same normalized
   media and source identity.

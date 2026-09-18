@@ -18,6 +18,7 @@ from companion.similarity_index_service import SimilarityIndexMaintainer, _failu
 from companion.similarity_visual_normalization import (
     DEFAULT_VISUAL_SOURCE_MAX_BYTES,
     SimilarityVisualNormalizer,
+    source_is_camera_raw,
 )
 
 ASSET_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -322,6 +323,64 @@ async def test_visual_normalizer_keeps_128_mib_preview_fallback_budget() -> None
 
     assert DEFAULT_VISUAL_SOURCE_MAX_BYTES == 128 * 1024 * 1024
     assert seen_max_bytes == 128 * 1024 * 1024
+
+
+def test_camera_raw_detection_uses_filename_and_mime_hints() -> None:
+    assert source_is_camera_raw(
+        image_source(
+            originalFileName="capture.DNG",
+            originalMimeType="image/x-adobe-dng",
+        )
+    )
+    assert source_is_camera_raw(
+        image_source(
+            originalFileName="capture.CR3",
+            originalMimeType="application/octet-stream",
+        )
+    )
+    assert not source_is_camera_raw(
+        image_source(
+            originalFileName="photo.jpg",
+            originalMimeType="image/jpeg",
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_dng_original_uses_explicit_raw_loader_route(monkeypatch) -> None:
+    original = encoded_jpeg()
+    source = image_source(
+        originalFileName="capture.dng",
+        originalMimeType="image/x-adobe-dng",
+        width=4000,
+        height=3000,
+    )
+    seen_raw_source: list[bool] = []
+
+    def fake_normalize(*, path=None, content=None, raw_source=False):
+        assert path is not None
+        assert content is None
+        seen_raw_source.append(raw_source)
+        return encoded_jpeg(), 640, 480, False
+
+    monkeypatch.setattr(
+        "companion.similarity_visual_normalization._canonical_vips_image",
+        fake_normalize,
+    )
+
+    class Immich:
+        stream_original = staticmethod(original_stream(original))
+
+        async def get_bounded_preview(self, *_args, **_kwargs):
+            pytest.fail("A decodable RAW original must not use preview fallback")
+
+    normalizer = SimilarityVisualNormalizer(Immich())  # type: ignore[arg-type]
+    normalized = await normalizer.normalize(
+        Context(), ASSET_ID, source  # type: ignore[arg-type]
+    )
+
+    assert seen_raw_source == [True]
+    assert normalized.source_kind == "original"
 
 
 def test_packaged_libvips_has_required_image_loaders() -> None:

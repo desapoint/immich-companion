@@ -17,7 +17,7 @@ from companion.task_coordinator import TaskContext
 
 MAX_VISUAL_DIMENSION = 6000
 DEFAULT_VISUAL_SOURCE_MAX_BYTES = 128 * 1024 * 1024
-VISUAL_NORMALIZATION_VERSION = 2
+VISUAL_NORMALIZATION_VERSION = 3
 PYVIPS_VERSION = getattr(pyvips, "__version__", "unknown")
 LIBVIPS_VERSION = ".".join(str(pyvips.version(part)) for part in range(3))
 VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
@@ -27,6 +27,7 @@ VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
         f"max-dimension={MAX_VISUAL_DIMENSION}:"
         f"source-max-bytes={DEFAULT_VISUAL_SOURCE_MAX_BYTES}:"
         "autorotate=on:resize=thumbnail-down:"
+        "raw-loader=explicit-dcraw-or-magick:"
         "alpha-output=png:opaque-output=jpeg-q95-444"
     ).encode(),
     usedforsecurity=False,
@@ -37,6 +38,53 @@ VISUAL_NORMALIZATION_FINGERPRINT = hashlib.sha256(
 pyvips.cache_set_max(0)
 
 VisualSourceKind = Literal["original", "preview"]
+
+CAMERA_RAW_SUFFIXES = frozenset(
+    {
+        ".3fr",
+        ".arw",
+        ".cr2",
+        ".cr3",
+        ".dcr",
+        ".dng",
+        ".erf",
+        ".fff",
+        ".iiq",
+        ".k25",
+        ".kdc",
+        ".mef",
+        ".mos",
+        ".mrw",
+        ".nef",
+        ".nrw",
+        ".orf",
+        ".pef",
+        ".raf",
+        ".raw",
+        ".rw2",
+        ".rwl",
+        ".sr2",
+        ".srf",
+        ".srw",
+        ".x3f",
+    }
+)
+CAMERA_RAW_MIME_TOKENS = (
+    "camera-raw",
+    "digital-negative",
+    "dng",
+    "cr2",
+    "cr3",
+    "nef",
+    "nrw",
+    "arw",
+    "raf",
+    "rw2",
+    "orf",
+    "pef",
+    "srw",
+    "x3f",
+)
 
 
 class VisualNormalizationError(ValueError):
@@ -70,6 +118,14 @@ class NormalizedVisualImage:
         return "original" if self.source_kind == "original" else "preview_fallback"
 
 
+def source_is_camera_raw(asset: ImmichAsset) -> bool:
+    """Identify camera RAW sources so libvips never mistakes DNG for ordinary TIFF."""
+
+    suffix = Path(getattr(asset, "original_file_name", "") or "").suffix.lower()
+    mime = (getattr(asset, "original_mime_type", "") or "").lower()
+    return suffix in CAMERA_RAW_SUFFIXES or any(token in mime for token in CAMERA_RAW_MIME_TOKENS)
+
+
 def _safe_suffix(asset: ImmichAsset) -> str:
     filename = getattr(asset, "original_file_name", "") or ""
     suffix = Path(filename).suffix.lower()
@@ -82,6 +138,7 @@ def _canonical_vips_image(
     *,
     path: Path | None = None,
     content: bytes | None = None,
+    raw_source: bool = False,
 ) -> tuple[bytes, int, int, bool]:
     """Use libvips to autorotate and fit one source inside the canonical visual box."""
 
@@ -95,7 +152,30 @@ def _canonical_vips_image(
             "fail_on": "error",
         }
         if path is not None:
-            image = pyvips.Image.thumbnail(str(path), MAX_VISUAL_DIMENSION, **options)
+            if raw_source:
+                if pyvips.type_find("VipsOperation", "dcrawload"):
+                    image = pyvips.Image.dcrawload(
+                        str(path),
+                        access="sequential",
+                        fail_on="error",
+                    )
+                elif pyvips.type_find("VipsOperation", "magickload"):
+                    image = pyvips.Image.magickload(
+                        str(path),
+                        access="sequential",
+                    )
+                else:
+                    raise VisualNormalizationError("camera RAW loader is unavailable")
+                image = image.autorot()
+                scale = min(
+                    1.0,
+                    MAX_VISUAL_DIMENSION / image.width,
+                    MAX_VISUAL_DIMENSION / image.height,
+                )
+                if scale < 1.0:
+                    image = image.resize(scale, kernel="lanczos3")
+            else:
+                image = pyvips.Image.thumbnail(str(path), MAX_VISUAL_DIMENSION, **options)
         else:
             assert content is not None
             if not content:
@@ -203,18 +283,21 @@ class SimilarityVisualNormalizer:
         *,
         path: Path | None = None,
         content: bytes | None = None,
+        raw_source: bool = False,
     ) -> tuple[bytes, int, int, bool]:
         if self._decode_slots is None:
             return await asyncio.to_thread(
                 _canonical_vips_image,
                 path=path,
                 content=content,
+                raw_source=raw_source,
             )
         async with self._decode_slots:
             return await asyncio.to_thread(
                 _canonical_vips_image,
                 path=path,
                 content=content,
+                raw_source=raw_source,
             )
 
     @staticmethod
@@ -240,7 +323,10 @@ class SimilarityVisualNormalizer:
                 )
 
         try:
-            normalized, width, height, has_alpha = await self._run_vips(path=path)
+            normalized, width, height, has_alpha = await self._run_vips(
+                path=path,
+                raw_source=source_is_camera_raw(asset),
+            )
         finally:
             path.unlink(missing_ok=True)
 
