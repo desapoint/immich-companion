@@ -9,7 +9,7 @@ function member(
   name: string,
   similarity: number,
   admittedByAssetId: string | null,
-  linkDepth = 1,
+  linkDepth = 0,
 ): DuplicateMemberRecord {
   return {
     asset: { id, original_file_name: name } as DuplicateMemberRecord['asset'],
@@ -31,7 +31,7 @@ function member(
 
 describe('V2DuplicateAdmissionEvidence', () => {
   it('renders linked admission as a compact intermediate-count pill that opens the admitting asset in a new tab', () => {
-    const linked = member('asset-1', 'linked.jpg', 99, 'asset-2', 2);
+    const linked = member('asset-1', 'linked.jpg', 99, 'asset-2', 1);
     const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
@@ -50,7 +50,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
   });
 
   it('shows linked provenance from admission data even when the direct reference score is not below threshold', () => {
-    const linked = member('asset-1', 'linked.jpg', 99.5, 'asset-2', 3);
+    const linked = member('asset-1', 'linked.jpg', 99.5, 'asset-2', 1);
     const admittedBy = member('asset-2', 'bridge.jpg', 99.7, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
@@ -65,7 +65,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
   });
 
   it('does not render a pill for a direct reference admission', () => {
-    const direct = member('asset-1', 'direct.jpg', 90, 'asset-2', 1);
+    const direct = member('asset-1', 'direct.jpg', 90, 'asset-2', 0);
     const reference = member('asset-2', 'reference.jpg', 100, null);
     const { body } = render(V2DuplicateAdmissionEvidence, {
       props: {
@@ -80,7 +80,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
   });
 
   it('does not render a linked pill outside linked validation mode or without a resolvable admitting asset', () => {
-    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2', 2);
+    const linked = member('asset-1', 'linked.jpg', 90, 'asset-2', 1);
     const admittedBy = member('asset-2', 'bridge.jpg', 99, null);
 
     const nonLinkedMode = render(V2DuplicateAdmissionEvidence, {
@@ -103,7 +103,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
   });
 
   it('keeps validation and similarity evidence out of the duplicate-list overlay', () => {
-    const linked = member('asset-1', 'linked.jpg', 98.72, 'asset-2', 2);
+    const linked = member('asset-1', 'linked.jpg', 98.72, 'asset-2', 1);
     linked.asset = { ...linked.asset, width: 18_000, height: 10_000 };
     linked.similarityEvidence = {
       structuralPercent: 99,
