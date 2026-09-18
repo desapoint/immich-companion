@@ -5,24 +5,24 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
-from io import BytesIO
 from pathlib import Path
 from time import perf_counter
 from uuid import UUID
 
+from PIL import Image
+
 from companion.asset_repository import AssetRepository
 from companion.duplicate_schema import SimilarityIndexCoverage, SimilarityIndexTaskStart
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
-from companion.integrity import detect_file_format
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.similarity_bounded_state import SourceAlphaState
-from companion.similarity_detail import extract_detail_feature
+from companion.similarity_detail import extract_detail_feature_from_image
 from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_search_features import (
     SEARCH_CONFIG_FINGERPRINT,
     SEARCH_FEATURE_VERSION,
     SEARCH_MODEL_VERSION,
-    extract_search_feature,
+    extract_search_feature_from_image,
     search_source_identity,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
@@ -55,6 +55,23 @@ NON_RETRYABLE_FAILURE_MARKERS = (
 )
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def _extract_normalized_evidence(normalized):
+    """Build search and detail evidence from one decoded normalized raster."""
+
+    image = Image.frombytes(
+        normalized.pixel_mode,
+        (normalized.width, normalized.height),
+        normalized.pixel_bytes,
+    )
+    try:
+        timings: dict[str, int] = {}
+        feature = extract_search_feature_from_image(image, timings=timings)
+        detail = extract_detail_feature_from_image(image)
+        return feature, detail, timings
+    finally:
+        image.close()
 
 
 class SimilarityIndexCoverageDetails(SimilarityIndexCoverage):
@@ -435,18 +452,11 @@ class SimilarityIndexMaintainer:
             if normalized.resized:
                 self._count("normalized_images_resized")
 
-            timings: dict[str, int] = {}
             started = perf_counter()
             async with self._decode_slots:
-                feature = await asyncio.to_thread(
-                    extract_search_feature,
-                    normalized.content,
-                    timings=timings,
-                )
-                detail = await asyncio.to_thread(
-                    extract_detail_feature,
-                    BytesIO(normalized.content),
-                    detect_file_format(normalized.content[:64]),
+                feature, detail, timings = await asyncio.to_thread(
+                    _extract_normalized_evidence,
+                    normalized,
                 )
             self._measure("decode_feature_wall", started)
             self._record_timings(timings)
