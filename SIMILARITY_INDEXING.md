@@ -11,7 +11,7 @@ assets already encountered in Immich duplicate groups.
    source identity and active evidence-generation versions.
 3. For every missing or stale image, download the encoded original with a hard
    128 MiB source cap and pass it to the unified libvips normalizer.
-4. Libvips autorotates and fits the image inside a 6000 × 6000 box while
+4. Libvips autorotates and fits the image inside a 2048 × 2048 box while
    preserving aspect ratio and using decoder-level reduction when supported.
 5. Generate both the search fingerprint and localized-detail feature from that
    same normalized representation and cache both.
@@ -37,10 +37,12 @@ libvips / pyvips
         |
         | autorotate
         | decoder-level shrink when supported
-        | fit inside 6000 × 6000
+        | fit inside 2048 × 2048
         | preserve aspect ratio
         v
-canonical visual image
+canonical bounded sRGB pixels
+        |
+        | no JPEG/PNG re-encode or second media decode
         |
         +---- search fingerprint
         |
@@ -53,7 +55,10 @@ canonical visual image
 The original is streamed to a temporary encoded file. Companion does not first
 create a full Python/Pillow raster just to resize it. This lets large JPEG,
 HEIC/HEIF/AVIF, TIFF, and other libvips-supported sources use libvips' bounded,
-demand-driven processing.
+demand-driven processing. After normalization, libvips exports the bounded sRGB
+pixel buffer directly. Search and localized-detail extraction share one Pillow
+view of those pixels; Companion does not encode a normalized JPEG/PNG and then
+decode it again for each consumer.
 
 RAW also enters through libvips. Companion explicitly recognizes common camera
 RAW suffixes/MIME hints so DNG cannot be accidentally treated as ordinary TIFF
@@ -74,8 +79,8 @@ cached Appearance evidence.
 
 ## Cache completeness and scoring
 
-Search and detail evidence are generated together from one canonical visual
-image. A search fingerprint without its matching current detail record is not
+Search and detail evidence are generated together from one canonical bounded
+pixel representation. A search fingerprint without its matching current detail record is not
 considered complete/current visual evidence and is re-queued for indexing.
 
 Candidate discovery, full-library scans, incremental maintenance, duplicate
@@ -105,7 +110,7 @@ A visual fingerprint or localized-detail match never becomes exact-file proof.
 - Encoded original input is capped at 128 MiB by
   `SIMILARITY_DETAIL_MAX_BYTES`, which is also the unified visual-source
   budget.
-- Canonical output is bounded to 6000 pixels on either axis.
+- Canonical output is bounded to 2048 pixels on either axis.
 - Fetch and decode concurrency remain independently bounded by the existing
   similarity fetch/decode slots.
 - The libvips operation cache is disabled for this one-shot normalization
@@ -115,7 +120,7 @@ A visual fingerprint or localized-detail match never becomes exact-file proof.
 
 ## Acceptance tests
 
-- A source with dimensions above 6000px is streamed from the original and
+- A source with dimensions above 2048px is streamed from the original and
   reduced by libvips rather than rejected solely because of dimensions.
 - A known source larger than 128 MiB is not opened and falls back to the safe
   preview path.
@@ -124,8 +129,10 @@ A visual fingerprint or localized-detail match never becomes exact-file proof.
 - DNG and other camera RAW sources are deliberately routed through that RAW path
   instead of generic TIFF/filename autodetection.
 - Alpha survives normalization when the source representation contains alpha.
+- Normalization hands bounded sRGB pixels directly to feature extraction without
+  creating an intermediate JPEG/PNG.
 - Search and localized-detail features are written from the same normalized
-  media and source identity.
+  pixels and source identity.
 - A search-only cache entry is not exposed as current.
 - Full scans and incremental scoring perform one cache-only scoring pass and no
   second detail media stage.
