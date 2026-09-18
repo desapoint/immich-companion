@@ -249,6 +249,86 @@ describe('live V2 duplicate repository', () => {
     expect(fetcher.mock.calls.some(([input]) => String(input).includes('/summary'))).toBe(false);
   });
 
+  it('preserves complete backend similarity and preservation evidence', async () => {
+    const evidenceResult = {
+      ...duplicateResult,
+      groups: [{
+        ...group,
+        members: group.members.map((member, index) => index === 0 ? member : {
+          ...member,
+          similarity: {
+            ...member.similarity,
+            normalized_luminance_mae: 0.01,
+            normalized_luminance_rmse: 0.02,
+            normalized_luminance_ssim: 0.99,
+            aspect_ratio_difference: 0.001,
+            dimensions_equal: false,
+            exact_thumbnail_match: false,
+            exact_pixel_match: true,
+            validated_width: 1920,
+            validated_height: 1080,
+            reference_validated_width: 3840,
+            reference_validated_height: 2160,
+            model_version: 'appearance-preview-v1',
+            feature_version: 3,
+            comparison_version: 6,
+          },
+          preservation: {
+            origin: 'original',
+            pixel_normalization_version: 1,
+            pixel_sha256: 'a'.repeat(64),
+            decoded_width: 1920,
+            decoded_height: 1080,
+            bit_depth: 8,
+            channel_count: 3,
+            has_alpha: false,
+            color_space: 'RGB',
+            orientation: null,
+            icc_profile_present: true,
+            has_exif: true,
+            has_capture_time: true,
+            has_camera_info: true,
+            has_gps: false,
+            has_orientation_metadata: false,
+            metadata_richness: 4,
+          },
+        }),
+      }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
+      String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(evidenceResult)));
+    const repository = createDuplicateRepository(tasks());
+
+    const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
+    const member = result.items[0]?.members[1];
+
+    expect(member?.similarityEvidence).toMatchObject({
+      normalizedLuminanceMae: 0.01,
+      normalizedLuminanceRmse: 0.02,
+      normalizedLuminanceSsim: 0.99,
+      aspectRatioDifference: 0.001,
+      dimensionsEqual: false,
+      exactThumbnailMatch: false,
+      exactPixelMatch: true,
+      validatedWidth: 1920,
+      validatedHeight: 1080,
+      referenceValidatedWidth: 3840,
+      referenceValidatedHeight: 2160,
+      modelVersion: 'appearance-preview-v1',
+      featureVersion: 3,
+      comparisonVersion: 6,
+    });
+    expect(member?.preservation).toMatchObject({
+      origin: 'original',
+      pixelNormalizationVersion: 1,
+      decodedWidth: 1920,
+      decodedHeight: 1080,
+      iccProfilePresent: true,
+      hasExif: true,
+      metadataRichness: 4,
+    });
+  });
+
   it('does not present verified content hashes as visual similarity scores', async () => {
     const exactOnly = {
       ...duplicateResult,
