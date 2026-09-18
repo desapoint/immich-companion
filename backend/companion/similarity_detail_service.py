@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select, update
@@ -23,12 +23,7 @@ from companion.models import (
     AssetSimilarityDetailFeatureRecord,
     AssetSimilaritySearchFeatureRecord,
 )
-from companion.similarity_bounded_state import (
-    BOUNDED_CAPABILITY_VERSION,
-    BOUNDED_POLICY_FINGERPRINT,
-    AssetSimilarityBoundedStateRecord,
-    SourceAlphaState,
-)
+from companion.similarity_bounded_state import AssetSimilarityBoundedStateRecord
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
     DetailDiagnostics,
@@ -129,110 +124,6 @@ class SimilarityDetailRepository:
         async with self._database.sessions() as session:
             records = list((await session.scalars(statement)).all())
         return {record.asset_id: record for record in records}
-
-    async def get_current_unavailable_many(self, asset_ids: list[UUID]) -> dict[UUID, str]:
-        """Return deterministic detail failures still valid for the current source."""
-
-        if not asset_ids:
-            return {}
-        statement = (
-            select(
-                AssetSimilarityBoundedStateRecord.asset_id,
-                AssetSimilarityBoundedStateRecord.detail_reason,
-            )
-            .join(
-                AssetSimilaritySearchFeatureRecord,
-                AssetSimilaritySearchFeatureRecord.asset_id
-                == AssetSimilarityBoundedStateRecord.asset_id,
-            )
-            .join(AssetRecord, AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id)
-            .where(
-                AssetSimilarityBoundedStateRecord.asset_id.in_(set(asset_ids)),
-                AssetSimilarityBoundedStateRecord.capability_version
-                == BOUNDED_CAPABILITY_VERSION,
-                AssetSimilarityBoundedStateRecord.policy_fingerprint
-                == BOUNDED_POLICY_FINGERPRINT,
-                AssetSimilarityBoundedStateRecord.search_status == "available",
-                AssetSimilarityBoundedStateRecord.source_identity
-                == AssetSimilaritySearchFeatureRecord.source_identity,
-                AssetSimilarityBoundedStateRecord.detail_status == "unavailable",
-                AssetSimilarityBoundedStateRecord.detail_source_identity
-                == AssetSimilaritySearchFeatureRecord.source_identity,
-                AssetSimilarityBoundedStateRecord.detail_feature_version
-                == DETAIL_FEATURE_VERSION,
-                AssetRecord.asset_type == "IMAGE",
-                AssetRecord.is_trashed.is_(False),
-                AssetRecord.is_offline.is_(False),
-                AssetSimilaritySearchFeatureRecord.model_version == SEARCH_MODEL_VERSION,
-                AssetSimilaritySearchFeatureRecord.feature_version == SEARCH_FEATURE_VERSION,
-                AssetSimilaritySearchFeatureRecord.config_fingerprint
-                == SEARCH_CONFIG_FINGERPRINT,
-                AssetSimilaritySearchFeatureRecord.source_file_modified_at
-                == AssetRecord.file_modified_at,
-                AssetSimilaritySearchFeatureRecord.source_file_size_bytes.is_not_distinct_from(
-                    AssetRecord.file_size_bytes
-                ),
-                AssetSimilaritySearchFeatureRecord.source_checksum.is_not_distinct_from(
-                    AssetRecord.checksum
-                ),
-            )
-        )
-        async with self._database.sessions() as session:
-            rows = (await session.execute(statement)).all()
-        return {asset_id: reason or "detail unavailable" for asset_id, reason in rows}
-
-    async def source_alpha_state(
-        self, asset_id: UUID, source_identity: str
-    ) -> SourceAlphaState | None:
-        statement = select(AssetSimilarityBoundedStateRecord.alpha_state).where(
-            AssetSimilarityBoundedStateRecord.asset_id == asset_id,
-            AssetSimilarityBoundedStateRecord.source_identity == source_identity,
-            AssetSimilarityBoundedStateRecord.search_status == "available",
-            AssetSimilarityBoundedStateRecord.capability_version == BOUNDED_CAPABILITY_VERSION,
-            AssetSimilarityBoundedStateRecord.policy_fingerprint == BOUNDED_POLICY_FINGERPRINT,
-        )
-        async with self._database.sessions() as session:
-            value = await session.scalar(statement)
-        if value in {"confirmed_opaque", "confirmed_alpha", "unknown_alpha"}:
-            return cast(SourceAlphaState, value)
-        return None
-
-    async def mark_unavailable(
-        self,
-        source_identity: str,
-        asset_id: UUID,
-        reason: str,
-        *,
-        evidence_epoch: int | None = None,
-    ) -> bool:
-        """Persist a deterministic bounded-detail failure against its source identity."""
-
-        expected_epoch = (
-            evidence_epoch if evidence_epoch is not None else await self.current_evidence_epoch()
-        )
-        statement = (
-            update(AssetSimilarityBoundedStateRecord)
-            .where(
-                AssetSimilarityBoundedStateRecord.asset_id == asset_id,
-                AssetSimilarityBoundedStateRecord.source_identity == source_identity,
-                AssetSimilarityBoundedStateRecord.search_status == "available",
-                AssetSimilarityBoundedStateRecord.capability_version
-                == BOUNDED_CAPABILITY_VERSION,
-                AssetSimilarityBoundedStateRecord.policy_fingerprint
-                == BOUNDED_POLICY_FINGERPRINT,
-            )
-            .values(
-                detail_status="unavailable",
-                detail_reason=reason,
-                detail_source_identity=source_identity,
-                detail_feature_version=DETAIL_FEATURE_VERSION,
-                updated_at=datetime.now(UTC),
-            )
-        )
-        async with self._database.sessions() as session, session.begin():
-            await self._evidence_epoch.assert_current(session, expected_epoch)
-            result = await session.execute(statement)
-        return bool(result.rowcount)
 
     async def diagnostics(
         self, selected_asset_id: UUID, reference_asset_id: UUID
@@ -508,46 +399,23 @@ class SimilarityDetailMaintainer:
         on_progress: Callable[[int, int], Awaitable[None]] | None = None,
         evidence_epoch: int | None = None,
     ) -> None:
+        """Repair only genuinely missing detail using the shared visual normalizer."""
+
         expected_epoch = (
             evidence_epoch
             if evidence_epoch is not None
             else await self._details.current_evidence_epoch()
         )
         ordered = sorted(set(asset_ids), key=lambda item: item.int)
-        retry_unavailable = (
-            getattr(getattr(context, "task", None), "task_type", None) == "similarity_scan"
-        )
         for offset in range(0, len(ordered), DETAIL_WORK_BATCH_SIZE):
             await context.ensure_active()
             page = ordered[offset : offset + DETAIL_WORK_BATCH_SIZE]
             current = await self._details.get_current_many(page)
             self.counters["detail_features_reused"] += len(current)
-            unavailable_getter = getattr(self._details, "get_current_unavailable_many", None)
-            unavailable = (
-                await unavailable_getter(page) if unavailable_getter is not None else {}
-            )
-            unavailable_without_detail = {
-                asset_id: reason
-                for asset_id, reason in unavailable.items()
-                if asset_id not in current
-            }
-            if retry_unavailable:
-                # A full user-requested scan is the explicit regeneration boundary:
-                # retry source-current deterministic failures instead of carrying
-                # their old terminal marker into the new scan generation.
-                self.counters["detail_unavailable_retried"] += len(
-                    unavailable_without_detail
-                )
-            else:
-                self.counters["deterministic_retries_suppressed"] += len(
-                    unavailable_without_detail
-                )
             pending = [
                 asset_id
                 for asset_id in page
-                if asset_id not in current
-                and (retry_unavailable or asset_id not in unavailable)
-                and asset_id in search_features
+                if asset_id not in current and asset_id in search_features
             ]
             tasks = [
                 asyncio.create_task(
