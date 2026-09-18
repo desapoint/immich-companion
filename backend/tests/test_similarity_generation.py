@@ -110,6 +110,15 @@ def _scan_payload() -> dict[str, object]:
     }
 
 
+def test_generation_descriptor_contains_only_current_appearance_pipeline() -> None:
+    descriptor = generation_module.similarity_generation_descriptor()
+
+    assert "search" in descriptor
+    assert "detail" in descriptor
+    assert "comparison" in descriptor
+    assert "legacy_visual" not in descriptor
+
+
 def test_broad_generation_changes_generation_and_pair_fingerprints(monkeypatch) -> None:
     generation_before = similarity_generation_fingerprint()
     pair_before = _pair_config_fingerprint("feature-config")
@@ -130,8 +139,8 @@ def test_broad_generation_changes_generation_and_pair_fingerprints(monkeypatch) 
 
 
 def test_hot_pair_key_is_scoped_to_runtime_epoch() -> None:
-    left = SimpleNamespace(source_sha256="left", config_fingerprint="config")
-    right = SimpleNamespace(source_sha256="right", config_fingerprint="config")
+    left = SimpleNamespace(source_identity="left", config_fingerprint="config")
+    right = SimpleNamespace(source_identity="right", config_fingerprint="config")
 
     first = SimilarityRepository._hot_key(  # type: ignore[arg-type]
         SimpleNamespace(int=1),
