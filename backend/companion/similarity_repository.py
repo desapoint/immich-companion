@@ -367,11 +367,12 @@ class SimilarityRepository:
                     DetailFeature(low_detail.width, low_detail.height, low_detail.sample),
                     DetailFeature(high_detail.width, high_detail.height, high_detail.sample),
                 )
+                origins = {low_detail.origin, high_detail.origin}
                 detail_source = (
                     "preview"
-                    if "preview_fallback" in {low_detail.origin, high_detail.origin}
+                    if origins & {"preview_fallback", "bounded_preview", "bounded_fullsize"}
                     else "transcoded"
-                    if "transcoded_fullsize" in {low_detail.origin, high_detail.origin}
+                    if "transcoded_fullsize" in origins
                     else "original"
                 )
             evidence = PairSimilarityEvidence(
