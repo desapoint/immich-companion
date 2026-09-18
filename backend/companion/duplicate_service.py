@@ -1119,7 +1119,7 @@ class CrossSourceDuplicateService:
             or (
                 include_similarity
                 and asset.asset_type == "IMAGE"
-                and similarity_feature_freshness(features.get(asset.id), asset) != "current"
+                and preservation_feature_freshness(features.get(asset.id), asset) != "current"
             )
         ]
 
@@ -2929,7 +2929,7 @@ class CrossSourceDuplicateTaskHandler:
 
         reports = await self._reports.get_many(list(candidates))
         features = (
-            await self._reports.get_similarity_features(list(candidates))
+            await self._reports.get_preservation_features(list(candidates))
             if self._include_similarity
             else {}
         )
@@ -2949,7 +2949,7 @@ class CrossSourceDuplicateTaskHandler:
                 or (
                     self._include_similarity
                     and asset.asset_type == "IMAGE"
-                    and similarity_feature_freshness(features.get(asset.id), asset) != "current"
+                    and preservation_feature_freshness(features.get(asset.id), asset) != "current"
                 )
             )
         ]
