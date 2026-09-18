@@ -177,6 +177,34 @@ async def test_ensure_asset_reuses_complete_visual_cache_without_media_fetch() -
 
 
 @pytest.mark.asyncio
+async def test_ensure_asset_consumes_prepared_original_without_streaming_again(tmp_path) -> None:
+    features = FakeFeatures([A])
+    immich = FakeImmich()
+    prepared = tmp_path / "prepared.png"
+    prepared.write_bytes(PREVIEW)
+    maintainer = SimilarityIndexMaintainer(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        features,  # type: ignore[arg-type]
+    )
+
+    assert (
+        await maintainer.ensure_asset(
+            FakeContext(),
+            A,
+            source=source(A),
+            original_path=prepared,
+            original_source_bytes=len(PREVIEW),
+        )
+        is True
+    )
+
+    assert prepared.exists()
+    assert immich.previewed == []
+    assert features.current == {A}
+
+
+@pytest.mark.asyncio
 async def test_library_index_reuses_committed_features_after_restart() -> None:
     features = FakeFeatures([A, B, C])
     features.current.add(A)
