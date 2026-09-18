@@ -37,6 +37,10 @@ from companion.models import (
     AssetIntegrityReportRecord,
     AssetSimilaritySearchFeatureRecord,
 )
+from companion.preservation_features import (
+    PRESERVATION_CONFIG_FINGERPRINT,
+    PRESERVATION_FEATURE_VERSION,
+)
 from companion.similarity_features import (
     SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
@@ -161,9 +165,11 @@ def feature(
 ) -> AssetImagePreservationFeatureRecord:
     return AssetImagePreservationFeatureRecord(
         asset_id=identifier,
-        model_version=SIMILARITY_MODEL_VERSION,
-        feature_version=SIMILARITY_FEATURE_VERSION,
-        config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+        extractor_model_version=SIMILARITY_MODEL_VERSION,
+        extractor_feature_version=SIMILARITY_FEATURE_VERSION,
+        extractor_config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+        preservation_version=PRESERVATION_FEATURE_VERSION,
+        preservation_config_fingerprint=PRESERVATION_CONFIG_FINGERPRINT,
         source_file_modified_at=MODIFIED,
         source_file_size_bytes=4,
         source_sha256=digest or str(identifier).replace("-", "") * 2,
