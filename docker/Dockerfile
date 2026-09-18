@@ -15,7 +15,10 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     VIRTUAL_ENV=/opt/venv
 
-RUN python -m venv "$VIRTUAL_ENV"
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libvips-dev dcraw \
+    && rm -rf /var/lib/apt/lists/* \
+    && python -m venv "$VIRTUAL_ENV"
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY backend/pyproject.toml /build/backend/pyproject.toml
@@ -44,7 +47,10 @@ ENV PATH="/opt/venv/bin:$PATH" \
     COMPANION_FRONTEND_DIR=/opt/immich-companion/frontend \
     ALLOW_DESTRUCTIVE_ACTIONS=false
 
-RUN groupadd --gid "$APP_GID" companion \
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends libvips-tools dcraw \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid "$APP_GID" companion \
     && useradd --uid "$APP_UID" --gid "$APP_GID" --no-create-home --shell /usr/sbin/nologin companion \
     && mkdir -p /cache \
     && chown companion:companion /cache
