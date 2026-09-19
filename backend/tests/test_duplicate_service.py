@@ -988,6 +988,7 @@ def test_similarity_members_are_reference_first_then_descending_similarity() -> 
     discovered = DiscoveredGroup(
         group_id="companion:member-order",
         discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id="scan:member-order",
         assets=members,
     )
     result = CrossSourceDuplicateService.assemble(
