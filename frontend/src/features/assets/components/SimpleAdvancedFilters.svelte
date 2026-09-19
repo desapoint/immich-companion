@@ -1,14 +1,14 @@
 <script lang="ts">
   import DateTimePickerField from '../../../lib/components/ui/DateTimePickerField.svelte';
-  import V2AspectRatioField from '../../../v2/components/V2AspectRatioField.svelte';
+  import V2AspectRatioField from '../../../lib/components/ui/AspectRatioField.svelte';
   import V2Badge from '../../../lib/components/ui/Badge.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
-  import V2Field from '../../../v2/components/V2Field.svelte';
+  import V2Field from '../../../lib/components/ui/TextField.svelte';
   import V2Inline from '../../../lib/components/layout/Inline.svelte';
   import V2RelationFilterField from './RelationFilterField.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
-  import type { SelectOption } from '../../../v2/components/SelectField.svelte';
+  import type { SelectOption } from '../../../lib/components/ui/SelectField.svelte';
 
   export type SimpleAdvancedFilters = {
     albumIds: string;

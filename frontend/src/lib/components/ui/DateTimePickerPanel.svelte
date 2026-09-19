@@ -1,5 +1,5 @@
 <script lang="ts">
-  import SelectField from './SelectField.svelte';
+  import SimpleSelectField from './SimpleSelectField.svelte';
   import DateTimeCalendar from './DateTimeCalendar.svelte';
   import type { CalendarDay } from '../../utils/dateTime';
 
@@ -21,9 +21,9 @@
 <div id={`${id}-picker`} class="picker-panel" role="dialog" tabindex="-1" aria-modal="false" aria-labelledby={`${id}-picker-title`} onkeydown={onpanelkeydown}>
   <DateTimeCalendar {id} {monthLabel} {days} {today} {selectedDate} {focusedDate} onmonthchange={onmonthchange} onselect={onselect} onfocusdate={onfocusdate} onkeydown={onkeydown} bind:element />
   <div class="time-row">
-    <SelectField id={`${id}-hour`} label="Hour" value={hour} options={hourOptions} compact onchange={onhourchange} />
+    <SimpleSelectField id={`${id}-hour`} label="Hour" value={hour} options={hourOptions} compact onchange={onhourchange} />
     <span class="time-separator" aria-hidden="true">:</span>
-    <SelectField id={`${id}-minute`} label="Minute" value={minute} options={minuteOptions} compact onchange={onminutechange} />
+    <SimpleSelectField id={`${id}-minute`} label="Minute" value={minute} options={minuteOptions} compact onchange={onminutechange} />
     <button class="now-button" type="button" onclick={onnow}>Now</button>
   </div>
   <footer class="picker-actions">

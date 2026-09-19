@@ -5,8 +5,8 @@
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2Checkbox from '../../../lib/components/ui/Checkbox.svelte';
-  import V2CronField from '../../../v2/components/V2CronField.svelte';
-  import V2Field from '../../../v2/components/V2Field.svelte';
+  import V2CronField from '../../../lib/components/ui/CronField.svelte';
+  import V2Field from '../../../lib/components/ui/TextField.svelte';
   import V2Notice from '../../../lib/components/ui/Notice.svelte';
   import V2Progress from '../../../lib/components/ui/Progress.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';

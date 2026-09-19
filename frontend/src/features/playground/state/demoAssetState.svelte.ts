@@ -1,4 +1,4 @@
-import type { AssetSelectionState } from '../../../v2/components/assetSelection';
+import type { AssetSelectionState } from '../../assets/state/assetSelection';
 import { BASE_ALBUMS, BASE_ALBUM_ASSETS, BASE_STACKS, BASE_TAGS, BASE_TAG_ASSETS, BASE_TRASH_IDS, LEGACY_STORAGE_KEYS, PREVIOUS_STORAGE_KEY, STORAGE_KEY, applyRelationships, baseAssetsById, buildState, cloneAsset, cloneStack, newDemoId, tagValueForPath, toTrashApiAsset } from '../data/demoAssetSeed';
 import type { DemoAlbumRecord, DemoAssetOverride, DemoAssetRecord, DemoAssetStackSnapshot, DemoTagAssetRecord, DemoTagRecord, DemoTrashApiAsset, DemoTrashRelationshipSnapshot, PersistedDemoState, PersistedDemoStateV3 } from '../data/demoAssetTypes';
 

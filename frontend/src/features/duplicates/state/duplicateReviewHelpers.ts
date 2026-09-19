@@ -1,5 +1,5 @@
 import type { DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan } from '../types/contracts';
-import { resolutionStacks, stacksForGroup, type DuplicateStackWorkspace } from '../../../v2/state/duplicateStackResolution';
+import { resolutionStacks, stacksForGroup, type DuplicateStackWorkspace } from './duplicateStackResolution';
 
 export function currentResolution(workspace: DuplicateStackWorkspace, decisions: Readonly<Record<string, DuplicateDecision>>): DuplicateResolutionPlan {
   return { decisions: { ...decisions }, stacks: resolutionStacks(workspace).filter((stack) => stack.assetIds.every((id) => decisions[id] === 'stack')) };

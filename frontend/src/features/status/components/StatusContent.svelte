@@ -7,7 +7,7 @@
   import V2Notice from '../../../lib/components/ui/Notice.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
-  import V2Table from '../../../v2/components/V2Table.svelte';
+  import V2Table from '../../../lib/components/ui/Table.svelte';
   import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
   import V2Zone from '../../../lib/components/layout/Zone.svelte';
   import { companionState, dependencyState, immichVersion } from '../utils/statusPresentation';

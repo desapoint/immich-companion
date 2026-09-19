@@ -16,7 +16,7 @@ import type {
   TrashSearchQuery, TrashSelectionTarget, StackActionPlan, StackResolution,
 } from '../../../lib/types/libraryContracts';
 import type { DuplicateDecision, DuplicateDiscoveryOptions, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateSearchQuery } from '../../duplicates/types/contracts';
-import type { LibraryDataSource } from '../../../v2/data/contracts';
+import type { LibraryDataSource } from '../../../app/data/libraryContracts';
 
 const DUPLICATE_STORAGE_KEY='immichCompanionV2DemoDuplicateState.v2';
 const DEMO_MIN_DELAY=90,DEMO_MAX_DELAY=260;

@@ -1,6 +1,6 @@
 import { duplicateDiscoverySettingsRepository } from '../api/duplicateDiscoverySettingsRepository';
 import type { SimilarityValidationMode } from '../types/contracts';
-import type { OperationRunOptions } from '../../../v2/state/operationController.svelte';
+import type { OperationRunOptions } from '../../../lib/state/operationController.svelte';
 import { errorMessage } from '../../../lib/api/mutationFeedback';
 
 export type DuplicateDiscoveryState = {

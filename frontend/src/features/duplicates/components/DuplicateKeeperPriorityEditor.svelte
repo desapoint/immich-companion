@@ -1,12 +1,12 @@
 <script lang="ts">
   import { ArrowDown, ArrowUp, Plus, Trash2 } from '@lucide/svelte';
-  import DateTimePickerField from '../../../v2/components/DateTimePickerField.svelte';
-  import SelectField, { type SelectOption } from '../../../v2/components/SelectField.svelte';
+  import DateTimePickerField from '../../../lib/components/ui/DateTimePickerField.svelte';
+  import SelectField, { type SelectOption } from '../../../lib/components/ui/SelectField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Card from '../../../lib/components/ui/Card.svelte';
-  import V2Field from '../../../v2/components/V2Field.svelte';
+  import V2Field from '../../../lib/components/ui/TextField.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
-  import { keeperEffectOptions, keeperFieldDefinition, keeperOperatorOptions, keeperPresetNames, keeperRuleFieldOptions, keeperRuleNeedsValue, type DuplicateKeeperUiRule } from '../../../v2/state/duplicateKeeperRules';
+  import { keeperEffectOptions, keeperFieldDefinition, keeperOperatorOptions, keeperPresetNames, keeperRuleFieldOptions, keeperRuleNeedsValue, type DuplicateKeeperUiRule } from '../state/duplicateKeeperRules';
   import type { DuplicateKeeperRuleField } from '../types/contracts';
 
   let {

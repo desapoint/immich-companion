@@ -1,9 +1,9 @@
 <script lang="ts">
-  import SelectField from '../../../v2/components/SelectField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Modal from '../../../lib/components/ui/Modal.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
-  import type { AssetRelationshipOption } from '../../../v2/data/contracts';
+  import type { AssetRelationshipOption } from '../../../lib/types/libraryContracts';
 
   let {
     kind,

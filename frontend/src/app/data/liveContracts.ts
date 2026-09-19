@@ -1,4 +1,4 @@
-import type { ResolvedLibraryDataSource } from '../../v2/data/contracts';
+import type { ResolvedLibraryDataSource } from './libraryContracts';
 import type { SyncDataRepository, TaskRepository } from '../../features/status/types/syncContracts';
 
 export type LiveLibraryDataSource = ResolvedLibraryDataSource & {

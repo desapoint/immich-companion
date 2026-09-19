@@ -5,39 +5,39 @@
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2Checkbox from '../../../lib/components/ui/Checkbox.svelte';
-  import V2CollectionControls, { type ResultMode } from '../../../v2/components/V2CollectionControls.svelte';
-  import V2CollectionFooter from '../../../v2/components/V2CollectionFooter.svelte';
+  import V2CollectionControls, { type ResultMode } from '../../../lib/components/ui/CollectionControls.svelte';
+  import V2CollectionFooter from '../../../lib/components/ui/CollectionFooter.svelte';
   import V2CollectionLoadingOverlay from '../../../lib/components/ui/CollectionLoadingOverlay.svelte';
   import DuplicateCompareViewer from './DuplicateCompareViewer.svelte';
   import DuplicateDiscoveryIntro from './DuplicateDiscoveryIntro.svelte';
   import DuplicateHistoryControls from './DuplicateHistoryControls.svelte';
   import DuplicateHistoryList from './DuplicateHistoryList.svelte';
   import DuplicateReviewControls from './DuplicateReviewControls.svelte';
-  import V2DuplicateHistoryDetail from '../../../v2/components/V2DuplicateHistoryDetail.svelte';
-  import V2DuplicateAdmissionEvidence from '../../../v2/components/V2DuplicateAdmissionEvidence.svelte';
-  import V2DuplicateCachePanel from '../../../v2/components/V2DuplicateCachePanel.svelte';
-  import V2DuplicateDecisionControls from '../../../v2/components/V2DuplicateDecisionControls.svelte';
+  import V2DuplicateHistoryDetail from './DuplicateHistoryDetail.svelte';
+  import V2DuplicateAdmissionEvidence from './DuplicateAdmissionEvidence.svelte';
+  import V2DuplicateCachePanel from './DuplicateCachePanel.svelte';
+  import V2DuplicateDecisionControls from './DuplicateDecisionControls.svelte';
   import DuplicateKeeperModal from './DuplicateKeeperModal.svelte';
-  import V2DuplicateStackControls from '../../../v2/components/V2DuplicateStackControls.svelte';
-  import V2DuplicateValidationSettings from '../../../v2/components/V2DuplicateValidationSettings.svelte';
+  import V2DuplicateStackControls from './DuplicateStackControls.svelte';
+  import V2DuplicateValidationSettings from './DuplicateValidationSettings.svelte';
   import V2ErrorState from '../../../lib/components/ui/ErrorState.svelte';
-  import V2Field from '../../../v2/components/V2Field.svelte';
+  import V2Field from '../../../lib/components/ui/TextField.svelte';
   import V2Inline from '../../../lib/components/layout/Inline.svelte';
-  import V2LazyAssetMedia from '../../../v2/components/V2LazyAssetMedia.svelte';
+  import V2LazyAssetMedia from '../../assets/components/LazyAssetMedia.svelte';
   import OperationToast from '../../../lib/components/app/OperationToast.svelte';
   import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
   import V2RoundCheckbox from '../../../lib/components/ui/RoundCheckbox.svelte';
   import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
-  import V2SimilarityEvidenceGenerationPanel from '../../../v2/components/V2SimilarityEvidenceGenerationPanel.svelte';
+  import V2SimilarityEvidenceGenerationPanel from './SimilarityEvidenceGenerationPanel.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import V2Tabs from '../../../lib/components/ui/Tabs.svelte';
   import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
   import V2Zone from '../../../lib/components/layout/Zone.svelte';
-  import { createCollectionView } from '../../../v2/state/collectionView.svelte';
+  import { createCollectionView } from '../../../lib/state/collectionView.svelte';
   import { backgroundTaskStatus } from '../../status/state/backgroundTaskStatus.svelte';
   import { duplicateDiscoverySettingsRepository } from '../api/duplicateDiscoverySettingsRepository';
-  import { CollectionRequestController } from '../../../v2/state/collectionRequest.svelte';
-  import { OperationController } from '../../../v2/state/operationController.svelte';
+  import { CollectionRequestController } from '../../../lib/state/collectionRequest.svelte';
+  import { OperationController } from '../../../lib/state/operationController.svelte';
   import {
     assignAssetToActiveStack,
     assignGroupToSingleStack,
@@ -51,14 +51,14 @@
     setPendingStackPrimary,
     stackForAsset,
     stacksForGroup,
-  } from '../../../v2/state/duplicateStackResolution';
+  } from '../state/duplicateStackResolution';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
   import { clearAllDuplicateResolutionHistory, clearDuplicateResolutionHistory } from '../api/duplicateResolutionHistory';
   import { duplicateGroupTitle, duplicateKindLabel } from '../utils/duplicatePresentation';
   import { duplicateListMemberMeta, formatSimilarityPercent } from '../types/duplicateMember';
   import { duplicateSourceLabels } from '../utils/duplicateSource';
   import { comparisonTargetId } from '../../../lib/utils/duplicateComparisonNavigation';
-  import { duplicateViewerGroupNavigationPlan, type DuplicateViewerGroupDirection } from '../../../v2/state/duplicateViewerGroupNavigation';
+  import { duplicateViewerGroupNavigationPlan, type DuplicateViewerGroupDirection } from '../state/duplicateViewerGroupNavigation';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../../lib/api/mutationFeedback';
   import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateKeeperSelectionResult, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateSourceFilter, DuplicateState, SimilarityCacheKind, SimilarityCacheStatus, SimilarityValidationMode } from '../types/contracts';
   import { currentResolution, groupComplete, groupHasInvalidStack, groupResolution } from '../state/duplicateReviewHelpers';

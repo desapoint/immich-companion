@@ -1,300 +1,96 @@
 <script lang="ts">
-import { onDestroy, onMount, tick } from 'svelte';
-
+  import { ArrowDown, ArrowUp, Plus } from '@lucide/svelte';
+  import { tick } from 'svelte';
   import { clickOutside } from '../../actions/clickOutside';
-  import type { SelectOption } from '../../types/ui';
-  import SelectOptionList from './SelectOptionList.svelte';
-  import { adjacentEnabledIndex, firstEnabledIndex, lastEnabledIndex, selectedOptionIndex, typeaheadIndex } from './selectOptions';
+  import { floatingFieldLayout } from '../../utils/floatingField';
 
-  interface Props {
-    id: string;
-    label: string;
-    value: string;
-    options: SelectOption[];
-    disabled?: boolean;
-    required?: boolean;
-    compact?: boolean;
-    onchange: (value: string) => void;
-  }
+  type SortDirection = 'asc' | 'desc';
+  type NormalizedSelectOption = { value:string; label:string; subtitle:string; disabled:boolean; direction?:SortDirection };
+
+  export type SelectOption = string | { value:string; label:string; subtitle?:string; disabled?:boolean; direction?:SortDirection };
+  export type SelectAddRequest = { query:string; shiftKey:boolean };
 
   let {
-    id,
-    label,
-    value,
-    options,
-    disabled = false,
-    required = false,
-    compact = false,
-    onchange,
-  }: Props = $props();
+    id,label='',value=$bindable<string|number>(''),values=$bindable<string[]>([]),multiple=false,options,width='full',disabled=false,allowEmpty=false,
+    placeholder='Choose an option',searchable=false,searchPlaceholder='Search options…',loading=false,hasMore=false,addLabel='',
+    onchange,onvalueschange,onsearchchange,onloadmore,onadd,
+  }: {
+    id:string; label?:string; value?:string|number; values?:string[]; multiple?:boolean; options:SelectOption[]; width?:'full'|'content'; disabled?:boolean;
+    allowEmpty?:boolean; placeholder?:string; searchable?:boolean; searchPlaceholder?:string; loading?:boolean; hasMore?:boolean; addLabel?:string;
+    onchange?:(value:string)=>void; onvalueschange?:(values:string[])=>void; onsearchchange?:(query:string)=>void; onloadmore?:()=>void; onadd?:(request:SelectAddRequest)=>void;
+  }=$props();
 
-  let triggerElement = $state<HTMLButtonElement>();
-  let listElement = $state<HTMLDivElement>();
-  let open = $state(false);
-  let activeIndex = $state(-1);
-  let typeahead = '';
-  let typeaheadTimer: ReturnType<typeof setTimeout> | undefined;
-  let listStyle = $state('');
+  let open=$state(false),activeIndex=$state(-1),searchQuery=$state('');
+  let control=$state<HTMLDivElement>(),trigger=$state<HTMLButtonElement>(),optionsPopup=$state<HTMLDivElement>(),list=$state<HTMLDivElement>(),searchInput=$state<HTMLInputElement>(),widthProbe=$state<HTMLDivElement>();
+  let intrinsicPopupWidth=$state(0),popupTop=$state(0),popupBottom=$state<number|null>(null),popupLeft=$state(0),popupWidth=$state(0),popupMaxHeight=$state(304);
+  let popupPlacement=$state<'down'|'up'>('down'),popupAlignment=$state<'left'|'right'|'viewport'>('left'),multiTriggerText=$state('');
 
-  const selectedOption = $derived(options.find((option) => option.value === value));
-
-  function selectedIndex(): number {
-    return selectedOptionIndex(options, value);
+  function normalizeStringOption(option:string):NormalizedSelectOption[]{
+    const directional=option.match(/^(.*)\s([↑↓])$/); if(!directional)return[{value:option,label:option,subtitle:'',disabled:false}];
+    const[,optionLabel,arrow]=directional; const currentDirection:SortDirection=arrow==='↑'?'asc':'desc'; const alternateDirection:SortDirection=currentDirection==='asc'?'desc':'asc';
+    const valueFor=(direction:SortDirection)=>`${optionLabel} ${direction==='asc'?'↑':'↓'}`;
+    return([currentDirection,alternateDirection] as SortDirection[]).map((direction)=>({value:valueFor(direction),label:optionLabel,subtitle:'',disabled:false,direction}));
   }
+  function normalizeOption(option:SelectOption):NormalizedSelectOption[]{if(typeof option==='string')return normalizeStringOption(option);return[{value:option.value,label:option.label,subtitle:option.subtitle??'',disabled:option.disabled??false,direction:option.direction}]}
 
-  async function focusActiveOption(): Promise<void> {
-    await tick();
-    listElement?.querySelector<HTMLButtonElement>(`[data-option-index="${activeIndex}"]`)?.focus();
-  }
+  const normalized:NormalizedSelectOption[]=$derived(options.flatMap(normalizeOption));
+  const selectedSet=$derived(new Set(values.map(String)));
+  const selectedOptions=$derived(normalized.filter((option)=>selectedSet.has(option.value)));
+  const selected=$derived(normalized.find((option)=>option.value===String(value))??(!allowEmpty?normalized.find((option)=>!option.disabled):undefined));
+  const isEmpty=$derived(multiple?values.length===0:allowEmpty&&String(value)==='');
+  const normalizedSearch=$derived(searchQuery.trim().toLocaleLowerCase());
+  const visibleOptions:NormalizedSelectOption[]=$derived(onsearchchange||!searchable||!normalizedSearch?normalized:normalized.filter((option)=>`${option.label}\n${option.subtitle}`.toLocaleLowerCase().includes(normalizedSearch)));
+  const showAdd=$derived(Boolean(onadd&&searchQuery.trim()));
+  const addText=$derived(`${addLabel||'Add'} “${searchQuery.trim()}”`);
 
-  async function openList(preferredIndex = selectedIndex()): Promise<void> {
-    if (disabled || options.length === 0) return;
-    activeIndex = preferredIndex >= 0 ? preferredIndex : firstEnabledIndex(options);
-    open = true;
-    await tick();
-    positionList();
-    await focusActiveOption();
-  }
-
-  async function closeList(restoreFocus = false): Promise<void> {
-    open = false;
-    if (restoreFocus) {
-      await tick();
-      triggerElement?.focus();
-    }
-  }
-
-  function positionList(): void {
-    if (!triggerElement) return;
-    const rect = triggerElement.getBoundingClientRect();
-    const height = listElement?.offsetHeight ?? Math.min(304, window.innerHeight * 0.48);
-    const top = rect.bottom + 6 + height <= window.innerHeight - 10 || rect.top < height + 16
-      ? Math.min(rect.bottom + 6, window.innerHeight - height - 10)
-      : rect.top - height - 6;
-    listStyle = `top:${Math.max(10, top)}px;left:${rect.left}px;width:${rect.width}px;`;
-  }
-
-  async function moveActive(direction: 1 | -1): Promise<void> {
-    activeIndex = adjacentEnabledIndex(options, activeIndex, direction);
-    await focusActiveOption();
-  }
-
-  function choose(option: SelectOption): void {
-    if (disabled || option.disabled) return;
-    onchange(option.value);
-    void closeList(true);
-  }
-
-  function handleTriggerKeydown(event: KeyboardEvent): void {
-    if (disabled) return;
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      void openList(selectedIndex());
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      void openList(lastEnabledIndex(options));
-    } else if (event.key === 'Enter' || event.key === ' ') {
-      event.preventDefault();
-      void openList();
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      void openList(firstEnabledIndex(options));
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      void openList(lastEnabledIndex(options));
-    }
-  }
-
-  function handleTypeahead(key: string): void {
-    typeahead += key.toLocaleLowerCase();
-    if (typeaheadTimer) clearTimeout(typeaheadTimer);
-    typeaheadTimer = setTimeout(() => (typeahead = ''), 600);
-    const match = typeaheadIndex(options, typeahead);
-    if (match >= 0) {
-      activeIndex = match;
-      void focusActiveOption();
-    }
-  }
-
-  function handleOptionKeydown(event: KeyboardEvent): void {
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      event.stopPropagation();
-      void moveActive(1);
-    } else if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      event.stopPropagation();
-      void moveActive(-1);
-    } else if (event.key === 'Home') {
-      event.preventDefault();
-      event.stopPropagation();
-      activeIndex = firstEnabledIndex(options);
-      void focusActiveOption();
-    } else if (event.key === 'End') {
-      event.preventDefault();
-      event.stopPropagation();
-      activeIndex = lastEnabledIndex(options);
-      void focusActiveOption();
-    } else if (event.key === 'Escape') {
-      event.preventDefault();
-      event.stopPropagation();
-      void closeList(true);
-    } else if (event.key === 'Tab') {
-      void closeList();
-    } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
-      event.preventDefault();
-      handleTypeahead(event.key);
-    }
-  }
-
-  $effect(() => {
-    if (disabled) open = false;
-  });
-
-  onDestroy(() => {
-    if (typeaheadTimer) clearTimeout(typeaheadTimer);
-  });
-
-  onMount(() => {
-    const reposition = () => open && positionList();
-    window.addEventListener('resize', reposition);
-    window.addEventListener('scroll', reposition, true);
-    return () => {
-      window.removeEventListener('resize', reposition);
-      window.removeEventListener('scroll', reposition, true);
-    };
-  });
+  function firstEnabled(){return visibleOptions.findIndex((option)=>!option.disabled)}
+  function move(direction:1|-1){if(!visibleOptions.length)return;let index=activeIndex<0?firstEnabled():activeIndex;for(let attempt=0;attempt<visibleOptions.length;attempt+=1){index=(index+direction+visibleOptions.length)%visibleOptions.length;if(!visibleOptions[index]?.disabled){activeIndex=index;void tick().then(()=>list?.querySelector<HTMLButtonElement>(`[data-index="${index}"]`)?.focus());return}}}
+  function measureIntrinsicPopupWidth(){if(!widthProbe)return;const popupProbe=widthProbe.querySelector<HTMLElement>('[data-select-width-popup]');const measuredPopup=popupProbe?.getBoundingClientRect().width??0;intrinsicPopupWidth=Math.max(Math.ceil(measuredPopup),searchable?240:0)}
+  function measureText(text:string){if(!trigger)return Number.POSITIVE_INFINITY;const canvas=document.createElement('canvas'),context=canvas.getContext('2d');if(!context)return Number.POSITIVE_INFINITY;const style=getComputedStyle(trigger);context.font=`${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;return context.measureText(text).width}
+  function updateMultiTriggerText(){if(!multiple)return;if(selectedOptions.length===0){multiTriggerText=placeholder;return}const available=Math.max(40,(trigger?.clientWidth??0)-74),labels=selectedOptions.map((option)=>option.label),all=labels.join(', ');if(measureText(all)<=available){multiTriggerText=all;return}for(let shown=labels.length-1;shown>=1;shown-=1){const candidate=`${labels.slice(0,shown).join(', ')} +${labels.length-shown}`;if(measureText(candidate)<=available){multiTriggerText=candidate;return}}multiTriggerText=`${labels.length} selected`}
+  function positionPopup(){if(!open||!trigger)return;const anchor=control??trigger,rect=anchor.getBoundingClientRect(),layout=floatingFieldLayout({anchor:rect,viewportWidth:window.innerWidth,viewportHeight:window.innerHeight,preferredWidth:Math.min(544,Math.max(rect.width,intrinsicPopupWidth)),preferredHeight:304,minimumUsefulHeight:144,minimumHeight:96});popupPlacement=layout.placement;popupAlignment=layout.alignment;popupTop=layout.placement==='down'?layout.top:0;popupBottom=layout.placement==='up'?Math.max(10,window.innerHeight-rect.top+5):null;popupLeft=layout.left;popupWidth=layout.width;popupMaxHeight=layout.maxHeight}
+  function show(){if(disabled||(!normalized.length&&!onsearchchange&&!onadd))return;searchQuery='';onsearchchange?.('');activeIndex=multiple?normalized.findIndex((option)=>selectedSet.has(option.value)&&!option.disabled):normalized.findIndex((option)=>option.value===selected?.value&&!option.disabled);if(activeIndex<0)activeIndex=firstEnabled();measureIntrinsicPopupWidth();open=true;void tick().then(()=>{positionPopup();requestAnimationFrame(positionPopup);if(searchable)searchInput?.focus();else list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus()})}
+  function choose(option:NormalizedSelectOption|undefined){if(!option||option.disabled)return;if(multiple){const next=new Set(values.map(String)),adding=!next.has(option.value);if(!adding)next.delete(option.value);else next.add(option.value);values=normalized.filter((candidate)=>next.has(candidate.value)).map((candidate)=>candidate.value);onvalueschange?.(values);const selectedEveryAvailable=adding&&!hasMore&&normalized.filter((candidate)=>!candidate.disabled).every((candidate)=>next.has(candidate.value));if(selectedEveryAvailable){open=false;searchQuery='';activeIndex=-1;void tick().then(()=>trigger?.focus())}else void tick().then(updateMultiTriggerText);return}value=option.value;onchange?.(option.value);open=false;searchQuery='';void tick().then(()=>trigger?.focus())}
+  function add(event?:MouseEvent|KeyboardEvent){event?.preventDefault();event?.stopPropagation();if(disabled||!onadd)return;const query=searchQuery.trim();if(!query)return;const request:SelectAddRequest={query,shiftKey:Boolean(event?.shiftKey)};open=false;searchQuery='';activeIndex=-1;onadd(request)}
+  function clear(event?:MouseEvent){event?.stopPropagation();if(disabled||isEmpty)return;if(multiple){values=[];onvalueschange?.([]);void tick().then(updateMultiTriggerText);return}if(!allowEmpty)return;value='';onchange?.('');open=false;searchQuery='';void tick().then(()=>trigger?.focus())}
+  function handleTriggerKey(event:KeyboardEvent){if(event.key==='ArrowDown'||event.key==='ArrowUp'||event.key==='Enter'||event.key===' '){event.preventDefault();show()}}
+  function handleSearchKey(event:KeyboardEvent){if(event.key==='ArrowDown'){event.preventDefault();activeIndex=firstEnabled();void tick().then(()=>list?.querySelector<HTMLButtonElement>(`[data-index="${activeIndex}"]`)?.focus())}else if(event.key==='ArrowUp'){event.preventDefault();activeIndex=visibleOptions.length;move(-1)}else if(event.key==='Enter'){const first=visibleOptions[firstEnabled()];if(first){event.preventDefault();choose(first)}else if(showAdd){event.preventDefault();add(event)}}else if(event.key==='Escape'){event.preventDefault();open=false;searchQuery='';void tick().then(()=>trigger?.focus())}}
+  function handleOptionKey(event:KeyboardEvent,index:number){if(event.key==='ArrowDown'){event.preventDefault();move(1)}else if(event.key==='ArrowUp'){event.preventDefault();if(searchable&&index===firstEnabled())searchInput?.focus();else move(-1)}else if(event.key==='Enter'||event.key===' '){event.preventDefault();choose(visibleOptions[index])}else if(event.key==='Escape'){event.preventDefault();open=false;searchQuery='';void tick().then(()=>trigger?.focus())}else if(event.key==='Tab')open=false;else if(!searchable&&event.key.length===1&&!event.ctrlKey&&!event.metaKey&&!event.altKey){const query=event.key.toLocaleLowerCase(),match=visibleOptions.findIndex((option)=>!option.disabled&&option.label.toLocaleLowerCase().startsWith(query));if(match>=0){event.preventDefault();activeIndex=match;void tick().then(()=>list?.querySelector<HTMLButtonElement>(`[data-index="${match}"]`)?.focus())}}}
+  function handleSearchInput(value:string){searchQuery=value;activeIndex=-1;onsearchchange?.(value);void tick().then(()=>{measureIntrinsicPopupWidth();positionPopup()})}
+  $effect(()=>{const optionSignature=normalized.map((option)=>`${option.label}\u0000${option.subtitle}\u0000${option.direction??''}`).join('\u0001'),currentSearchable=searchable,selectedSignature=multiple?values.join('\u0001'):String(value);void tick().then(()=>{void optionSignature;void currentSearchable;void selectedSignature;measureIntrinsicPopupWidth();updateMultiTriggerText();if(open)positionPopup()})});
+  $effect(()=>{if(!open)return;const reposition=()=>{positionPopup();updateMultiTriggerText()};const handleScroll=(event:Event)=>{const target=event.target;if(target instanceof Node&&optionsPopup?.contains(target))return;reposition()};window.addEventListener('resize',reposition);window.addEventListener('scroll',handleScroll,true);return()=>{window.removeEventListener('resize',reposition);window.removeEventListener('scroll',handleScroll,true)}});
 </script>
 
-<div
-  use:clickOutside={{ enabled: open, onoutside: () => void closeList() }}
-  class:compact
-  class:open
-  class="select-field"
->
-  <span id={`${id}-label`} class="field-label">
-    {label}
-    {#if required}<small>Required</small>{/if}
-  </span>
-  <button
-    bind:this={triggerElement}
-    {id}
-    class="select-trigger"
-    class:placeholder={!selectedOption}
-    type="button"
-    {disabled}
-    aria-haspopup="listbox"
-    aria-expanded={open}
-    aria-controls={`${id}-options`}
-    aria-labelledby={`${id}-label ${id}-value`}
-    onclick={() => (open ? void closeList() : void openList())}
-    onkeydown={handleTriggerKeydown}
-  >
-    <span id={`${id}-value`} class="selected-value">{selectedOption?.label ?? 'Choose an option'}</span>
-    <span class="chevron" aria-hidden="true"></span>
-  </button>
+<div class="v2-select-field" data-width={width} use:clickOutside={{enabled:open,onoutside:()=>open=false}}>
+  {#if label}<label class="v2-field-label" for={id}>{label}</label>{/if}
+  <div bind:this={control} class="v2-select-control">
+    <button bind:this={trigger} {id} class="v2-select-trigger" data-placeholder={isEmpty||undefined} type="button" {disabled} aria-haspopup="listbox" aria-expanded={open} aria-controls={`${id}-options`} onclick={()=>open?open=false:show()} onkeydown={handleTriggerKey}>
+      {#if width==='content'&&!multiple}
+        <span class="v2-select-trigger-copy" style="display:grid;overflow:visible"><span style="grid-area:1 / 1;display:inline-flex;align-items:center;gap:6px;min-width:0;overflow:hidden"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{isEmpty?placeholder:selected?.label??placeholder}</span>{#if !isEmpty&&selected?.direction==='asc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}{#if !isEmpty&&selected?.direction==='desc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}</span>{#if allowEmpty}<span aria-hidden="true" style="grid-area:1 / 1;visibility:hidden;display:inline-flex;align-items:center;gap:6px;width:max-content;white-space:nowrap"><span>{placeholder}</span></span>{/if}{#each normalized as option (`trigger-sizer-${option.value}`)}<span aria-hidden="true" style="grid-area:1 / 1;visibility:hidden;display:inline-flex;align-items:center;gap:6px;width:max-content;white-space:nowrap"><span>{option.label}</span>{#if option.direction==='asc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}{#if option.direction==='desc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}</span>{/each}</span>
+      {:else}
+        <span class="v2-select-trigger-copy"><span>{multiple?multiTriggerText:isEmpty?placeholder:selected?.label??placeholder}</span>{#if !multiple&&!isEmpty&&selected?.direction==='asc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}{#if !multiple&&!isEmpty&&selected?.direction==='desc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}</span>
+      {/if}
+      <span class="v2-select-chevron" aria-hidden="true"></span>
+    </button>
+    {#if (multiple&&values.length>0)||(!multiple&&allowEmpty&&!isEmpty)}<button class="v2-select-clear" type="button" disabled={disabled} aria-label={`Clear ${label||(multiple?'selections':'selection')}`} onclick={clear}>×</button>{/if}
+  </div>
+
+  <div bind:this={widthProbe} aria-hidden="true" style="position:fixed;left:-10000px;top:-10000px;visibility:hidden;pointer-events:none;width:max-content;max-width:none"><div data-select-width-popup class="v2-select-options" data-searchable={searchable||undefined} style="position:static;left:auto;top:auto;width:max-content;min-width:0;max-width:none;max-height:none;overflow:visible;visibility:hidden">{#if searchable}<div class="v2-select-search" style="width:240px"><input tabindex="-1" value="" placeholder={searchPlaceholder} aria-hidden="true"></div>{/if}<div class="v2-select-option-list" style="width:max-content;max-width:none">{#each normalized as option (`popup-probe-${option.value}`)}<button type="button" tabindex="-1" style="width:max-content;max-width:none;grid-template-columns:minmax(0,1fr)"><span class="v2-select-option-copy"><span class="v2-select-option-heading"><span class="v2-select-option-label">{option.label}</span>{#if option.direction==='asc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}{#if option.direction==='desc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}</span></span></button>{/each}{#if showAdd}<button type="button" tabindex="-1" class="v2-select-add"><Plus size={14}/><span>{addText}</span></button>{/if}</div></div></div>
 
   {#if open}
-    <SelectOptionList
-      id={`${id}-options`}
-      labelId={`${id}-label`}
-      {value}
-      {options}
-      {activeIndex}
-      {listStyle}
-      {required}
-      onchoose={choose}
-      onfocusoption={(index) => (activeIndex = index)}
-      onkeydown={handleOptionKeydown}
-      bind:element={listElement}
-    />
+    <div bind:this={optionsPopup} id={`${id}-options`} class="v2-select-options" data-searchable={searchable||undefined} data-placement={popupPlacement} data-alignment={popupAlignment} style={`top:${popupPlacement==='down'?`${popupTop}px`:'auto'};bottom:${popupBottom===null?'auto':`${popupBottom}px`};left:${popupLeft}px;width:${popupWidth}px;max-height:${popupMaxHeight}px`}>
+      {#if searchable}<div class="v2-select-search"><input bind:this={searchInput} value={searchQuery} placeholder={searchPlaceholder} aria-label={`Search ${label||'options'}`} oninput={(event)=>handleSearchInput(event.currentTarget.value)} onkeydown={handleSearchKey}></div>{/if}
+      <div bind:this={list} class="v2-select-option-list" role="listbox" aria-multiselectable={multiple||undefined} aria-label={label||undefined}>
+        {#each visibleOptions as option,index (option.value)}{@const optionSelected=multiple?selectedSet.has(option.value):!isEmpty&&option.value===selected?.value}<button type="button" role="option" aria-selected={optionSelected} disabled={option.disabled} data-index={index} data-active={index===activeIndex||undefined} data-selected={optionSelected||undefined} style="grid-template-columns:minmax(0,1fr)" onclick={()=>choose(option)} onfocus={()=>activeIndex=index} onkeydown={(event)=>handleOptionKey(event,index)}><span class="v2-select-option-copy"><span class="v2-select-option-heading"><span class="v2-select-option-label">{option.label}</span>{#if option.direction==='asc'}<ArrowDown class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}{#if option.direction==='desc'}<ArrowUp class="v2-select-direction-icon" size={14} aria-hidden="true"/>{/if}</span>{#if option.subtitle}<span class="v2-select-option-subtitle">{option.subtitle}</span>{/if}</span></button>{:else}<div class="v2-select-empty">{loading?'Loading options…':'No matching options'}</div>{/each}
+        {#if hasMore}<button type="button" class="v2-select-option-load-more" disabled={loading} onclick={()=>onloadmore?.()}>{loading?'Loading…':'Load more'}</button>{/if}
+        {#if showAdd}<button type="button" class="v2-select-add" onclick={add}><Plus size={14} aria-hidden="true"/><span>{addText}</span></button>{/if}
+      </div>
+    </div>
   {/if}
 </div>
 
 <style>
-  .select-field {
-    position: relative;
-    display: grid;
-    min-width: 0;
-    gap: 0.35rem;
-  }
-
-  .field-label {
-    color: var(--color-ink-muted);
-    font-size: 0.68rem;
-    font-weight: 760;
-    letter-spacing: 0.045em;
-    text-transform: uppercase;
-  }
-
-  .field-label small {
-    margin-left: 0.3rem;
-    color: var(--color-accent-strong);
-    font-size: 0.56rem;
-    letter-spacing: 0.02em;
-  }
-
-  .select-trigger {
-    display: grid;
-    width: 100%;
-    min-width: 0;
-    min-height: 2.55rem;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.65rem;
-    padding: 0.56rem 0.68rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--color-ink-strong);
-    background: var(--color-canvas);
-    cursor: pointer;
-    font: inherit;
-    text-align: left;
-  }
-
-  .select-trigger:hover:not(:disabled),
-  .open .select-trigger {
-    border-color: var(--color-accent-strong);
-    background: color-mix(in srgb, var(--color-accent-strong) 5%, var(--color-canvas));
-  }
-
-  .select-trigger:focus-visible {
-    outline: 0.16rem solid color-mix(in srgb, var(--color-accent-strong) 35%, transparent);
-    outline-offset: 0.08rem;
-  }
-
-  .select-trigger:disabled {
-    cursor: wait;
-    opacity: 0.58;
-  }
-
-  .selected-value {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .placeholder .selected-value {
-    color: var(--color-ink-muted);
-  }
-
-  .chevron {
-    width: 0.52rem;
-    height: 0.52rem;
-    border-right: 0.12rem solid currentColor;
-    border-bottom: 0.12rem solid currentColor;
-    transform: translateY(-0.13rem) rotate(45deg);
-    transition: transform 130ms ease;
-  }
-
-  .open .chevron {
-    transform: translateY(0.13rem) rotate(225deg);
-  }
-
-  .compact .select-trigger {
-    min-height: 2.3rem;
-    padding-block: 0.42rem;
-    font-size: 0.78rem;
-  }
-
+  .v2-select-add{width:100%;display:flex;align-items:center;gap:7px;border:0;border-top:1px solid var(--v2-line);border-radius:0;background:transparent;color:#9bb9e2;padding:7px 6px;cursor:pointer;text-align:left;font:inherit}
+  .v2-select-add:hover,.v2-select-add:focus-visible{background:#172231;color:var(--v2-text)}
+  .v2-select-add:focus-visible{outline:2px solid #4169a8;outline-offset:-2px}
 </style>

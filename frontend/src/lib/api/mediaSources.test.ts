@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MediaResource } from '../../v2/data/contracts';
+import type { MediaResource } from '../types/libraryContracts';
 import { mediaResourceSources, nextMediaSourceIndex } from './mediaSources';
 
 const resource: MediaResource = {

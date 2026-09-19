@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Folder, Layers3, Tags } from '@lucide/svelte';
   import { tick } from 'svelte';
-  import { floatingFieldLayout } from '../../../v2/state/floatingField';
+  import { floatingFieldLayout } from '../../../lib/utils/floatingField';
 
   let {
     kind,

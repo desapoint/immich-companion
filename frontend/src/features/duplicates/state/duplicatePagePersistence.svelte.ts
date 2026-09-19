@@ -7,7 +7,7 @@ import {
   removeAssetFromPendingStack,
   setPendingStackPrimary,
   type DuplicateStackWorkspace,
-} from '../../../v2/state/duplicateStackResolution';
+} from './duplicateStackResolution';
 
 export class DuplicatePagePersistence {
   readonly draftTimers = new Map<string, ReturnType<typeof setTimeout>>();

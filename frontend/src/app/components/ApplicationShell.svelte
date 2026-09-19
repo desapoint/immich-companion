@@ -4,12 +4,12 @@
   import type { SyncRun } from '../../features/status/types/syncContracts';
   import { formatTaskProgressPercent } from '../../features/status/utils/taskProgress';
   import { backgroundTaskPresentation, backgroundTaskStatus } from '../../features/status/state/backgroundTaskStatus.svelte';
-  import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../../v2/state/density';
+  import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../../lib/state/density';
   import { syncStatus } from '../../features/status/state/syncStatus.svelte';
   import V2Button from '../../lib/components/ui/Button.svelte';
   import V2Progress from '../../lib/components/ui/Progress.svelte';
   import V2Segmented from '../../lib/components/ui/Segmented.svelte';
-  import V2TaskBubble from '../../v2/components/V2TaskBubble.svelte';
+  import V2TaskBubble from '../../features/status/components/TaskBubble.svelte';
   import { pagePath } from '../navigation';
 
   type NavItem = { key:string; label:string; href:string; group?:string; position?:'top'|'bottom' };

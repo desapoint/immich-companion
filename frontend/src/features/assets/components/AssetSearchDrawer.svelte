@@ -11,7 +11,7 @@
   import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import { assetGroupCount,assetRuleCount,maxAssetSearchId,type AssetGroup,type AssetRule } from '../state/assetSearch';
-  import type { RelationOption } from '../../../v2/data/contracts';
+  import type { RelationOption } from '../../../lib/types/libraryContracts';
 
   let { rules=$bindable<AssetRule[]>([]),groups=$bindable<AssetGroup[]>([]),logic=$bindable<'AND'|'OR'>('AND'),negated=$bindable(false),albumOptions=[],tagOptions=[],albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,onclose,onsave,onapply }:{rules?:AssetRule[];groups?:AssetGroup[];logic?:'AND'|'OR';negated?:boolean;albumOptions?:RelationOption[];tagOptions?:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;onalbumsearch?:(value:string)=>void;ontagsearch?:(value:string)=>void;onalbumloadmore?:()=>void;ontagloadmore?:()=>void;onclose:()=>void;onsave?:()=>void;onapply:()=>void}=$props();
   let seq=$state(maxAssetSearchId(rules,groups));

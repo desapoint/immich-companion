@@ -9,7 +9,7 @@
   import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import type { AssetGroup,AssetRule } from '../state/assetSearch';
-  import type { RelationOption } from '../../../v2/data/contracts';
+  import type { RelationOption } from '../../../lib/types/libraryContracts';
 
   let { group,depth=1,albumOptions=[],tagOptions=[],albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,nextId,onchange,onremove,onapply }:{group:AssetGroup;depth?:number;albumOptions?:RelationOption[];tagOptions?:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;onalbumsearch?:(value:string)=>void;ontagsearch?:(value:string)=>void;onalbumloadmore?:()=>void;ontagloadmore?:()=>void;nextId:()=>number;onchange:(group:AssetGroup)=>void;onremove:()=>void;onapply:()=>void}=$props();
 

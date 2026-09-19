@@ -1,5 +1,5 @@
 import type { DuplicateKeeperRuleField, DuplicateKeeperRuleOperator } from '../types/contracts';
-import { keeperOperatorOptions, keeperRuleFieldOptions } from '../../../v2/state/duplicateKeeperRules';
+import { keeperOperatorOptions, keeperRuleFieldOptions } from './duplicateKeeperRules';
 import type {
   AutomationGroupFieldDefinition,
   DuplicateAutomationConditionField,

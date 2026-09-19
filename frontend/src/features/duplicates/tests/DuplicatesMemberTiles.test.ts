@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 const pageSource = readFileSync(new URL('../components/DuplicatesPage.svelte', import.meta.url), 'utf8');
 const admissionSource = readFileSync(
-  new URL('../../../v2/components/V2DuplicateAdmissionEvidence.svelte', import.meta.url),
+  new URL('../components/DuplicateAdmissionEvidence.svelte', import.meta.url),
   'utf8',
 );
 

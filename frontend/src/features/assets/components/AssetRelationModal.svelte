@@ -1,12 +1,12 @@
 <script lang="ts">
-  import SelectField, { type SelectAddRequest } from '../../../v2/components/SelectField.svelte';
+  import SelectField, { type SelectAddRequest } from '../../../lib/components/ui/SelectField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Modal from '../../../lib/components/ui/Modal.svelte';
   import V2RelationCreateModal, { type AlbumCreateDetails, type TagCreateDetails } from './RelationCreateModal.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
   import { errorMessage } from '../../../lib/api/mutationFeedback';
-  import type { RelationOption } from '../../../v2/data/contracts';
+  import type { RelationOption } from '../../../lib/types/libraryContracts';
 
   let {
     kind,selectedCount,albumValue='',tagValues=[],albumOptions,tagOptions,albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,busy=false,

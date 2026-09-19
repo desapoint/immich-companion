@@ -1,10 +1,10 @@
 <script lang="ts">
   import DateTimePickerField from '../../../lib/components/ui/DateTimePickerField.svelte';
-  import SelectField from '../../../v2/components/SelectField.svelte';
-  import V2AspectRatioField from '../../../v2/components/V2AspectRatioField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
+  import V2AspectRatioField from '../../../lib/components/ui/AspectRatioField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import { assetFieldSelectOptions,assetOperatorOptionsForField,splitAssetIds,type AssetRule } from '../state/assetSearch';
-  import type { RelationOption } from '../../../v2/data/contracts';
+  import type { RelationOption } from '../../../lib/types/libraryContracts';
 
   let { idPrefix,rule,albumOptions=[],tagOptions=[],albumLoading=false,tagLoading=false,albumHasMore=false,tagHasMore=false,onalbumsearch,ontagsearch,onalbumloadmore,ontagloadmore,onchange,onremove,onapply }:{idPrefix:string;rule:AssetRule;albumOptions?:RelationOption[];tagOptions?:RelationOption[];albumLoading?:boolean;tagLoading?:boolean;albumHasMore?:boolean;tagHasMore?:boolean;onalbumsearch?:(value:string)=>void;ontagsearch?:(value:string)=>void;onalbumloadmore?:()=>void;ontagloadmore?:()=>void;onchange:(rule:AssetRule)=>void;onremove:()=>void;onapply:()=>void}=$props();
 

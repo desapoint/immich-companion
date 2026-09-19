@@ -1,10 +1,10 @@
 <script lang="ts">
   import { Eye, Heart } from '@lucide/svelte';
   import V2AssetMetaPill from './AssetMetaPill.svelte';
-  import V2LazyAssetMedia from '../../../v2/components/V2LazyAssetMedia.svelte';
+  import V2LazyAssetMedia from './LazyAssetMedia.svelte';
   import V2RoundCheckbox from '../../../lib/components/ui/RoundCheckbox.svelte';
-  import V2StackPrimaryControl from '../../../v2/components/V2StackPrimaryControl.svelte';
-  import type { MediaResource } from '../../../v2/data/contracts';
+  import V2StackPrimaryControl from './StackPrimaryControl.svelte';
+  import type { MediaResource } from '../../../lib/types/libraryContracts';
   import type { ThumbnailSource } from '../../../lib/api/mediaThumbnailCache';
 
   let {

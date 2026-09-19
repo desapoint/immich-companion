@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { OptionSearchResult } from '../../../v2/data/contracts';
+import type { OptionSearchResult } from '../../../lib/types/libraryContracts';
 
 const repositories = vi.hoisted(() => ({
   searchAlbums: vi.fn(),

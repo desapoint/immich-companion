@@ -1,12 +1,12 @@
 <script lang="ts">
-  import SelectField from '../../../v2/components/SelectField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import V2Badge from '../../../lib/components/ui/Badge.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import { TOAST_POSITIONS, type ToastPosition } from '../../../app/state/toasts.svelte';
-  import type { V2Density } from '../../../v2/state/density';
+  import type { V2Density } from '../../../lib/state/density';
 
   let { density, toastPosition, ondensitychange, ontoastpositionchange, onopenplayground }: {
     density: V2Density;

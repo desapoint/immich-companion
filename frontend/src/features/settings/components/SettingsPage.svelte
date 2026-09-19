@@ -3,14 +3,14 @@
   import GeneralSettingsSection from './GeneralSettingsSection.svelte';
   import DuplicateSettingsSection from './DuplicateSettingsSection.svelte';
   import SyncSettingsSection from './SyncSettingsSection.svelte';
-  import V2ActiveTasksSettings from '../../../v2/components/V2ActiveTasksSettings.svelte';
+  import V2ActiveTasksSettings from './ActiveTasksSettings.svelte';
   import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
   import V2Notice from '../../../lib/components/ui/Notice.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Tabs from '../../../lib/components/ui/Tabs.svelte';
   import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
   import V2Zone from '../../../lib/components/layout/Zone.svelte';
-  import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../../../v2/state/density';
+  import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../../../lib/state/density';
   import { TOAST_POSITIONS, type ToastPosition } from '../../../app/state/toasts.svelte';
 
   type SettingsTab = 'General' | 'Duplicates' | 'Sync' | 'Tasks';

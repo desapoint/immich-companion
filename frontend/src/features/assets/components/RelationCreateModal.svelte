@@ -1,16 +1,16 @@
 <script lang="ts">
-  import SelectField from '../../../v2/components/SelectField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Card from '../../../lib/components/ui/Card.svelte';
   import ColorField from '../../../lib/components/ui/ColorField.svelte';
-  import V2ColorSwatch from '../../../v2/components/V2ColorSwatch.svelte';
-  import V2Field from '../../../v2/components/V2Field.svelte';
+  import V2ColorSwatch from '../../../lib/components/ui/ColorSwatch.svelte';
+  import V2Field from '../../../lib/components/ui/TextField.svelte';
   import V2Modal from '../../../lib/components/ui/Modal.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
   import { errorMessage } from '../../../lib/api/mutationFeedback';
-  import type { RelationOption } from '../../../v2/data/contracts';
+  import type { RelationOption } from '../../../lib/types/libraryContracts';
 
   export type AlbumCreateDetails = { name:string; description:string };
   export type TagCreateDetails = { name:string; color:string|null; parentPath:string };

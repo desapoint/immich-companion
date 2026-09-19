@@ -1,8 +1,8 @@
 import { errorMessage } from '../../../lib/api/mutationFeedback';
 import { libraryData } from '../../../app/data/currentDataSource.svelte';
-import type { RelationOption } from '../../../v2/data/contracts';
+import type { RelationOption } from '../../../lib/types/libraryContracts';
 import type { AlbumCreateDetails, TagCreateDetails } from '../components/RelationCreateModal.svelte';
-import { LatestRequestController } from '../../../v2/state/latestRequest';
+import { LatestRequestController } from '../../../lib/state/latestRequest';
 
 function mergeOptions(current:RelationOption[],incoming:RelationOption[],selected:string[],append:boolean){
   const selectedSet=new Set(selected);

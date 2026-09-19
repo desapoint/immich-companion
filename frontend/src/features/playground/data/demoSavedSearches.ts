@@ -5,7 +5,7 @@ import type {
   SavedSearchRepository,
   SavedSearchQuery,
 } from '../../../lib/types/libraryContracts';
-import type { ResolvedLibraryDataSource } from '../../../v2/data/contracts';
+import type { ResolvedLibraryDataSource } from '../../../app/data/libraryContracts';
 
 const STORAGE_KEY = 'immichCompanionV2DemoSavedSearches.v1';
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

@@ -1,20 +1,21 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
   import ApplicationShell from './components/ApplicationShell.svelte';
+  import DocsPage from './components/DocsPage.svelte';
   import ToastViewport from '../lib/components/app/ToastViewport.svelte';
   import V2ImplementationWarning from '../lib/components/ui/ImplementationWarning.svelte';
-  import V2StackConflictReviewHost from '../v2/components/V2StackConflictReviewHost.svelte';
-  import V2AlbumsPage from '../v2/pages/V2AlbumsPage.svelte';
-  import V2AssetsPage from '../v2/pages/V2AssetsPage.svelte';
+  import StackConflictReviewHost from '../features/duplicates/components/StackConflictReviewHost.svelte';
+  import AlbumsPage from '../features/albums/components/AlbumsPage.svelte';
+  import V2AssetsPage from '../features/assets/components/AssetsPage.svelte';
   import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
   import PlaygroundPage from '../features/playground/components/PlaygroundPage.svelte';
-  import V2RestorePage from '../v2/pages/V2RestorePage.svelte';
+  import V2RestorePage from '../features/assets/components/RestorePage.svelte';
   import SettingsPage from '../features/settings/components/SettingsPage.svelte';
   import StatusPage from '../features/status/components/StatusPage.svelte';
-  import V2TagsPage from '../v2/pages/V2TagsPage.svelte';
+  import TagsPage from '../features/tags/components/TagsPage.svelte';
   import { provideToasts, ToastController } from './state/toasts.svelte';
   import { AssetSelectionWorkspaceController } from '../features/assets/state/assetSelectionWorkspace.svelte';
-  import { TransientAssetSelectionController } from '../v2/state/transientAssetSelection.svelte';
+  import { TransientAssetSelectionController } from '../features/assets/state/transientAssetSelection.svelte';
   import { libraryData } from '../app/data/currentDataSource.svelte';
   import {
     storeAssetFilterHandoff,
@@ -103,13 +104,15 @@
   {:else if activeKey === 'duplicates'}
     <DuplicatesPage />
   {:else if activeKey === 'albums'}
-    <V2AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
+    <AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
   {:else if activeKey === 'tags'}
-    <V2TagsPage onfilterassets={(tagIds)=>openAssetsWithFilter({tagIds})}/>
+    <TagsPage onfilterassets={(tagIds)=>openAssetsWithFilter({tagIds})}/>
   {:else if activeKey === 'settings'}
     <SettingsPage toastPosition={toasts.position} ontoastpositionchange={(position)=>toasts.setPosition(position)} onopenplayground={()=>navigate('playground')}/>
   {:else if activeKey === 'playground'}
     <PlaygroundPage />
+  {:else if activeKey === 'docs'}
+    <DocsPage />
   {:else}
     <V2ImplementationWarning
       title={titles[activeKey]}
@@ -117,5 +120,5 @@
     />
   {/if}
 </ApplicationShell>
-<V2StackConflictReviewHost />
+<StackConflictReviewHost />
 <ToastViewport controller={toasts}/>

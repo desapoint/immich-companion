@@ -1,5 +1,5 @@
 <script lang="ts">
-  import SelectField from '../../../v2/components/SelectField.svelte';
+  import SelectField from '../../../lib/components/ui/SelectField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import SelectField, { type SelectOption } from '../../../v2/components/SelectField.svelte';
+  import SelectField, { type SelectOption } from '../../../lib/components/ui/SelectField.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
 
   let {

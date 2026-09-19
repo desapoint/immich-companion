@@ -1,6 +1,6 @@
 import { destructiveActionAvailability, type CapabilityAvailability } from '../../lib/api/capabilities';
 import { createApiLibraryDataSource } from '../../app/data/apiLibraryDataSource.svelte';
-import type { ResolvedLibraryDataSource } from '../../v2/data/contracts';
+import type { ResolvedLibraryDataSource } from './libraryContracts';
 import { withDuplicateWorkspaceWriteBarrier } from '../../features/duplicates/state/duplicateWorkspaceWriteBarrier';
 import type { LiveLibraryDataSource } from './liveContracts';
 

@@ -10,7 +10,8 @@ import type {
   ViewerNavigationWindow,
 } from '../../../lib/types/libraryContracts';
 import type { DuplicateGroupRecord } from '../../duplicates/types/contracts';
-import type { LegacyMediaRepository, LibraryDataSource, ResolvedLibraryDataSource, SavedSearchRepository } from '../../../v2/data/contracts';
+import type { LegacyMediaRepository, SavedSearchRepository } from '../../../lib/types/libraryContracts';
+import type { LibraryDataSource, ResolvedLibraryDataSource } from '../../../app/data/libraryContracts';
 
 type MediaResolvedLibraryDataSource = Omit<ResolvedLibraryDataSource, 'savedSearches'> & { readonly savedSearches?: SavedSearchRepository };
 const RAW_EXTENSIONS = ['dng', 'nef', 'cr3', 'arw', 'raf'] as const;

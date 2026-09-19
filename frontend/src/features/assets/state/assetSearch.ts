@@ -1,4 +1,4 @@
-import type { AssetSearchCriteria,AssetSearchGroup,AssetSearchRule } from '../../../v2/data/contracts';
+import type { AssetSearchCriteria,AssetSearchGroup,AssetSearchRule } from '../../../lib/types/libraryContracts';
 import type { SimpleAdvancedFilters } from '../components/SimpleAdvancedFilters.svelte';
 
 export type AssetSearchMode='Simple'|'Expert';
