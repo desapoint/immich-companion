@@ -19,6 +19,7 @@ from companion.composite_duplicate_sync import (
     CompositeDuplicateRebuildTaskHandler,
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
+    composite_projection_is_stale,
 )
 from companion.discovery import PersistedCompositeDuplicateProvider
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
@@ -466,3 +467,15 @@ async def test_follow_up_reclaims_delegate_memory_before_projection(monkeypatch)
     await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
 
     assert events == ["source", "cleanup", "projection"]
+
+
+
+def test_projection_staleness_uses_source_success_watermarks() -> None:
+    old = datetime(2026, 9, 13, tzinfo=UTC)
+    current = datetime(2026, 9, 14, tzinfo=UTC)
+    newer = datetime(2026, 9, 15, tzinfo=UTC)
+
+    assert composite_projection_is_stale(None, current, current) is True
+    assert composite_projection_is_stale(current, old, current) is False
+    assert composite_projection_is_stale(current, newer, old) is True
+    assert composite_projection_is_stale(current, old, newer) is True

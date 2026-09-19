@@ -80,6 +80,7 @@ from companion.composite_duplicate_sync import (
     CompositeDuplicateRebuildTaskHandler,
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
+    composite_projection_is_stale,
 )
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
@@ -674,9 +675,27 @@ def create_app(
                 if similarity_maintenance_service is not None
                 else None
             )
-            if composite_duplicate_sync_service is not None and maintenance_task is None:
-                # Pending maintenance already owns a composite follow-up. Avoid publishing
-                # an intermediate projection only to rebuild it again moments later.
+            projection_stale = False
+            if (
+                composite_duplicate_repository is not None
+                and immich_duplicate_repository is not None
+                and similarity_scan_repository is not None
+            ):
+                composite_metadata = await composite_duplicate_repository.metadata()
+                immich_metadata = await immich_duplicate_repository.metadata()
+                similarity_summary = await similarity_scan_repository.latest_completed_summary()
+                projection_stale = composite_projection_is_stale(
+                    composite_metadata.last_success_at,
+                    immich_metadata.last_success_at,
+                    similarity_summary.completed_at if similarity_summary is not None else None,
+                )
+            if (
+                composite_duplicate_sync_service is not None
+                and maintenance_task is None
+                and projection_stale
+            ):
+                # Pending maintenance owns its follow-up, and a current projection needs
+                # no restart work at all.
                 await composite_duplicate_sync_service.start()
         try:
             yield

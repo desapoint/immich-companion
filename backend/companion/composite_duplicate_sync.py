@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -22,6 +23,21 @@ COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE = "composite_duplicate_rebuild"
 COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY = "authoritative_projection"
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def composite_projection_is_stale(
+    composite_last_success_at: datetime | None,
+    immich_last_success_at: datetime | None,
+    similarity_last_success_at: datetime | None,
+) -> bool:
+    """Return whether a source snapshot is newer than the composite publication."""
+
+    if composite_last_success_at is None:
+        return True
+    return any(
+        source_time is not None and source_time > composite_last_success_at
+        for source_time in (immich_last_success_at, similarity_last_success_at)
+    )
 
 
 class CompositeDuplicateRebuildTaskHandler:
