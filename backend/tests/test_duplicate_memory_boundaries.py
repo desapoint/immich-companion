@@ -11,14 +11,22 @@ def test_v2_single_group_and_preset_paths_do_not_call_full_result_hydration() ->
     """Keep ordinary V2 mutations off the legacy whole-library result contract."""
 
     methods = (
+        CrossSourceDuplicateService.review_page,
         CrossSourceDuplicateService.save_review,
+        CrossSourceDuplicateService.workspace,
+        CrossSourceDuplicateService.save_workspace_selection,
+        CrossSourceDuplicateService.apply_rules,
+        CrossSourceDuplicateService.reset_workspace_decisions,
         CrossSourceDuplicateService.similarity_reference,
         CrossSourceDuplicateService.apply_workspace_preset,
+        CrossSourceDuplicateService.plan,
+        CrossSourceDuplicateService.execute_plan,
     )
     for method in methods:
         source = inspect.getsource(method)
         assert "self.result(" not in source
         assert "self._live_groups(" not in source
+        assert "await self._snapshot(" not in source
 
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
 
