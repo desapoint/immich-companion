@@ -19,5 +19,7 @@ services:
       - --reload
       - --reload-dir
       - /workspace/backend/companion
+      - --timeout-graceful-shutdown
+      - "5"
     volumes:
       - ../backend:/workspace/backend:ro
