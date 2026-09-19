@@ -99,7 +99,9 @@ function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
-function asPage(value = duplicateResult) {
+function asPage(
+  value: { group_count: number; groups: unknown[] } = duplicateResult,
+) {
   return {
     items: value.groups,
     total: value.group_count,
