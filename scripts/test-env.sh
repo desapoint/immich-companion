@@ -185,6 +185,10 @@ start_frontend() {
 
 start_backend_dev() {
   echo "Switching only the companion service to bind-mounted Uvicorn reload mode..."
+  # Build the backend-only development image separately from the production
+  # Dockerfile. This keeps native development dependencies current without
+  # changing or bypassing the production image's test-gated build.
+  compose_backend_dev build companion
   # Legacy docker-compose 1.29 cannot reliably recreate containers built by
   # current Docker engines. The companion is stateless, so remove only that
   # service before applying the development override; all volumes and other

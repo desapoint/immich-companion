@@ -2,6 +2,10 @@ version: "3.8"
 
 services:
   companion:
+    image: immich-companion:dev
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.dev
     working_dir: /workspace/backend
     command:
       - uvicorn
