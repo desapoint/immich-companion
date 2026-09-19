@@ -253,7 +253,15 @@ class FollowUpTaskHandler:
                 "detail": "Publishing duplicate results…",
             },
         )
-        await self._after_success()
+        try:
+            await self._after_success()
+        except PermanentTaskError:
+            raise
+        except Exception as error:
+            raise PermanentTaskError(
+                f"{self.task_type} source work completed, but its required follow-up failed: "
+                f"{error}"
+            ) from error
         await context.checkpoint(
             checkpoint={"phase": "published_results"},
             counters=result.counters,

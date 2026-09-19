@@ -30,6 +30,7 @@ from companion.similarity_grouping import (
     SimilarityAdmissionEvidence,
     ValidatedSimilarityGroup,
 )
+from companion.task_coordinator import PermanentTaskError
 from companion.task_schema import TaskResult
 
 NOW = datetime(2026, 9, 14, tzinfo=UTC)
@@ -438,8 +439,13 @@ async def test_follow_up_failure_fails_the_parent_task() -> None:
     async def follow_up():
         raise RuntimeError("projection failed")
 
-    with pytest.raises(RuntimeError, match="projection failed"):
+    with pytest.raises(
+        PermanentTaskError,
+        match="source work completed, but its required follow-up failed: projection failed",
+    ) as raised:
         await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+
+    assert isinstance(raised.value.__cause__, RuntimeError)
 
 
 
