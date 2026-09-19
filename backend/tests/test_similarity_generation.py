@@ -293,10 +293,15 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
     assert database.queued_task_parameters["payload"] == scan_payload
     assert database.queued_task_parameters["id"] == result.task_id
     assert result.removed_counts == {
-        "composite_groups": 0,
+        "composite_groups": 1,
         "scan_pairs": 1,
         "scans": 1,
     }
+    projection_sql = "\n".join(database.statements)
+    assert "companion_similarity" in projection_sql
+    assert "immich_duplicate" in projection_sql
+    assert "similarity_score = NULL" in projection_sql
+    assert "last_success_at = NULL" in projection_sql
     assert not any("DELETE FROM asset_similarity_edges" in sql for sql in database.statements)
     assert not any(
         "DELETE FROM asset_similarity_detail_features" in sql

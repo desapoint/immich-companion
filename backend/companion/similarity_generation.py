@@ -326,9 +326,6 @@ class SimilarityEvidenceEpochRepository:
                     {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
                 )
 
-        # A rebuild publishes its replacement projection atomically, so keep the last
-        # successful projection readable while replacement evidence is being produced.
-        # A deliberate destroy remains the only operation that clears the projection.
         if drop_reusable_evidence:
             composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
             removed["composite_groups"] = int(composite.rowcount or 0)
@@ -340,7 +337,56 @@ class SimilarityEvidenceEpochRepository:
                 )
             )
         else:
-            removed["composite_groups"] = 0
+            # Keep exact output available, but never expose invalidated similarity
+            # membership or scores as though they were current. Similarity-only groups
+            # disappear until the replacement scan publishes; coalesced exact groups
+            # retain only their exact provenance.
+            composite = await session.execute(
+                text(
+                    "DELETE FROM composite_duplicate_groups AS group_record "
+                    "WHERE EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS similarity_evidence "
+                    "WHERE similarity_evidence.group_id = group_record.group_id "
+                    "AND similarity_evidence.discovery_source = 'companion_similarity'"
+                    ") AND NOT EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS exact_evidence "
+                    "WHERE exact_evidence.group_id = group_record.group_id "
+                    "AND exact_evidence.discovery_source = 'immich_duplicate'"
+                    ")"
+                )
+            )
+            removed["composite_groups"] = int(composite.rowcount or 0)
+            await session.execute(
+                text(
+                    "UPDATE composite_duplicate_groups AS group_record SET "
+                    "similarity_score = NULL, similarity_validation = NULL "
+                    "WHERE EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS similarity_evidence "
+                    "WHERE similarity_evidence.group_id = group_record.group_id "
+                    "AND similarity_evidence.discovery_source = 'companion_similarity'"
+                    ") AND EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS exact_evidence "
+                    "WHERE exact_evidence.group_id = group_record.group_id "
+                    "AND exact_evidence.discovery_source = 'immich_duplicate'"
+                    ")"
+                )
+            )
+            await session.execute(
+                text(
+                    "DELETE FROM composite_duplicate_group_evidence "
+                    "WHERE discovery_source = 'companion_similarity'"
+                )
+            )
+            await session.execute(
+                text(
+                    "UPDATE composite_duplicate_sync_state SET "
+                    "group_count = (SELECT count(*) FROM composite_duplicate_groups), "
+                    "member_count = (SELECT count(*) FROM composite_duplicate_group_members), "
+                    "evidence_count = ("
+                    "SELECT count(*) FROM composite_duplicate_group_evidence"
+                    "), last_success_at = NULL WHERE id = 1"
+                )
+            )
 
         derived_tables = [
             ("scan_pairs", "similarity_scan_pairs"),
