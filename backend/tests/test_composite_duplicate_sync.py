@@ -495,3 +495,11 @@ def test_active_source_work_defers_startup_projection_refresh() -> None:
     assert source_change_in_progress(
         [SimpleNamespace(task_type="composite_duplicate_rebuild", status="running")]
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_task_coordinator_exposes_startup_active_task_listing() -> None:
+    from companion.task_coordinator import TaskCoordinator
+
+    assert callable(TaskCoordinator.list_tasks)
+    assert not hasattr(TaskCoordinator, "list")

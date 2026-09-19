@@ -691,7 +691,7 @@ def create_app(
                     similarity_summary.completed_at if similarity_summary is not None else None,
                 )
             active_source_change = source_change_in_progress(
-                await task_coordinator.list(active_only=True, limit=100)
+                await task_coordinator.list_tasks(active_only=True, limit=100)
             )
             if (
                 composite_duplicate_sync_service is not None
