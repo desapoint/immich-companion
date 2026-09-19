@@ -8,9 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from companion.database import DatabaseManager
-from companion.duplicate_schema import SimilarityScanRequest
 from companion.models import DuplicateDiscoverySettingsRecord
-from companion.similarity_generation import SimilarityEvidenceEpochRepository
 
 
 class DuplicateDiscoverySettings(BaseModel):
@@ -27,9 +25,8 @@ class DuplicateDiscoverySettingsUpdate(DuplicateDiscoverySettings):
 
 
 # These fields can change which assets become members of similarity-derived duplicate
-# groups. Any changed value must cross the evidence-generation boundary so persisted
-# similarity evidence and the derived composite projection cannot survive with stale
-# membership semantics.
+# groups. They are classified so the explicit discovery workflow can decide what work
+# to run; persisting settings itself intentionally has no orchestration side effects.
 MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS = frozenset(
     {
         "similarity_threshold",
@@ -44,31 +41,9 @@ MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS = frozenset(
 ORCHESTRATION_ONLY_DISCOVERY_FIELDS = frozenset({"include_exact", "include_similar"})
 
 
-def _membership_configuration(
-    value: DuplicateDiscoverySettings,
-) -> dict[str, object]:
-    return value.model_dump(include=MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS)
-
-
-def _replacement_scan_payload(
-    value: DuplicateDiscoverySettings,
-) -> dict[str, object]:
-    return SimilarityScanRequest(
-        similarity_threshold=value.similarity_threshold,
-        validation_mode=value.validation_mode,
-        max_link_depth=value.max_link_depth,
-        maximum_neighbors_per_asset=value.max_candidates,
-    ).model_dump(mode="json")
-
-
 class DuplicateDiscoverySettingsRepository:
-    def __init__(
-        self,
-        database: DatabaseManager,
-        evidence_epoch: SimilarityEvidenceEpochRepository | None = None,
-    ) -> None:
+    def __init__(self, database: DatabaseManager) -> None:
         self._database = database
-        self._evidence_epoch = evidence_epoch or SimilarityEvidenceEpochRepository(database)
 
     async def get(self) -> DuplicateDiscoverySettings:
         async with self._database.sessions() as session, session.begin():
@@ -105,29 +80,11 @@ class DuplicateDiscoverySettingsRepository:
                 .where(DuplicateDiscoverySettingsRecord.id == 1)
                 .with_for_update()
             )
-            previous = (
-                DuplicateDiscoverySettings()
-                if record is None
-                else DuplicateDiscoverySettings(
-                    include_exact=record.include_exact,
-                    include_similar=record.include_similar,
-                    similarity_threshold=record.similarity_threshold,
-                    validation_mode=record.validation_mode,
-                    max_link_depth=record.max_link_depth,
-                    max_candidates=record.max_candidates,
-                )
-            )
             if record is None:
                 record = DuplicateDiscoverySettingsRecord(id=1)
                 session.add(record)
             for key, item in value.model_dump().items():
                 setattr(record, key, item)
             await session.flush()
-
-            if _membership_configuration(previous) != _membership_configuration(value):
-                await self._evidence_epoch.rebuild_in_session(
-                    session,
-                    _replacement_scan_payload(value),
-                )
 
         return DuplicateDiscoverySettings(**value.model_dump())
