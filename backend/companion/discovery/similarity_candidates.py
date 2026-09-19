@@ -213,10 +213,10 @@ class BoundedSimilarityCandidateIndex:
             return
         version = (feature.model_version, feature.feature_version)
         tree = self._trees.setdefault(version, _HammingBkTree())
-        matches = sorted(
-            tree.find(hash_value, self._maximum_perceptual_distance, stats),
-            key=lambda item: (item[0], item[1].int),
-        )
+        matches = tree.find(hash_value, self._maximum_perceptual_distance, stats)
+        # ``find`` already owns this list, so sorting it in place avoids a second
+        # query-sized list allocation on every processed asset.
+        matches.sort(key=lambda item: (item[0], item[1].int))
         for distance, candidate_id in matches:
             if self._neighbor_counts.get(feature.asset_id, 0) >= self._maximum_forward_neighbors:
                 break
@@ -225,7 +225,10 @@ class BoundedSimilarityCandidateIndex:
             candidate = self._by_id[candidate_id]
             if _aspect_difference(feature, candidate) > self._maximum_aspect_difference:
                 continue
-            low, high = sorted((feature.asset_id, candidate_id), key=lambda value: value.int)
+            if feature.asset_id.int < candidate_id.int:
+                low, high = feature.asset_id, candidate_id
+            else:
+                low, high = candidate_id, feature.asset_id
             self._pairs.append(
                 SimilarityCandidatePair(
                     asset_id_low=low,
