@@ -10,8 +10,12 @@ from companion.duplicate_review_repository import DuplicateReviewRepository
 from companion.duplicate_schema import DuplicateAnalysisOptions, ExactDuplicateGroup
 from companion.duplicate_service import CrossSourceDuplicateService
 from companion.integrity_repository import IntegrityRepository
+from companion.task_coordinator import TaskContext, TaskCoordinator
+from companion.task_schema import TaskResult
 
 V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE = 250
+V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE = "v2_duplicate_policy_refresh"
+V2_DUPLICATE_POLICY_REFRESH_DEDUPLICATION_KEY = "current_projection"
 V2_DUPLICATE_ANALYSIS_OPTIONS = DuplicateAnalysisOptions(
     keeper_policy="prefer_upload",
     external_library_ids=[],
@@ -49,13 +53,6 @@ class V2DuplicateReviewStateService:
         self._reports = reports
         self._snapshots = snapshots
         self._reviews = reviews
-
-    async def refresh_after_change(self) -> object | None:
-        try:
-            return await self.refresh()
-        except Exception:
-            logger.exception("Could not refresh V2 duplicate policy-state projection")
-            return None
 
     async def refresh(self) -> dict[str, int]:
         initial = await self._discovery.discover_page(
@@ -115,3 +112,66 @@ class V2DuplicateReviewStateService:
             inherited,
         )
         return {"groups": updated, "inherited_resolutions": inherited}
+
+
+
+class V2DuplicateReviewStateRefreshTaskHandler:
+    """Durably refresh SQL-native duplicate policy state after source changes."""
+
+    task_type = V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE
+    lane_key = V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE
+    max_concurrency = 1
+
+    def __init__(self, service: V2DuplicateReviewStateService) -> None:
+        self._service = service
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        del payload
+        await context.checkpoint(
+            checkpoint={"phase": "refreshing_policy_state"},
+            counters={},
+            progress={
+                "phase": "duplicate_policy_refresh",
+                "completed": 0,
+                "total": None,
+                "percent": None,
+                "detail": "Refreshing duplicate review policy state",
+            },
+        )
+        summary = await self._service.refresh()
+        counters = {
+            "groups": summary["groups"],
+            "inherited_resolutions": summary["inherited_resolutions"],
+        }
+        await context.checkpoint(
+            checkpoint={"phase": "policy_state_refreshed"},
+            counters=counters,
+            progress={
+                "phase": "duplicate_policy_refresh",
+                "completed": summary["groups"],
+                "total": summary["groups"],
+                "percent": 100.0,
+                "detail": "Duplicate review policy state refreshed",
+            },
+        )
+        return TaskResult(summary=summary, counters=counters)
+
+
+class V2DuplicateReviewStateRefreshService:
+    """Submit and await one deduplicated durable policy-state refresh."""
+
+    def __init__(self, tasks: TaskCoordinator) -> None:
+        self._tasks = tasks
+
+    async def refresh_after_change(self) -> object | None:
+        task = await self._tasks.submit(
+            V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE,
+            {},
+            priority=17,
+            deduplication_key=V2_DUPLICATE_POLICY_REFRESH_DEDUPLICATION_KEY,
+        )
+        await self._tasks.start()
+        completed = await self._tasks.wait(task.id)
+        if completed.status != "completed":
+            raise RuntimeError("Duplicate policy-state refresh did not complete")
+        return completed
