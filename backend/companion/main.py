@@ -667,7 +667,10 @@ def create_app(
             if similarity_maintenance_service is not None:
                 await similarity_maintenance_service.start_if_pending()
             if composite_duplicate_sync_service is not None:
-                await composite_duplicate_sync_service.start_after_source_change()
+                # Startup only needs to durably enqueue projection refresh. Waiting for
+                # a potentially large rebuild here delays FastAPI readiness and makes an
+                # inherited task lease look like a server-start hang.
+                await composite_duplicate_sync_service.start()
         try:
             yield
         finally:
