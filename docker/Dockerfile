@@ -26,16 +26,7 @@ COPY backend/companion /build/backend/companion
 RUN pip install /build/backend
 
 
-FROM builder AS test
-
-COPY backend/tests /build/backend/tests
-COPY tools/generate_test_media.py /build/tools/generate_test_media.py
-RUN pip install "/build/backend[dev]"
-WORKDIR /build/backend
-RUN pytest && ruff check companion tests
-
-
-FROM python:3.12-slim AS runtime
+FROM python:3.12-slim AS runtime-base
 
 ARG APP_UID=10001
 ARG APP_GID=10001
@@ -55,9 +46,6 @@ RUN apt-get update \
     && mkdir -p /cache \
     && chown companion:companion /cache
 
-COPY --from=builder /opt/venv /opt/venv
-COPY --from=frontend-builder --chown=companion:companion /build/frontend/dist /opt/immich-companion/frontend
-
 USER companion
 EXPOSE 8080
 
@@ -65,3 +53,23 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/live', timeout=2)"]
 
 CMD ["uvicorn", "companion.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log"]
+
+
+FROM runtime-base AS development
+
+COPY --from=builder /opt/venv /opt/venv
+
+
+FROM builder AS test
+
+COPY backend/tests /build/backend/tests
+COPY tools/generate_test_media.py /build/tools/generate_test_media.py
+RUN pip install "/build/backend[dev]"
+WORKDIR /build/backend
+RUN pytest && ruff check companion tests
+
+
+FROM runtime-base AS runtime
+
+COPY --from=builder /opt/venv /opt/venv
+COPY --from=frontend-builder --chown=companion:companion /build/frontend/dist /opt/immich-companion/frontend

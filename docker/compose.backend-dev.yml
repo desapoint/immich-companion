@@ -5,7 +5,8 @@ services:
     image: immich-companion:dev
     build:
       context: ..
-      dockerfile: docker/Dockerfile.dev
+      dockerfile: docker/Dockerfile
+      target: development
     working_dir: /workspace/backend
     command:
       - uvicorn
