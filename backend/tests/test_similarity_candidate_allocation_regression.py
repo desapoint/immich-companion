@@ -43,3 +43,15 @@ def test_incremental_processing_keeps_existing_batch_semantics() -> None:
     assert index.processed == 4
     assert first == index.pairs[: len(first)]
     assert second == index.pairs[len(first) :]
+
+
+def test_candidate_pairs_remain_canonical_after_allocation_optimization() -> None:
+    index = BoundedSimilarityCandidateIndex(
+        (feature(number, perceptual_hash=0) for number in (3, 1, 2)),
+        maximum_neighbors_per_asset=3,
+    )
+
+    pairs = index.process_next(3)
+
+    assert pairs
+    assert all(pair.asset_id_low.int < pair.asset_id_high.int for pair in pairs)
