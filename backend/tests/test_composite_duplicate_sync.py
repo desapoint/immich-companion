@@ -14,11 +14,13 @@ from companion.composite_duplicate_repository import (
     _group_projection_summary,
 )
 from companion.composite_duplicate_sync import (
-    COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY,
     COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE,
     CompositeDuplicateRebuildTaskHandler,
+    CompositeDuplicateStartupReconcileTaskHandler,
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
+    composite_projection_is_stale,
+    source_change_in_progress,
 )
 from companion.discovery import PersistedCompositeDuplicateProvider
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
@@ -28,6 +30,7 @@ from companion.similarity_grouping import (
     SimilarityAdmissionEvidence,
     ValidatedSimilarityGroup,
 )
+from companion.task_coordinator import PermanentTaskError
 from companion.task_schema import TaskResult
 
 NOW = datetime(2026, 9, 14, tzinfo=UTC)
@@ -85,6 +88,9 @@ class Context:
 
     async def checkpoint(self, **kwargs) -> None:
         self.checkpoints.append(kwargs)
+
+    async def ensure_active(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -323,7 +329,56 @@ async def test_rebuild_handler_materializes_source_discovery_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_service_uses_one_deduplicated_durable_rebuild() -> None:
+async def test_rebuild_handler_streams_bounded_batches_when_supported() -> None:
+    first = DiscoveredGroup(
+        group_id="immich:stream-1",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="stream-1",
+        assets=(asset(ASSET_1), asset(ASSET_2)),
+    )
+    second = DiscoveredGroup(
+        group_id="immich:stream-2",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="stream-2",
+        assets=(asset(ASSET_1), asset(ASSET_2)),
+    )
+
+    class Discovery:
+        discover_called = False
+
+        async def discover(self):
+            self.discover_called = True
+            raise AssertionError("bounded rebuild must not materialize source discovery")
+
+        async def discover_batches(self):
+            yield [first]
+            yield [second]
+
+    class Repository:
+        received: list[list[str]] = []
+
+        async def replace_snapshot_batches(self, batches):
+            async for batch in batches:
+                self.received.append([group.group_id for group in batch])
+            return CompositeDuplicateSnapshotMetadata(5, 2, 4, 2, NOW)
+
+    discovery = Discovery()
+    repository = Repository()
+    context = Context()
+    result = await CompositeDuplicateRebuildTaskHandler(discovery, repository).execute(context, {})
+
+    assert discovery.discover_called is False
+    assert repository.received == [[first.group_id], [second.group_id]]
+    assert result.counters == {"groups": 2, "members": 4, "evidence": 2}
+    assert any(
+        checkpoint["progress"]["detail"].endswith("2 streamed")
+        for checkpoint in context.checkpoints
+        if checkpoint["progress"]["phase"] == "composite_duplicates_publish"
+    )
+
+
+@pytest.mark.asyncio
+async def test_sync_service_submits_one_isolated_durable_rebuild() -> None:
     class Tasks:
         submitted = None
         started = 0
@@ -340,7 +395,7 @@ async def test_sync_service_uses_one_deduplicated_durable_rebuild() -> None:
 
     assert task_id == TASK_ID
     assert tasks.submitted[0] == (COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE, {})
-    assert tasks.submitted[1]["deduplication_key"] == COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY
+    assert "deduplication_key" not in tasks.submitted[1]
     assert tasks.started == 1
 
 
@@ -361,7 +416,221 @@ async def test_follow_up_handler_runs_only_after_delegate_success() -> None:
         events.append("composite")
         return None
 
-    result = await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+    context = Context()
+    result = await FollowUpTaskHandler(Delegate(), follow_up).execute(context, {})
 
     assert isinstance(result, TaskResult)
     assert events == ["source", "composite"]
+    assert [item["progress"]["phase"] for item in context.checkpoints] == [
+        "duplicate_projection_publish",
+        "duplicate_projection_publish",
+    ]
+    assert context.checkpoints[0]["progress"]["detail"] == "Publishing duplicate results…"
+    assert context.checkpoints[-1]["progress"]["detail"] == "Duplicate results published."
+
+
+@pytest.mark.asyncio
+async def test_follow_up_failure_fails_the_parent_task() -> None:
+    class Delegate:
+        task_type = "source"
+        lane_key = "source"
+        max_concurrency = 1
+
+        async def execute(self, _context, _payload):
+            return TaskResult(summary={}, counters={})
+
+    async def follow_up():
+        raise RuntimeError("projection failed")
+
+    with pytest.raises(
+        PermanentTaskError,
+        match="source work completed, but its required follow-up failed: projection failed",
+    ) as raised:
+        await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+
+    assert isinstance(raised.value.__cause__, RuntimeError)
+
+
+@pytest.mark.asyncio
+async def test_follow_up_reclaims_delegate_memory_before_projection(monkeypatch) -> None:
+    events: list[str] = []
+
+    class Delegate:
+        task_type = "source"
+        lane_key = "source"
+        max_concurrency = 1
+
+        async def execute(self, _context, _payload):
+            events.append("source")
+            return TaskResult(summary={}, counters={})
+
+    async def follow_up():
+        events.append("projection")
+        return None
+
+    monkeypatch.setattr(
+        "companion.composite_duplicate_sync.reclaim_process_memory",
+        lambda: events.append("cleanup"),
+    )
+
+    await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+
+    assert events == ["source", "cleanup", "projection"]
+
+
+def test_projection_staleness_uses_source_success_watermarks() -> None:
+    old = datetime(2026, 9, 13, tzinfo=UTC)
+    current = datetime(2026, 9, 14, tzinfo=UTC)
+    newer = datetime(2026, 9, 15, tzinfo=UTC)
+
+    assert composite_projection_is_stale(None, current, current) is True
+    assert composite_projection_is_stale(current, old, current) is False
+    assert composite_projection_is_stale(current, newer, old) is True
+    assert composite_projection_is_stale(current, old, newer) is True
+
+
+def test_active_source_work_defers_startup_projection_refresh() -> None:
+    tasks = [
+        SimpleNamespace(task_type="similarity_scan", status="recovering"),
+        SimpleNamespace(task_type="other", status="running"),
+    ]
+    assert source_change_in_progress(tasks) is True
+    assert source_change_in_progress(
+        [SimpleNamespace(task_type="similarity_scan", status="paused")]
+    ) is False
+    assert source_change_in_progress(
+        [SimpleNamespace(task_type="composite_duplicate_rebuild", status="running")]
+    ) is False
+
+
+@pytest.mark.asyncio
+async def test_task_coordinator_exposes_startup_active_task_listing() -> None:
+    from companion.task_coordinator import TaskCoordinator
+
+    assert callable(TaskCoordinator.list_tasks)
+    assert not hasattr(TaskCoordinator, "list")
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_waits_for_source_work_then_rechecks_staleness(
+    monkeypatch,
+) -> None:
+    active = SimpleNamespace(task_type="similarity_scan", status="running")
+
+    class Tasks:
+        calls = 0
+
+        async def list_tasks(self, **_kwargs):
+            self.calls += 1
+            return [active] if self.calls == 1 else []
+
+    stale_checks = 0
+    refreshes = 0
+
+    async def is_stale():
+        nonlocal stale_checks
+        stale_checks += 1
+        return True
+
+    async def refresh():
+        nonlocal refreshes
+        refreshes += 1
+        return None
+
+    sleeps: list[float] = []
+
+    async def no_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("companion.composite_duplicate_sync.asyncio.sleep", no_sleep)
+    handler = CompositeDuplicateStartupReconcileTaskHandler(Tasks(), is_stale, refresh)
+    context = Context()
+
+    result = await handler.execute(context, {})
+
+    assert stale_checks == 1
+    assert refreshes == 1
+    assert result.summary["projection_refreshed"] is True
+    assert context.checkpoints[0]["checkpoint"] == {"phase": "waiting_for_sources"}
+    assert sleeps == [2.0]
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_skips_projection_when_sources_made_it_current() -> None:
+    class Tasks:
+        async def list_tasks(self, **_kwargs):
+            return []
+
+    async def is_stale():
+        return False
+
+    async def refresh():
+        raise AssertionError("current projection must not be rebuilt")
+
+    result = await CompositeDuplicateStartupReconcileTaskHandler(
+        Tasks(),
+        is_stale,
+        refresh,
+    ).execute(Context(), {})
+
+    assert result.summary == {
+        "projection_refreshed": False,
+        "reason": "already_current",
+    }
+
+
+@pytest.mark.asyncio
+async def test_sync_service_does_not_coalesce_distinct_source_commits() -> None:
+    submitted: list[dict[str, object]] = []
+
+    class Tasks:
+        next_id = 0
+
+        async def submit(self, _task_type, _payload, **kwargs):
+            self.next_id += 1
+            submitted.append(kwargs)
+            return SimpleNamespace(id=UUID(int=self.next_id))
+
+        async def start(self):
+            return None
+
+    service = CompositeDuplicateSyncService(Tasks())
+    first = await service.start()
+    second = await service.start()
+
+    assert first != second
+    assert len(submitted) == 2
+    assert all("deduplication_key" not in item for item in submitted)
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_reports_waiting_only_once(monkeypatch) -> None:
+    active = SimpleNamespace(task_type="similarity_scan", status="running")
+
+    class Tasks:
+        calls = 0
+
+        async def list_tasks(self, **_kwargs):
+            self.calls += 1
+            return [active] if self.calls <= 3 else []
+
+    async def is_stale():
+        return False
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("companion.composite_duplicate_sync.asyncio.sleep", no_sleep)
+    context = Context()
+    await CompositeDuplicateStartupReconcileTaskHandler(
+        Tasks(),
+        is_stale,
+        lambda: None,  # type: ignore[arg-type]
+    ).execute(context, {})
+
+    waiting = [
+        item
+        for item in context.checkpoints
+        if item["checkpoint"] == {"phase": "waiting_for_sources"}
+    ]
+    assert len(waiting) == 1

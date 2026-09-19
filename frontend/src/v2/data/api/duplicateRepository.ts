@@ -419,13 +419,14 @@ function numericProgress(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: number, rangeEnd: number): DuplicateDiscoveryProgress {
+export function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: number, rangeEnd: number): DuplicateDiscoveryProgress {
   const rawPhase = typeof task.progress.phase === 'string' ? task.progress.phase : '';
   const phases: Record<string, string> = {
     duplicate_fingerprints: 'Verifying file evidence',
     similarity_candidates: 'Indexing similarity candidates',
     similarity_scoring: 'Comparing candidate pairs',
     similarity_finalizing: 'Finalizing duplicate groups',
+    duplicate_projection_publish: 'Publishing duplicate results',
     complete: 'Completing analysis',
   };
   const rawPercent = numericProgress(task.progress.percent);
@@ -433,13 +434,20 @@ function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: nu
     ? null
     : Math.min(rangeEnd, rangeStart + (rangeEnd - rangeStart) * rawPercent / 100);
   const matches = numericProgress(task.counters.matches_retained);
+  const queuedDetail = similarity
+    ? 'Queued behind active asset-integrity work; the similarity phase will start automatically.'
+    : 'Queued behind active asset-integrity work; '
+      + 'exact duplicate analysis will start automatically.';
   const detail = typeof task.progress.detail === 'string'
     ? task.progress.detail
     : task.status === 'queued'
-      ? 'Waiting for the background worker…'
+      ? queuedDetail
       : 'Preparing duplicate analysis…';
+  const fallbackPhase = task.status === 'queued'
+    ? (similarity ? 'Waiting for similarity scan' : 'Waiting for exact analysis')
+    : (similarity ? 'Preparing similarity scan' : 'Preparing exact matches');
   return {
-    label: `Duplicate discovery · ${phases[rawPhase] ?? (similarity ? 'Preparing similarity scan' : 'Preparing exact matches')}`,
+    label: `Duplicate discovery · ${phases[rawPhase] ?? fallbackPhase}`,
     detail: matches === null ? detail : `${detail} · ${matches.toLocaleString()} matches retained`,
     completed: numericProgress(task.progress.completed) ?? 0,
     total: numericProgress(task.progress.total),

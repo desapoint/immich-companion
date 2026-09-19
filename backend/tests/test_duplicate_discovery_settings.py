@@ -81,14 +81,6 @@ class _Database:
         yield self.session
 
 
-class _EvidenceEpoch:
-    def __init__(self) -> None:
-        self.calls: list[tuple[object, dict[str, object]]] = []
-
-    async def rebuild_in_session(self, session, payload):
-        self.calls.append((session, payload))
-        return 0, {}, SimpleNamespace(int=1)
-
 
 def _record(**overrides):
     values = DuplicateDiscoverySettings().model_dump()
@@ -106,57 +98,37 @@ def _record(**overrides):
         ("max_candidates", 12),
     ],
 )
-async def test_membership_affecting_setting_change_atomically_schedules_rebuild(
+async def test_membership_affecting_setting_change_only_persists_configuration(
     field: str,
     value: object,
 ) -> None:
     database = _Database(_record())
-    evidence_epoch = _EvidenceEpoch()
-    repository = DuplicateDiscoverySettingsRepository(  # type: ignore[arg-type]
-        database,
-        evidence_epoch=evidence_epoch,  # type: ignore[arg-type]
-    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
     payload = DuplicateDiscoverySettings().model_dump()
     payload[field] = value
 
     saved = await repository.update(DuplicateDiscoverySettingsUpdate(**payload))
 
     assert getattr(saved, field) == value
+    assert getattr(database.session.record, field) == value
     assert database.session.flushed is True
-    assert len(evidence_epoch.calls) == 1
-    session, scan_payload = evidence_epoch.calls[0]
-    assert session is database.session
-    assert scan_payload["similarity_threshold"] == saved.similarity_threshold
-    assert scan_payload["validation_mode"] == saved.validation_mode
-    assert scan_payload["max_link_depth"] == saved.max_link_depth
-    assert scan_payload["maximum_neighbors_per_asset"] == saved.max_candidates
-    assert scan_payload["anchor_asset_id"] is None
-    assert scan_payload["scope"] == "all_eligible_assets"
 
 
 @pytest.mark.asyncio
 async def test_unchanged_membership_settings_do_not_schedule_rebuild() -> None:
     database = _Database(_record())
-    evidence_epoch = _EvidenceEpoch()
-    repository = DuplicateDiscoverySettingsRepository(  # type: ignore[arg-type]
-        database,
-        evidence_epoch=evidence_epoch,  # type: ignore[arg-type]
-    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
 
     await repository.update(DuplicateDiscoverySettingsUpdate())
 
-    assert evidence_epoch.calls == []
+    assert database.session.flushed is True
 
 
 @pytest.mark.asyncio
 async def test_orchestration_only_setting_change_does_not_invalidate_similarity_generation(
 ) -> None:
     database = _Database(_record())
-    evidence_epoch = _EvidenceEpoch()
-    repository = DuplicateDiscoverySettingsRepository(  # type: ignore[arg-type]
-        database,
-        evidence_epoch=evidence_epoch,  # type: ignore[arg-type]
-    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
 
     await repository.update(
         DuplicateDiscoverySettingsUpdate(
@@ -165,20 +137,16 @@ async def test_orchestration_only_setting_change_does_not_invalidate_similarity_
         )
     )
 
-    assert evidence_epoch.calls == []
+    assert database.session.flushed is True
 
 
 @pytest.mark.asyncio
-async def test_first_persisted_nondefault_membership_configuration_schedules_rebuild() -> None:
+async def test_first_persisted_nondefault_membership_configuration_only_persists() -> None:
     database = _Database(None)
-    evidence_epoch = _EvidenceEpoch()
-    repository = DuplicateDiscoverySettingsRepository(  # type: ignore[arg-type]
-        database,
-        evidence_epoch=evidence_epoch,  # type: ignore[arg-type]
-    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
 
-    await repository.update(DuplicateDiscoverySettingsUpdate(max_link_depth=5))
+    saved = await repository.update(DuplicateDiscoverySettingsUpdate(max_link_depth=5))
 
     assert database.session.added is not None
-    assert len(evidence_epoch.calls) == 1
-    assert evidence_epoch.calls[0][1]["max_link_depth"] == 5
+    assert saved.max_link_depth == 5
+    assert database.session.record.max_link_depth == 5

@@ -78,8 +78,11 @@ from companion.collection_delete_service import (
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
 from companion.composite_duplicate_sync import (
     CompositeDuplicateRebuildTaskHandler,
+    CompositeDuplicateStartupReconcileService,
+    CompositeDuplicateStartupReconcileTaskHandler,
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
+    composite_projection_is_stale,
 )
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
@@ -216,7 +219,11 @@ from companion.sync_schema import (
 from companion.sync_settings import SyncRuntimeSettingsRepository, SyncRuntimeSettingsUpdate
 from companion.task_coordinator import TaskCoordinator
 from companion.task_schema import TaskEvent, TaskScheduleUpdate, TaskScheduleView, TaskStatusView
-from companion.v2_duplicate_review_state import V2DuplicateReviewStateService
+from companion.v2_duplicate_review_state import (
+    V2DuplicateReviewStateRefreshService,
+    V2DuplicateReviewStateRefreshTaskHandler,
+    V2DuplicateReviewStateService,
+)
 
 
 def tag_subtree_ids(catalog: list[ImmichTag]) -> dict[UUID, list[UUID]]:
@@ -366,9 +373,22 @@ def create_app(
         and duplicate_review_repository is not None
         else None
     )
+    v2_duplicate_review_state_refresh_service = None
+    if task_coordinator is not None and v2_duplicate_review_state_service is not None:
+        task_coordinator.register_handler(
+            V2DuplicateReviewStateRefreshTaskHandler(v2_duplicate_review_state_service)
+        )
+        v2_duplicate_review_state_refresh_service = V2DuplicateReviewStateRefreshService(
+            task_coordinator
+        )
+    exact_duplicate_discovery = (
+        ImmichDuplicateProvider(immich_duplicate_repository, asset_repository)
+        if immich_duplicate_repository is not None and asset_repository is not None
+        else None
+    )
     source_duplicate_discovery = (
         CompositeGroupDiscoveryProvider(
-            ImmichDuplicateProvider(immich_duplicate_repository, asset_repository),
+            exact_duplicate_discovery,
             SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
         )
         if similarity_scan_repository is not None
@@ -383,6 +403,41 @@ def create_app(
         and composite_duplicate_repository is not None
         else None
     )
+
+    async def composite_projection_needs_refresh() -> bool:
+        if (
+            composite_duplicate_repository is None
+            or immich_duplicate_repository is None
+            or similarity_scan_repository is None
+        ):
+            return False
+        composite_metadata = await composite_duplicate_repository.metadata()
+        immich_metadata = await immich_duplicate_repository.metadata()
+        similarity_summary = await similarity_scan_repository.latest_completed_summary()
+        return composite_projection_is_stale(
+            composite_metadata.last_success_at,
+            immich_metadata.last_success_at,
+            similarity_summary.completed_at if similarity_summary is not None else None,
+        )
+
+    composite_duplicate_startup_reconcile_service = None
+    if (
+        task_coordinator is not None
+        and composite_duplicate_sync_service is not None
+        and composite_duplicate_repository is not None
+        and immich_duplicate_repository is not None
+        and similarity_scan_repository is not None
+    ):
+        task_coordinator.register_handler(
+            CompositeDuplicateStartupReconcileTaskHandler(
+                task_coordinator,
+                composite_projection_needs_refresh,
+                composite_duplicate_sync_service.refresh_and_wait,
+            )
+        )
+        composite_duplicate_startup_reconcile_service = (
+            CompositeDuplicateStartupReconcileService(task_coordinator)
+        )
     if (
         task_coordinator is not None
         and source_duplicate_discovery is not None
@@ -395,9 +450,9 @@ def create_app(
         task_coordinator.register_handler(
             FollowUpTaskHandler(
                 composite_duplicate_handler,
-                v2_duplicate_review_state_service.refresh_after_change,
+                v2_duplicate_review_state_refresh_service.refresh_after_change,
             )
-            if v2_duplicate_review_state_service is not None
+            if v2_duplicate_review_state_refresh_service is not None
             else composite_duplicate_handler
         )
     immich_duplicate_sync_service = (
@@ -557,16 +612,16 @@ def create_app(
             integrity_repository,
             integrity_handler,
             include_preservation=True,
-            discovery=duplicate_discovery,
+            discovery=exact_duplicate_discovery,
             similarity_indexer=similarity_index_maintainer,
             shared_original_cache_path=similarity_cache.decode_path,
         )
         task_coordinator.register_handler(
             FollowUpTaskHandler(
                 duplicate_analysis_handler,
-                v2_duplicate_review_state_service.refresh_after_change,
+                v2_duplicate_review_state_refresh_service.refresh_after_change,
             )
-            if v2_duplicate_review_state_service is not None
+            if v2_duplicate_review_state_refresh_service is not None
             else duplicate_analysis_handler
         )
         task_coordinator.register_handler(
@@ -666,8 +721,8 @@ def create_app(
             await task_coordinator.start()
             if similarity_maintenance_service is not None:
                 await similarity_maintenance_service.start_if_pending()
-            if composite_duplicate_sync_service is not None:
-                await composite_duplicate_sync_service.start_after_source_change()
+            if composite_duplicate_startup_reconcile_service is not None:
+                await composite_duplicate_startup_reconcile_service.start()
         try:
             yield
         finally:
@@ -2075,8 +2130,8 @@ def create_app(
         from companion.duplicate_resolution_history import clear_all_completed_resolutions
 
         cleared = await clear_all_completed_resolutions(database)
-        if v2_duplicate_review_state_service is not None:
-            await v2_duplicate_review_state_service.refresh_after_change()
+        if v2_duplicate_review_state_refresh_service is not None:
+            await v2_duplicate_review_state_refresh_service.refresh_after_change()
         return {"cleared": cleared}
 
     @app.delete(
@@ -2096,8 +2151,8 @@ def create_app(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="The completed duplicate resolution was not found.",
             )
-        if v2_duplicate_review_state_service is not None:
-            await v2_duplicate_review_state_service.refresh_after_change()
+        if v2_duplicate_review_state_refresh_service is not None:
+            await v2_duplicate_review_state_refresh_service.refresh_after_change()
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(

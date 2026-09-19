@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TaskRepository } from '../syncContracts';
-import { createDuplicateRepository } from './duplicateRepository';
+import type { TaskRecord, TaskRepository } from '../syncContracts';
+import { createDuplicateRepository, discoveryProgress } from './duplicateRepository';
 
 const ASSET_IDS = [
   '11111111-1111-4111-8111-111111111111',
@@ -746,7 +746,12 @@ describe('live V2 duplicate repository', () => {
     expect(result).toEqual({groupCount:1,candidateCount:2});
     expect(progress).toEqual([25,98,99]);
     expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1]});
-    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);
+    const discoveryCalls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    expect(discoveryCalls.filter((path) => path.endsWith('/cross-source/analyze'))).toHaveLength(1);
+    expect(discoveryCalls.filter((path) => path.endsWith('/similarity-scan'))).toHaveLength(1);
+    expect(discoveryCalls.findIndex((path) => path.endsWith('/cross-source/analyze')))
+      .toBeLessThan(discoveryCalls.findIndex((path) => path.endsWith('/similarity-scan')));
+    expect(discoveryCalls.some((path) => path.endsWith('/cross-source/search'))).toBe(false);
   });
 
   it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{
@@ -764,4 +769,26 @@ describe('live V2 duplicate repository', () => {
     expect(calls.at(-1)).toEqual({path:'/api/assets/duplicates/cache/clear',body:{cache:'pairs'}});
   });
 
+});
+
+
+
+it('shows projection publication as an explicit discovery loading phase', async () => {
+  const task = {
+    id: 'projection-task',
+    type: 'similarity_scan',
+    status: 'running',
+    progress: {
+      phase: 'duplicate_projection_publish',
+      completed: 0,
+      total: null,
+      percent: null,
+      detail: 'Publishing duplicate results…',
+    },
+    counters: {},
+  } as unknown as TaskRecord;
+  const progress = discoveryProgress(task, true, 50, 98);
+  expect(progress.label).toBe('Duplicate discovery · Publishing duplicate results');
+  expect(progress.detail).toBe('Publishing duplicate results…');
+  expect(progress.percent).toBeNull();
 });

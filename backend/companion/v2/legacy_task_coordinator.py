@@ -110,6 +110,16 @@ def _public_event(record: TaskEventRecord) -> TaskEvent:
     )
 
 
+def _shutdown_release_state(status: str) -> tuple[str, str, str, bool]:
+    """Map an owned active task to its durable shutdown state."""
+
+    if status == "cancel_requested":
+        return "cancelled", "cancelled", "cancelled", False
+    if status == "pause_requested":
+        return "paused", "paused", "paused", False
+    return "recovering", "failed", "recovering", True
+
+
 class TaskRepository:
     """Atomic persistence boundary for tasks and their execution history."""
 
@@ -185,6 +195,61 @@ class TaskRepository:
     async def claim(self, worker_id: UUID, *, lease_duration: timedelta) -> TaskStatusView | None:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
+            orphaned_requests = list(
+                (
+                    await session.scalars(
+                        select(TaskRecord)
+                        .where(
+                            TaskRecord.status.in_(("pause_requested", "cancel_requested")),
+                            (TaskRecord.lease_expires_at.is_(None))
+                            | (TaskRecord.lease_expires_at <= now),
+                        )
+                        .with_for_update(skip_locked=True)
+                        .limit(32)
+                    )
+                ).all()
+            )
+            for record in orphaned_requests:
+                previous_status = record.status
+                target_status, attempt_status, event_kind, _resumable = (
+                    _shutdown_release_state(previous_status)
+                )
+                record.status = target_status
+                record.lease_owner = None
+                record.lease_expires_at = None
+                record.next_attempt_at = None
+                record.completed_at = now if target_status == "cancelled" else None
+                if target_status == "cancelled":
+                    record.error = None
+                attempt = await session.scalar(
+                    select(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.task_id == record.id,
+                        TaskAttemptRecord.attempt == record.attempt,
+                        TaskAttemptRecord.status == "running",
+                    )
+                    .with_for_update()
+                )
+                if attempt is not None:
+                    attempt.status = attempt_status
+                    attempt.completed_at = now
+                    attempt.details = {
+                        "type": "worker_lease_expired",
+                        "message": f"Recovered orphaned {previous_status} control request",
+                    }
+                session.add(
+                    TaskEventRecord(
+                        task_id=record.id,
+                        attempt=record.attempt,
+                        kind=event_kind,
+                        details={"reason": "worker_lease_expired"},
+                    )
+                )
+                await session.execute(
+                    text("SELECT pg_notify(:channel, :payload)"),
+                    {"channel": TASK_UPDATE_CHANNEL, "payload": str(record.id)},
+                )
+
             candidates = await session.scalars(
                 select(TaskRecord)
                 .where(
@@ -620,6 +685,75 @@ class TaskRepository:
             )
             return [_public_event(record) for record in records]
 
+    async def release_worker_leases(self, worker_id: UUID) -> int:
+        """Release or finalize every active lease owned by a shutting-down worker."""
+
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            records = list(
+                (
+                    await session.scalars(
+                        select(TaskRecord)
+                        .where(
+                            TaskRecord.lease_owner == worker_id,
+                            TaskRecord.status.in_(
+                                (
+                                    "running",
+                                    "recovering",
+                                    "pause_requested",
+                                    "cancel_requested",
+                                )
+                            ),
+                        )
+                        .with_for_update()
+                    )
+                ).all()
+            )
+            for record in records:
+                previous_status = record.status
+                target_status, attempt_status, event_kind, resumable = _shutdown_release_state(
+                    previous_status
+                )
+                record.status = target_status
+                record.lease_owner = None
+                record.lease_expires_at = None
+                record.next_attempt_at = now if resumable else None
+                if target_status == "cancelled":
+                    record.completed_at = now
+                    record.error = {
+                        "type": "worker_shutdown_cancelled",
+                        "message": "Cancellation completed while the worker was shutting down",
+                    }
+                attempt = await session.scalar(
+                    select(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.task_id == record.id,
+                        TaskAttemptRecord.attempt == record.attempt,
+                        TaskAttemptRecord.status == "running",
+                    )
+                    .with_for_update()
+                )
+                if attempt is not None:
+                    attempt.status = attempt_status
+                    attempt.completed_at = now
+                    attempt.details = {
+                        "type": "worker_shutdown",
+                        "message": (
+                            "Worker stopped before task completion"
+                            if resumable
+                            else f"Worker shutdown completed {previous_status}"
+                        ),
+                    }
+                session.add(
+                    TaskEventRecord(
+                        task_id=record.id,
+                        attempt=record.attempt,
+                        kind=event_kind,
+                        details={"reason": "worker_shutdown"},
+                    )
+                )
+            return len(records)
+
     async def cancel_unfinished(self, task_type: str, *, reason: str) -> int:
         """Cancel unfinished tasks of one type before startup workers can reclaim them."""
 
@@ -736,6 +870,7 @@ class TaskCoordinator:
         self._global_subscribers: set[asyncio.Queue[TaskStatusView]] = set()
         self._database = database
         self._listener: asyncio.Task[None] | None = None
+        self._worker_id: UUID | None = None
 
     def register_handler(self, handler: TaskHandler) -> None:
         self._handlers[handler.task_type] = handler
@@ -938,11 +1073,18 @@ class TaskCoordinator:
             self._listener.cancel()
             with suppress(asyncio.CancelledError):
                 await self._listener
-        if self._running:
-            await asyncio.gather(*self._running, return_exceptions=True)
+        running = tuple(self._running)
+        for execution in running:
+            execution.cancel()
+        if running:
+            await asyncio.gather(*running, return_exceptions=True)
+        if self._worker_id is not None:
+            await self._repository.release_worker_leases(self._worker_id)
+            self._worker_id = None
 
     async def _run(self) -> None:
         worker_id = uuid4()
+        self._worker_id = worker_id
         scheduler = asyncio.create_task(self._schedule(), name="task-coordinator-scheduler")
         try:
             while not self._stopping.is_set():

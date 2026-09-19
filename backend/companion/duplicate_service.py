@@ -3251,249 +3251,268 @@ class CrossSourceDuplicateTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         options = DuplicateAnalysisOptions.model_validate(payload)
-        groups = await self._discovery.discover()
-        candidates: dict[UUID, ImmichAsset] = {}
-        for group in groups:
-            for asset in group.assets:
-                if (
-                    asset.library_id is not None
-                    or options.verify_upload_streams
-                    or self._include_preservation
-                    and asset.asset_type == "IMAGE"
-                ):
-                    if asset.file_size_bytes is None:
-                        asset = await self._immich.get_asset(asset.id)
-                    candidates[asset.id] = asset
+        batch_reader = getattr(self._discovery, "discover_batches", None)
 
-        reports = await self._reports.get_many(list(candidates))
-        features = (
-            await self._reports.get_preservation_features(list(candidates))
-            if self._include_preservation
-            else {}
-        )
-        pending = [
-            asset
-            for asset in candidates.values()
-            if not asset.is_offline
-            and (
-                (
-                    (
-                        asset.library_id is None
-                        and options.verify_upload_streams
-                        or asset.library_id is not None
-                    )
-                    and report_freshness(reports.get(asset.id), asset) != "current"
-                )
-                or (
-                    self._include_preservation
-                    and asset.asset_type == "IMAGE"
-                    and preservation_feature_freshness(features.get(asset.id), asset) != "current"
-                )
-            )
-        ]
-        visual_candidates = [
-            asset
-            for asset in candidates.values()
-            if asset.asset_type == "IMAGE" and not asset.is_offline
-        ]
-        pending_ids = {asset.id for asset in pending}
-        visual_pending_ids: set[UUID] = set()
+        async def discovery_batches():
+            if callable(batch_reader):
+                async for batch in batch_reader():
+                    yield batch
+                return
+            yield await self._discovery.discover()
+
+        group_count = 0
+        candidate_file_count = 0
+        files_attempted = 0
+        unavailable = 0
+        visual_assets = 0
         visual_unavailable = 0
         shared_original_downloads = 0
         shared_original_bytes = 0
+        processed_asset_ids: set[UUID] = set()
 
-        share_capable = bool(
-            self._similarity_indexer is not None
-            and callable(getattr(self._similarity_indexer, "has_current", None))
-        )
-        if self._similarity_indexer is not None:
-            if share_capable:
-                for asset in visual_candidates:
-                    await context.ensure_active()
-                    if not await self._similarity_indexer.has_current(asset.id):
-                        visual_pending_ids.add(asset.id)
-                # Assets needing only Appearance evidence keep the normal one-branch
-                # path. Only assets that need both evidence families require a
-                # caller-owned original shared across the two consumers.
-                for asset in visual_candidates:
-                    if asset.id not in visual_pending_ids or asset.id in pending_ids:
-                        continue
-                    await context.ensure_active()
-                    if not await self._similarity_indexer.ensure_asset(
-                        context,
-                        asset.id,
-                    ):
-                        visual_unavailable += 1
-                        logger.warning(
-                            "Duplicate candidate visual evidence unavailable: "
-                            "asset_id=%s filename=%s",
-                            asset.id,
-                            asset.original_file_name,
-                        )
-            else:
-                # Compatibility for lightweight adapters that predate shared-source
-                # preparation.
-                for asset in visual_candidates:
-                    await context.ensure_active()
-                    if not await self._similarity_indexer.ensure_asset(context, asset.id):
-                        visual_unavailable += 1
-                        logger.warning(
-                            "Duplicate candidate visual evidence unavailable: "
-                            "asset_id=%s filename=%s",
-                            asset.id,
-                            asset.original_file_name,
-                        )
-
-        unavailable = 0
         await context.checkpoint(
             checkpoint={"phase": "fingerprinting"},
             counters={
                 "files_attempted": 0,
                 "files_unavailable": 0,
-                "visual_assets": len(visual_candidates),
-                "visual_unavailable": visual_unavailable,
-                "shared_original_downloads": shared_original_downloads,
-                "shared_original_bytes": shared_original_bytes,
+                "visual_assets": 0,
+                "visual_unavailable": 0,
+                "shared_original_downloads": 0,
+                "shared_original_bytes": 0,
             },
             progress={
                 "phase": "duplicate_fingerprints",
                 "completed": 0,
-                "total": len(pending),
-                "percent": 0.0,
-                "detail": (
-                    f"Preparing to verify {len(pending)} duplicate candidate files…"
-                    if pending
-                    else "All duplicate candidate evidence is current."
-                ),
+                "total": None,
+                "percent": None,
+                "detail": "Streaming exact duplicate groups for verification…",
             },
         )
-        for index, asset in enumerate(pending, start=1):
-            await context.ensure_active()
-            await self._assets.refresh_asset(asset)
-            appearance_needed = share_capable and asset.id in visual_pending_ids
-            prepared_path: Path | None = None
-            prepared_bytes: int | None = None
-            shared_failed = False
-            if appearance_needed:
-                try:
-                    prepared_path, prepared_bytes = await self._download_shared_original(
-                        context,
-                        asset,
-                    )
-                    shared_original_downloads += 1
-                    shared_original_bytes += prepared_bytes
-                except (ImmichApiError, OSError, RetryableTaskError) as error:
-                    shared_failed = True
-                    logger.warning(
-                        "Shared duplicate original acquisition failed; falling back "
-                        "to independent evidence paths: asset_id=%s filename=%s "
-                        "error_type=%s reason=%s",
-                        asset.id,
-                        asset.original_file_name,
-                        type(error).__name__,
-                        error,
-                    )
 
-            try:
-                if appearance_needed and self._similarity_indexer is not None:
-                    visual_ready = await self._similarity_indexer.ensure_asset(
-                        context,
-                        asset.id,
-                        source=asset,
-                        original_path=None if shared_failed else prepared_path,
-                        original_source_bytes=None if shared_failed else prepared_bytes,
+        share_capable = bool(
+            self._similarity_indexer is not None
+            and callable(getattr(self._similarity_indexer, "has_current", None))
+        )
+
+        async for groups in discovery_batches():
+            group_count += len(groups)
+            candidates: dict[UUID, ImmichAsset] = {}
+            for group in groups:
+                for asset in group.assets:
+                    if asset.id in processed_asset_ids:
+                        continue
+                    if (
+                        asset.library_id is not None
+                        or options.verify_upload_streams
+                        or self._include_preservation
+                        and asset.asset_type == "IMAGE"
+                    ):
+                        if asset.file_size_bytes is None:
+                            asset = await self._immich.get_asset(asset.id)
+                        candidates[asset.id] = asset
+                        processed_asset_ids.add(asset.id)
+
+            candidate_file_count += len(candidates)
+            if not candidates:
+                continue
+            reports = await self._reports.get_many(list(candidates))
+            features = (
+                await self._reports.get_preservation_features(list(candidates))
+                if self._include_preservation
+                else {}
+            )
+            pending = [
+                asset
+                for asset in candidates.values()
+                if not asset.is_offline
+                and (
+                    (
+                        (
+                            asset.library_id is None
+                            and options.verify_upload_streams
+                            or asset.library_id is not None
+                        )
+                        and report_freshness(reports.get(asset.id), asset) != "current"
                     )
-                    if not visual_ready:
-                        visual_unavailable += 1
+                    or (
+                        self._include_preservation
+                        and asset.asset_type == "IMAGE"
+                        and preservation_feature_freshness(features.get(asset.id), asset)
+                        != "current"
+                    )
+                )
+            ]
+            visual_candidates = [
+                asset
+                for asset in candidates.values()
+                if asset.asset_type == "IMAGE" and not asset.is_offline
+            ]
+            visual_assets += len(visual_candidates)
+            pending_ids = {asset.id for asset in pending}
+            visual_pending_ids: set[UUID] = set()
+
+            if self._similarity_indexer is not None:
+                if share_capable:
+                    for asset in visual_candidates:
+                        await context.ensure_active()
+                        if not await self._similarity_indexer.has_current(asset.id):
+                            visual_pending_ids.add(asset.id)
+                    for asset in visual_candidates:
+                        if asset.id not in visual_pending_ids or asset.id in pending_ids:
+                            continue
+                        await context.ensure_active()
+                        if not await self._similarity_indexer.ensure_asset(context, asset.id):
+                            visual_unavailable += 1
+                            logger.warning(
+                                "Duplicate candidate visual evidence unavailable: "
+                                "asset_id=%s filename=%s",
+                                asset.id,
+                                asset.original_file_name,
+                            )
+                else:
+                    for asset in visual_candidates:
+                        await context.ensure_active()
+                        if not await self._similarity_indexer.ensure_asset(context, asset.id):
+                            visual_unavailable += 1
+                            logger.warning(
+                                "Duplicate candidate visual evidence unavailable: "
+                                "asset_id=%s filename=%s",
+                                asset.id,
+                                asset.original_file_name,
+                            )
+
+            for asset in pending:
+                await context.ensure_active()
+                files_attempted += 1
+                await self._assets.refresh_asset(asset)
+                appearance_needed = share_capable and asset.id in visual_pending_ids
+                prepared_path: Path | None = None
+                prepared_bytes: int | None = None
+                shared_failed = False
+                if appearance_needed:
+                    try:
+                        prepared_path, prepared_bytes = await self._download_shared_original(
+                            context,
+                            asset,
+                        )
+                        shared_original_downloads += 1
+                        shared_original_bytes += prepared_bytes
+                    except (ImmichApiError, OSError, RetryableTaskError) as error:
+                        shared_failed = True
                         logger.warning(
-                            "Duplicate candidate visual evidence unavailable: "
-                            "asset_id=%s filename=%s",
+                            "Shared duplicate original acquisition failed; falling back "
+                            "to independent evidence paths: asset_id=%s filename=%s "
+                            "error_type=%s reason=%s",
                             asset.id,
                             asset.original_file_name,
+                            type(error).__name__,
+                            error,
                         )
 
                 try:
-                    if prepared_path is not None and not shared_failed:
-                        await self._integrity.analyze(
+                    if appearance_needed and self._similarity_indexer is not None:
+                        visual_ready = await self._similarity_indexer.ensure_asset(
                             context,
                             asset.id,
-                            publish_progress=False,
                             source=asset,
-                            original_path=prepared_path,
-                            original_source_bytes=prepared_bytes,
+                            original_path=None if shared_failed else prepared_path,
+                            original_source_bytes=None if shared_failed else prepared_bytes,
                         )
-                    else:
-                        await self._integrity.analyze(
-                            context,
-                            asset.id,
-                            publish_progress=False,
-                            source=asset,
-                        )
-                except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
-                    unavailable += 1
-                    logger.warning(
-                        "Duplicate candidate verification failed: asset_id=%s filename=%s "
-                        "source=%s error_type=%s reason=%s",
-                        asset.id,
-                        asset.original_file_name,
-                        "upload" if asset.library_id is None else "external",
-                        type(error).__name__,
-                        error,
-                    )
-            finally:
-                if prepared_path is not None:
-                    prepared_path.unlink(missing_ok=True)
+                        if not visual_ready:
+                            visual_unavailable += 1
+                            logger.warning(
+                                "Duplicate candidate visual evidence unavailable: "
+                                "asset_id=%s filename=%s",
+                                asset.id,
+                                asset.original_file_name,
+                            )
 
-            await context.checkpoint(
-                checkpoint={"phase": "fingerprinting", "asset_id": str(asset.id)},
-                counters={
-                    "files_attempted": index,
-                    "files_unavailable": unavailable,
-                    "visual_assets": len(visual_candidates),
-                    "visual_unavailable": visual_unavailable,
-                    "shared_original_downloads": shared_original_downloads,
-                    "shared_original_bytes": shared_original_bytes,
-                },
-                progress={
-                    "phase": "duplicate_fingerprints",
-                    "completed": index,
-                    "total": len(pending),
-                    "percent": round(index / len(pending) * 100, 1),
-                    "detail": (f"Verified {index} of {len(pending)} duplicate candidate files"),
-                },
-            )
+                    try:
+                        if prepared_path is not None and not shared_failed:
+                            await self._integrity.analyze(
+                                context,
+                                asset.id,
+                                publish_progress=False,
+                                source=asset,
+                                original_path=prepared_path,
+                                original_source_bytes=prepared_bytes,
+                            )
+                        else:
+                            await self._integrity.analyze(
+                                context,
+                                asset.id,
+                                publish_progress=False,
+                                source=asset,
+                            )
+                    except (PermanentTaskError, RetryableTaskError, ImmichApiError) as error:
+                        unavailable += 1
+                        logger.warning(
+                            "Duplicate candidate verification failed: asset_id=%s filename=%s "
+                            "source=%s error_type=%s reason=%s",
+                            asset.id,
+                            asset.original_file_name,
+                            "upload" if asset.library_id is None else "external",
+                            type(error).__name__,
+                            error,
+                        )
+                finally:
+                    if prepared_path is not None:
+                        prepared_path.unlink(missing_ok=True)
+
+                await context.checkpoint(
+                    checkpoint={"phase": "fingerprinting", "asset_id": str(asset.id)},
+                    counters={
+                        "files_attempted": files_attempted,
+                        "files_unavailable": unavailable,
+                        "visual_assets": visual_assets,
+                        "visual_unavailable": visual_unavailable,
+                        "shared_original_downloads": shared_original_downloads,
+                        "shared_original_bytes": shared_original_bytes,
+                    },
+                    progress={
+                        "phase": "duplicate_fingerprints",
+                        "completed": files_attempted,
+                        "total": None,
+                        "percent": None,
+                        "detail": (
+                            f"Verified {files_attempted} exact duplicate candidate files"
+                        ),
+                    },
+                )
+
         if unavailable:
             logger.warning(
-                "Duplicate candidate verification completed with unavailable files: attempted=%s unavailable=%s",
-                len(pending),
+                "Duplicate candidate verification completed with unavailable files: "
+                "attempted=%s unavailable=%s",
+                files_attempted,
                 unavailable,
             )
         await context.checkpoint(
             checkpoint={"phase": "complete"},
             counters={
-                "files_attempted": len(pending),
+                "files_attempted": files_attempted,
                 "files_unavailable": unavailable,
-                "visual_assets": len(visual_candidates),
+                "visual_assets": visual_assets,
                 "visual_unavailable": visual_unavailable,
                 "shared_original_downloads": shared_original_downloads,
                 "shared_original_bytes": shared_original_bytes,
             },
             progress={
                 "phase": "complete",
-                "completed": len(pending),
-                "total": len(pending),
+                "completed": files_attempted,
+                "total": files_attempted,
                 "percent": 100.0,
-                "detail": "Duplicate candidate verification is ready.",
+                "detail": "Exact duplicate candidate verification is ready.",
             },
         )
         return TaskResult(
-            summary={"duplicate_group_count": len(groups)},
+            summary={"duplicate_group_count": group_count},
             counters={
-                "duplicate_groups": len(groups),
-                "candidate_files": len(candidates),
-                "files_attempted": len(pending),
+                "duplicate_groups": group_count,
+                "candidate_files": candidate_file_count,
+                "files_attempted": files_attempted,
                 "files_unavailable": unavailable,
-                "visual_assets": len(visual_candidates),
+                "visual_assets": visual_assets,
                 "visual_unavailable": visual_unavailable,
                 "shared_original_downloads": shared_original_downloads,
                 "shared_original_bytes": shared_original_bytes,

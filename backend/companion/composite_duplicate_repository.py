@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -802,16 +803,26 @@ class CompositeDuplicateRepository:
         self,
         groups: list[DiscoveredGroup],
     ) -> CompositeDuplicateSnapshotMetadata:
-        """Publish one complete composite snapshot or leave the previous one intact."""
+        """Compatibility wrapper around bounded snapshot publication."""
 
-        group_ids = {group.group_id for group in groups}
-        if len(group_ids) != len(groups):
-            raise ValueError("Composite duplicate snapshot contains duplicate group IDs")
-        asset_ids = {asset.id for group in groups for asset in group.assets}
-        group_count = len(groups)
-        member_count = sum(len(group.assets) for group in groups)
-        evidence_count = sum(len(group.evidence) for group in groups)
+        async def batches() -> AsyncIterable[list[DiscoveredGroup]]:
+            for offset in range(0, len(groups), WRITE_BATCH_SIZE):
+                yield groups[offset : offset + WRITE_BATCH_SIZE]
+
+        return await self.replace_snapshot_batches(batches())
+
+    async def replace_snapshot_batches(
+        self,
+        batches: AsyncIterable[list[DiscoveredGroup]],
+    ) -> CompositeDuplicateSnapshotMetadata:
+        """Atomically publish a snapshot while retaining only one group batch in memory."""
+
         now = datetime.now(UTC)
+        group_count = 0
+        member_count = 0
+        evidence_count = 0
+        position = 0
+        seen_group_ids: set[str] = set()
 
         async with self._database.sessions() as session, session.begin():
             state = await session.scalar(
@@ -823,36 +834,46 @@ class CompositeDuplicateRepository:
                 state = CompositeDuplicateSyncStateRecord(id=SNAPSHOT_STATE_ID)
                 session.add(state)
                 await session.flush()
-
-            if asset_ids:
-                available = set(
-                    (
-                        await session.scalars(
-                            select(AssetRecord.id).where(
-                                AssetRecord.id.in_(asset_ids),
-                                AssetRecord.is_trashed.is_(False),
-                            )
-                        )
-                    ).all()
-                )
-                missing = asset_ids - available
-                if missing:
-                    raise CompositeDuplicateSnapshotAssetMissingError(
-                        "Composite duplicate rebuild references "
-                        f"{len(missing)} asset(s) missing from the synchronized local catalog."
-                    )
-
             generation = state.authoritative_generation + 1
 
-            for offset in range(0, group_count, WRITE_BATCH_SIZE):
-                values = []
-                for position, group in enumerate(
-                    groups[offset : offset + WRITE_BATCH_SIZE],
-                    start=offset,
-                ):
+            async for groups in batches:
+                if not groups:
+                    continue
+                batch_ids = [group.group_id for group in groups]
+                duplicate_ids = seen_group_ids.intersection(batch_ids)
+                if duplicate_ids or len(set(batch_ids)) != len(batch_ids):
+                    duplicate_id = sorted(duplicate_ids or set(batch_ids))[0]
+                    raise ValueError(
+                        f"Composite duplicate snapshot contains duplicate group ID: {duplicate_id}"
+                    )
+                seen_group_ids.update(batch_ids)
+
+                asset_ids = {asset.id for group in groups for asset in group.assets}
+                if asset_ids:
+                    available = set(
+                        (
+                            await session.scalars(
+                                select(AssetRecord.id).where(
+                                    AssetRecord.id.in_(asset_ids),
+                                    AssetRecord.is_trashed.is_(False),
+                                )
+                            )
+                        ).all()
+                    )
+                    missing = asset_ids - available
+                    if missing:
+                        raise CompositeDuplicateSnapshotAssetMissingError(
+                            "Composite duplicate rebuild references "
+                            f"{len(missing)} asset(s) missing from the synchronized local catalog."
+                        )
+
+                group_values: list[dict[str, object]] = []
+                member_values: list[dict[str, object]] = []
+                evidence_values: list[dict[str, object]] = []
+                for group in groups:
                     fingerprint = member_set_key(asset.id for asset in group.assets)
                     summary = _group_projection_summary(group)
-                    values.append(
+                    group_values.append(
                         {
                             "group_id": group.group_id,
                             "position": position,
@@ -875,101 +896,88 @@ class CompositeDuplicateRepository:
                             "synced_at": now,
                         }
                     )
-                if values:
-                    statement = insert(CompositeDuplicateGroupRecord).values(values)
+                    for member_position, asset in enumerate(group.assets):
+                        member_values.append(
+                            {
+                                "group_id": group.group_id,
+                                "asset_id": asset.id,
+                                "position": member_position,
+                                "sync_generation": generation,
+                            }
+                        )
+                    for item in group.evidence:
+                        evidence_values.append(
+                            {
+                                "group_id": group.group_id,
+                                "discovery_source": item.discovery_source.value,
+                                "provider_group_id": item.provider_group_id,
+                                "evidence_metadata": dict(item.metadata),
+                                "sync_generation": generation,
+                            }
+                        )
+                    position += 1
+                    group_count += 1
+                    member_count += len(group.assets)
+                    evidence_count += len(group.evidence)
+
+                statement = insert(CompositeDuplicateGroupRecord).values(group_values)
+                await session.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[CompositeDuplicateGroupRecord.group_id],
+                        set_={
+                            "position": statement.excluded.position,
+                            "discovery_source": statement.excluded.discovery_source,
+                            "provider_group_id": statement.excluded.provider_group_id,
+                            "stable_group_key": statement.excluded.stable_group_key,
+                            "member_fingerprint": statement.excluded.member_fingerprint,
+                            "member_count": statement.excluded.member_count,
+                            "reclaimable_bytes": statement.excluded.reclaimable_bytes,
+                            "similarity_score": statement.excluded.similarity_score,
+                            "oldest_taken_at": statement.excluded.oldest_taken_at,
+                            "newest_taken_at": statement.excluded.newest_taken_at,
+                            "v2_policy_state": statement.excluded.v2_policy_state,
+                            "v2_state_updated_at": statement.excluded.v2_state_updated_at,
+                            "provider_metadata": statement.excluded.provider_metadata,
+                            "similarity_validation": statement.excluded.similarity_validation,
+                            "sync_generation": statement.excluded.sync_generation,
+                            "synced_at": statement.excluded.synced_at,
+                        },
+                    )
+                )
+
+                for offset in range(0, len(member_values), WRITE_BATCH_SIZE):
+                    values = member_values[offset : offset + WRITE_BATCH_SIZE]
+                    member_statement = insert(CompositeDuplicateGroupMemberRecord).values(values)
                     await session.execute(
-                        statement.on_conflict_do_update(
-                            index_elements=[CompositeDuplicateGroupRecord.group_id],
+                        member_statement.on_conflict_do_update(
+                            index_elements=[
+                                CompositeDuplicateGroupMemberRecord.group_id,
+                                CompositeDuplicateGroupMemberRecord.asset_id,
+                            ],
                             set_={
-                                "position": statement.excluded.position,
-                                "discovery_source": statement.excluded.discovery_source,
-                                "provider_group_id": statement.excluded.provider_group_id,
-                                "stable_group_key": statement.excluded.stable_group_key,
-                                "member_fingerprint": statement.excluded.member_fingerprint,
-                                "member_count": statement.excluded.member_count,
-                                "reclaimable_bytes": statement.excluded.reclaimable_bytes,
-                                "similarity_score": statement.excluded.similarity_score,
-                                "oldest_taken_at": statement.excluded.oldest_taken_at,
-                                "newest_taken_at": statement.excluded.newest_taken_at,
-                                "v2_policy_state": statement.excluded.v2_policy_state,
-                                "v2_state_updated_at": statement.excluded.v2_state_updated_at,
-                                "provider_metadata": statement.excluded.provider_metadata,
-                                "similarity_validation": statement.excluded.similarity_validation,
-                                "sync_generation": statement.excluded.sync_generation,
-                                "synced_at": statement.excluded.synced_at,
+                                "position": member_statement.excluded.position,
+                                "sync_generation": member_statement.excluded.sync_generation,
                             },
                         )
                     )
-
-            member_values: list[dict[str, object]] = []
-
-            async def flush_members() -> None:
-                if not member_values:
-                    return
-                statement = insert(CompositeDuplicateGroupMemberRecord).values(member_values)
-                await session.execute(
-                    statement.on_conflict_do_update(
-                        index_elements=[
-                            CompositeDuplicateGroupMemberRecord.group_id,
-                            CompositeDuplicateGroupMemberRecord.asset_id,
-                        ],
-                        set_={
-                            "position": statement.excluded.position,
-                            "sync_generation": statement.excluded.sync_generation,
-                        },
+                for offset in range(0, len(evidence_values), WRITE_BATCH_SIZE):
+                    values = evidence_values[offset : offset + WRITE_BATCH_SIZE]
+                    evidence_statement = insert(
+                        CompositeDuplicateGroupEvidenceRecord
+                    ).values(values)
+                    await session.execute(
+                        evidence_statement.on_conflict_do_update(
+                            index_elements=[
+                                CompositeDuplicateGroupEvidenceRecord.group_id,
+                                CompositeDuplicateGroupEvidenceRecord.discovery_source,
+                            ],
+                            set_={
+                                "provider_group_id": evidence_statement.excluded.provider_group_id,
+                                "evidence_metadata": evidence_statement.excluded.evidence_metadata,
+                                "sync_generation": evidence_statement.excluded.sync_generation,
+                            },
+                        )
                     )
-                )
-                member_values.clear()
-
-            for group in groups:
-                for position, asset in enumerate(group.assets):
-                    member_values.append(
-                        {
-                            "group_id": group.group_id,
-                            "asset_id": asset.id,
-                            "position": position,
-                            "sync_generation": generation,
-                        }
-                    )
-                    if len(member_values) >= WRITE_BATCH_SIZE:
-                        await flush_members()
-            await flush_members()
-
-            evidence_values: list[dict[str, object]] = []
-
-            async def flush_evidence() -> None:
-                if not evidence_values:
-                    return
-                statement = insert(CompositeDuplicateGroupEvidenceRecord).values(evidence_values)
-                await session.execute(
-                    statement.on_conflict_do_update(
-                        index_elements=[
-                            CompositeDuplicateGroupEvidenceRecord.group_id,
-                            CompositeDuplicateGroupEvidenceRecord.discovery_source,
-                        ],
-                        set_={
-                            "provider_group_id": statement.excluded.provider_group_id,
-                            "evidence_metadata": statement.excluded.evidence_metadata,
-                            "sync_generation": statement.excluded.sync_generation,
-                        },
-                    )
-                )
-                evidence_values.clear()
-
-            for group in groups:
-                for item in group.evidence:
-                    evidence_values.append(
-                        {
-                            "group_id": group.group_id,
-                            "discovery_source": item.discovery_source.value,
-                            "provider_group_id": item.provider_group_id,
-                            "evidence_metadata": dict(item.metadata),
-                            "sync_generation": generation,
-                        }
-                    )
-                    if len(evidence_values) >= WRITE_BATCH_SIZE:
-                        await flush_evidence()
-            await flush_evidence()
 
             await session.execute(
                 delete(CompositeDuplicateGroupEvidenceRecord).where(

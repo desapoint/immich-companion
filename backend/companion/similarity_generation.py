@@ -239,8 +239,9 @@ class SimilarityEvidenceEpochRepository:
         update_rebuilt_at: bool,
         reason_type: str,
         reason_message: str,
+        drop_reusable_evidence: bool,
     ) -> tuple[int, dict[str, int]]:
-        """Advance the epoch, retire writers, and delete all derived Appearance evidence."""
+        """Advance the epoch and retire writers without discarding reusable features."""
 
         current_descriptor = similarity_generation_fingerprint()
         removed: dict[str, int] = {}
@@ -325,28 +326,83 @@ class SimilarityEvidenceEpochRepository:
                     {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
                 )
 
-        # The composite duplicate projection is derived output. Remove it too so the UI
-        # cannot keep displaying groups backed by invalidated similarity evidence. Review
-        # decisions/history live in separate durable tables and are deliberately preserved.
-        composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
-        removed["composite_groups"] = int(composite.rowcount or 0)
-        await session.execute(
-            text(
-                "UPDATE composite_duplicate_sync_state SET "
-                "group_count = 0, member_count = 0, evidence_count = 0, "
-                "last_success_at = NULL WHERE id = 1"
+        if drop_reusable_evidence:
+            composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
+            removed["composite_groups"] = int(composite.rowcount or 0)
+            await session.execute(
+                text(
+                    "UPDATE composite_duplicate_sync_state SET "
+                    "group_count = 0, member_count = 0, evidence_count = 0, "
+                    "last_success_at = NULL WHERE id = 1"
+                )
             )
-        )
+        else:
+            # Keep exact output available, but never expose invalidated similarity
+            # membership or scores as though they were current. Similarity-only groups
+            # disappear until the replacement scan publishes; coalesced exact groups
+            # retain only their exact provenance.
+            composite = await session.execute(
+                text(
+                    "DELETE FROM composite_duplicate_groups AS group_record "
+                    "WHERE EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS similarity_evidence "
+                    "WHERE similarity_evidence.group_id = group_record.group_id "
+                    "AND similarity_evidence.discovery_source = 'companion_similarity'"
+                    ") AND NOT EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS exact_evidence "
+                    "WHERE exact_evidence.group_id = group_record.group_id "
+                    "AND exact_evidence.discovery_source = 'immich_duplicate'"
+                    ")"
+                )
+            )
+            removed["composite_groups"] = int(composite.rowcount or 0)
+            await session.execute(
+                text(
+                    "UPDATE composite_duplicate_groups AS group_record SET "
+                    "similarity_score = NULL, similarity_validation = NULL "
+                    "WHERE EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS similarity_evidence "
+                    "WHERE similarity_evidence.group_id = group_record.group_id "
+                    "AND similarity_evidence.discovery_source = 'companion_similarity'"
+                    ") AND EXISTS ("
+                    "SELECT 1 FROM composite_duplicate_group_evidence AS exact_evidence "
+                    "WHERE exact_evidence.group_id = group_record.group_id "
+                    "AND exact_evidence.discovery_source = 'immich_duplicate'"
+                    ")"
+                )
+            )
+            await session.execute(
+                text(
+                    "DELETE FROM composite_duplicate_group_evidence "
+                    "WHERE discovery_source = 'companion_similarity'"
+                )
+            )
+            await session.execute(
+                text(
+                    "UPDATE composite_duplicate_sync_state SET "
+                    "group_count = (SELECT count(*) FROM composite_duplicate_groups), "
+                    "member_count = (SELECT count(*) FROM composite_duplicate_group_members), "
+                    "evidence_count = ("
+                    "SELECT count(*) FROM composite_duplicate_group_evidence"
+                    "), last_success_at = NULL WHERE id = 1"
+                )
+            )
 
-        for label, table_name in (
+        derived_tables = [
             ("scan_pairs", "similarity_scan_pairs"),
             ("scans", "similarity_scans"),
-            ("pair_results", "asset_similarity_edges"),
-            ("detail_features", "asset_similarity_detail_features"),
-            ("bounded_state", "asset_similarity_bounded_state"),
-            ("search_features", "asset_similarity_search_features"),
-            ("pending_asset_changes", "similarity_asset_changes"),
-        ):
+        ]
+        if drop_reusable_evidence:
+            derived_tables.extend(
+                (
+                    ("pair_results", "asset_similarity_edges"),
+                    ("detail_features", "asset_similarity_detail_features"),
+                    ("bounded_state", "asset_similarity_bounded_state"),
+                    ("search_features", "asset_similarity_search_features"),
+                    ("pending_asset_changes", "similarity_asset_changes"),
+                )
+            )
+        for label, table_name in derived_tables:
             result = await session.execute(text(f"DELETE FROM {table_name}"))
             removed[label] = int(result.rowcount or 0)
 
@@ -361,6 +417,7 @@ class SimilarityEvidenceEpochRepository:
                 update_rebuilt_at=False,
                 reason_type="evidence_destroy",
                 reason_message="Retired by similarity evidence destroy",
+                drop_reusable_evidence=True,
             )
 
         state = await self.status()
@@ -386,6 +443,7 @@ class SimilarityEvidenceEpochRepository:
             update_rebuilt_at=True,
             reason_type="evidence_rebuild",
             reason_message="Retired by similarity evidence rebuild",
+            drop_reusable_evidence=False,
         )
 
         # The replacement scan is created before the transaction can commit. Callers that

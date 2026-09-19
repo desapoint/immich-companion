@@ -1614,13 +1614,15 @@ async def test_duplicate_analysis_progress_is_monotonic_across_member_analysis()
     )
 
     progress = [checkpoint["progress"] for checkpoint in context.checkpoints]
-    assert [item["percent"] for item in progress] == [0.0, 50.0, 100.0, 100.0]
+    assert [item["percent"] for item in progress] == [None, None, None, 100.0]
     assert [(item["completed"], item["total"]) for item in progress] == [
-        (0, 2),
-        (1, 2),
-        (2, 2),
+        (0, None),
+        (1, None),
+        (2, None),
         (2, 2),
     ]
+    assert progress[0]["detail"] == "Streaming exact duplicate groups for verification…"
+    assert progress[-1]["detail"] == "Exact duplicate candidate verification is ready."
 
 
 @pytest.mark.asyncio

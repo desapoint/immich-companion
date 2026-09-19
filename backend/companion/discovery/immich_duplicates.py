@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Protocol, cast
 from uuid import UUID
 
@@ -15,6 +16,7 @@ from companion.immich_duplicate_repository import ImmichDuplicateSnapshotGroup
 logger = logging.getLogger("uvicorn.error")
 
 LOCAL_HYDRATION_BATCH_SIZE = 1_000
+PERSISTED_GROUP_BATCH_SIZE = 250
 LIVE_HYDRATION_BATCH_SIZE = 16
 LIVE_HYDRATION_CONCURRENCY = 2
 
@@ -52,14 +54,48 @@ class ImmichDuplicateProvider:
         self._assets = assets
 
     async def discover(self) -> list[DiscoveredGroup]:
-        if self._snapshots is not None:
-            return await self._discover_persisted()
-        return await self._discover_live()
+        groups: list[DiscoveredGroup] = []
+        async for batch in self.discover_batches():
+            groups.extend(batch)
+        return groups
 
-    async def _discover_persisted(self) -> list[DiscoveredGroup]:
-        assert self._snapshots is not None
+    async def discover_batches(
+        self,
+        *,
+        batch_size: int = PERSISTED_GROUP_BATCH_SIZE,
+    ) -> AsyncIterator[list[DiscoveredGroup]]:
+        """Yield persisted groups with only one hydration batch resident at a time."""
+
+        batch_size = max(1, min(batch_size, 1_000))
+        if self._snapshots is None:
+            groups = await self._discover_live()
+            for offset in range(0, len(groups), batch_size):
+                yield groups[offset : offset + batch_size]
+            return
+
+        page_reader = getattr(self._snapshots, "groups_page", None)
+        if not callable(page_reader):
+            groups = await self._discover_persisted()
+            for offset in range(0, len(groups), batch_size):
+                yield groups[offset : offset + batch_size]
+            return
+
+        cursor: str | None = None
+        while True:
+            snapshot, cursor = await page_reader(
+                after_provider_group_id=cursor,
+                limit=batch_size,
+            )
+            if snapshot:
+                yield await self._hydrate_persisted(snapshot)
+            if cursor is None:
+                return
+
+    async def _hydrate_persisted(
+        self,
+        snapshot: list[ImmichDuplicateSnapshotGroup],
+    ) -> list[DiscoveredGroup]:
         assert self._assets is not None
-        snapshot = await self._snapshots.groups()
         asset_ids = list(
             dict.fromkeys(asset_id for group in snapshot for asset_id in group.asset_ids)
         )
@@ -91,6 +127,10 @@ class ImmichDuplicateProvider:
                 )
             )
         return discovered
+
+    async def _discover_persisted(self) -> list[DiscoveredGroup]:
+        assert self._snapshots is not None
+        return await self._hydrate_persisted(await self._snapshots.groups())
 
     async def _discover_live(self) -> list[DiscoveredGroup]:
         """Compatibility path for tests/direct callers that do not inject discovery."""
