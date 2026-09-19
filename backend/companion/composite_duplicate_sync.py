@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
@@ -21,6 +22,8 @@ from companion.task_schema import TaskResult
 
 COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE = "composite_duplicate_rebuild"
 COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY = "authoritative_projection"
+COMPOSITE_DUPLICATE_STARTUP_RECONCILE_TASK_TYPE = "composite_duplicate_startup_reconcile"
+COMPOSITE_DUPLICATE_STARTUP_RECONCILE_DEDUPLICATION_KEY = "startup_projection"
 SOURCE_CHANGING_TASK_TYPES = frozenset(
     {"immich_duplicate_sync", "similarity_scan", "similarity_maintenance"}
 )
@@ -54,6 +57,84 @@ def composite_projection_is_stale(
         source_time is not None and source_time > composite_last_success_at
         for source_time in (immich_last_success_at, similarity_last_success_at)
     )
+
+
+class CompositeDuplicateStartupReconcileTaskHandler:
+    """Repair a stale startup projection after source-changing work becomes idle."""
+
+    task_type = COMPOSITE_DUPLICATE_STARTUP_RECONCILE_TASK_TYPE
+    lane_key = COMPOSITE_DUPLICATE_STARTUP_RECONCILE_TASK_TYPE
+    max_concurrency = 1
+
+    def __init__(
+        self,
+        tasks: TaskCoordinator,
+        projection_is_stale: Callable[[], Awaitable[bool]],
+        refresh_projection: Callable[[], Awaitable[object | None]],
+    ) -> None:
+        self._tasks = tasks
+        self._projection_is_stale = projection_is_stale
+        self._refresh_projection = refresh_projection
+
+    async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
+        del payload
+        while True:
+            await context.ensure_active()
+            active_tasks = await self._tasks.list_tasks(active_only=True, limit=100)
+            if not source_change_in_progress(active_tasks):
+                break
+            await context.checkpoint(
+                checkpoint={"phase": "waiting_for_sources"},
+                counters={},
+                progress={
+                    "phase": "composite_duplicates_startup_wait",
+                    "completed": 0,
+                    "total": None,
+                    "percent": None,
+                    "detail": "Waiting for duplicate source work before startup reconciliation",
+                },
+            )
+            await asyncio.sleep(0.5)
+
+        if not await self._projection_is_stale():
+            return TaskResult(
+                summary={"projection_refreshed": False, "reason": "already_current"},
+                counters={},
+            )
+
+        await context.checkpoint(
+            checkpoint={"phase": "refreshing_projection"},
+            counters={},
+            progress={
+                "phase": "composite_duplicates_startup_refresh",
+                "completed": 0,
+                "total": 1,
+                "percent": 0.0,
+                "detail": "Refreshing stale duplicate projection after startup",
+            },
+        )
+        await self._refresh_projection()
+        return TaskResult(
+            summary={"projection_refreshed": True},
+            counters={},
+        )
+
+
+class CompositeDuplicateStartupReconcileService:
+    """Submit one durable, nonblocking startup projection reconciliation."""
+
+    def __init__(self, tasks: TaskCoordinator) -> None:
+        self._tasks = tasks
+
+    async def start(self) -> UUID:
+        task = await self._tasks.submit(
+            COMPOSITE_DUPLICATE_STARTUP_RECONCILE_TASK_TYPE,
+            {},
+            priority=4,
+            deduplication_key=COMPOSITE_DUPLICATE_STARTUP_RECONCILE_DEDUPLICATION_KEY,
+        )
+        await self._tasks.start()
+        return task.id
 
 
 class CompositeDuplicateRebuildTaskHandler:

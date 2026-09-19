@@ -17,6 +17,7 @@ from companion.composite_duplicate_sync import (
     COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY,
     COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE,
     CompositeDuplicateRebuildTaskHandler,
+    CompositeDuplicateStartupReconcileTaskHandler,
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
     composite_projection_is_stale,
@@ -88,6 +89,9 @@ class Context:
 
     async def checkpoint(self, **kwargs) -> None:
         self.checkpoints.append(kwargs)
+
+    async def ensure_active(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
@@ -509,3 +513,68 @@ async def test_task_coordinator_exposes_startup_active_task_listing() -> None:
 
     assert callable(TaskCoordinator.list_tasks)
     assert not hasattr(TaskCoordinator, "list")
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_waits_for_source_work_then_rechecks_staleness(
+    monkeypatch,
+) -> None:
+    active = SimpleNamespace(task_type="similarity_scan", status="running")
+
+    class Tasks:
+        calls = 0
+
+        async def list_tasks(self, **_kwargs):
+            self.calls += 1
+            return [active] if self.calls == 1 else []
+
+    stale_checks = 0
+    refreshes = 0
+
+    async def is_stale():
+        nonlocal stale_checks
+        stale_checks += 1
+        return True
+
+    async def refresh():
+        nonlocal refreshes
+        refreshes += 1
+        return None
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("companion.composite_duplicate_sync.asyncio.sleep", no_sleep)
+    handler = CompositeDuplicateStartupReconcileTaskHandler(Tasks(), is_stale, refresh)
+    context = Context()
+
+    result = await handler.execute(context, {})
+
+    assert stale_checks == 1
+    assert refreshes == 1
+    assert result.summary["projection_refreshed"] is True
+    assert context.checkpoints[0]["checkpoint"] == {"phase": "waiting_for_sources"}
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_skips_projection_when_sources_made_it_current() -> None:
+    class Tasks:
+        async def list_tasks(self, **_kwargs):
+            return []
+
+    async def is_stale():
+        return False
+
+    async def refresh():
+        raise AssertionError("current projection must not be rebuilt")
+
+    result = await CompositeDuplicateStartupReconcileTaskHandler(
+        Tasks(),
+        is_stale,
+        refresh,
+    ).execute(Context(), {})
+
+    assert result.summary == {
+        "projection_refreshed": False,
+        "reason": "already_current",
+    }

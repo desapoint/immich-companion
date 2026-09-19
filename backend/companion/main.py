@@ -78,10 +78,11 @@ from companion.collection_delete_service import (
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
 from companion.composite_duplicate_sync import (
     CompositeDuplicateRebuildTaskHandler,
+    CompositeDuplicateStartupReconcileService,
+    CompositeDuplicateStartupReconcileTaskHandler,
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
     composite_projection_is_stale,
-    source_change_in_progress,
 )
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
@@ -390,6 +391,40 @@ def create_app(
         and composite_duplicate_repository is not None
         else None
     )
+    async def composite_projection_needs_refresh() -> bool:
+        if (
+            composite_duplicate_repository is None
+            or immich_duplicate_repository is None
+            or similarity_scan_repository is None
+        ):
+            return False
+        composite_metadata = await composite_duplicate_repository.metadata()
+        immich_metadata = await immich_duplicate_repository.metadata()
+        similarity_summary = await similarity_scan_repository.latest_completed_summary()
+        return composite_projection_is_stale(
+            composite_metadata.last_success_at,
+            immich_metadata.last_success_at,
+            similarity_summary.completed_at if similarity_summary is not None else None,
+        )
+
+    composite_duplicate_startup_reconcile_service = None
+    if (
+        task_coordinator is not None
+        and composite_duplicate_sync_service is not None
+        and composite_duplicate_repository is not None
+        and immich_duplicate_repository is not None
+        and similarity_scan_repository is not None
+    ):
+        task_coordinator.register_handler(
+            CompositeDuplicateStartupReconcileTaskHandler(
+                task_coordinator,
+                composite_projection_needs_refresh,
+                composite_duplicate_sync_service.refresh_and_wait,
+            )
+        )
+        composite_duplicate_startup_reconcile_service = (
+            CompositeDuplicateStartupReconcileService(task_coordinator)
+        )
     if (
         task_coordinator is not None
         and source_duplicate_discovery is not None
@@ -671,37 +706,10 @@ def create_app(
                 reason="Asset sync does not resume automatically on container startup.",
             )
             await task_coordinator.start()
-            maintenance_task = (
+            if similarity_maintenance_service is not None:
                 await similarity_maintenance_service.start_if_pending()
-                if similarity_maintenance_service is not None
-                else None
-            )
-            projection_stale = False
-            if (
-                composite_duplicate_repository is not None
-                and immich_duplicate_repository is not None
-                and similarity_scan_repository is not None
-            ):
-                composite_metadata = await composite_duplicate_repository.metadata()
-                immich_metadata = await immich_duplicate_repository.metadata()
-                similarity_summary = await similarity_scan_repository.latest_completed_summary()
-                projection_stale = composite_projection_is_stale(
-                    composite_metadata.last_success_at,
-                    immich_metadata.last_success_at,
-                    similarity_summary.completed_at if similarity_summary is not None else None,
-                )
-            active_source_change = source_change_in_progress(
-                await task_coordinator.list_tasks(active_only=True, limit=100)
-            )
-            if (
-                composite_duplicate_sync_service is not None
-                and maintenance_task is None
-                and not active_source_change
-                and projection_stale
-            ):
-                # Pending maintenance owns its follow-up, and a current projection needs
-                # no restart work at all.
-                await composite_duplicate_sync_service.start()
+            if composite_duplicate_startup_reconcile_service is not None:
+                await composite_duplicate_startup_reconcile_service.start()
         try:
             yield
         finally:
