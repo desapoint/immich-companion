@@ -195,6 +195,61 @@ class TaskRepository:
     async def claim(self, worker_id: UUID, *, lease_duration: timedelta) -> TaskStatusView | None:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
+            orphaned_requests = list(
+                (
+                    await session.scalars(
+                        select(TaskRecord)
+                        .where(
+                            TaskRecord.status.in_(("pause_requested", "cancel_requested")),
+                            (TaskRecord.lease_expires_at.is_(None))
+                            | (TaskRecord.lease_expires_at <= now),
+                        )
+                        .with_for_update(skip_locked=True)
+                        .limit(32)
+                    )
+                ).all()
+            )
+            for record in orphaned_requests:
+                previous_status = record.status
+                target_status, attempt_status, event_kind, _resumable = (
+                    _shutdown_release_state(previous_status)
+                )
+                record.status = target_status
+                record.lease_owner = None
+                record.lease_expires_at = None
+                record.next_attempt_at = None
+                record.completed_at = now if target_status == "cancelled" else None
+                if target_status == "cancelled":
+                    record.error = None
+                attempt = await session.scalar(
+                    select(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.task_id == record.id,
+                        TaskAttemptRecord.attempt == record.attempt,
+                        TaskAttemptRecord.status == "running",
+                    )
+                    .with_for_update()
+                )
+                if attempt is not None:
+                    attempt.status = attempt_status
+                    attempt.completed_at = now
+                    attempt.details = {
+                        "type": "worker_lease_expired",
+                        "message": f"Recovered orphaned {previous_status} control request",
+                    }
+                session.add(
+                    TaskEventRecord(
+                        task_id=record.id,
+                        attempt=record.attempt,
+                        kind=event_kind,
+                        details={"reason": "worker_lease_expired"},
+                    )
+                )
+                await session.execute(
+                    text("SELECT pg_notify(:channel, :payload)"),
+                    {"channel": TASK_UPDATE_CHANNEL, "payload": str(record.id)},
+                )
+
             candidates = await session.scalars(
                 select(TaskRecord)
                 .where(

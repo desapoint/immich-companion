@@ -310,3 +310,15 @@ def test_shutdown_release_finalizes_pause_and_cancel_requests() -> None:
         "cancelled",
         False,
     )
+
+
+def test_claim_finalizes_expired_requested_states_before_normal_work() -> None:
+    import inspect
+
+    source = inspect.getsource(coordinator_module.TaskRepository.claim)
+
+    assert '"pause_requested", "cancel_requested"' in source
+    assert "_shutdown_release_state(previous_status)" in source
+    assert '"worker_lease_expired"' in source
+    assert "record.lease_owner = None" in source
+    assert "record.next_attempt_at = None" in source
