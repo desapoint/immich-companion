@@ -10,6 +10,7 @@
   import V2Progress from './V2Progress.svelte';
   import V2Segmented from './V2Segmented.svelte';
   import V2TaskBubble from './V2TaskBubble.svelte';
+  import { v2PagePath } from '../navigation';
 
   type NavItem = { key:string; label:string; href:string; group?:string; position?:'top'|'bottom' };
 
@@ -35,7 +36,7 @@
     {key:'duplicates',label:'Review'},
     {key:'albums',label:'Manage'},
     {key:'settings',label:'More'},
-  ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??`/v2/${mobileItem.key}` })));
+  ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??v2PagePath(mobileItem.key as Parameters<typeof v2PagePath>[0]) })));
   const currentRun=$derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
   const backgroundTasks=$derived(backgroundTaskStatus.workflow?[backgroundTaskStatus.workflow]:backgroundTaskStatus.tasks.map((task)=>({id:task.id,presentation:backgroundTaskPresentation(task)})));

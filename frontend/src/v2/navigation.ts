@@ -13,7 +13,7 @@ export const V2_PAGE_KEYS = [
 export type V2PageKey = (typeof V2_PAGE_KEYS)[number];
 export type V2AssetFilterHandoff = { albumIds?: string[]; tagIds?: string[] };
 
-export const V2_DEFAULT_PAGE: V2PageKey = 'settings';
+export const V2_DEFAULT_PAGE: V2PageKey = 'status';
 export const V2_ASSET_FILTER_HANDOFF_KEY = 'immichCompanionV2AssetFilterHandoff';
 
 const v2PageKeySet = new Set<string>(V2_PAGE_KEYS);
@@ -23,7 +23,7 @@ export function isV2PageKey(value: string): value is V2PageKey {
 }
 
 export function v2PagePath(key: V2PageKey): string {
-  return `/v2/${key}`;
+  return key === 'status' ? '/' : `/${key}`;
 }
 
 export function v2AssetViewerPath(assetId: string): string {
@@ -32,7 +32,7 @@ export function v2AssetViewerPath(assetId: string): string {
 
 export function v2AssetIdFromPath(pathname: string): string | null {
   const normalizedPath = pathname.replace(/\/+$/, '') || '/';
-  const match = /^\/v2\/assets\/([^/]+)$/.exec(normalizedPath);
+  const match = /^\/assets\/([^/]+)$/.exec(normalizedPath);
   if (!match) return null;
   try {
     return decodeURIComponent(match[1]);
@@ -43,11 +43,29 @@ export function v2AssetIdFromPath(pathname: string): string | null {
 
 export function v2PageFromPath(pathname: string): V2PageKey {
   const normalizedPath = pathname.replace(/\/+$/, '') || '/';
-  if (normalizedPath === '/v2') return V2_DEFAULT_PAGE;
+  if (normalizedPath === '/') return V2_DEFAULT_PAGE;
   if (v2AssetIdFromPath(normalizedPath) !== null) return 'assets';
 
-  const match = /^\/v2\/([^/]+)$/.exec(normalizedPath);
+  const match = /^\/([^/]+)$/.exec(normalizedPath);
   return match && isV2PageKey(match[1]) ? match[1] : V2_DEFAULT_PAGE;
+}
+
+/**
+ * Return the canonical frontend URL for an old V2 URL, or null when no
+ * redirect is needed. This intentionally only handles frontend paths; API
+ * endpoints under /api/v2 remain versioned and are not redirected.
+ */
+export function legacyV2RedirectPath(pathname: string): string | null {
+  const normalizedPath = pathname.replace(/\/+$/, '') || '/';
+  if (normalizedPath !== '/v2' && !normalizedPath.startsWith('/v2/')) return null;
+
+  if (normalizedPath === '/v2') return '/';
+
+  const legacyPath = normalizedPath.slice('/v2/'.length);
+  const assetMatch = /^assets\/([^/]+)$/.exec(legacyPath);
+  if (assetMatch) return `/assets/${assetMatch[1]}`;
+  if (isV2PageKey(legacyPath)) return v2PagePath(legacyPath);
+  return '/';
 }
 
 export function v2PageFromLegacyHash(hash: string): V2PageKey | null {

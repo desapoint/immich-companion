@@ -3,6 +3,11 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 describe('V2 page composition', () => {
+  it('is the primary page composition without a legacy branch', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/v2/V2Page.svelte'), 'utf8');
+    expect(source).not.toContain('/v2/');
+  });
+
   it('routes the live restore page instead of the implementation placeholder', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/v2/V2Page.svelte'), 'utf8');
     expect(source).toContain("activeKey === 'restore'");

@@ -13,7 +13,7 @@ async function mockTags(page: Page): Promise<void> {
 
 test('chooses precise, preset, keyboard, and empty colors in the V2 tag modal', async ({ page }) => {
   await mockTags(page);
-  await page.goto('/v2/tags');
+  await page.goto('/tags');
   await expect(page.getByRole('heading', { level: 1, name: 'Tags' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Create tag' }).click();

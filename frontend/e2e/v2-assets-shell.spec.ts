@@ -99,7 +99,7 @@ async function mockViewerAssetWorkspace(page: Page): Promise<void> {
 
 test('routes the implemented live Assets workspace from the V2 shell', async ({ page }) => {
   await mockEmptyAssetWorkspace(page);
-  await page.goto('/v2/assets');
+  await page.goto('/assets');
 
   await expect(page.getByRole('heading', { level: 1, name: 'Assets' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Search assets' })).toBeVisible();
@@ -114,7 +114,7 @@ test('opens the V2 asset viewer without a recursive Svelte effect failure', asyn
   page.on('pageerror', (error) => runtimeErrors.push(error.message));
 
   await mockViewerAssetWorkspace(page);
-  await page.goto('/v2/assets');
+  await page.goto('/assets');
 
   await page.getByRole('button', { name: 'Preview viewer-regression.jpg' }).click();
   const viewer = page.getByRole('dialog', { name: 'Assets Viewer' });
