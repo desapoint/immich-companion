@@ -151,12 +151,16 @@ class BoundedSimilarityCandidateIndex:
         if maximum_neighbors_per_asset < 1:
             raise ValueError("maximum_neighbors_per_asset must be positive")
 
-        received = list(features)
+        by_id: dict[UUID, SimilarityCandidateFeature] = {}
+        assets_received = 0
+        for feature in features:
+            assets_received += 1
+            by_id[feature.asset_id] = feature
         self.ordered_features = sorted(
-            {feature.asset_id: feature for feature in received}.values(),
+            by_id.values(),
             key=lambda feature: feature.asset_id.int,
         )
-        self._by_id = {feature.asset_id: feature for feature in self.ordered_features}
+        self._by_id = by_id
         self._maximum_perceptual_distance = maximum_perceptual_distance
         self._maximum_aspect_difference = maximum_aspect_difference
         self._maximum_neighbors_per_asset = maximum_neighbors_per_asset
@@ -171,7 +175,7 @@ class BoundedSimilarityCandidateIndex:
         self._processed = 0
         self._active_index_assets = 0
         if stats is not None:
-            stats.assets_received = len(received)
+            stats.assets_received = assets_received
 
     @property
     def processed(self) -> int:
@@ -188,8 +192,8 @@ class BoundedSimilarityCandidateIndex:
             raise ValueError("count must be positive")
         start_pair = len(self._pairs)
         stop = min(len(self.ordered_features), self._processed + count)
-        for feature in self.ordered_features[self._processed : stop]:
-            self._process_feature(feature)
+        for index in range(self._processed, stop):
+            self._process_feature(self.ordered_features[index])
         self._processed = stop
         if self._stats is not None:
             self._stats.pairs_emitted = len(self._pairs)
