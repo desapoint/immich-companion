@@ -1,14 +1,12 @@
 <script lang="ts">
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2DuplicateDecisionControls from '../../../v2/components/V2DuplicateDecisionControls.svelte';
   import V2ImageComparison, { type ComparisonMode } from '../../../v2/components/V2ImageComparison.svelte';
-  import V2KeyboardShortcuts, { type KeyboardShortcut } from '../../../v2/components/V2KeyboardShortcuts.svelte';
   import V2LazyAssetMedia from '../../../v2/components/V2LazyAssetMedia.svelte';
   import V2Section from '../../../v2/components/V2Section.svelte';
   import V2ViewerShell from '../../../v2/components/V2ViewerShell.svelte';
   import DuplicateComparisonDetails from './DuplicateComparisonDetails.svelte';
   import DuplicateComparisonSummary from './DuplicateComparisonSummary.svelte';
+  import DuplicateComparisonHeader from './DuplicateComparisonHeader.svelte';
+  import DuplicateComparisonFooter from './DuplicateComparisonFooter.svelte';
   import {
     comparisonMemberData,
     formatSimilarityPercent,
@@ -93,20 +91,6 @@
     onclose: () => void;
   } = $props();
 
-  const shortcuts: KeyboardShortcut[] = [
-    { keys: 'Esc', description: 'Close comparison' },
-    { keys: '←', description: 'Previous image in group' },
-    { keys: '→', description: 'Next image in group' },
-    { keys: ['Shift', '←'], description: 'Previous duplicate group' },
-    { keys: ['Shift', '→'], description: 'Next duplicate group' },
-    { keys: 'R', description: 'Set current asset as reference' },
-    { keys: '1', description: 'Side by side' },
-    { keys: '2', description: 'Swipe' },
-    { keys: '3', description: 'Transparency' },
-    { keys: '4', description: 'Difference' },
-    { keys: '5', description: 'Local changes' },
-    { keys: '6', description: 'Flicker' },
-  ];
 
   let mode = $state<ComparisonMode>('Side by side');
   let split = $state(50);
@@ -410,7 +394,7 @@
 <svelte:window onkeydown={handleShortcut}/>
 
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
-  {#snippet header()}<div class="v2-compare-header-identity"><V2Button onclick={onclose}>✕</V2Button><b class="v2-compare-group-title" title={groupTitle}>{groupTitle}</b><V2Badge text={matchLabel}/><V2Badge text={`${activeCount} images`}/>{#if selectedForReview}<V2Badge tone="ok" text="Selected for review"/>{/if}{#if boundedValidation}<V2Badge tone="warn" text="Bounded validation"/>{/if}</div><div class="v2-compare-header-actions"><V2Button disabled={!canPreviousGroup||groupNavigationLoading} title="Previous duplicate group (Shift+Left)" onclick={()=>void navigateGroup('previous')}>⇤ Previous group</V2Button><V2Button disabled={!activeCount} onclick={prev}>← Previous image</V2Button><V2Button disabled={!activeCount} onclick={next}>Next image →</V2Button><V2Button disabled={!canNextGroup||groupNavigationLoading} title="Next duplicate group (Shift+Right)" onclick={()=>void navigateGroup('next')}>Next group ⇥</V2Button><V2Button disabled={disabled||!selectedAsset} onclick={()=>void setReference()}>Set as reference</V2Button>{#if onrevalidate}<V2Button disabled={disabled||!assetIds[reference]} onclick={()=>void revalidate()}>Revalidate from reference</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></div>{/snippet}
+  {#snippet header()}<DuplicateComparisonHeader {groupTitle} {matchLabel} {activeCount} {selectedForReview} {boundedValidation} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} {disabled} hasSelectedAsset={Boolean(selectedAsset)} hasReference={Boolean(assetIds[reference])} {onclose} onpreviousgroup={()=>void navigateGroup('previous')} onprevious={prev} onnext={next} onnextgroup={()=>void navigateGroup('next')} onreference={()=>void setReference()} onrevalidate={onrevalidate?()=>void revalidate():undefined}/>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual">
     {#if loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if loadError}<div class="v2-compare-media-status" role="alert">{loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance {localDiagnostics} {localDiagnosticsLoading} {localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}{@const evidence=similarityEvidence[assetId]??null}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}{usesBoundedValidation(evidence)?' · Bounded validation':''}</small></button>{/each}</div>
@@ -475,22 +459,13 @@
       {showMemberById}
     />
   </aside></div>
-  {#snippet footer()}<span class="v2-compare-footer-label"><b>{selectedData.name}</b> <span class="v2-small v2-muted">Choose disposition</span></span><div class="v2-compare-footer-actions"><div class="v2-compare-footer-decisions"><V2DuplicateDecisionControls decision={decisions[decisionKey]} {stackLabel} isPrimary={stackPrimary} decisions={decisionOptions} {disabled} ondecision={setDecision} onprimary={setStackPrimary}/></div><span class="v2-compare-clear-selection"><V2Button disabled={disabled||!decisions[decisionKey]} onclick={clearDecision}>Clear selection</V2Button></span></div>{/snippet}
+  {#snippet footer()}<DuplicateComparisonFooter assetName={selectedData.name} decision={decisions[decisionKey]} {stackLabel} stackPrimary={stackPrimary} decisions={decisionOptions} {disabled} ondecision={setDecision} onprimary={setStackPrimary} onclear={clearDecision}/>{/snippet}
 </V2ViewerShell>
 
 <style>
-  .v2-compare-header-identity,.v2-compare-header-actions{display:flex;align-items:center;gap:var(--v2-space-2);flex-wrap:wrap;min-width:0;max-width:100%}
-  .v2-compare-header-identity{flex:1 1 360px}
-  .v2-compare-header-actions{flex:0 1 auto;justify-content:flex-end}
-  .v2-compare-group-title{display:block;min-width:0;max-width:min(34rem,42vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .v2-compare-footer-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .v2-compare-footer-actions{display:flex;align-items:center;justify-content:flex-end;gap:var(--v2-space-2);flex:0 1 auto;min-width:0;margin-left:auto}
-  .v2-compare-footer-decisions{flex:0 1 25rem;width:min(25rem,100%);min-width:min(20rem,100%)}
-  .v2-compare-footer-decisions :global(.v2-duplicate-decision-controls){margin-top:0}
-  .v2-compare-clear-selection{display:inline-flex;flex:0 0 auto;align-self:center;white-space:nowrap}
   .v2-thumb-media{position:relative;display:block;width:92px;height:92px;overflow:hidden;border-radius:5px}
   .v2-compare-media-status{display:grid;place-items:center;width:100%;height:100%;padding:var(--v2-space-4);color:var(--v2-muted);background:var(--v2-image-workzone);text-align:center}
   .v2-compare-data{display:grid;grid-template-rows:auto minmax(0,1fr);gap:12px;overflow:hidden}
   .v2-compare-header-zone{min-width:0;overflow-x:hidden;overflow-y:auto;scrollbar-gutter:stable both-edges}
-  @media(max-width:720px){.v2-compare-group-title{max-width:calc(100vw - 8rem)}.v2-compare-header-actions{justify-content:flex-start}.v2-compare-footer-actions{flex:1 1 100%;width:100%}.v2-compare-footer-decisions{flex:1 1 18rem;min-width:0}.v2-compare-data{display:flex;overflow:visible}}
+  @media(max-width:720px){.v2-compare-data{display:flex;overflow:visible}}
 </style>

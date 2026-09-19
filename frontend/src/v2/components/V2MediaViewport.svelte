@@ -3,7 +3,7 @@
   import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
   import V2ImageViewport from './V2ImageViewport.svelte';
   import V2VideoPlayer from './V2VideoPlayer.svelte';
-  import { ViewerViewportController } from './viewerViewport.svelte';
+  import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';
 
   let {
     resource,

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import DateTimePickerField from './DateTimePickerField.svelte';
+  import DateTimePickerField from '../../lib/components/ui/DateTimePickerField.svelte';
   import V2AspectRatioField from './V2AspectRatioField.svelte';
   import V2Badge from './V2Badge.svelte';
   import V2Button from './V2Button.svelte';

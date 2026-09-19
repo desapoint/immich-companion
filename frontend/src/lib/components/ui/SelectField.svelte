@@ -3,6 +3,8 @@ import { onDestroy, onMount, tick } from 'svelte';
 
   import { clickOutside } from '../../actions/clickOutside';
   import type { SelectOption } from '../../types/ui';
+  import SelectOptionList from './SelectOptionList.svelte';
+  import { adjacentEnabledIndex, firstEnabledIndex, lastEnabledIndex, selectedOptionIndex, typeaheadIndex } from './selectOptions';
 
   interface Props {
     id: string;
@@ -36,30 +38,8 @@ import { onDestroy, onMount, tick } from 'svelte';
 
   const selectedOption = $derived(options.find((option) => option.value === value));
 
-  function firstEnabledIndex(): number {
-    return options.findIndex((option) => !option.disabled);
-  }
-
-  function lastEnabledIndex(): number {
-    for (let index = options.length - 1; index >= 0; index -= 1) {
-      if (!options[index]?.disabled) return index;
-    }
-    return -1;
-  }
-
   function selectedIndex(): number {
-    const index = options.findIndex((option) => option.value === value && !option.disabled);
-    return index >= 0 ? index : firstEnabledIndex();
-  }
-
-  function adjacentEnabledIndex(start: number, direction: 1 | -1): number {
-    if (options.length === 0) return -1;
-    let index = start;
-    for (let attempt = 0; attempt < options.length; attempt += 1) {
-      index = (index + direction + options.length) % options.length;
-      if (!options[index]?.disabled) return index;
-    }
-    return -1;
+    return selectedOptionIndex(options, value);
   }
 
   async function focusActiveOption(): Promise<void> {
@@ -69,7 +49,7 @@ import { onDestroy, onMount, tick } from 'svelte';
 
   async function openList(preferredIndex = selectedIndex()): Promise<void> {
     if (disabled || options.length === 0) return;
-    activeIndex = preferredIndex >= 0 ? preferredIndex : firstEnabledIndex();
+    activeIndex = preferredIndex >= 0 ? preferredIndex : firstEnabledIndex(options);
     open = true;
     await tick();
     positionList();
@@ -95,7 +75,7 @@ import { onDestroy, onMount, tick } from 'svelte';
   }
 
   async function moveActive(direction: 1 | -1): Promise<void> {
-    activeIndex = adjacentEnabledIndex(activeIndex, direction);
+    activeIndex = adjacentEnabledIndex(options, activeIndex, direction);
     await focusActiveOption();
   }
 
@@ -112,16 +92,16 @@ import { onDestroy, onMount, tick } from 'svelte';
       void openList(selectedIndex());
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
-      void openList(lastEnabledIndex());
+      void openList(lastEnabledIndex(options));
     } else if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
       void openList();
     } else if (event.key === 'Home') {
       event.preventDefault();
-      void openList(firstEnabledIndex());
+      void openList(firstEnabledIndex(options));
     } else if (event.key === 'End') {
       event.preventDefault();
-      void openList(lastEnabledIndex());
+      void openList(lastEnabledIndex(options));
     }
   }
 
@@ -129,9 +109,7 @@ import { onDestroy, onMount, tick } from 'svelte';
     typeahead += key.toLocaleLowerCase();
     if (typeaheadTimer) clearTimeout(typeaheadTimer);
     typeaheadTimer = setTimeout(() => (typeahead = ''), 600);
-    const match = options.findIndex((option) => (
-      !option.disabled && option.label.toLocaleLowerCase().startsWith(typeahead)
-    ));
+    const match = typeaheadIndex(options, typeahead);
     if (match >= 0) {
       activeIndex = match;
       void focusActiveOption();
@@ -150,12 +128,12 @@ import { onDestroy, onMount, tick } from 'svelte';
     } else if (event.key === 'Home') {
       event.preventDefault();
       event.stopPropagation();
-      activeIndex = firstEnabledIndex();
+      activeIndex = firstEnabledIndex(options);
       void focusActiveOption();
     } else if (event.key === 'End') {
       event.preventDefault();
       event.stopPropagation();
-      activeIndex = lastEnabledIndex();
+      activeIndex = lastEnabledIndex(options);
       void focusActiveOption();
     } else if (event.key === 'Escape') {
       event.preventDefault();
@@ -217,38 +195,19 @@ import { onDestroy, onMount, tick } from 'svelte';
   </button>
 
   {#if open}
-    <div
-      bind:this={listElement}
+    <SelectOptionList
       id={`${id}-options`}
-      class="option-list"
-      style={listStyle}
-      role="listbox"
-      aria-labelledby={`${id}-label`}
-      aria-required={required}
-    >
-      {#each options as option, index (option.value)}
-        <button
-          id={`${id}-option-${index}`}
-          class:active={index === activeIndex}
-          class:selected={option.value === value}
-          class="option"
-          type="button"
-          role="option"
-          aria-selected={option.value === value}
-          disabled={option.disabled}
-          tabindex={index === activeIndex ? 0 : -1}
-          data-option-index={index}
-          onclick={() => choose(option)}
-          onfocus={() => (activeIndex = index)}
-          onkeydown={handleOptionKeydown}
-        >
-          <span>{option.label}</span>
-          {#if option.value === value}
-            <span class="check" aria-hidden="true">✓</span>
-          {/if}
-        </button>
-      {/each}
-    </div>
+      labelId={`${id}-label`}
+      {value}
+      {options}
+      {activeIndex}
+      {listStyle}
+      {required}
+      onchoose={choose}
+      onfocusoption={(index) => (activeIndex = index)}
+      onkeydown={handleOptionKeydown}
+      bind:element={listElement}
+    />
   {/if}
 </div>
 
@@ -332,76 +291,10 @@ import { onDestroy, onMount, tick } from 'svelte';
     transform: translateY(0.13rem) rotate(225deg);
   }
 
-  .option-list {
-    position: fixed;
-    z-index: 1300;
-    display: grid;
-    width: 100%;
-    max-height: min(19rem, 48vh);
-    gap: 0.18rem;
-    padding: 0.32rem;
-    overflow-y: auto;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-sm);
-    background: var(--color-surface-raised);
-    box-shadow: 0 0.8rem 2.2rem rgb(17 24 19 / 18%);
-    overscroll-behavior: contain;
-  }
-
-  .option {
-    display: grid;
-    width: 100%;
-    min-height: 2.25rem;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.75rem;
-    padding: 0.48rem 0.58rem;
-    border: 0;
-    border-radius: calc(var(--radius-sm) - 0.18rem);
-    color: var(--color-ink-strong);
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
-    text-align: left;
-  }
-
-  .option:hover:not(:disabled),
-  .option.active {
-    color: var(--color-accent-strong);
-    background: var(--color-surface-soft);
-  }
-
-  .option.selected {
-    font-weight: 780;
-  }
-
-  .option > span:first-child {
-    overflow-wrap: anywhere;
-  }
-
-  .option:focus-visible {
-    outline: 0.14rem solid var(--color-accent-strong);
-    outline-offset: -0.14rem;
-  }
-
-  .option:disabled {
-    cursor: default;
-    opacity: 0.46;
-  }
-
-  .check {
-    color: var(--color-accent-strong);
-    font-weight: 900;
-  }
-
   .compact .select-trigger {
     min-height: 2.3rem;
     padding-block: 0.42rem;
     font-size: 0.78rem;
   }
 
-  .compact .option {
-    min-height: 2.1rem;
-    font-size: 0.78rem;
-  }
 </style>

@@ -14,6 +14,8 @@
   import V2Segmented from './V2Segmented.svelte';
   import V2Stack from './V2Stack.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
+  import DuplicateAutomationRulesEditor from '../../features/duplicates/components/DuplicateAutomationRulesEditor.svelte';
+  import DuplicateKeeperPriorityEditor from '../../features/duplicates/components/DuplicateKeeperPriorityEditor.svelte';
   import type {
     AssetRecord,
     DuplicateDecision,
@@ -294,68 +296,9 @@
       </V2Stack>
     </V2Card>
 
-    <div class="automation-heading"><div><h3>Decision rules</h3><p>Each rule has conditions, a target, an action, and flow control. Earlier decisions are protected from later rules. Manual choices are protected unless replacement is explicitly enabled.</p></div><V2Button onclick={addAutomationRule}><Plus size={15}/> Add rule</V2Button></div>
+    <DuplicateAutomationRulesEditor rules={rules} {albumOptions} {tagOptions} {albumLoading} {tagLoading} updateRule={updateAutomationRule} addRule={addAutomationRule} removeRule={removeAutomationRule} moveRule={moveAutomationRule} {addCondition} {removeCondition} {updateCondition} {loadOptions} {conditionInputKind} {placeholder} {setConditionRelations}/>
 
-    <div class="automation-rule-list">
-      {#each rules as rule,index (rule.id)}
-        <V2Card>
-          <V2Stack gap="sm">
-            <div class="automation-rule-header">
-              <div class="rule-order"><V2Button iconOnly ariaLabel="Move rule up" disabled={index===0} onclick={()=>moveAutomationRule(index,-1)}><ArrowUp size={15}/></V2Button><strong>Rule {index+1}</strong><V2Button iconOnly ariaLabel="Move rule down" disabled={index===rules.length-1} onclick={()=>moveAutomationRule(index,1)}><ArrowDown size={15}/></V2Button></div>
-              <V2Inline gap="sm"><SelectField id={`automation-logic-${rule.id}`} label="Conditions" value={rule.logic} options={[{value:'all',label:'All must match'},{value:'any',label:'Any may match'}]} onchange={(value)=>updateAutomationRule(rule.id,{logic:value as DuplicateAutomationUiRule['logic']})}/><V2Button variant="danger" iconOnly ariaLabel="Remove rule" onclick={()=>removeAutomationRule(rule.id)}><Trash2 size={15}/></V2Button></V2Inline>
-            </div>
-            <div class="condition-list">
-              {#each rule.conditions as condition (condition.id)}
-                {@const conditionKind=conditionInputKind(condition)}
-                {@const operators=automationOperatorOptions(condition)}
-                <div class="condition-row">
-                  <SelectField id={`condition-scope-${condition.id}`} label="When" value={condition.scope} options={[...automationConditionScopeOptions]} onchange={(value)=>updateCondition(rule.id,condition.id,{scope:value as DuplicateAutomationConditionScope})}/>
-                  <SelectField id={`condition-field-${condition.id}`} label="Field" value={condition.field} options={automationConditionFieldOptions(condition.scope)} searchable onchange={(value)=>updateCondition(rule.id,condition.id,{field:value as DuplicateAutomationConditionField})}/>
-                  <SelectField id={`condition-op-${condition.id}`} label="Match" value={condition.operator} options={[...operators]} onchange={(value)=>updateCondition(rule.id,condition.id,{operator:value as DuplicateAutomationUiCondition['operator']})}/>
-                  {#if automationConditionNeedsValue(condition)}
-                    {#if conditionKind==='media'}
-                      <SelectField id={`condition-value-${condition.id}`} label="Value" value={condition.value} options={[{value:'image',label:'Image'},{value:'video',label:'Video'},{value:'audio',label:'Audio'},{value:'other',label:'Other'}]} onchange={(value)=>updateCondition(rule.id,condition.id,{value})}/>
-                    {:else if conditionKind==='availability'}
-                      <SelectField id={`condition-value-${condition.id}`} label="Value" value={condition.value} options={[{value:'online',label:'Online'},{value:'offline',label:'Offline'}]} onchange={(value)=>updateCondition(rule.id,condition.id,{value})}/>
-                    {:else if conditionKind==='date'}
-                      <DateTimePickerField id={`condition-value-${condition.id}`} label="Value" value={condition.value} showTime onchange={(value)=>updateCondition(rule.id,condition.id,{value})}/>
-                    {:else if conditionKind==='relation'}
-                      <SelectField id={`condition-value-${condition.id}`} label="Value" multiple values={relationValues(condition.value)} options={condition.field==='album'?albumOptions:tagOptions} searchable loading={condition.field==='album'?albumLoading:tagLoading} searchPlaceholder={`Search ${condition.field}s…`} onvalueschange={(values)=>setConditionRelations(rule.id,condition,values)} onsearchchange={(query)=>void loadOptions(condition.field==='album'?'album':'tag',query)}/>
-                    {:else if condition.field==='classification'}
-                      <SelectField id={`condition-value-${condition.id}`} label="Value" value={condition.value} multiple values={relationValues(condition.value)} options={[{value:'exact file',label:'Exact file'},{value:'exact pixels',label:'Exact pixels'},{value:'likely same',label:'Likely same'},{value:'similar',label:'Similar'},{value:'mismatch',label:'Mismatch'},{value:'unverified',label:'Unverified'},{value:'unavailable',label:'Unavailable'},{value:'ineligible',label:'Ineligible'}]} onvalueschange={(values)=>updateCondition(rule.id,condition.id,{value:values.join(',')})}/>
-                    {:else if condition.field==='review_state'}
-                      <SelectField id={`condition-value-${condition.id}`} label="Value" value={condition.value} options={['Actionable','Needs review','Needs decisions','Blocked'].map((value)=>({value,label:value}))} onchange={(value)=>updateCondition(rule.id,condition.id,{value})}/>
-                    {:else if condition.field==='discovery_source'}
-                      <SelectField id={`condition-value-${condition.id}`} label="Value" value={condition.value} options={[{value:'immich_duplicate',label:'Immich'},{value:'companion_similarity',label:'Similarity'}]} onchange={(value)=>updateCondition(rule.id,condition.id,{value})}/>
-                    {:else}
-                      <V2Field label="Value" type={conditionKind==='number'?'number':'text'} value={condition.value} placeholder={placeholder(condition.field)} step={conditionKind==='number'?'any':undefined} onvalueinput={(value)=>updateCondition(rule.id,condition.id,{value})}/>
-                    {/if}
-                  {:else}<div class="no-value">No value needed</div>{/if}
-                  {#if condition.scope==='at_least_members'}<V2Field label="N" type="number" value={String(condition.count)} min="1" step="1" onvalueinput={(value)=>updateCondition(rule.id,condition.id,{count:Math.max(1,Number.parseInt(value||'1',10)||1)})}/>{/if}
-                  <V2Button variant="danger" iconOnly ariaLabel="Remove condition" disabled={rule.conditions.length===1} onclick={()=>removeCondition(rule.id,condition.id)}><Trash2 size={15}/></V2Button>
-                </div>
-              {/each}
-            </div>
-            <V2Button onclick={()=>addCondition(rule.id)}><Plus size={15}/> Add condition</V2Button>
-            <div class="rule-actions">
-              <SelectField id={`automation-target-${rule.id}`} label="Target" value={rule.target} options={[...automationTargetOptions]} onchange={(value)=>updateAutomationRule(rule.id,{target:value as DuplicateAutomationUiRule['target']})}/>
-              <SelectField id={`automation-action-${rule.id}`} label="Action" value={rule.action} options={[...automationActionOptions]} onchange={(value)=>updateAutomationRule(rule.id,{action:value as DuplicateAutomationUiRule['action']})}/>
-              <SelectField id={`automation-flow-${rule.id}`} label="After" value={rule.flow} options={[...automationFlowOptions]} onchange={(value)=>updateAutomationRule(rule.id,{flow:value as DuplicateAutomationUiRule['flow']})}/>
-            </div>
-            {#if rule.target==='matching_members'&&!rule.conditions.some((condition)=>condition.scope==='member')}<p class="automation-warning">Matching members needs at least one condition whose scope is Member.</p>{/if}
-          </V2Stack>
-        </V2Card>
-      {/each}
-    </div>
-
-    <div class="automation-heading"><div><h3>Keeper priority</h3><p>Used only when a rule chooses “Resolve using keeper priority”. Require filters candidates first; Prefer and Avoid then narrow them in order. A remaining tie uses the current reference, otherwise the group stays for manual review.</p></div><V2Button onclick={addKeeperRule}><Plus size={15}/> Add keeper condition</V2Button></div>
-    <V2Card><SelectField id="keeper-preset" label="Keeper preset" value={keeperPresetName} options={keeperPresetNames.map((value)=>({value,label:value}))} onchange={applyKeeperPreset}/></V2Card>
-    <div class="keeper-rule-list">
-      {#each keeperRules as rule,index (rule.id)}
-        {@const definition=keeperFieldDefinition(rule.field)}{@const operators=keeperOperatorOptions(rule.field,rule.effect)}
-        <V2Card><div class="keeper-rule-row"><div class="rule-order"><V2Button iconOnly ariaLabel="Move keeper condition up" disabled={index===0} onclick={()=>moveKeeperRule(index,-1)}><ArrowUp size={15}/></V2Button><span>{index+1}</span><V2Button iconOnly ariaLabel="Move keeper condition down" disabled={index===keeperRules.length-1} onclick={()=>moveKeeperRule(index,1)}><ArrowDown size={15}/></V2Button></div><SelectField id={`keeper-effect-${rule.id}`} label="Behavior" value={rule.effect} options={keeperEffectOptions} onchange={(value)=>updateKeeperRule(rule.id,{effect:value as DuplicateKeeperUiRule['effect']})}/><SelectField id={`keeper-field-${rule.id}`} label="Condition" value={rule.field} options={keeperRuleFieldOptions} searchable onchange={(value)=>updateKeeperRule(rule.id,{field:value as DuplicateKeeperRuleField})}/><SelectField id={`keeper-operator-${rule.id}`} label="Match" value={rule.operator} options={[...operators]} onchange={(value)=>updateKeeperRule(rule.id,{operator:value as DuplicateKeeperUiRule['operator']})}/><div>{#if keeperRuleNeedsValue(rule)}{#if definition.kind==='media'}<SelectField id={`keeper-value-${rule.id}`} label="Value" value={rule.value} options={[{value:'image',label:'Image'},{value:'video',label:'Video'},{value:'audio',label:'Audio'},{value:'other',label:'Other'}]} onchange={(value)=>updateKeeperRule(rule.id,{value})}/>{:else if definition.kind==='availability'}<SelectField id={`keeper-value-${rule.id}`} label="Value" value={rule.value} options={[{value:'online',label:'Online'},{value:'offline',label:'Offline'}]} onchange={(value)=>updateKeeperRule(rule.id,{value})}/>{:else if definition.kind==='date'}<DateTimePickerField id={`keeper-value-${rule.id}`} label="Value" value={rule.value} showTime onchange={(value)=>updateKeeperRule(rule.id,{value})}/>{:else if definition.kind==='relation'}<SelectField id={`keeper-value-${rule.id}`} label="Value" multiple values={relationValues(rule.value)} options={rule.field==='album'?albumOptions:tagOptions} searchable loading={rule.field==='album'?albumLoading:tagLoading} onvalueschange={(values)=>setKeeperRelations(rule,values)} onsearchchange={(query)=>void loadOptions(rule.field==='album'?'album':'tag',query)}/>{:else}<V2Field label="Value" type={definition.kind==='number'?'number':'text'} value={rule.value} step={definition.kind==='number'?'any':undefined} onvalueinput={(value)=>updateKeeperRule(rule.id,{value})}/>{/if}{:else}<div class="no-value">No value needed</div>{/if}</div><V2Button variant="danger" iconOnly ariaLabel="Remove keeper condition" onclick={()=>removeKeeperRule(rule.id)}><Trash2 size={15}/></V2Button></div></V2Card>
-      {/each}
-    </div>
+    <DuplicateKeeperPriorityEditor rules={keeperRules} presetName={keeperPresetName} {albumOptions} {tagOptions} {albumLoading} {tagLoading} setPreset={applyKeeperPreset} updateRule={updateKeeperRule} addRule={addKeeperRule} removeRule={removeKeeperRule} moveRule={moveKeeperRule} {loadOptions}/>
 
     {#if preview}
       <V2Card><V2Stack gap="sm"><strong>{preview.wouldApplyGroupCount.toLocaleString()} groups would receive automation changes</strong><div class="preview-grid"><span><b>{preview.matchedGroupCount.toLocaleString()}</b> in scope</span><span><b>{preview.completeGroupCount.toLocaleString()}</b> complete drafts</span><span><b>{preview.partialGroupCount.toLocaleString()}</b> partial drafts</span><span><b>{preview.manualReviewGroupCount.toLocaleString()}</b> need manual review</span><span><b>{preview.keepCount.toLocaleString()}</b> automatic Keep</span><span><b>{preview.trashCount.toLocaleString()}</b> automatic Delete</span><span><b>{preview.stackCount.toLocaleString()}</b> automatic Stack</span><span><b>{preview.undecidedMemberCount.toLocaleString()}</b> members left undecided</span><span><b>{preview.preservedManualGroupCount.toLocaleString()}</b> groups preserving manual choices</span><span><b>{preview.ambiguousGroupCount.toLocaleString()}</b> safely left ambiguous</span><span><b>{preview.blockedGroupCount.toLocaleString()}</b> blocked groups skipped</span></div>{#if preview.limitExceeded}<p class="automation-warning">The matching set exceeds the {MAX_AUTOMATION_GROUPS.toLocaleString()}-group safety limit. Narrow the current filters before applying.</p>{/if}</V2Stack></V2Card>
@@ -367,16 +310,7 @@
 
 <style>
   .automation-grid{display:grid;gap:12px;grid-template-columns:repeat(2,minmax(0,1fr))}
-  .automation-heading,.automation-rule-header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px}
-  .automation-heading h3{margin:0 0 4px}.automation-heading p{margin:0;color:var(--v2-text-muted);max-width:820px}
-  .automation-rule-list,.condition-list,.keeper-rule-list{display:grid;gap:10px}
-  .rule-order{display:flex;align-items:center;gap:6px}.rule-order span{min-width:22px;text-align:center;font-variant-numeric:tabular-nums}
-  .condition-row{display:grid;grid-template-columns:minmax(130px,.8fr) minmax(170px,1.2fr) minmax(140px,.9fr) minmax(170px,1fr) minmax(80px,.4fr) auto;gap:10px;align-items:end}
-  .rule-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-  .keeper-rule-row{display:grid;grid-template-columns:auto minmax(120px,.7fr) minmax(180px,1.25fr) minmax(150px,1fr) minmax(180px,1.2fr) auto;gap:10px;align-items:end}
-  .no-value{min-height:40px;display:flex;align-items:center;color:var(--v2-text-muted);font-size:.9rem}
   .preview-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 16px}
   .automation-warning,.automation-error{margin:0;color:var(--v2-danger)}
-  @media(max-width:1050px){.condition-row{grid-template-columns:1fr 1fr 1fr}.keeper-rule-row{grid-template-columns:1fr 1fr}.rule-order{grid-column:1/-1}}
-  @media(max-width:760px){.automation-grid,.rule-actions,.preview-grid,.condition-row{grid-template-columns:1fr}.automation-heading,.automation-rule-header{align-items:stretch;flex-direction:column}}
+  @media(max-width:760px){.automation-grid,.preview-grid{grid-template-columns:1fr}}
 </style>

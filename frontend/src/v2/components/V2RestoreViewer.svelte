@@ -11,7 +11,7 @@
   import V2ViewerAssetFacts from './V2ViewerAssetFacts.svelte';
   import V2ZoomControl from './V2ZoomControl.svelte';
   import { isViewerSelectionShortcut } from './viewerSelection';
-  import { ViewerViewportController } from './viewerViewport.svelte';
+  import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';
   import { libraryData } from '../data/currentDataSource.svelte';
   import { errorMessage } from '../data/mutationFeedback';
   import type { MediaResource, TrashAssetRecord, ViewerNavigationWindow } from '../data/contracts';

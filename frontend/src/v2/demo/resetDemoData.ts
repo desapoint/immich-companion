@@ -1,4 +1,4 @@
-import { resetDemoAssetState } from './demoAssetState.svelte';
+import { resetDemoAssetState } from '../../features/playground/state/demoAssetState.svelte';
 
 const DEMO_STORAGE_PREFIX = 'immichCompanionV2Demo';
 

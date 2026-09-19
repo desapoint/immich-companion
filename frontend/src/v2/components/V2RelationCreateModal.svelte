@@ -2,7 +2,7 @@
   import SelectField from './SelectField.svelte';
   import V2Button from './V2Button.svelte';
   import V2Card from './V2Card.svelte';
-  import V2ColorField from './V2ColorField.svelte';
+  import ColorField from '../../lib/components/ui/ColorField.svelte';
   import V2ColorSwatch from './V2ColorSwatch.svelte';
   import V2Field from './V2Field.svelte';
   import V2Modal from './V2Modal.svelte';
@@ -78,7 +78,7 @@
     {#if kind==='album'}
       <V2Field label="Description" value={description} multiline={true} disabled={saving||busy} onchange={(value)=>description=value}/>
     {:else}
-      <V2ColorField id="asset-create-tag-color" label="Color" value={color} disabled={saving||busy} onchange={(value)=>color=value}/>
+      <ColorField id="asset-create-tag-color" label="Color" value={color} disabled={saving||busy} onchange={(value)=>color=value}/>
       <SelectField id="asset-create-tag-parent" label="Parent" value={parentPath} options={parentOptions} allowEmpty searchable searchPlaceholder="Search parent tags or paths…" placeholder="No parent — root tag" disabled={saving||busy} onchange={(value)=>parentPath=value}/>
       <V2Section title="Hierarchy preview"><V2Card><span class="create-tag-preview"><V2ColorSwatch {color} size="sm"/><span class="v2-small">{parentPath?`${parentPath} / ${name||'New tag'}`:name||'Root tag'}</span></span></V2Card></V2Section>
     {/if}

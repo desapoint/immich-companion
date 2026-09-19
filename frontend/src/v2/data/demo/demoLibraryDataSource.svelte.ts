@@ -4,7 +4,7 @@ import {
   removeDemoAssetsFromStacks, removeDemoCompleteStack, removeDemoTagsFromAssets, restoreDemoTrashAssets,
   setDemoAssetsArchived, setDemoAssetsFavorite, setDemoStackPrimary, stackDemoAssets, syncDemoAssets,
   trashApiDemoAssets, trashDemoAssets, updateDemoAlbum, updateDemoTag,
-} from '../../demo/demoAssetState.svelte';
+} from '../../../features/playground/state/demoAssetState.svelte';
 import { normalizeDemoStacks } from '../../demo/demoAssetConsistency';
 import { demoAssetFullSize, demoAssetPreview } from '../../demo/demoAssetVisuals';
 import { demoDifferenceMask } from '../../demo/duplicateVisuals';

@@ -44,7 +44,7 @@
   import { SavedSearchController } from '../state/savedSearches.svelte';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { LatestRequestController } from '../state/latestRequest';
-  import { AssetSelectionWorkspaceController } from '../state/assetSelectionWorkspace.svelte';
+  import { AssetSelectionWorkspaceController } from '../../features/assets/state/assetSelectionWorkspace.svelte';
   import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
   import { consumeV2AssetFilterHandoff, v2AssetIdFromPath, v2AssetViewerPath, v2PagePath } from '../navigation';
   import { libraryData } from '../data/currentDataSource.svelte';

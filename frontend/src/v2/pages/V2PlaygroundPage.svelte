@@ -1,11 +1,11 @@
 <script lang="ts">
-  import DateTimePickerField from '../components/DateTimePickerField.svelte';
+  import DateTimePickerField from '../../lib/components/ui/DateTimePickerField.svelte';
   import SelectField from '../components/SelectField.svelte';
   import V2Badge from '../components/V2Badge.svelte';
   import V2Button from '../components/V2Button.svelte';
   import V2Card from '../components/V2Card.svelte';
   import V2Checkbox from '../components/V2Checkbox.svelte';
-  import V2ColorField from '../components/V2ColorField.svelte';
+  import ColorField from '../../lib/components/ui/ColorField.svelte';
   import V2Field from '../components/V2Field.svelte';
   import V2Inline from '../components/V2Inline.svelte';
   import V2Modal from '../components/V2Modal.svelte';
@@ -113,7 +113,7 @@
       </V2Card>
 
       <V2Card title="Color field">
-        <V2Stack gap="sm"><V2ColorField id="playground-color" label="Reusable color" value={color} onchange={(value)=>color=value}/><span class="v2-small v2-muted">Selected: {color??'No color'}</span></V2Stack>
+        <V2Stack gap="sm"><ColorField id="playground-color" label="Reusable color" value={color} onchange={(value)=>color=value}/><span class="v2-small v2-muted">Selected: {color??'No color'}</span></V2Stack>
       </V2Card>
 
       <V2Card title="Video playback overlay">

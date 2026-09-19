@@ -11,6 +11,7 @@
     toLocalDateTimeValue,
   } from '../../utils/dateTime';
   import SelectField from './SelectField.svelte';
+  import DateTimeCalendar from './DateTimeCalendar.svelte';
 
   interface Props {
     id: string;
@@ -229,36 +230,19 @@
       aria-labelledby={`${id}-picker-title`}
       onkeydown={handlePanelKeydown}
     >
-      <header class="calendar-header">
-        <button type="button" onclick={() => changeMonth(-1)} aria-label="Previous month" title="Previous month">‹</button>
-        <strong id={`${id}-picker-title`}>{monthLabel}</strong>
-        <button type="button" onclick={() => changeMonth(1)} aria-label="Next month" title="Next month">›</button>
-      </header>
-
-      <div class="weekday-grid" aria-hidden="true">
-        {#each weekdays as weekday}
-          <span>{weekday}</span>
-        {/each}
-      </div>
-
-      <div bind:this={calendarElement} class="day-grid" aria-label={monthLabel}>
-        {#each calendarDays as day (day.date)}
-          <button
-            class:outside={!day.inCurrentMonth}
-            class:selected={day.date === draftDate}
-            class:today={day.date === today}
-            type="button"
-            data-date={day.date}
-            tabindex={day.date === focusedDate ? 0 : -1}
-            aria-label={new Intl.DateTimeFormat(undefined, { dateStyle: 'full' }).format(parseDateKey(day.date) ?? now)}
-            aria-pressed={day.date === draftDate}
-            aria-current={day.date === today ? 'date' : undefined}
-            onclick={() => selectDate(day.date)}
-            onfocus={() => (focusedDate = day.date)}
-            onkeydown={handleDayKeydown}
-          >{day.day}</button>
-        {/each}
-      </div>
+      <DateTimeCalendar
+        {id}
+        {monthLabel}
+        days={calendarDays}
+        {today}
+        selectedDate={draftDate}
+        {focusedDate}
+        onmonthchange={changeMonth}
+        onselect={selectDate}
+        onfocusdate={(date) => (focusedDate = date)}
+        onkeydown={handleDayKeydown}
+        bind:element={calendarElement}
+      />
 
       <div class="time-row">
         <SelectField
@@ -397,20 +381,6 @@
     box-shadow: 0 1rem 2.6rem rgb(17 24 19 / 22%);
   }
 
-  .calendar-header {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: 0.5rem;
-  }
-
-  .calendar-header strong {
-    font-size: 0.84rem;
-    text-align: center;
-  }
-
-  .calendar-header button,
-  .day-grid button,
   .now-button,
   .picker-actions button {
     border: 1px solid transparent;
@@ -421,17 +391,6 @@
     font: inherit;
   }
 
-  .calendar-header button {
-    width: 2.15rem;
-    height: 2.15rem;
-    border-color: var(--color-border-subtle);
-    background: var(--color-surface-soft);
-    font-size: 1.35rem;
-    line-height: 1;
-  }
-
-  .calendar-header button:hover,
-  .day-grid button:hover,
   .now-button:hover,
   .picker-actions button:hover:not(:disabled) {
     border-color: var(--color-accent-strong);
@@ -439,48 +398,6 @@
     background: var(--color-surface-soft);
   }
 
-  .weekday-grid,
-  .day-grid {
-    display: grid;
-    grid-template-columns: repeat(7, minmax(0, 1fr));
-    gap: 0.16rem;
-  }
-
-  .weekday-grid span {
-    padding-block: 0.2rem;
-    color: var(--color-ink-muted);
-    font-size: 0.58rem;
-    font-weight: 800;
-    text-align: center;
-    text-transform: uppercase;
-  }
-
-  .day-grid button {
-    aspect-ratio: 1;
-    min-width: 0;
-    padding: 0;
-    font-size: 0.72rem;
-  }
-
-  .day-grid button.outside {
-    color: var(--color-ink-muted);
-    opacity: 0.5;
-  }
-
-  .day-grid button.today {
-    border-color: var(--color-accent-strong);
-  }
-
-  .day-grid button.selected {
-    border-color: var(--color-accent-strong);
-    color: var(--color-ink-inverse);
-    background: var(--color-accent-strong);
-    font-weight: 820;
-    opacity: 1;
-  }
-
-  .day-grid button:focus-visible,
-  .calendar-header button:focus-visible,
   .now-button:focus-visible,
   .picker-actions button:focus-visible {
     outline: 0.15rem solid var(--color-accent-strong);

@@ -1,4 +1,4 @@
-import { demoAssetState } from './demoAssetState.svelte';
+import { demoAssetState } from '../../features/playground/state/demoAssetState.svelte';
 import { formatBytes } from '../../lib/utils/fileSize';
 
 export function demoCompareImage(group: number, index: number): string {

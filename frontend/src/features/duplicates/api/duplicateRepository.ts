@@ -1,25 +1,23 @@
 import { jsonRequest, requestJson } from '../../../lib/api/http';
 import type {
-  AssetRecord,
   DuplicateDecision,
   DuplicateDiscoveryOptions,
   DuplicateGroupRecord,
   DuplicateKeeperSelectionInput,
-  DuplicateKeeperSelectionResult,
   DuplicatePreparedPlan,
   DuplicateRepository,
   DuplicateResolutionPlan,
   DuplicateSearchQuery,
   DuplicateSource,
-  DuplicateState,
   MutationResult,
   PageResult,
-  SimilarityCacheStatus,
 } from '../../../v2/data/contracts';
 import type { TaskRecord, TaskRepository } from '../../../v2/data/syncContracts';
-import { serializeStackResolution } from '../../../v2/data/stackResolution';
-import { mapDuplicateGroup } from './duplicateMapping';
+import { actionFor, groupResolution, mapDuplicateGroup, primaryFor } from './duplicateMapping';
 import { discoveryProgress, waitForTask } from './duplicateDiscovery';
+import { cacheStatus, historyDays, historySummary, pageNumber, reviewStateParam } from './duplicateRepositorySupport';
+import { createDuplicateDraftController } from './duplicateRepositoryDrafts';
+import { createKeeperSelectionController } from './duplicateRepositoryKeeperSelection';
 
 export { discoveryProgress } from './duplicateDiscovery';
 
@@ -186,7 +184,7 @@ export type ApiDuplicateHistoryPage = {
   pages: number;
 };
 
-const ANALYSIS_OPTIONS: AnalysisOptions = {
+export const ANALYSIS_OPTIONS: AnalysisOptions = {
   keeper_policy: 'prefer_upload',
   external_library_ids: [],
   verify_upload_streams: false,
@@ -206,206 +204,9 @@ type PlanResponse = {
     follow_up?: { primary_asset_id: string; member_asset_ids: string[]; resolution?: string } | null;
   }>;
 };
-type ApiDiskCacheStatus = { path:string;healthy:boolean;used_bytes:number;max_bytes:number;free_bytes:number;entry_count:number;hits:number;misses:number;evictions:number;cleanup_failures:number };
-type ApiSimilarityCacheStatus = { config_fingerprint:string;feature_count:number;feature_estimated_bytes:number;pair_count:number;pair_estimated_bytes:number;pair_max_bytes:number;pair_hits:number;pair_misses:number;pair_evictions:number;hot_count:number;hot_estimated_bytes:number;hot_max_bytes:number;hot_hits:number;hot_misses:number;hot_evictions:number;reference_latency_p50_ms:number|null;reference_latency_p95_ms:number|null;previews:ApiDiskCacheStatus;decode:ApiDiskCacheStatus;generated_at:string };
+export type ApiDiskCacheStatus = { path:string;healthy:boolean;used_bytes:number;max_bytes:number;free_bytes:number;entry_count:number;hits:number;misses:number;evictions:number;cleanup_failures:number };
+export type ApiSimilarityCacheStatus = { config_fingerprint:string;feature_count:number;feature_estimated_bytes:number;pair_count:number;pair_estimated_bytes:number;pair_max_bytes:number;pair_hits:number;pair_misses:number;pair_evictions:number;hot_count:number;hot_estimated_bytes:number;hot_max_bytes:number;hot_hits:number;hot_misses:number;hot_evictions:number;reference_latency_p50_ms:number|null;reference_latency_p95_ms:number|null;previews:ApiDiskCacheStatus;decode:ApiDiskCacheStatus;generated_at:string };
 type ApiSimilarityCacheClearResult = { status:ApiSimilarityCacheStatus };
-
-function diskCacheStatus(value:ApiDiskCacheStatus){return{path:value.path,healthy:value.healthy,usedBytes:value.used_bytes,maxBytes:value.max_bytes,freeBytes:value.free_bytes,entryCount:value.entry_count,hits:value.hits,misses:value.misses,evictions:value.evictions,cleanupFailures:value.cleanup_failures}}
-function cacheStatus(value:ApiSimilarityCacheStatus):SimilarityCacheStatus{return{configFingerprint:value.config_fingerprint,featureCount:value.feature_count,featureEstimatedBytes:value.feature_estimated_bytes,pairCount:value.pair_count,pairEstimatedBytes:value.pair_estimated_bytes,pairMaxBytes:value.pair_max_bytes,pairHits:value.pair_hits,pairMisses:value.pair_misses,pairEvictions:value.pair_evictions,hotCount:value.hot_count,hotEstimatedBytes:value.hot_estimated_bytes,hotMaxBytes:value.hot_max_bytes,hotHits:value.hot_hits,hotMisses:value.hot_misses,hotEvictions:value.hot_evictions,referenceLatencyP50Ms:value.reference_latency_p50_ms,referenceLatencyP95Ms:value.reference_latency_p95_ms,previews:diskCacheStatus(value.previews),decode:diskCacheStatus(value.decode),generatedAt:value.generated_at}}
-
-function pageNumber(query: DuplicateSearchQuery): number {
-  if (query.page) return query.page;
-  const cursor = Number.parseInt(query.cursor ?? '', 10);
-  return Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 1;
-}
-
-function historyDays(range: 'Last 30 days' | 'Last 90 days' | 'All history'): number | null {
-  if (range === 'Last 30 days') return 30;
-  if (range === 'Last 90 days') return 90;
-  return null;
-}
-
-function historySummary(item: ApiDuplicateHistoryItem): string {
-  const count = item.member_count;
-  if (item.review_status === 'reviewed_keep_all') return `Kept all ${count} duplicate assets`;
-  if (item.review_status === 'reviewed_stack_all') return `Stacked ${count} duplicate assets`;
-  if (item.review_status === 'reviewed_mixed') return `Applied mixed decisions to ${count} duplicate assets`;
-  return `Resolved ${count} duplicate assets`;
-}
-
-function reviewStateParam(state: DuplicateSearchQuery['state']): string {
-  if (!state || state === 'All groups' || state === 'Selected') return 'all';
-  if (state === 'Needs review') return 'needs_review';
-  if (state === 'Auto-ready') return 'auto_ready';
-  if (state === 'Blocked') return 'blocked';
-  if (state === 'Actionable') return 'actionable';
-  return 'needs_decisions';
-}
-
-function similarity(member: ApiDuplicateMember): number | null {
-
-  if (!member.similarity) return null;
-  if (member.similarity?.state === 'reference') return 100;
-  return member.similarity.similarity_percent;
-}
-
-function similarityEvidence(member: ApiDuplicateMember) {
-  if (!member.similarity) return null;
-  return {
-    structuralPercent: member.similarity.structural_percent,
-    perceptualPercent: member.similarity.perceptual_percent,
-    colorPercent: member.similarity.color_percent,
-    ...(member.similarity.normalized_luminance_mae !== undefined
-      ? { normalizedLuminanceMae: member.similarity.normalized_luminance_mae } : {}),
-    ...(member.similarity.normalized_luminance_rmse !== undefined
-      ? { normalizedLuminanceRmse: member.similarity.normalized_luminance_rmse } : {}),
-    ...(member.similarity.normalized_luminance_ssim !== undefined
-      ? { normalizedLuminanceSsim: member.similarity.normalized_luminance_ssim } : {}),
-    ...(member.similarity.aspect_ratio_difference !== undefined
-      ? { aspectRatioDifference: member.similarity.aspect_ratio_difference } : {}),
-    ...(member.similarity.dimensions_equal !== undefined
-      ? { dimensionsEqual: member.similarity.dimensions_equal } : {}),
-    ...(member.similarity.exact_thumbnail_match !== undefined
-      ? { exactThumbnailMatch: member.similarity.exact_thumbnail_match } : {}),
-    ...(member.similarity.exact_pixel_match !== undefined
-      ? { exactPixelMatch: member.similarity.exact_pixel_match } : {}),
-    ...(member.similarity.detail_changed_percent !== undefined
-      ? { detailChangedPercent: member.similarity.detail_changed_percent } : {}),
-    ...(member.similarity.detail_source !== undefined
-      ? { detailSource: member.similarity.detail_source } : {}),
-    ...(member.similarity.validated_width !== undefined
-      ? { validatedWidth: member.similarity.validated_width } : {}),
-    ...(member.similarity.validated_height !== undefined
-      ? { validatedHeight: member.similarity.validated_height } : {}),
-    ...(member.similarity.reference_validated_width !== undefined
-      ? { referenceValidatedWidth: member.similarity.reference_validated_width } : {}),
-    ...(member.similarity.reference_validated_height !== undefined
-      ? { referenceValidatedHeight: member.similarity.reference_validated_height } : {}),
-    ...(member.similarity.model_version !== undefined
-      ? { modelVersion: member.similarity.model_version } : {}),
-    ...(member.similarity.feature_version !== undefined
-      ? { featureVersion: member.similarity.feature_version } : {}),
-    ...(member.similarity.comparison_version !== undefined
-      ? { comparisonVersion: member.similarity.comparison_version } : {}),
-  };
-}
-
-function admissionEvidence(member: ApiDuplicateMember) {
-  if (!member.admission) return null;
-  return {
-    admittedByAssetId: member.admission.admitted_by_asset_id,
-    admissionSimilarityPercent: member.admission.admission_similarity_percent,
-    bestGroupMatchAssetId: member.admission.best_group_match_asset_id,
-    bestGroupMatchSimilarityPercent: member.admission.best_group_match_similarity_percent,
-    linkDepth: member.admission.link_depth,
-    modelVersion: member.admission.model_version,
-    featureVersion: member.admission.feature_version,
-    comparisonVersion: member.admission.comparison_version,
-    configFingerprint: member.admission.config_fingerprint,
-  };
-}
-
-function preservationEvidence(member: ApiDuplicateMember) {
-  if (!member.preservation) return null;
-  return {
-    origin: member.preservation.origin,
-    pixelNormalizationVersion: member.preservation.pixel_normalization_version,
-    pixelSha256: member.preservation.pixel_sha256,
-    decodedWidth: member.preservation.decoded_width,
-    decodedHeight: member.preservation.decoded_height,
-    bitDepth: member.preservation.bit_depth,
-    channelCount: member.preservation.channel_count,
-    hasAlpha: member.preservation.has_alpha,
-    colorSpace: member.preservation.color_space,
-    orientation: member.preservation.orientation,
-    iccProfilePresent: member.preservation.icc_profile_present,
-    hasExif: member.preservation.has_exif,
-    hasCaptureTime: member.preservation.has_capture_time,
-    hasCameraInfo: member.preservation.has_camera_info,
-    hasGps: member.preservation.has_gps,
-    hasOrientationMetadata: member.preservation.has_orientation_metadata,
-    metadataRichness: member.preservation.metadata_richness,
-  };
-}
-
-function assetType(mimeType: string | null): AssetRecord['asset_type'] {
-  if (mimeType?.startsWith('video/')) return 'VIDEO';
-  if (mimeType?.startsWith('audio/')) return 'AUDIO';
-  if (mimeType?.startsWith('image/')) return 'IMAGE';
-  return 'OTHER';
-}
-
-function assetFromMember(member: ApiDuplicateMember): AssetRecord {
-  return {
-    id: member.id,
-    owner_id: null,
-    library_id: member.library_id,
-    asset_type: assetType(member.original_mime_type),
-    original_file_name: member.original_file_name,
-    original_path: null,
-    original_mime_type: member.original_mime_type,
-    checksum: null,
-    file_size_bytes: member.file_size_bytes,
-    width: member.evidence.decoded_width ?? null,
-    height: member.evidence.decoded_height ?? null,
-    duration: null,
-    file_created_at: member.uploaded_at ?? member.file_modified_at,
-    file_modified_at: member.file_modified_at,
-    local_date_time: null,
-    immich_created_at: member.uploaded_at,
-    immich_updated_at: null,
-    is_favorite: false,
-    is_archived: false,
-    is_offline: member.is_offline,
-    is_edited: false,
-    has_metadata: false,
-    visibility: null,
-    live_photo_video_id: null,
-    tags: [],
-    albums: [],
-    stack: null,
-    synced_at: member.file_modified_at,
-  };
-}
-
-function savedDecisions(draft: ApiDuplicateDraft | undefined): Record<string, DuplicateDecision> {
-  return Object.fromEntries(
-    (draft?.decisions ?? [])
-      .map((decision) => [decision.asset_id, decision.disposition]),
-  ) as Record<string, DuplicateDecision>;
-}
-
-function groupState(group: ApiDuplicateGroup, draft: ApiDuplicateDraft | undefined): DuplicateState {
-  if (!group.eligible || group.status === 'ineligible' || draft?.stale) return 'Blocked';
-  const decisionCount = draft?.decisions.length ?? 0;
-  if (decisionCount > 0 && decisionCount < group.members.length) return 'Needs decisions';
-  if (decisionCount === group.members.length || group.auto_resolvable || group.auto_selected) return 'Actionable';
-  return 'Needs review';
-}
-
-function actionFor(decisions: Record<string, DuplicateDecision>): 'resolve' | 'keep_all' | 'stack_all' | 'mixed' {
-  const values = Object.values(decisions);
-  if (values.every((decision) => decision === 'keep')) return 'keep_all';
-  if (values.every((decision) => decision === 'stack')) return 'stack_all';
-  if (values.includes('stack')) return 'mixed';
-  return 'resolve';
-}
-
-function primaryFor(resolution: DuplicateResolutionPlan, memberIds: readonly string[]): string | null {
-  const stack = resolution.stacks.find((candidate) => candidate.assetIds.some((id) => memberIds.includes(id)));
-  if (stack?.primaryAssetId) return stack.primaryAssetId;
-  return memberIds.find((id) => resolution.decisions[id] === 'keep')
-    ?? memberIds.find((id) => resolution.decisions[id] !== 'delete')
-    ?? null;
-}
-
-function groupResolution(resolution: DuplicateResolutionPlan, group: ApiDuplicateGroup): DuplicateResolutionPlan {
-  const ids = new Set(group.members.map((member) => member.id));
-  return {
-    decisions: Object.fromEntries(Object.entries(resolution.decisions).filter(([id]) => ids.has(id))),
-    stacks: resolution.stacks.filter((stack) => stack.groupId === group.group_id),
-  };
-}
 
 function failureResult(groups: readonly ApiDuplicateGroup[], failedGroupIds: readonly string[]): MutationResult {
   const failed = new Set(failedGroupIds);
@@ -420,75 +221,14 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
   let hasWorkspaceSnapshot = false;
   let visibleGroupIds = new Set<string>();
   let workspace: ApiDuplicateWorkspace = { initialized: false, revision: 0, selected_count: 0, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
-  const draftQueues = new Map<string, Promise<void>>();
-  const draftErrors = new Map<string, unknown>();
-
-  const draftFor = (groupId: string): ApiDuplicateDraft | undefined => workspace.drafts.find((draft) => draft.group_id === groupId && !draft.stale);
-  const replaceDraft = (draft: ApiDuplicateDraft): void => {
-    workspace = { ...workspace, drafts: [...workspace.drafts.filter((candidate) => candidate.group_id !== draft.group_id), draft] };
-  };
+  const drafts = createDuplicateDraftController({ rawGroups, getWorkspace: () => workspace, setWorkspace: (next) => { workspace = next; }, analysisOptions: ANALYSIS_OPTIONS });
+  const { draftFor, saveDraft, flushDrafts, saveWorkspaceStackResolution, draftQueues, draftErrors } = drafts;
 
   const materialize = (group: ApiDuplicateGroup): DuplicateGroupRecord => {
     const draft = draftFor(group.group_id);
     return mapDuplicateGroup(group, draft, workspace.selected_group_ids.includes(group.group_id));
   };
 
-  const writeDraft = async (groupId: string, resolution: DuplicateResolutionPlan): Promise<void> => {
-    const group = rawGroups.get(groupId);
-    if (!group) throw new Error(`Duplicate group ${groupId} is no longer available.`);
-    const scoped = groupResolution(resolution, group);
-    if (scoped.stacks.length > 1) throw new Error('Immich can create only one resulting stack per duplicate group.');
-    if (scoped.stacks.some((stack) => stack.assetIds.length === 1)) throw new Error('A stack needs at least two images.');
-    const memberIds = group.members.map((member) => member.id);
-    const primary = primaryFor(scoped, memberIds);
-    const survivors = memberIds.filter((id) => scoped.decisions[id] !== 'delete');
-    const draft = await requestJson<ApiDuplicateDraft>('/api/assets/duplicates/workspace/group', jsonRequest('PUT', {
-      group_id: groupId,
-      member_fingerprint: group.member_fingerprint,
-      options: ANALYSIS_OPTIONS,
-      decisions: Object.entries(scoped.decisions).map(([asset_id, disposition]) => ({ asset_id, disposition, source: 'manual', status: 'pending' })),
-      stack_primary_asset_id: scoped.stacks[0]?.primaryAssetId ?? (Object.values(scoped.decisions).includes('stack') ? primary : null),
-      stack_resolution: serializeStackResolution(scoped.stacks[0]?.stackResolution),
-      metadata_keeper_asset_id: Object.values(scoped.decisions).includes('delete') && survivors.length === 1 ? survivors[0] : null,
-      status: Object.keys(scoped.decisions).length === memberIds.length ? 'completed' : 'pending',
-    }));
-    replaceDraft(draft);
-  };
-
-  const saveDraft = (groupId: string, resolution: DuplicateResolutionPlan): Promise<void> => {
-    const queued = (draftQueues.get(groupId) ?? Promise.resolve())
-      .catch(() => undefined)
-      .then(() => writeDraft(groupId, resolution));
-    draftQueues.set(groupId, queued);
-    void queued.then(
-      () => { draftErrors.delete(groupId); if (draftQueues.get(groupId) === queued) draftQueues.delete(groupId); },
-      (error) => { draftErrors.set(groupId, error); if (draftQueues.get(groupId) === queued) draftQueues.delete(groupId); },
-    );
-    return queued;
-  };
-
-  const flushDrafts = async (): Promise<void> => {
-    await Promise.all([...draftQueues.values()]);
-    const failure = draftErrors.values().next().value;
-    if (failure !== undefined) throw failure;
-  };
-
-  const saveWorkspaceStackResolution = async (stack: DuplicateResolutionPlan['stacks'][number]): Promise<void> => {
-    if (stack.stackResolution === undefined) return;
-    const draft = draftFor(stack.groupId);
-    if (!draft) throw new Error(`Duplicate group ${stack.groupId} no longer has a current saved draft.`);
-    const updated = await requestJson<ApiDuplicateDraft>('/api/assets/duplicates/workspace/group', jsonRequest('PUT', {
-      group_id: stack.groupId,
-      member_fingerprint: draft.member_fingerprint,
-      options: ANALYSIS_OPTIONS,
-      decisions: draft.decisions,
-      stack_primary_asset_id: stack.primaryAssetId ?? draft.stack_primary_asset_id,
-      stack_resolution: serializeStackResolution(stack.stackResolution),
-      metadata_keeper_asset_id: draft.metadata_keeper_asset_id ?? null,
-      status: draft.status,
-    }));
-    replaceDraft(updated);
-  };
 
   const saveSelection = async (groupIds: readonly string[], activeGroupId: string | null): Promise<void> => {
     const selectedGroupIds = [
@@ -523,66 +263,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     );
   };
 
-  const keeperSelection = async (
-    mode: 'preview' | 'apply',
-    input: DuplicateKeeperSelectionInput,
-  ): Promise<DuplicateKeeperSelectionResult> => {
-    await Promise.all([...draftQueues.values()]);
-    const selectedView = input.reviewFilter === 'Selected';
-    const targetGroupIds = selectedView && input.scope === 'all_matching'
-      ? workspace.selected_group_ids
-      : input.groupIds;
-    const result = await requestJson<ApiDuplicateKeeperSelectionResult>(
-      `/api/assets/duplicates/workspace/auto-select/${mode}`,
-      jsonRequest('POST', {
-        options: ANALYSIS_OPTIONS,
-        scope: selectedView ? 'current_page' : input.scope,
-        group_ids: [...new Set(targetGroupIds)],
-        review_filter: selectedView ? 'All groups' : input.reviewFilter ?? 'All groups',
-        source_filter: input.sourceFilter,
-        rules: input.rules,
-        overwrite_manual: input.overwriteManual ?? false,
-      }),
-    );
-    if (mode === 'apply' && !result.limit_exceeded) {
-      const refreshed = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace');
-      const automaticGroupIds = refreshed.drafts
-        .filter((draft) => (
-          !draft.stale
-          && draft.status === 'completed'
-          && draft.decisions.length > 0
-          && draft.decisions.every((decision) => decision.source === 'automatic')
-        ))
-        .map((draft) => draft.group_id);
-      const automatic = new Set(automaticGroupIds);
-      workspace = await requestJson<ApiDuplicateWorkspace>(
-        '/api/assets/duplicates/workspace/selection',
-        jsonRequest('PUT', {
-          options: ANALYSIS_OPTIONS,
-          selected_group_ids: [...automatic],
-          active_group_id: refreshed.active_group_id && automatic.has(refreshed.active_group_id)
-            ? refreshed.active_group_id
-            : null,
-          revision: refreshed.revision,
-        }),
-      );
-      hasWorkspaceSnapshot = true;
-    }
-    return {
-      matchedGroupCount: result.matched_group_count,
-      validGroupCount: result.valid_group_count,
-      resolvedGroupCount: result.resolved_group_count,
-      wouldApplyGroupCount: result.would_apply_group_count,
-      appliedGroupCount: result.applied_group_count,
-      ambiguousGroupCount: result.ambiguous_group_count,
-      blockedGroupCount: result.blocked_group_count,
-      preservedManualGroupCount: result.preserved_manual_group_count,
-      missingGroupCount: result.missing_group_count,
-      keeperCount: result.keeper_count,
-      trashCount: result.trash_count,
-      limitExceeded: result.limit_exceeded,
-    };
-  };
+  const keeperSelection = createKeeperSelectionController({ getWorkspace: () => workspace, setWorkspace: (next) => { workspace = next; }, draftQueues, setWorkspaceSnapshot: (value) => { hasWorkspaceSnapshot = value; }, analysisOptions: ANALYSIS_OPTIONS });
 
   return {
     async capabilities() {

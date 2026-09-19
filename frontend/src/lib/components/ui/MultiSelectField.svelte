@@ -7,6 +7,13 @@
     floatingPopoverLayout,
     type FloatingPopoverLayout,
   } from '../../utils/floatingPopover';
+  import MultiSelectSummary from './MultiSelectSummary.svelte';
+  import {
+    canCreateSelectOption,
+    filterSelectOptions,
+    firstEnabledOptionIndex,
+    nextEnabledOptionIndex,
+  } from './multiSelectOptions';
 
   interface Props {
     id: string;
@@ -53,36 +60,17 @@
       .map((value) => options.find((option) => option.value === value))
       .filter((option): option is SelectOption => Boolean(option)),
   );
-  const summary = $derived.by(() => {
-    if (!selectedOptions.length) return placeholder;
-    if (selectedOptions.length <= 2) return selectedOptions.map((option) => option.label).join(', ');
-    return `${selectedOptions.length} selected`;
-  });
-  const filteredOptions = $derived.by(() => {
-    const normalized = query.trim().toLocaleLowerCase();
-    if (!searchable || !normalized) return options;
-    return options.filter((option) => option.label.toLocaleLowerCase().includes(normalized));
-  });
-  const canCreate = $derived.by(() => {
-    const value = query.trim();
-    return allowCreate && Boolean(value) && !options.some(
-      (option) => option.label.trim().toLocaleLowerCase() === value.toLocaleLowerCase(),
-    );
-  });
+  const filteredOptions = $derived(filterSelectOptions(options, query, searchable));
+  const canCreate = $derived(canCreateSelectOption(options, query, allowCreate));
 
   function firstEnabledIndex(): number {
-    return filteredOptions.findIndex((option) => !option.disabled);
+    return firstEnabledOptionIndex(filteredOptions);
   }
 
   function adjacentEnabledIndex(start: number, direction: 1 | -1): number {
-    if (!filteredOptions.length) return -1;
-    let index = start;
-    for (let attempt = 0; attempt < filteredOptions.length; attempt += 1) {
-      index = (index + direction + filteredOptions.length) % filteredOptions.length;
-      if (!filteredOptions[index]?.disabled) return index;
-    }
-    return -1;
+    return nextEnabledOptionIndex(filteredOptions, start, direction);
   }
+
 
   async function focusOption(index = activeIndex): Promise<void> {
     await tick();
@@ -218,8 +206,7 @@
     onclick={() => (open ? void closeList() : void openList())}
     onkeydown={handleTriggerKeydown}
   >
-    <span id={`${id}-value`} class="selected-value">{summary}</span>
-    <span class="selection-count" aria-hidden="true">{values.length || ''}</span>
+    <span id={`${id}-value`}><MultiSelectSummary {values} {selectedOptions} {placeholder}/></span>
     <span class="chevron" aria-hidden="true"></span>
   </button>
 
@@ -356,33 +343,6 @@
   .multi-select-trigger:disabled {
     cursor: wait;
     opacity: 0.58;
-  }
-
-  .selected-value {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .placeholder .selected-value {
-    color: var(--color-ink-muted);
-  }
-
-  .selection-count {
-    display: grid;
-    min-width: 1.25rem;
-    min-height: 1.25rem;
-    padding-inline: 0.25rem;
-    place-items: center;
-    border-radius: 999px;
-    color: var(--color-accent-strong);
-    background: var(--color-surface-soft);
-    font-size: 0.64rem;
-    font-weight: 800;
-  }
-
-  .selection-count:empty {
-    visibility: hidden;
   }
 
   .chevron {

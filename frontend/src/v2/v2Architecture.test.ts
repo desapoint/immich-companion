@@ -29,7 +29,7 @@ describe('frontend architecture boundary', () => {
     const path = resolve(process.cwd(), 'src/v2/components/V2ImageViewport.svelte');
     const source = readFileSync(path, 'utf8');
 
-    expect(source).toContain("import { ViewportRegistrationController } from './viewportRegistration';");
+    expect(source).toContain("import { ViewportRegistrationController } from '../../features/assets/state/viewportRegistration';");
     expect(source).toContain('use:registerViewport={controller}');
     expect(source).not.toContain('controller.setViewport(viewport)');
     expect(source).not.toContain('return () => controller.setViewport(null)');

@@ -3,7 +3,7 @@
   import V2Button from './V2Button.svelte';
   import V2CompareDifference from './V2CompareDifference.svelte';
   import V2CompareFlicker from './V2CompareFlicker.svelte';
-  import V2CompareLocalChanges from './V2CompareLocalChanges.svelte';
+  import DuplicateLocalChangesComparison from '../../features/duplicates/components/DuplicateLocalChangesComparison.svelte';
   import V2CompareSideBySide from './V2CompareSideBySide.svelte';
   import V2CompareSwipe from './V2CompareSwipe.svelte';
   import V2CompareTransparency from './V2CompareTransparency.svelte';
@@ -12,8 +12,8 @@
   import type { MediaResource } from '../data/contracts';
   import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
   import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
-  import { ViewerViewportController } from './viewerViewport.svelte';
-  import { ViewportRegistrationController } from './viewportRegistration';
+  import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';
+  import { ViewportRegistrationController } from '../../features/assets/state/viewportRegistration';
 
   export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference' | 'Local changes' | 'Flicker';
 
@@ -245,7 +245,7 @@
         onviewport={setViewport}
       />
     {:else if mode === 'Local changes'}
-      <V2CompareLocalChanges
+      <DuplicateLocalChangesComparison
         {selectedSrc}
         {referenceSrc}
         {selectedLabel}

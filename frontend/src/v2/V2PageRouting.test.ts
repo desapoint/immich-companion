@@ -17,12 +17,12 @@ describe('V2 page composition', () => {
   it('routes the live duplicates page instead of the implementation placeholder', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/v2/V2Page.svelte'), 'utf8');
     expect(source).toContain("activeKey === 'duplicates'");
-    expect(source).toContain('<V2DuplicatesPage />');
+    expect(source).toContain('<DuplicatesPage />');
   });
 
   it('routes the static playground instead of the implementation placeholder', () => {
     const source = readFileSync(resolve(process.cwd(), 'src/v2/V2Page.svelte'), 'utf8');
     expect(source).toContain("activeKey === 'playground'");
-    expect(source).toContain('<V2PlaygroundPage />');
+    expect(source).toContain('<PlaygroundPage />');
   });
 });

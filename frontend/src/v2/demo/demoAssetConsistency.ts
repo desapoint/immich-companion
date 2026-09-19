@@ -1,4 +1,5 @@
-import { demoAssetState, type DemoAssetStackSnapshot } from './demoAssetState.svelte';
+import { demoAssetState } from '../../features/playground/state/demoAssetState.svelte';
+import type { DemoAssetStackSnapshot } from '../../features/playground/data/demoAssetTypes';
 
 export function normalizeDemoStacks(): void {
   const byStack = new Map<string, string[]>();

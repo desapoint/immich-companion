@@ -27,7 +27,7 @@
   import type { AlbumRecord, CollectionDeletePlan } from '../data/contracts';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { OperationController } from '../state/operationController.svelte';
-  import { SelectionWorkspaceController } from '../state/assetSelectionWorkspace.svelte';
+  import { SelectionWorkspaceController } from '../../lib/state/selectionWorkspace.svelte';
 
   let { onfilterassets }: { onfilterassets: (albumIds: string[]) => void } = $props();
 

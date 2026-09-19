@@ -1,5 +1,5 @@
 <script lang="ts">
-  import V2AssetViewer from './V2AssetViewer.svelte';
+  import V2AssetViewer from '../../features/assets/components/AssetViewer.svelte';
   import V2RestoreViewer from './V2RestoreViewer.svelte';
   import type { ViewerNavigationWindow } from '../data/contracts';
 

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { ViewerViewportController } from './viewerViewport.svelte';
-  import { ViewportRegistrationController } from './viewportRegistration';
+  import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';
+  import { ViewportRegistrationController } from '../../features/assets/state/viewportRegistration';
 
   let {
     src,

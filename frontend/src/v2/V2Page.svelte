@@ -6,14 +6,14 @@
   import V2StackConflictReviewHost from './components/V2StackConflictReviewHost.svelte';
   import V2AlbumsPage from './pages/V2AlbumsPage.svelte';
   import V2AssetsPage from './pages/V2AssetsPage.svelte';
-  import V2DuplicatesPage from './pages/V2DuplicatesPage.svelte';
-  import V2PlaygroundPage from './pages/V2PlaygroundPage.svelte';
+  import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
+  import PlaygroundPage from '../features/playground/components/PlaygroundPage.svelte';
   import V2RestorePage from './pages/V2RestorePage.svelte';
-  import V2SettingsPage from './pages/V2SettingsPage.svelte';
-  import V2StatusPage from './pages/V2StatusPage.svelte';
+  import SettingsPage from '../features/settings/components/SettingsPage.svelte';
+  import StatusPage from '../features/status/components/StatusPage.svelte';
   import V2TagsPage from './pages/V2TagsPage.svelte';
   import { provideV2Toasts, V2ToastController } from './state/toasts.svelte';
-  import { AssetSelectionWorkspaceController } from './state/assetSelectionWorkspace.svelte';
+  import { AssetSelectionWorkspaceController } from '../features/assets/state/assetSelectionWorkspace.svelte';
   import { TransientAssetSelectionController } from './state/transientAssetSelection.svelte';
   import { libraryData } from './data/currentDataSource.svelte';
   import {
@@ -95,21 +95,21 @@
 
 <V2Shell {activeKey} title={titles[activeKey]} {navItems} onnavigate={navigate}>
   {#if activeKey === 'status'}
-    <V2StatusPage />
+    <StatusPage />
   {:else if activeKey === 'assets'}
     <V2AssetsPage selectionWorkspace={assetSelection} />
   {:else if activeKey === 'restore'}
     <V2RestorePage selectionController={restoreSelection} />
   {:else if activeKey === 'duplicates'}
-    <V2DuplicatesPage />
+    <DuplicatesPage />
   {:else if activeKey === 'albums'}
     <V2AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
   {:else if activeKey === 'tags'}
     <V2TagsPage onfilterassets={(tagIds)=>openAssetsWithFilter({tagIds})}/>
   {:else if activeKey === 'settings'}
-    <V2SettingsPage toastPosition={toasts.position} ontoastpositionchange={(position)=>toasts.setPosition(position)} onopenplayground={()=>navigate('playground')}/>
+    <SettingsPage toastPosition={toasts.position} ontoastpositionchange={(position)=>toasts.setPosition(position)} onopenplayground={()=>navigate('playground')}/>
   {:else if activeKey === 'playground'}
-    <V2PlaygroundPage />
+    <PlaygroundPage />
   {:else}
     <V2ImplementationWarning
       title={titles[activeKey]}
