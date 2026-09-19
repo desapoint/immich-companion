@@ -239,8 +239,9 @@ class SimilarityEvidenceEpochRepository:
         update_rebuilt_at: bool,
         reason_type: str,
         reason_message: str,
+        drop_reusable_evidence: bool,
     ) -> tuple[int, dict[str, int]]:
-        """Advance the epoch, retire writers, and delete all derived Appearance evidence."""
+        """Advance the epoch and retire writers without discarding reusable features."""
 
         current_descriptor = similarity_generation_fingerprint()
         removed: dict[str, int] = {}
@@ -338,15 +339,21 @@ class SimilarityEvidenceEpochRepository:
             )
         )
 
-        for label, table_name in (
+        derived_tables = [
             ("scan_pairs", "similarity_scan_pairs"),
             ("scans", "similarity_scans"),
-            ("pair_results", "asset_similarity_edges"),
-            ("detail_features", "asset_similarity_detail_features"),
-            ("bounded_state", "asset_similarity_bounded_state"),
-            ("search_features", "asset_similarity_search_features"),
-            ("pending_asset_changes", "similarity_asset_changes"),
-        ):
+        ]
+        if drop_reusable_evidence:
+            derived_tables.extend(
+                (
+                    ("pair_results", "asset_similarity_edges"),
+                    ("detail_features", "asset_similarity_detail_features"),
+                    ("bounded_state", "asset_similarity_bounded_state"),
+                    ("search_features", "asset_similarity_search_features"),
+                    ("pending_asset_changes", "similarity_asset_changes"),
+                )
+            )
+        for label, table_name in derived_tables:
             result = await session.execute(text(f"DELETE FROM {table_name}"))
             removed[label] = int(result.rowcount or 0)
 
@@ -361,6 +368,7 @@ class SimilarityEvidenceEpochRepository:
                 update_rebuilt_at=False,
                 reason_type="evidence_destroy",
                 reason_message="Retired by similarity evidence destroy",
+                drop_reusable_evidence=True,
             )
 
         state = await self.status()
@@ -386,6 +394,7 @@ class SimilarityEvidenceEpochRepository:
             update_rebuilt_at=True,
             reason_type="evidence_rebuild",
             reason_message="Retired by similarity evidence rebuild",
+            drop_reusable_evidence=False,
         )
 
         # The replacement scan is created before the transaction can commit. Callers that

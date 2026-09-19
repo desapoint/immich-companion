@@ -296,12 +296,11 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
         "composite_groups": 1,
         "scan_pairs": 1,
         "scans": 1,
-        "pair_results": 1,
-        "detail_features": 1,
-        "bounded_state": 1,
-        "search_features": 1,
-        "pending_asset_changes": 1,
     }
+    assert not any("DELETE FROM asset_similarity_edges" in sql for sql in database.statements)
+    assert not any("DELETE FROM asset_similarity_detail_features" in sql for sql in database.statements)
+    assert not any("DELETE FROM asset_similarity_search_features" in sql for sql in database.statements)
+    assert not any("DELETE FROM similarity_asset_changes" in sql for sql in database.statements)
 
 
 @pytest.mark.asyncio
@@ -318,6 +317,16 @@ async def test_destroy_uses_typed_json_for_cancelled_attempt_details() -> None:
     }
     assert "json_build_object" not in database.attempt_update_sql
     assert "::JSON" in database.attempt_update_sql
+    assert result.removed_counts == {
+        "composite_groups": 1,
+        "scan_pairs": 1,
+        "scans": 1,
+        "pair_results": 1,
+        "detail_features": 1,
+        "bounded_state": 1,
+        "search_features": 1,
+        "pending_asset_changes": 1,
+    }
 
 
 @pytest.mark.asyncio
