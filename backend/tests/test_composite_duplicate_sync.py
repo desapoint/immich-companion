@@ -14,7 +14,6 @@ from companion.composite_duplicate_repository import (
     _group_projection_summary,
 )
 from companion.composite_duplicate_sync import (
-    COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY,
     COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE,
     CompositeDuplicateRebuildTaskHandler,
     CompositeDuplicateStartupReconcileTaskHandler,
@@ -538,8 +537,10 @@ async def test_startup_reconcile_waits_for_source_work_then_rechecks_staleness(
         refreshes += 1
         return None
 
-    async def no_sleep(_seconds):
-        return None
+    sleeps: list[float] = []
+
+    async def no_sleep(seconds):
+        sleeps.append(seconds)
 
     monkeypatch.setattr("companion.composite_duplicate_sync.asyncio.sleep", no_sleep)
     handler = CompositeDuplicateStartupReconcileTaskHandler(Tasks(), is_stale, refresh)
@@ -551,6 +552,7 @@ async def test_startup_reconcile_waits_for_source_work_then_rechecks_staleness(
     assert refreshes == 1
     assert result.summary["projection_refreshed"] is True
     assert context.checkpoints[0]["checkpoint"] == {"phase": "waiting_for_sources"}
+    assert sleeps == [2.0]
 
 
 @pytest.mark.asyncio
@@ -599,3 +601,36 @@ async def test_sync_service_does_not_coalesce_distinct_source_commits() -> None:
     assert first != second
     assert len(submitted) == 2
     assert all("deduplication_key" not in item for item in submitted)
+
+
+@pytest.mark.asyncio
+async def test_startup_reconcile_reports_waiting_only_once(monkeypatch) -> None:
+    active = SimpleNamespace(task_type="similarity_scan", status="running")
+
+    class Tasks:
+        calls = 0
+
+        async def list_tasks(self, **_kwargs):
+            self.calls += 1
+            return [active] if self.calls <= 3 else []
+
+    async def is_stale():
+        return False
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("companion.composite_duplicate_sync.asyncio.sleep", no_sleep)
+    context = Context()
+    await CompositeDuplicateStartupReconcileTaskHandler(
+        Tasks(),
+        is_stale,
+        lambda: None,  # type: ignore[arg-type]
+    ).execute(context, {})
+
+    waiting = [
+        item
+        for item in context.checkpoints
+        if item["checkpoint"] == {"phase": "waiting_for_sources"}
+    ]
+    assert len(waiting) == 1

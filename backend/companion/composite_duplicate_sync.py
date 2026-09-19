@@ -78,23 +78,28 @@ class CompositeDuplicateStartupReconcileTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         del payload
+        waiting_reported = False
         while True:
             await context.ensure_active()
             active_tasks = await self._tasks.list_tasks(active_only=True, limit=100)
             if not source_change_in_progress(active_tasks):
                 break
-            await context.checkpoint(
-                checkpoint={"phase": "waiting_for_sources"},
-                counters={},
-                progress={
-                    "phase": "composite_duplicates_startup_wait",
-                    "completed": 0,
-                    "total": None,
-                    "percent": None,
-                    "detail": "Waiting for duplicate source work before startup reconciliation",
-                },
-            )
-            await asyncio.sleep(0.5)
+            if not waiting_reported:
+                await context.checkpoint(
+                    checkpoint={"phase": "waiting_for_sources"},
+                    counters={},
+                    progress={
+                        "phase": "composite_duplicates_startup_wait",
+                        "completed": 0,
+                        "total": None,
+                        "percent": None,
+                        "detail": (
+                            "Waiting for duplicate source work before startup reconciliation"
+                        ),
+                    },
+                )
+                waiting_reported = True
+            await asyncio.sleep(2.0)
 
         if not await self._projection_is_stale():
             return TaskResult(
