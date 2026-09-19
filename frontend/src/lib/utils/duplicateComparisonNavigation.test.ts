@@ -17,10 +17,11 @@ describe('duplicate comparison navigation', () => {
     expect(viewerSelectionTargetId(ids, 'third')).toBe('third');
   });
 
-  it('cycles through candidates without comparing the reference with itself', () => {
-    expect(stepComparisonTargetId(ids, 'reference', 'third', 'next')).toBe('second');
-    expect(stepComparisonTargetId(ids, 'reference', 'second', 'previous')).toBe('third');
+  it('cycles through every member, including the reference', () => {
+    expect(stepComparisonTargetId(ids, 'reference', 'third', 'next')).toBe('reference');
+    expect(stepComparisonTargetId(ids, 'reference', 'second', 'previous')).toBe('reference');
     expect(stepComparisonTargetId(ids, 'reference', 'reference', 'next')).toBe('second');
+    expect(stepComparisonTargetId(ids, 'reference', 'reference', 'previous')).toBe('third');
   });
 
   it('keeps a single-image group usable', () => {
@@ -28,8 +29,9 @@ describe('duplicate comparison navigation', () => {
     expect(stepComparisonTargetId(['only'], 'only', 'only', 'next')).toBe('only');
   });
 
-  it('keeps the only other image visible in a two-image group', () => {
+  it('cycles between the reference and the other image in a two-image group', () => {
     expect(comparisonTargetId(['reference', 'other'], 'reference', 'reference')).toBe('other');
-    expect(stepComparisonTargetId(['reference', 'other'], 'reference', 'other', 'next')).toBe('other');
+    expect(stepComparisonTargetId(['reference', 'other'], 'reference', 'other', 'next')).toBe('reference');
+    expect(stepComparisonTargetId(['reference', 'other'], 'reference', 'reference', 'next')).toBe('other');
   });
 });
