@@ -1028,6 +1028,27 @@ class CrossSourceDuplicateService:
                         }
                     )
                 )
+
+            def member_sort_key(
+                item: DuplicateMember,
+                reference_id: UUID = reference.id,
+            ) -> tuple[bool, float, str]:
+                similarity_percent = (
+                    item.similarity.similarity_percent
+                    if item.similarity is not None
+                    else None
+                )
+                return (
+                    item.id != reference_id,
+                    -(
+                        similarity_percent
+                        if similarity_percent is not None
+                        else float("-inf")
+                    ),
+                    str(item.id),
+                )
+
+            members.sort(key=member_sort_key)
             group_update: dict[str, object] = {
                 "members": members,
                 "reference_asset_id": reference.id,
