@@ -298,8 +298,14 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
         "scans": 1,
     }
     assert not any("DELETE FROM asset_similarity_edges" in sql for sql in database.statements)
-    assert not any("DELETE FROM asset_similarity_detail_features" in sql for sql in database.statements)
-    assert not any("DELETE FROM asset_similarity_search_features" in sql for sql in database.statements)
+    assert not any(
+        "DELETE FROM asset_similarity_detail_features" in sql
+        for sql in database.statements
+    )
+    assert not any(
+        "DELETE FROM asset_similarity_search_features" in sql
+        for sql in database.statements
+    )
     assert not any("DELETE FROM similarity_asset_changes" in sql for sql in database.statements)
 
 

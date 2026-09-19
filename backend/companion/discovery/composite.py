@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+
 from companion.discovery.base import (
     DiscoveredGroup,
     DiscoveryEvidence,
@@ -65,20 +67,87 @@ class CompositeGroupDiscoveryProvider:
 
     async def discover(self) -> list[DiscoveredGroup]:
         groups: list[DiscoveredGroup] = []
-        group_ids: set[str] = set()
-        member_positions: dict[tuple[int, ...], int] = {}
-        for provider in self._providers:
-            for group in await provider.discover():
-                if group.group_id in group_ids:
-                    raise ValueError(f"Duplicate discovery group ID: {group.group_id}")
-                group_ids.add(group.group_id)
-                key = _member_key(group)
-                position = member_positions.get(key)
-                if position is not None:
-                    current = groups[position]
-                    if current.discovery_source is not group.discovery_source:
-                        groups[position] = _coalesce(current, group)
-                        continue
-                member_positions.setdefault(key, len(groups))
-                groups.append(group)
+        async for batch in self.discover_batches():
+            groups.extend(batch)
         return groups
+
+    async def discover_batches(
+        self,
+        *,
+        batch_size: int = 250,
+    ) -> AsyncIterator[list[DiscoveredGroup]]:
+        """Stream the large first provider while retaining only bounded tail groups."""
+
+        if not self._providers:
+            return
+        batch_size = max(1, batch_size)
+
+        pending: list[DiscoveredGroup | None] = []
+        pending_group_ids: set[str] = set()
+        pending_member_positions: dict[tuple[int, ...], int] = {}
+        for provider in self._providers[1:]:
+            for group in await provider.discover():
+                if group.group_id in pending_group_ids:
+                    raise ValueError(f"Duplicate discovery group ID: {group.group_id}")
+                pending_group_ids.add(group.group_id)
+                key = _member_key(group)
+                position = pending_member_positions.get(key)
+                if position is not None:
+                    current = pending[position]
+                    if (
+                        current is not None
+                        and current.discovery_source is not group.discovery_source
+                    ):
+                        pending[position] = _coalesce(current, group)
+                        continue
+                pending_member_positions.setdefault(key, len(pending))
+                pending.append(group)
+
+        emitted_group_ids: set[str] = set()
+        output: list[DiscoveredGroup] = []
+
+        async def first_provider_batches() -> AsyncIterator[list[DiscoveredGroup]]:
+            provider = self._providers[0]
+            batch_reader = getattr(provider, "discover_batches", None)
+            if callable(batch_reader):
+                async for batch in batch_reader(batch_size=batch_size):
+                    yield batch
+                return
+            groups = await provider.discover()
+            for offset in range(0, len(groups), batch_size):
+                yield groups[offset : offset + batch_size]
+
+        async for source_batch in first_provider_batches():
+            for group in source_batch:
+                if group.group_id in emitted_group_ids or group.group_id in pending_group_ids:
+                    raise ValueError(f"Duplicate discovery group ID: {group.group_id}")
+                emitted_group_ids.add(group.group_id)
+                position = pending_member_positions.get(_member_key(group))
+                if position is not None:
+                    current = pending[position]
+                    if (
+                        current is not None
+                        and current.discovery_source is not group.discovery_source
+                    ):
+                        group = _coalesce(group, current)
+                        pending[position] = None
+                output.append(group)
+                if len(output) >= batch_size:
+                    yield output
+                    output = []
+        if output:
+            yield output
+
+        output = []
+        for group in pending:
+            if group is None:
+                continue
+            if group.group_id in emitted_group_ids:
+                raise ValueError(f"Duplicate discovery group ID: {group.group_id}")
+            emitted_group_ids.add(group.group_id)
+            output.append(group)
+            if len(output) >= batch_size:
+                yield output
+                output = []
+        if output:
+            yield output

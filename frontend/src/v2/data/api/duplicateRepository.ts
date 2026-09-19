@@ -435,7 +435,8 @@ function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: nu
   const matches = numericProgress(task.counters.matches_retained);
   const queuedDetail = similarity
     ? 'Queued behind active asset-integrity work; the similarity phase will start automatically.'
-    : 'Queued behind active asset-integrity work; exact duplicate analysis will start automatically.';
+    : 'Queued behind active asset-integrity work; '
+      + 'exact duplicate analysis will start automatically.';
   const detail = typeof task.progress.detail === 'string'
     ? task.progress.detail
     : task.status === 'queued'

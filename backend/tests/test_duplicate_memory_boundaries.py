@@ -5,6 +5,8 @@ from __future__ import annotations
 import inspect
 
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
+from companion.composite_duplicate_sync import CompositeDuplicateRebuildTaskHandler
+from companion.discovery.immich_duplicates import ImmichDuplicateProvider
 from companion.duplicate_service import CrossSourceDuplicateService
 
 
@@ -31,10 +33,21 @@ def test_v2_single_group_and_preset_paths_do_not_call_full_result_hydration() ->
         assert "await self._snapshot(" not in source
 
 
-def test_composite_snapshot_publication_does_not_materialize_full_row_copies() -> None:
-    source = inspect.getsource(CompositeDuplicateRepository.replace_snapshot)
-    assert "member_rows = [" not in source
-    assert "evidence_rows = [" not in source
-    assert "group_rows = []" not in source
-    assert "member_values.clear()" in source
-    assert "evidence_values.clear()" in source
+def test_composite_snapshot_publication_consumes_bounded_group_batches() -> None:
+    source = inspect.getsource(CompositeDuplicateRepository.replace_snapshot_batches)
+    assert "async for groups in batches" in source
+    assert "for group in groups" in source
+    assert "await session.scalars" in source
+    assert "groups = [" not in source
+
+
+def test_composite_rebuild_prefers_batched_discovery_and_publication() -> None:
+    source = inspect.getsource(CompositeDuplicateRebuildTaskHandler.execute)
+    assert 'getattr(self._discovery, "discover_batches"' in source
+    assert 'getattr(self._repository, "replace_snapshot_batches"' in source
+
+
+def test_persisted_immich_discovery_pages_before_hydration() -> None:
+    source = inspect.getsource(ImmichDuplicateProvider.discover_batches)
+    assert '"groups_page"' in source
+    assert "yield await self._hydrate_persisted(snapshot)" in source

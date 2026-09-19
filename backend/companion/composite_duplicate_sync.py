@@ -10,6 +10,7 @@ from uuid import UUID
 from companion.composite_duplicate_repository import (
     CompositeDuplicateRepository,
     CompositeDuplicateSnapshotAssetMissingError,
+    CompositeDuplicateSnapshotMetadata,
 )
 from companion.discovery.base import GroupDiscoveryProvider
 from companion.similarity_generation import SimilarityEvidenceEpochRepository
@@ -65,24 +66,56 @@ class CompositeDuplicateRebuildTaskHandler:
                 "detail": "Composing persisted duplicate providers",
             },
         )
-        groups = await self._discovery.discover()
-        member_count = sum(len(group.assets) for group in groups)
-        evidence_count = sum(len(group.evidence) for group in groups)
-        await context.checkpoint(
-            checkpoint={"phase": "publishing"},
-            counters={
-                "groups": len(groups),
-                "members": member_count,
-                "evidence": evidence_count,
-            },
-            progress={
-                "phase": "composite_duplicates_publish",
-                "completed": 0,
-                "total": len(groups),
-                "percent": 0.0 if groups else 100.0,
-                "detail": f"Publishing {len(groups)} composite duplicate groups",
-            },
-        )
+        discover_batches = getattr(self._discovery, "discover_batches", None)
+        replace_batches = getattr(self._repository, "replace_snapshot_batches", None)
+        use_bounded_path = callable(discover_batches) and callable(replace_batches)
+
+        async def publish() -> CompositeDuplicateSnapshotMetadata:
+            if use_bounded_path:
+                discovered_groups = 0
+
+                async def monitored_batches():
+                    nonlocal discovered_groups
+                    async for batch in discover_batches():
+                        discovered_groups += len(batch)
+                        await context.checkpoint(
+                            checkpoint={"phase": "publishing", "groups": discovered_groups},
+                            counters={"groups": discovered_groups},
+                            progress={
+                                "phase": "composite_duplicates_publish",
+                                "completed": discovered_groups,
+                                "total": None,
+                                "percent": None,
+                                "detail": (
+                                    f"Publishing composite duplicate groups · "
+                                    f"{discovered_groups} streamed"
+                                ),
+                            },
+                        )
+                        yield batch
+
+                return await replace_batches(monitored_batches())
+
+            groups = await self._discovery.discover()
+            member_count = sum(len(group.assets) for group in groups)
+            evidence_count = sum(len(group.evidence) for group in groups)
+            await context.checkpoint(
+                checkpoint={"phase": "publishing"},
+                counters={
+                    "groups": len(groups),
+                    "members": member_count,
+                    "evidence": evidence_count,
+                },
+                progress={
+                    "phase": "composite_duplicates_publish",
+                    "completed": 0,
+                    "total": len(groups),
+                    "percent": 0.0 if groups else 100.0,
+                    "detail": f"Publishing {len(groups)} composite duplicate groups",
+                },
+            )
+            return await self._repository.replace_snapshot(groups)
+
         try:
             if (
                 self._evidence_epochs is not None
@@ -95,9 +128,9 @@ class CompositeDuplicateRebuildTaskHandler:
                 # rebuild wins and this publication is rejected as stale.
                 async with self._database.sessions() as session, session.begin():
                     await self._evidence_epochs.assert_current(session, evidence_epoch)
-                    metadata = await self._repository.replace_snapshot(groups)
+                    metadata = await publish()
             else:
-                metadata = await self._repository.replace_snapshot(groups)
+                metadata = await publish()
         except CompositeDuplicateSnapshotAssetMissingError as error:
             raise PermanentTaskError(str(error)) from error
         counters = {

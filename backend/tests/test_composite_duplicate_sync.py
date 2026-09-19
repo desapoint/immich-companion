@@ -323,6 +323,55 @@ async def test_rebuild_handler_materializes_source_discovery_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rebuild_handler_streams_bounded_batches_when_supported() -> None:
+    first = DiscoveredGroup(
+        group_id="immich:stream-1",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="stream-1",
+        assets=(asset(ASSET_1), asset(ASSET_2)),
+    )
+    second = DiscoveredGroup(
+        group_id="immich:stream-2",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="stream-2",
+        assets=(asset(ASSET_1), asset(ASSET_2)),
+    )
+
+    class Discovery:
+        discover_called = False
+
+        async def discover(self):
+            self.discover_called = True
+            raise AssertionError("bounded rebuild must not materialize source discovery")
+
+        async def discover_batches(self):
+            yield [first]
+            yield [second]
+
+    class Repository:
+        received: list[list[str]] = []
+
+        async def replace_snapshot_batches(self, batches):
+            async for batch in batches:
+                self.received.append([group.group_id for group in batch])
+            return CompositeDuplicateSnapshotMetadata(5, 2, 4, 2, NOW)
+
+    discovery = Discovery()
+    repository = Repository()
+    context = Context()
+    result = await CompositeDuplicateRebuildTaskHandler(discovery, repository).execute(context, {})
+
+    assert discovery.discover_called is False
+    assert repository.received == [[first.group_id], [second.group_id]]
+    assert result.counters == {"groups": 2, "members": 4, "evidence": 2}
+    assert any(
+        checkpoint["progress"]["detail"].endswith("2 streamed")
+        for checkpoint in context.checkpoints
+        if checkpoint["progress"]["phase"] == "composite_duplicates_publish"
+    )
+
+
+@pytest.mark.asyncio
 async def test_sync_service_uses_one_deduplicated_durable_rebuild() -> None:
     class Tasks:
         submitted = None

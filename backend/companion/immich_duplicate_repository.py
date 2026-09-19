@@ -124,6 +124,61 @@ class ImmichDuplicateRepository:
             if len(asset_ids) >= 2
         ]
 
+    async def groups_page(
+        self,
+        *,
+        after_provider_group_id: str | None = None,
+        limit: int = 250,
+    ) -> tuple[list[ImmichDuplicateSnapshotGroup], str | None]:
+        """Read one keyset-paginated group batch without materializing the full snapshot."""
+
+        limit = max(1, min(limit, 1_000))
+        async with self._database.sessions() as session:
+            statement = (
+                select(ImmichDuplicateGroupRecord.provider_group_id)
+                .order_by(ImmichDuplicateGroupRecord.provider_group_id)
+                .limit(limit)
+            )
+            if after_provider_group_id is not None:
+                statement = statement.where(
+                    ImmichDuplicateGroupRecord.provider_group_id > after_provider_group_id
+                )
+            provider_group_ids = list((await session.scalars(statement)).all())
+            if not provider_group_ids:
+                return [], None
+            rows = list(
+                (
+                    await session.execute(
+                        select(
+                            ImmichDuplicateGroupMemberRecord.provider_group_id,
+                            ImmichDuplicateGroupMemberRecord.asset_id,
+                        )
+                        .where(
+                            ImmichDuplicateGroupMemberRecord.provider_group_id.in_(
+                                provider_group_ids
+                            )
+                        )
+                        .order_by(
+                            ImmichDuplicateGroupMemberRecord.provider_group_id,
+                            ImmichDuplicateGroupMemberRecord.position,
+                        )
+                    )
+                ).all()
+            )
+        grouped: dict[str, list[UUID]] = {}
+        for provider_group_id, asset_id in rows:
+            grouped.setdefault(provider_group_id, []).append(asset_id)
+        groups = [
+            ImmichDuplicateSnapshotGroup(
+                provider_group_id,
+                tuple(grouped.get(provider_group_id, [])),
+            )
+            for provider_group_id in provider_group_ids
+            if len(grouped.get(provider_group_id, [])) >= 2
+        ]
+        next_cursor = provider_group_ids[-1] if len(provider_group_ids) == limit else None
+        return groups, next_cursor
+
     async def replace_snapshot(
         self,
         groups: list[ImmichDuplicateGroup],
