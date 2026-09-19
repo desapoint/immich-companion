@@ -2277,13 +2277,14 @@ class CrossSourceDuplicateService:
 
     async def plan(self, request: DuplicateResolutionPlanRequest) -> DuplicateResolutionPlan:
         options = await self._options(request.options)
-        requested_group_ids = list(request.group_ids)
+        requested_group_ids = list(dict.fromkeys(request.group_ids))
         if request.workspace_selected:
             requested_group_ids = (await self.workspace(options)).selected_group_ids
             if request.group_ids and set(request.group_ids) != set(requested_group_ids):
                 raise ActionPlanConflictError(
                     "The duplicate workspace selection changed before planning"
                 )
+
         if request.all_eligible:
             limit = getattr(self._settings, "action_max_targets", 5000)
             target_ids = await self._matching_group_ids(
@@ -2295,231 +2296,342 @@ class CrossSourceDuplicateService:
                 raise ValueError(
                     f"Eligible duplicate planning exceeds the configured {limit} group limit"
                 )
-            selected: list[ExactDuplicateGroup] = []
-            batch_size = max(
-                1,
-                min(250, getattr(self._settings, "sync_batch_size", 250)),
-            )
-            for offset in range(0, len(target_ids), batch_size):
-                batch_ids = target_ids[offset : offset + batch_size]
-                discovered = await self._groups_by_ids(batch_ids)
-                _, _, _, result = await self._snapshot_groups(discovered, options)
-                selected.extend(
-                    group for group in result.groups if group.auto_resolvable
-                )
         else:
-            discovered = await self._groups_by_ids(requested_group_ids)
+            target_ids = requested_group_ids
+
+        if not target_ids:
+            raise ValueError("No duplicate groups were selected")
+
+        batch_size = max(
+            1,
+            min(250, getattr(self._settings, "sync_batch_size", 250)),
+        )
+        found_ids: set[str] = set()
+        plan_groups: list[dict[str, Any]] = []
+        for offset in range(0, len(target_ids), batch_size):
+            batch_ids = target_ids[offset : offset + batch_size]
+            discovered = await self._groups_by_ids(batch_ids)
             _, _, _, result = await self._snapshot_groups(discovered, options)
             selected = [
-                group for group in result.groups if group.group_id in requested_group_ids
+                group
+                for group in result.groups
+                if (
+                    group.auto_resolvable
+                    if request.all_eligible
+                    else group.group_id in batch_ids
+                )
             ]
-        if not selected:
-            raise ValueError("No duplicate groups were selected")
-        if not request.all_eligible and {group.group_id for group in selected} != set(
-            requested_group_ids
-        ):
-            raise ActionPlanConflictError("A selected duplicate group is no longer available")
-        review_records: dict[tuple[str, str], object] = {}
-        if self._reviews is not None:
-            for discovery_source in {group.discovery_source for group in selected}:
-                source_groups = [
-                    group for group in selected if group.discovery_source == discovery_source
-                ]
-                records = await self._reviews.get_many(
-                    discovery_source,
-                    [group.stable_group_key for group in source_groups],
+            found_ids.update(group.group_id for group in selected)
+
+            review_records: dict[tuple[str, str], object] = {}
+            if self._reviews is not None:
+                for discovery_source in {
+                    group.discovery_source for group in selected
+                }:
+                    source_groups = [
+                        group
+                        for group in selected
+                        if group.discovery_source == discovery_source
+                    ]
+                    records = await self._reviews.get_many(
+                        discovery_source,
+                        [group.stable_group_key for group in source_groups],
+                    )
+                    review_records.update(
+                        (
+                            (discovery_source, group_key),
+                            record,
+                        )
+                        for group_key, record in records.items()
+                    )
+
+            for group in selected:
+                member_ids = {member.id for member in group.members}
+                record = review_records.get(
+                    (group.discovery_source, group.stable_group_key)
                 )
-                review_records.update(
-                    ((discovery_source, group_key), record) for group_key, record in records.items()
+                raw_decisions = list(getattr(record, "member_decisions", []) or [])
+                draft_dispositions = {
+                    UUID(decision["asset_id"]): decision["disposition"]
+                    for decision in raw_decisions
+                    if isinstance(decision, dict)
+                    and decision.get("asset_id")
+                    and decision.get("disposition") in {"keep", "delete", "stack"}
+                }
+                draft_is_current = (
+                    record is not None
+                    and getattr(record, "member_fingerprint", None)
+                    == group.member_fingerprint
+                    and set(draft_dispositions) == member_ids
+                    and len(draft_dispositions) == len(group.members)
                 )
-        plan_groups: list[dict[str, Any]] = []
-        for group in selected:
-            member_ids = {member.id for member in group.members}
-            record = review_records.get((group.discovery_source, group.stable_group_key))
-            raw_decisions = list(getattr(record, "member_decisions", []) or [])
-            draft_dispositions = {
-                UUID(decision["asset_id"]): decision["disposition"]
-                for decision in raw_decisions
-                if isinstance(decision, dict)
-                and decision.get("asset_id")
-                and decision.get("disposition") in {"keep", "delete", "stack"}
-            }
-            draft_is_current = (
-                record is not None
-                and getattr(record, "member_fingerprint", None) == group.member_fingerprint
-                and set(draft_dispositions) == member_ids
-                and len(draft_dispositions) == len(group.members)
-            )
-            if raw_decisions and not draft_is_current:
-                raise ActionPlanConflictError(
-                    "Every selected duplicate needs a complete current saved draft"
-                )
-            if draft_is_current:
-                dispositions = [draft_dispositions[member.id] for member in group.members]
-                action = _action_for_dispositions(dispositions)
-            else:
-                action = request.action_overrides.get(
-                    group.group_id,
-                    "resolve"
-                    if request.all_eligible or group.group_id in request.keeper_overrides
-                    else group.effective_action,
-                )
-                if action == "mixed":
+                if raw_decisions and not draft_is_current:
                     raise ActionPlanConflictError(
-                        "Mixed duplicate choices require a complete current saved draft"
+                        "Every selected duplicate needs a complete current saved draft"
                     )
-                legacy_primary = request.keeper_overrides.get(
-                    group.group_id,
-                    group.effective_primary_asset_id or group.keeper_asset_id,
-                )
-                dispositions = [
-                    item["disposition"]
-                    for item in _member_dispositions(
-                        action,
-                        [member.id for member in group.members],
-                        legacy_primary,
+                if draft_is_current:
+                    dispositions = [
+                        draft_dispositions[member.id] for member in group.members
+                    ]
+                    action = _action_for_dispositions(dispositions)
+                else:
+                    action = request.action_overrides.get(
+                        group.group_id,
+                        "resolve"
+                        if request.all_eligible
+                        or group.group_id in request.keeper_overrides
+                        else group.effective_action,
                     )
+                    if action == "mixed":
+                        raise ActionPlanConflictError(
+                            "Mixed duplicate choices require a complete current saved draft"
+                        )
+                    legacy_primary = request.keeper_overrides.get(
+                        group.group_id,
+                        group.effective_primary_asset_id or group.keeper_asset_id,
+                    )
+                    dispositions = [
+                        item["disposition"]
+                        for item in _member_dispositions(
+                            action,
+                            [member.id for member in group.members],
+                            legacy_primary,
+                        )
+                    ]
+                if action == "none":
+                    raise ActionPlanConflictError(
+                        "Every selected group needs an action"
+                    )
+                has_deletions = "delete" in dispositions
+                if has_deletions and not _reviewed_delete_supported(group):
+                    raise ActionPlanConflictError(
+                        "Deleting duplicate members requires a current "
+                        "multi-member duplicate group"
+                    )
+                stack_ids = [
+                    member.id
+                    for member, disposition in zip(
+                        group.members,
+                        dispositions,
+                        strict=True,
+                    )
+                    if disposition == "stack"
                 ]
-            if action == "none":
-                raise ActionPlanConflictError("Every selected group needs an action")
-            has_deletions = "delete" in dispositions
-            if has_deletions and not _reviewed_delete_supported(group):
-                raise ActionPlanConflictError(
-                    "Deleting duplicate members requires a current multi-member duplicate group"
+                if stack_ids and any(
+                    member.is_offline
+                    for member in group.members
+                    if member.id in stack_ids
+                ):
+                    raise ActionPlanConflictError(
+                        "Offline members cannot form a reviewed stack"
+                    )
+                if len(stack_ids) == 1:
+                    raise ActionPlanConflictError(
+                        "A stack needs at least two surviving members"
+                    )
+                keep_ids = [
+                    member.id
+                    for member, disposition in zip(
+                        group.members,
+                        dispositions,
+                        strict=True,
+                    )
+                    if disposition in {"keep", "stack"}
+                ]
+                trash_ids = [
+                    member.id
+                    for member, disposition in zip(
+                        group.members,
+                        dispositions,
+                        strict=True,
+                    )
+                    if disposition == "delete"
+                ]
+                stack_primary_id = (
+                    getattr(record, "stack_primary_asset_id", None)
+                    if record
+                    else None
                 )
-            stack_ids = [
-                member.id
-                for member, disposition in zip(group.members, dispositions, strict=True)
-                if disposition == "stack"
-            ]
-            if stack_ids and any(
-                member.is_offline for member in group.members if member.id in stack_ids
-            ):
-                raise ActionPlanConflictError("Offline members cannot form a reviewed stack")
-            if len(stack_ids) == 1:
-                raise ActionPlanConflictError("A stack needs at least two surviving members")
-            keep_ids = [
-                member.id
-                for member, disposition in zip(group.members, dispositions, strict=True)
-                if disposition in {"keep", "stack"}
-            ]
-            trash_ids = [
-                member.id
-                for member, disposition in zip(group.members, dispositions, strict=True)
-                if disposition == "delete"
-            ]
-            stack_primary_id = getattr(record, "stack_primary_asset_id", None) if record else None
-            stack_resolution = getattr(record, "stack_resolution", "move_selected")
-            if stack_ids:
-                if stack_primary_id not in stack_ids:
-                    preferred = group.effective_primary_asset_id or group.keeper_asset_id
-                    stack_primary_id = preferred if preferred in stack_ids else stack_ids[0]
-            else:
-                stack_primary_id = None
-            metadata_keeper_id = _metadata_keeper_for_plan(
-                keep_ids,
-                trash_ids,
-            )
-            keeper_id = metadata_keeper_id or stack_primary_id
-            if action == "resolve" and keeper_id is None:
-                raise ActionPlanConflictError("A primary asset must be chosen from the group")
-            ordered_keep_ids = (
-                [
-                    metadata_keeper_id,
-                    *(asset_id for asset_id in keep_ids if asset_id != metadata_keeper_id),
-                ]
-                if metadata_keeper_id is not None
-                else keep_ids
-            )
-            ordered_members = (
-                [
-                    keeper_id,
-                    *(member.id for member in group.members if member.id != keeper_id),
-                ]
-                if keeper_id is not None
-                else [member.id for member in group.members]
-            )
-            metadata_work: dict[str, Any] | None = None
-            if metadata_keeper_id is not None and trash_ids:
-                keeper_albums: set[UUID] = set()
-                keeper_tags: set[UUID] = set()
-                trash_albums: set[UUID] = set()
-                trash_tags: set[UUID] = set()
-                relation_snapshot, relation_fingerprint = await self._relation_snapshot(member_ids)
-                for member_id, (albums, tags) in relation_snapshot.items():
-                    if member_id == metadata_keeper_id:
-                        keeper_albums.update(albums)
-                        keeper_tags.update(tags)
-                    if member_id in trash_ids:
-                        trash_albums.update(albums)
-                        trash_tags.update(tags)
-                metadata_work = {
-                    "keeper_asset_id": str(metadata_keeper_id),
-                    "album_ids": [
-                        str(identifier) for identifier in sorted(trash_albums - keeper_albums)
-                    ],
-                    "tag_ids": [str(identifier) for identifier in sorted(trash_tags - keeper_tags)],
-                    "source_fingerprint": relation_fingerprint,
-                }
-            stack_source_fingerprint = (
-                _source_fingerprint([member for member in group.members if member.id in stack_ids])
-                if stack_ids
-                else None
-            )
-            plan_groups.append(
-                {
-                    "group_id": group.group_id,
-                    "stable_group_key": group.stable_group_key,
-                    "member_set_key": group.member_set_key,
-                    "discovery_source": group.discovery_source,
-                    "provider_group_id": group.provider_group_id,
-                    "action": action,
-                    "keeper_asset_id": str(keeper_id) if keeper_id is not None else None,
-                    "member_asset_ids": [str(asset_id) for asset_id in ordered_members],
-                    "keep_asset_ids": [str(asset_id) for asset_id in ordered_keep_ids],
-                    "trash_asset_ids": [str(asset_id) for asset_id in trash_ids],
-                    "metadata_work": metadata_work,
-                    "follow_up": (
-                        {
-                            "type": "stack",
-                            "primary_asset_id": str(stack_primary_id),
-                            "resolution": stack_resolution,
-                            "member_asset_ids": [
-                                str(stack_primary_id),
-                                *(
-                                    str(asset_id)
-                                    for asset_id in stack_ids
-                                    if asset_id != stack_primary_id
+                stack_resolution = getattr(
+                    record,
+                    "stack_resolution",
+                    "move_selected",
+                )
+                if stack_ids:
+                    if stack_primary_id not in stack_ids:
+                        preferred = (
+                            group.effective_primary_asset_id
+                            or group.keeper_asset_id
+                        )
+                        stack_primary_id = (
+                            preferred if preferred in stack_ids else stack_ids[0]
+                        )
+                else:
+                    stack_primary_id = None
+                metadata_keeper_id = _metadata_keeper_for_plan(
+                    keep_ids,
+                    trash_ids,
+                )
+                keeper_id = metadata_keeper_id or stack_primary_id
+                if action == "resolve" and keeper_id is None:
+                    raise ActionPlanConflictError(
+                        "A primary asset must be chosen from the group"
+                    )
+                ordered_keep_ids = (
+                    [
+                        metadata_keeper_id,
+                        *(
+                            asset_id
+                            for asset_id in keep_ids
+                            if asset_id != metadata_keeper_id
+                        ),
+                    ]
+                    if metadata_keeper_id is not None
+                    else keep_ids
+                )
+                ordered_members = (
+                    [
+                        keeper_id,
+                        *(
+                            member.id
+                            for member in group.members
+                            if member.id != keeper_id
+                        ),
+                    ]
+                    if keeper_id is not None
+                    else [member.id for member in group.members]
+                )
+                metadata_work: dict[str, Any] | None = None
+                if metadata_keeper_id is not None and trash_ids:
+                    keeper_albums: set[UUID] = set()
+                    keeper_tags: set[UUID] = set()
+                    trash_albums: set[UUID] = set()
+                    trash_tags: set[UUID] = set()
+                    relation_snapshot, relation_fingerprint = (
+                        await self._relation_snapshot(member_ids)
+                    )
+                    for member_id, (albums, tags) in relation_snapshot.items():
+                        if member_id == metadata_keeper_id:
+                            keeper_albums.update(albums)
+                            keeper_tags.update(tags)
+                        if member_id in trash_ids:
+                            trash_albums.update(albums)
+                            trash_tags.update(tags)
+                    metadata_work = {
+                        "keeper_asset_id": str(metadata_keeper_id),
+                        "album_ids": [
+                            str(identifier)
+                            for identifier in sorted(
+                                trash_albums - keeper_albums
+                            )
+                        ],
+                        "tag_ids": [
+                            str(identifier)
+                            for identifier in sorted(
+                                trash_tags - keeper_tags
+                            )
+                        ],
+                        "source_fingerprint": relation_fingerprint,
+                    }
+                stack_source_fingerprint = (
+                    _source_fingerprint(
+                        [
+                            member
+                            for member in group.members
+                            if member.id in stack_ids
+                        ]
+                    )
+                    if stack_ids
+                    else None
+                )
+                plan_groups.append(
+                    {
+                        "group_id": group.group_id,
+                        "stable_group_key": group.stable_group_key,
+                        "member_set_key": group.member_set_key,
+                        "discovery_source": group.discovery_source,
+                        "provider_group_id": group.provider_group_id,
+                        "action": action,
+                        "keeper_asset_id": (
+                            str(keeper_id) if keeper_id is not None else None
+                        ),
+                        "member_asset_ids": [
+                            str(asset_id) for asset_id in ordered_members
+                        ],
+                        "keep_asset_ids": [
+                            str(asset_id) for asset_id in ordered_keep_ids
+                        ],
+                        "trash_asset_ids": [
+                            str(asset_id) for asset_id in trash_ids
+                        ],
+                        "metadata_work": metadata_work,
+                        "follow_up": (
+                            {
+                                "type": "stack",
+                                "primary_asset_id": str(stack_primary_id),
+                                "resolution": stack_resolution,
+                                "member_asset_ids": [
+                                    str(stack_primary_id),
+                                    *(
+                                        str(asset_id)
+                                        for asset_id in stack_ids
+                                        if asset_id != stack_primary_id
+                                    ),
+                                ],
+                                "source_fingerprint": stack_source_fingerprint,
+                                "conflict_fingerprint": None,
+                            }
+                            if stack_primary_id is not None
+                            else None
+                        ),
+                        "execution_state": "pending",
+                        "member_fingerprint": group.member_fingerprint,
+                        "members": [
+                            {
+                                "asset_id": str(member.id),
+                                "disposition": (
+                                    draft_dispositions[member.id]
+                                    if draft_is_current
+                                    else dispositions[index]
                                 ),
-                            ],
-                            "source_fingerprint": stack_source_fingerprint,
-                            "conflict_fingerprint": None,
-                        }
-                        if stack_primary_id is not None
-                        else None
-                    ),
-                    "execution_state": "pending",
-                    "member_fingerprint": group.member_fingerprint,
-                    "members": [
-                        {
-                            "asset_id": str(member.id),
-                            "disposition": draft_dispositions[member.id]
-                            if draft_is_current
-                            else dispositions[index],
-                            "primary": member.id in {stack_primary_id, metadata_keeper_id},
-                        }
-                        for index, member in enumerate(group.members)
-                    ],
-                }
+                                "primary": member.id
+                                in {
+                                    stack_primary_id,
+                                    metadata_keeper_id,
+                                },
+                            }
+                            for index, member in enumerate(group.members)
+                        ],
+                    }
+                )
+
+        if not plan_groups:
+            raise ValueError("No duplicate groups were selected")
+        if (
+            not request.all_eligible
+            and found_ids != set(requested_group_ids)
+        ):
+            raise ActionPlanConflictError(
+                "A selected duplicate group is no longer available"
             )
-        stack_plan_groups = [planned for planned in plan_groups if planned["follow_up"] is not None]
+
+        stack_plan_groups = [
+            planned
+            for planned in plan_groups
+            if planned["follow_up"] is not None
+        ]
         if stack_plan_groups and self._stacks is not None:
             stack_snapshot = await self._stacks.stack_snapshot()
             for planned in stack_plan_groups:
                 follow_up = planned["follow_up"]
-                member_ids = [UUID(value) for value in follow_up["member_asset_ids"]]
+                member_ids = [
+                    UUID(value) for value in follow_up["member_asset_ids"]
+                ]
                 follow_up["conflict_fingerprint"] = _stable_fingerprint(
-                    self._stacks.select_conflict_snapshot(member_ids, stack_snapshot)
+                    self._stacks.select_conflict_snapshot(
+                        member_ids,
+                        stack_snapshot,
+                    )
                 )
         plan_groups.sort(key=lambda item: item["group_id"])
         record = await self._actions.create_duplicate_plan(
