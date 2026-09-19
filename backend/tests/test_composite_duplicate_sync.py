@@ -410,10 +410,17 @@ async def test_follow_up_handler_runs_only_after_delegate_success() -> None:
         events.append("composite")
         return None
 
-    result = await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+    context = Context()
+    result = await FollowUpTaskHandler(Delegate(), follow_up).execute(context, {})
 
     assert isinstance(result, TaskResult)
     assert events == ["source", "composite"]
+    assert [item["progress"]["phase"] for item in context.checkpoints] == [
+        "duplicate_projection_publish",
+        "duplicate_projection_publish",
+    ]
+    assert context.checkpoints[0]["progress"]["detail"] == "Publishing duplicate results…"
+    assert context.checkpoints[-1]["progress"]["detail"] == "Duplicate results published."
 
 
 @pytest.mark.asyncio

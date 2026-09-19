@@ -208,5 +208,27 @@ class FollowUpTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         result = await self._delegate.execute(context, payload)
+        await context.checkpoint(
+            checkpoint={"phase": "publishing_results"},
+            counters=result.counters,
+            progress={
+                "phase": "duplicate_projection_publish",
+                "completed": 0,
+                "total": None,
+                "percent": None,
+                "detail": "Publishing duplicate results…",
+            },
+        )
         await self._after_success()
+        await context.checkpoint(
+            checkpoint={"phase": "published_results"},
+            counters=result.counters,
+            progress={
+                "phase": "duplicate_projection_publish",
+                "completed": 1,
+                "total": 1,
+                "percent": 100.0,
+                "detail": "Duplicate results published.",
+            },
+        )
         return result

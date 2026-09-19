@@ -419,13 +419,14 @@ function numericProgress(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: number, rangeEnd: number): DuplicateDiscoveryProgress {
+export function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: number, rangeEnd: number): DuplicateDiscoveryProgress {
   const rawPhase = typeof task.progress.phase === 'string' ? task.progress.phase : '';
   const phases: Record<string, string> = {
     duplicate_fingerprints: 'Verifying file evidence',
     similarity_candidates: 'Indexing similarity candidates',
     similarity_scoring: 'Comparing candidate pairs',
     similarity_finalizing: 'Finalizing duplicate groups',
+    duplicate_projection_publish: 'Publishing duplicate results',
     complete: 'Completing analysis',
   };
   const rawPercent = numericProgress(task.progress.percent);

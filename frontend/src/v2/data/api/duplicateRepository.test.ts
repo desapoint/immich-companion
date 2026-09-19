@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TaskRepository } from '../syncContracts';
-import { createDuplicateRepository } from './duplicateRepository';
+import type { TaskRecord, TaskRepository } from '../syncContracts';
+import { createDuplicateRepository, discoveryProgress } from './duplicateRepository';
 
 const ASSET_IDS = [
   '11111111-1111-4111-8111-111111111111',
@@ -769,4 +769,26 @@ describe('live V2 duplicate repository', () => {
     expect(calls.at(-1)).toEqual({path:'/api/assets/duplicates/cache/clear',body:{cache:'pairs'}});
   });
 
+});
+
+
+
+test('shows projection publication as an explicit discovery loading phase', async () => {
+  const task = {
+    id: 'projection-task',
+    type: 'similarity_scan',
+    status: 'running',
+    progress: {
+      phase: 'duplicate_projection_publish',
+      completed: 0,
+      total: null,
+      percent: null,
+      detail: 'Publishing duplicate results…',
+    },
+    counters: {},
+  } as unknown as TaskRecord;
+  const progress = discoveryProgress(task, true, 50, 98);
+  expect(progress.label).toBe('Duplicate discovery · Publishing duplicate results');
+  expect(progress.detail).toBe('Publishing duplicate results…');
+  expect(progress.percent).toBeNull();
 });
