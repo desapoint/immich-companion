@@ -15,6 +15,7 @@ from companion.task_coordinator import (
 )
 from companion.task_schema import TaskResult, TaskStatusView
 from companion.v2 import task_coordinator as coordinator_module
+from companion.v2.legacy_task_coordinator import _shutdown_release_state
 
 TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 WORKER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
@@ -281,3 +282,31 @@ async def test_startup_fence_cancels_only_requested_unfinished_task_type() -> No
     assert repository.cancelled_types == [
         ("asset_sync", "Do not resume library sync at startup.")
     ]
+
+
+
+def test_shutdown_release_finalizes_pause_and_cancel_requests() -> None:
+    assert _shutdown_release_state("running") == (
+        "recovering",
+        "failed",
+        "recovering",
+        True,
+    )
+    assert _shutdown_release_state("recovering") == (
+        "recovering",
+        "failed",
+        "recovering",
+        True,
+    )
+    assert _shutdown_release_state("pause_requested") == (
+        "paused",
+        "paused",
+        "paused",
+        False,
+    )
+    assert _shutdown_release_state("cancel_requested") == (
+        "cancelled",
+        "cancelled",
+        "cancelled",
+        False,
+    )
