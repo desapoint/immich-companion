@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Layers3, Plus } from '@lucide/svelte';
-  import V2Button from './V2Button.svelte';
-  import V2Inline from './V2Inline.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
   import type { DuplicatePendingStack } from '../data/contracts';
 
   let {

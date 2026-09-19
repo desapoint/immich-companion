@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TaskRecord, TaskRepository } from '../../../v2/data/syncContracts';
+import type { TaskRecord, TaskRepository } from '../../status/types/syncContracts';
 import { createDuplicateRepository } from '../api/duplicateRepository';
 import { discoveryProgress } from '../api/duplicateDiscovery';
 

@@ -1,21 +1,21 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { CheckCheck,ListChecks,RotateCcw } from '@lucide/svelte';
-  import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
-  import V2AssetGrid from '../components/V2AssetGrid.svelte';
-  import V2AssetSelectionToolbar from '../components/V2AssetSelectionToolbar.svelte';
-  import V2AssetTile from '../components/V2AssetTile.svelte';
-  import V2Badge from '../components/V2Badge.svelte';
-  import V2Button from '../components/V2Button.svelte';
+  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import V2AssetGrid from '../../features/assets/components/AssetGrid.svelte';
+  import V2AssetSelectionToolbar from '../../features/assets/components/AssetSelectionToolbar.svelte';
+  import V2AssetTile from '../../features/assets/components/AssetTile.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
   import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
   import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
-  import V2ErrorState from '../components/V2ErrorState.svelte';
-  import V2OperationToast from '../components/V2OperationToast.svelte';
-  import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2RangeSlider from '../components/V2RangeSlider.svelte';
-  import V2Toolbar from '../components/V2Toolbar.svelte';
+  import V2ErrorState from '../../lib/components/ui/ErrorState.svelte';
+  import OperationToast from '../../lib/components/app/OperationToast.svelte';
+  import V2PageLayout from '../../lib/components/layout/PageLayout.svelte';
+  import V2RangeSlider from '../../lib/components/ui/RangeSlider.svelte';
+  import V2Toolbar from '../../lib/components/layout/Toolbar.svelte';
   import V2Viewer from '../components/V2Viewer.svelte';
-  import V2Zone from '../components/V2Zone.svelte';
+  import V2Zone from '../../lib/components/layout/Zone.svelte';
   import { createGridViewportAnchor } from '../components/gridViewportAnchor';
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
   import { applyShiftAssetRange,getAssetSelectionCount,isAllVisibleSelected,isAssetSelected,selectAllMatchingAssets,selectVisibleAssets,setAssetSelected,toggleAssetSelected } from '../components/assetSelection';
@@ -24,8 +24,8 @@
   import { OperationController } from '../state/operationController.svelte';
   import { TransientAssetSelectionController } from '../state/transientAssetSelection.svelte';
   import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
-  import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
+  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../lib/api/mutationFeedback';
   import type { MutationResult, TrashAssetRecord, TrashSelectionTarget, ViewerNavigationWindow } from '../data/contracts';
 
   let { selectionController }: { selectionController: TransientAssetSelectionController } = $props();
@@ -125,7 +125,7 @@
   {#snippet headerActions()}<V2Button variant="primary" disabled={total===0||loading||mutating} onclick={()=>confirmRestoreAll=true}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Restoring…'):'Restore all'}</V2Button>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Restore unavailable" message={loadError} onretry={()=>void refresh(true)}/>{/if}
-    <V2OperationToast {feedback} error={operationError} failureTitle="Restore operation failed" retryLabel={retryTarget?'Retry failed':''} onretry={retryTarget?()=>void runRestore(retryTarget!):undefined}/>
+    <OperationToast {feedback} error={operationError} failureTitle="Restore operation failed" retryLabel={retryTarget?'Retry failed':''} onretry={retryTarget?()=>void runRestore(retryTarget!):undefined}/>
     {#if selectionActive}<V2AssetSelectionToolbar {selectedCount} {total} noun="trash assets" {allMatchingSelected} {allVisibleSelected} onselectvisible={selectVisible} onselectall={selectAllMatching} oninvert={invertSelection} onclear={clearSelection}>{#snippet actions()}<V2Button iconOnly variant="primary" title="Restore selected" ariaLabel="Restore selected" disabled={mutating} onclick={restoreSelected}><RotateCcw size={18}/></V2Button>{/snippet}</V2AssetSelectionToolbar>{:else}<V2Toolbar><V2Badge text={`${total.toLocaleString()} in trash`}/><V2Badge text={mutating?(operations.phase==='reconciling'?'Refreshing…':'Restoring…'):loading?'Loading…':'Ready'}/><V2Button iconOnly title="Select visible" ariaLabel="Select visible" disabled={total===0||mutating} onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} trash assets`} ariaLabel={`Select all ${total.toLocaleString()} trash assets`} disabled={total===0||mutating} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="restore-results" {sort} sortFields={[{value:'deletedAt',label:'Deleted date'},{value:'takenAt',label:'Taken date'},{value:'name',label:'Name'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>{/if}
     <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each items as asset,index (asset.id)}<V2AssetTile index={collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index:index} assetId={asset.id} label={asset.original_file_name} sublabel={asset.restore_path??`Taken ${new Date(asset.taken_at).toLocaleDateString()}`} image={()=>libraryData.media.thumbnail(asset)} selected={isSelected(asset.id)} selectionMode={selectionActive} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>openViewer(asset.id)} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}</V2AssetGrid>
     {#if total===0}<p class="v2-muted">{loading?'Loading trash…':loadError?'Trash could not be loaded.':'Trash is empty.'}</p>{:else}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={items.length} noun="trash assets" onpage={setPage} onloadmore={loadMore}/>{/if}

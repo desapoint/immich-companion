@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { MediaDelivery } from '../data/contracts';
   import { formatBytes } from '../../lib/utils/fileSize';
-  import V2Card from './V2Card.svelte';
-  import V2Section from './V2Section.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
+  import V2Section from '../../lib/components/layout/Section.svelte';
 
   let {
     filename,

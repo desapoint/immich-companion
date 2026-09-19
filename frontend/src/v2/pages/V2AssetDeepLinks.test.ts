@@ -8,17 +8,17 @@ const admissionEvidence = readFileSync(
   'utf8',
 );
 
-describe('V2 asset deep links', () => {
+describe('asset deep links', () => {
   it('opens and keeps the asset viewer synchronized with /assets/:assetId', () => {
-    expect(assetsPage).toContain('v2AssetIdFromPath');
-    expect(assetsPage).toContain('v2AssetViewerPath');
+    expect(assetsPage).toContain('assetIdFromPath');
+    expect(assetsPage).toContain('assetViewerPath');
     expect(assetsPage).toContain('onpopstate={syncViewerFromLocation}');
     expect(assetsPage).toContain("setViewerUrl(id,'replace')");
     expect(assetsPage).toContain('syncViewerFromLocation()}catch');
   });
 
   it('opens linked duplicate admission sources in a new Assets viewer tab', () => {
-    expect(admissionEvidence).toContain('href={v2AssetViewerPath(admittedBy.asset.id)}');
+    expect(admissionEvidence).toContain('href={assetViewerPath(admittedBy.asset.id)}');
     expect(admissionEvidence).toContain('target="_blank"');
     expect(admissionEvidence).toContain('rel="noopener noreferrer"');
     expect(admissionEvidence).not.toContain('oninspect');

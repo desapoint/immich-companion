@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Star } from '@lucide/svelte';
-  import V2Button from './V2Button.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
   import type { DuplicateDecision } from '../data/contracts';
 
   let {

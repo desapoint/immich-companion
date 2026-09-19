@@ -1,19 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import LoadingSpinner from '../../../lib/components/ui/LoadingSpinner.svelte';
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Checkbox from '../../../v2/components/V2Checkbox.svelte';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import V2CronField from '../../../v2/components/V2CronField.svelte';
   import V2Field from '../../../v2/components/V2Field.svelte';
-  import V2Notice from '../../../v2/components/V2Notice.svelte';
-  import V2Progress from '../../../v2/components/V2Progress.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
-  import { libraryData } from '../../../v2/data/currentDataSource.svelte';
-  import type { SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule } from '../../../v2/data/syncContracts';
-  import { syncStatus } from '../../../v2/state/syncStatus.svelte';
+  import V2Notice from '../../../lib/components/ui/Notice.svelte';
+  import V2Progress from '../../../lib/components/ui/Progress.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
+  import { libraryData } from '../../../app/data/currentDataSource.svelte';
+  import type { SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule } from '../../status/types/syncContracts';
+  import { syncStatus } from '../../status/state/syncStatus.svelte';
 
   type PendingOperation = 'starting' | 'cancelling' | 'runtime' | 'schedules' | null;
   let runtime = $state<SyncRuntimeSettings | null>(null);

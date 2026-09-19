@@ -1,4 +1,4 @@
-import type { KeyboardShortcut } from '../../../v2/components/V2KeyboardShortcuts.svelte';
+import type { KeyboardShortcut } from '../../../lib/components/ui/KeyboardShortcuts.svelte';
 
 export const assetViewerShortcuts: KeyboardShortcut[] = [
   { keys: 'Esc', description: 'Close viewer' },

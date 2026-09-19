@@ -4,16 +4,16 @@
   import { jsonRequest, requestJson } from '../../lib/api/http';
   import SelectField, { type SelectOption } from './SelectField.svelte';
   import DateTimePickerField from './DateTimePickerField.svelte';
-  import V2Badge from './V2Badge.svelte';
-  import V2Button from './V2Button.svelte';
-  import V2Card from './V2Card.svelte';
-  import V2Checkbox from './V2Checkbox.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
+  import V2Checkbox from '../../lib/components/ui/Checkbox.svelte';
   import V2Field from './V2Field.svelte';
-  import V2Inline from './V2Inline.svelte';
-  import V2Modal from './V2Modal.svelte';
-  import V2Segmented from './V2Segmented.svelte';
-  import V2Stack from './V2Stack.svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import V2Modal from '../../lib/components/ui/Modal.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
   import DuplicateAutomationRulesEditor from '../../features/duplicates/components/DuplicateAutomationRulesEditor.svelte';
   import DuplicateKeeperPriorityEditor from '../../features/duplicates/components/DuplicateKeeperPriorityEditor.svelte';
   import type {

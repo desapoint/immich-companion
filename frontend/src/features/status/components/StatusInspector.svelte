@@ -1,9 +1,9 @@
 <script lang="ts">
   import type { StatusLoadState } from '../../../lib/types/status';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
-  import V2Zone from '../../../v2/components/V2Zone.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
+  import V2Zone from '../../../lib/components/layout/Zone.svelte';
   import { capabilityLabel } from '../utils/statusPresentation';
 
   let { state }: { state: StatusLoadState } = $props();

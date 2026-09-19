@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import type { LocalChangeDiagnostics } from '../../../v2/data/localChangeDiagnostics';
+  import type { LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
   import LocalChangeControls from './LocalChangeControls.svelte';
   import LocalChangeDiagnosticStatus from './LocalChangeDiagnosticStatus.svelte';
   import LocalChangeGrid from './LocalChangeGrid.svelte';

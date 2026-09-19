@@ -1,6 +1,6 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
-import type { LocalChangeDiagnostics } from '../../../v2/data/localChangeDiagnostics';
+import type { LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
 import DuplicateLocalChangesComparison from '../components/DuplicateLocalChangesComparison.svelte';
 
 function diagnostics32(): LocalChangeDiagnostics {

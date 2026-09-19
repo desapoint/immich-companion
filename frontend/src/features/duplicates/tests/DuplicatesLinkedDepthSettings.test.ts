@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(new URL('../components/DuplicatesPage.svelte', import.meta.url), 'utf8');
+const controllerSource = readFileSync(new URL('../state/duplicateDiscoveryController.ts', import.meta.url), 'utf8');
 
 describe('V2 duplicate linked depth setting', () => {
   it('defaults the user-facing maximum link depth to two', () => {
@@ -15,7 +16,7 @@ describe('V2 duplicate linked depth setting', () => {
   });
 
   it('persists and sends the normalized link depth with discovery', () => {
-    expect(source).toContain('maxLinkDepth:normalizedLinkDepth');
-    expect(source).toContain('maxLinkDepth=String(saved.maxLinkDepth)');
+    expect(controllerSource).toContain('maxLinkDepth: normalizedLinkDepth');
+    expect(controllerSource).toContain('maxLinkDepth: String(saved.maxLinkDepth)');
   });
 });

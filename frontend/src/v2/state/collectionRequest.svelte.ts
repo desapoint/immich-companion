@@ -1,4 +1,4 @@
-import { errorMessage } from '../data/mutationFeedback';
+import { errorMessage } from '../../lib/api/mutationFeedback';
 import { LatestRequestController } from './latestRequest';
 
 export type CollectionLoadMode = 'replace' | 'append';

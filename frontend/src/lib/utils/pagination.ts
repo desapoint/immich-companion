@@ -9,6 +9,13 @@ export type PaginationItem =
   | { kind: 'page'; page: number; key: string }
   | { kind: 'ellipsis'; key: string };
 
+export function validPageNumber(value: string, maxPage: number): number | null {
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const page = Number(trimmed);
+  return Number.isSafeInteger(page) && page >= 1 && page <= Math.max(1, Math.floor(maxPage)) ? page : null;
+}
+
 function positiveInteger(value: number, minimum = 0): number {
   if (!Number.isFinite(value)) return minimum;
   return Math.max(minimum, Math.floor(value));

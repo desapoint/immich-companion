@@ -1,8 +1,8 @@
 <script lang="ts">
   import SelectField from '../../../v2/components/SelectField.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
 
   let { historyRange, canViewHistory, mutating, reconciling, onrangechange, onrefresh, onclearall }: {
     historyRange: 'Last 30 days' | 'Last 90 days' | 'All history';

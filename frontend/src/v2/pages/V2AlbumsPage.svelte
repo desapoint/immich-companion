@@ -1,29 +1,29 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
+  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
   import { visibleSelectionState } from '../components/collectionSelection';
-  import V2Badge from '../components/V2Badge.svelte';
-  import V2Button from '../components/V2Button.svelte';
-  import V2Card from '../components/V2Card.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
   import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
-  import V2ErrorState from '../components/V2ErrorState.svelte';
+  import V2ErrorState from '../../lib/components/ui/ErrorState.svelte';
   import V2Field from '../components/V2Field.svelte';
-  import V2InfiniteFooter from '../components/V2InfiniteFooter.svelte';
-  import V2Inline from '../components/V2Inline.svelte';
-  import V2Modal from '../components/V2Modal.svelte';
-  import V2OperationToast from '../components/V2OperationToast.svelte';
-  import V2PageLayout from '../components/V2PageLayout.svelte';
+  import V2InfiniteFooter from '../../lib/components/ui/InfiniteFooter.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import V2Modal from '../../lib/components/ui/Modal.svelte';
+  import OperationToast from '../../lib/components/app/OperationToast.svelte';
+  import V2PageLayout from '../../lib/components/layout/PageLayout.svelte';
   import V2Pagination from '../components/V2Pagination.svelte';
-  import V2RoundCheckbox from '../components/V2RoundCheckbox.svelte';
-  import V2Section from '../components/V2Section.svelte';
-  import V2Segmented from '../components/V2Segmented.svelte';
-  import V2SortableHeader from '../components/V2SortableHeader.svelte';
-  import V2Stack from '../components/V2Stack.svelte';
+  import V2RoundCheckbox from '../../lib/components/ui/RoundCheckbox.svelte';
+  import V2Section from '../../lib/components/layout/Section.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
+  import V2SortableHeader from '../../lib/components/ui/SortableHeader.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
   import V2Table from '../components/V2Table.svelte';
-  import V2Toolbar from '../components/V2Toolbar.svelte';
-  import V2Zone from '../components/V2Zone.svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
+  import V2Toolbar from '../../lib/components/layout/Toolbar.svelte';
+  import V2Zone from '../../lib/components/layout/Zone.svelte';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
+  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../lib/api/mutationFeedback';
   import type { AlbumRecord, CollectionDeletePlan } from '../data/contracts';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { OperationController } from '../state/operationController.svelte';
@@ -129,7 +129,7 @@
   {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={queryDraft} placeholder="Search albums…" oninput={(event)=>queryDraft=event.currentTarget.value} onkeydown={handleSearchKeydown}><V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Albums could not be loaded" message={loadError} onretry={()=>void refresh(true)}/>{/if}
-    <V2OperationToast {feedback} error={operationError} failureTitle="Album operation failed" retryLabel={retryDeletePlan?'Retry saved plan':retryDeleteIds.length?'Retry failed':''} onretry={retryDeletePlan?()=>{pendingPlan=retryDeletePlan;deleteDialogOpen=true}:retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
+    <OperationToast {feedback} error={operationError} failureTitle="Album operation failed" retryLabel={retryDeletePlan?'Retry saved plan':retryDeleteIds.length?'Retry failed':''} onretry={retryDeletePlan?()=>{pendingPlan=retryDeletePlan;deleteDialogOpen=true}:retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
     <V2Toolbar><V2Badge text={`${total} album${total===1?'':'s'}`}/><V2Badge text={`${selection.selectedCount} selected`}/><V2Badge text={mutating?(operations.phase==='reconciling'?'Refreshing…':'Applying change…'):loading?'Loading…':'Ready'}/>{#snippet actions()}<V2Segmented items={['Current page','All matching']} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Album selection scope"/><V2CollectionControls id="album-results" {sort} sortFields={[{value:'name',label:'Name'},{value:'assets',label:'Assets'},{value:'description',label:'Description'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
     <V2Card><V2Table layout="fixed"><thead><tr><th class="v2-collection-check-column"><V2RoundCheckbox size="sm" checked={selectionScope==='All matching'?selection.allMatchingSelected:visibleSelection==='all'} indeterminate={selectionScope==='All matching'?selection.matchingSelectedCount>0&&!selection.allMatchingSelected:visibleSelection==='some'} disabled={!albums.length||mutating} ariaLabel={selectionScope==='All matching'?(selection.allMatchingSelected?'Unselect all matching albums':'Select all matching albums'):(visibleSelection==='all'?'Unselect all visible albums':'Select all visible albums')} onclick={toggleVisible}/></th><V2SortableHeader field="name" label="Name" {sort} onsort={setSort}/><V2SortableHeader field="assets" label="Assets" {sort} class="v2-collection-count-column" onsort={setSort}/><V2SortableHeader field="description" label="Description" {sort} class="v2-collection-description-column" onsort={setSort}/><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each albums as album (album.id)}<tr><td class="v2-collection-check-column"><V2RoundCheckbox size="sm" checked={selectedIds.includes(album.id)} disabled={mutating} ariaLabel={`${selectedIds.includes(album.id)?'Unselect':'Select'} ${album.album_name}`} onclick={()=>toggleSelection(album.id,!selectedIds.includes(album.id))}/></td><td><b class="v2-collection-title">{album.album_name}</b></td><td class="v2-collection-count-column">{album.asset_count.toLocaleString()}</td><td class="v2-collection-description-column v2-muted"><span class="v2-collection-description">{album.description||'—'}</span></td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button disabled={mutating} onclick={()=>filterAssets(album)}>Filter assets</V2Button><V2Button disabled={mutating} onclick={()=>openEdit(album)}>Edit</V2Button><V2Button variant="danger" disabled={mutating} onclick={()=>deleteRow(album.id)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="5" class="v2-muted">{loading?'Loading albums…':loadError?'Albums could not be loaded.':'No albums match this search.'}</td></tr>{/each}</tbody></V2Table></V2Card>
     {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} {total} onpage={setPage}/>{:else}<V2InfiniteFooter loaded={albums.length} {total} batchSize={pageSize} noun="albums" onloadmore={loadMore}/>{/if}

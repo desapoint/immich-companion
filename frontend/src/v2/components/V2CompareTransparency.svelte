@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import V2RangeSlider from './V2RangeSlider.svelte';
+  import V2RangeSlider from '../../lib/components/ui/RangeSlider.svelte';
 
   let {
     selectedSrc,

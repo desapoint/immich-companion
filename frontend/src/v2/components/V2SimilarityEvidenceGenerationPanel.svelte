@@ -2,13 +2,13 @@
   import { onMount } from 'svelte';
 
   import { jsonRequest, requestJson } from '../../lib/api/http';
-  import { duplicateDiscoverySettingsRepository } from '../data/api/duplicateDiscoverySettingsRepository';
-  import V2Badge from './V2Badge.svelte';
-  import V2Button from './V2Button.svelte';
-  import V2Card from './V2Card.svelte';
-  import V2ConfirmDialog from './V2ConfirmDialog.svelte';
-  import V2Inline from './V2Inline.svelte';
-  import V2Stack from './V2Stack.svelte';
+  import { duplicateDiscoverySettingsRepository } from '../../features/duplicates/api/duplicateDiscoverySettingsRepository';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
+  import V2ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
 
   type ApiGeneration = {
     epoch: number;

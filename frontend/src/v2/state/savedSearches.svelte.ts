@@ -1,5 +1,5 @@
-import { libraryData } from '../data/currentDataSource.svelte';
-import { errorMessage, mutationFeedback, type OperationFeedback } from '../data/mutationFeedback';
+import { libraryData } from '../../app/data/currentDataSource.svelte';
+import { errorMessage, mutationFeedback, type OperationFeedback } from '../../lib/api/mutationFeedback';
 import type { AssetSearchCriteria, SavedSearchCreateInput, SavedSearchRecord, SavedSearchUpdateInput } from '../data/contracts';
 
 export class SavedSearchController {

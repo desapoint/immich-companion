@@ -1,4 +1,4 @@
-import type { AssetSearchCriteria, AssetSelectionWorkspace } from '../../../v2/data/contracts';
+import type { AssetSearchCriteria, AssetSelectionWorkspace } from '../../../lib/types/libraryContracts';
 import {
   SelectionWorkspaceController,
   type SelectionWorkspaceRepository,

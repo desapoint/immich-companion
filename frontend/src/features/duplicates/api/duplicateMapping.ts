@@ -1,6 +1,6 @@
-import type { AssetRecord, DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan, DuplicateState } from '../../../v2/data/contracts';
-import { referenceFirstDuplicateMembers } from '../../../v2/data/duplicatePresentation';
-import { parseStackResolution } from '../../../v2/data/stackResolution';
+import type { AssetRecord, DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan, DuplicateState } from '../types/contracts';
+import { referenceFirstDuplicateMembers } from '../utils/duplicatePresentation';
+import { parseStackResolution } from '../types/stackResolution';
 import type { ApiDuplicateDraft, ApiDuplicateGroup, ApiDuplicateMember } from './duplicateRepository';
 
 function similarity(member: ApiDuplicateMember): number | null {

@@ -1,9 +1,9 @@
 <script lang="ts">
   import SelectField from '../../../v2/components/SelectField.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
-  import type { DuplicateDecision, DuplicateSourceFilter } from '../../../v2/data/contracts';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
+  import type { DuplicateDecision, DuplicateSourceFilter } from '../types/contracts';
 
   let { sourceFilter, reviewFilter, reviewFilterOptions, selectionScope, groupCount, mutating, keeperSummary, decisions, bulkPresetDisabled, onsourcefilter, onreviewfilter, onselectionchange, onopenkeeper, onpreset }: {
     sourceFilter: DuplicateSourceFilter;

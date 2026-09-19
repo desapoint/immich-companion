@@ -1,29 +1,29 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  import V2AssetRelationModal from '../../../v2/components/V2AssetRelationModal.svelte';
-  import V2AssetRelationRemoveModal from '../../../v2/components/V2AssetRelationRemoveModal.svelte';
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2ErrorState from '../../../v2/components/V2ErrorState.svelte';
+  import V2AssetRelationModal from '../../../features/assets/components/AssetRelationModal.svelte';
+  import V2AssetRelationRemoveModal from '../../../features/assets/components/AssetRelationRemoveModal.svelte';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2ErrorState from '../../../lib/components/ui/ErrorState.svelte';
   import V2MediaViewport from '../../../v2/components/V2MediaViewport.svelte';
-  import V2Inline from '../../../v2/components/V2Inline.svelte';
-  import V2KeyboardShortcuts from '../../../v2/components/V2KeyboardShortcuts.svelte';
-  import V2OperationFeedback from '../../../v2/components/V2OperationFeedback.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
+  import V2Inline from '../../../lib/components/layout/Inline.svelte';
+  import V2KeyboardShortcuts from '../../../lib/components/ui/KeyboardShortcuts.svelte';
+  import OperationFeedback from '../../../lib/components/app/OperationFeedback.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2StackFilmstrip from '../../../v2/components/V2StackFilmstrip.svelte';
   import V2ViewerShell from '../../../v2/components/V2ViewerShell.svelte';
   import V2ViewerAssetFacts from '../../../v2/components/V2ViewerAssetFacts.svelte';
-  import V2ZoomControl from '../../../v2/components/V2ZoomControl.svelte';
+  import V2ZoomControl from '../../../lib/components/ui/ZoomControl.svelte';
   import { ViewerViewportController } from '../state/viewportController.svelte';
   import { AssetMutationController } from '../../../v2/state/assetMutations.svelte';
-  import { AssetRelationOptionsController } from '../../../v2/state/assetRelationOptions.svelte';
+  import { AssetRelationOptionsController } from '../state/assetRelationOptions.svelte';
   import { AssetRemovableRelationshipsController } from '../../../v2/state/assetRemovableRelationships.svelte';
-  import { useOptionalV2Toasts } from '../../../v2/state/toasts.svelte';
-  import { libraryData } from '../../../v2/data/currentDataSource.svelte';
-  import { errorMessage } from '../../../v2/data/mutationFeedback';
+  import { useOptionalToasts } from '../../../app/state/toasts.svelte';
+  import { libraryData } from '../../../app/data/currentDataSource.svelte';
+  import { errorMessage } from '../../../lib/api/mutationFeedback';
   import { isViewerSelectionShortcut } from '../../../v2/components/viewerSelection';
-  import type { AssetDetailRecord, AssetRecord, AssetSelectionTarget, MediaResource, MutationResult, ViewerNavigationWindow } from '../../../v2/data/contracts';
+  import type { AssetDetailRecord, AssetRecord, AssetSelectionTarget, MediaResource, MutationResult, ViewerNavigationWindow } from '../../../lib/types/libraryContracts';
   import { assetViewerShortcuts } from '../state/viewerShortcuts';
 
   type RelationDialog='album'|'tags'|null;
@@ -40,7 +40,7 @@
   const camera=new ViewerViewportController();
   const relations=new AssetRelationOptionsController();
   const removableRelations=new AssetRemovableRelationshipsController();
-  const toasts=useOptionalV2Toasts();
+  const toasts=useOptionalToasts();
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts = assetViewerShortcuts;
 
@@ -289,7 +289,7 @@
     <V2Inline gap="sm">{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
   {/snippet}
   <div class="v2-viewer-workarea">
-    {#if actionFeedback?.tone==='pending'}<div class="v2-viewer-operation-feedback"><V2OperationFeedback feedback={actionFeedback}/></div>{/if}
+    {#if actionFeedback?.tone==='pending'}<div class="v2-viewer-operation-feedback"><OperationFeedback feedback={actionFeedback}/></div>{/if}
     <div class="v2-viewer-stage">
       <div class="v2-image-stage">{#if loading}<span class="v2-muted">Loading asset…</span>{:else if assetError}<V2ErrorState title="Asset unavailable" message={assetError} onretry={()=>currentId&&void loadCurrent(currentId)}/>{:else if mediaError}<V2ErrorState title={asset?.is_offline?'Source offline':'Media unavailable'} message={mediaError} retryLabel={mediaRefreshing?'Refreshing…':'Retry media'} onretry={()=>void retryMedia()}/>{:else if asset&&media}{#key mediaAttempt}<V2MediaViewport resource={media} assetType={asset.asset_type} alt={asset.original_file_name} controller={camera} onerror={markMediaFailed}/>{/key}{/if}</div>
       <aside class="v2-viewer-info">

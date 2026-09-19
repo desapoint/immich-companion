@@ -10,8 +10,7 @@
     parseLocalDateTime,
     toLocalDateTimeValue,
   } from '../../utils/dateTime';
-  import SelectField from './SelectField.svelte';
-  import DateTimeCalendar from './DateTimeCalendar.svelte';
+  import DateTimePickerPanel from './DateTimePickerPanel.svelte';
 
   interface Props {
     id: string;
@@ -221,57 +220,7 @@
   </button>
 
   {#if open}
-    <div
-      id={`${id}-picker`}
-      class="picker-panel"
-      role="dialog"
-      tabindex="-1"
-      aria-modal="false"
-      aria-labelledby={`${id}-picker-title`}
-      onkeydown={handlePanelKeydown}
-    >
-      <DateTimeCalendar
-        {id}
-        {monthLabel}
-        days={calendarDays}
-        {today}
-        selectedDate={draftDate}
-        {focusedDate}
-        onmonthchange={changeMonth}
-        onselect={selectDate}
-        onfocusdate={(date) => (focusedDate = date)}
-        onkeydown={handleDayKeydown}
-        bind:element={calendarElement}
-      />
-
-      <div class="time-row">
-        <SelectField
-          id={`${id}-hour`}
-          label="Hour"
-          value={draftHour}
-          options={hourOptions}
-          compact
-          onchange={(nextHour) => (draftHour = nextHour)}
-        />
-        <span class="time-separator" aria-hidden="true">:</span>
-        <SelectField
-          id={`${id}-minute`}
-          label="Minute"
-          value={draftMinute}
-          options={minuteOptions}
-          compact
-          onchange={(nextMinute) => (draftMinute = nextMinute)}
-        />
-        <button class="now-button" type="button" onclick={chooseNow}>Now</button>
-      </div>
-
-      <footer class="picker-actions">
-        <button class="clear" type="button" onclick={clearSelection} disabled={!value}>Clear</button>
-        <span></span>
-        <button type="button" onclick={() => void closePicker(true)}>Cancel</button>
-        <button class="apply" type="button" onclick={applySelection}>Apply</button>
-      </footer>
-    </div>
+    <DateTimePickerPanel id={id} {monthLabel} days={calendarDays} {today} selectedDate={draftDate} {focusedDate} hour={draftHour} minute={draftMinute} {hourOptions} {minuteOptions} hasValue={Boolean(value)} bind:element={calendarElement} onmonthchange={changeMonth} onselect={selectDate} onfocusdate={(date) => (focusedDate = date)} onkeydown={handleDayKeydown} onpanelkeydown={handlePanelKeydown} onhourchange={(nextHour) => (draftHour = nextHour)} onminutechange={(nextMinute) => (draftMinute = nextMinute)} onnow={chooseNow} onclear={clearSelection} oncancel={() => void closePicker(true)} onapply={applySelection} />
   {/if}
 </div>
 
@@ -365,113 +314,4 @@
     transform: translateY(0.13rem) rotate(225deg);
   }
 
-  .picker-panel {
-    position: absolute;
-    z-index: 60;
-    top: calc(100% + 0.4rem);
-    left: 0;
-    display: grid;
-    width: min(22rem, calc(100vw - 2rem));
-    gap: 0.55rem;
-    padding: 0.72rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-md);
-    color: var(--color-ink-strong);
-    background: var(--color-surface-raised);
-    box-shadow: 0 1rem 2.6rem rgb(17 24 19 / 22%);
-  }
-
-  .now-button,
-  .picker-actions button {
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--color-ink-strong);
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
-  }
-
-  .now-button:hover,
-  .picker-actions button:hover:not(:disabled) {
-    border-color: var(--color-accent-strong);
-    color: var(--color-accent-strong);
-    background: var(--color-surface-soft);
-  }
-
-  .now-button:focus-visible,
-  .picker-actions button:focus-visible {
-    outline: 0.15rem solid var(--color-accent-strong);
-    outline-offset: 0.08rem;
-  }
-
-  .time-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
-    align-items: end;
-    gap: 0.38rem;
-    padding-top: 0.62rem;
-    border-top: 1px solid var(--color-border-subtle);
-  }
-
-  .time-separator {
-    min-height: 2.3rem;
-    align-content: center;
-    color: var(--color-ink-muted);
-    font-weight: 850;
-  }
-
-  .now-button {
-    min-height: 2.3rem;
-    padding-inline: 0.65rem;
-    border-color: var(--color-border-strong);
-    color: var(--color-accent-strong);
-    background: var(--color-surface-soft);
-    font-size: 0.7rem;
-    font-weight: 780;
-  }
-
-  .picker-actions {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: 0.4rem;
-    padding-top: 0.62rem;
-    border-top: 1px solid var(--color-border-subtle);
-  }
-
-  .picker-actions button {
-    min-height: 2.15rem;
-    padding-inline: 0.68rem;
-    border-color: var(--color-border-strong);
-    background: var(--color-surface-soft);
-    font-size: 0.68rem;
-    font-weight: 780;
-  }
-
-  .picker-actions button:disabled {
-    cursor: default;
-    opacity: 0.42;
-  }
-
-  .picker-actions .clear {
-    color: var(--color-negative-ink);
-  }
-
-  .picker-actions .apply {
-    border-color: var(--color-accent-strong);
-    color: var(--color-ink-inverse);
-    background: var(--color-accent-strong);
-  }
-
-  @media (max-width: 30rem) {
-    .picker-panel {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      width: min(22rem, calc(100vw - 1rem));
-      max-height: calc(100dvh - 1rem);
-      overflow-y: auto;
-      transform: translate(-50%, -50%);
-    }
-  }
 </style>

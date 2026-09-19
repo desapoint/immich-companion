@@ -1,4 +1,4 @@
-import type { DuplicateSearchQuery, SimilarityCacheStatus } from '../../../v2/data/contracts';
+import type { DuplicateSearchQuery, SimilarityCacheStatus } from '../types/contracts';
 import type { ApiDuplicateHistoryItem, ApiDiskCacheStatus, ApiSimilarityCacheStatus } from './duplicateRepository';
 
 export function cacheStatus(value: ApiSimilarityCacheStatus): SimilarityCacheStatus {

@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Image as ImageIcon, ImageOff } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import { cachedThumbnail, type ThumbnailSource } from '../data/mediaThumbnailCache';
-  import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
+  import { cachedThumbnail, type ThumbnailSource } from '../../lib/api/mediaThumbnailCache';
+  import { mediaResourceSources, nextMediaSourceIndex } from '../../lib/api/mediaSources';
 
   let {
     cacheKey,

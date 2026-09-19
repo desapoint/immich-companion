@@ -1,17 +1,17 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import V2Button from './V2Button.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
   import V2CompareDifference from './V2CompareDifference.svelte';
   import V2CompareFlicker from './V2CompareFlicker.svelte';
   import DuplicateLocalChangesComparison from '../../features/duplicates/components/DuplicateLocalChangesComparison.svelte';
   import V2CompareSideBySide from './V2CompareSideBySide.svelte';
   import V2CompareSwipe from './V2CompareSwipe.svelte';
   import V2CompareTransparency from './V2CompareTransparency.svelte';
-  import V2Segmented from './V2Segmented.svelte';
-  import V2ZoomControl from './V2ZoomControl.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
+  import V2ZoomControl from '../../lib/components/ui/ZoomControl.svelte';
   import type { MediaResource } from '../data/contracts';
-  import type { LocalChangeDiagnostics } from '../data/localChangeDiagnostics';
-  import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
+  import type { LocalChangeDiagnostics } from '../../features/duplicates/utils/localChangeDiagnostics';
+  import { mediaResourceSources, nextMediaSourceIndex } from '../../lib/api/mediaSources';
   import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';
   import { ViewportRegistrationController } from '../../features/assets/state/viewportRegistration';
 

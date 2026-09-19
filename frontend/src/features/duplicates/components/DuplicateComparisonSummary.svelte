@@ -1,8 +1,8 @@
 <script lang="ts">
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Inline from '../../../v2/components/V2Inline.svelte';
-  import { formatSimilarityPercent, type ComparisonMemberData } from '../../../v2/data/duplicateMember';
-  import type { DuplicateSimilarityEvidence } from '../../../v2/data/contracts';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Inline from '../../../lib/components/layout/Inline.svelte';
+  import { formatSimilarityPercent, type ComparisonMemberData } from '../types/duplicateMember';
+  import type { DuplicateSimilarityEvidence } from '../types/contracts';
 
   let {
     matchLabel,

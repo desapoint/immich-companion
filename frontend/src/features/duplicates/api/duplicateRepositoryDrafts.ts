@@ -1,6 +1,6 @@
 import { jsonRequest, requestJson } from '../../../lib/api/http';
-import type { DuplicateResolutionPlan } from '../../../v2/data/contracts';
-import { serializeStackResolution } from '../../../v2/data/stackResolution';
+import type { DuplicateResolutionPlan } from '../types/contracts';
+import { serializeStackResolution } from '../types/stackResolution';
 import type { ApiDuplicateDraft, ApiDuplicateGroup, ApiDuplicateWorkspace, AnalysisOptions } from './duplicateRepository';
 import { groupResolution, primaryFor } from './duplicateMapping';
 

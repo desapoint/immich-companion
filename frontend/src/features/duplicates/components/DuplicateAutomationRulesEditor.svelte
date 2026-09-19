@@ -2,10 +2,10 @@
   import { ArrowDown, ArrowUp, Plus, Trash2 } from '@lucide/svelte';
   import DateTimePickerField from '../../../v2/components/DateTimePickerField.svelte';
   import SelectField, { type SelectOption } from '../../../v2/components/SelectField.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2Field from '../../../v2/components/V2Field.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import {
     automationActionOptions, automationConditionFieldOptions, automationConditionNeedsValue, automationConditionScopeOptions,
     automationFlowOptions, automationOperatorOptions, automationTargetOptions,

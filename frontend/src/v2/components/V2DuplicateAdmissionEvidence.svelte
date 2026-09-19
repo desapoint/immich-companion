@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Link2 } from '@lucide/svelte';
   import type { DuplicateMemberRecord, SimilarityValidationMode } from '../data/contracts';
-  import { v2AssetViewerPath } from '../navigation';
-  import { linkedIntermediateCount } from '../data/duplicateMember';
+  import { assetViewerPath } from '../../app/navigation';
+  import { linkedIntermediateCount } from '../../features/duplicates/types/duplicateMember';
 
   let { member, members, mode }: {
     member: DuplicateMemberRecord;
@@ -31,7 +31,7 @@
 {#if linkedAdmission && admittedBy && linkDepth !== null}
   <a
     class="v2-linked-admission-pill"
-    href={v2AssetViewerPath(admittedBy.asset.id)}
+    href={assetViewerPath(admittedBy.asset.id)}
     target="_blank"
     rel="noopener noreferrer"
     title={linkLabel}

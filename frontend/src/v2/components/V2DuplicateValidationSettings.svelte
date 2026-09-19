@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { SimilarityValidationMode } from '../data/contracts';
   import SelectField from './SelectField.svelte';
-  import V2Stack from './V2Stack.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
 
   let { mode, onchange }: {
     mode: SimilarityValidationMode;

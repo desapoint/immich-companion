@@ -1,6 +1,6 @@
 <script lang="ts">
-  import V2Button from './V2Button.svelte';
-  import V2Modal from './V2Modal.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Modal from '../../lib/components/ui/Modal.svelte';
 
   let {
     selectedCount,

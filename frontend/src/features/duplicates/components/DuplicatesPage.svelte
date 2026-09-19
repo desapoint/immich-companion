@@ -1,13 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import ConfirmDialog from '../../../v2/components/V2ConfirmDialog.svelte';
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Checkbox from '../../../v2/components/V2Checkbox.svelte';
+  import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import V2CollectionControls, { type ResultMode } from '../../../v2/components/V2CollectionControls.svelte';
   import V2CollectionFooter from '../../../v2/components/V2CollectionFooter.svelte';
-  import V2CollectionLoadingOverlay from '../../../v2/components/V2CollectionLoadingOverlay.svelte';
+  import V2CollectionLoadingOverlay from '../../../lib/components/ui/CollectionLoadingOverlay.svelte';
   import DuplicateCompareViewer from './DuplicateCompareViewer.svelte';
   import DuplicateDiscoveryIntro from './DuplicateDiscoveryIntro.svelte';
   import DuplicateHistoryControls from './DuplicateHistoryControls.svelte';
@@ -20,22 +20,22 @@
   import DuplicateKeeperModal from './DuplicateKeeperModal.svelte';
   import V2DuplicateStackControls from '../../../v2/components/V2DuplicateStackControls.svelte';
   import V2DuplicateValidationSettings from '../../../v2/components/V2DuplicateValidationSettings.svelte';
-  import V2ErrorState from '../../../v2/components/V2ErrorState.svelte';
+  import V2ErrorState from '../../../lib/components/ui/ErrorState.svelte';
   import V2Field from '../../../v2/components/V2Field.svelte';
-  import V2Inline from '../../../v2/components/V2Inline.svelte';
+  import V2Inline from '../../../lib/components/layout/Inline.svelte';
   import V2LazyAssetMedia from '../../../v2/components/V2LazyAssetMedia.svelte';
-  import V2OperationToast from '../../../v2/components/V2OperationToast.svelte';
-  import V2PageLayout from '../../../v2/components/V2PageLayout.svelte';
-  import V2RoundCheckbox from '../../../v2/components/V2RoundCheckbox.svelte';
-  import V2Segmented from '../../../v2/components/V2Segmented.svelte';
+  import OperationToast from '../../../lib/components/app/OperationToast.svelte';
+  import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
+  import V2RoundCheckbox from '../../../lib/components/ui/RoundCheckbox.svelte';
+  import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
   import V2SimilarityEvidenceGenerationPanel from '../../../v2/components/V2SimilarityEvidenceGenerationPanel.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
-  import V2Tabs from '../../../v2/components/V2Tabs.svelte';
-  import V2Toolbar from '../../../v2/components/V2Toolbar.svelte';
-  import V2Zone from '../../../v2/components/V2Zone.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
+  import V2Tabs from '../../../lib/components/ui/Tabs.svelte';
+  import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
+  import V2Zone from '../../../lib/components/layout/Zone.svelte';
   import { createCollectionView } from '../../../v2/state/collectionView.svelte';
-  import { backgroundTaskStatus } from '../../../v2/state/backgroundTaskStatus.svelte';
-  import { duplicateDiscoverySettingsRepository } from '../../../v2/data/api/duplicateDiscoverySettingsRepository';
+  import { backgroundTaskStatus } from '../../status/state/backgroundTaskStatus.svelte';
+  import { duplicateDiscoverySettingsRepository } from '../api/duplicateDiscoverySettingsRepository';
   import { CollectionRequestController } from '../../../v2/state/collectionRequest.svelte';
   import { OperationController } from '../../../v2/state/operationController.svelte';
   import {
@@ -52,16 +52,18 @@
     stackForAsset,
     stacksForGroup,
   } from '../../../v2/state/duplicateStackResolution';
-  import { libraryData } from '../../../v2/data/currentDataSource.svelte';
-  import { clearAllDuplicateResolutionHistory, clearDuplicateResolutionHistory } from '../../../v2/data/api/duplicateResolutionHistory';
-  import { duplicateGroupTitle, duplicateKindLabel } from '../../../v2/data/duplicatePresentation';
-  import { duplicateListMemberMeta, formatSimilarityPercent } from '../../../v2/data/duplicateMember';
-  import { duplicateSourceLabels } from '../../../v2/data/duplicateSource';
+  import { libraryData } from '../../../app/data/currentDataSource.svelte';
+  import { clearAllDuplicateResolutionHistory, clearDuplicateResolutionHistory } from '../api/duplicateResolutionHistory';
+  import { duplicateGroupTitle, duplicateKindLabel } from '../utils/duplicatePresentation';
+  import { duplicateListMemberMeta, formatSimilarityPercent } from '../types/duplicateMember';
+  import { duplicateSourceLabels } from '../utils/duplicateSource';
   import { comparisonTargetId } from '../../../lib/utils/duplicateComparisonNavigation';
   import { duplicateViewerGroupNavigationPlan, type DuplicateViewerGroupDirection } from '../../../v2/state/duplicateViewerGroupNavigation';
-  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../../v2/data/mutationFeedback';
-  import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateKeeperSelectionResult, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateSourceFilter, DuplicateState, SimilarityCacheKind, SimilarityCacheStatus, SimilarityValidationMode } from '../../../v2/data/contracts';
+  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../../lib/api/mutationFeedback';
+  import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateKeeperSelectionResult, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateSourceFilter, DuplicateState, SimilarityCacheKind, SimilarityCacheStatus, SimilarityValidationMode } from '../types/contracts';
   import { currentResolution, groupComplete, groupHasInvalidStack, groupResolution } from '../state/duplicateReviewHelpers';
+  import { DuplicatePagePersistence } from '../state/duplicatePagePersistence.svelte';
+  import { DuplicateDiscoveryController } from '../state/duplicateDiscoveryController';
 
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
   type DuplicateSortField='reclaimable'|'members'|'similarity'|'date'|'discovered';
@@ -90,42 +92,30 @@
   const nextGroupPlan=$derived(duplicateViewerGroupNavigationPlan('next',groupNavigationState));
   const canPreviousGroup=$derived(compare&&!mutating&&!reviewLoading&&!groupNavigationLoading&&previousGroupPlan!==null);
   const canNextGroup=$derived(compare&&!mutating&&!reviewLoading&&!groupNavigationLoading&&nextGroupPlan!==null);
-  const draftTimers=new Map<string,ReturnType<typeof setTimeout>>();
-  let selectionSave=Promise.resolve();
-  let workspaceHydrated=false;
+  const persistence = new DuplicatePagePersistence();
+  const discovery = new DuplicateDiscoveryController({
+    getState: () => ({ includeExact, includeSimilar, similarityThreshold, validationMode, maxLinkDepth, maxCandidates }),
+    setState: (state) => { includeExact=state.includeExact;includeSimilar=state.includeSimilar;similarityThreshold=state.similarityThreshold;validationMode=state.validationMode;maxLinkDepth=state.maxLinkDepth;maxCandidates=state.maxCandidates },
+    isReady: () => discoveryReady,
+    isMutating: () => mutating,
+    clearOutcome: () => operations.clearOutcome(),
+    setError: (message) => interactionError=message,
+    setSummary: (summary) => discoverySummary=summary,
+    resetWorkspace: () => stackWorkspace=createDuplicateStackWorkspace(),
+    pending,
+    runOperation: (action, runner, options) => operations.run(action, runner, options),
+    runDiscovery: (options, onProgress) => libraryData.duplicates.runDiscovery(options, onProgress),
+    reconcile: () => reconcileGroups('Duplicate discovery'),
+    updateProgress: (progress) => backgroundTaskStatus.updateDuplicateDiscovery(progress),
+    startProgress: () => backgroundTaskStatus.startDuplicateDiscovery(),
+    finishProgress: () => backgroundTaskStatus.finishDuplicateDiscovery(),
+  });
   $effect(()=>{if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-selection-scope',selectionScope)});
 
-  function hydrateWorkspace(items:DuplicateGroupRecord[],replace:boolean){
-    let nextDecisions:Record<string,DuplicateDecision>=replace?{}:{...decisions};
-    let nextStacks=replace?createDuplicateStackWorkspace():stackWorkspace;
-    const selected:string[]=replace?[...libraryData.duplicates.selectedGroupIds()]:[...selectedGroups];
-    for(const item of items){
-      nextDecisions={...nextDecisions,...item.savedDecisions};
-      if(item.selected&&!selected.includes(item.id))selected.push(item.id);
-      const stackIds=item.members.filter((entry)=>item.savedDecisions[entry.asset.id]==='stack').map((entry)=>entry.asset.id);
-      if(stackIds.length){nextStacks=createPendingStack(nextStacks,item.id);for(const id of stackIds)nextStacks=assignAssetToActiveStack(nextStacks,item.id,id);if(item.stackPrimaryAssetId)nextStacks=setPendingStackPrimary(nextStacks,item.stackPrimaryAssetId)}
-    }
-    decisions=nextDecisions;stackWorkspace=nextStacks;selectedGroups=selected;workspaceHydrated=true;
-  }
-
-  async function flushWorkspace():Promise<void>{
-    const writes:Promise<void>[]=[];
-    for(const item of groups){const timer=draftTimers.get(item.id);if(!timer)continue;clearTimeout(timer);draftTimers.delete(item.id);writes.push(libraryData.duplicates.saveDraft(item.id,groupResolution(stackWorkspace,item,decisions)))}
-    await Promise.all(writes);
-    await libraryData.duplicates.flushDrafts();
-    await selectionSave;
-  }
-
-  function scheduleDraft(item:DuplicateGroupRecord){
-    const previous=draftTimers.get(item.id);if(previous)clearTimeout(previous);
-    draftTimers.set(item.id,setTimeout(()=>{draftTimers.delete(item.id);const resolution=groupResolution(stackWorkspace,item,decisions);if(!Object.keys(resolution.decisions).length)return;void libraryData.duplicates.saveDraft(item.id,resolution).catch((error)=>interactionError=errorMessage(error,'Duplicate choices could not be saved.'))},250));
-  }
-
-  function persistSelection(){
-    if(!workspaceHydrated)return;
-    const ids=[...selectedGroups],active=compare?group:null;
-    selectionSave=selectionSave.catch(()=>undefined).then(()=>libraryData.duplicates.saveSelection(ids,active)).catch((error)=>{interactionError=errorMessage(error,'Duplicate group selection could not be saved.')});
-  }
+  function hydrateWorkspace(items:DuplicateGroupRecord[],replace:boolean){const hydrated=persistence.hydrateWorkspace(items,replace,decisions,stackWorkspace,selectedGroups);decisions=hydrated.decisions;stackWorkspace=hydrated.stackWorkspace;selectedGroups=hydrated.selectedGroups}
+  async function flushWorkspace():Promise<void>{await persistence.flushWorkspace(groups,(item)=>groupResolution(stackWorkspace,item,decisions))}
+  function scheduleDraft(item:DuplicateGroupRecord){persistence.scheduleDraft(item,()=>groupResolution(stackWorkspace,item,decisions),(error)=>interactionError=errorMessage(error,'Duplicate choices could not be saved.'))}
+  function persistSelection(){persistence.persistSelection(selectedGroups,compare?group:null,(error)=>interactionError=errorMessage(error,'Duplicate group selection could not be saved.'))}
 
   $effect(()=>{
     let next=stackWorkspace;
@@ -200,7 +190,7 @@
   }
   async function switchReference(assetId:string){if(mutating||!activeGroup)return;const updated=await libraryData.duplicates.switchReference(activeGroup.id,assetId),ids=updated.members.map((entry)=>entry.asset.id);groups=groups.map((item)=>item.id===updated.id?updated:item);reference=Math.max(0,ids.indexOf(updated.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',assetId)))}
   function setDecision(groupId:string,assetId:string,decision:DuplicateDecision){if(mutating||!capabilities.decisions.includes(decision))return;const item=groups.find((entry)=>entry.id===groupId),wasComplete=item?groupComplete(item,decisions):false;const next={...decisions,[assetId]:decision};decisions=next;stackWorkspace=decision==='stack'?assignAssetToActiveStack(stackWorkspace,groupId,assetId):removeAssetFromPendingStack(stackWorkspace,assetId);if(item){if(!wasComplete&&groupComplete(item,next)&&!selectedGroups.includes(item.id)){selectedGroups=[...selectedGroups,item.id];persistSelection()}scheduleDraft(item)}}
-  function clearDecision(groupId:string,assetId:string){if(mutating||!decisions[assetId])return;const next={...decisions};delete next[assetId];decisions=next;stackWorkspace=removeAssetFromPendingStack(stackWorkspace,assetId);selectedGroups=selectedGroups.filter((id)=>id!==groupId);persistSelection();const item=groups.find((entry)=>entry.id===groupId);if(!item)return;const resolution=groupResolution(stackWorkspace,item,decisions);if(Object.keys(resolution.decisions).length){scheduleDraft(item);return}const timer=draftTimers.get(item.id);if(timer)clearTimeout(timer);draftTimers.delete(item.id);void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>interactionError=errorMessage(error,'Duplicate choice could not be cleared.'))}
+  function clearDecision(groupId:string,assetId:string){if(mutating||!decisions[assetId])return;const next={...decisions};delete next[assetId];decisions=next;stackWorkspace=removeAssetFromPendingStack(stackWorkspace,assetId);selectedGroups=selectedGroups.filter((id)=>id!==groupId);persistSelection();const item=groups.find((entry)=>entry.id===groupId);if(!item)return;const resolution=groupResolution(stackWorkspace,item,decisions);if(Object.keys(resolution.decisions).length){scheduleDraft(item);return}persistence.cancelDraft(item.id);void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>interactionError=errorMessage(error,'Duplicate choice could not be cleared.'))}
   function setStackPrimary(assetId:string){if(mutating||decisions[assetId]!=='stack')return;stackWorkspace=setPendingStackPrimary(stackWorkspace,assetId);const item=groups.find((entry)=>entry.members.some((entry)=>entry.asset.id===assetId));if(item)scheduleDraft(item)}
   function newStack(groupId:string){stackWorkspace=createPendingStack(stackWorkspace,groupId)}
   function chooseStack(groupId:string,stackId:string){stackWorkspace=selectPendingStack(stackWorkspace,groupId,stackId)}
@@ -208,9 +198,8 @@
   function clearGroupChoices(item:DuplicateGroupRecord){const groupIds=new Set(item.members.map((member)=>member.asset.id));decisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>!groupIds.has(id))) as Record<string,DuplicateDecision>;stackWorkspace=clearGroupStacks(stackWorkspace,item.id);selectedGroups=selectedGroups.filter((id)=>id!==item.id);persistSelection();void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>interactionError=errorMessage(error,'Duplicate choices could not be cleared.'))}
   async function clearAllDecisions():Promise<void>{
     if(mutating)return;
-    for(const timer of draftTimers.values())clearTimeout(timer);
-    draftTimers.clear();
-    await selectionSave.catch(()=>undefined);
+    persistence.dispose();
+    await persistence.waitForSelectionSave();
     const previousDecisions={...decisions};
     const previousStackWorkspace=stackWorkspace;
     const previousSelectedGroups=[...selectedGroups];
@@ -291,33 +280,7 @@
     });
   }
   async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);pendingReview=null}
-  async function runDiscovery(anchorAssetId?:string){
-    if(!discoveryReady||mutating)return;
-    operations.clearOutcome();interactionError='';
-    backgroundTaskStatus.startDuplicateDiscovery();
-    try{
-      const normalizedThreshold=Math.min(100,Math.max(50,Number(similarityThreshold)||95));
-      const normalizedCandidates=Math.min(64,Math.max(1,Math.round(Number(maxCandidates)||8)));
-      const normalizedLinkDepth=Math.min(64,Math.max(0,Math.round(Number(maxLinkDepth)||0)));
-      similarityThreshold=String(normalizedThreshold);maxLinkDepth=String(normalizedLinkDepth);maxCandidates=String(normalizedCandidates);
-      if(!anchorAssetId){
-        try{
-          const saved=await duplicateDiscoverySettingsRepository.save({includeExact,includeSimilar,similarityThreshold:normalizedThreshold,validationMode,maxLinkDepth:normalizedLinkDepth,maxCandidates:normalizedCandidates});
-          includeExact=saved.includeExact;includeSimilar=saved.includeSimilar;similarityThreshold=String(saved.similarityThreshold);validationMode=saved.validationMode;maxLinkDepth=String(saved.maxLinkDepth);maxCandidates=String(saved.maxCandidates);
-        }catch(error){
-          interactionError=errorMessage(error,'Discovery settings could not be saved to Companion. Discovery was not started.');
-          return;
-        }
-      }
-      await operations.run('Duplicate discovery',()=>libraryData.duplicates.runDiscovery({similarityThreshold:normalizedThreshold,validationMode,maxLinkDepth:normalizedLinkDepth,anchorAssetId,includeSimilar,includeExact,maxCandidates:normalizedCandidates},(progress)=>backgroundTaskStatus.updateDuplicateDiscovery(progress)),{
-        pending:pending('Duplicate discovery'),
-        outcome:(result)=>({tone:'ok',title:'Discovery completed',detail:`${result.groupCount} groups · ${result.candidateCount} candidates`,failures:[]}),
-        onOutcome:(outcome)=>{discoverySummary=outcome.detail;stackWorkspace=createDuplicateStackWorkspace()},
-        reconcile:()=>{backgroundTaskStatus.updateDuplicateDiscovery({label:'Duplicate discovery · Refreshing results',detail:'Loading the newly completed duplicate groups for refresh…',completed:1,total:1,percent:99});return reconcileGroups('Duplicate discovery')},
-        reconcileError:'Duplicate discovery completed, but the latest groups could not be loaded.',
-      });
-    }finally{backgroundTaskStatus.finishDuplicateDiscovery()}
-  }
+  async function runDiscovery(anchorAssetId?:string){await discovery.run(anchorAssetId)}
   async function revalidateFromReference(assetId:string){
     if(mutating||!activeGroup)return;
     includeSimilar=true;
@@ -371,7 +334,7 @@
   async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){interactionError=errorMessage(error,'Similarity cache status could not be loaded.')}finally{cacheLoading=false}}
   async function clearCache(cache:SimilarityCacheKind){if(cacheLoading)return;cacheLoading=true;interactionError='';try{cacheTelemetry=await libraryData.duplicates.clearCache(cache)}catch(error){interactionError=errorMessage(error,'The disposable similarity cache could not be cleared.')}finally{cacheLoading=false}}
 
-  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();try{const saved=await duplicateDiscoverySettingsRepository.load();includeExact=saved.includeExact;includeSimilar=saved.includeSimilar;similarityThreshold=String(saved.similarityThreshold);validationMode=saved.validationMode;maxLinkDepth=String(saved.maxLinkDepth);maxCandidates=String(saved.maxCandidates)}catch(error){interactionError=errorMessage(error,'Saved duplicate discovery settings could not be loaded from Companion.')}if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';void refreshHistory();void refreshCacheStatus();await refreshGroups(true,true)}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();for(const timer of draftTimers.values())clearTimeout(timer)}});
+  onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();try{const saved=await duplicateDiscoverySettingsRepository.load();includeExact=saved.includeExact;includeSimilar=saved.includeSimilar;similarityThreshold=String(saved.similarityThreshold);validationMode=saved.validationMode;maxLinkDepth=String(saved.maxLinkDepth);maxCandidates=String(saved.maxCandidates)}catch(error){interactionError=errorMessage(error,'Saved duplicate discovery settings could not be loaded from Companion.')}if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';void refreshHistory();void refreshCacheStatus();await refreshGroups(true,true)}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();persistence.dispose()}});
 </script>
 
 <V2PageLayout title="Duplicates" description="Review duplicate groups supplied by the active data source, with provider-backed discovery and decisions.">
@@ -382,7 +345,7 @@
   <V2Zone>
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
     {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
-    <V2OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll():undefined}/>
+    <OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll():undefined}/>
     {#if tab==='Rules & discovery'}<V2SimilarityEvidenceGenerationPanel/>{/if}
     {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" {sort} sortFields={[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'date',label:'Date'},{value:'discovered',label:'Recently discovered'}]} pageSize={collection.pageSize} pageSizes={[6,12,24,48,96,192]} batchLabel="page" resultMode={collection.resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={reviewLoading||mutating} onclick={()=>void selectAllGroups()}>{selectingAll?'Selecting…':'Select all groups'}</V2Button><V2Button disabled={reviewLoading||mutating} onclick={()=>void refreshGroups(true,false)}>Refresh groups</V2Button><V2Button disabled={mutating} onclick={()=>void clearAllDecisions()}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item (item.id)}

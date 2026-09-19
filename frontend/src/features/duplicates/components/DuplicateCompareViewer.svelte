@@ -1,7 +1,7 @@
 <script lang="ts">
   import V2ImageComparison, { type ComparisonMode } from '../../../v2/components/V2ImageComparison.svelte';
   import V2LazyAssetMedia from '../../../v2/components/V2LazyAssetMedia.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2ViewerShell from '../../../v2/components/V2ViewerShell.svelte';
   import DuplicateComparisonDetails from './DuplicateComparisonDetails.svelte';
   import DuplicateComparisonSummary from './DuplicateComparisonSummary.svelte';
@@ -15,21 +15,19 @@
     similarityValidationEvidenceLabel,
     usesBoundedValidation,
     type ComparisonMemberData,
-  } from '../../../v2/data/duplicateMember';
+  } from '../types/duplicateMember';
   import { stepComparisonTargetId, viewerSelectionTargetId } from '../../../lib/utils/duplicateComparisonNavigation';
-  import { duplicateKindLabel } from '../../../v2/data/duplicatePresentation';
-  import { libraryData } from '../../../v2/data/currentDataSource.svelte';
+  import { duplicateKindLabel } from '../utils/duplicatePresentation';
+  import { libraryData } from '../../../app/data/currentDataSource.svelte';
   import type {
     AssetRecord,
     DuplicateDecision,
     DuplicateMemberRecord,
     DuplicateSimilarityEvidence,
-    MediaResource,
     SimilarityValidationMode,
-  } from '../../../v2/data/contracts';
-  import { loadLocalChangeDiagnostics, type LocalChangeDiagnostics } from '../../../v2/data/localChangeDiagnostics';
+  } from '../types/contracts';
   import { formatByteDifference } from '../../../lib/utils/fileSize';
-  import { loadImmichLibraries } from '../../../lib/api/duplicatePolicyApi';
+  import { DuplicateComparisonDataController } from '../state/duplicateComparisonData.svelte';
 
   let {
     open,
@@ -99,75 +97,12 @@
   let diffContrast = $state(180);
   let diffBinary = $state(true);
   let diffTolerance = $state(8);
-  let assets = $state<AssetRecord[]>([]);
-  let libraryNames = $state<Map<string, string>>(new Map());
-  let loading = $state(false);
-  let loadError = $state('');
-  let loadGeneration = 0;
-  let loadedAssetSetKey = '';
-  let libraryNamesPromise: Promise<Map<string, string>> | null = null;
-  let localDiagnostics = $state<LocalChangeDiagnostics | null>(null);
-  let localDiagnosticsLoading = $state(false);
-  let localDiagnosticsError = $state('');
-  let localDiagnosticsGeneration = 0;
-  const localDiagnosticsCache = new Map<string, LocalChangeDiagnostics>();
+  const comparisonData = new DuplicateComparisonDataController();
 
   const emptyData: ComparisonMemberData = {
     name: 'Unknown asset', source: '—', size: '—', sizeBytes: null, dims: '—', taken: '—',
     codec: 'Unknown type', library: '—', libraryId: null, folder: '—', uploaded: '—', similarity: 'Not calculated',
   };
-  const emptyResource: MediaResource = {
-    url: '', fallbackUrls: [], mimeType: null, posterUrl: null, delivery: 'preview', originalMimeType: null, expiresAt: null,
-  };
-  const videoPlaceholder = 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640" viewBox="0 0 960 640"><rect width="960" height="640" fill="#222831"/><circle cx="480" cy="320" r="82" fill="#ffffff22"/><path d="M455 270 545 320 455 370Z" fill="white"/><text x="480" y="450" text-anchor="middle" fill="white" font-family="sans-serif" font-size="34">Video asset</text></svg>`);
-
-  function comparisonResource(asset: AssetRecord | undefined): MediaResource {
-    if (!asset) return emptyResource;
-    if (asset.asset_type === 'VIDEO') return { ...emptyResource, url: videoPlaceholder, mimeType: 'image/svg+xml' };
-    return libraryData.media.view(asset);
-  }
-
-  function getLibraryNames(): Promise<Map<string, string>> {
-    libraryNamesPromise ??= loadImmichLibraries()
-      .then((libraries) => new Map(libraries.map((library) => [library.id, library.name])))
-      .catch(() => new Map());
-    return libraryNamesPromise;
-  }
-
-  async function getDetailedAssets(ids: string[]): Promise<AssetRecord[]> {
-    const items: AssetRecord[] = [];
-    for (let index = 0; index < ids.length; index += 8) {
-      const batch = await Promise.all(ids.slice(index, index + 8).map((id) => libraryData.assets.details(id)));
-      for (const item of batch) if (item) items.push(item);
-    }
-    return items;
-  }
-
-  function assetSetKey(ids: readonly string[]): string {
-    return [...ids].sort().join('\u0000');
-  }
-
-  function diagnosticsPairKey(selectedId: string, referenceId: string): string {
-    return `${selectedId}\u0000${referenceId}`;
-  }
-
-  function identicalDiagnostics(assetId: string): LocalChangeDiagnostics {
-    const side = 32;
-    return {
-      available: true,
-      selectedAssetId: assetId,
-      referenceAssetId: assetId,
-      changedPercent: 0,
-      localizedChangedPercent: 0,
-      coherentChangedPercent: 0,
-      largestChangedRegionPercent: 0,
-      substantialRegionCount: 0,
-      rows: side,
-      columns: side,
-      cells: Array.from({ length: side }, () => Array<number>(side).fill(0)),
-      source: null,
-    };
-  }
 
   function validationModeLabel(value: SimilarityValidationMode | null): string {
     if (value === 'linked') return 'Linked';
@@ -184,14 +119,14 @@
   }
 
   const activeCount = $derived(assetIds.length);
-  const assetById = $derived(new Map(assets.map((asset) => [asset.id, asset])));
-  const memberData = $derived(assetIds.map((id) => comparisonMemberData(assetById.get(id), similarities[id] ?? null, libraryNames)));
+  const assetById = $derived(new Map(comparisonData.assets.map((asset) => [asset.id, asset])));
+  const memberData = $derived(assetIds.map((id) => comparisonMemberData(assetById.get(id), similarities[id] ?? null, comparisonData.libraryNames)));
   const selectedAsset = $derived(assetById.get(assetIds[member]));
   const referenceAsset = $derived(assetById.get(assetIds[reference]));
   const selectedData = $derived(memberData[member] ?? emptyData);
   const referenceData = $derived(memberData[reference] ?? emptyData);
-  const selectedResource = $derived(comparisonResource(selectedAsset));
-  const referenceResource = $derived(comparisonResource(referenceAsset));
+  const selectedResource = $derived(comparisonData.resource(selectedAsset));
+  const referenceResource = $derived(comparisonData.resource(referenceAsset));
   const decisionKey = $derived(assetIds[member] ?? '');
   const selectedSimilarity = $derived(similarities[decisionKey] ?? null);
   const selectedEvidence = $derived(similarityEvidence[decisionKey] ?? null);
@@ -255,74 +190,8 @@
     { label: 'Added to Immich', selected: selectedData.uploaded, reference: referenceData.uploaded, changed: selectedData.uploaded !== referenceData.uploaded },
   ]);
 
-  $effect(() => {
-    if (!open) return;
-    const generation = ++loadGeneration;
-    const ids = [...assetIds];
-    const requestedAssetSetKey = assetSetKey(ids);
-    loading = ids.length > 0 && loadedAssetSetKey !== requestedAssetSetKey;
-    loadError = '';
-    void (async () => {
-      try {
-        const [nextAssets, nextLibraryNames] = await Promise.all([getDetailedAssets(ids), getLibraryNames()]);
-        if (generation !== loadGeneration) return;
-        assets = nextAssets;
-        libraryNames = nextLibraryNames;
-        loadedAssetSetKey = assetSetKey(nextAssets.map((asset) => asset.id));
-      } catch (error) {
-        if (generation === loadGeneration) loadError = error instanceof Error ? error.message : 'Could not load comparison assets.';
-      } finally {
-        if (generation === loadGeneration) loading = false;
-      }
-    })();
-    return () => { loadGeneration += 1; };
-  });
-
-  $effect(() => {
-    const selectedId = selectedAsset?.id ?? '';
-    const referenceId = referenceAsset?.id ?? '';
-    const selectedType = selectedAsset?.asset_type;
-    const referenceType = referenceAsset?.asset_type;
-    const generation = ++localDiagnosticsGeneration;
-    const controller = new AbortController();
-
-    localDiagnostics = null;
-    localDiagnosticsError = '';
-    localDiagnosticsLoading = false;
-
-    if (!open || !selectedId || !referenceId || selectedType !== 'IMAGE' || referenceType !== 'IMAGE') {
-      return () => controller.abort();
-    }
-
-    const key = diagnosticsPairKey(selectedId, referenceId);
-    if (selectedId === referenceId) {
-      localDiagnostics = identicalDiagnostics(selectedId);
-      return () => controller.abort();
-    }
-
-    const cached = localDiagnosticsCache.get(key);
-    if (cached) {
-      localDiagnostics = cached;
-      return () => controller.abort();
-    }
-
-    localDiagnosticsLoading = true;
-    void (async () => {
-      try {
-        const result = await loadLocalChangeDiagnostics(selectedId, referenceId, controller.signal);
-        if (generation !== localDiagnosticsGeneration) return;
-        localDiagnosticsCache.set(key, result);
-        localDiagnostics = result;
-      } catch (error) {
-        if (generation !== localDiagnosticsGeneration || controller.signal.aborted) return;
-        localDiagnosticsError = error instanceof Error ? error.message : 'Could not load localized change diagnostics.';
-      } finally {
-        if (generation === localDiagnosticsGeneration) localDiagnosticsLoading = false;
-      }
-    })();
-
-    return () => controller.abort();
-  });
+  $effect(() => { void comparisonData.load(assetIds, open); return () => comparisonData.invalidate(); });
+  $effect(() => { void comparisonData.loadDiagnostics(selectedAsset, referenceAsset, open); return () => comparisonData.invalidate(); });
 
   function showMemberById(assetId: string) {
     const target = viewerSelectionTargetId(assetIds, assetId);
@@ -396,7 +265,7 @@
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
   {#snippet header()}<DuplicateComparisonHeader {groupTitle} {matchLabel} {activeCount} {selectedForReview} {boundedValidation} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} {disabled} hasSelectedAsset={Boolean(selectedAsset)} hasReference={Boolean(assetIds[reference])} {onclose} onpreviousgroup={()=>void navigateGroup('previous')} onprevious={prev} onnext={next} onnextgroup={()=>void navigateGroup('next')} onreference={()=>void setReference()} onrevalidate={onrevalidate?()=>void revalidate():undefined}/>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual">
-    {#if loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if loadError}<div class="v2-compare-media-status" role="alert">{loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance {localDiagnostics} {localDiagnosticsLoading} {localDiagnosticsError}/>{/if}
+    {#if comparisonData.loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if comparisonData.loadError}<div class="v2-compare-media-status" role="alert">{comparisonData.loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance localDiagnostics={comparisonData.localDiagnostics} localDiagnosticsLoading={comparisonData.localDiagnosticsLoading} localDiagnosticsError={comparisonData.localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}{@const evidence=similarityEvidence[assetId]??null}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}{usesBoundedValidation(evidence)?' · Bounded validation':''}</small></button>{/each}</div>
   </section>
 
@@ -454,8 +323,8 @@
       {folderScopeLabel}
       {foldersComparable}
       {sameFolder}
-      {localDiagnostics}
-      {localDiagnosticsLoading}
+      localDiagnostics={comparisonData.localDiagnostics}
+      localDiagnosticsLoading={comparisonData.localDiagnosticsLoading}
       {showMemberById}
     />
   </aside></div>

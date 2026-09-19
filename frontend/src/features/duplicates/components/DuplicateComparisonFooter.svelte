@@ -1,7 +1,7 @@
 <script lang="ts">
-  import V2Button from '../../../v2/components/V2Button.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2DuplicateDecisionControls from '../../../v2/components/V2DuplicateDecisionControls.svelte';
-  import type { DuplicateDecision } from '../../../v2/data/contracts';
+  import type { DuplicateDecision } from '../types/contracts';
 
   let { assetName, decision, stackLabel, stackPrimary, decisions, disabled, ondecision, onprimary, onclear, }: {
     assetName: string; decision?: DuplicateDecision; stackLabel: string; stackPrimary: boolean; decisions: DuplicateDecision[]; disabled: boolean;

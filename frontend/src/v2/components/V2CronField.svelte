@@ -1,6 +1,6 @@
 <script lang="ts">
   import SelectField from './SelectField.svelte';
-  import V2Button from './V2Button.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
 
   type ScheduleMode = 'Interval' | 'Hourly' | 'Daily' | 'Weekly' | 'Monthly' | 'Custom';
   type ParsedSchedule = { mode: ScheduleMode; interval: string; minute: string; time: string; weekday: string; monthday: string };

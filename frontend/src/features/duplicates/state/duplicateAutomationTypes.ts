@@ -1,4 +1,4 @@
-import type { DuplicateDecision, DuplicateKeeperRule, DuplicateKeeperRuleField, DuplicateKeeperRuleOperator } from '../../../v2/data/contracts';
+import type { DuplicateDecision, DuplicateKeeperRule, DuplicateKeeperRuleField, DuplicateKeeperRuleOperator } from '../types/contracts';
 
 export type DuplicateAutomationConditionScope = 'group' | 'member' | 'any_member' | 'all_members' | 'no_members' | 'at_least_members';
 export type DuplicateAutomationLogic = 'all' | 'any';

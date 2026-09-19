@@ -3,7 +3,7 @@
 
   import { loadStatus } from '../../../lib/api/status';
   import type { StatusLoadState } from '../../../lib/types/status';
-  import V2PageLayout from '../../../v2/components/V2PageLayout.svelte';
+  import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
   import StatusContent from './StatusContent.svelte';
   import StatusContext from './StatusContext.svelte';
   import StatusInspector from './StatusInspector.svelte';

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from '@lucide/svelte';
-  import V2Button from './V2Button.svelte';
-  import V2PageJumpDialog from './V2PageJumpDialog.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2PageJumpDialog from '../../lib/components/ui/PageJumpDialog.svelte';
   import { paginationItems } from '../state/pagination';
 
   let { page, pageSize, total, onpage }: { page:number; pageSize:number; total:number; onpage:(page:number)=>void } = $props();

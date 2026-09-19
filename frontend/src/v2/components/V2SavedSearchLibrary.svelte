@@ -1,16 +1,16 @@
 <script lang="ts">
   import { Pencil, Play, RefreshCw, Save, Trash2 } from '@lucide/svelte';
-  import ConfirmDialog from './V2ConfirmDialog.svelte';
-  import V2Badge from './V2Badge.svelte';
-  import V2Button from './V2Button.svelte';
-  import V2Card from './V2Card.svelte';
-  import V2ErrorState from './V2ErrorState.svelte';
+  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
+  import V2ErrorState from '../../lib/components/ui/ErrorState.svelte';
   import V2Field from './V2Field.svelte';
-  import V2Inline from './V2Inline.svelte';
-  import V2OperationToast from './V2OperationToast.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import OperationToast from '../../lib/components/app/OperationToast.svelte';
   import V2SavedSearchModal from './V2SavedSearchModal.svelte';
-  import V2Stack from './V2Stack.svelte';
-  import V2Toolbar from './V2Toolbar.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
+  import V2Toolbar from '../../lib/components/layout/Toolbar.svelte';
   import type { AssetSearchCriteria, SavedSearchRecord } from '../data/contracts';
   import type { SavedSearchController } from '../state/savedSearches.svelte';
 
@@ -51,7 +51,7 @@
 
 <V2Stack gap="md">
   {#if controller.error}<V2ErrorState title="Saved searches unavailable" message={controller.error} onretry={()=>void controller.refresh(query)}/>{/if}
-  <V2OperationToast feedback={controller.feedback}/>
+  <OperationToast feedback={controller.feedback}/>
   <V2Toolbar sticky={false}>
     <V2Badge text={`${controller.records.length.toLocaleString()} saved searches`}/>
     <V2Badge text={controller.loading?'Loading…':controller.busy?'Saving…':'Ready'}/>

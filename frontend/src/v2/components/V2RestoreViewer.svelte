@@ -1,19 +1,19 @@
 <script lang="ts">
-  import V2Badge from './V2Badge.svelte';
-  import V2Button from './V2Button.svelte';
-  import V2Card from './V2Card.svelte';
-  import V2ErrorState from './V2ErrorState.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
+  import V2ErrorState from '../../lib/components/ui/ErrorState.svelte';
   import V2MediaViewport from './V2MediaViewport.svelte';
-  import V2Inline from './V2Inline.svelte';
-  import V2KeyboardShortcuts, { type KeyboardShortcut } from './V2KeyboardShortcuts.svelte';
-  import V2Section from './V2Section.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import V2KeyboardShortcuts, { type KeyboardShortcut } from '../../lib/components/ui/KeyboardShortcuts.svelte';
+  import V2Section from '../../lib/components/layout/Section.svelte';
   import V2ViewerShell from './V2ViewerShell.svelte';
   import V2ViewerAssetFacts from './V2ViewerAssetFacts.svelte';
-  import V2ZoomControl from './V2ZoomControl.svelte';
+  import V2ZoomControl from '../../lib/components/ui/ZoomControl.svelte';
   import { isViewerSelectionShortcut } from './viewerSelection';
   import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage } from '../data/mutationFeedback';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
+  import { errorMessage } from '../../lib/api/mutationFeedback';
   import type { MediaResource, TrashAssetRecord, ViewerNavigationWindow } from '../data/contracts';
 
   let { open=false, assetId=null, assetIds=[], restoreBusy=false, onclose, onnavigate, onrestore, isselected, ontoggleselection }: { open?:boolean; assetId?:string|null; assetIds?:string[]; restoreBusy?:boolean; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>; onrestore?:(assetId:string)=>boolean|Promise<boolean>; isselected?:(assetId:string)=>boolean; ontoggleselection?:(assetId:string)=>void }=$props();

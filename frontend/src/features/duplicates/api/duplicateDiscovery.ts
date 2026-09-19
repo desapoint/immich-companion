@@ -1,5 +1,5 @@
-import type { DuplicateDiscoveryProgress } from '../../../v2/data/contracts';
-import type { TaskRecord, TaskRepository } from '../../../v2/data/syncContracts';
+import type { DuplicateDiscoveryProgress } from '../types/contracts';
+import type { TaskRecord, TaskRepository } from '../../status/types/syncContracts';
 
 const TERMINAL_TASK_STATES = new Set(['completed', 'failed', 'cancelled']);
 

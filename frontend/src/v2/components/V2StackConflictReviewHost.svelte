@@ -5,8 +5,8 @@
     registerStackConflictReviewer,
     StackConflictReviewCancelled,
     type StackConflictReviewResult,
-  } from '../data/stackConflictReviewBridge';
-  import { conflictResolutionMap, type StackConflictReviewTarget } from '../data/stackResolution';
+  } from '../../features/duplicates/state/stackConflictReviewBridge';
+  import { conflictResolutionMap, type StackConflictReviewTarget } from '../../features/duplicates/types/stackResolution';
   import V2StackActionModal from './V2StackActionModal.svelte';
 
   let reviews = $state<StackConflictReviewTarget[]>([]);

@@ -2,16 +2,16 @@
   import { onMount } from 'svelte';
 
   import type { AssetRecord, TrashAssetRecord } from '../data/contracts';
-  import { libraryData } from '../data/currentDataSource.svelte';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
   import {
     duplicateResolutionHistoryDetail,
     type DuplicateResolutionHistoryItem,
-  } from '../data/api/duplicateResolutionHistory';
-  import { errorMessage } from '../data/mutationFeedback';
-  import V2Badge from './V2Badge.svelte';
-  import V2Button from './V2Button.svelte';
+  } from '../../features/duplicates/api/duplicateResolutionHistory';
+  import { errorMessage } from '../../lib/api/mutationFeedback';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
   import V2LazyAssetMedia from './V2LazyAssetMedia.svelte';
-  import V2Modal from './V2Modal.svelte';
+  import V2Modal from '../../lib/components/ui/Modal.svelte';
 
   type HistoryAsset = {
     id: string;

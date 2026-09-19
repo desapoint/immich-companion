@@ -1,5 +1,5 @@
 <script lang="ts">
-  import V2Button from './V2Button.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
   import { formatAspectDecimal, invertAspectRatio, parseAspectRatio } from '../state/aspectRatio';
 
   let {

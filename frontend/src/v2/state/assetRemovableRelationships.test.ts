@@ -4,7 +4,7 @@ import type { AssetSelectionRelationships } from '../data/contracts';
 
 const repositories = vi.hoisted(() => ({ removableRelationships: vi.fn() }));
 
-vi.mock('../data/currentDataSource.svelte', () => ({
+vi.mock('../../app/data/currentDataSource.svelte', () => ({
   libraryData: { assets: { removableRelationships: repositories.removableRelationships } },
 }));
 

@@ -10,9 +10,9 @@
     stackReviewComplete,
     withConflictResolution,
     type StackConflictReviewTarget,
-  } from '../data/stackResolution';
-  import V2Button from './V2Button.svelte';
-  import V2ConfirmDialog from './V2ConfirmDialog.svelte';
+  } from '../../features/duplicates/types/stackResolution';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
   import V2LazyAssetMedia from './V2LazyAssetMedia.svelte';
 
   let {

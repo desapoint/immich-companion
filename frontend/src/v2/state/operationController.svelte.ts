@@ -1,4 +1,4 @@
-import { errorMessage, type OperationFeedback } from '../data/mutationFeedback';
+import { errorMessage, type OperationFeedback } from '../../lib/api/mutationFeedback';
 
 export type OperationPhase = 'idle' | 'applying' | 'reconciling';
 

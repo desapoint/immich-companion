@@ -1,4 +1,4 @@
-import { mutationFeedback, pendingOperationFeedback, type OperationFeedback } from '../data/mutationFeedback';
+import { mutationFeedback, pendingOperationFeedback, type OperationFeedback } from '../../lib/api/mutationFeedback';
 import type { AssetSelectionTarget, MutationResult } from '../data/contracts';
 import { OperationController } from './operationController.svelte';
 

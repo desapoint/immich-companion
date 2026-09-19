@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { LocalChangeDiagnostics } from '../../../v2/data/localChangeDiagnostics';
+  import type { LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
 
   let {
     diagnostics,

@@ -1,5 +1,5 @@
 import { jsonRequest, requestJson } from '../../../lib/api/http';
-import type { DuplicateKeeperSelectionInput, DuplicateKeeperSelectionResult } from '../../../v2/data/contracts';
+import type { DuplicateKeeperSelectionInput, DuplicateKeeperSelectionResult } from '../types/contracts';
 import type { ApiDuplicateKeeperSelectionResult, ApiDuplicateWorkspace, AnalysisOptions } from './duplicateRepository';
 
 export function createKeeperSelectionController({

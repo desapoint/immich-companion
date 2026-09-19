@@ -1,4 +1,4 @@
-import type { DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan } from '../../../v2/data/contracts';
+import type { DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan } from '../types/contracts';
 import { resolutionStacks, stacksForGroup, type DuplicateStackWorkspace } from '../../../v2/state/duplicateStackResolution';
 
 export function currentResolution(workspace: DuplicateStackWorkspace, decisions: Readonly<Record<string, DuplicateDecision>>): DuplicateResolutionPlan {

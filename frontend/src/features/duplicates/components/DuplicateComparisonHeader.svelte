@@ -1,7 +1,7 @@
 <script lang="ts">
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2KeyboardShortcuts, { type KeyboardShortcut } from '../../../v2/components/V2KeyboardShortcuts.svelte';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2KeyboardShortcuts, { type KeyboardShortcut } from '../../../lib/components/ui/KeyboardShortcuts.svelte';
 
   let { groupTitle, matchLabel, activeCount, selectedForReview, boundedValidation, canPreviousGroup, canNextGroup, groupNavigationLoading, disabled, hasSelectedAsset, hasReference, onclose, onpreviousgroup, onprevious, onnext, onnextgroup, onreference, onrevalidate, }: {
     groupTitle: string; matchLabel: string; activeCount: number; selectedForReview: boolean; boundedValidation: boolean;

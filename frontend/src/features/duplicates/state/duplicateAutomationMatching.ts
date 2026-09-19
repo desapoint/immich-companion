@@ -1,4 +1,4 @@
-import type { DuplicateGroupRecord, DuplicateKeeperRule, DuplicateKeeperRuleField, DuplicateKeeperRuleOperator } from '../../../v2/data/contracts';
+import type { DuplicateGroupRecord, DuplicateKeeperRule, DuplicateKeeperRuleField, DuplicateKeeperRuleOperator } from '../types/contracts';
 import { keeperFieldDefinition } from '../../../v2/state/duplicateKeeperRules';
 import type { DuplicateAutomationConditionScope, DuplicateAutomationGroupField, DuplicateAutomationUiCondition, DuplicateAutomationUiRule } from './duplicateAutomationTypes';
 import { automationGroupFields } from './duplicateAutomationOptions';

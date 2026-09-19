@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Star, Unlink } from '@lucide/svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
   import type { AssetRecord } from '../data/contracts';
 
   let {

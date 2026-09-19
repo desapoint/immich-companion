@@ -14,6 +14,7 @@ import type {
 import { applyMembership, visibleAnchor } from './selection/helpers';
 import { readVisibleMembership } from './selection/membership';
 import { clearSelectionId, defaultSelectionStorage, persistSelectionId, readSelectionId } from './selection/storage';
+import { SelectionWriteQueue } from './selection/writeQueue';
 
 export type {
   SelectionState,
@@ -39,8 +40,7 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
   private readonly visibleAssetIds = new Set<string>();
   private readonly pending = new Map<string, boolean>();
   private pendingVersion = $state(0);
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private writeChain: Promise<void> = Promise.resolve();
+  private readonly writeQueue = new SelectionWriteQueue();
   private workspacePromise: Promise<TWorkspace> | null = null;
   private generation = 0;
 
@@ -113,7 +113,7 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
       return;
     }
     const selectionId = this.selectionId;
-    const operation = this.writeChain.then(async () => {
+    const operation = this.writeQueue.enqueue(async () => {
       const membership = await readVisibleMembership(this.repository, selectionId, assetIds);
       if (!membership) {
         this.abandon();
@@ -136,12 +136,11 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
       this.allMatchingSelected = false;
       this.pendingVersion += 1;
     });
-    this.writeChain = operation.catch(() => {});
     await operation;
   }
 
   async selectAll(criteria: TCriteria, visibleIds: readonly string[], matchingTotal: number): Promise<void> {
-    this.cancelTimer();
+    this.writeQueue.cancelTimer();
     this.pending.clear();
     this.visibleSelectedIds = new Set(visibleIds);
     this.serverSelectedCount = matchingTotal;
@@ -149,7 +148,7 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
     this.allMatchingSelected = true;
     this.pendingVersion += 1;
     const generation = this.generation;
-    const operation = this.writeChain.then(async () => {
+    const operation = this.writeQueue.enqueue(async () => {
       if (generation !== this.generation) return;
       const workspace = await this.ensureWorkspace();
       const selected = await this.repository.selectAllIntoSelection(workspace.id, criteria);
@@ -159,7 +158,6 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
       visibleIds.forEach((id) => this.serverVisibleIds.add(id));
       await this.drainPending();
     });
-    this.writeChain = operation.catch(() => {});
     await operation;
   }
 
@@ -179,7 +177,7 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
     try {
       await this.flush();
       const generation = this.generation;
-      const operation = this.writeChain.then(async () => {
+      const operation = this.writeQueue.enqueue(async () => {
         if (generation !== this.generation) return;
         const workspace = await this.ensureWorkspace();
         if (generation !== this.generation) return;
@@ -198,7 +196,6 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
           if (selected) this.serverVisibleIds.add(id); else this.serverVisibleIds.delete(id);
         }
       });
-      this.writeChain = operation.catch(() => {});
       await operation;
     } catch (error) {
       this.visibleSelectedIds = previousVisible;
@@ -226,10 +223,8 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
   }
 
   async flush(): Promise<void> {
-    this.cancelTimer();
-    const operation = this.writeChain.then(() => this.drainPending());
-    this.writeChain = operation.catch(() => {});
-    await operation;
+    this.writeQueue.cancelTimer();
+    await this.writeQueue.enqueue(() => this.drainPending());
   }
 
   async target(): Promise<SelectionWorkspaceTarget> {
@@ -250,7 +245,7 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
 
   abandon(): void {
     this.generation += 1;
-    this.cancelTimer();
+    this.writeQueue.cancelTimer();
     this.pending.clear();
     this.workspacePromise = null;
     this.selectionId = null;
@@ -301,18 +296,12 @@ export class SelectionWorkspaceController<TCriteria, TWorkspace extends Selectio
   }
 
   private scheduleFlush(): void {
-    this.cancelTimer();
-    this.timer = setTimeout(() => { void this.flush().catch((error) => { this.error = error instanceof Error ? error.message : 'Selection could not be saved.'; }); }, WRITE_DEBOUNCE_MS);
+    this.writeQueue.schedule(() => this.flush(), WRITE_DEBOUNCE_MS, (error) => { this.error = error instanceof Error ? error.message : 'Selection could not be saved.'; });
   }
 
   private stageMember(id: string, selected: boolean): void {
     if (this.serverVisibleIds.has(id) === selected) this.pending.delete(id);
     else this.pending.set(id, selected);
-  }
-
-  private cancelTimer(): void {
-    if (this.timer !== null) clearTimeout(this.timer);
-    this.timer = null;
   }
 
   private async drainPending(allowRecovery = true): Promise<void> {

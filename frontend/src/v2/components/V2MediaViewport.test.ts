@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MediaResource } from '../data/contracts';
 import V2MediaViewport from './V2MediaViewport.svelte';
-import { nextMediaSourceIndex } from '../data/mediaSources';
+import { nextMediaSourceIndex } from '../../lib/api/mediaSources';
 
 const imageResource: MediaResource = {
   url: '/original',

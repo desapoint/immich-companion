@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { ComparisonMemberData } from '../../../v2/data/duplicateMember';
-  import type { DuplicateAdmissionEvidence, DuplicateMemberRecord, DuplicateSimilarityEvidence } from '../../../v2/data/contracts';
-  import type { LocalChangeDiagnostics } from '../../../v2/data/localChangeDiagnostics';
-  import { formatSimilarityPercent } from '../../../v2/data/duplicateMember';
+  import type { ComparisonMemberData } from '../types/duplicateMember';
+  import type { DuplicateAdmissionEvidence, DuplicateMemberRecord, DuplicateSimilarityEvidence } from '../types/contracts';
+  import type { LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
+  import { formatSimilarityPercent } from '../types/duplicateMember';
 
   type MetadataRow = { label: string; selected: string; reference: string; changed: boolean };
 

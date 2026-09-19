@@ -13,7 +13,7 @@
 
 <script lang="ts">
   import { Expand, LoaderCircle, Pause, Play, Volume2, VolumeX } from '@lucide/svelte';
-  import V2RangeSlider from './V2RangeSlider.svelte';
+  import V2RangeSlider from '../../lib/components/ui/RangeSlider.svelte';
 
   let { src, poster = null, label, onerror }: { src: string; poster?: string | null; label: string; onerror?: () => void } = $props();
 

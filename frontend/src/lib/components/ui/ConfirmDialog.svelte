@@ -1,106 +1,109 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
 
-  import type { IconName } from '../../types/ui';
-  import Dialog from './Dialog.svelte';
   import Icon from './Icon.svelte';
-
-  interface Props {
-    title: string;
-    message?: string;
-    confirmLabel: string;
-    icon?: IconName;
-    children?: Snippet;
-    detail?: Snippet;
-    busy?: boolean;
-    confirmDisabled?: boolean;
-    destructive?: boolean;
-    onconfirm: () => void;
-    onclose: () => void;
-  }
+  import LoadingSpinner from './LoadingSpinner.svelte';
+  import type { IconName } from '../../types/ui';
+  import V2Button from './Button.svelte';
+  import V2Modal from './Modal.svelte';
 
   let {
     title,
     message,
     confirmLabel,
+    cancelLabel = 'Cancel',
     icon = 'check',
+    size = 'sm',
     children,
     detail,
-    busy = false,
+    pending = false,
     confirmDisabled = false,
     destructive = false,
     onconfirm,
     onclose,
-  }: Props = $props();
+  }: {
+    title: string;
+    message?: string;
+    confirmLabel: string;
+    cancelLabel?: string;
+    icon?: IconName;
+    size?: 'sm' | 'md' | 'lg' | 'xl';
+    children?: Snippet;
+    detail?: Snippet;
+    pending?: boolean;
+    confirmDisabled?: boolean;
+    destructive?: boolean;
+    onconfirm: () => void;
+    onclose: () => void;
+  } = $props();
+  const dialogId = $props.id();
+
+  function requestClose(): void {
+    if (!pending) onclose();
+  }
 </script>
 
-<Dialog {title} size="small" closeOnBackdrop={!busy} closeOnEscape={!busy} {onclose}>
-  <div class:destructive class="confirmation">
-    <span class="confirmation-icon"><Icon name={icon} size="1.35rem" /></span>
-    <div>
+<V2Modal
+  id={dialogId}
+  {title}
+  {size}
+  dismissOnBackdrop={!pending}
+  onclose={requestClose}
+>
+  <div class="v2-confirmation" data-destructive={destructive || undefined}>
+    <span class="v2-confirmation-icon"><Icon name={icon} size="1.35rem" /></span>
+    <div class="v2-confirmation-copy">
       {#if message}<p>{message}</p>{/if}
-      {#if detail}<div class="detail">{@render detail()}</div>{/if}
-      {#if children}<div class="confirmation-form">{@render children()}</div>{/if}
+      {#if detail}<div class="v2-confirmation-detail">{@render detail()}</div>{/if}
+      {#if children}<div class="v2-confirmation-form">{@render children()}</div>{/if}
     </div>
   </div>
+
   {#snippet footer()}
-    <div class="confirmation-actions">
-      <button type="button" onclick={onclose} disabled={busy}>Cancel</button>
-      <button
-        class:destructive
-        class="confirm"
-        type="button"
-        onclick={onconfirm}
-        disabled={busy || confirmDisabled}
-      >{busy ? 'Applying…' : confirmLabel}</button>
-    </div>
+    <V2Button disabled={pending} onclick={requestClose}>{cancelLabel}</V2Button>
+    <V2Button
+      variant={destructive ? 'danger' : 'primary'}
+      disabled={pending || confirmDisabled}
+      onclick={onconfirm}
+    >
+      {#if pending}
+        <span class="v2-confirmation-loading" aria-live="polite">
+          <LoadingSpinner size="14px" thickness="2px" />
+          <span>Applying…</span>
+        </span>
+      {:else}
+        {confirmLabel}
+      {/if}
+    </V2Button>
   {/snippet}
-</Dialog>
+</V2Modal>
 
 <style>
-  .confirmation {
+  .v2-confirmation {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    gap: 0.8rem;
+    gap: 12px;
     align-items: start;
   }
 
-  .confirmation-icon {
+  .v2-confirmation-icon {
     display: grid;
-    width: 2.6rem;
-    height: 2.6rem;
+    width: 42px;
+    height: 42px;
     place-items: center;
     border-radius: 999px;
-    color: var(--color-accent-strong);
-    background: var(--color-surface-soft);
+    color: var(--v2-accent);
+    background: var(--v2-accent-2);
   }
 
-  .confirmation.destructive .confirmation-icon { color: #b45309; }
-  p { margin: 0; line-height: 1.5; }
-  .detail { margin-top: 0.65rem; color: var(--color-ink-muted); font-size: 0.74rem; }
-  .confirmation-form { min-width: 0; margin-top: 0.8rem; }
-
-  .confirmation-actions {
-    display: flex;
-    width: 100%;
-    justify-content: flex-end;
-    gap: 0.55rem;
+  .v2-confirmation[data-destructive='true'] .v2-confirmation-icon {
+    color: var(--v2-red);
+    background: color-mix(in srgb, var(--v2-red) 14%, var(--v2-surface-2));
   }
 
-  button {
-    min-height: 2.4rem;
-    padding: 0.5rem 0.8rem;
-    border: 1px solid var(--color-border-strong);
-    border-radius: var(--radius-sm);
-    color: var(--color-ink-strong);
-    background: var(--color-canvas);
-    cursor: pointer;
-    font: inherit;
-    font-size: 0.72rem;
-    font-weight: 780;
-  }
-
-  .confirm { border-color: var(--color-accent-strong); color: var(--color-accent-strong); }
-  .confirm.destructive { border-color: #b45309; color: #b45309; }
-  button:disabled { cursor: wait; opacity: 0.5; }
+  .v2-confirmation-copy { min-width: 0; }
+  p { margin: 2px 0 0; line-height: 1.5; }
+  .v2-confirmation-detail { margin-top: 10px; color: var(--v2-muted); font-size: 12px; }
+  .v2-confirmation-form { min-width: 0; margin-top: 12px; }
+  .v2-confirmation-loading { display: inline-flex; align-items: center; gap: 8px; }
 </style>

@@ -1,10 +1,10 @@
 <script lang="ts">
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
-  import V2Toolbar from '../../../v2/components/V2Toolbar.svelte';
-  import type { DuplicateHistoryRecord } from '../../../v2/data/contracts';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
+  import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
+  import type { DuplicateHistoryRecord } from '../types/contracts';
 
   let { history, mutating, reconciling, onselect, onclear }: { history: DuplicateHistoryRecord[]; mutating: boolean; reconciling: boolean; onselect: (id: string) => void; onclear: (row: DuplicateHistoryRecord) => void } = $props();
 </script>

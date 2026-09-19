@@ -2,53 +2,53 @@
   import { onMount, tick } from 'svelte';
   import { Archive,ArchiveRestore,CheckCheck,FolderMinus,FolderPlus,Heart,HeartOff,Layers3,ListChecks,MoreHorizontal,RefreshCw,Star,Tag,Tags,Trash2,Unlink } from '@lucide/svelte';
   import SelectField from '../components/SelectField.svelte';
-  import V2AssetGrid from '../components/V2AssetGrid.svelte';
-  import V2AssetRelationModal from '../components/V2AssetRelationModal.svelte';
-  import V2AssetRelationRemoveModal from '../components/V2AssetRelationRemoveModal.svelte';
-  import V2AssetSearchDrawer from '../components/V2AssetSearchDrawer.svelte';
-  import V2AssetSelectionToolbar from '../components/V2AssetSelectionToolbar.svelte';
-  import V2AssetTile from '../components/V2AssetTile.svelte';
-  import V2Badge from '../components/V2Badge.svelte';
-  import V2Button from '../components/V2Button.svelte';
-  import V2Card from '../components/V2Card.svelte';
+  import V2AssetGrid from '../../features/assets/components/AssetGrid.svelte';
+  import V2AssetRelationModal from '../../features/assets/components/AssetRelationModal.svelte';
+  import V2AssetRelationRemoveModal from '../../features/assets/components/AssetRelationRemoveModal.svelte';
+  import V2AssetSearchDrawer from '../../features/assets/components/AssetSearchDrawer.svelte';
+  import V2AssetSelectionToolbar from '../../features/assets/components/AssetSelectionToolbar.svelte';
+  import V2AssetTile from '../../features/assets/components/AssetTile.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
   import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
   import V2CollectionFooter from '../components/V2CollectionFooter.svelte';
-  import V2CollectionLoadingOverlay from '../components/V2CollectionLoadingOverlay.svelte';
-  import V2ConfirmDialog from '../components/V2ConfirmDialog.svelte';
-  import V2ErrorState from '../components/V2ErrorState.svelte';
+  import V2CollectionLoadingOverlay from '../../lib/components/ui/CollectionLoadingOverlay.svelte';
+  import V2ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
+  import V2ErrorState from '../../lib/components/ui/ErrorState.svelte';
   import V2Field from '../components/V2Field.svelte';
-  import V2Inline from '../components/V2Inline.svelte';
-  import V2OperationToast from '../components/V2OperationToast.svelte';
-  import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2RangeSlider from '../components/V2RangeSlider.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import OperationToast from '../../lib/components/app/OperationToast.svelte';
+  import V2PageLayout from '../../lib/components/layout/PageLayout.svelte';
+  import V2RangeSlider from '../../lib/components/ui/RangeSlider.svelte';
   import V2SavedSearchLibrary from '../components/V2SavedSearchLibrary.svelte';
   import V2SavedSearchModal from '../components/V2SavedSearchModal.svelte';
   import V2SearchSelectionDialog from '../components/V2SearchSelectionDialog.svelte';
-  import V2Section from '../components/V2Section.svelte';
-  import V2Segmented from '../components/V2Segmented.svelte';
-  import V2SimpleAdvancedFilters from '../components/V2SimpleAdvancedFilters.svelte';
+  import V2Section from '../../lib/components/layout/Section.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
+  import V2SimpleAdvancedFilters from '../../features/assets/components/SimpleAdvancedFilters.svelte';
   import V2StackActionModal from '../components/V2StackActionModal.svelte';
-  import V2Stack from '../components/V2Stack.svelte';
-  import V2Tabs from '../components/V2Tabs.svelte';
-  import V2Toolbar from '../components/V2Toolbar.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
+  import V2Tabs from '../../lib/components/ui/Tabs.svelte';
+  import V2Toolbar from '../../lib/components/layout/Toolbar.svelte';
   import V2Viewer from '../components/V2Viewer.svelte';
-  import V2Zone from '../components/V2Zone.svelte';
+  import V2Zone from '../../lib/components/layout/Zone.svelte';
   import { createGridViewportAnchor } from '../components/gridViewportAnchor';
   import { createAssetGridSelectionInteraction } from '../components/assetGridSelectionInteraction';
   import { applyShiftAssetRange,isAllVisibleSelected,isAssetSelected,resolveAssetSelectionPrimary,toggleAssetSelected } from '../components/assetSelection';
   import { createCollectionView } from '../state/collectionView.svelte';
   import { AssetMutationController } from '../state/assetMutations.svelte';
-  import { AssetRelationOptionsController } from '../state/assetRelationOptions.svelte';
+  import { AssetRelationOptionsController } from '../../features/assets/state/assetRelationOptions.svelte';
   import { AssetRemovableRelationshipsController } from '../state/assetRemovableRelationships.svelte';
-  import { assetRulesInGroups,assetSearchCounts,buildAssetCriteria,cloneAssetGroups,emptyAssetAdvanced,emptyAssetSimple,hydrateAssetGroups,simpleAssetSearchToExpert,splitAssetIds,type AssetGroup,type AssetRule,type AssetSearchMode,type AssetSimpleSnapshot } from '../state/assetSearch';
+  import { assetRulesInGroups,assetSearchCounts,buildAssetCriteria,cloneAssetGroups,emptyAssetAdvanced,emptyAssetSimple,hydrateAssetGroups,simpleAssetSearchToExpert,splitAssetIds,type AssetGroup,type AssetRule,type AssetSearchMode,type AssetSimpleSnapshot } from '../../features/assets/state/assetSearch';
   import { SavedSearchController } from '../state/savedSearches.svelte';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
   import { LatestRequestController } from '../state/latestRequest';
   import { AssetSelectionWorkspaceController } from '../../features/assets/state/assetSelectionWorkspace.svelte';
   import { scrollViewedAssetIntoView, viewerPageForPosition } from '../state/viewerCollectionNavigation';
-  import { consumeV2AssetFilterHandoff, v2AssetIdFromPath, v2AssetViewerPath, v2PagePath } from '../navigation';
-  import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage } from '../data/mutationFeedback';
+  import { consumeAssetFilterHandoff, assetIdFromPath, assetViewerPath, pagePath } from '../../app/navigation';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
+  import { errorMessage } from '../../lib/api/mutationFeedback';
   import type { AssetRecord, AssetSearchCriteria, AssetSearchQuery, AssetSelectionCapabilities, AssetSelectionTarget, SavedSearchRecord, StackActionPlan, StackResolution, ViewerNavigationWindow } from '../data/contracts';
 
   type AssetTab='Browse'|'Saved searches';
@@ -147,12 +147,12 @@
   function toggleViewerSelection(id:string){const wasSelected=isAssetSelected(selection,id);selectionWorkspace.replaceVisible(toggleAssetSelected(selection,id));reconcileStackPrimary(wasSelected?null:id);resetStackReview();scheduleSelectionCapabilities()}
   function handleSelectionClick(id:string,event:MouseEvent){const wasSelected=isAssetSelected(selection,id);selectionWorkspace.replaceVisible(event.shiftKey?applyShiftAssetRange(selection,ids,id):toggleAssetSelected(selection,id));reconcileStackPrimary(wasSelected?null:id);resetStackReview();scheduleSelectionCapabilities()}
   function setViewerUrl(id:string|null,mode:'push'|'replace'='replace'){
-    const path=id?v2AssetViewerPath(id):v2PagePath('assets');
+    const path=id?assetViewerPath(id):pagePath('assets');
     if(window.location.pathname===path&&!window.location.search&&!window.location.hash)return;
     if(mode==='push')history.pushState(null,'',path);else history.replaceState(null,'',path);
   }
   function openViewer(id:string,startStack=false,updateUrl=true){const index=items.findIndex((item)=>item.id===id);viewerAssetId=id;viewerStartStack=startStack;viewerLastId=id;viewerLastPosition=index<0?null:collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index+1:index+1;viewer=true;if(updateUrl)setViewerUrl(id,'push')}
-  function syncViewerFromLocation(){const id=v2AssetIdFromPath(window.location.pathname);if(id){if(!viewer||viewerAssetId!==id)openViewer(id,false,false);return}if(viewer)closeViewer(false)}
+  function syncViewerFromLocation(){const id=assetIdFromPath(window.location.pathname);if(id){if(!viewer||viewerAssetId!==id)openViewer(id,false,false);return}if(viewer)closeViewer(false)}
   async function synchronizeViewerCollection(id:string,navigation:ViewerNavigationWindow):Promise<void>{
     viewerLastId=id;
     if(navigation.position!==null)viewerLastPosition=navigation.position;
@@ -198,7 +198,7 @@
   async function applyRemoveRelationDialog(){const kind=removeRelationDialog,ids=[...removeRelationValues];if(!kind||!ids.length)return;const target=await preparedSelectionTarget();if(!target)return;const result=kind==='album'?await mutations.run('Remove selected albums',(value)=>libraryData.assets.removeFromAlbums(value,ids),target):await mutations.run('Remove selected tags',(value)=>libraryData.assets.removeTags(value,ids),target);if(result)removeRelationDialog=null}
   async function applyClearedSearch(){filename='';mediaType='';favorite='';archived='';simpleAdvanced=emptyAssetAdvanced();rules=[];groups=[];appliedSimple=emptyAssetSimple();appliedRules=[];appliedGroups=[];appliedSearchMode=searchMode;selectedSaved='';collection.reset();await refreshSearch(true)}
   function handleWindowClick(event:MouseEvent){const target=event.target;if(moreOpen&&target instanceof Element&&!target.closest('.v2-selection-more'))moreOpen=false}
-  async function consumeFilterHandoff(){const handoff=consumeV2AssetFilterHandoff();if(!handoff)return false;simpleAdvanced={...emptyAssetAdvanced(),albumIds:(handoff.albumIds??[]).join(','),tagIds:(handoff.tagIds??[]).join(',')};searchMode='Simple';await runSearch();return true}
+  async function consumeFilterHandoff(){const handoff=consumeAssetFilterHandoff();if(!handoff)return false;simpleAdvanced={...emptyAssetAdvanced(),albumIds:(handoff.albumIds??[]).join(','),tagIds:(handoff.tagIds??[]).join(',')};searchMode='Simple';await runSearch();return true}
   async function retryPageError(){mutations.clearError();relations.clearError();removableRelations.error='';savedSearches.error='';selectionError='';searchRequests.clearError();await Promise.all([refreshSearch(true),searchAlbumOptions(relations.albumQuery),searchTagOptions(relations.tagQuery),savedSearches.refresh()])}
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();await Promise.all([searchAlbumOptions(''),searchTagOptions(''),savedSearches.refresh()]);if(!await consumeFilterHandoff())await refreshSearch(true);syncViewerFromLocation()}catch(error){searchRequests.setError(errorMessage(error,'The asset data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{if(capabilityTimer!==null)clearTimeout(capabilityTimer);void selectionWorkspace.flush();searchRequests.cancel();capabilityRequests.cancel();relations.destroy();removableRelations.destroy();gridViewportAnchor.destroy();interaction.destroy()}});
 </script>
@@ -211,7 +211,7 @@
 
   <V2Zone>{#if tab==='Browse'}
     {#if loadError||selectionError||selectionWorkspace.error||relations.error||removableRelations.error||savedSearches.error}<V2ErrorState title="Asset operation failed" message={loadError||selectionError||selectionWorkspace.error||relations.error||removableRelations.error||savedSearches.error} onretry={()=>void retryPageError()}/>{/if}
-    <V2OperationToast feedback={mutations.feedback} error={mutations.error} failureTitle="Asset operation failed" retryLabel={mutations.retry?'Retry failed':''} onretry={mutations.retry?()=>void mutations.retry?.():undefined}/>
+    <OperationToast feedback={mutations.feedback} error={mutations.error} failureTitle="Asset operation failed" retryLabel={mutations.retry?'Retry failed':''} onretry={mutations.retry?()=>void mutations.retry?.():undefined}/>
     {#if selectionActive}<V2AssetSelectionToolbar {selectedCount} {total} noun="matching assets" {allMatchingSelected} {allVisibleSelected} onselectvisible={selectVisible} onselectall={selectAllMatching} oninvert={invertSelection} onclear={clearSelection}>{#snippet actions()}<V2Button iconOnly title="Add to album" ariaLabel="Add to album" disabled={mutations.busy} onclick={()=>openRelationDialog('album')}><FolderPlus size={18}/></V2Button><V2Button iconOnly title={favoriteActionLabel} ariaLabel={favoriteActionLabel} disabled={mutations.busy} onclick={setSelectedFavorite}>{#if favoriteActionLabel==='Unfavorite'}<HeartOff size={18}/>{:else}<Heart size={18}/>{/if}</V2Button><V2Button iconOnly variant="danger" title="Move to trash" ariaLabel="Move to trash" disabled={mutations.busy} onclick={()=>trashConfirmOpen=true}><Trash2 size={18}/></V2Button><div class="v2-selection-more"><V2Button iconOnly title="More actions" ariaLabel="More actions" active={moreOpen} disabled={mutations.busy} onclick={()=>moreOpen=!moreOpen}><MoreHorizontal size={18}/></V2Button>{#if moreOpen}<div class="v2-selection-menu" role="menu"><button type="button" disabled={mutations.busy} onclick={syncSelected}><RefreshCw size={17}/><span>Bulk Sync</span></button><div class="v2-selection-menu-separator"></div><button type="button" disabled={mutations.busy} onclick={()=>openRelationDialog('tags')}><Tags size={17}/><span>Add tags</span></button><button type="button" disabled={mutations.busy||!hasRemovableTags} onclick={()=>openRemoveRelationDialog('tags')}><Tag size={17}/><span>Remove tags…</span></button><button type="button" disabled={mutations.busy||!hasRemovableTags} onclick={removeAllTags}><Tag size={17}/><span>Remove all tags</span></button><button type="button" disabled={mutations.busy||!hasRemovableAlbums} onclick={()=>openRemoveRelationDialog('album')}><FolderMinus size={17}/><span>Remove from albums…</span></button><button type="button" disabled={mutations.busy||!hasRemovableAlbums} onclick={removeAllAlbums}><FolderMinus size={17}/><span>Remove from all albums</span></button><div class="v2-selection-menu-separator"></div><span class="v2-selection-menu-label">Stack actions</span><button type="button" disabled={mutations.busy||!selectionCapabilities.canStack} onclick={stackSelected}><Layers3 size={17}/><span>Stack selected</span></button>{#if canSetStackPrimary}<button type="button" disabled={mutations.busy} onclick={setPrimary}><Star size={17}/><span>Set as stack primary</span></button>{/if}<button type="button" disabled={mutations.busy||!hasStackMembers} onclick={removeFromStack}><Unlink size={17}/><span>Remove from stack</span></button>{#if canRemoveCompleteStack}<button type="button" disabled={mutations.busy} onclick={removeCompleteStack}><Layers3 size={17}/><span>Remove complete stack</span></button>{/if}<div class="v2-selection-menu-separator"></div><button type="button" disabled={mutations.busy} onclick={setSelectedArchived}>{#if archiveActionLabel==='Unarchive'}<ArchiveRestore size={17}/>{:else}<Archive size={17}/>{/if}<span>{archiveActionLabel}</span></button></div>{/if}</div>{/snippet}</V2AssetSelectionToolbar>{:else}<V2Toolbar><V2Badge text={`${total.toLocaleString()} matches`}/>{#if searching}<V2Badge text="Searching…"/>{/if}<V2Button iconOnly title="Select visible" ariaLabel="Select visible" onclick={selectVisible}><ListChecks size={18}/></V2Button><V2Button iconOnly title={`Select all ${total.toLocaleString()} matching assets`} ariaLabel={`Select all ${total.toLocaleString()} matching assets`} onclick={selectAllMatching}><CheckCheck size={18}/></V2Button>{#snippet actions()}<V2RangeSlider label="Per row" min={2} max={10} step={1} value={collection.columns} valueLabel={`${collection.columns}`} width={92} thumbSize={18} ariaLabel="Images per row" oninteractionstart={()=>gridViewportAnchor.begin(collection.columns)} onchange={setAssetColumns} oninteractionend={gridViewportAnchor.end}/><V2CollectionControls id="asset-results" {sort} sortFields={[{value:'takenDate',label:'Taken date'},{value:'filename',label:'Filename'}]} pageSize={collection.pageSize} pageSizes={[24,48,96]} resultMode={collection.resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>{/if}
     <V2AssetGrid columns={collection.columns} bind:element={assetGrid}>{#each items as asset,index (asset.id)}<V2AssetTile index={collection.resultMode==='Pagination'?(collection.page-1)*collection.pageSize+index:index} assetId={asset.id} label={asset.original_file_name} sublabel={assetSublabel(asset)} favorite={asset.is_favorite} tags={asset.tags.map((tag)=>tag.name)} albums={(asset.albums??[]).map((album)=>album.name)} stackCount={asset.stack?.assetCount??0} image={()=>libraryData.media.thumbnail(asset)} selected={isSelected(asset.id)} selectionMode={selectionActive} stackPrimary={stackPrimaryAssetId===asset.id} onactivate={(event)=>handleTileActivate(asset.id,event)} onselect={(event)=>handleSelectionClick(asset.id,event)} onpreview={()=>openViewer(asset.id)} onstackview={()=>openViewer(asset.id,true)} onstackprimary={()=>chooseStackPrimary(asset.id)} onpointerdown={(event)=>interaction.start(asset.id,event)}/>{/each}</V2AssetGrid><V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={items.length} noun="assets" onpage={setPage} onloadmore={loadMore}/>
   {:else}<V2SavedSearchLibrary controller={savedSearches} currentCriteria={criteria()} onopen={openSaved}/>{/if}</V2Zone>

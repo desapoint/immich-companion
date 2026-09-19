@@ -1,5 +1,5 @@
-import { errorMessage } from '../data/mutationFeedback';
-import { libraryData } from '../data/currentDataSource.svelte';
+import { errorMessage } from '../../lib/api/mutationFeedback';
+import { libraryData } from '../../app/data/currentDataSource.svelte';
 import type { AssetRelationshipOption, AssetSelectionTarget } from '../data/contracts';
 import { LatestRequestController } from './latestRequest';
 

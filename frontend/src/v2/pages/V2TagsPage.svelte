@@ -1,34 +1,34 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import LoadingSpinner from '../../lib/components/ui/LoadingSpinner.svelte';
-  import ConfirmDialog from '../components/V2ConfirmDialog.svelte';
+  import ConfirmDialog from '../../lib/components/ui/ConfirmDialog.svelte';
   import { visibleSelectionState } from '../components/collectionSelection';
   import SelectField from '../components/SelectField.svelte';
-  import V2Badge from '../components/V2Badge.svelte';
-  import V2Button from '../components/V2Button.svelte';
-  import V2Card from '../components/V2Card.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
   import ColorField from '../../lib/components/ui/ColorField.svelte';
   import V2ColorSwatch from '../components/V2ColorSwatch.svelte';
   import V2CollectionControls, { type ResultMode } from '../components/V2CollectionControls.svelte';
-  import V2ErrorState from '../components/V2ErrorState.svelte';
+  import V2ErrorState from '../../lib/components/ui/ErrorState.svelte';
   import V2Field from '../components/V2Field.svelte';
-  import V2InfiniteFooter from '../components/V2InfiniteFooter.svelte';
-  import V2Inline from '../components/V2Inline.svelte';
-  import V2Modal from '../components/V2Modal.svelte';
-  import V2OperationToast from '../components/V2OperationToast.svelte';
-  import V2PageLayout from '../components/V2PageLayout.svelte';
+  import V2InfiniteFooter from '../../lib/components/ui/InfiniteFooter.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import V2Modal from '../../lib/components/ui/Modal.svelte';
+  import OperationToast from '../../lib/components/app/OperationToast.svelte';
+  import V2PageLayout from '../../lib/components/layout/PageLayout.svelte';
   import V2Pagination from '../components/V2Pagination.svelte';
-  import V2RoundCheckbox from '../components/V2RoundCheckbox.svelte';
-  import V2Section from '../components/V2Section.svelte';
-  import V2Segmented from '../components/V2Segmented.svelte';
-  import V2SortableHeader from '../components/V2SortableHeader.svelte';
-  import V2Stack from '../components/V2Stack.svelte';
+  import V2RoundCheckbox from '../../lib/components/ui/RoundCheckbox.svelte';
+  import V2Section from '../../lib/components/layout/Section.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
+  import V2SortableHeader from '../../lib/components/ui/SortableHeader.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
   import V2Table from '../components/V2Table.svelte';
-  import V2Toggle from '../components/V2Toggle.svelte';
-  import V2Toolbar from '../components/V2Toolbar.svelte';
-  import V2Zone from '../components/V2Zone.svelte';
-  import { libraryData } from '../data/currentDataSource.svelte';
-  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../data/mutationFeedback';
+  import V2Toggle from '../../lib/components/ui/Toggle.svelte';
+  import V2Toolbar from '../../lib/components/layout/Toolbar.svelte';
+  import V2Zone from '../../lib/components/layout/Zone.svelte';
+  import { libraryData } from '../../app/data/currentDataSource.svelte';
+  import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../lib/api/mutationFeedback';
   import type { CollectionDeletePlan, TagHierarchyRow } from '../data/contracts';
   import { normalizeHex } from '../state/color';
   import { CollectionRequestController } from '../state/collectionRequest.svelte';
@@ -139,7 +139,7 @@
   {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search tags…" oninput={(event)=>query=event.currentTarget.value} onkeydown={handleSearchKeydown}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>includeHierarchy=checked}/><V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and canonical parent paths.':'Matches tag names only.'}</p></V2Stack></V2Section><V2Section title="Hierarchy"><V2Card><V2Stack gap="xs"><b>{resultTotal} matching hierarchy rows</b><span class="v2-small v2-muted">Hierarchy construction, descendant IDs and aggregate counts come from the data provider.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
   <V2Zone>
     {#if loadError}<V2ErrorState title="Tags could not be loaded" message={loadError} onretry={()=>void refresh(true)}/>{/if}
-    <V2OperationToast {feedback} error={operationError} failureTitle="Tag operation failed" retryLabel={retryDeletePlan?'Retry saved plan':retryDeleteIds.length?'Retry failed':''} onretry={retryDeletePlan?()=>{pendingPlan=retryDeletePlan;deleteDialogOpen=true}:retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
+    <OperationToast {feedback} error={operationError} failureTitle="Tag operation failed" retryLabel={retryDeletePlan?'Retry saved plan':retryDeleteIds.length?'Retry failed':''} onretry={retryDeletePlan?()=>{pendingPlan=retryDeletePlan;deleteDialogOpen=true}:retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
     <V2Toolbar><V2Inline gap="sm" wrap={true}><V2Badge text={`${resultTotal} matches`}/><V2Badge text={`${selection.selectedCount} selected`}/><V2Badge text={appliedHierarchy?'Name + hierarchy':'Name only'}/><V2Badge text={preparingCreate?'Preparing tag…':mutating?(operations.phase==='reconciling'?'Refreshing…':'Applying change…'):loading?'Loading…':'Ready'}/></V2Inline>{#snippet actions()}<V2Segmented items={['Current page','All matching']} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Tag selection scope"/><V2CollectionControls id="tag-results" {sort} sortFields={[{value:'name',label:'Tag'},{value:'path',label:'Path'},{value:'assets',label:'Assets'},{value:'children',label:'Children'}]} {pageSize} pageSizes={[24,48,96]} {resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/>{/snippet}</V2Toolbar>
     <V2Card><V2Table compact={true} layout="fixed"><thead><tr><th class="v2-tag-check-column"><V2RoundCheckbox size="sm" checked={selectionScope==='All matching'?selection.allMatchingSelected:visibleSelection==='all'} indeterminate={selectionScope==='All matching'?selection.matchingSelectedCount>0&&!selection.allMatchingSelected:visibleSelection==='some'} disabled={!rows.length||mutating} ariaLabel={selectionScope==='All matching'?(selection.allMatchingSelected?'Unselect all matching tags':'Select all matching tags'):(visibleSelection==='all'?'Unselect all visible tags':'Select all visible tags')} onclick={toggleVisible}/></th><V2SortableHeader field="name" label="Tag" {sort} onsort={setSort}/><V2SortableHeader field="path" label="Path" {sort} class="v2-tag-path-column" onsort={setSort}/><V2SortableHeader field="assets" label="Assets" {sort} class="v2-collection-count-column" onsort={setSort}/><V2SortableHeader field="children" label="Children" {sort} class="v2-tag-children-column" onsort={setSort}/><th class="v2-table-actions v2-collection-actions-column">Actions</th></tr></thead><tbody>{#each rows as tag (tag.id)}<tr><td class="v2-tag-check-column"><V2RoundCheckbox size="sm" checked={selectedIds.includes(tag.id)} indeterminate={partiallySelectedIds.includes(tag.id)} disabled={mutating} ariaLabel={`${selectedIds.includes(tag.id)?'Unselect':'Select'} ${tag.name}`} onclick={()=>toggleSelection(tag.id,!selectedIds.includes(tag.id))}/></td><td><span class="v2-tag-name"><V2ColorSwatch color={tag.color} size="sm"/><b>{tag.name}</b></span><span class="v2-tag-path v2-tag-path-condensed" title={tag.path}>{tag.parent||'Root'}</span></td><td class="v2-tag-path-column"><span class="v2-tag-path" title={tag.path}>{tag.path}</span></td><td class="v2-collection-count-column">{tag.assets.toLocaleString()}</td><td class="v2-tag-children-column">{tag.children.toLocaleString()}</td><td class="v2-table-actions v2-collection-actions-column"><V2Inline class="v2-table-actions-content" gap="sm" justify="end" wrap={false}><V2Button disabled={mutating} onclick={()=>filterAssets(tag)}>Filter assets</V2Button><V2Button disabled={mutating||tag.synthetic} title={tag.synthetic?'Generated parent node':'Edit tag color'} onclick={()=>openEdit(tag)}>Edit</V2Button><V2Button variant="danger" disabled={mutating} onclick={()=>deleteRow(tag)}>Delete</V2Button></V2Inline></td></tr>{:else}<tr><td colspan="6" class="v2-tag-empty">{loading?'Loading tags…':loadError?'Tags could not be loaded.':'No tags match this search mode.'}</td></tr>{/each}</tbody></V2Table></V2Card>
     {#if resultMode==='Pagination'}<V2Pagination {page} {pageSize} total={resultTotal} onpage={setPage}/>{:else}<V2InfiniteFooter loaded={rows.length} total={resultTotal} batchSize={pageSize} noun="tags" onloadmore={loadMore}/>{/if}

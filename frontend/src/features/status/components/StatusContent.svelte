@@ -1,15 +1,15 @@
 <script lang="ts">
   import type { StatusLoadState } from '../../../lib/types/status';
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Metric from '../../../v2/components/V2Metric.svelte';
-  import V2Notice from '../../../v2/components/V2Notice.svelte';
-  import V2Section from '../../../v2/components/V2Section.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Metric from '../../../lib/components/ui/Metric.svelte';
+  import V2Notice from '../../../lib/components/ui/Notice.svelte';
+  import V2Section from '../../../lib/components/layout/Section.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import V2Table from '../../../v2/components/V2Table.svelte';
-  import V2Toolbar from '../../../v2/components/V2Toolbar.svelte';
-  import V2Zone from '../../../v2/components/V2Zone.svelte';
+  import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
+  import V2Zone from '../../../lib/components/layout/Zone.svelte';
   import { companionState, dependencyState, immichVersion } from '../utils/statusPresentation';
 
   let {

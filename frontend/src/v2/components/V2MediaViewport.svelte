@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { AssetRecord, MediaResource } from '../data/contracts';
-  import { mediaResourceSources, nextMediaSourceIndex } from '../data/mediaSources';
+  import { mediaResourceSources, nextMediaSourceIndex } from '../../lib/api/mediaSources';
   import V2ImageViewport from './V2ImageViewport.svelte';
   import V2VideoPlayer from './V2VideoPlayer.svelte';
   import { ViewerViewportController } from '../../features/assets/state/viewportController.svelte';

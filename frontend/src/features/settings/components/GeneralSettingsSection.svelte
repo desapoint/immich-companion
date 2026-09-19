@@ -1,18 +1,18 @@
 <script lang="ts">
   import SelectField from '../../../v2/components/SelectField.svelte';
-  import V2Badge from '../../../v2/components/V2Badge.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
-  import V2Segmented from '../../../v2/components/V2Segmented.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
-  import { V2_TOAST_POSITIONS, type V2ToastPosition } from '../../../v2/state/toasts.svelte';
+  import V2Badge from '../../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
+  import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
+  import { TOAST_POSITIONS, type ToastPosition } from '../../../app/state/toasts.svelte';
   import type { V2Density } from '../../../v2/state/density';
 
   let { density, toastPosition, ondensitychange, ontoastpositionchange, onopenplayground }: {
     density: V2Density;
-    toastPosition: V2ToastPosition;
+    toastPosition: ToastPosition;
     ondensitychange: (density: V2Density) => void;
-    ontoastpositionchange?: (position: V2ToastPosition) => void;
+    ontoastpositionchange?: (position: ToastPosition) => void;
     onopenplayground?: () => void;
   } = $props();
 </script>
@@ -30,7 +30,7 @@
     {#snippet actions()}<V2Badge tone="ok" text="Saved locally" />{/snippet}
     <V2Stack gap="sm">
       <span class="v2-small v2-muted">Choose which corner anchors standard action success, warning and error toasts.</span>
-      <SelectField id="settings-toast-position" label="Toast position" value={toastPosition} options={V2_TOAST_POSITIONS} onchange={(value) => ontoastpositionchange?.(value as V2ToastPosition)} />
+      <SelectField id="settings-toast-position" label="Toast position" value={toastPosition} options={TOAST_POSITIONS} onchange={(value) => ontoastpositionchange?.(value as ToastPosition)} />
       <span class="v2-small v2-muted">Top positions place each latest notification below the previous one; bottom positions grow upward.</span>
     </V2Stack>
   </V2Card>

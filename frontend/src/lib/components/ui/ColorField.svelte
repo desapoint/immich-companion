@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { Check, Copy } from '@lucide/svelte';
   import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { clickOutside } from '../../actions/clickOutside';
   import {
@@ -19,6 +18,7 @@
   } from '../../utils/color';
   import { floatingFieldLayout, type FloatingAlignment, type FloatingPlacement } from '../../utils/floatingField';
   import ColorSwatch from './ColorSwatch.svelte';
+  import ColorPickerPopup from './ColorPickerPopup.svelte';
 
   type UsedColor = { color: string; count?: number };
 
@@ -334,32 +334,7 @@
     <span class="v2-color-trigger-chevron" aria-hidden="true"></span>
   </button>
 
-  {#if open}
-    <div bind:this={popup} id={`${id}-popup`} class="v2-color-popup" role="dialog" tabindex="-1" aria-label="Choose color" data-placement={popupPlacement} data-alignment={popupAlignment} style={`top:${popupTop}px;left:${popupLeft}px;width:${popupWidth}px;max-height:${popupMaxHeight}px`} onkeydown={handlePopupKeydown}>
-      <span id={`${id}-plane-help`} class="v2-visually-hidden">Use arrow keys to change saturation and brightness. Hold Shift for larger adjustments.</span>
-      <button bind:this={plane} type="button" role="slider" class="v2-color-plane" style:--v2-picker-hue={pureHue} aria-label="Saturation and brightness" aria-describedby={`${id}-plane-help`} aria-valuemin="0" aria-valuemax="100" aria-valuenow={Math.round(hsv.s)} aria-valuetext={`Saturation ${Math.round(hsv.s)} percent, brightness ${Math.round(hsv.v)} percent`} onpointerdown={handlePlanePointerDown} onpointermove={handlePlanePointerMove} onpointerup={releasePlanePointer} onpointercancel={releasePlanePointer} onkeydown={handlePlaneKeydown}>
-        <span class="v2-color-plane-handle" style:left={`${hsv.s}%`} style:top={`${100-hsv.v}%`}></span>
-      </button>
-
-      <button type="button" class="v2-color-hue" role="slider" aria-label="Hue" aria-valuemin="0" aria-valuemax="359" aria-valuenow={Math.round(wrapHue(hsv.h))} aria-valuetext={`${Math.round(wrapHue(hsv.h))} degrees`} onpointerdown={handleHuePointerDown} onpointermove={handleHuePointerMove} onpointerup={releaseHuePointer} onpointercancel={releaseHuePointer} onkeydown={handleHueKeydown}>
-        <span class="v2-color-hue-track"></span><span class="v2-color-hue-handle" style:left={`${wrapHue(hsv.h)/360*100}%`}></span>
-      </button>
-
-      <div class="v2-color-value-row" data-invalid={Boolean(hexDraft && !normalizeHex(hexDraft)) || undefined}>
-        <ColorSwatch color={currentHex}/>
-        <input class="v2-color-hex-input" value={hexDraft} placeholder="#9A78FF" aria-label="HEX color" spellcheck="false" autocomplete="off" oninput={handleHexInput} onkeydown={handleHexKeydown} onblur={commitHex}>
-        <button type="button" class="v2-color-copy" disabled={!currentHex} aria-label={currentHex ? `Copy ${currentHex}` : 'No color to copy'} title={copied ? 'Copied' : 'Copy HEX color'} onclick={() => void copyColor()}>{#if copied}<Check size={16} aria-hidden="true"/>{:else}<Copy size={16} aria-hidden="true"/>{/if}<span class="v2-visually-hidden">{copied ? 'Copied' : 'Copy'}</span></button>
-      </div>
-
-      <section class="v2-color-section" aria-label="Quick colors"><span class="v2-color-section-title">Quick colors</span><div class="v2-color-palette">{#each normalizedPalette as color (color)}<button type="button" class="v2-color-choice" data-selected={currentHex === color || undefined} aria-label={`${paletteLabel(color)} · ${color}`} aria-pressed={currentHex === color} title={`${paletteLabel(color)} · ${color}`} onclick={() => chooseHex(color)}><ColorSwatch {color} selected={currentHex === color}/></button>{/each}</div></section>
-
-      {#if recent && recentColors.length}<section class="v2-color-section" aria-label="Recent colors"><span class="v2-color-section-title">Recent</span><div class="v2-color-palette">{#each recentColors as color (color)}<button type="button" class="v2-color-choice" data-selected={currentHex === color || undefined} aria-label={`Recent color ${color}`} aria-pressed={currentHex === color} title={color} onclick={() => chooseHex(color)}><ColorSwatch {color} selected={currentHex === color}/></button>{/each}</div></section>{/if}
-
-      {#if normalizedUsedColors.length}<section class="v2-color-section" aria-label={usedColorsLabel}><span class="v2-color-section-title">{usedColorsLabel}</span><div class="v2-color-palette">{#each normalizedUsedColors as entry (entry.color)}<button type="button" class="v2-color-choice" data-selected={currentHex === entry.color || undefined} aria-label={`${entry.color}${entry.count === undefined ? '' : `, used by ${entry.count} tags`}`} aria-pressed={currentHex === entry.color} title={`${entry.color}${entry.count === undefined ? '' : ` · Used by ${entry.count} tags`}`} onclick={() => chooseHex(entry.color)}><ColorSwatch color={entry.color} selected={currentHex === entry.color}/></button>{/each}</div></section>{/if}
-
-      {#if allowEmpty}<div class="v2-color-actions"><button type="button" onclick={clearColor}><ColorSwatch color={null} size="sm"/><span>No color</span></button></div>{/if}
-    </div>
-  {/if}
+  {#if open}<ColorPickerPopup {id} {popupTop} {popupLeft} {popupWidth} {popupMaxHeight} {popupPlacement} {popupAlignment} {pureHue} {hsv} {currentHex} {hexDraft} {copied} {normalizedPalette} {recentColors} {normalizedUsedColors} {recent} {allowEmpty} {usedColorsLabel} onplane={handlePlanePointerDown} onplanemove={handlePlanePointerMove} onplaneup={releasePlanePointer} onplanekeydown={handlePlaneKeydown} onhuedown={handleHuePointerDown} onhuemove={handleHuePointerMove} onhueup={releaseHuePointer} onhuekeydown={handleHueKeydown} onhexinput={handleHexInput} onhexkeydown={handleHexKeydown} onhexblur={commitHex} oncopy={copyColor} onclear={clearColor} onchoose={chooseHex} {paletteLabel} {normalizeHex} {wrapHue}/>{/if}
 </div>
 
 <style>
@@ -367,21 +342,8 @@
   .v2-color-label{font-size:12px;color:#a9b6c4}
   .v2-color-trigger{width:100%;min-width:0;min-height:42px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;border:1px solid var(--v2-line);border-radius:8px;background:#0f151d;color:var(--v2-text);padding:8px 10px;cursor:pointer;text-align:left}
   .v2-color-trigger:hover:not(:disabled),.v2-color-trigger[aria-expanded="true"]{border-color:#4d607a}
-  .v2-color-trigger:focus-visible,.v2-color-popup button:focus-visible,.v2-color-popup input:focus-visible{outline:2px solid #4169a8;outline-offset:2px}
+  .v2-color-trigger:focus-visible{outline:2px solid #4169a8;outline-offset:2px}
   .v2-color-trigger:disabled{cursor:default;opacity:.5}
   .v2-color-trigger-content{min-width:0;display:flex;align-items:center;gap:9px}.v2-color-trigger-value{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.v2-color-field[data-empty="true"] .v2-color-trigger-value{color:var(--v2-muted)}
   .v2-color-trigger-chevron{width:7px;height:7px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:translateY(-2px) rotate(45deg);transition:transform 120ms ease}.v2-color-trigger[aria-expanded="true"] .v2-color-trigger-chevron{transform:translateY(2px) rotate(225deg)}
-  .v2-color-popup{position:fixed;z-index:180;display:flex;flex-direction:column;gap:12px;overflow-y:auto;overscroll-behavior:contain;padding:14px;border:1px solid var(--v2-line);border-radius:10px;background:var(--v2-surface-2);box-shadow:0 14px 32px rgba(0,0,0,.42);scrollbar-gutter:stable both-edges;scrollbar-width:thin;scrollbar-color:#475970 transparent}
-  .v2-color-popup::-webkit-scrollbar{width:6px;height:6px}.v2-color-popup::-webkit-scrollbar-track{background:transparent}.v2-color-popup::-webkit-scrollbar-thumb{border:1px solid var(--v2-surface-2);border-radius:999px;background:#475970}
-  .v2-color-plane{position:relative;display:block;width:100%;aspect-ratio:1.68/1;min-height:150px;flex:0 0 auto;overflow:hidden;border:1px solid rgba(255,255,255,.16);border-radius:8px;padding:0;cursor:crosshair;touch-action:none;background:linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,var(--v2-picker-hue));box-shadow:inset 0 0 0 1px rgba(0,0,0,.18)}
-  .v2-color-plane-handle{position:absolute;width:15px;height:15px;border:2px solid #fff;border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.7),0 1px 3px rgba(0,0,0,.4);transform:translate(-50%,-50%);pointer-events:none}
-  .v2-color-hue{position:relative;width:100%;height:28px;display:block;border:0;background:transparent;padding:6px 0;cursor:pointer;touch-action:none}
-  .v2-color-hue-track{display:block;width:100%;height:16px;border-radius:999px;background:linear-gradient(to right,#f00 0%,#ff0 16.67%,#0f0 33.33%,#0ff 50%,#00f 66.67%,#f0f 83.33%,#f00 100%);box-shadow:inset 0 0 0 1px rgba(0,0,0,.32)}
-  .v2-color-hue-handle{position:absolute;top:3px;width:10px;height:22px;border:2px solid #fff;border-radius:999px;box-shadow:0 0 0 1px rgba(0,0,0,.6),0 1px 3px rgba(0,0,0,.35);transform:translateX(-50%);pointer-events:none}
-  .v2-color-value-row{display:grid;grid-template-columns:auto minmax(0,1fr) 36px;align-items:center;gap:8px}.v2-color-hex-input{width:100%;min-width:0;height:38px;border:1px solid var(--v2-line);border-radius:8px;background:#0f151d;color:var(--v2-text);padding:7px 9px;text-transform:uppercase}.v2-color-value-row[data-invalid="true"] .v2-color-hex-input{border-color:var(--v2-red)}
-  .v2-color-copy{width:36px;height:36px;display:grid;place-items:center;border:1px solid var(--v2-line);border-radius:8px;background:#111923;color:var(--v2-text);padding:0;cursor:pointer}.v2-color-copy:hover:not(:disabled){border-color:#4d607a;background:#172231}.v2-color-copy:disabled{cursor:default;opacity:.45}
-  .v2-color-section{display:flex;flex-direction:column;gap:7px}.v2-color-section-title{font-size:10px;font-weight:800;line-height:1.2;letter-spacing:.08em;text-transform:uppercase;color:#9aaabd}.v2-color-palette{display:grid;grid-template-columns:repeat(8,minmax(28px,1fr));gap:6px}
-  .v2-color-choice{min-width:0;min-height:30px;display:grid;place-items:center;border:0;border-radius:999px;background:transparent;padding:3px;cursor:pointer}.v2-color-choice:hover{background:rgba(255,255,255,.07)}.v2-color-choice:focus-visible{outline-offset:0!important}
-  .v2-color-actions{display:flex;justify-content:flex-end;padding-top:1px}.v2-color-actions button{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--v2-line);border-radius:8px;background:#111923;color:var(--v2-text);padding:7px 9px;cursor:pointer}.v2-color-actions button:hover{border-color:#4d607a;background:#172231}
-  @media(max-width:520px){.v2-color-popup{padding:12px}.v2-color-plane{min-height:140px}}
 </style>

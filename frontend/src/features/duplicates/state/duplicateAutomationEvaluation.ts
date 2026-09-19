@@ -1,4 +1,4 @@
-import type { DuplicateDecision, DuplicateGroupRecord, DuplicateKeeperRule } from '../../../v2/data/contracts';
+import type { DuplicateDecision, DuplicateGroupRecord, DuplicateKeeperRule } from '../types/contracts';
 import { automationRuleValid } from './duplicateAutomationOptions';
 import { chooseKeeper, ruleMatch } from './duplicateAutomationMatching';
 import type { DuplicateAutomationDecision, DuplicateAutomationEvaluation, DuplicateAutomationExistingDecision, DuplicateAutomationUiRule } from './duplicateAutomationTypes';

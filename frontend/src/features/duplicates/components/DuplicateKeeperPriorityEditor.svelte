@@ -2,12 +2,12 @@
   import { ArrowDown, ArrowUp, Plus, Trash2 } from '@lucide/svelte';
   import DateTimePickerField from '../../../v2/components/DateTimePickerField.svelte';
   import SelectField, { type SelectOption } from '../../../v2/components/SelectField.svelte';
-  import V2Button from '../../../v2/components/V2Button.svelte';
-  import V2Card from '../../../v2/components/V2Card.svelte';
+  import V2Button from '../../../lib/components/ui/Button.svelte';
+  import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2Field from '../../../v2/components/V2Field.svelte';
-  import V2Stack from '../../../v2/components/V2Stack.svelte';
+  import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import { keeperEffectOptions, keeperFieldDefinition, keeperOperatorOptions, keeperPresetNames, keeperRuleFieldOptions, keeperRuleNeedsValue, type DuplicateKeeperUiRule } from '../../../v2/state/duplicateKeeperRules';
-  import type { DuplicateKeeperRuleField } from '../../../v2/data/contracts';
+  import type { DuplicateKeeperRuleField } from '../types/contracts';
 
   let {
     rules, presetName, albumOptions, tagOptions, albumLoading, tagLoading, setPreset, updateRule, addRule, removeRule, moveRule, loadOptions,

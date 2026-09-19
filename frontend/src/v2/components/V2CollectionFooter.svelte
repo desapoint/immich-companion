@@ -1,5 +1,5 @@
 <script lang="ts">
-  import V2InfiniteFooter from './V2InfiniteFooter.svelte';
+  import V2InfiniteFooter from '../../lib/components/ui/InfiniteFooter.svelte';
   import V2Pagination from './V2Pagination.svelte';
   import type { CollectionResultMode } from '../state/collectionView.svelte';
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import V2RangeSlider from '../../../v2/components/V2RangeSlider.svelte';
+  import V2RangeSlider from '../../../lib/components/ui/RangeSlider.svelte';
 
   let {
     highlightColor = $bindable('#00DCFF'),

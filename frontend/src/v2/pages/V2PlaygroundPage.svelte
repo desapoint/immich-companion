@@ -1,29 +1,29 @@
 <script lang="ts">
   import DateTimePickerField from '../../lib/components/ui/DateTimePickerField.svelte';
   import SelectField from '../components/SelectField.svelte';
-  import V2Badge from '../components/V2Badge.svelte';
-  import V2Button from '../components/V2Button.svelte';
-  import V2Card from '../components/V2Card.svelte';
-  import V2Checkbox from '../components/V2Checkbox.svelte';
+  import V2Badge from '../../lib/components/ui/Badge.svelte';
+  import V2Button from '../../lib/components/ui/Button.svelte';
+  import V2Card from '../../lib/components/ui/Card.svelte';
+  import V2Checkbox from '../../lib/components/ui/Checkbox.svelte';
   import ColorField from '../../lib/components/ui/ColorField.svelte';
   import V2Field from '../components/V2Field.svelte';
-  import V2Inline from '../components/V2Inline.svelte';
-  import V2Modal from '../components/V2Modal.svelte';
-  import V2Notice from '../components/V2Notice.svelte';
-  import V2PageLayout from '../components/V2PageLayout.svelte';
-  import V2Progress from '../components/V2Progress.svelte';
-  import V2RangeSlider from '../components/V2RangeSlider.svelte';
-  import V2RelationFilterField from '../components/V2RelationFilterField.svelte';
-  import V2Section from '../components/V2Section.svelte';
-  import V2Segmented from '../components/V2Segmented.svelte';
-  import V2Stack from '../components/V2Stack.svelte';
-  import V2Tabs from '../components/V2Tabs.svelte';
+  import V2Inline from '../../lib/components/layout/Inline.svelte';
+  import V2Modal from '../../lib/components/ui/Modal.svelte';
+  import V2Notice from '../../lib/components/ui/Notice.svelte';
+  import V2PageLayout from '../../lib/components/layout/PageLayout.svelte';
+  import V2Progress from '../../lib/components/ui/Progress.svelte';
+  import V2RangeSlider from '../../lib/components/ui/RangeSlider.svelte';
+  import V2RelationFilterField from '../../features/assets/components/RelationFilterField.svelte';
+  import V2Section from '../../lib/components/layout/Section.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
+  import V2Stack from '../../lib/components/layout/Stack.svelte';
+  import V2Tabs from '../../lib/components/ui/Tabs.svelte';
   import V2TaskBubble from '../components/V2TaskBubble.svelte';
-  import V2Toggle from '../components/V2Toggle.svelte';
-  import V2Toolbar from '../components/V2Toolbar.svelte';
+  import V2Toggle from '../../lib/components/ui/Toggle.svelte';
+  import V2Toolbar from '../../lib/components/layout/Toolbar.svelte';
   import V2VideoPlayer from '../components/V2VideoPlayer.svelte';
-  import V2Zone from '../components/V2Zone.svelte';
-  import { useOptionalV2Toasts, type V2ToastTone } from '../state/toasts.svelte';
+  import V2Zone from '../../lib/components/layout/Zone.svelte';
+  import { useOptionalToasts, type ToastTone } from '../../app/state/toasts.svelte';
 
   const shortOptions = ['One', 'Two', 'Three'];
   const richOptions = [
@@ -54,9 +54,9 @@
   let slider = $state(62);
   let modalSelect = $state('montreal');
   let color = $state<string|null>('#9A78FF');
-  const toasts = useOptionalV2Toasts();
+  const toasts = useOptionalToasts();
 
-  function showToast(tone:V2ToastTone):void{
+  function showToast(tone:ToastTone):void{
     const labels={info:'Information',success:'Action completed',warning:'Action needs review',error:'Action failed'};
     toasts?.push({tone,title:labels[tone],message:`This is a ${tone} toast from the static component playground.`});
   }

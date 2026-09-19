@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
-import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../../../v2/data/contracts';
+import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../types/contracts';
 import DuplicateCompareViewer from '../components/DuplicateCompareViewer.svelte';
 
 const viewerSource = [

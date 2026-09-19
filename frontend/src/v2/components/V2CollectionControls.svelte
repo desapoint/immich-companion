@@ -1,6 +1,6 @@
 <script lang="ts">
   import SelectField, { type SelectOption } from './SelectField.svelte';
-  import V2Segmented from './V2Segmented.svelte';
+  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
 
   export type SortField = { value: string; label: string };
   export type ResultMode = 'Pagination' | 'Infinite';
