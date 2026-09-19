@@ -3,7 +3,6 @@ import type {
   AssetRecord,
   DuplicateDecision,
   DuplicateDiscoveryOptions,
-  DuplicateDiscoveryProgress,
   DuplicateGroupRecord,
   DuplicateKeeperSelectionInput,
   DuplicateKeeperSelectionResult,
@@ -16,12 +15,15 @@ import type {
   MutationResult,
   PageResult,
   SimilarityCacheStatus,
-} from '../contracts';
-import type { TaskRecord, TaskRepository } from '../syncContracts';
-import { referenceFirstDuplicateMembers } from '../duplicatePresentation';
-import { parseStackResolution, serializeStackResolution } from '../stackResolution';
+} from '../../../v2/data/contracts';
+import type { TaskRecord, TaskRepository } from '../../../v2/data/syncContracts';
+import { serializeStackResolution } from '../../../v2/data/stackResolution';
+import { mapDuplicateGroup } from './duplicateMapping';
+import { discoveryProgress, waitForTask } from './duplicateDiscovery';
 
-type AnalysisOptions = {
+export { discoveryProgress } from './duplicateDiscovery';
+
+export type AnalysisOptions = {
   keeper_policy: 'prefer_upload';
   external_library_ids: string[];
   verify_upload_streams: boolean;
@@ -30,7 +32,7 @@ type AnalysisOptions = {
   exact_file_action: 'resolve';
   analyze_automatically: boolean;
 };
-type ApiDuplicateMember = {
+export type ApiDuplicateMember = {
   id: string;
   source_kind: 'upload' | 'external';
   library_id: string | null;
@@ -100,7 +102,7 @@ type ApiDuplicateMember = {
     metadata_richness: number;
   } | null;
 };
-type ApiDuplicateKeeperSelectionResult = {
+export type ApiDuplicateKeeperSelectionResult = {
   matched_group_count: number;
   valid_group_count: number;
   resolved_group_count: number;
@@ -115,7 +117,7 @@ type ApiDuplicateKeeperSelectionResult = {
   limit_exceeded: boolean;
 };
 
-type ApiDuplicateGroup = {
+export type ApiDuplicateGroup = {
   group_id: string;
   discovery_source: DuplicateSource;
   discovery_sources?: DuplicateSource[];
@@ -136,10 +138,10 @@ type ApiDuplicateGroup = {
   members: ApiDuplicateMember[];
   eligible: boolean;
 };
-type ApiDuplicateSummary = { group_count: number; member_count: number };
-type ApiDuplicateGroupIds = { group_ids: string[]; limit_exceeded: boolean };
-type ApiDuplicatePage = { items: ApiDuplicateGroup[]; total: number; page: number; page_size: number; pages: number };
-type ApiDuplicateDraft = {
+export type ApiDuplicateSummary = { group_count: number; member_count: number };
+export type ApiDuplicateGroupIds = { group_ids: string[]; limit_exceeded: boolean };
+export type ApiDuplicatePage = { items: ApiDuplicateGroup[]; total: number; page: number; page_size: number; pages: number };
+export type ApiDuplicateDraft = {
   group_id: string;
   member_fingerprint: string;
   decisions: Array<{
@@ -154,7 +156,7 @@ type ApiDuplicateDraft = {
   status: 'pending' | 'completed';
   stale: boolean;
 };
-type ApiDuplicateWorkspace = {
+export type ApiDuplicateWorkspace = {
   initialized: boolean;
   revision?: number;
   selected_count?: number;
@@ -166,7 +168,7 @@ type ApiDuplicateWorkspace = {
   last_skipped_group_ids?: string[];
   cleared_group_count?: number;
 };
-type ApiDuplicateHistoryItem = {
+export type ApiDuplicateHistoryItem = {
   id: string;
   occurred_at: string;
   discovery_source: DuplicateSource;
@@ -176,7 +178,7 @@ type ApiDuplicateHistoryItem = {
   member_count: number;
   member_asset_ids: string[];
 };
-type ApiDuplicateHistoryPage = {
+export type ApiDuplicateHistoryPage = {
   items: ApiDuplicateHistoryItem[];
   total: number;
   page: number;
@@ -193,8 +195,6 @@ const ANALYSIS_OPTIONS: AnalysisOptions = {
   exact_file_action: 'resolve',
   analyze_automatically: false,
 };
-
-const TERMINAL_TASK_STATES = new Set(['completed', 'failed', 'cancelled']);
 
 type TaskStart = { task_id: string };
 type PlanResponse = {
@@ -415,58 +415,6 @@ function failureResult(groups: readonly ApiDuplicateGroup[], failedGroupIds: rea
   };
 }
 
-function numericProgress(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
-}
-
-export function discoveryProgress(task: TaskRecord, similarity: boolean, rangeStart: number, rangeEnd: number): DuplicateDiscoveryProgress {
-  const rawPhase = typeof task.progress.phase === 'string' ? task.progress.phase : '';
-  const phases: Record<string, string> = {
-    duplicate_fingerprints: 'Verifying file evidence',
-    similarity_candidates: 'Indexing similarity candidates',
-    similarity_scoring: 'Comparing candidate pairs',
-    similarity_finalizing: 'Finalizing duplicate groups',
-    duplicate_projection_publish: 'Publishing duplicate results',
-    complete: 'Completing analysis',
-  };
-  const rawPercent = numericProgress(task.progress.percent);
-  const overallPercent = rawPercent === null
-    ? null
-    : Math.min(rangeEnd, rangeStart + (rangeEnd - rangeStart) * rawPercent / 100);
-  const matches = numericProgress(task.counters.matches_retained);
-  const queuedDetail = similarity
-    ? 'Queued behind active asset-integrity work; the similarity phase will start automatically.'
-    : 'Queued behind active asset-integrity work; '
-      + 'exact duplicate analysis will start automatically.';
-  const detail = typeof task.progress.detail === 'string'
-    ? task.progress.detail
-    : task.status === 'queued'
-      ? queuedDetail
-      : 'Preparing duplicate analysis…';
-  const fallbackPhase = task.status === 'queued'
-    ? (similarity ? 'Waiting for similarity scan' : 'Waiting for exact analysis')
-    : (similarity ? 'Preparing similarity scan' : 'Preparing exact matches');
-  return {
-    label: `Duplicate discovery · ${phases[rawPhase] ?? fallbackPhase}`,
-    detail: matches === null ? detail : `${detail} · ${matches.toLocaleString()} matches retained`,
-    completed: numericProgress(task.progress.completed) ?? 0,
-    total: numericProgress(task.progress.total),
-    percent: overallPercent,
-  };
-}
-
-async function waitForTask(tasks: TaskRepository, taskId: string, similarity = false, rangeStart = 0, rangeEnd = 98, onprogress?: (progress: DuplicateDiscoveryProgress) => void): Promise<TaskRecord> {
-  for (;;) {
-    const task = await tasks.get(taskId);
-    onprogress?.(discoveryProgress(task, similarity, rangeStart, rangeEnd));
-    if (TERMINAL_TASK_STATES.has(task.status)) {
-      if (task.status !== 'completed') throw new Error(task.error?.message ?? `Duplicate task ${task.status}.`);
-      return task;
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-}
-
 export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepository {
   let rawGroups = new Map<string, ApiDuplicateGroup>();
   let hasWorkspaceSnapshot = false;
@@ -482,31 +430,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
 
   const materialize = (group: ApiDuplicateGroup): DuplicateGroupRecord => {
     const draft = draftFor(group.group_id);
-    return {
-      id: group.group_id,
-      discoverySources: group.discovery_sources?.length ? group.discovery_sources : [group.discovery_source],
-      state: groupState(group, draft),
-      autoReady: group.auto_selected,
-      kind: group.classification.replaceAll('_', ' '),
-      reason: group.reason,
-      referenceAssetId: group.reference_asset_id ?? null,
-      groupSimilarity: group.group_similarity_percent ?? null,
-      similarityEngine: group.similarity_engine ?? null,
-      similarityModelVersion: group.similarity_model_version ?? null,
-      similarityFeatureVersion: group.similarity_feature_version ?? null,
-      similarityComparisonVersion: group.similarity_comparison_version ?? null,
-      similarityValidationMode: group.similarity_validation_mode ?? null,
-      similarityThresholdPercent: group.similarity_threshold_percent ?? null,
-      memberFingerprint: group.member_fingerprint,
-      selected: workspace.selected_group_ids.includes(group.group_id),
-      savedDecisions: savedDecisions(draft),
-      stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null,
-      stackResolution: parseStackResolution(draft?.stack_resolution ?? 'move_selected'),
-      members: referenceFirstDuplicateMembers(
-        group.members.map((member) => ({ asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member), admission: admissionEvidence(member), preservation: preservationEvidence(member) })),
-        group.reference_asset_id,
-      ),
-    };
+    return mapDuplicateGroup(group, draft, workspace.selected_group_ids.includes(group.group_id));
   };
 
   const writeDraft = async (groupId: string, resolution: DuplicateResolutionPlan): Promise<void> => {

@@ -12,12 +12,12 @@ function sourceFiles(root: string): string[] {
   });
 }
 
-describe('V2 architecture boundary', () => {
-  it('does not import feature-owned V1 modules', () => {
-    const root = resolve(process.cwd(), 'src/v2');
+describe('frontend architecture boundary', () => {
+  it('keeps shared library modules independent of feature and migration code', () => {
+    const root = resolve(process.cwd(), 'src/lib');
     const violations = sourceFiles(root).flatMap((path) => {
       const source = readFileSync(path, 'utf8');
-      return /(?:from\s+|import\s*\()['"][^'"]*features\//.test(source)
+      return /(?:from\s+|import\s*\()['"][^'"]*(?:features|v2)\//.test(source)
         ? [path.slice(root.length + 1)]
         : [];
     });

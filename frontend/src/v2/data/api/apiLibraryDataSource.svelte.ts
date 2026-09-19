@@ -2,7 +2,7 @@ import type { LiveLibraryDataSource } from '../liveContracts';
 import { withDuplicateStackConflictReview } from '../duplicateStackConflictReviewRepository';
 import { createAlbumRepository } from './albumRepository';
 import { createAssetApiProfile } from './assetRepository';
-import { createDuplicateRepository } from './duplicateRepository';
+import { createDuplicateRepository } from '../../../features/duplicates/api/duplicateRepository';
 import { createLocalSavedSearchRepository } from './localSavedSearchRepository';
 import { createSyncRepository } from './syncRepository';
 import { createTagRepository } from './tagRepository';

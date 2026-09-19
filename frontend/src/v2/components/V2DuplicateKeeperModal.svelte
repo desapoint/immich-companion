@@ -44,7 +44,7 @@
     type DuplicateAutomationExistingDecision,
     type DuplicateAutomationUiCondition,
     type DuplicateAutomationUiRule,
-  } from '../state/duplicateAutomationRules';
+  } from '../../features/duplicates/state/duplicateAutomationRules';
   import {
     keeperEffectOptions,
     keeperFieldDefinition,

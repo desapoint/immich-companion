@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import type { AssetRecord, DuplicateGroupRecord, DuplicateKeeperRule } from '../data/contracts';
+import type { AssetRecord, DuplicateGroupRecord, DuplicateKeeperRule } from '../../../v2/data/contracts';
 import {
   evaluateDuplicateAutomation,
   type DuplicateAutomationExistingDecision,
   type DuplicateAutomationUiRule,
-} from './duplicateAutomationRules';
+} from '../state/duplicateAutomationRules';
 
 let nextAsset = 0;
 function asset(overrides: Partial<AssetRecord> = {}): AssetRecord {

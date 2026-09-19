@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { TaskRecord, TaskRepository } from '../syncContracts';
-import { createDuplicateRepository, discoveryProgress } from './duplicateRepository';
+import type { TaskRecord, TaskRepository } from '../../../v2/data/syncContracts';
+import { createDuplicateRepository } from '../api/duplicateRepository';
+import { discoveryProgress } from '../api/duplicateDiscovery';
 
 const ASSET_IDS = [
   '11111111-1111-4111-8111-111111111111',

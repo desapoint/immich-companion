@@ -2,10 +2,13 @@ import { readFileSync } from 'node:fs';
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
-import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../data/contracts';
-import V2DuplicateCompareViewer from './V2DuplicateCompareViewer.svelte';
+import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../../../v2/data/contracts';
+import DuplicateCompareViewer from '../components/DuplicateCompareViewer.svelte';
 
-const viewerSource = readFileSync(new URL('./V2DuplicateCompareViewer.svelte', import.meta.url), 'utf8');
+const viewerSource = [
+  readFileSync(new URL('../components/DuplicateCompareViewer.svelte', import.meta.url), 'utf8'),
+  readFileSync(new URL('../components/DuplicateComparisonDetails.svelte', import.meta.url), 'utf8'),
+].join('\n');
 
 function buttonWithText(body: string, text: string): string {
   return [...body.matchAll(/<button\b[^>]*>[\s\S]*?<\/button>/g)]
@@ -42,9 +45,9 @@ function groupMember(
   };
 }
 
-describe('V2DuplicateCompareViewer', () => {
+describe('DuplicateCompareViewer', () => {
   it('uses the shared decision controls with a layout-stable stack primary action', () => {
-    const { body } = render(V2DuplicateCompareViewer, {
+    const { body } = render(DuplicateCompareViewer, {
       props: {
         open: true,
         groupTitle: 'IMG_1234.JPG and 2 more',
@@ -112,7 +115,7 @@ describe('V2DuplicateCompareViewer', () => {
   });
 
   it('shows actual bounded validation dimensions without implying full-resolution proof', () => {
-    const { body } = render(V2DuplicateCompareViewer, {
+    const { body } = render(DuplicateCompareViewer, {
       props: {
         open: true,
         groupTitle: 'Oversized comparison',
@@ -156,7 +159,7 @@ describe('V2DuplicateCompareViewer', () => {
     }));
     const bridge = groupMember('asset-2', 'bridge.heic', 82.34);
     const best = groupMember('asset-3', 'best-match.heic', 83.07);
-    const { body } = render(V2DuplicateCompareViewer, {
+    const { body } = render(DuplicateCompareViewer, {
       props: {
         open: true,
         groupTitle: 'Linked comparison',
@@ -196,7 +199,7 @@ describe('V2DuplicateCompareViewer', () => {
   });
 
   it('wires the admitted-through control to select that asset in the current viewer', () => {
-    expect(viewerSource).toContain('onclick={()=>showMemberById(admittedByMember.asset.id)}');
+    expect(viewerSource).toContain('onclick={() => showMemberById(admittedByMember.asset.id)}');
     expect(viewerSource).toContain('function showMemberById(assetId: string)');
     expect(viewerSource).toContain('const target = viewerSelectionTargetId(assetIds, assetId)');
   });
@@ -211,7 +214,7 @@ describe('V2DuplicateCompareViewer', () => {
     }));
     const reference = groupMember('asset-2', 'reference.heic', 100);
     const stronger = groupMember('asset-3', 'stronger.heic', 99);
-    const { body } = render(V2DuplicateCompareViewer, {
+    const { body } = render(DuplicateCompareViewer, {
       props: {
         open: true,
         groupTitle: 'Direct comparison',
@@ -234,7 +237,7 @@ describe('V2DuplicateCompareViewer', () => {
   });
 
   it('renders duplicate-group navigation and wires Shift+Arrow keyboard shortcuts', () => {
-    const { body } = render(V2DuplicateCompareViewer, {
+    const { body } = render(DuplicateCompareViewer, {
       props: {
         open: true,
         groupTitle: 'Group navigation',
@@ -258,7 +261,7 @@ describe('V2DuplicateCompareViewer', () => {
   });
 
   it('keeps inspection navigation enabled while write controls are disabled', () => {
-    const { body } = render(V2DuplicateCompareViewer, {
+    const { body } = render(DuplicateCompareViewer, {
       props: {
         open: true,
         groupTitle: 'Read-only comparison',
