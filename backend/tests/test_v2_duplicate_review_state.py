@@ -29,7 +29,6 @@ def test_policy_state_keeps_auto_ready_distinct_from_actionable() -> None:
     assert v2_policy_state(group()) == "needs_review"
 
 
-
 @pytest.mark.asyncio
 async def test_policy_refresh_handler_propagates_refresh_failure() -> None:
     class Service:

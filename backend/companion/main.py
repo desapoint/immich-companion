@@ -403,6 +403,7 @@ def create_app(
         and composite_duplicate_repository is not None
         else None
     )
+
     async def composite_projection_needs_refresh() -> bool:
         if (
             composite_duplicate_repository is None

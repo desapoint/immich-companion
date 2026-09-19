@@ -452,7 +452,6 @@ async def test_follow_up_failure_fails_the_parent_task() -> None:
     assert isinstance(raised.value.__cause__, RuntimeError)
 
 
-
 @pytest.mark.asyncio
 async def test_follow_up_reclaims_delegate_memory_before_projection(monkeypatch) -> None:
     events: list[str] = []
@@ -480,7 +479,6 @@ async def test_follow_up_reclaims_delegate_memory_before_projection(monkeypatch)
     assert events == ["source", "cleanup", "projection"]
 
 
-
 def test_projection_staleness_uses_source_success_watermarks() -> None:
     old = datetime(2026, 9, 13, tzinfo=UTC)
     current = datetime(2026, 9, 14, tzinfo=UTC)
@@ -490,7 +488,6 @@ def test_projection_staleness_uses_source_success_watermarks() -> None:
     assert composite_projection_is_stale(current, old, current) is False
     assert composite_projection_is_stale(current, newer, old) is True
     assert composite_projection_is_stale(current, old, newer) is True
-
 
 
 def test_active_source_work_defers_startup_projection_refresh() -> None:

@@ -284,7 +284,6 @@ async def test_startup_fence_cancels_only_requested_unfinished_task_type() -> No
     ]
 
 
-
 def test_shutdown_release_finalizes_pause_and_cancel_requests() -> None:
     assert _shutdown_release_state("running") == (
         "recovering",

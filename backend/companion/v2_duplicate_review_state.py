@@ -114,7 +114,6 @@ class V2DuplicateReviewStateService:
         return {"groups": updated, "inherited_resolutions": inherited}
 
 
-
 class V2DuplicateReviewStateRefreshTaskHandler:
     """Durably refresh SQL-native duplicate policy state after source changes."""
 

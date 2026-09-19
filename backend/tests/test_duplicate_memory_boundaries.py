@@ -5,6 +5,8 @@ from __future__ import annotations
 import gc
 import inspect
 import tracemalloc
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -15,7 +17,11 @@ from companion.composite_duplicate_sync import CompositeDuplicateRebuildTaskHand
 from companion.discovery.base import DiscoveredGroup
 from companion.discovery.composite import CompositeGroupDiscoveryProvider
 from companion.discovery.immich_duplicates import ImmichDuplicateProvider
-from companion.duplicate_service import CrossSourceDuplicateService
+from companion.duplicate_schema import DuplicateAnalysisOptions
+from companion.duplicate_service import (
+    CrossSourceDuplicateService,
+    CrossSourceDuplicateTaskHandler,
+)
 from companion.group_decision import DiscoverySource
 
 
@@ -114,4 +120,156 @@ async def test_composite_streaming_memory_does_not_scale_with_group_payloads() -
     assert consumed == group_count
     # Full retention would exceed 64 MiB from metadata payloads alone. Keep enough
     # headroom for interpreter/test-runner allocations while requiring bounded behavior.
+    assert peak < 24 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_composite_repository_publication_does_not_retain_streamed_payloads() -> None:
+    """Exercise the real repository publisher with a lightweight transactional adapter."""
+
+    left = SimpleNamespace(
+        id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        file_size_bytes=100,
+        file_created_at=datetime(2026, 9, 19, tzinfo=UTC),
+    )
+    right = SimpleNamespace(
+        id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        file_size_bytes=100,
+        file_created_at=datetime(2026, 9, 19, tzinfo=UTC),
+    )
+    available_ids = [left.id, right.id]
+    group_count = 2_000
+    batch_size = 40
+    payload_bytes = 32 * 1024
+
+    async def batches():
+        for start in range(0, group_count, batch_size):
+            yield [
+                DiscoveredGroup(
+                    group_id=f"immich:publisher-{index}",
+                    discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+                    provider_group_id=f"publisher-{index}",
+                    assets=(left, right),  # type: ignore[arg-type]
+                    provider_metadata={
+                        "payload": f"{index:06d}-" + ("x" * payload_bytes)
+                    },
+                )
+                for index in range(start, min(group_count, start + batch_size))
+            ]
+
+    class ScalarRows:
+        def all(self):
+            return available_ids
+
+    class Session:
+        state = SimpleNamespace(
+            authoritative_generation=0,
+            group_count=0,
+            member_count=0,
+            evidence_count=0,
+            last_success_at=None,
+        )
+
+        @asynccontextmanager
+        async def begin(self):
+            yield self
+
+        async def scalar(self, _statement):
+            return self.state
+
+        async def scalars(self, _statement):
+            return ScalarRows()
+
+        async def execute(self, _statement):
+            return None
+
+        def add(self, _record):
+            return None
+
+        async def flush(self):
+            return None
+
+    session = Session()
+
+    class Database:
+        @asynccontextmanager
+        async def sessions(self):
+            yield session
+
+    repository = CompositeDuplicateRepository(Database())  # type: ignore[arg-type]
+    gc.collect()
+    tracemalloc.start()
+    try:
+        metadata = await repository.replace_snapshot_batches(batches())
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert metadata.group_count == group_count
+    assert peak < 24 * 1024 * 1024
+
+
+@pytest.mark.asyncio
+async def test_exact_analysis_does_not_retain_streamed_group_payloads() -> None:
+    """Exercise the real exact-analysis consumer without candidate verification I/O."""
+
+    left = SimpleNamespace(
+        id=UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+        library_id=None,
+    )
+    right = SimpleNamespace(
+        id=UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+        library_id=None,
+    )
+    group_count = 2_000
+    batch_size = 40
+    payload_bytes = 32 * 1024
+
+    class Discovery:
+        async def discover(self):
+            raise AssertionError("streaming exact analysis must not materialize all groups")
+
+        async def discover_batches(self):
+            for start in range(0, group_count, batch_size):
+                yield [
+                    DiscoveredGroup(
+                        group_id=f"immich:analysis-{index}",
+                        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+                        provider_group_id=f"analysis-{index}",
+                        assets=(left, right),  # type: ignore[arg-type]
+                        provider_metadata={
+                            "payload": f"{index:06d}-" + ("x" * payload_bytes)
+                        },
+                    )
+                    for index in range(start, min(group_count, start + batch_size))
+                ]
+
+    class Context:
+        async def checkpoint(self, **_kwargs):
+            return None
+
+        async def ensure_active(self):
+            return None
+
+    handler = CrossSourceDuplicateTaskHandler(
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        discovery=Discovery(),  # type: ignore[arg-type]
+    )
+
+    gc.collect()
+    tracemalloc.start()
+    try:
+        result = await handler.execute(
+            Context(),  # type: ignore[arg-type]
+            DuplicateAnalysisOptions().model_dump(mode="json"),
+        )
+        _current, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+
+    assert result.counters["duplicate_groups"] == group_count
+    assert result.counters["candidate_files"] == 0
     assert peak < 24 * 1024 * 1024
