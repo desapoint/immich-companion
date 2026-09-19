@@ -620,6 +620,54 @@ class TaskRepository:
             )
             return [_public_event(record) for record in records]
 
+    async def release_worker_leases(self, worker_id: UUID) -> int:
+        """Release resumable leases owned by a worker that is shutting down."""
+
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            records = list(
+                (
+                    await session.scalars(
+                        select(TaskRecord)
+                        .where(
+                            TaskRecord.lease_owner == worker_id,
+                            TaskRecord.status.in_(("running", "recovering")),
+                        )
+                        .with_for_update()
+                    )
+                ).all()
+            )
+            for record in records:
+                record.status = "recovering"
+                record.lease_owner = None
+                record.lease_expires_at = None
+                record.next_attempt_at = now
+                attempt = await session.scalar(
+                    select(TaskAttemptRecord)
+                    .where(
+                        TaskAttemptRecord.task_id == record.id,
+                        TaskAttemptRecord.attempt == record.attempt,
+                        TaskAttemptRecord.status == "running",
+                    )
+                    .with_for_update()
+                )
+                if attempt is not None:
+                    attempt.status = "failed"
+                    attempt.completed_at = now
+                    attempt.details = {
+                        "type": "worker_shutdown",
+                        "message": "Worker stopped before task completion",
+                    }
+                session.add(
+                    TaskEventRecord(
+                        task_id=record.id,
+                        attempt=record.attempt,
+                        kind="recovering",
+                        details={"reason": "worker_shutdown"},
+                    )
+                )
+            return len(records)
+
     async def cancel_unfinished(self, task_type: str, *, reason: str) -> int:
         """Cancel unfinished tasks of one type before startup workers can reclaim them."""
 
@@ -736,6 +784,7 @@ class TaskCoordinator:
         self._global_subscribers: set[asyncio.Queue[TaskStatusView]] = set()
         self._database = database
         self._listener: asyncio.Task[None] | None = None
+        self._worker_id: UUID | None = None
 
     def register_handler(self, handler: TaskHandler) -> None:
         self._handlers[handler.task_type] = handler
@@ -938,11 +987,18 @@ class TaskCoordinator:
             self._listener.cancel()
             with suppress(asyncio.CancelledError):
                 await self._listener
-        if self._running:
-            await asyncio.gather(*self._running, return_exceptions=True)
+        running = tuple(self._running)
+        for execution in running:
+            execution.cancel()
+        if running:
+            await asyncio.gather(*running, return_exceptions=True)
+        if self._worker_id is not None:
+            await self._repository.release_worker_leases(self._worker_id)
+            self._worker_id = None
 
     async def _run(self) -> None:
         worker_id = uuid4()
+        self._worker_id = worker_id
         scheduler = asyncio.create_task(self._schedule(), name="task-coordinator-scheduler")
         try:
             while not self._stopping.is_set():
