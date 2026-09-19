@@ -326,18 +326,21 @@ class SimilarityEvidenceEpochRepository:
                     {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
                 )
 
-        # The composite duplicate projection is derived output. Remove it too so the UI
-        # cannot keep displaying groups backed by invalidated similarity evidence. Review
-        # decisions/history live in separate durable tables and are deliberately preserved.
-        composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
-        removed["composite_groups"] = int(composite.rowcount or 0)
-        await session.execute(
-            text(
-                "UPDATE composite_duplicate_sync_state SET "
-                "group_count = 0, member_count = 0, evidence_count = 0, "
-                "last_success_at = NULL WHERE id = 1"
+        # A rebuild publishes its replacement projection atomically, so keep the last
+        # successful projection readable while replacement evidence is being produced.
+        # A deliberate destroy remains the only operation that clears the projection.
+        if drop_reusable_evidence:
+            composite = await session.execute(text("DELETE FROM composite_duplicate_groups"))
+            removed["composite_groups"] = int(composite.rowcount or 0)
+            await session.execute(
+                text(
+                    "UPDATE composite_duplicate_sync_state SET "
+                    "group_count = 0, member_count = 0, evidence_count = 0, "
+                    "last_success_at = NULL WHERE id = 1"
+                )
             )
-        )
+        else:
+            removed["composite_groups"] = 0
 
         derived_tables = [
             ("scan_pairs", "similarity_scan_pairs"),

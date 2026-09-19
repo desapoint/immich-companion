@@ -293,7 +293,7 @@ async def test_rebuild_advances_epoch_and_atomically_queues_replacement_scan() -
     assert database.queued_task_parameters["payload"] == scan_payload
     assert database.queued_task_parameters["id"] == result.task_id
     assert result.removed_counts == {
-        "composite_groups": 1,
+        "composite_groups": 0,
         "scan_pairs": 1,
         "scans": 1,
     }
