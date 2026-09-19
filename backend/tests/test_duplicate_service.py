@@ -979,6 +979,64 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     assert similarity.calls[0][0] == [[UPLOAD_1, EXTERNAL_1]]
 
 
+def test_similarity_members_are_reference_first_then_descending_similarity() -> None:
+    members = (
+        asset(UPLOAD_1, external=False, checksum=None, filename="reference.jpg"),
+        asset(EXTERNAL_1, external=False, checksum=None, filename="lower.jpg"),
+        asset(UPLOAD_2, external=False, checksum=None, filename="higher.jpg"),
+    )
+    discovered = DiscoveredGroup(
+        group_id="companion:member-order",
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        assets=members,
+    )
+    result = CrossSourceDuplicateService.assemble(
+        [discovered],
+        {},
+        DuplicateAnalysisOptions(),
+    )
+    lower = PairSimilarityEvidence(
+        similarity_percent=91.0,
+        structural_percent=91.0,
+        perceptual_percent=91.0,
+        color_percent=91.0,
+        exact_thumbnail_match=False,
+        exact_pixel_match=False,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        comparison_version=1,
+    )
+    higher = PairSimilarityEvidence(
+        similarity_percent=97.0,
+        structural_percent=97.0,
+        perceptual_percent=97.0,
+        color_percent=97.0,
+        exact_thumbnail_match=False,
+        exact_pixel_match=False,
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        comparison_version=1,
+    )
+
+    enriched = CrossSourceDuplicateService._apply_similarity(
+        result,
+        [discovered],
+        {
+            (UPLOAD_1, EXTERNAL_1): lower,
+            (UPLOAD_1, UPLOAD_2): higher,
+        },
+        {},
+        {},
+    )
+
+    assert enriched.groups[0].reference_asset_id == UPLOAD_1
+    assert [member.id for member in enriched.groups[0].members] == [
+        UPLOAD_1,
+        UPLOAD_2,
+        EXTERNAL_1,
+    ]
+
+
 @pytest.mark.asyncio
 async def test_companion_similarity_group_exposes_provenance_without_automatic_action() -> None:
     content = b"same"
@@ -1182,13 +1240,11 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
     assert result.auto_resolvable == original.auto_resolvable
     assert result.effective_action == original.effective_action
     assert result.effective_primary_asset_id == original.effective_primary_asset_id
-    assert [member.id for member in result.members] == [
-        member.id for member in original.members
-    ]
+    assert [member.id for member in result.members] == [EXTERNAL_1, UPLOAD_1]
     assert result.members[0].similarity is not None
-    assert result.members[0].similarity.similarity_percent == 93.0
+    assert result.members[0].similarity.state == "reference"
     assert result.members[1].similarity is not None
-    assert result.members[1].similarity.state == "reference"
+    assert result.members[1].similarity.similarity_percent == 93.0
 
     with pytest.raises(ActionPlanConflictError, match="not a member"):
         await service.similarity_reference(
