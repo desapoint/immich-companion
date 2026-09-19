@@ -51,3 +51,13 @@ def test_persisted_immich_discovery_pages_before_hydration() -> None:
     source = inspect.getsource(ImmichDuplicateProvider.discover_batches)
     assert '"groups_page"' in source
     assert "yield await self._hydrate_persisted(snapshot)" in source
+
+
+
+def test_exact_duplicate_analysis_streams_discovery_batches() -> None:
+    from companion.duplicate_service import CrossSourceDuplicateTaskHandler
+
+    handler_source = inspect.getsource(CrossSourceDuplicateTaskHandler.execute)
+    assert '"discover_batches"' in handler_source
+    assert "groups = await self._discovery.discover()" not in handler_source
+    assert "processed_asset_ids" in handler_source

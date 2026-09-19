@@ -366,9 +366,14 @@ def create_app(
         and duplicate_review_repository is not None
         else None
     )
+    exact_duplicate_discovery = (
+        ImmichDuplicateProvider(immich_duplicate_repository, asset_repository)
+        if immich_duplicate_repository is not None and asset_repository is not None
+        else None
+    )
     source_duplicate_discovery = (
         CompositeGroupDiscoveryProvider(
-            ImmichDuplicateProvider(immich_duplicate_repository, asset_repository),
+            exact_duplicate_discovery,
             SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
         )
         if similarity_scan_repository is not None
@@ -557,7 +562,7 @@ def create_app(
             integrity_repository,
             integrity_handler,
             include_preservation=True,
-            discovery=duplicate_discovery,
+            discovery=exact_duplicate_discovery,
             similarity_indexer=similarity_index_maintainer,
             shared_original_cache_path=similarity_cache.decode_path,
         )
