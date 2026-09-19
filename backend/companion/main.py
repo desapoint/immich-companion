@@ -1347,6 +1347,28 @@ def create_app(
         return add_public_asset_url(await repository.find_structured_match(asset_id, criteria))
 
     @app.get(
+        "/api/assets/duplicates/summary",
+        response_model=DuplicateDiscoverySummary,
+    )
+    async def duplicate_discovery_summary() -> DuplicateDiscoverySummary:
+        if composite_duplicate_repository is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The persisted duplicate projection is unavailable.",
+            )
+        metadata = await composite_duplicate_repository.metadata()
+        group_count, member_count = (
+            await composite_duplicate_repository.unresolved_counts()
+        )
+        return DuplicateDiscoverySummary(
+            authoritative_generation=metadata.authoritative_generation,
+            group_count=group_count,
+            member_count=member_count,
+            evidence_count=metadata.evidence_count,
+            last_success_at=metadata.last_success_at,
+        )
+
+    @app.get(
         "/api/assets/{asset_id}/summary",
         response_model=AssetSummary | None,
     )
@@ -2227,28 +2249,6 @@ def create_app(
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error
-
-    @app.get(
-        "/api/assets/duplicates/summary",
-        response_model=DuplicateDiscoverySummary,
-    )
-    async def duplicate_discovery_summary() -> DuplicateDiscoverySummary:
-        if composite_duplicate_repository is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The persisted duplicate projection is unavailable.",
-            )
-        metadata = await composite_duplicate_repository.metadata()
-        group_count, member_count = (
-            await composite_duplicate_repository.unresolved_counts()
-        )
-        return DuplicateDiscoverySummary(
-            authoritative_generation=metadata.authoritative_generation,
-            group_count=group_count,
-            member_count=member_count,
-            evidence_count=metadata.evidence_count,
-            last_success_at=metadata.last_success_at,
-        )
 
     @app.get(
         "/api/assets/duplicates/group-ids",

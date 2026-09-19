@@ -153,6 +153,16 @@ def test_frontend_assets_are_served_without_shadowing_api_routes(tmp_path: Path)
     assert missing_api.status_code == 404
 
 
+def test_duplicate_summary_route_precedes_asset_summary_route() -> None:
+    """The literal duplicate path must not be parsed as an asset UUID."""
+
+    with TestClient(create_app(settings(), pong_transport())) as client:
+        response = client.get("/api/assets/duplicates/summary")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The persisted duplicate projection is unavailable."
+
+
 def test_root_reports_missing_frontend_assets_during_backend_only_development() -> None:
     with TestClient(create_app(settings(), pong_transport())) as client:
         response = client.get("/")
