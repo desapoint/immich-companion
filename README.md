@@ -5,6 +5,33 @@ built to provide advanced search, safe bulk actions, duplicate review, tagging,
 integrity analysis, and people/album workflows without modifying Immich's
 database or media files directly.
 
+## Preferred stack & tooling
+
+Use these choices by default when adding or extending the project so the stack
+stays consistent and the preferred tools are easy to identify at a glance:
+
+- **Frontend:** Svelte 5 + TypeScript, built with Vite.
+- **V2 UI:** reusable V2-owned Svelte primitives and responsibility-based CSS;
+  prefer component props/state and shared layout primitives over page-specific
+  styling or duplicated markup.
+- **Icons:** `@lucide/svelte` (Lucide) is the preferred complete icon set. Use
+  Lucide icons for new icon placements instead of text glyphs, emoji, or ad-hoc
+  SVGs unless a product-specific graphic genuinely requires something custom.
+- **Frontend testing:** `svelte-check`, Vitest, and Playwright.
+- **Package management:** npm with the committed `package-lock.json`; use
+  `npm ci` for reproducible installs.
+- **Backend:** Python 3.12+ with FastAPI and Uvicorn.
+- **Backend testing/linting:** pytest and Ruff.
+- **Persistence:** PostgreSQL for companion-owned relational state. Qdrant is
+  reserved for vector storage when needed.
+- **Immich integration:** use the supported Immich API. Do not write directly to
+  Immich's database or mutate Immich-managed media files.
+- **Local/runtime environment:** Docker Compose for the reproducible integration
+  environment and production-style service orchestration.
+- **Development workflow:** Vite HMR for frontend iteration and Uvicorn reload
+  for backend iteration; keep locked dependencies and CI checks aligned with the
+  same toolchain.
+
 The current vertical slice includes a FastAPI service, a componentized Svelte
 status dashboard and asset workspace, typed Immich asset/album synchronization,
 nested PostgreSQL search with stable configurable ordering, image cards, and a
@@ -146,6 +173,19 @@ Archive/Unarchive direction and one Favorite/Unfavorite direction; Trash and
 Restore remain independently available when either state applies. Shared typed
 icons, icon-button legends, dialogs, and confirmation dialogs provide the
 reusable UI foundation for these controls.
+
+Duplicate comparison keeps versioned Appearance features and sparse canonical
+pair results in Companion PostgreSQL. Synchronized thumbnails and previews use
+a separately bounded disposable disk LRU, while active decode work and the
+in-process hot-group cache have independent limits. The Duplicates page reports
+cache usage, hit rates, eviction/cleanup health, and reference-switch latency;
+clearing disposable caches never removes durable review state or features.
+Similarity discovery supports reference-only, linked-group, and strict
+all-pairs validation. The selected strategy, stable anchor, threshold, grouping
+version, and admitting relationships are retained with the immutable scan
+evidence. Changing the comparison reference only changes displayed pair scores;
+the explicit revalidation action starts a new scan when membership should be
+rebuilt from that reference.
 
 Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather
@@ -301,6 +341,5 @@ only after their corresponding parity tasks have passed staging validation.
 
 ## Roadmap
 
-The detailed task graph is maintained locally in the ignored `TASKS.md` file.
 The implementation guide and imported reference scripts remain local under the
 ignored `docs/` directory.

@@ -8,7 +8,9 @@ from PIL import Image, ImageCms, ImageDraw, ImageEnhance
 from companion.similarity_features import (
     COLOR_HISTOGRAM_LENGTH,
     LUMINANCE_VECTOR_LENGTH,
+    SIMILARITY_FEATURE_VERSION,
     compare_visual_features,
+    decode_and_extract_features,
     extract_visual_features,
 )
 
@@ -30,10 +32,33 @@ def features(image: Image.Image):
     return result
 
 
+def test_verification_decodes_once_for_dimensions_features_and_pixel_hash(monkeypatch) -> None:
+    payload = BytesIO()
+    scene().save(payload, format="PNG")
+    original_open = Image.open
+    opens = 0
+
+    def counted_open(*args, **kwargs):
+        nonlocal opens
+        opens += 1
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(Image, "open", counted_open)
+    decoded, feature = decode_and_extract_features(payload, "png")
+
+    assert opens == 1
+    assert decoded.valid is True
+    assert (decoded.width, decoded.height) == (192, 128)
+    assert feature is not None
+    assert feature.pixel_sha256 is not None
+
+
 def test_visual_features_are_fixed_size_and_deterministic() -> None:
     first = features(scene())
     second = features(scene())
 
+    assert SIMILARITY_FEATURE_VERSION == 3
+    assert first.feature_version == 3
     assert first == second
     assert len(first.luminance_vector) == LUMINANCE_VECTOR_LENGTH
     assert len(first.perceptual_hash) == 16
@@ -65,8 +90,37 @@ def test_lossless_container_and_opaque_alpha_share_normalized_pixels() -> None:
     assert rgb_result is not None
     assert rgba_result is not None
     assert rgb_result.pixel_sha256 == rgba_result.pixel_sha256
+    assert compare_visual_features(rgb_result, rgba_result).similarity_percent == 100
     assert rgb_result.has_alpha is False
     assert rgba_result.has_alpha is True
+
+
+def test_hidden_rgb_under_full_transparency_does_not_change_appearance() -> None:
+    red_hidden = Image.new("RGBA", (128, 128), (255, 0, 0, 0))
+    cyan_hidden = Image.new("RGBA", (128, 128), (0, 220, 255, 0))
+
+    first = features(red_hidden)
+    second = features(cyan_hidden)
+    comparison = compare_visual_features(first, second)
+
+    assert comparison.similarity_percent == 100
+    assert comparison.structural_percent == 100
+    assert comparison.perceptual_percent == 100
+    assert comparison.color_percent == 100
+    assert first.thumbnail_sha256 == second.thumbnail_sha256
+    # Exact decoded-pixel identity intentionally remains stricter than appearance.
+    assert first.pixel_sha256 != second.pixel_sha256
+
+
+def test_alpha_only_visibility_change_remains_meaningful() -> None:
+    transparent = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    visible = transparent.copy()
+    ImageDraw.Draw(visible).rectangle((32, 32, 95, 95), fill=(0, 0, 0, 255))
+
+    comparison = compare_visual_features(features(transparent), features(visible))
+
+    assert comparison.similarity_percent < 100
+    assert comparison.structural_percent < 100
 
 
 def test_meaningful_alpha_and_dimensions_change_normalized_pixel_identity() -> None:

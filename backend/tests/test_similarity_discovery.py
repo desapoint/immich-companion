@@ -1,6 +1,7 @@
 """Companion similarity scan discovery publication regressions."""
 
 from datetime import UTC, datetime
+from typing import Literal
 from uuid import UUID
 
 import pytest
@@ -22,6 +23,7 @@ from companion.similarity_scan_repository import (
 LOW = UUID("11111111-1111-4111-8111-111111111111")
 HIGH = UUID("22222222-2222-4222-8222-222222222222")
 THIRD = UUID("33333333-3333-4333-8333-333333333333")
+FOURTH = UUID("44444444-4444-4444-8444-444444444444")
 SCAN_ONE = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 SCAN_TWO = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
@@ -66,6 +68,10 @@ def scan_pair(
 def snapshot(
     scan_id: UUID,
     pairs: tuple[SimilarityScanPair, ...] | None = None,
+    *,
+    validation_mode: Literal["reference", "linked", "strict"] = "strict",
+    max_link_depth: int = 2,
+    anchor_asset_id: UUID | None = None,
 ) -> SimilarityScanSnapshot:
     current_pairs = pairs or (scan_pair(),)
     return SimilarityScanSnapshot(
@@ -80,6 +86,9 @@ def snapshot(
             maximum_aspect_difference=0.05,
             maximum_neighbors_per_asset=8,
             maximum_matches=5000,
+            validation_mode=validation_mode,
+            max_link_depth=max_link_depth,
+            anchor_asset_id=anchor_asset_id,
         ),
         asset_count=len(
             {
@@ -124,6 +133,7 @@ async def test_similarity_provider_publishes_latest_pair_with_scan_provenance() 
     assert groups[0].assets[0].id == LOW
     assert groups[0].provider_metadata["scan_id"] == str(SCAN_ONE)
     assert groups[0].provider_metadata["similarity_percent"] == "98.5"
+    assert groups[0].provider_metadata["max_link_depth"] == "2"
     assert assets.requested == [LOW, HIGH]
 
 
@@ -172,6 +182,10 @@ async def test_similarity_provider_publishes_fully_cohesive_triangle() -> None:
     assert groups[0].provider_metadata["minimum_similarity_percent"] == "96"
     assert groups[0].provider_metadata["maximum_similarity_percent"] == "99"
     assert groups[0].provider_metadata["cohesive_pair_count"] == "3"
+    assert groups[0].provider_metadata["validation_mode"] == "strict"
+    assert groups[0].similarity_validation is not None
+    assert groups[0].similarity_validation.anchor_asset_id == LOW
+    assert groups[0].similarity_validation.admission_evidence[2].admitted_by_asset_id == LOW
 
 
 @pytest.mark.asyncio
@@ -194,18 +208,75 @@ async def test_similarity_provider_does_not_collapse_non_transitive_chain() -> N
 
 
 @pytest.mark.asyncio
+async def test_similarity_provider_applies_persisted_link_depth_limit() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (
+            scan_pair(LOW, HIGH, 99),
+            scan_pair(HIGH, THIRD, 98),
+            scan_pair(THIRD, FOURTH, 97),
+        ),
+        validation_mode="linked",
+        max_link_depth=1,
+        anchor_asset_id=LOW,
+    )
+    provider = SimilarityDuplicateProvider(
+        FakeScans(current),
+        FakeAssets({
+            LOW: asset(LOW),
+            HIGH: asset(HIGH),
+            THIRD: asset(THIRD),
+            FOURTH: asset(FOURTH),
+        }),
+    )
+
+    group = (await provider.discover())[0]
+
+    assert tuple(member.id for member in group.assets) == (LOW, HIGH, THIRD)
+    assert group.provider_metadata["max_link_depth"] == "1"
+    assert group.similarity_validation is not None
+    evidence = {
+        item.asset_id: item
+        for item in group.similarity_validation.admission_evidence
+    }
+    assert evidence[HIGH].link_depth == 0
+    assert evidence[THIRD].link_depth == 1
+    assert FOURTH not in evidence
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_places_explicit_revalidation_anchor_first() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (scan_pair(LOW, HIGH, 98), scan_pair(HIGH, THIRD, 97)),
+        validation_mode="linked",
+        anchor_asset_id=THIRD,
+    )
+    provider = SimilarityDuplicateProvider(
+        FakeScans(current),
+        FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH), THIRD: asset(THIRD)}),
+    )
+
+    group = (await provider.discover())[0]
+
+    assert tuple(member.id for member in group.assets) == (THIRD, LOW, HIGH)
+    assert group.similarity_validation is not None
+    assert group.similarity_validation.anchor_asset_id == THIRD
+
+
+@pytest.mark.asyncio
 async def test_composite_provider_keeps_registration_order_and_rejects_collisions() -> None:
     first_group = DiscoveredGroup(
         group_id="first",
         discovery_source=DiscoverySource.IMMICH_DUPLICATE,
         provider_group_id="one",
-        assets=(),
+        assets=(asset(LOW), asset(HIGH)),
     )
     second_group = DiscoveredGroup(
         group_id="second",
         discovery_source=DiscoverySource.COMPANION_SIMILARITY,
         provider_group_id="two",
-        assets=(),
+        assets=(asset(HIGH), asset(THIRD)),
     )
 
     class Provider:
@@ -221,3 +292,87 @@ async def test_composite_provider_keeps_registration_order_and_rejects_collision
     collision = CompositeGroupDiscoveryProvider(Provider([first_group]), Provider([first_group]))
     with pytest.raises(ValueError, match="Duplicate discovery group ID"):
         await collision.discover()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reverse", [False, True])
+async def test_composite_provider_coalesces_only_exact_cross_provider_member_sets(
+    reverse: bool,
+) -> None:
+    immich = DiscoveredGroup(
+        group_id="immich-group",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="immich-provider-id",
+        assets=(asset(HIGH), asset(LOW)),
+        provider_metadata={"endpoint": "/api/duplicates"},
+    )
+    similar = DiscoveredGroup(
+        group_id="similar-group",
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id="scan-id:pair",
+        assets=(asset(LOW), asset(HIGH)),
+        provider_metadata={"similarity_percent": "98.5"},
+    )
+
+    class Provider:
+        def __init__(self, group: DiscoveredGroup) -> None:
+            self.group = group
+
+        async def discover(self) -> list[DiscoveredGroup]:
+            return [self.group]
+
+    providers = [Provider(immich), Provider(similar)]
+    if reverse:
+        providers.reverse()
+    groups = await CompositeGroupDiscoveryProvider(*providers).discover()
+
+    assert len(groups) == 1
+    assert groups[0].group_id == "immich-group"
+    assert groups[0].provider_group_id == "immich-provider-id"
+    assert groups[0].discovery_source is DiscoverySource.IMMICH_DUPLICATE
+    assert [item.discovery_source for item in groups[0].evidence] == [
+        DiscoverySource.IMMICH_DUPLICATE,
+        DiscoverySource.COMPANION_SIMILARITY,
+    ]
+    assert groups[0].evidence[1].metadata["similarity_percent"] == "98.5"
+
+
+@pytest.mark.asyncio
+async def test_composite_provider_does_not_merge_partial_or_transitive_overlap() -> None:
+    groups = [
+        DiscoveredGroup(
+            group_id="immich-ab",
+            discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+            provider_group_id="one",
+            assets=(asset(LOW), asset(HIGH)),
+        ),
+        DiscoveredGroup(
+            group_id="similar-abc",
+            discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+            provider_group_id="two",
+            assets=(asset(LOW), asset(HIGH), asset(THIRD)),
+        ),
+        DiscoveredGroup(
+            group_id="similar-bc",
+            discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+            provider_group_id="three",
+            assets=(asset(HIGH), asset(THIRD)),
+        ),
+    ]
+
+    class Provider:
+        def __init__(self, group: DiscoveredGroup) -> None:
+            self.group = group
+
+        async def discover(self) -> list[DiscoveredGroup]:
+            return [self.group]
+
+    discovered = await CompositeGroupDiscoveryProvider(
+        *(Provider(group) for group in groups)
+    ).discover()
+
+    assert [group.group_id for group in discovered] == [
+        "immich-ab",
+        "similar-abc",
+        "similar-bc",
+    ]

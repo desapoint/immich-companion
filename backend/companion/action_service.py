@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -32,6 +33,8 @@ from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
 from companion.task_coordinator import PermanentTaskError, RetryableTaskError, TaskContext
 from companion.task_schema import TaskResult
 
+logger = logging.getLogger(__name__)
+
 
 class ActionPlanNotFoundError(RuntimeError):
     """Raised when a requested plan does not exist."""
@@ -54,6 +57,24 @@ def selection_digest(ids: list[UUID]) -> str:
 
     value = "\n".join(sorted(str(identifier) for identifier in ids))
     return sha256(value.encode()).hexdigest()
+
+
+def stack_conflict_snapshot(conflicts: list[StackConflict]) -> list[dict[str, object]]:
+    """Freeze the exact source-stack topology presented during review."""
+
+    return sorted(
+        [
+            {
+                "stack_id": str(conflict.stack_id),
+                "primary_asset_id": str(conflict.primary_asset_id),
+                "member_asset_ids": sorted(
+                    str(identifier) for identifier in conflict.member_asset_ids
+                ),
+            }
+            for conflict in conflicts
+        ],
+        key=lambda item: str(item["stack_id"]),
+    )
 
 
 class AssetActionService:
@@ -183,6 +204,19 @@ class AssetActionService:
             raise EmptySelectionError("No synchronized assets matched the selection")
         original_target_digest = selection_digest(resolution.ids)
         operation = self._operation_for_request(request, resolution)
+        if operation in {"remove_album", "remove_tag"} and not request.relation_ids:
+            request = request.model_copy(
+                update={
+                    "relation_ids": await self._assets.relation_ids_for_assets(
+                        operation, resolution.ids
+                    )
+                }
+            )
+            if not request.relation_ids:
+                relation = "album" if operation == "remove_album" else "tag"
+                raise EmptySelectionError(
+                    f"The selected assets have no {relation} relationships to remove"
+                )
         stack_conflicts: list[StackConflict] = []
         if operation == "stack":
             primary_asset_id = request.stack_primary_asset_id
@@ -204,9 +238,11 @@ class AssetActionService:
                 }
             )
             stack_conflicts = await self._stacks.conflicts(resolution.ids)
+            conflict_snapshot = stack_conflict_snapshot(stack_conflicts)
             if stack_conflicts and request.stack_resolution is None:
                 relation_work = {
                     "__stack_conflicts": [item.model_dump(mode="json") for item in stack_conflicts],
+                    "__stack_conflict_snapshot": conflict_snapshot,
                     "__stack_primary_asset_id": str(primary_asset_id),
                 }
                 record = await self._actions.create_plan(
@@ -230,6 +266,7 @@ class AssetActionService:
                 "__stack_conflicts": [] if request.stack_resolution else [
                     item.model_dump(mode="json") for item in stack_conflicts
                 ],
+                "__stack_conflict_snapshot": conflict_snapshot,
                 "__stack_resolution": request.stack_resolution or "move_selected",
                 "__stack_primary_asset_id": str(primary_asset_id),
             }
@@ -267,13 +304,15 @@ class AssetActionService:
                     "applicable_ids": [str(identifier) for identifier in applicable],
                     "skipped_ids": [str(identifier) for identifier in skipped],
                 }
-        else:
+        elif operation not in {"remove_album", "remove_tag"}:
             applicable_set = await self._assets.applicable_action_ids(
                 operation,
                 resolution.ids,
             )
             applicable_union = applicable_set
             skipped_union = set(resolution.ids) - applicable_set
+        else:
+            skipped_union = set(resolution.ids)
         if operation == "stack":
             applicable_union = set(resolution.ids)
             skipped_union = set()
@@ -311,21 +350,7 @@ class AssetActionService:
                 for asset_id in (member.id for member in stack.assets if member.id in selected):
                     await self._immich.update_stack_primary(stack.id, asset_id)
         elif operation == "remove_from_stack":
-            selected = set(ids)
-            for stack in await self._immich.list_stacks():
-                selected_members = [member.id for member in stack.assets if member.id in selected]
-                if not selected_members:
-                    continue
-                if len(selected_members) == len(stack.assets):
-                    await self._immich.delete_stack(stack.id)
-                    continue
-                if stack.primary_asset_id in selected:
-                    replacement = next(
-                        member.id for member in stack.assets if member.id not in selected
-                    )
-                    await self._immich.update_stack_primary(stack.id, replacement)
-                for asset_id in selected_members:
-                    await self._immich.remove_asset_from_stack(stack.id, asset_id)
+            await self._stacks.remove_members(ids)
         elif operation == "remove_stack":
             selected = set(ids)
             for stack in await self._immich.list_stacks():
@@ -362,8 +387,10 @@ class AssetActionService:
         batch_size: int,
         throttle: bool,
     ) -> AssetActionResult:
-        """Apply, refresh once, and verify every relation in a reviewed plan."""
+        """Apply and verify relation changes, deferring repair during a global sync."""
 
+        action_started = perf_counter()
+        mutation_seconds = 0.0
         initial: dict[UUID, tuple[list[UUID], list[UUID]]] = {}
         api_failed: dict[UUID, list[UUID]] = {}
         successful_relations: list[UUID] = []
@@ -385,6 +412,7 @@ class AssetActionService:
                 for index, batch in enumerate(action_batches):
                     batch_started = perf_counter()
                     await self._apply(operation, batch, relation_id)
+                    mutation_seconds += perf_counter() - batch_started
                     relation_processed += len(batch)
                     if progress is not None:
                         await progress(
@@ -398,16 +426,54 @@ class AssetActionService:
             except Exception:
                 api_failed[relation_id] = applicable
 
+        reconciliation_started = perf_counter()
         has_successful_changes = any(
             initial[relation_id][0] for relation_id in successful_relations
         )
         if successful_relations and has_successful_changes:
             try:
                 relation = "album" if operation in {"add_album", "remove_album"} else "tag"
-                await self._repair_targets(
-                    target_ids,
-                    relations=[(relation, relation_id) for relation_id in successful_relations],
+                changed_asset_ids = list(
+                    dict.fromkeys(
+                        identifier
+                        for relation_id in successful_relations
+                        for identifier in initial[relation_id][0]
+                    )
                 )
+                covered_by_global_sync = False
+                coverage = getattr(
+                    self._sync,
+                    f"{relation}_reconciliation_will_cover",
+                    None,
+                )
+                if coverage is not None:
+                    covered_by_global_sync = await coverage(successful_relations)
+
+                deferred_repair = False
+                if not covered_by_global_sync:
+                    enqueue = getattr(self._sync, "enqueue_relation_repair_during_sync", None)
+                    if enqueue is not None:
+                        deferred_repair = await enqueue(
+                            [(relation, relation_id) for relation_id in successful_relations]
+                        )
+
+                if covered_by_global_sync or deferred_repair:
+                    present = operation in {"add_album", "add_tag"}
+                    for relation_id in successful_relations:
+                        for asset_id in initial[relation_id][0]:
+                            await self._assets.apply_membership_event(
+                                relation,
+                                relation_id,
+                                asset_id,
+                                present,
+                            )
+                else:
+                    await self._repair_targets(
+                        changed_asset_ids,
+                        relations=[
+                            (relation, relation_id) for relation_id in successful_relations
+                        ],
+                    )
             except Exception as error:
                 relation_results = [
                     AssetActionRelationResult(
@@ -429,6 +495,8 @@ class AssetActionService:
                 )
                 raise
 
+        reconciliation_seconds = perf_counter() - reconciliation_started
+        verification_started = perf_counter()
         relation_results: list[AssetActionRelationResult] = []
         for relation_id, (applicable, skipped) in initial.items():
             if relation_id in api_failed:
@@ -455,6 +523,14 @@ class AssetActionService:
             record.id,
             result.status,
             result.model_dump(mode="json"),
+        )
+        logger.info(
+            "Asset relation action timing: operation=%s targets=%s relations=%s "
+            "mutation_seconds=%.3f reconciliation_seconds=%.3f "
+            "verification_seconds=%.3f total_seconds=%.3f",
+            operation, len(target_ids), len(record.relation_ids), mutation_seconds,
+            reconciliation_seconds, perf_counter() - verification_started,
+            perf_counter() - action_started,
         )
         return result
 
@@ -490,6 +566,7 @@ class AssetActionService:
             applied_ids=applied_ids,
             skipped_ids=skipped_ids,
             failed_ids=failed_ids,
+            affected_ids=applied_ids,
             relation_results=relation_results,
             verified=failed_count == 0,
             status="completed" if failed_count == 0 else "failed",
@@ -514,6 +591,14 @@ class AssetActionService:
             raise ActionPlanConflictError("Action plan has expired")
         if existing.destructive and not self._settings.allow_destructive_actions:
             raise DestructiveActionsDisabledError("Trash actions are disabled")
+        if (
+            existing.operation == "stack"
+            and existing.relation_work.get("__stack_conflicts")
+            and "__stack_resolution" not in existing.relation_work
+        ):
+            raise ActionPlanConflictError(
+                "Existing stack conflicts require an explicit reviewed resolution"
+            )
 
         selection = AssetSelectionRequest.model_validate(existing.selection)
         resolution = await self.resolve_selection(selection)
@@ -527,6 +612,19 @@ class AssetActionService:
         ):
             await self._actions.finish_plan(existing.id, "drifted", {"error": "target_drift"})
             raise ActionPlanConflictError("The selected assets changed after review")
+        if existing.operation == "stack":
+            reviewed_stack_snapshot = existing.relation_work.get("__stack_conflict_snapshot")
+            if reviewed_stack_snapshot is not None:
+                current_stack_snapshot = await self._stacks.conflict_snapshot(resolution.ids)
+                if current_stack_snapshot != reviewed_stack_snapshot:
+                    await self._actions.finish_plan(
+                        existing.id,
+                        "drifted",
+                        {"error": "stack_topology_drift"},
+                    )
+                    raise ActionPlanConflictError(
+                        "Existing stack membership changed after review"
+                    )
 
         claimed = (
             existing
@@ -591,6 +689,12 @@ class AssetActionService:
         applicable_ids = [identifier for identifier in target_ids if identifier in applicable_set]
         skipped_count = len(target_ids) - len(applicable_ids)
 
+        action_started = perf_counter()
+        mutation_seconds = 0.0
+        reconciliation_seconds = 0.0
+        verification_seconds = 0.0
+        deferred_repair = False
+        post_action_stacks = None
         try:
             repair_ids = applicable_ids
             if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
@@ -606,6 +710,7 @@ class AssetActionService:
                     created = await self._stacks.execute(stack_preparation)
                 else:
                     await self._apply(operation, batch, relation_id)
+                mutation_seconds += perf_counter() - batch_started
                 if operation == "trash":
                     # Immich's successful response is authoritative. Trashed
                     # assets belong to the live Restore API, not the local index.
@@ -620,15 +725,32 @@ class AssetActionService:
                 if index + 1 < len(action_batches):
                     await self._pace_large_action_batch(batch_started, enabled=throttle)
             if applicable_ids and operation not in {"trash", "stack"}:
-                await self._repair_targets(
-                    repair_ids,
-                    include_stacks=operation in {
-                        "stack",
-                        "set_stack_primary",
-                        "remove_from_stack",
-                        "remove_stack",
-                    },
-                )
+                reconciliation_started = perf_counter()
+                if operation in {"favorite", "unfavorite", "archive", "unarchive"}:
+                    enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
+                    if enqueue is not None:
+                        deferred_repair = await enqueue(repair_ids)
+                    if deferred_repair:
+                        await self._assets.apply_asset_action_event(operation, applicable_ids)
+                elif operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
+                    enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
+                    snapshot = getattr(self._sync, "apply_stack_snapshot_for_targets", None)
+                    if enqueue is not None and snapshot is not None:
+                        deferred_repair = await enqueue(repair_ids, include_stacks=True)
+                        if deferred_repair:
+                            post_action_stacks = await snapshot(repair_ids)
+                if not deferred_repair:
+                    await self._repair_targets(
+                        repair_ids,
+                        include_stacks=operation in {
+                            "stack",
+                            "set_stack_primary",
+                            "remove_from_stack",
+                            "remove_stack",
+                        },
+                    )
+                reconciliation_seconds += perf_counter() - reconciliation_started
+            verification_started = perf_counter()
             if operation == "stack":
                 # Stacking is a positive state change. The generic applicability
                 # query intentionally returns every asset for this operation, so
@@ -637,7 +759,9 @@ class AssetActionService:
                 # create request through the requested primary asset instead.
                 remaining = set() if created else set(applicable_ids)
             elif operation == "set_stack_primary":
-                current_stacks = await self._immich.list_stacks()
+                current_stacks = post_action_stacks
+                if current_stacks is None:
+                    current_stacks = await self._immich.list_stacks()
                 primary_ids = {stack.primary_asset_id for stack in current_stacks}
                 remaining = {
                     identifier for identifier in applicable_ids if identifier not in primary_ids
@@ -648,6 +772,7 @@ class AssetActionService:
                     applicable_ids,
                     relation_id,
                 )
+            verification_seconds = perf_counter() - verification_started
         except ImmichApiError as error:
             result_payload = {
                 "operation": operation,
@@ -694,6 +819,13 @@ class AssetActionService:
             applied_ids=applied_ids,
             skipped_ids=skipped_ids,
             failed_ids=failed_ids,
+            affected_ids=(
+                repair_ids
+                if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}
+                else stack_preparation.affected_ids
+                if operation == "stack" and stack_preparation is not None
+                else applied_ids
+            ),
             verified=not failed_ids,
             status=status,
         )
@@ -701,6 +833,14 @@ class AssetActionService:
             claimed.id,
             status,
             result.model_dump(mode="json"),
+        )
+        logger.info(
+            "Asset action timing: operation=%s targets=%s applied=%s failed=%s "
+            "mutation_seconds=%.3f reconciliation_seconds=%.3f "
+            "verification_seconds=%.3f total_seconds=%.3f repair_deferred=%s",
+            operation, len(target_ids), len(applied_ids), len(failed_ids),
+            mutation_seconds, reconciliation_seconds, verification_seconds,
+            perf_counter() - action_started, deferred_repair,
         )
         return result
 

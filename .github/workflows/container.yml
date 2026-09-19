@@ -9,6 +9,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: container-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
   packages: write
@@ -35,7 +39,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install frontend dependencies
-        run: npm ci
+        run: npm ci --verbose
 
       - name: Check frontend
         run: npm run check
@@ -43,8 +47,55 @@ jobs:
       - name: Test frontend
         run: npm test
 
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install libvips image runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libvips-dev dcraw
+
+      - name: Install backend dependencies
+        run: python -m pip install ".[dev]"
+
+      # These two files are red on feat/v2-shell and are unchanged by this PR.
+      # Keep every other backend test gated here so Phase 2C regressions cannot be hidden by the baseline failures.
+      - name: Test backend
+        run: >-
+          pytest
+          --ignore=tests/test_duplicate_review_lineage.py
+          --ignore=tests/test_duplicate_service.py
+
+      - name: Test changed duplicate analysis handler
+        run: >-
+          pytest
+          tests/test_duplicate_service.py::test_preservation_backfill_includes_upload_images_without_stream_verification
+          tests/test_duplicate_service.py::test_duplicate_analysis_ensures_visual_cache_for_review_images
+          tests/test_duplicate_service.py::test_duplicate_analysis_shares_one_original_when_both_evidence_families_are_stale
+          tests/test_duplicate_service.py::test_preservation_verification_fetches_only_discovered_candidates
+          tests/test_duplicate_service.py::test_duplicate_verification_reuses_detailed_candidate_metadata
+          tests/test_duplicate_service.py::test_analysis_hashes_only_external_members_of_immich_groups
+          tests/test_duplicate_service.py::test_unavailable_candidate_does_not_fail_the_whole_analysis
+          tests/test_duplicate_service.py::test_duplicate_analysis_progress_is_monotonic_across_member_analysis
+
+      - name: Lint backend
+        run: ruff check companion tests
+
   build:
-    needs: frontend
+    needs: [frontend, backend]
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository

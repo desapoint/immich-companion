@@ -11,9 +11,9 @@ from companion.image_decode import ImageDecodeResult
 from companion.immich import ImmichAsset
 from companion.integrity import ANALYZER_VERSION
 from companion.integrity_repository import (
+    preservation_feature_freshness,
     public_report,
     report_freshness,
-    similarity_feature_freshness,
 )
 from companion.integrity_schema import AssetIntegrityReport
 from companion.integrity_service import (
@@ -21,8 +21,13 @@ from companion.integrity_service import (
     IntegrityTaskHandler,
     RetryableTaskError,
 )
-from companion.models import AssetIntegrityReportRecord, AssetSimilarityFeatureRecord
+from companion.models import AssetImagePreservationFeatureRecord, AssetIntegrityReportRecord
+from companion.preservation_features import (
+    PRESERVATION_CONFIG_FINGERPRINT,
+    PRESERVATION_FEATURE_VERSION,
+)
 from companion.similarity_features import (
+    SIMILARITY_CONFIG_FINGERPRINT,
     SIMILARITY_FEATURE_VERSION,
     SIMILARITY_MODEL_VERSION,
     VisualFeatureResult,
@@ -56,8 +61,14 @@ def asset(
 
 
 class FakeAssets:
+    def __init__(self):
+        self.refreshed = []
+
     async def has_asset(self, _asset_id):
         return True
+
+    async def refresh_asset(self, current, *, track_similarity_changes=True):
+        self.refreshed.append(current)
 
 
 class FakeReports:
@@ -68,8 +79,15 @@ class FakeReports:
     async def get(self, _asset_id):
         return self.record
 
-    async def save(self, current, result, visual_feature=None):
-        self.saved.append((current, result, visual_feature))
+    async def save(
+        self,
+        current,
+        result,
+        visual_feature=None,
+        *,
+        visual_feature_origin="original",
+    ):
+        self.saved.append((current, result, visual_feature, visual_feature_origin))
         return AssetIntegrityReport(
             asset_id=current.id,
             analyzer_version=result.analyzer_version,
@@ -189,14 +207,18 @@ def report_record(current: ImmichAsset) -> AssetIntegrityReportRecord:
     )
 
 
-def feature_record(current: ImmichAsset) -> AssetSimilarityFeatureRecord:
-    return AssetSimilarityFeatureRecord(
+def preservation_record(current: ImmichAsset) -> AssetImagePreservationFeatureRecord:
+    return AssetImagePreservationFeatureRecord(
         asset_id=current.id,
-        model_version=SIMILARITY_MODEL_VERSION,
-        feature_version=SIMILARITY_FEATURE_VERSION,
+        extractor_model_version=SIMILARITY_MODEL_VERSION,
+        extractor_feature_version=SIMILARITY_FEATURE_VERSION,
+        extractor_config_fingerprint=SIMILARITY_CONFIG_FINGERPRINT,
+        preservation_version=PRESERVATION_FEATURE_VERSION,
+        preservation_config_fingerprint=PRESERVATION_CONFIG_FINGERPRINT,
         source_file_modified_at=current.file_modified_at,
         source_file_size_bytes=4,
         source_sha256="1" * 64,
+        origin="original",
         width=1,
         height=1,
         luminance_vector=bytes([128] * 256),
@@ -227,10 +249,6 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
     reports = FakeReports()
     context = FakeContext()
     handler = IntegrityTaskHandler(FakeImmich(current), FakeAssets(), reports)
-    monkeypatch.setattr(
-        "companion.integrity_service.decode_image",
-        lambda *_args: ImageDecodeResult(supported=True, valid=True, width=1, height=1),
-    )
     visual_feature = VisualFeatureResult(
         model_version=SIMILARITY_MODEL_VERSION,
         feature_version=SIMILARITY_FEATURE_VERSION,
@@ -256,8 +274,11 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
         metadata_richness=0,
     )
     monkeypatch.setattr(
-        "companion.integrity_service.extract_visual_features",
-        lambda *_args: visual_feature,
+        "companion.integrity_service.decode_and_extract_features",
+        lambda *_args: (
+            ImageDecodeResult(supported=True, valid=True, width=1, height=1),
+            visual_feature,
+        ),
     )
 
     result = await handler.execute(context, {"asset_id": str(ASSET_ID)})
@@ -265,7 +286,70 @@ async def test_handler_streams_then_saves_only_after_source_verification(monkeyp
     assert result.summary["classification"] == "healthy"
     assert reports.saved[0][1].byte_size == 4
     assert reports.saved[0][2] == visual_feature
+    assert reports.saved[0][3] == "original"
     assert context.checkpoints[-1]["progress"]["phase"] == "finalizing"
+
+
+@pytest.mark.asyncio
+async def test_handler_consumes_prepared_original_without_streaming_again(
+    tmp_path, monkeypatch
+) -> None:
+    current = asset()
+    reports = FakeReports()
+
+    class PreparedOnlyImmich(FakeImmich):
+        @asynccontextmanager
+        async def stream_original(self, _asset_id, *, chunk_size):
+            pytest.fail("Prepared original should prevent another Immich stream")
+            yield  # pragma: no cover
+
+    visual_feature = VisualFeatureResult(
+        model_version=SIMILARITY_MODEL_VERSION,
+        feature_version=SIMILARITY_FEATURE_VERSION,
+        width=1,
+        height=1,
+        luminance_vector=bytes([128] * 256),
+        perceptual_hash="0" * 16,
+        color_histogram=bytes([0] * 48),
+        thumbnail_sha256="2" * 64,
+        pixel_normalization_version=1,
+        pixel_sha256="3" * 64,
+        bit_depth=8,
+        channel_count=3,
+        has_alpha=False,
+        color_space="RGB",
+        orientation=None,
+        icc_profile_present=False,
+        has_exif=False,
+        has_capture_time=False,
+        has_camera_info=False,
+        has_gps=False,
+        has_orientation_metadata=False,
+        metadata_richness=0,
+    )
+    monkeypatch.setattr(
+        "companion.integrity_service.decode_and_extract_features",
+        lambda *_args: (
+            ImageDecodeResult(supported=True, valid=True, width=1, height=1),
+            visual_feature,
+        ),
+    )
+    prepared = tmp_path / "prepared.jpg"
+    prepared.write_bytes(b"\xff\xd8\xff\xd9")
+    handler = IntegrityTaskHandler(PreparedOnlyImmich(current), FakeAssets(), reports)
+
+    result = await handler.analyze(
+        FakeContext(),
+        ASSET_ID,
+        source=current,
+        publish_progress=False,
+        original_path=prepared,
+        original_source_bytes=4,
+    )
+
+    assert result.byte_size == 4
+    assert prepared.exists()
+    assert reports.saved[0][2] == visual_feature
 
 
 @pytest.mark.asyncio
@@ -280,6 +364,29 @@ async def test_handler_does_not_save_when_source_changes_during_stream() -> None
     with pytest.raises(RetryableTaskError, match="source changed"):
         await handler.execute(FakeContext(), {"asset_id": str(ASSET_ID)})
 
+    assert reports.saved == []
+
+
+@pytest.mark.asyncio
+async def test_supplied_candidate_source_uses_one_final_live_check() -> None:
+    reports = FakeReports()
+
+    class CountingImmich(FakeImmich):
+        lookups = 0
+
+        async def get_asset(self, asset_id):
+            self.lookups += 1
+            return await super().get_asset(asset_id)
+
+    immich = CountingImmich(asset(checksum="after"))
+    handler = IntegrityTaskHandler(immich, FakeAssets(), reports)
+
+    with pytest.raises(RetryableTaskError, match="source changed"):
+        await handler.analyze(
+            FakeContext(), ASSET_ID, source=asset(checksum="before"), publish_progress=False
+        )
+
+    assert immich.lookups == 1
     assert reports.saved == []
 
 
@@ -360,24 +467,30 @@ def test_upload_report_becomes_stale_when_size_or_mtime_changes() -> None:
     )
 
 
-def test_similarity_feature_reuses_only_compatible_source_and_versions() -> None:
+def test_preservation_feature_reuses_only_compatible_source_and_versions() -> None:
     current = asset()
-    record = feature_record(current)
+    record = preservation_record(current)
 
-    assert similarity_feature_freshness(record, current) == "current"
-    assert similarity_feature_freshness(record, asset(size=5)) == "stale"
+    assert preservation_feature_freshness(record, current) == "current"
+    assert preservation_feature_freshness(record, asset(size=5)) == "stale"
     assert (
-        similarity_feature_freshness(
+        preservation_feature_freshness(
             record,
             asset(modified="2026-08-28T12:01:00Z"),
         )
         == "stale"
     )
-    record.feature_version += 1
-    assert similarity_feature_freshness(record, current) == "stale"
-    record.feature_version = SIMILARITY_FEATURE_VERSION
-    record.model_version = "appearance-future"
-    assert similarity_feature_freshness(record, current) == "stale"
+
+    # Extractor provenance is retained for diagnostics but no longer couples
+    # preservation freshness to the Appearance generation.
+    record.extractor_feature_version += 1
+    assert preservation_feature_freshness(record, current) == "current"
+
+    record.preservation_version += 1
+    assert preservation_feature_freshness(record, current) == "stale"
+    record.preservation_version = PRESERVATION_FEATURE_VERSION
+    record.preservation_config_fingerprint = "legacy"
+    assert preservation_feature_freshness(record, current) == "stale"
 
 
 def test_legacy_other_format_report_remains_readable_while_stale() -> None:

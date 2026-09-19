@@ -6,12 +6,14 @@ from uuid import UUID
 from companion.similarity_grouping import (
     SimilarityGroupingEdge,
     cohesive_similarity_groups,
+    validated_similarity_groups,
 )
 
 A = UUID("11111111-1111-4111-8111-111111111111")
 B = UUID("22222222-2222-4222-8222-222222222222")
 C = UUID("33333333-3333-4333-8333-333333333333")
 D = UUID("44444444-4444-4444-8444-444444444444")
+E = UUID("55555555-5555-4555-8555-555555555555")
 
 
 def edge(left: UUID, right: UUID, score: float) -> SimilarityGroupingEdge:
@@ -85,3 +87,144 @@ def test_invalid_or_noncanonical_edges_are_rejected() -> None:
         assert "between 0 and 100" in str(error)
     else:
         raise AssertionError("Expected invalid score rejection")
+
+
+def test_reference_linked_and_strict_validation_retain_admission_evidence() -> None:
+    edges = (
+        edge(A, B, 98),
+        edge(A, C, 94),
+        edge(A, D, 86),
+        edge(B, C, 93),
+        edge(C, D, 96),
+    )
+
+    reference = validated_similarity_groups(edges, mode="reference", threshold=92)
+    linked = validated_similarity_groups(edges, mode="linked", threshold=92)
+    strict = validated_similarity_groups(edges, mode="strict", threshold=92)
+
+    assert reference[0].asset_ids == (A, B, C)
+    assert linked[0].asset_ids == (A, B, C, D)
+    linked_d = next(item for item in linked[0].admission_evidence if item.asset_id == D)
+    assert linked_d.admitted_by_asset_id == C
+    assert linked_d.admission_similarity_percent == 96
+    assert linked_d.best_group_match_asset_id == C
+    assert linked_d.link_depth == 1
+    anchored_strict = next(group for group in strict if group.anchor_asset_id == A)
+    assert anchored_strict.asset_ids == (A, B, C)
+    assert D not in anchored_strict.asset_ids
+
+    rebuilt = validated_similarity_groups(
+        edges,
+        mode="reference",
+        threshold=92,
+        preferred_anchor_asset_id=D,
+    )
+    assert rebuilt[0].anchor_asset_id == D
+    assert rebuilt[0].asset_ids == (C, D)
+
+
+def test_validation_is_deterministic_across_edge_order() -> None:
+    edges = (edge(A, B, 98), edge(A, C, 94), edge(B, C, 93), edge(C, D, 96))
+
+    assert validated_similarity_groups(
+        edges, mode="linked", threshold=92
+    ) == validated_similarity_groups(tuple(reversed(edges)), mode="linked", threshold=92)
+
+
+
+def test_linked_mode_keeps_direct_reference_matches_direct_even_with_stronger_cross_link() -> None:
+    groups = validated_similarity_groups(
+        (
+            edge(A, B, 96),
+            edge(A, C, 96),
+            edge(B, C, 99),
+        ),
+        mode="linked",
+        threshold=95,
+    )
+
+    assert len(groups) == 1
+    evidence = {item.asset_id: item for item in groups[0].admission_evidence}
+    assert evidence[B].admitted_by_asset_id == A
+    assert evidence[B].admission_similarity_percent == 96
+    assert evidence[B].link_depth == 0
+    assert evidence[C].admitted_by_asset_id == A
+    assert evidence[C].admission_similarity_percent == 96
+    assert evidence[C].link_depth == 0
+    assert evidence[C].best_group_match_asset_id == B
+    assert evidence[C].best_group_match_similarity_percent == 99
+
+
+def test_linked_depth_limit_uses_the_same_zero_based_depth_as_review_pills() -> None:
+    edges = (
+        edge(A, B, 99),
+        edge(B, C, 98),
+        edge(C, D, 97),
+        edge(D, E, 96),
+    )
+
+    direct_only = validated_similarity_groups(
+        edges,
+        mode="linked",
+        threshold=95,
+        preferred_anchor_asset_id=A,
+        max_link_depth=0,
+    )
+    one_link = validated_similarity_groups(
+        edges,
+        mode="linked",
+        threshold=95,
+        preferred_anchor_asset_id=A,
+        max_link_depth=1,
+    )
+    two_links = validated_similarity_groups(
+        edges,
+        mode="linked",
+        threshold=95,
+        preferred_anchor_asset_id=A,
+        max_link_depth=2,
+    )
+
+    assert direct_only[0].asset_ids == (A, B)
+    assert one_link[0].asset_ids == (A, B, C)
+    assert two_links[0].asset_ids == (A, B, C, D)
+
+    evidence = {item.asset_id: item for item in two_links[0].admission_evidence}
+    assert evidence[B].link_depth == 0
+    assert evidence[C].link_depth == 1
+    assert evidence[D].link_depth == 2
+    assert E not in evidence
+
+
+def test_linked_depth_is_shortest_expansion_depth_not_strongest_longer_path() -> None:
+    groups = validated_similarity_groups(
+        (
+            edge(A, B, 99),
+            edge(B, C, 96),
+            edge(C, D, 99),
+            edge(B, D, 95),
+        ),
+        mode="linked",
+        threshold=95,
+        preferred_anchor_asset_id=A,
+        max_link_depth=2,
+    )
+
+    evidence = {item.asset_id: item for item in groups[0].admission_evidence}
+    assert evidence[D].admitted_by_asset_id == B
+    assert evidence[D].link_depth == 1
+
+
+def test_two_member_linked_group_never_has_an_indirect_admission() -> None:
+    groups = validated_similarity_groups(
+        (edge(A, B, 96),),
+        mode="linked",
+        threshold=95,
+    )
+
+    assert len(groups) == 1
+    evidence = {item.asset_id: item for item in groups[0].admission_evidence}
+    assert evidence[A].link_depth == 0
+    assert evidence[A].admitted_by_asset_id is None
+    assert evidence[B].link_depth == 0
+    assert evidence[B].admitted_by_asset_id == A

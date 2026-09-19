@@ -13,6 +13,8 @@ TaskStatus = Literal[
     "running",
     "retrying",
     "recovering",
+    "pause_requested",
+    "paused",
     "cancel_requested",
     "cancelled",
     "completed",
@@ -83,6 +85,7 @@ class TaskScheduleView(BaseModel):
     deduplication_policy: str = "window"
     blocked_by: list[str] = Field(default_factory=list)
     next_run_at: datetime
+    last_run_at: datetime | None = None
     task_type: str
     payload: dict[str, Any]
     priority: int

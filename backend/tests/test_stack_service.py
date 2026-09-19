@@ -1,25 +1,28 @@
 """Shared stack planning and execution regression coverage."""
 
+import json
 from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
-from companion.stack_service import StackSelectionError, StackService
+from companion.stack_service import StackPreparation, StackSelectionError, StackService
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
 ASSET_THREE = UUID("33333333-3333-4333-8333-333333333333")
+ASSET_FOUR = UUID("55555555-5555-4555-8555-555555555555")
 STACK_ID = UUID("44444444-4444-4444-8444-444444444444")
+STACK_TWO_ID = UUID("66666666-6666-4666-8666-666666666666")
 
 
 def member(asset_id: UUID):
     return SimpleNamespace(id=asset_id)
 
 
-def stack(*asset_ids: UUID, primary: UUID = ASSET_ONE):
+def stack(*asset_ids: UUID, primary: UUID = ASSET_ONE, stack_id: UUID = STACK_ID):
     return SimpleNamespace(
-        id=STACK_ID,
+        id=stack_id,
         primary_asset_id=primary,
         assets=[member(asset_id) for asset_id in asset_ids],
     )
@@ -29,8 +32,10 @@ class FakeImmich:
     def __init__(self, stacks=None) -> None:
         self.stacks = list(stacks or [])
         self.calls: list[tuple[str, UUID | None, list[UUID]]] = []
+        self.list_calls = 0
 
     async def list_stacks(self):
+        self.list_calls += 1
         return self.stacks
 
     async def create_stack(self, asset_ids):
@@ -60,8 +65,40 @@ class FakeSync:
         self.repairs.append((asset_ids, include_stacks))
 
 
+class DeferredSync(FakeSync):
+    def __init__(self) -> None:
+        super().__init__()
+        self.queued: list[tuple[list[UUID], bool]] = []
+        self.snapshots: list[list[UUID]] = []
+
+    async def enqueue_asset_repair_during_sync(self, asset_ids, *, include_stacks=False):
+        self.queued.append((asset_ids, include_stacks))
+        return True
+
+    async def apply_stack_snapshot_for_targets(self, asset_ids, stacks=None):
+        assert stacks is not None
+        self.snapshots.append(asset_ids)
+
+
 def service(immich: FakeImmich, sync: FakeSync | None = None) -> StackService:
     return StackService(immich, FakeAssets(), sync or FakeSync())  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_created_stack_is_verified_and_published_without_waiting_for_repair(caplog) -> None:
+    immich = FakeImmich()
+    sync = DeferredSync()
+    workflow = service(immich, sync)
+    preparation = StackPreparation([ASSET_ONE, ASSET_TWO], [ASSET_ONE, ASSET_TWO], ASSET_ONE)
+
+    with caplog.at_level("INFO", logger="companion.stack_service"):
+        assert await workflow.execute(preparation) is True
+    assert sync.queued == [([ASSET_ONE, ASSET_TWO], True)]
+    assert sync.snapshots == [[ASSET_ONE, ASSET_TWO]]
+    assert sync.repairs == []
+    assert immich.list_calls == 1
+    assert "verification_seconds=" in caplog.text
+    assert "reconciliation_seconds=" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -71,13 +108,50 @@ async def test_conflicts_report_selected_and_unselected_members() -> None:
     conflicts = await workflow.conflicts([ASSET_ONE, ASSET_TWO])
 
     assert len(conflicts) == 1
+    assert conflicts[0].primary_asset_id == ASSET_ONE
+    assert conflicts[0].member_asset_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
+    assert conflicts[0].selected_asset_ids == [ASSET_ONE, ASSET_TWO]
     assert conflicts[0].selected_count == 2
     assert conflicts[0].member_count == 3
     assert conflicts[0].includes_unselected is True
 
 
 @pytest.mark.asyncio
+async def test_one_stack_snapshot_can_serve_multiple_group_filters() -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_TWO, ASSET_THREE)])
+    workflow = service(immich)
+
+    snapshot = await workflow.stack_snapshot()
+    first = workflow.select_conflict_snapshot([ASSET_ONE], snapshot)
+    second = workflow.select_conflict_snapshot([ASSET_TWO], snapshot)
+
+    assert immich.list_calls == 1
+    assert first == second == [{
+        "stack_id": str(STACK_ID),
+        "primary_asset_id": str(ASSET_ONE),
+        "member_asset_ids": sorted(map(str, [ASSET_ONE, ASSET_TWO, ASSET_THREE])),
+    }]
+
+
+@pytest.mark.asyncio
 async def test_move_selected_preserves_unselected_stack_with_new_primary() -> None:
+    immich = FakeImmich(
+        [stack(ASSET_ONE, ASSET_THREE, ASSET_FOUR, primary=ASSET_ONE)]
+    )
+    workflow = service(immich)
+
+    preparation = await workflow.prepare([ASSET_ONE, ASSET_TWO], "move_selected")
+
+    assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO]
+    assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]
+    assert immich.calls == [
+        ("primary", STACK_ID, [ASSET_THREE]),
+        ("remove", STACK_ID, [ASSET_ONE]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_move_selected_dissolves_an_old_stack_that_would_become_singleton() -> None:
     immich = FakeImmich([stack(ASSET_ONE, ASSET_THREE, primary=ASSET_ONE)])
     workflow = service(immich)
 
@@ -85,10 +159,51 @@ async def test_move_selected_preserves_unselected_stack_with_new_primary() -> No
 
     assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO]
     assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
+    assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("removed", [ASSET_ONE, ASSET_TWO])
+async def test_removing_either_member_of_a_two_asset_stack_dissolves_it(
+    removed: UUID,
+) -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_TWO, primary=ASSET_ONE)])
+    workflow = service(immich)
+
+    affected = await workflow.remove_members([removed])
+
+    assert affected == [ASSET_ONE, ASSET_TWO]
+    assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_removing_primary_from_larger_stack_promotes_remaining_member_first() -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_TWO, ASSET_THREE, primary=ASSET_ONE)])
+    workflow = service(immich)
+
+    affected = await workflow.remove_members([ASSET_ONE])
+
+    assert affected == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
     assert immich.calls == [
-        ("primary", STACK_ID, [ASSET_THREE]),
+        ("primary", STACK_ID, [ASSET_TWO]),
         ("remove", STACK_ID, [ASSET_ONE]),
     ]
+
+
+@pytest.mark.asyncio
+async def test_repair_ids_uses_authoritative_members_from_every_affected_stack() -> None:
+    workflow = service(
+        FakeImmich(
+            [
+                stack(ASSET_ONE, ASSET_THREE),
+                stack(ASSET_TWO, ASSET_FOUR, primary=ASSET_TWO, stack_id=STACK_TWO_ID),
+            ]
+        )
+    )
+
+    repair_ids = await workflow.repair_ids([ASSET_ONE, ASSET_TWO])
+
+    assert repair_ids == [ASSET_ONE, ASSET_THREE, ASSET_TWO, ASSET_FOUR]
 
 
 @pytest.mark.asyncio
@@ -100,6 +215,72 @@ async def test_include_existing_expands_and_removes_old_stack() -> None:
 
     assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
     assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_include_existing_merges_members_from_different_stacks() -> None:
+    immich = FakeImmich(
+        [
+            stack(ASSET_ONE, ASSET_THREE),
+            stack(ASSET_TWO, ASSET_FOUR, primary=ASSET_TWO, stack_id=STACK_TWO_ID),
+        ]
+    )
+    workflow = service(immich)
+
+    preparation = await workflow.prepare(
+        [ASSET_ONE, ASSET_TWO], "include_existing", ASSET_TWO
+    )
+
+    assert preparation.asset_ids == [ASSET_TWO, ASSET_ONE, ASSET_THREE, ASSET_FOUR]
+    assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]
+    assert immich.calls == [
+        ("delete", STACK_ID, []),
+        ("delete", STACK_TWO_ID, []),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_per_stack_resolution_can_keep_one_existing_stack_and_include_another() -> None:
+    immich = FakeImmich(
+        [
+            stack(ASSET_ONE, ASSET_THREE),
+            stack(ASSET_TWO, ASSET_FOUR, primary=ASSET_TWO, stack_id=STACK_TWO_ID),
+        ]
+    )
+    workflow = service(immich)
+
+    preparation = await workflow.prepare(
+        [ASSET_ONE, ASSET_TWO],
+        {
+            str(STACK_ID): "keep_existing",
+            str(STACK_TWO_ID): "include_existing",
+        },
+        ASSET_TWO,
+    )
+
+    assert preparation.asset_ids == [ASSET_TWO, ASSET_FOUR]
+    assert preparation.affected_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE, ASSET_FOUR]
+    assert immich.calls == [("delete", STACK_TWO_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_serialized_per_stack_resolution_is_supported_for_duplicate_drafts() -> None:
+    immich = FakeImmich([stack(ASSET_ONE, ASSET_THREE)])
+    workflow = service(immich)
+    resolution = json.dumps({str(STACK_ID): "include_existing"})
+
+    preparation = await workflow.prepare([ASSET_ONE, ASSET_TWO], resolution)
+
+    assert preparation.asset_ids == [ASSET_ONE, ASSET_TWO, ASSET_THREE]
+    assert immich.calls == [("delete", STACK_ID, [])]
+
+
+@pytest.mark.asyncio
+async def test_per_stack_resolution_requires_a_choice_for_every_conflict() -> None:
+    workflow = service(FakeImmich([stack(ASSET_ONE, ASSET_THREE)]))
+
+    with pytest.raises(StackSelectionError, match="needs a reviewed resolution"):
+        await workflow.prepare([ASSET_ONE, ASSET_TWO], {}, ASSET_TWO)
 
 
 @pytest.mark.asyncio

@@ -16,6 +16,8 @@ from companion.group_decision import (
 
 A = UUID("11111111-1111-4111-8111-111111111111")
 B = UUID("22222222-2222-4222-8222-222222222222")
+LIBRARY_A = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+LIBRARY_B = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 NOW = datetime(2026, 8, 29, tzinfo=UTC)
 
 
@@ -169,3 +171,85 @@ def test_review_policy_never_preselects_exact_groups() -> None:
     assert decision.recommended_action is GroupAction.NONE
     assert decision.auto_resolvable is False
     assert decision.auto_selected is False
+
+
+def test_ordered_library_priority_selects_the_expected_keeper() -> None:
+    decision = decide_group(
+        exact(
+            CandidateMember(A, "external", NOW, library_id=LIBRARY_A),
+            CandidateMember(B, "external", NOW, library_id=LIBRARY_B),
+        ),
+        ResolutionPolicy(
+            keeper_preference="prefer_upload",
+            source_priority=(str(LIBRARY_B), str(LIBRARY_A), "immich_uploads", "unlisted"),
+        ),
+    )
+
+    assert decision.recommended_primary_asset_id == B
+    assert DecisionReason.SOURCE_PRIORITY in decision.recommendation_reason_codes
+
+
+def test_same_priority_members_advance_through_ordered_tiebreakers() -> None:
+    decision = decide_group(
+        exact(
+            CandidateMember(
+                A,
+                "external",
+                NOW,
+                library_id=LIBRARY_A,
+                is_favorite=True,
+                width=2000,
+                height=1000,
+            ),
+            CandidateMember(
+                B,
+                "external",
+                NOW,
+                library_id=LIBRARY_A,
+                is_favorite=True,
+                width=3000,
+                height=2000,
+            ),
+        ),
+        ResolutionPolicy(
+            keeper_preference="first",
+            source_priority=(str(LIBRARY_A), "unlisted"),
+            keeper_tiebreakers=("favorite", "resolution"),
+        ),
+    )
+
+    assert decision.recommended_primary_asset_id == B
+    assert DecisionReason.PREFERRED_FAVORITE not in decision.recommendation_reason_codes
+    assert DecisionReason.LARGEST_RESOLUTION in decision.recommendation_reason_codes
+
+
+def test_unlisted_source_rank_catches_libraries_added_after_policy_save() -> None:
+    decision = decide_group(
+        exact(
+            CandidateMember(A, "external", NOW, library_id=LIBRARY_A),
+            CandidateMember(B, "upload", NOW),
+        ),
+        ResolutionPolicy(
+            keeper_preference="prefer_upload",
+            source_priority=("unlisted", "immich_uploads"),
+        ),
+    )
+
+    assert decision.recommended_primary_asset_id == A
+
+
+def test_exhausted_tiebreakers_do_not_invent_a_winner() -> None:
+    decision = decide_group(
+        exact(
+            CandidateMember(A, "external", NOW, library_id=LIBRARY_A, is_favorite=True),
+            CandidateMember(B, "external", NOW, library_id=LIBRARY_A, is_favorite=True),
+        ),
+        ResolutionPolicy(
+            keeper_preference="first",
+            source_priority=(str(LIBRARY_A), "unlisted"),
+            keeper_tiebreakers=("favorite",),
+        ),
+    )
+
+    assert decision.recommended_primary_asset_id is None
+    assert DecisionReason.MULTIPLE_EQUAL_CANDIDATES in decision.recommendation_reason_codes

@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AfterValidator, BaseModel, Field, model_validator
 
 from companion.asset_schema import SearchGroup
 
@@ -41,10 +42,40 @@ AssetActionOperation = Literal[
     "remove_from_stack",
     "remove_stack",
 ]
-StackResolution = Literal["keep_existing", "move_selected", "include_existing"]
+StackResolutionChoice = Literal["keep_existing", "move_selected", "include_existing"]
+_STACK_RESOLUTIONS = {"keep_existing", "move_selected", "include_existing"}
+
+
+def _validated_stack_resolution(value: str) -> str:
+    """Validate and canonicalize scalar or serialized per-existing-stack choices."""
+
+    if value in _STACK_RESOLUTIONS:
+        return value
+    try:
+        decoded = json.loads(value)
+    except json.JSONDecodeError as error:
+        raise ValueError("Unknown stack conflict resolution") from error
+    if not isinstance(decoded, dict) or not decoded:
+        raise ValueError("Serialized stack conflict resolution must be a non-empty object")
+    normalized: dict[str, str] = {}
+    for raw_stack_id, raw_choice in decoded.items():
+        stack_id = str(raw_stack_id)
+        try:
+            UUID(stack_id)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Stack resolution keys must be stack UUIDs") from error
+        if raw_choice not in _STACK_RESOLUTIONS:
+            raise ValueError("Unknown stack conflict resolution")
+        normalized[stack_id] = str(raw_choice)
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"))
+
+
+StackResolution = Annotated[str, AfterValidator(_validated_stack_resolution)]
+StackResolutionSelection = StackResolution | dict[str, StackResolutionChoice]
 ActionPlanStatus = Literal[
     "planned",
     "running",
+    "partial",
     "completed",
     "failed",
     "drifted",
@@ -81,6 +112,7 @@ class SelectionSetView(BaseModel):
     """Reload-safe server-owned selection metadata."""
 
     id: UUID
+    entity_kind: Literal["asset", "album", "tag"] = "asset"
     revision: int
     selected_count: int
     status: Literal["active", "cancelled", "expired"]
@@ -132,28 +164,67 @@ class AssetSelectionResolution(BaseModel):
     summary: AssetSelectionSummary
 
 
+class AssetSelectionCapabilities(BaseModel):
+    """Aggregate UI capabilities without materializing every selected asset."""
+
+    count: int
+    all_favorite: bool
+    all_archived: bool
+    has_tags: bool
+    has_albums: bool
+    has_stack_members: bool
+    can_stack: bool
+    single_asset_id: UUID | None
+    can_set_stack_primary: bool
+    can_remove_complete_stack: bool
+
+
+class AssetSelectionRelationship(BaseModel):
+    """One relationship present on at least one asset in a selection."""
+
+    id: UUID
+    name: str
+    selected_asset_count: int
+
+
+class AssetSelectionRelationships(BaseModel):
+    """Union of removable relationships across a backend-resolved selection."""
+
+    albums: list[AssetSelectionRelationship]
+    tags: list[AssetSelectionRelationship]
+
+
 class AssetActionPlanRequest(BaseModel):
     """Request a reviewable action plan for a resolved selection."""
 
     selection: AssetSelectionRequest
     action: AssetActionIntent
     relation_ids: list[UUID] = Field(default_factory=list, min_length=0, max_length=10_000)
-    stack_resolution: StackResolution | None = None
+    stack_resolution: StackResolutionSelection | None = None
     stack_primary_asset_id: UUID | None = None
 
     @model_validator(mode="after")
     def validate_relation(self) -> AssetActionPlanRequest:
         self.relation_ids = list(dict.fromkeys(self.relation_ids))
-        relation_action = self.action in {
+        add_relation_action = self.action in {"add_album", "add_tag"}
+        non_relation_action = self.action not in {
             "add_album",
             "add_tag",
             "remove_album",
             "remove_tag",
         }
-        if relation_action != bool(self.relation_ids):
-            raise ValueError("Album and tag actions require one or more relation IDs")
+        if add_relation_action and not self.relation_ids:
+            raise ValueError("Adding albums or tags requires one or more relation IDs")
+        if non_relation_action and self.relation_ids:
+            raise ValueError("Relation IDs are only valid for album and tag actions")
         if self.stack_resolution is not None and self.action != "stack":
             raise ValueError("Stack resolution is only valid for stack actions")
+        if isinstance(self.stack_resolution, dict):
+            for stack_id in self.stack_resolution:
+                try:
+                    UUID(stack_id)
+                except (TypeError, ValueError) as error:
+                    raise ValueError("Stack resolution keys must be stack UUIDs") from error
         if self.stack_primary_asset_id is not None and self.action != "stack":
             raise ValueError("Stack primary is only valid for stack actions")
         if self.action == "stack" and self.stack_primary_asset_id is None:
@@ -173,6 +244,9 @@ class StackConflict(BaseModel):
     """Stack membership overlap found during a stack-action preview."""
 
     stack_id: UUID
+    primary_asset_id: UUID
+    member_asset_ids: list[UUID]
+    selected_asset_ids: list[UUID]
     selected_count: int
     member_count: int
     includes_unselected: bool
@@ -230,6 +304,7 @@ class AssetActionResult(BaseModel):
     applied_ids: list[UUID]
     skipped_ids: list[UUID]
     failed_ids: list[UUID]
+    affected_ids: list[UUID] = Field(default_factory=list)
     relation_results: list[AssetActionRelationResult] = Field(default_factory=list)
     verified: bool
     status: ActionPlanStatus

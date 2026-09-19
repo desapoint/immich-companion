@@ -6,13 +6,14 @@ import asyncio
 import logging
 from dataclasses import replace
 from io import BytesIO
+from pathlib import Path
 from tempfile import SpooledTemporaryFile
 from time import monotonic
 from typing import Any
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
-from companion.image_decode import decode_image
+from companion.image_decode import SUPPORTED_FORMATS, ImageDecodeResult
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.integrity import FileIntegrityAnalyzer
 from companion.integrity_repository import (
@@ -26,7 +27,7 @@ from companion.integrity_schema import (
     AssetIntegrityReport,
     AssetIntegrityState,
 )
-from companion.similarity_features import extract_visual_features
+from companion.similarity_features import decode_and_extract_features, extract_visual_features
 from companion.task_coordinator import (
     PermanentTaskError,
     RetryableTaskError,
@@ -143,10 +144,15 @@ class IntegrityTaskHandler:
         immich: ImmichApiClient,
         assets: AssetRepository,
         reports: IntegrityRepository,
+        *,
+        decode_cache_path: Path | None = None,
+        decode_cache_max_bytes: int = 512 * 1024 * 1024,
     ) -> None:
         self._immich = immich
         self._assets = assets
         self._reports = reports
+        self._decode_cache_path = decode_cache_path
+        self._decode_cache_max_bytes = decode_cache_max_bytes
 
     async def _active_asset(self, asset_id: UUID) -> ImmichAsset:
         if not await self._assets.has_asset(asset_id):
@@ -230,10 +236,16 @@ class IntegrityTaskHandler:
         asset_id: UUID,
         *,
         publish_progress: bool = True,
+        source: ImmichAsset | None = None,
+        track_similarity_changes: bool = True,
+        original_path: Path | None = None,
+        original_source_bytes: int | None = None,
     ) -> AssetIntegrityReport:
         """Run the shared bounded analyzer for one known synchronized asset."""
 
-        source = await self._active_asset(asset_id)
+        source = source or await self._active_asset(asset_id)
+        if source.id != asset_id or source.is_trashed or not await self._assets.has_asset(asset_id):
+            raise PermanentTaskError("The asset is no longer in the active workspace.")
         immich_content_checksum = source.checksum if source.library_id is None else None
         analyzer = FileIntegrityAnalyzer(source.original_mime_type, immich_content_checksum)
         started = monotonic()
@@ -247,49 +259,94 @@ class IntegrityTaskHandler:
                     "completed": 0,
                     "total": None,
                     "percent": None,
-                    "detail": "Opening original from Immich…",
+                    "detail": (
+                        "Opening prepared original…"
+                        if original_path is not None
+                        else "Opening original from Immich…"
+                    ),
                 },
             )
         else:
             await context.ensure_active()
 
-        with SpooledTemporaryFile(max_size=INTEGRITY_SPOOL_MEMORY_BYTES) as spool:
-            try:
-                async with self._immich.stream_original(
-                    asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
-                ) as original:
-                    total = original.content_length
+        with SpooledTemporaryFile(
+            max_size=INTEGRITY_SPOOL_MEMORY_BYTES,
+            dir=self._decode_cache_path,
+            suffix=".tmp",
+        ) as spool:
+            spool_complete = True
+            total: int | None
+            if original_path is not None:
+                try:
+                    total = (
+                        original_source_bytes
+                        if original_source_bytes is not None
+                        else original_path.stat().st_size
+                    )
                     last_reported = monotonic()
-                    async for chunk in original.chunks:
-                        analyzer.update(chunk)
-                        spool.write(chunk)
-                        now = monotonic()
-                        if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
-                            continue
-                        await self._checkpoint(
-                            context,
-                            asset_id,
-                            analyzer.byte_size,
-                            total,
-                            started,
-                            publish_progress=publish_progress,
+                    with original_path.open("rb") as prepared:
+                        while True:
+                            chunk = prepared.read(INTEGRITY_CHUNK_SIZE)
+                            if not chunk:
+                                break
+                            analyzer.update(chunk)
+                            now = monotonic()
+                            if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
+                                continue
+                            await self._checkpoint(
+                                context,
+                                asset_id,
+                                analyzer.byte_size,
+                                total,
+                                started,
+                                publish_progress=publish_progress,
+                            )
+                            last_reported = now
+                    spool_complete = analyzer.byte_size <= self._decode_cache_max_bytes
+                except OSError as error:
+                    raise RetryableTaskError("The prepared original is temporarily unavailable.") from error
+            else:
+                try:
+                    async with self._immich.stream_original(
+                        asset_id, chunk_size=INTEGRITY_CHUNK_SIZE
+                    ) as original:
+                        total = original.content_length
+                        last_reported = monotonic()
+                        async for chunk in original.chunks:
+                            analyzer.update(chunk)
+                            if spool_complete and analyzer.byte_size <= self._decode_cache_max_bytes:
+                                spool.write(chunk)
+                            elif spool_complete:
+                                spool_complete = False
+                                spool.seek(0)
+                                spool.truncate(0)
+                            now = monotonic()
+                            if now - last_reported < INTEGRITY_PROGRESS_INTERVAL_SECONDS:
+                                continue
+                            await self._checkpoint(
+                                context,
+                                asset_id,
+                                analyzer.byte_size,
+                                total,
+                                started,
+                                publish_progress=publish_progress,
+                            )
+                            last_reported = now
+                except ImmichApiError as error:
+                    if error.status_code == 404:
+                        logger.warning(
+                            "Integrity verification unavailable for asset %s (%s): Immich original was not found",
+                            source.id,
+                            source.original_file_name,
                         )
-                        last_reported = now
-            except ImmichApiError as error:
-                if error.status_code == 404:
+                        raise PermanentTaskError("The Immich original was not found.") from error
                     logger.warning(
-                        "Integrity verification unavailable for asset %s (%s): Immich original was not found",
+                        "Integrity verification unavailable for asset %s (%s): original stream failed: %s",
                         source.id,
                         source.original_file_name,
+                        error,
                     )
-                    raise PermanentTaskError("The Immich original was not found.") from error
-                logger.warning(
-                    "Integrity verification unavailable for asset %s (%s): original stream failed: %s",
-                    source.id,
-                    source.original_file_name,
-                    error,
-                )
-                raise RetryableTaskError("The Immich original stream was interrupted.") from error
+                    raise RetryableTaskError("The Immich original stream was interrupted.") from error
 
             await self._checkpoint(
                 context,
@@ -301,7 +358,35 @@ class IntegrityTaskHandler:
             )
             await context.ensure_active()
             result = analyzer.finalize()
-            decoded = await asyncio.to_thread(decode_image, spool, result.detected_format)
+            visual_feature_origin = "original"
+            if spool_complete:
+                if original_path is not None:
+                    try:
+                        with original_path.open("rb") as prepared:
+                            decoded, visual_feature = await asyncio.to_thread(
+                                decode_and_extract_features,
+                                prepared,
+                                result.detected_format,
+                            )
+                    except OSError as error:
+                        raise RetryableTaskError(
+                            "The prepared original is temporarily unavailable."
+                        ) from error
+                else:
+                    decoded, visual_feature = await asyncio.to_thread(
+                        decode_and_extract_features,
+                        spool,
+                        result.detected_format,
+                    )
+            else:
+                decoded, visual_feature = (
+                    ImageDecodeResult(
+                        supported=result.detected_format in SUPPORTED_FORMATS,
+                        valid=None,
+                        issue="image_decode_cache_limit_exceeded",
+                    ),
+                    None,
+                )
             result = result.with_decode(
                 supported=decoded.supported,
                 valid=decoded.valid,
@@ -311,16 +396,15 @@ class IntegrityTaskHandler:
                 immich_height=source.height,
                 issue=decoded.issue,
             )
-            visual_feature = None
             if decoded.valid is True:
-                visual_feature = await asyncio.to_thread(
-                    extract_visual_features,
-                    spool,
-                    result.detected_format,
-                )
-            elif decoded.issue == "image_decode_limit_exceeded":
+                pass
+            elif decoded.issue in {
+                "image_decode_limit_exceeded",
+                "image_decode_cache_limit_exceeded",
+            }:
                 visual_feature = await self._oversized_preview_feature(source)
                 if visual_feature is not None:
+                    visual_feature_origin = "preview"
                     logger.warning(
                         "Similarity feature using bounded preview: asset_id=%s filename=%s original_dimensions=%sx%s",
                         source.id,
@@ -375,7 +459,18 @@ class IntegrityTaskHandler:
                 source.original_file_name,
             )
             raise RetryableTaskError("The source changed during integrity analysis.")
-        return await self._reports.save(current, result, visual_feature)
+        # A lightweight synchronization payload may omit file size. Persist the
+        # verified detailed metadata so this feature becomes current in the
+        # catalog and is not reprocessed on every later library-wide pass.
+        await self._assets.refresh_asset(
+            current, track_similarity_changes=track_similarity_changes
+        )
+        return await self._reports.save(
+            current,
+            result,
+            visual_feature,
+            visual_feature_origin=visual_feature_origin,
+        )
 
     @staticmethod
     async def _checkpoint(

@@ -116,21 +116,77 @@ class AssetIntegrityReportRecord(Base):
     __table_args__ = (Index("ix_asset_integrity_exact_hash", byte_size, sha256_hex),)
 
 
-class AssetSimilarityFeatureRecord(Base):
-    """Latest compatible compact visual feature for one active asset."""
+class AssetSimilaritySearchFeatureRecord(Base):
+    """Coarse search evidence, never original-file or exact-pixel proof."""
 
-    __tablename__ = "asset_similarity_features"
+    __tablename__ = "asset_similarity_search_features"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    source_file_size_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    source_checksum: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    media_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    fingerprint_origin: Mapped[str] = mapped_column(String(16), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    luminance_vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    perceptual_hash: Mapped[str] = mapped_column(String(16), nullable=False)
+    color_histogram: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    thumbnail_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+    __table_args__ = (
+        Index(
+            "ix_asset_similarity_search_features_version",
+            model_version,
+            feature_version,
+            config_fingerprint,
+        ),
+    )
+
+
+class AssetSimilarityDetailFeatureRecord(Base):
+    """Cached localized-detail evidence derived from the canonical visual representation."""
+
+    __tablename__ = "asset_similarity_detail_features"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    source_identity: Mapped[str] = mapped_column(String(64), nullable=False)
+    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False)
+    width: Mapped[int] = mapped_column(Integer, nullable=False)
+    height: Mapped[int] = mapped_column(Integer, nullable=False)
+    sample: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class AssetImagePreservationFeatureRecord(Base):
+    """Original-analysis image evidence kept separate from Appearance discovery."""
+
+    __tablename__ = "asset_image_preservation_features"
 
     asset_id: Mapped[UUID] = mapped_column(
         Uuid,
         ForeignKey("assets.id", ondelete="CASCADE"),
         primary_key=True,
     )
-    model_version: Mapped[str] = mapped_column(String(32), nullable=False)
-    feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    extractor_model_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    extractor_feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    extractor_config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    preservation_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    preservation_config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     source_file_modified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     source_file_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    origin: Mapped[str] = mapped_column(String(24), nullable=False)
     width: Mapped[int] = mapped_column(Integer, nullable=False)
     height: Mapped[int] = mapped_column(Integer, nullable=False)
     luminance_vector: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
@@ -155,9 +211,15 @@ class AssetSimilarityFeatureRecord(Base):
 
     __table_args__ = (
         Index(
-            "ix_asset_similarity_features_version",
-            model_version,
-            feature_version,
+            "ix_asset_image_preservation_features_extractor_version",
+            extractor_model_version,
+            extractor_feature_version,
+            extractor_config_fingerprint,
+        ),
+        Index(
+            "ix_asset_image_preservation_features_version",
+            preservation_version,
+            preservation_config_fingerprint,
         ),
     )
 
@@ -180,6 +242,7 @@ class AssetSimilarityEdgeRecord(Base):
     model_version: Mapped[str] = mapped_column(String(32), primary_key=True)
     feature_version: Mapped[int] = mapped_column(Integer, primary_key=True)
     comparison_version: Mapped[int] = mapped_column(Integer, primary_key=True)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_low_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     asset_high_source_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     similarity_percent: Mapped[float] = mapped_column(Float, nullable=False)
@@ -193,6 +256,9 @@ class AssetSimilarityEdgeRecord(Base):
     dimensions_equal: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_pixel_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    detail_version: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    detail_changed_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
     calculated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
     __table_args__ = (
@@ -202,6 +268,19 @@ class AssetSimilarityEdgeRecord(Base):
             feature_version,
             comparison_version,
         ),
+    )
+
+
+class SimilarityAssetChangeRecord(Base):
+    """Coalesced durable similarity work produced by authoritative asset sync."""
+
+    __tablename__ = "similarity_asset_changes"
+
+    asset_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    operation: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    enqueued_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
     )
 
 
@@ -215,6 +294,11 @@ class SimilarityScanRecord(Base):
     model_version: Mapped[str] = mapped_column(String(32), nullable=False)
     feature_version: Mapped[int] = mapped_column(Integer, nullable=False)
     comparison_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    config_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    grouping_version: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False, default="strict")
+    max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
+    anchor_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
     scope: Mapped[str] = mapped_column(
         String(32), nullable=False, default="all_eligible_assets"
@@ -268,6 +352,8 @@ class SimilarityScanPairRecord(Base):
     dimensions_equal: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     exact_thumbnail_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_pixel_match: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    detail_changed_percent: Mapped[float | None] = mapped_column(Float, nullable=True)
+    detail_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     __table_args__ = (
         Index("ix_similarity_scan_pairs_assets", asset_id_low, asset_id_high),
@@ -509,6 +595,35 @@ class SyncRuntimeSettingsRecord(Base):
     )
 
 
+class SimilarityRuntimeSettingsRecord(Base):
+    """Singleton, user-editable runtime settings for similarity fingerprinting."""
+
+    __tablename__ = "similarity_runtime_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    fingerprint_page_size: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class DuplicateDiscoverySettingsRecord(Base):
+    """Singleton, user-editable defaults for duplicate discovery runs."""
+
+    __tablename__ = "duplicate_discovery_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    include_exact: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    include_similar: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    validation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
+    max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False)
+    max_candidates: Mapped[int] = mapped_column(Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class DuplicatePolicyRecord(Base):
     """Singleton, user-editable policy for Immich duplicate review."""
 
@@ -519,6 +634,8 @@ class DuplicatePolicyRecord(Base):
     preselect_safe_groups: Mapped[bool] = mapped_column(Boolean, nullable=False)
     exact_file_action: Mapped[str] = mapped_column(String(24), nullable=False)
     keeper_policy: Mapped[str] = mapped_column(String(24), nullable=False)
+    source_priority: Mapped[list[str]] = mapped_column(JSON, default=list)
+    keeper_tiebreakers: Mapped[list[str]] = mapped_column(JSON, default=list)
     analyze_automatically: Mapped[bool] = mapped_column(Boolean, nullable=False)
     verify_upload_streams: Mapped[bool] = mapped_column(Boolean, nullable=False)
     external_library_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
@@ -564,12 +681,17 @@ class DuplicateGroupReviewRecord(Base):
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
     discovery_source: Mapped[str] = mapped_column(String(32), nullable=False)
-    provider_group_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    provider_group_id: Mapped[str] = mapped_column(Text, nullable=False)
+    stable_group_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    member_set_key: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     member_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     manual_action: Mapped[str | None] = mapped_column(String(24), nullable=True)
     manual_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     member_decisions: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     stack_primary_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
+    stack_resolution: Mapped[str] = mapped_column(
+        String(24), nullable=False, default="move_selected", server_default="move_selected"
+    )
     metadata_keeper_asset_id: Mapped[UUID | None] = mapped_column(Uuid, nullable=True)
     draft_status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
     review_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
@@ -585,9 +707,8 @@ class DuplicateGroupReviewRecord(Base):
 
     __table_args__ = (
         UniqueConstraint(
-            "discovery_source",
-            "provider_group_id",
-            name="uq_duplicate_group_reviews_provider",
+            "stable_group_key",
+            name="uq_duplicate_group_reviews_stable_key",
         ),
         Index("ix_duplicate_group_reviews_status", review_status),
     )
@@ -599,6 +720,7 @@ class DuplicateReviewWorkspaceRecord(Base):
     __tablename__ = "duplicate_review_workspaces"
 
     workspace_key: Mapped[str] = mapped_column(String(32), primary_key=True)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     selected_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     active_group: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(
@@ -612,6 +734,9 @@ class SelectionSetRecord(Base):
     __tablename__ = "selection_sets"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    entity_kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="asset", server_default="asset", index=True
+    )
     revision: Mapped[int] = mapped_column(Integer, default=0)
     selected_count: Mapped[int] = mapped_column(BigInteger, default=0)
     status: Mapped[str] = mapped_column(String(16), default="active", index=True)
@@ -631,4 +756,16 @@ class SelectionSetMemberRecord(Base):
     asset_id: Mapped[UUID] = mapped_column(
         Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SelectionSetKeyMemberRecord(Base):
+    """One selected non-asset UUID in a typed server-owned selection set."""
+
+    __tablename__ = "selection_set_key_members"
+
+    selection_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("selection_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    entity_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

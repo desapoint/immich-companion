@@ -53,6 +53,12 @@ class DecisionReason(StrEnum):
     NON_EXACT_MATCH = "non_exact_match"
     MEMBER_UNAVAILABLE = "member_unavailable"
     GROUP_INELIGIBLE = "group_ineligible"
+    SOURCE_PRIORITY = "source_priority"
+    PREFERRED_FAVORITE = "preferred_favorite"
+    LARGEST_RESOLUTION = "largest_resolution"
+    RICHEST_METADATA = "richest_metadata"
+    LARGEST_FILE = "largest_file"
+    OLDEST_CAPTURE = "oldest_capture"
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +67,13 @@ class CandidateMember:
     source_kind: Literal["upload", "external"]
     uploaded_at: datetime | None
     available: bool = True
+    library_id: UUID | None = None
+    is_favorite: bool = False
+    width: int | None = None
+    height: int | None = None
+    file_size_bytes: int | None = None
+    metadata_richness: int | None = None
+    captured_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +93,18 @@ class ResolutionPolicy:
     automatic_handling: bool = True
     preselect_safe_groups: bool = True
     exact_file_action: Literal["resolve", "keep_all", "stack_all", "review"] = "resolve"
+    source_priority: tuple[str, ...] = ()
+    keeper_tiebreakers: tuple[
+        Literal[
+            "favorite",
+            "resolution",
+            "metadata_richness",
+            "file_size",
+            "oldest_capture",
+            "uploaded_at",
+        ],
+        ...,
+    ] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,7 +161,19 @@ def decide_group(group: CandidateGroup, policy: ResolutionPolicy) -> GroupDecisi
             primary_source=DecisionSource.NONE,
         )
 
-    if policy.keeper_preference == "prefer_upload":
+    if policy.source_priority:
+        ranks = {source: rank for rank, source in enumerate(policy.source_priority)}
+
+        def source_rank(member: CandidateMember) -> int:
+            source = str(member.library_id) if member.library_id is not None else "immich_uploads"
+            return ranks.get(source, ranks.get("unlisted", len(ranks)))
+
+        best_rank = min(source_rank(member) for member in candidates)
+        preferred = [member for member in candidates if source_rank(member) == best_rank]
+        if len(preferred) < len(candidates):
+            candidates = preferred
+            reasons.append(DecisionReason.SOURCE_PRIORITY)
+    elif policy.keeper_preference == "prefer_upload":
         preferred = [member for member in candidates if member.source_kind == "upload"]
         if preferred:
             candidates = preferred
@@ -147,10 +184,60 @@ def decide_group(group: CandidateGroup, policy: ResolutionPolicy) -> GroupDecisi
             candidates = preferred
             reasons.append(DecisionReason.PREFERRED_EXTERNAL)
 
+    tiebreakers = {
+        "favorite": (
+            lambda member: int(member.is_favorite),
+            DecisionReason.PREFERRED_FAVORITE,
+        ),
+        "resolution": (
+            lambda member: (
+                member.width * member.height
+                if member.width is not None and member.height is not None
+                else None
+            ),
+            DecisionReason.LARGEST_RESOLUTION,
+        ),
+        "metadata_richness": (
+            lambda member: member.metadata_richness,
+            DecisionReason.RICHEST_METADATA,
+        ),
+        "file_size": (
+            lambda member: member.file_size_bytes,
+            DecisionReason.LARGEST_FILE,
+        ),
+        "oldest_capture": (
+            lambda member: (
+                -member.captured_at.timestamp() if member.captured_at is not None else None
+            ),
+            DecisionReason.OLDEST_CAPTURE,
+        ),
+        "uploaded_at": (
+            lambda member: (
+                member.uploaded_at.timestamp() if member.uploaded_at is not None else None
+            ),
+            DecisionReason.MOST_RECENT_UPLOAD,
+        ),
+    }
+    for name in policy.keeper_tiebreakers:
+        if len(candidates) == 1:
+            break
+        value_for, reason = tiebreakers[name]
+        known = [(member, value_for(member)) for member in candidates]
+        values = [value for _, value in known if value is not None]
+        if not values:
+            continue
+        best = max(values)
+        preferred = [member for member, value in known if value == best]
+        if len(preferred) < len(candidates):
+            candidates = preferred
+            reasons.append(reason)
+
     winner: CandidateMember | None = None
     if len(candidates) == 1:
         winner = candidates[0]
         reasons.append(DecisionReason.UNIQUE_CANDIDATE)
+    elif policy.keeper_tiebreakers:
+        reasons.append(DecisionReason.MULTIPLE_EQUAL_CANDIDATES)
     elif policy.keeper_preference == "first":
         winner = candidates[0]
         reasons.append(DecisionReason.EXPLICIT_FIRST_RESULT)
