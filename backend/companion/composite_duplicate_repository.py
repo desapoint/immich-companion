@@ -289,6 +289,31 @@ class CompositeDuplicateRepository:
                 last_success_at=state.last_success_at,
             )
 
+    async def unresolved_counts(self) -> tuple[int, int]:
+        """Count reviewable groups and members without hydrating duplicate records."""
+
+        review_join = and_(
+            DuplicateGroupReviewRecord.stable_group_key
+            == CompositeDuplicateGroupRecord.stable_group_key,
+            DuplicateGroupReviewRecord.member_fingerprint
+            == CompositeDuplicateGroupRecord.member_fingerprint,
+        )
+        statement = (
+            select(
+                func.count(CompositeDuplicateGroupRecord.group_id),
+                func.coalesce(
+                    func.sum(CompositeDuplicateGroupRecord.member_count),
+                    0,
+                ),
+            )
+            .select_from(CompositeDuplicateGroupRecord)
+            .outerjoin(DuplicateGroupReviewRecord, review_join)
+            .where(_unresolved_review_filter())
+        )
+        async with self._database.sessions() as session:
+            group_count, member_count = (await session.execute(statement)).one()
+        return int(group_count or 0), int(member_count or 0)
+
     async def identities(
         self,
         *,
@@ -586,11 +611,25 @@ class CompositeDuplicateRepository:
         sort: str = "reclaimable",
         direction: str = "desc",
         state: str = "all",
+        group_ids: list[str] | None = None,
     ) -> CompositeDuplicateSnapshotPage:
         """Read one ordered SQL-filtered page before hydrating its members."""
 
         page = max(1, page)
         page_size = max(1, min(page_size, 100))
+        selected_group_ids = (
+            list(dict.fromkeys(group_ids))
+            if group_ids is not None
+            else None
+        )
+        if selected_group_ids == []:
+            return CompositeDuplicateSnapshotPage(
+                groups=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                pages=0,
+            )
         offset = (page - 1) * page_size
         source_filter = (
             exists(
@@ -630,6 +669,13 @@ class CompositeDuplicateRepository:
                 .outerjoin(DuplicateGroupReviewRecord, review_join)
                 .where(_unresolved_review_filter())
             )
+
+            if selected_group_ids is not None:
+                selected_filter = CompositeDuplicateGroupRecord.group_id.in_(
+                    selected_group_ids
+                )
+                count_statement = count_statement.where(selected_filter)
+                group_statement = group_statement.where(selected_filter)
 
             if state != "all":
                 decision_count = func.coalesce(
@@ -758,10 +804,13 @@ class CompositeDuplicateRepository:
     ) -> CompositeDuplicateSnapshotMetadata:
         """Publish one complete composite snapshot or leave the previous one intact."""
 
-        group_ids = [group.group_id for group in groups]
-        if len(group_ids) != len(set(group_ids)):
+        group_ids = {group.group_id for group in groups}
+        if len(group_ids) != len(groups):
             raise ValueError("Composite duplicate snapshot contains duplicate group IDs")
         asset_ids = {asset.id for group in groups for asset in group.assets}
+        group_count = len(groups)
+        member_count = sum(len(group.assets) for group in groups)
+        evidence_count = sum(len(group.evidence) for group in groups)
         now = datetime.now(UTC)
 
         async with self._database.sessions() as session, session.begin():
@@ -794,82 +843,70 @@ class CompositeDuplicateRepository:
                     )
 
             generation = state.authoritative_generation + 1
-            group_rows = []
-            for position, group in enumerate(groups):
-                fingerprint = member_set_key(asset.id for asset in group.assets)
-                summary = _group_projection_summary(group)
-                group_rows.append(
-                    {
-                        "group_id": group.group_id,
-                        "position": position,
-                        "discovery_source": group.discovery_source.value,
-                        "provider_group_id": group.provider_group_id,
-                        "stable_group_key": stable_group_key(
-                            group.discovery_source.value, fingerprint
-                        ),
-                        "member_fingerprint": fingerprint,
-                        **summary,
-                        "first_discovered_at": now,
-                        "v2_policy_state": "blocked",
-                        "v2_state_updated_at": None,
-                        "provider_metadata": dict(group.provider_metadata),
-                        "similarity_validation": _validation_payload(group.similarity_validation),
-                        "sync_generation": generation,
-                        "synced_at": now,
-                    }
-                )
-            member_rows = [
-                {
-                    "group_id": group.group_id,
-                    "asset_id": asset.id,
-                    "position": position,
-                    "sync_generation": generation,
-                }
-                for group in groups
-                for position, asset in enumerate(group.assets)
-            ]
-            evidence_rows = [
-                {
-                    "group_id": group.group_id,
-                    "discovery_source": item.discovery_source.value,
-                    "provider_group_id": item.provider_group_id,
-                    "evidence_metadata": dict(item.metadata),
-                    "sync_generation": generation,
-                }
-                for group in groups
-                for item in group.evidence
-            ]
 
-            for offset in range(0, len(group_rows), WRITE_BATCH_SIZE):
-                values = group_rows[offset : offset + WRITE_BATCH_SIZE]
-                statement = insert(CompositeDuplicateGroupRecord).values(values)
-                await session.execute(
-                    statement.on_conflict_do_update(
-                        index_elements=[CompositeDuplicateGroupRecord.group_id],
-                        set_={
-                            "position": statement.excluded.position,
-                            "discovery_source": statement.excluded.discovery_source,
-                            "provider_group_id": statement.excluded.provider_group_id,
-                            "stable_group_key": statement.excluded.stable_group_key,
-                            "member_fingerprint": statement.excluded.member_fingerprint,
-                            "member_count": statement.excluded.member_count,
-                            "reclaimable_bytes": statement.excluded.reclaimable_bytes,
-                            "similarity_score": statement.excluded.similarity_score,
-                            "oldest_taken_at": statement.excluded.oldest_taken_at,
-                            "newest_taken_at": statement.excluded.newest_taken_at,
-                            "v2_policy_state": statement.excluded.v2_policy_state,
-                            "v2_state_updated_at": statement.excluded.v2_state_updated_at,
-                            "provider_metadata": statement.excluded.provider_metadata,
-                            "similarity_validation": statement.excluded.similarity_validation,
-                            "sync_generation": statement.excluded.sync_generation,
-                            "synced_at": statement.excluded.synced_at,
-                        },
+            for offset in range(0, group_count, WRITE_BATCH_SIZE):
+                values = []
+                for position, group in enumerate(
+                    groups[offset : offset + WRITE_BATCH_SIZE],
+                    start=offset,
+                ):
+                    fingerprint = member_set_key(asset.id for asset in group.assets)
+                    summary = _group_projection_summary(group)
+                    values.append(
+                        {
+                            "group_id": group.group_id,
+                            "position": position,
+                            "discovery_source": group.discovery_source.value,
+                            "provider_group_id": group.provider_group_id,
+                            "stable_group_key": stable_group_key(
+                                group.discovery_source.value,
+                                fingerprint,
+                            ),
+                            "member_fingerprint": fingerprint,
+                            **summary,
+                            "first_discovered_at": now,
+                            "v2_policy_state": "blocked",
+                            "v2_state_updated_at": None,
+                            "provider_metadata": dict(group.provider_metadata),
+                            "similarity_validation": _validation_payload(
+                                group.similarity_validation
+                            ),
+                            "sync_generation": generation,
+                            "synced_at": now,
+                        }
                     )
-                )
+                if values:
+                    statement = insert(CompositeDuplicateGroupRecord).values(values)
+                    await session.execute(
+                        statement.on_conflict_do_update(
+                            index_elements=[CompositeDuplicateGroupRecord.group_id],
+                            set_={
+                                "position": statement.excluded.position,
+                                "discovery_source": statement.excluded.discovery_source,
+                                "provider_group_id": statement.excluded.provider_group_id,
+                                "stable_group_key": statement.excluded.stable_group_key,
+                                "member_fingerprint": statement.excluded.member_fingerprint,
+                                "member_count": statement.excluded.member_count,
+                                "reclaimable_bytes": statement.excluded.reclaimable_bytes,
+                                "similarity_score": statement.excluded.similarity_score,
+                                "oldest_taken_at": statement.excluded.oldest_taken_at,
+                                "newest_taken_at": statement.excluded.newest_taken_at,
+                                "v2_policy_state": statement.excluded.v2_policy_state,
+                                "v2_state_updated_at": statement.excluded.v2_state_updated_at,
+                                "provider_metadata": statement.excluded.provider_metadata,
+                                "similarity_validation": statement.excluded.similarity_validation,
+                                "sync_generation": statement.excluded.sync_generation,
+                                "synced_at": statement.excluded.synced_at,
+                            },
+                        )
+                    )
 
-            for offset in range(0, len(member_rows), WRITE_BATCH_SIZE):
-                values = member_rows[offset : offset + WRITE_BATCH_SIZE]
-                statement = insert(CompositeDuplicateGroupMemberRecord).values(values)
+            member_values: list[dict[str, object]] = []
+
+            async def flush_members() -> None:
+                if not member_values:
+                    return
+                statement = insert(CompositeDuplicateGroupMemberRecord).values(member_values)
                 await session.execute(
                     statement.on_conflict_do_update(
                         index_elements=[
@@ -882,10 +919,28 @@ class CompositeDuplicateRepository:
                         },
                     )
                 )
+                member_values.clear()
 
-            for offset in range(0, len(evidence_rows), WRITE_BATCH_SIZE):
-                values = evidence_rows[offset : offset + WRITE_BATCH_SIZE]
-                statement = insert(CompositeDuplicateGroupEvidenceRecord).values(values)
+            for group in groups:
+                for position, asset in enumerate(group.assets):
+                    member_values.append(
+                        {
+                            "group_id": group.group_id,
+                            "asset_id": asset.id,
+                            "position": position,
+                            "sync_generation": generation,
+                        }
+                    )
+                    if len(member_values) >= WRITE_BATCH_SIZE:
+                        await flush_members()
+            await flush_members()
+
+            evidence_values: list[dict[str, object]] = []
+
+            async def flush_evidence() -> None:
+                if not evidence_values:
+                    return
+                statement = insert(CompositeDuplicateGroupEvidenceRecord).values(evidence_values)
                 await session.execute(
                     statement.on_conflict_do_update(
                         index_elements=[
@@ -899,6 +954,22 @@ class CompositeDuplicateRepository:
                         },
                     )
                 )
+                evidence_values.clear()
+
+            for group in groups:
+                for item in group.evidence:
+                    evidence_values.append(
+                        {
+                            "group_id": group.group_id,
+                            "discovery_source": item.discovery_source.value,
+                            "provider_group_id": item.provider_group_id,
+                            "evidence_metadata": dict(item.metadata),
+                            "sync_generation": generation,
+                        }
+                    )
+                    if len(evidence_values) >= WRITE_BATCH_SIZE:
+                        await flush_evidence()
+            await flush_evidence()
 
             await session.execute(
                 delete(CompositeDuplicateGroupEvidenceRecord).where(
@@ -917,15 +988,15 @@ class CompositeDuplicateRepository:
             )
 
             state.authoritative_generation = generation
-            state.group_count = len(group_rows)
-            state.member_count = len(member_rows)
-            state.evidence_count = len(evidence_rows)
+            state.group_count = group_count
+            state.member_count = member_count
+            state.evidence_count = evidence_count
             state.last_success_at = now
 
         return CompositeDuplicateSnapshotMetadata(
             authoritative_generation=generation,
-            group_count=len(group_rows),
-            member_count=len(member_rows),
-            evidence_count=len(evidence_rows),
+            group_count=group_count,
+            member_count=member_count,
+            evidence_count=evidence_count,
             last_success_at=now,
         )

@@ -164,6 +164,7 @@ export function createDemoLibraryDataSource():LibraryDataSource{
     async capabilities(){await delay();return{canRunDiscovery:true,canApplyDecisions:true,canViewHistory:true,reviewFilters:['All groups','Actionable','Needs review','Needs decisions','Blocked'],decisions:['keep','delete','stack']}},
     async search(query){await delay();return collectionPage(searchDuplicateGroups(query),query)},
     selectedGroupIds(){return [...demoSelectedDuplicateGroupIds]},
+    async selectAllGroups(){await delay();demoSelectedDuplicateGroupIds=materializeDuplicateGroups().map((group)=>group.id);return[...demoSelectedDuplicateGroupIds]},
     async saveDraft(){await delay()},
     async flushDrafts(){await delay()},
     async saveSelection(groupIds){await delay();demoSelectedDuplicateGroupIds=[...groupIds]},

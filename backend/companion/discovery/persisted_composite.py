@@ -50,6 +50,7 @@ class _CompositeSnapshotReader(Protocol):
         sort: str = "reclaimable",
         direction: str = "desc",
         state: str = "all",
+        group_ids: list[str] | None = None,
     ) -> CompositeDuplicateSnapshotPage: ...
 
 
@@ -168,6 +169,43 @@ class PersistedCompositeDuplicateProvider:
             sort=sort,
             direction=direction,
             state=state,
+            group_ids=None,
+        )
+        return DiscoveredGroupPage(
+            groups=await self._hydrate(snapshot.groups),
+            total=snapshot.total,
+            page=snapshot.page,
+            page_size=snapshot.page_size,
+            pages=snapshot.pages,
+        )
+
+    async def discover_selected_page(
+        self,
+        group_ids: list[str],
+        *,
+        page: int,
+        page_size: int,
+        source: str = "both",
+        sort: str = "reclaimable",
+        direction: str = "desc",
+    ) -> DiscoveredGroupPage:
+        """Page only persisted selected groups before member hydration."""
+
+        source_value = (
+            DiscoverySource.IMMICH_DUPLICATE
+            if source == "immich"
+            else DiscoverySource.COMPANION_SIMILARITY
+            if source == "similarity"
+            else None
+        )
+        snapshot = await self._snapshots.page(
+            page=page,
+            page_size=page_size,
+            source=source_value,
+            sort=sort,
+            direction=direction,
+            state="all",
+            group_ids=group_ids,
         )
         return DiscoveredGroupPage(
             groups=await self._hydrate(snapshot.groups),

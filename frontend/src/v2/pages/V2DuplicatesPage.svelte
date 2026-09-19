@@ -233,16 +233,7 @@
     selectingAll=true;interactionError='';
     try{
       await flushWorkspace();
-      const ids:string[]=[];
-      let cursor:string|null=null;
-      do{
-        const result=await libraryData.duplicates.search({state:'All groups',source:'both',sort:parseSort(),pageSize:100,cursor,reuseCachedGroups:true});
-        ids.push(...result.items.map((item)=>item.id));
-        if(ids.length>10_000)throw new Error('Duplicate selection is limited to 10,000 groups.');
-        cursor=result.nextCursor;
-      }while(cursor);
-      selectedGroups=[...new Set(ids)];
-      await libraryData.duplicates.saveSelection(selectedGroups,null);
+      selectedGroups=[...await libraryData.duplicates.selectAllGroups()];
       sourceFilter='both';
       if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-source-filter',sourceFilter);
       reviewFilter='Selected';

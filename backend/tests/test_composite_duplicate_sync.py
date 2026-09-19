@@ -189,6 +189,7 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         "sort": "similarity",
         "direction": "asc",
         "state": "needs_review",
+        "group_ids": None,
     }
     assert assets.requested == [ASSET_1, ASSET_2]
     assert result.total == 23
@@ -196,8 +197,70 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
     assert [group.group_id for group in result.groups] == [second_group.group_id]
 
 
+@pytest.mark.asyncio
+async def test_persisted_provider_pages_selected_ids_before_asset_hydration() -> None:
+    selected = ["immich:selected", "immich:off-page"]
+    snapshot_group = CompositeDuplicateSnapshotGroup(
+        group_id=selected[0],
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="selected",
+        asset_ids=(ASSET_1, ASSET_2),
+        provider_metadata={},
+        evidence=(),
+        similarity_validation=None,
+    )
+
+    class Snapshots:
+        received = None
+
+        async def page(self, **kwargs):
+            self.received = kwargs
+            return CompositeDuplicateSnapshotPage(
+                groups=[snapshot_group],
+                total=2,
+                page=1,
+                page_size=1,
+                pages=2,
+            )
+
+    class Assets:
+        requested = None
+
+        async def get_immich_assets(self, asset_ids):
+            self.requested = asset_ids
+            return {asset_id: asset(asset_id) for asset_id in asset_ids}
+
+    snapshots = Snapshots()
+    assets = Assets()
+    result = await PersistedCompositeDuplicateProvider(
+        snapshots,
+        assets,
+    ).discover_selected_page(
+        selected,
+        page=1,
+        page_size=1,
+        source="immich",
+        sort="members",
+        direction="desc",
+    )
+
+    assert snapshots.received == {
+        "page": 1,
+        "page_size": 1,
+        "source": DiscoverySource.IMMICH_DUPLICATE,
+        "sort": "members",
+        "direction": "desc",
+        "state": "all",
+        "group_ids": selected,
+    }
+    assert assets.requested == [ASSET_1, ASSET_2]
+    assert result.total == 2
+    assert [group.group_id for group in result.groups] == [selected[0]]
+
+
 def test_composite_repository_exposes_paged_state_methods() -> None:
     assert callable(CompositeDuplicateRepository.page)
+    assert callable(CompositeDuplicateRepository.unresolved_counts)
     assert callable(CompositeDuplicateRepository.matching_group_ids)
     assert callable(CompositeDuplicateRepository.update_v2_policy_states)
     assert callable(CompositeDuplicateRepository.replace_snapshot)
