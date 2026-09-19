@@ -69,7 +69,7 @@
   function setAssetColumns(next:number|string){collection.setColumns(next);gridViewportAnchor.adjust()}
   function isSelected(id:string){return isAssetSelected(selection,id)}
   function clearSelection(){selectionController.clear()}
-  function selectVisible(){let next=selectionController.snapshot();for(const id of itemIds)next=setAssetSelected(next,id,true);selectionController.replace(next)}
+  function selectVisible(){selectionController.replace(selectVisibleAssets(itemIds))}
   function selectAllMatching(){selectionController.replace(selectAllMatchingAssets(itemIds[0]??null))}
   function invertSelection(){let next=selectionController.snapshot();for(const id of itemIds)next=toggleAssetSelected(next,id);selectionController.replace(next)}
   function toggleSelection(id:string){selectionController.replace(toggleAssetSelected(selectionController.snapshot(),id))}

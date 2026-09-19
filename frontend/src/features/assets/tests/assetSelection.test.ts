@@ -31,6 +31,13 @@ describe('assetSelection', () => {
     expect(getAssetSelectionCount(state, 100)).toBe(99);
   });
 
+  it('uses an explicit visible selection after leaving select-all mode', () => {
+    const state = selectVisibleAssets([12, 13]);
+    expect(state.allMatchingSelected).toBe(false);
+    expect([...state.selectedIds]).toEqual([12, 13]);
+    expect([...state.excludedIds]).toEqual([]);
+  });
+
   it('inverts explicit selection into all-matching exclusions', () => {
     let state = emptyAssetSelection<number>();
     state = toggleAssetSelected(state, 10);
