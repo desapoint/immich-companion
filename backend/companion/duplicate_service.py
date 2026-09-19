@@ -1029,14 +1029,17 @@ class CrossSourceDuplicateService:
                     )
                 )
 
-            def member_sort_key(item: DuplicateMember) -> tuple[bool, float, str]:
+            def member_sort_key(
+                item: DuplicateMember,
+                reference_id: UUID = reference.id,
+            ) -> tuple[bool, float, str]:
                 similarity_percent = (
                     item.similarity.similarity_percent
                     if item.similarity is not None
                     else None
                 )
                 return (
-                    item.id != reference.id,
+                    item.id != reference_id,
                     -(
                         similarity_percent
                         if similarity_percent is not None
