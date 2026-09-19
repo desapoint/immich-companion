@@ -189,6 +189,7 @@ async def test_persisted_provider_pages_before_asset_hydration() -> None:
         "sort": "similarity",
         "direction": "asc",
         "state": "needs_review",
+        "group_ids": None,
     }
     assert assets.requested == [ASSET_1, ASSET_2]
     assert result.total == 23

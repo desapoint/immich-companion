@@ -548,7 +548,18 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
-      if (path.includes('/cross-source/page?')) return response(asPage({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] }));
+      if (path.includes('/cross-source/page?')) {
+        const url = new URL(path, 'http://localhost');
+        const page = Number(url.searchParams.get('page') ?? '1');
+        const items = page === 2 ? [secondGroup] : [group];
+        return response({
+          items,
+          total: 2,
+          page,
+          page_size: 1,
+          pages: 2,
+        });
+      }
       if (path.endsWith('/cross-source/search')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
       if (path.endsWith('/workspace')) return response(selectedWorkspace);
       if (path.endsWith('/cross-source/plan')) return response({ id: 'off-page-plan', groups: planGroups, destructive: true });

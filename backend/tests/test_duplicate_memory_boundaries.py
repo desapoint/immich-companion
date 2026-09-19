@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 
+from companion.composite_duplicate_repository import CompositeDuplicateRepository
 from companion.duplicate_service import CrossSourceDuplicateService
 
 
@@ -28,8 +29,6 @@ def test_v2_single_group_and_preset_paths_do_not_call_full_result_hydration() ->
         assert "self.result(" not in source
         assert "self._live_groups(" not in source
         assert "await self._snapshot(" not in source
-
-from companion.composite_duplicate_repository import CompositeDuplicateRepository
 
 
 def test_composite_snapshot_publication_does_not_materialize_full_row_copies() -> None:
