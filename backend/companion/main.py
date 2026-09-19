@@ -664,12 +664,14 @@ def create_app(
                 reason="Asset sync does not resume automatically on container startup.",
             )
             await task_coordinator.start()
-            if similarity_maintenance_service is not None:
+            maintenance_task = (
                 await similarity_maintenance_service.start_if_pending()
-            if composite_duplicate_sync_service is not None:
-                # Startup only needs to durably enqueue projection refresh. Waiting for
-                # a potentially large rebuild here delays FastAPI readiness and makes an
-                # inherited task lease look like a server-start hang.
+                if similarity_maintenance_service is not None
+                else None
+            )
+            if composite_duplicate_sync_service is not None and maintenance_task is None:
+                # Pending maintenance already owns a composite follow-up. Avoid publishing
+                # an intermediate projection only to rebuild it again moments later.
                 await composite_duplicate_sync_service.start()
         try:
             yield
