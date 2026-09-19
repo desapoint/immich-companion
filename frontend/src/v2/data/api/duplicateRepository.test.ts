@@ -118,7 +118,7 @@ function tasks(): TaskRepository {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('live V2 duplicate repository', () => {
-  it('filters all groups before pagination and includes groups reported by both sources', async () => {
+  it('uses server source filtering before pagination and includes overlapping sources', async () => {
     const similar = {
       ...group,
       group_id: 'similar-group',
@@ -130,9 +130,34 @@ describe('live V2 duplicate repository', () => {
       group_id: 'overlap-group',
       discovery_sources: ['immich_duplicate', 'companion_similarity'],
     };
-    const result = { ...duplicateResult, groups: [group, similar, overlap], group_count: 3 };
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
-      String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(result)));
+    const allGroups = [group, similar, overlap];
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (!path.includes('/cross-source/page?')) {
+        throw new Error(`Unexpected request: ${path}`);
+      }
+      const url = new URL(path, 'http://localhost');
+      const source = url.searchParams.get('source') ?? 'both';
+      const page = Number(url.searchParams.get('page') ?? '1');
+      const pageSize = Number(url.searchParams.get('page_size') ?? '1');
+      const filtered = allGroups.filter((candidate) => {
+        const sources = candidate.discovery_sources ?? [candidate.discovery_source];
+        return source === 'both'
+          || (source === 'immich' && sources.includes('immich_duplicate'))
+          || (source === 'similarity' && sources.includes('companion_similarity'));
+      });
+      const offset = (page - 1) * pageSize;
+      return response({
+        items: filtered.slice(offset, offset + pageSize),
+        total: filtered.length,
+        page,
+        page_size: pageSize,
+        pages: Math.ceil(filtered.length / pageSize),
+      });
+    }));
     const repository = createDuplicateRepository(tasks());
 
     const first = await repository.search({ page: 1, pageSize: 1, source: 'similarity' });
@@ -145,6 +170,8 @@ describe('live V2 duplicate repository', () => {
     expect(immich.items.map((item) => item.id)).toEqual([group.group_id, 'overlap-group']);
     expect(both.total).toBe(3);
     expect(second.items[0]?.discoverySources).toEqual(['immich_duplicate', 'companion_similarity']);
+    expect(calls.some((path) => path.includes('source=similarity'))).toBe(true);
+    expect(calls.some((path) => path.endsWith('/cross-source/search'))).toBe(false);
   });
 
   it('uses server pagination for page changes and restores workspace once', async () => {
@@ -375,7 +402,7 @@ describe('live V2 duplicate repository', () => {
         members: group.members.map((member) => ({ ...member, similarity: null })),
       }],
     };
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(exactOnly)));
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(asPage(exactOnly))));
     const repository = createDuplicateRepository(tasks());
 
     const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
