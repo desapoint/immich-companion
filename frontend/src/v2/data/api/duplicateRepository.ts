@@ -137,7 +137,8 @@ type ApiDuplicateGroup = {
   members: ApiDuplicateMember[];
   eligible: boolean;
 };
-type ApiDuplicateResult = { group_count: number; groups: ApiDuplicateGroup[] };
+type ApiDuplicateSummary = { group_count: number; member_count: number };
+type ApiDuplicateGroupIds = { group_ids: string[]; limit_exceeded: boolean };
 type ApiDuplicatePage = { items: ApiDuplicateGroup[]; total: number; page: number; page_size: number; pages: number };
 type ApiDuplicateDraft = {
   group_id: string;
@@ -217,26 +218,6 @@ function pageNumber(query: DuplicateSearchQuery): number {
   if (query.page) return query.page;
   const cursor = Number.parseInt(query.cursor ?? '', 10);
   return Number.isSafeInteger(cursor) && cursor > 0 ? cursor : 1;
-}
-
-function normalizeDuplicatePage(
-  value: ApiDuplicatePage | ApiDuplicateResult,
-  query: DuplicateSearchQuery,
-  page: number,
-): ApiDuplicatePage {
-  if ('items' in value) return value;
-  const filtered = value.groups.filter((group) => {
-    const sources = group.discovery_sources?.length ? group.discovery_sources : [group.discovery_source];
-    return matchesDuplicateSource(sources, query.source ?? 'both');
-  });
-  const start = (page - 1) * query.pageSize;
-  return {
-    items: filtered.slice(start, start + query.pageSize),
-    total: filtered.length,
-    page,
-    page_size: query.pageSize,
-    pages: Math.ceil(filtered.length / query.pageSize),
-  };
 }
 
 function historyDays(range: 'Last 30 days' | 'Last 90 days' | 'All history'): number | null {
@@ -698,6 +679,21 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       return { canRunDiscovery: true, canApplyDecisions: true, canViewHistory: true, reviewFilters: ['All groups', 'Selected', 'Actionable', 'Needs review', 'Needs decisions', 'Blocked'], decisions: ['keep', 'delete', 'stack'] };
     },
     selectedGroupIds() { return [...workspace.selected_group_ids]; },
+    async selectAllGroups() {
+      const params = new URLSearchParams({
+        source: 'both',
+        state: 'all',
+        limit: '10000',
+      });
+      const result = await requestJson<ApiDuplicateGroupIds>(
+        `/api/assets/duplicates/group-ids?${params.toString()}`,
+      );
+      if (result.limit_exceeded) {
+        throw new Error('Duplicate selection is limited to 10,000 groups.');
+      }
+      await saveSelection(result.group_ids, null);
+      return [...result.group_ids];
+    },
 
     async search(query): Promise<PageResult<DuplicateGroupRecord>> {
       const page = pageNumber(query);
@@ -719,7 +715,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           state: reviewStateParam(query.state),
         });
         const [rawPage, restored] = await Promise.all([
-          requestJson<ApiDuplicatePage | ApiDuplicateResult>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
+          requestJson<ApiDuplicatePage>(`/api/assets/duplicates/cross-source/page?${params.toString()}`, { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal }),
           restoreWorkspace
             ? requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { signal: query.signal })
             : Promise.resolve(null),
@@ -728,7 +724,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           workspace = restored;
           hasWorkspaceSnapshot = true;
         }
-        result = normalizeDuplicatePage(rawPage, query, page);
+        result = rawPage;
       }
       if (!query.reuseCachedGroups) rawGroups.clear();
       for (const group of result.items) rawGroups.set(group.group_id, group);
@@ -793,9 +789,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         }));
         await waitForTask(tasks, started.task_id, true, options.includeExact ? exactEnd : 0, 98, onprogress);
       }
-      const result = await requestJson<ApiDuplicateResult>('/api/assets/duplicates/cross-source/search', jsonRequest('POST', ANALYSIS_OPTIONS));
+      const result = await requestJson<ApiDuplicateSummary>('/api/assets/duplicates/summary');
       onprogress?.({label:'Duplicate discovery · Preparing results',detail:'Preparing the completed duplicate groups for refresh…',completed:1,total:1,percent:99});
-      return { groupCount: result.group_count, candidateCount: result.groups.reduce((count, group) => count + group.members.length, 0) };
+      return { groupCount: result.group_count, candidateCount: result.member_count };
     },
     async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
       const uniqueGroupIds = [...new Set(groupIds)];

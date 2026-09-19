@@ -99,8 +99,10 @@ from companion.duplicate_schema import (
     CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
     DuplicateAnalysisOptions,
+    DuplicateDiscoverySummary,
     DuplicateGroupDraft,
     DuplicateGroupDraftUpdate,
+    DuplicateGroupIdsResult,
     DuplicateKeeperSelectionRequest,
     DuplicateKeeperSelectionResult,
     DuplicateResolutionExecuteRequest,
@@ -2144,6 +2146,56 @@ def create_app(
             )
         except ImmichApiError as error:
             raise map_immich_error(error) from error
+
+    @app.get(
+        "/api/assets/duplicates/summary",
+        response_model=DuplicateDiscoverySummary,
+    )
+    async def duplicate_discovery_summary() -> DuplicateDiscoverySummary:
+        if composite_duplicate_repository is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The persisted duplicate projection is unavailable.",
+            )
+        metadata = await composite_duplicate_repository.metadata()
+        return DuplicateDiscoverySummary(
+            authoritative_generation=metadata.authoritative_generation,
+            group_count=metadata.group_count,
+            member_count=metadata.member_count,
+            evidence_count=metadata.evidence_count,
+            last_success_at=metadata.last_success_at,
+        )
+
+    @app.get(
+        "/api/assets/duplicates/group-ids",
+        response_model=DuplicateGroupIdsResult,
+    )
+    async def duplicate_group_ids(
+        source: Literal["both", "immich", "similarity"] = Query(default="both"),
+        state: Literal[
+            "all",
+            "needs_review",
+            "auto_ready",
+            "blocked",
+            "actionable",
+            "needs_decisions",
+        ] = Query(default="all"),
+        limit: int = Query(default=10_000, ge=1, le=50_000),
+    ) -> DuplicateGroupIdsResult:
+        if duplicate_discovery is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The persisted duplicate projection is unavailable.",
+            )
+        group_ids = await duplicate_discovery.resolve_matching_group_ids(
+            source=source,
+            state=state,
+            limit=min(50_001, limit + 1),
+        )
+        return DuplicateGroupIdsResult(
+            group_ids=group_ids[:limit],
+            limit_exceeded=len(group_ids) > limit,
+        )
 
     @app.post(
         "/api/assets/duplicates/cross-source/analyze",

@@ -351,6 +351,19 @@ class DuplicateSearchPage(BaseModel):
     pages: int = Field(ge=0)
 
 
+class DuplicateDiscoverySummary(BaseModel):
+    authoritative_generation: int = Field(ge=0)
+    group_count: int = Field(ge=0)
+    member_count: int = Field(ge=0)
+    evidence_count: int = Field(ge=0)
+    last_success_at: datetime | None = None
+
+
+class DuplicateGroupIdsResult(BaseModel):
+    group_ids: list[str] = Field(default_factory=list)
+    limit_exceeded: bool = False
+
+
 class CrossSourceDuplicateTaskStart(BaseModel):
     task_id: UUID
 
