@@ -381,6 +381,40 @@ describe('live V2 duplicate repository', () => {
     expect(result.items[0]?.members.map((member) => member.similarity)).toEqual([null, null]);
   });
 
+  it('pages the Selected view without scanning ordinary duplicate pages', async () => {
+    const selectedWorkspace = {
+      ...emptyWorkspace,
+      selected_count: 1,
+      selected_group_ids: [group.group_id],
+    };
+    const calls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      calls.push(path);
+      if (path.endsWith('/workspace')) return response(selectedWorkspace);
+      if (path.includes('/cross-source/selected-page?')) {
+        return response(asPage(duplicateResult));
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    const result = await repository.search({
+      page: 1,
+      pageSize: 6,
+      state: 'Selected',
+      source: 'both',
+    });
+
+    expect(result.items.map((item) => item.id)).toEqual([group.group_id]);
+    expect(calls.filter((path) => path.includes('/selected-page?'))).toHaveLength(1);
+    expect(calls.some((path) => (
+      path.includes('/cross-source/page?')
+      && !path.includes('/selected-page?')
+    ))).toBe(false);
+    expect(calls.some((path) => path.endsWith('/cross-source/search'))).toBe(false);
+  });
+
   it('persists complete per-image choices before planning and executing them', async () => {
     const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

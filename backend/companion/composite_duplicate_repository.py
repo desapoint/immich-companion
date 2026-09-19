@@ -586,11 +586,25 @@ class CompositeDuplicateRepository:
         sort: str = "reclaimable",
         direction: str = "desc",
         state: str = "all",
+        group_ids: list[str] | None = None,
     ) -> CompositeDuplicateSnapshotPage:
         """Read one ordered SQL-filtered page before hydrating its members."""
 
         page = max(1, page)
         page_size = max(1, min(page_size, 100))
+        selected_group_ids = (
+            list(dict.fromkeys(group_ids))
+            if group_ids is not None
+            else None
+        )
+        if selected_group_ids == []:
+            return CompositeDuplicateSnapshotPage(
+                groups=[],
+                total=0,
+                page=page,
+                page_size=page_size,
+                pages=0,
+            )
         offset = (page - 1) * page_size
         source_filter = (
             exists(
@@ -630,6 +644,13 @@ class CompositeDuplicateRepository:
                 .outerjoin(DuplicateGroupReviewRecord, review_join)
                 .where(_unresolved_review_filter())
             )
+
+            if selected_group_ids is not None:
+                selected_filter = CompositeDuplicateGroupRecord.group_id.in_(
+                    selected_group_ids
+                )
+                count_statement = count_statement.where(selected_filter)
+                group_statement = group_statement.where(selected_filter)
 
             if state != "all":
                 decision_count = func.coalesce(

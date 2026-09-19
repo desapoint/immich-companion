@@ -545,6 +545,51 @@ class CrossSourceDuplicateService:
             pages=pages,
         )
 
+    async def review_selected_page(
+        self,
+        options: DuplicateAnalysisOptions | None = None,
+        *,
+        page: int = 1,
+        page_size: int = 6,
+        source: Literal["both", "immich", "similarity"] = "both",
+        sort: Literal[
+            "reclaimable", "members", "similarity", "date", "discovered"
+        ] = "reclaimable",
+        direction: Literal["asc", "desc"] = "desc",
+    ) -> DuplicateSearchPage:
+        """Return one page from the persisted workspace selection only."""
+
+        resolved_options = await self._options(options)
+        workspace = await self.workspace(resolved_options)
+        discover_selected_page = getattr(
+            self._discovery,
+            "discover_selected_page",
+            None,
+        )
+        if not callable(discover_selected_page):
+            raise RuntimeError(
+                "Selected duplicate paging requires the persisted V2 projection"
+            )
+        discovered = await discover_selected_page(
+            workspace.selected_group_ids,
+            page=max(1, page),
+            page_size=max(1, min(page_size, 100)),
+            source=source,
+            sort=sort,
+            direction=direction,
+        )
+        _, _, _, result = await self._snapshot_groups(
+            discovered.groups,
+            resolved_options,
+        )
+        return DuplicateSearchPage(
+            items=result.groups,
+            total=discovered.total,
+            page=discovered.page,
+            page_size=discovered.page_size,
+            pages=discovered.pages,
+        )
+
     async def _snapshot(
         self,
         options: DuplicateAnalysisOptions,

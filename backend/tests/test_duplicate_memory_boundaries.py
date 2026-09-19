@@ -12,6 +12,7 @@ def test_v2_single_group_and_preset_paths_do_not_call_full_result_hydration() ->
 
     methods = (
         CrossSourceDuplicateService.review_page,
+        CrossSourceDuplicateService.review_selected_page,
         CrossSourceDuplicateService.save_review,
         CrossSourceDuplicateService.workspace,
         CrossSourceDuplicateService.save_workspace_selection,

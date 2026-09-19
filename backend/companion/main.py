@@ -2147,6 +2147,32 @@ def create_app(
         except ImmichApiError as error:
             raise map_immich_error(error) from error
 
+    @app.post(
+        "/api/assets/duplicates/cross-source/selected-page",
+        response_model=DuplicateSearchPage,
+    )
+    async def page_selected_cross_source_duplicates(
+        request: DuplicateAnalysisOptions,
+        page: int = Query(default=1, ge=1),
+        page_size: int = Query(default=6, ge=1, le=100),
+        source: Literal["both", "immich", "similarity"] = Query(default="both"),
+        sort: Literal[
+            "reclaimable", "members", "similarity", "date", "discovered"
+        ] = Query(default="reclaimable"),
+        direction: Literal["asc", "desc"] = Query(default="desc"),
+    ) -> DuplicateSearchPage:
+        try:
+            return await require_duplicate_service().review_selected_page(
+                request,
+                page=page,
+                page_size=page_size,
+                source=source,
+                sort=sort,
+                direction=direction,
+            )
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
     @app.get(
         "/api/assets/duplicates/summary",
         response_model=DuplicateDiscoverySummary,

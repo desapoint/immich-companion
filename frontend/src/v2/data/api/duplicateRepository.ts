@@ -575,41 +575,20 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     query: DuplicateSearchQuery,
     page: number,
   ): Promise<ApiDuplicatePage> => {
-    const selected = new Set(workspace.selected_group_ids);
-    if (!selected.size) {
+    if (!workspace.selected_group_ids.length) {
       return { items: [], total: 0, page, page_size: query.pageSize, pages: 0 };
     }
-    const matching: ApiDuplicateGroup[] = [];
-    let scanPage = 1;
-    let scanPages = 1;
-    do {
-      const params = new URLSearchParams({
-        page: String(scanPage),
-        page_size: '100',
-        source: query.source ?? 'both',
-        sort: query.sort?.field ?? 'reclaimable',
-        direction: query.sort?.direction ?? 'desc',
-        state: 'all',
-      });
-      const result = await requestJson<ApiDuplicatePage>(
-        `/api/assets/duplicates/cross-source/page?${params.toString()}`,
-        { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal },
-      );
-      matching.push(...result.items.filter((group) => selected.has(group.group_id)));
-      scanPages = result.pages;
-      scanPage += 1;
-    } while (
-      scanPage <= scanPages
-      && ((query.source ?? 'both') !== 'both' || matching.length < selected.size)
+    const params = new URLSearchParams({
+      page: String(page),
+      page_size: String(query.pageSize),
+      source: query.source ?? 'both',
+      sort: query.sort?.field ?? 'reclaimable',
+      direction: query.sort?.direction ?? 'desc',
+    });
+    return requestJson<ApiDuplicatePage>(
+      `/api/assets/duplicates/cross-source/selected-page?${params.toString()}`,
+      { ...jsonRequest('POST', ANALYSIS_OPTIONS), signal: query.signal },
     );
-    const start = (page - 1) * query.pageSize;
-    return {
-      items: matching.slice(start, start + query.pageSize),
-      total: matching.length,
-      page,
-      page_size: query.pageSize,
-      pages: Math.ceil(matching.length / query.pageSize),
-    };
   };
 
   const keeperSelection = async (
