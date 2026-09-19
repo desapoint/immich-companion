@@ -51,7 +51,7 @@ async def test_policy_refresh_service_waits_for_durable_child_completion() -> No
         async def submit(self, task_type, payload, **kwargs):
             assert task_type == V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE
             assert payload == {}
-            assert kwargs["deduplication_key"] == "current_projection"
+            assert "deduplication_key" not in kwargs
             return task_id
 
         async def start(self):
@@ -78,3 +78,30 @@ async def test_policy_refresh_service_reports_terminal_child_failure() -> None:
 
     with pytest.raises(RuntimeError, match="did not complete"):
         await V2DuplicateReviewStateRefreshService(Tasks()).refresh_after_change()
+
+
+@pytest.mark.asyncio
+async def test_policy_refresh_submissions_do_not_coalesce_across_parent_commits() -> None:
+    submitted: list[dict[str, object]] = []
+
+    class Tasks:
+        next_id = 0
+
+        async def submit(self, task_type, payload, **kwargs):
+            self.next_id += 1
+            submitted.append({"task_type": task_type, "payload": payload, **kwargs})
+            return SimpleNamespace(id=f"task-{self.next_id}")
+
+        async def start(self):
+            return None
+
+        async def wait(self, task_id):
+            return SimpleNamespace(id=task_id, status="completed")
+
+    service = V2DuplicateReviewStateRefreshService(Tasks())
+    first = await service.refresh_after_change()
+    second = await service.refresh_after_change()
+
+    assert first.id == "task-1"
+    assert second.id == "task-2"
+    assert all("deduplication_key" not in item for item in submitted)

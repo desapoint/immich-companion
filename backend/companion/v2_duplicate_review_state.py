@@ -15,7 +15,6 @@ from companion.task_schema import TaskResult
 
 V2_DUPLICATE_REVIEW_STATE_BATCH_SIZE = 250
 V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE = "v2_duplicate_policy_refresh"
-V2_DUPLICATE_POLICY_REFRESH_DEDUPLICATION_KEY = "current_projection"
 V2_DUPLICATE_ANALYSIS_OPTIONS = DuplicateAnalysisOptions(
     keeper_policy="prefer_upload",
     external_library_ids=[],
@@ -163,11 +162,14 @@ class V2DuplicateReviewStateRefreshService:
         self._tasks = tasks
 
     async def refresh_after_change(self) -> object | None:
+        # Do not coalesce refreshes across independently committed parent work.
+        # An older refresh may be reading the previous composite generation while
+        # a newer projection is publishing. Each parent must wait for a refresh
+        # submitted after its own commit boundary.
         task = await self._tasks.submit(
             V2_DUPLICATE_POLICY_REFRESH_TASK_TYPE,
             {},
             priority=17,
-            deduplication_key=V2_DUPLICATE_POLICY_REFRESH_DEDUPLICATION_KEY,
         )
         await self._tasks.start()
         completed = await self._tasks.wait(task.id)
