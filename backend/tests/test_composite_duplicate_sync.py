@@ -20,6 +20,7 @@ from companion.composite_duplicate_sync import (
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
     composite_projection_is_stale,
+    source_change_in_progress,
 )
 from companion.discovery import PersistedCompositeDuplicateProvider
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
@@ -479,3 +480,18 @@ def test_projection_staleness_uses_source_success_watermarks() -> None:
     assert composite_projection_is_stale(current, old, current) is False
     assert composite_projection_is_stale(current, newer, old) is True
     assert composite_projection_is_stale(current, old, newer) is True
+
+
+
+def test_active_source_work_defers_startup_projection_refresh() -> None:
+    tasks = [
+        SimpleNamespace(task_type="similarity_scan", status="recovering"),
+        SimpleNamespace(task_type="other", status="running"),
+    ]
+    assert source_change_in_progress(tasks) is True
+    assert source_change_in_progress(
+        [SimpleNamespace(task_type="similarity_scan", status="paused")]
+    ) is False
+    assert source_change_in_progress(
+        [SimpleNamespace(task_type="composite_duplicate_rebuild", status="running")]
+    ) is False

@@ -21,8 +21,24 @@ from companion.task_schema import TaskResult
 
 COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE = "composite_duplicate_rebuild"
 COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY = "authoritative_projection"
+SOURCE_CHANGING_TASK_TYPES = frozenset(
+    {"immich_duplicate_sync", "similarity_scan", "similarity_maintenance"}
+)
+SOURCE_CHANGING_ACTIVE_STATUSES = frozenset(
+    {"queued", "running", "retrying", "recovering", "pause_requested", "cancel_requested"}
+)
 
 logger = logging.getLogger("uvicorn.error")
+
+
+def source_change_in_progress(tasks: list[object]) -> bool:
+    """Return whether source-changing work can still publish a newer generation."""
+
+    return any(
+        getattr(task, "task_type", None) in SOURCE_CHANGING_TASK_TYPES
+        and getattr(task, "status", None) in SOURCE_CHANGING_ACTIVE_STATUSES
+        for task in tasks
+    )
 
 
 def composite_projection_is_stale(

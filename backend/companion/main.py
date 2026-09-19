@@ -81,6 +81,7 @@ from companion.composite_duplicate_sync import (
     CompositeDuplicateSyncService,
     FollowUpTaskHandler,
     composite_projection_is_stale,
+    source_change_in_progress,
 )
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
@@ -689,9 +690,13 @@ def create_app(
                     immich_metadata.last_success_at,
                     similarity_summary.completed_at if similarity_summary is not None else None,
                 )
+            active_source_change = source_change_in_progress(
+                await task_coordinator.list(active_only=True, limit=100)
+            )
             if (
                 composite_duplicate_sync_service is not None
                 and maintenance_task is None
+                and not active_source_change
                 and projection_stale
             ):
                 # Pending maintenance owns its follow-up, and a current projection needs
