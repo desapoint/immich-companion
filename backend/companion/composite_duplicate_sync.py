@@ -13,6 +13,7 @@ from companion.composite_duplicate_repository import (
     CompositeDuplicateSnapshotMetadata,
 )
 from companion.discovery.base import GroupDiscoveryProvider
+from companion.runtime_metrics import reclaim_process_memory
 from companion.similarity_generation import SimilarityEvidenceEpochRepository
 from companion.task_coordinator import PermanentTaskError, TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult
@@ -208,6 +209,7 @@ class FollowUpTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         result = await self._delegate.execute(context, payload)
+        reclaim_process_memory()
         await context.checkpoint(
             checkpoint={"phase": "publishing_results"},
             counters=result.counters,

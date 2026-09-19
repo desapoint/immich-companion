@@ -438,3 +438,31 @@ async def test_follow_up_failure_fails_the_parent_task() -> None:
 
     with pytest.raises(RuntimeError, match="projection failed"):
         await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+
+
+
+@pytest.mark.asyncio
+async def test_follow_up_reclaims_delegate_memory_before_projection(monkeypatch) -> None:
+    events: list[str] = []
+
+    class Delegate:
+        task_type = "source"
+        lane_key = "source"
+        max_concurrency = 1
+
+        async def execute(self, _context, _payload):
+            events.append("source")
+            return TaskResult(summary={}, counters={})
+
+    async def follow_up():
+        events.append("projection")
+        return None
+
+    monkeypatch.setattr(
+        "companion.composite_duplicate_sync.reclaim_process_memory",
+        lambda: events.append("cleanup"),
+    )
+
+    await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})
+
+    assert events == ["source", "cleanup", "projection"]
