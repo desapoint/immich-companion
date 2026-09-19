@@ -773,7 +773,7 @@ describe('live V2 duplicate repository', () => {
 
 
 
-test('shows projection publication as an explicit discovery loading phase', async () => {
+it('shows projection publication as an explicit discovery loading phase', async () => {
   const task = {
     id: 'projection-task',
     type: 'similarity_scan',
