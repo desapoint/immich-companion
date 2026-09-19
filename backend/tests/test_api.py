@@ -129,21 +129,25 @@ def test_disposable_seed_state_is_available_only_in_test_environment(tmp_path: P
 
 
 def test_frontend_assets_are_served_without_shadowing_api_routes(tmp_path: Path) -> None:
-    (tmp_path / "assets").mkdir()
+    (tmp_path / "static" / "assets").mkdir(parents=True)
     (tmp_path / "index.html").write_text("<h1>Compiled companion frontend</h1>")
-    (tmp_path / "assets" / "app.js").write_text("console.log('companion')")
+    (tmp_path / "static" / "assets" / "app.js").write_text("console.log('companion')")
 
     configured = settings(companion_frontend_dir=tmp_path)
     with TestClient(create_app(configured, pong_transport())) as client:
         page = client.get("/")
         nested_page = client.get("/future/search")
-        asset = client.get("/assets/app.js")
+        assets_page = client.get("/assets")
+        asset_detail_page = client.get("/assets/11111111-2222-4333-8444-555555555555")
+        asset = client.get("/static/assets/app.js")
         health = client.get("/api/health")
         missing_api = client.get("/api/not-implemented")
 
     assert page.status_code == 200
     assert "Compiled companion frontend" in page.text
     assert nested_page.text == page.text
+    assert assets_page.text == page.text
+    assert asset_detail_page.text == page.text
     assert asset.text == "console.log('companion')"
     assert health.status_code == 200
     assert missing_api.status_code == 404

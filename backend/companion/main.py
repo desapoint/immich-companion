@@ -2780,10 +2780,10 @@ def create_app(
     frontend_index = frontend_dir / "index.html" if frontend_dir else None
 
     if frontend_index and frontend_index.is_file():
-        frontend_assets = frontend_dir / "assets"
+        frontend_assets = frontend_dir / "static" / "assets"
         if frontend_assets.is_dir():
             app.mount(
-                "/assets",
+                "/static/assets",
                 StaticFiles(directory=frontend_assets),
                 name="frontend-assets",
             )

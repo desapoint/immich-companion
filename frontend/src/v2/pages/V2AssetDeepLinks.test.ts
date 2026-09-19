@@ -9,7 +9,7 @@ const admissionEvidence = readFileSync(
 );
 
 describe('V2 asset deep links', () => {
-  it('opens and keeps the asset viewer synchronized with /v2/assets/:assetId', () => {
+  it('opens and keeps the asset viewer synchronized with /assets/:assetId', () => {
     expect(assetsPage).toContain('v2AssetIdFromPath');
     expect(assetsPage).toContain('v2AssetViewerPath');
     expect(assetsPage).toContain('onpopstate={syncViewerFromLocation}');

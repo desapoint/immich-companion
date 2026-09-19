@@ -42,7 +42,7 @@ describe('V2DuplicateAdmissionEvidence', () => {
     });
 
     expect(body).toContain('v2-linked-admission-pill');
-    expect(body).toContain('href="/v2/assets/asset-2"');
+    expect(body).toContain('href="/assets/asset-2"');
     expect(body).toContain('target="_blank"');
     expect(body).toContain('rel="noopener noreferrer"');
     expect(body).toContain('Linked through bridge.jpg; 1 image in between the group admission reference and this image.');
