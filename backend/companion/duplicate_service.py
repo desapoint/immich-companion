@@ -1962,7 +1962,7 @@ class CrossSourceDuplicateService:
             return DuplicateKeeperSelectionResult(**counts, limit_exceeded=True)
 
         options = await self._options(request.options)
-        batch_size = max(1, min(250, self._settings.sync_batch_size))
+        batch_size = max(1, min(250, getattr(self._settings, "sync_batch_size", 250)))
         for offset in range(0, len(target_ids), batch_size):
             batch_ids = target_ids[offset : offset + batch_size]
             discovered = await self._groups_by_ids(batch_ids)
@@ -2084,7 +2084,7 @@ class CrossSourceDuplicateService:
                 raise RuntimeError(
                     "All-matching duplicate presets require the persisted V2 projection"
                 )
-            limit = self._settings.action_max_targets
+            limit = getattr(self._settings, "action_max_targets", 5000)
             resolved_ids = await resolver(
                 source=request.source_filter,
                 state=self._review_state_query(request.review_filter),

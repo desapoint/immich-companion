@@ -19,7 +19,6 @@ import type {
 } from '../contracts';
 import type { TaskRecord, TaskRepository } from '../syncContracts';
 import { referenceFirstDuplicateMembers } from '../duplicatePresentation';
-import { matchesDuplicateSource } from '../duplicateSource';
 import { parseStackResolution, serializeStackResolution } from '../stackResolution';
 
 type AnalysisOptions = {

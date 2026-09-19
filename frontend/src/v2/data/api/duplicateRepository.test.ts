@@ -99,6 +99,16 @@ function response(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 }
 
+function asPage(value = duplicateResult) {
+  return {
+    items: value.groups,
+    total: value.group_count,
+    page: 1,
+    page_size: Math.max(1, value.groups.length),
+    pages: value.group_count ? 1 : 0,
+  };
+}
+
 function tasks(): TaskRepository {
   return { get: vi.fn(async () => ({ status: 'completed', result: { summary: { failed_group_ids: [] } } })) } as unknown as TaskRepository;
 }
@@ -189,6 +199,30 @@ describe('live V2 duplicate repository', () => {
     expect(fetcher.mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);
   });
 
+  it('selects all groups through the ID-only endpoint without hydrating result pages', async () => {
+    const calls: Array<{ path: string; body: Record<string, unknown> | null }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : null;
+      calls.push({ path, body });
+      if (path.includes('/group-ids?')) {
+        return response({ group_ids: [group.group_id], limit_exceeded: false });
+      }
+      if (path.endsWith('/workspace/selection')) {
+        return response({ ...emptyWorkspace, selected_group_ids: [group.group_id] });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    const selected = await repository.selectAllGroups();
+
+    expect(selected).toEqual([group.group_id]);
+    expect(calls[0]?.path).toContain('/api/assets/duplicates/group-ids?');
+    expect(calls.some((call) => call.path.includes('/cross-source/page'))).toBe(false);
+    expect(calls.some((call) => call.path.endsWith('/cross-source/search'))).toBe(false);
+  });
+
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {
     const requests: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -224,7 +258,7 @@ describe('live V2 duplicate repository', () => {
         stale: false,
       }],
     };
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(selectedWorkspace) : response(duplicateResult)));
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(selectedWorkspace) : response(asPage(duplicateResult))));
     const fetcher = vi.mocked(fetch);
     const repository = createDuplicateRepository(tasks());
 
@@ -296,7 +330,7 @@ describe('live V2 duplicate repository', () => {
       }],
     };
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) =>
-      String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(evidenceResult)));
+      String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(asPage(evidenceResult))));
     const repository = createDuplicateRepository(tasks());
 
     const result = await repository.search({ page: 1, pageSize: 1, state: 'All groups' });
@@ -353,7 +387,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
-      if (path.includes('/cross-source/page?')) return response(duplicateResult);
+      if (path.includes('/cross-source/page?')) return response(asPage(duplicateResult));
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
@@ -394,7 +428,7 @@ describe('live V2 duplicate repository', () => {
   });
 
   it('rejects incomplete groups before creating an action plan', async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(duplicateResult));
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(asPage(duplicateResult)));
     vi.stubGlobal('fetch', fetcher);
     const repository = createDuplicateRepository(tasks());
     await repository.search({ page: 1, pageSize: 10 });
@@ -428,7 +462,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
-      if (path.includes('/cross-source/page?')) return response(resultWithOverlap);
+      if (path.includes('/cross-source/page?')) return response(asPage(resultWithOverlap));
       if (path.endsWith('/cross-source/search')) return response(resultWithOverlap);
       if (path.endsWith('/workspace') && init?.method !== 'PUT') return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return response({ ...emptyWorkspace, ...body, discovery_source: 'immich_duplicate', stale: false });
@@ -480,7 +514,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
-      if (path.includes('/cross-source/page?')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
+      if (path.includes('/cross-source/page?')) return response(asPage({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] }));
       if (path.endsWith('/cross-source/search')) return response({ ...duplicateResult, group_count: 2, groups: [group, secondGroup] });
       if (path.endsWith('/workspace')) return response(selectedWorkspace);
       if (path.endsWith('/cross-source/plan')) return response({ id: 'off-page-plan', groups: planGroups, destructive: true });
@@ -507,7 +541,7 @@ describe('live V2 duplicate repository', () => {
     const pendingWrite = new Promise<Response>((resolve) => { completeWrite = resolve; });
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      if (path.includes('/cross-source/page?')) return response(duplicateResult);
+      if (path.includes('/cross-source/page?')) return response(asPage(duplicateResult));
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return pendingWrite;
@@ -535,7 +569,7 @@ describe('live V2 duplicate repository', () => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       calls.push({ path, body });
-      if (path.includes('/cross-source/page?')) return response(duplicateResult);
+      if (path.includes('/cross-source/page?')) return response(asPage(duplicateResult));
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace/reset')) return response({ ...emptyWorkspace, cleared_group_count: 1 });
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
@@ -559,7 +593,7 @@ describe('live V2 duplicate repository', () => {
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
       calls.push(path);
-      if (path.includes('/cross-source/page?')) return response(duplicateResult);
+      if (path.includes('/cross-source/page?')) return response(asPage(duplicateResult));
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       if (path.endsWith('/workspace/group')) return response({ detail: 'draft failed' }, 500);
       if (path.endsWith('/workspace/reset')) return response({ ...emptyWorkspace, cleared_group_count: 1 });
@@ -590,7 +624,7 @@ describe('live V2 duplicate repository', () => {
     };
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
       const path = String(input);
-      if (path.includes('/cross-source/page?')) return response(duplicateResult);
+      if (path.includes('/cross-source/page?')) return response(asPage(duplicateResult));
       if (path.endsWith('/cross-source/search')) return response(duplicateResult);
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
       if (path.includes('/similarity-reference')) return response(switched);
@@ -627,17 +661,18 @@ describe('live V2 duplicate repository', () => {
         similarityBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return response({task_id:'similarity-task'},202);
       }
-      if (path.includes('/cross-source/page?')) return response(duplicateResult);
-      if (path.endsWith('/cross-source/search')) return response(duplicateResult);
+      if (path.endsWith('/summary')) return response({group_count:1,member_count:2});
       throw new Error(`Unexpected request: ${path}`);
     }));
     const progress: number[] = [];
     const repository = createDuplicateRepository(taskRepository);
 
-    await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
+    const result = await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
 
+    expect(result).toEqual({groupCount:1,candidateCount:2});
     expect(progress).toEqual([25,98,99]);
     expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1]});
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);
   });
 
   it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{
