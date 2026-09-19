@@ -5,6 +5,9 @@ const backendProxyTarget = process.env.VITE_BACKEND_PROXY_TARGET ?? 'http://127.
 
 export default defineConfig({
   plugins: [svelte()],
+  build: {
+    assetsDir: 'static/assets',
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,
