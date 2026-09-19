@@ -29,11 +29,8 @@ export function stepComparisonTargetId(
 ): string {
   if (ids.length < 2) return ids[0] ?? visibleId;
   const start = ids.indexOf(visibleId);
-  const origin = start >= 0 ? start : ids.indexOf(referenceId);
+  const referenceIndex = ids.indexOf(referenceId);
+  const origin = start >= 0 ? start : referenceIndex >= 0 ? referenceIndex : 0;
   const step = direction === 'next' ? 1 : -1;
-  for (let offset = 1; offset < ids.length; offset += 1) {
-    const candidate = ids[(origin + step * offset + ids.length * 2) % ids.length];
-    if (candidate !== referenceId) return candidate;
-  }
-  return visibleId;
+  return ids[(origin + step + ids.length) % ids.length] ?? visibleId;
 }
