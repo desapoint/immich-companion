@@ -746,7 +746,12 @@ describe('live V2 duplicate repository', () => {
     expect(result).toEqual({groupCount:1,candidateCount:2});
     expect(progress).toEqual([25,98,99]);
     expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1]});
-    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).endsWith('/cross-source/search'))).toBe(false);
+    const discoveryCalls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
+    expect(discoveryCalls.filter((path) => path.endsWith('/cross-source/analyze'))).toHaveLength(1);
+    expect(discoveryCalls.filter((path) => path.endsWith('/similarity-scan'))).toHaveLength(1);
+    expect(discoveryCalls.findIndex((path) => path.endsWith('/cross-source/analyze')))
+      .toBeLessThan(discoveryCalls.findIndex((path) => path.endsWith('/similarity-scan')));
+    expect(discoveryCalls.some((path) => path.endsWith('/cross-source/search'))).toBe(false);
   });
 
   it('maps cache telemetry and returns refreshed status after clearing one bucket', async()=>{
