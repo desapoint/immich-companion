@@ -275,17 +275,19 @@ class CompositeDuplicateRebuildTaskHandler:
 
 
 class CompositeDuplicateSyncService:
-    """Submit and await idempotent composite projection rebuilds."""
+    """Submit and await one serialized rebuild per committed source change."""
 
     def __init__(self, tasks: TaskCoordinator) -> None:
         self._tasks = tasks
 
     async def start(self) -> UUID:
+        # Source tasks have independent commit boundaries. Never coalesce a later
+        # source commit into an older in-flight projection rebuild; the composite
+        # lane already serializes these tasks without losing generations.
         task = await self._tasks.submit(
             COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE,
             {},
             priority=18,
-            deduplication_key=COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY,
         )
         await self._tasks.start()
         return task.id

@@ -379,7 +379,7 @@ async def test_rebuild_handler_streams_bounded_batches_when_supported() -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_service_uses_one_deduplicated_durable_rebuild() -> None:
+async def test_sync_service_submits_one_isolated_durable_rebuild() -> None:
     class Tasks:
         submitted = None
         started = 0
@@ -396,7 +396,7 @@ async def test_sync_service_uses_one_deduplicated_durable_rebuild() -> None:
 
     assert task_id == TASK_ID
     assert tasks.submitted[0] == (COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE, {})
-    assert tasks.submitted[1]["deduplication_key"] == COMPOSITE_DUPLICATE_REBUILD_DEDUPLICATION_KEY
+    assert "deduplication_key" not in tasks.submitted[1]
     assert tasks.started == 1
 
 
@@ -575,3 +575,27 @@ async def test_startup_reconcile_skips_projection_when_sources_made_it_current()
         "projection_refreshed": False,
         "reason": "already_current",
     }
+
+
+@pytest.mark.asyncio
+async def test_sync_service_does_not_coalesce_distinct_source_commits() -> None:
+    submitted: list[dict[str, object]] = []
+
+    class Tasks:
+        next_id = 0
+
+        async def submit(self, _task_type, _payload, **kwargs):
+            self.next_id += 1
+            submitted.append(kwargs)
+            return SimpleNamespace(id=UUID(int=self.next_id))
+
+        async def start(self):
+            return None
+
+    service = CompositeDuplicateSyncService(Tasks())
+    first = await service.start()
+    second = await service.start()
+
+    assert first != second
+    assert len(submitted) == 2
+    assert all("deduplication_key" not in item for item in submitted)
