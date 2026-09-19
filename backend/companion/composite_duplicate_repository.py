@@ -289,6 +289,31 @@ class CompositeDuplicateRepository:
                 last_success_at=state.last_success_at,
             )
 
+    async def unresolved_counts(self) -> tuple[int, int]:
+        """Count reviewable groups and members without hydrating duplicate records."""
+
+        review_join = and_(
+            DuplicateGroupReviewRecord.stable_group_key
+            == CompositeDuplicateGroupRecord.stable_group_key,
+            DuplicateGroupReviewRecord.member_fingerprint
+            == CompositeDuplicateGroupRecord.member_fingerprint,
+        )
+        statement = (
+            select(
+                func.count(CompositeDuplicateGroupRecord.group_id),
+                func.coalesce(
+                    func.sum(CompositeDuplicateGroupRecord.member_count),
+                    0,
+                ),
+            )
+            .select_from(CompositeDuplicateGroupRecord)
+            .outerjoin(DuplicateGroupReviewRecord, review_join)
+            .where(_unresolved_review_filter())
+        )
+        async with self._database.sessions() as session:
+            group_count, member_count = (await session.execute(statement)).one()
+        return int(group_count or 0), int(member_count or 0)
+
     async def identities(
         self,
         *,

@@ -2184,10 +2184,13 @@ def create_app(
                 detail="The persisted duplicate projection is unavailable.",
             )
         metadata = await composite_duplicate_repository.metadata()
+        group_count, member_count = (
+            await composite_duplicate_repository.unresolved_counts()
+        )
         return DuplicateDiscoverySummary(
             authoritative_generation=metadata.authoritative_generation,
-            group_count=metadata.group_count,
-            member_count=metadata.member_count,
+            group_count=group_count,
+            member_count=member_count,
             evidence_count=metadata.evidence_count,
             last_success_at=metadata.last_success_at,
         )
