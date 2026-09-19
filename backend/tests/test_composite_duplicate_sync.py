@@ -414,3 +414,20 @@ async def test_follow_up_handler_runs_only_after_delegate_success() -> None:
 
     assert isinstance(result, TaskResult)
     assert events == ["source", "composite"]
+
+
+@pytest.mark.asyncio
+async def test_follow_up_failure_fails_the_parent_task() -> None:
+    class Delegate:
+        task_type = "source"
+        lane_key = "source"
+        max_concurrency = 1
+
+        async def execute(self, _context, _payload):
+            return TaskResult(summary={}, counters={})
+
+    async def follow_up():
+        raise RuntimeError("projection failed")
+
+    with pytest.raises(RuntimeError, match="projection failed"):
+        await FollowUpTaskHandler(Delegate(), follow_up).execute(Context(), {})

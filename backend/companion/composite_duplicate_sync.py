@@ -186,17 +186,13 @@ class CompositeDuplicateSyncService:
         return completed
 
     async def start_after_source_change(self) -> object | None:
-        """Best-effort durable follow-up that must not fail the source task."""
+        """Publish the source change and fail the parent task if publication fails."""
 
-        try:
-            return await self.refresh_and_wait()
-        except Exception:
-            logger.exception("Could not rebuild composite duplicate projection")
-            return None
+        return await self.refresh_and_wait()
 
 
 class FollowUpTaskHandler:
-    """Run one best-effort durable follow-up after a delegate task succeeds."""
+    """Run one required follow-up after a delegate task succeeds."""
 
     def __init__(
         self,
@@ -212,11 +208,5 @@ class FollowUpTaskHandler:
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         result = await self._delegate.execute(context, payload)
-        try:
-            await self._after_success()
-        except Exception:
-            logger.exception(
-                "Task %s completed but its composite duplicate follow-up failed",
-                self.task_type,
-            )
+        await self._after_success()
         return result
