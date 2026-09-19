@@ -3,7 +3,7 @@ import { mount } from 'svelte';
 import App from './app/App.svelte';
 import AppRuntimeError from './app/components/AppRuntimeError.svelte';
 import { errorMessage } from './lib/utils/errors';
-import { legacyV2RedirectPath } from './v2/navigation';
+import { legacyV2RedirectPath } from './app/navigation';
 import './styles/reset.css';
 
 const target = document.getElementById('app');

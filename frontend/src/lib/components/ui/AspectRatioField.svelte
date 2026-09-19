@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { aspectRatioValidationMessage } from '../../utils/aspectRatio';
+  import Button from './Button.svelte';
+  import { aspectRatioValidationMessage, formatAspectDecimal, invertAspectRatio, parseAspectRatio } from '../../utils/aspectRatio';
 
   interface Props {
     id: string;
@@ -32,6 +33,18 @@
     onchange(input.value);
   }
 
+  const parsed = $derived(parseAspectRatio(value));
+  const counterpart = $derived(parsed
+    ? parsed.source === 'ratio'
+      ? `${parsed.ratio} = ${formatAspectDecimal(parsed.decimal)}`
+      : `${formatAspectDecimal(parsed.decimal)} ≈ ${parsed.ratio}`
+    : '');
+
+  function invert(): void {
+    const next = invertAspectRatio(value);
+    if (next) onchange(next);
+  }
+
   $effect(() => {
     value;
     if (inputElement) validate(inputElement, value);
@@ -40,20 +53,23 @@
 
 <label class:compact>
   <span>{label}</span>
-  <input
-    bind:this={inputElement}
-    {id}
-    type="text"
-    inputmode="decimal"
-    autocomplete="off"
-    placeholder="16/9 or 1.7778"
-    aria-describedby={`${id}-hint`}
-    {value}
-    {disabled}
-    {required}
-    oninput={update}
-  />
-  <small id={`${id}-hint`}>Positive decimals and fractions are accepted.</small>
+  <div class="aspect-ratio-input-row">
+    <input
+      bind:this={inputElement}
+      {id}
+      type="text"
+      inputmode="decimal"
+      autocomplete="off"
+      placeholder="16/9 or 1.7778"
+      aria-describedby={`${id}-hint`}
+      {value}
+      {disabled}
+      {required}
+      oninput={update}
+    />
+    <Button disabled={disabled || !parsed} onclick={invert}>Invert</Button>
+  </div>
+  <small id={`${id}-hint`}>{counterpart || 'Positive decimals and fractions are accepted.'}</small>
 </label>
 
 <style>
@@ -81,6 +97,13 @@
     color: var(--color-ink-strong);
     background: var(--color-canvas);
     font: inherit;
+  }
+
+  .aspect-ratio-input-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0.45rem;
+    align-items: center;
   }
 
   .compact input {

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { buildPaginationItems } from '../../utils/pagination';
-  import SelectField from './SelectField.svelte';
+  import SimpleSelectField from './SimpleSelectField.svelte';
 
   interface Props {
     currentPage: number;
@@ -87,7 +87,7 @@
   >
     {#if showPageSize}
       <div class="page-size">
-        <SelectField
+        <SimpleSelectField
           id={`${componentId}-page-size`}
           label="Items per page"
           value={String(pageSize)}
