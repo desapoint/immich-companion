@@ -80,7 +80,7 @@
   role="group"
   aria-label="Flicker comparison"
 >
-  <div class="v2-compare-layer">
+  <div class="v2-compare-layer v2-flicker-selected" class:inactive={showReference} aria-hidden={showReference}>
     <div class="v2-compare-transform" style={`transform:${transform}`}>
       <img src={selectedSrc} alt={selectedLabel} onload={onselectedload} onerror={onselectederror}>
     </div>

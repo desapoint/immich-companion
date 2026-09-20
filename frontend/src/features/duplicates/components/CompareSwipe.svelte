@@ -70,7 +70,7 @@
 </script>
 
 <div class="v2-compare-overlay mode-swipe" bind:this={viewport}>
-  <div class="v2-compare-layer"><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedSrc} alt={selectedLabel} onload={onselectedload} onerror={onselectederror}></div></div>
+  <div class="v2-compare-layer selected-side" style={`clip-path:inset(0 0 0 ${split}%)`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedSrc} alt={selectedLabel} onload={onselectedload} onerror={onselectederror}></div></div>
   <div class="v2-compare-layer top" style={`clip-path:inset(0 ${100 - split}% 0 0)`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceSrc} alt={referenceLabel} onload={onreferenceload} onerror={onreferenceerror}></div></div>
   <div class="v2-compare-split-line" style={`left:${split}%`}></div>
   <div class="v2-compare-split-handle" style={`left:${split}%`}>↔</div>
