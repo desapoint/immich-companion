@@ -4,46 +4,22 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import UTC, datetime, timedelta
-from typing import Literal
-from urllib.parse import urlsplit
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
-from croniter import CroniterBadCronError, croniter
 from fastapi import (
     FastAPI,
     HTTPException,
-    Query,
-    Request,
     Response,
-    WebSocket,
-    WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, model_validator
 
+from companion.action_duplicate_routes import register_action_duplicate_routes
 from companion.action_repository import ActionRepository
-from companion.action_schema import (
-    AssetActionExecuteRequest,
-    AssetActionPlan,
-    AssetActionPlanRequest,
-    AssetActionResult,
-    AssetActionTaskStart,
-    AssetSelectionCapabilities,
-    AssetSelectionRelationships,
-    AssetSelectionRequest,
-    AssetSelectionResolution,
-    SelectionSetMembershipRequest,
-    SelectionSetMembershipResponse,
-    SelectionSetMembersRequest,
-    SelectionSetView,
-)
 from companion.action_service import (
     ActionPlanConflictError,
     ActionPlanNotFoundError,
@@ -54,27 +30,12 @@ from companion.action_service import (
     selection_digest,
 )
 from companion.asset_repository import AssetRepository
+from companion.asset_routes import register_asset_routes
 from companion.asset_schema import (
-    AlbumOption,
-    AssetDetail,
-    AssetSearchMatchRequest,
-    AssetSearchQuery,
     AssetSearchResponse,
-    AssetSelectionSyncResult,
-    AssetSortDirection,
-    AssetSortField,
     AssetSummary,
-    AssetSyncResult,
-    StructuredAssetSearchQuery,
-    TagOption,
 )
 from companion.asset_service import AssetSyncService, batches
-from companion.collection_delete_service import (
-    CollectionDeletePlanBusyError,
-    CollectionDeletePlanError,
-    CollectionDeleteService,
-    tag_delete_targets,
-)
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
 from companion.composite_duplicate_sync import (
     CompositeDuplicateRebuildTaskHandler,
@@ -95,97 +56,45 @@ from companion.discovery import (
 )
 from companion.duplicate_discovery_settings import (
     DuplicateDiscoverySettingsRepository,
-    DuplicateDiscoverySettingsUpdate,
 )
-from companion.duplicate_policy import DuplicatePolicy, DuplicatePolicyRepository
+from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
+from companion.duplicate_routes import register_duplicate_routes
 from companion.duplicate_schema import (
-    CrossSourceDuplicateResult,
-    CrossSourceDuplicateTaskStart,
-    DuplicateAnalysisOptions,
-    DuplicateDiscoverySummary,
-    DuplicateGroupDraft,
-    DuplicateGroupDraftUpdate,
-    DuplicateGroupIdsResult,
-    DuplicateKeeperSelectionRequest,
-    DuplicateKeeperSelectionResult,
-    DuplicateResolutionExecuteRequest,
-    DuplicateResolutionPlan,
-    DuplicateResolutionPlanRequest,
-    DuplicateReviewUpdate,
-    DuplicateSearchPage,
-    DuplicateSimilarityReferenceRequest,
-    DuplicateWorkspaceMembership,
-    DuplicateWorkspaceMembershipRequest,
-    DuplicateWorkspacePresetRequest,
-    DuplicateWorkspaceResetRequest,
-    DuplicateWorkspaceSelectionDelta,
-    DuplicateWorkspaceSelectionUpdate,
-    DuplicateWorkspaceState,
-    ExactDuplicateGroup,
-    SimilarityCacheClearRequest,
-    SimilarityCacheClearResult,
     SimilarityCacheStatus,
     SimilarityDiskCacheStatus,
-    SimilarityIndexCoverage,
-    SimilarityIndexTaskStart,
-    SimilarityScanRequest,
-    SimilarityScanSummary,
-    SimilarityScanTaskStart,
 )
 from companion.duplicate_service import (
     CrossSourceDuplicateService,
-    CrossSourceDuplicateTaskHandler,
 )
+from companion.duplicate_task_handlers import CrossSourceDuplicateTaskHandler
+from companion.frontend_routes import register_frontend_routes
+from companion.health_routes import register_health_routes
 from companion.immich import (
-    ImmichAlbum,
     ImmichApiClient,
     ImmichApiError,
-    ImmichLibrary,
     ImmichTag,
 )
 from companion.immich_duplicate_repository import ImmichDuplicateRepository
 from companion.immich_duplicate_sync import (
     ImmichDuplicateSyncService,
-    ImmichDuplicateSyncStatus,
     ImmichDuplicateSyncTaskHandler,
-    ImmichDuplicateSyncTaskStart,
     RefreshingDuplicateResolutionTaskHandler,
 )
 from companion.integrity_repository import IntegrityRepository
-from companion.integrity_schema import (
-    AssetIntegrityAnalyzeRequest,
-    AssetIntegrityAnalyzeResponse,
-    AssetIntegrityState,
-)
 from companion.integrity_service import (
-    IntegrityAssetUnavailableError,
     IntegrityService,
     IntegrityTaskHandler,
 )
-from companion.media_proxy import media_stream_response
-from companion.migrate import run_migrations
-from companion.relation_schema import (
-    AlbumCreateRequest,
-    AlbumManagementItem,
-    AlbumUpdateRequest,
-    CollectionDeleteExecuteRequest,
-    CollectionDeleteItemResult,
-    CollectionDeletePlan,
-    CollectionDeletePlanRequest,
-    RelationBatchDeleteRequest,
-    RelationMatchingSelectionRequest,
-    RelationMatchingSelectionState,
-    RelationPage,
-    RelationSelectAllRequest,
-    RelationSelectionMembershipRequest,
-    RelationSelectionMembersRequest,
-    TagCreateRequest,
-    TagManagementItem,
-    TagUpdateRequest,
+from companion.media_restore_routes import (
+    RestoreRequest,
+    register_media_restore_routes,
+    restore_batch_with_accounting,
 )
-from companion.selection_repository import RelationEntityKind, RelationSelectionRepository
-from companion.similarity_cache import CachedPreview, SimilarityCacheManager
+from companion.migrate import run_migrations
+from companion.relation_routes import register_relation_management_routes
+from companion.selection_repository import RelationSelectionRepository
+from companion.similarity_cache import SimilarityCacheManager
 from companion.similarity_detail_api import register_similarity_detail_routes
 from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_generation import SimilarityEvidenceDestroyTaskHandler
@@ -202,30 +111,31 @@ from companion.similarity_maintenance import (
 from companion.similarity_repository import SimilarityRepository
 from companion.similarity_scan_repository import SimilarityScanRepository
 from companion.similarity_scan_service import (
-    SimilarityScanAlreadyRunningError,
     SimilarityScanService,
     SimilarityScanTaskHandler,
 )
 from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.similarity_settings import (
     SimilarityRuntimeSettingsRepository,
-    SimilarityRuntimeSettingsUpdate,
 )
 from companion.stack_service import StackService
 from companion.sync_repository import SyncRepository
-from companion.sync_schema import (
-    SyncCoordinatorStatus,
-    SyncRunStatus,
-    SyncStartRequest,
-)
-from companion.sync_settings import SyncRuntimeSettingsRepository, SyncRuntimeSettingsUpdate
+from companion.sync_settings import SyncRuntimeSettingsRepository
+from companion.sync_settings_routes import register_sync_settings_routes
 from companion.task_coordinator import TaskCoordinator
-from companion.task_schema import TaskEvent, TaskScheduleUpdate, TaskScheduleView, TaskStatusView
 from companion.v2_duplicate_review_state import (
     V2DuplicateReviewStateRefreshService,
     V2DuplicateReviewStateRefreshTaskHandler,
     V2DuplicateReviewStateService,
 )
+
+__all__ = [
+    "RestoreRequest",
+    "create_app",
+    "matching_tag_ids",
+    "restore_batch_with_accounting",
+    "tag_subtree_ids",
+]
 
 
 def tag_subtree_ids(catalog: list[ImmichTag]) -> dict[UUID, list[UUID]]:
@@ -273,52 +183,6 @@ def matching_tag_ids(catalog: list[ImmichTag], query: str, include_hierarchy: bo
     return list(
         dict.fromkeys(descendant_id for tag in matching for descendant_id in subtrees[tag.id])
     )
-
-
-class RestoreRequest(BaseModel):
-    """A bounded restore target with optional server-side exclusions."""
-
-    ids: list[UUID] = Field(default_factory=list, max_length=10_000)
-    all: bool = False
-    excluded_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
-
-    @model_validator(mode="after")
-    def validate_target(self) -> RestoreRequest:
-        if self.all == bool(self.ids):
-            raise ValueError("Specify either one or more ids or all=true.")
-        if self.ids and self.excluded_ids:
-            raise ValueError("excluded_ids are only valid with all=true.")
-        if len(set(self.excluded_ids)) != len(self.excluded_ids):
-            raise ValueError("excluded_ids must be unique.")
-        return self
-
-
-async def restore_batch_with_accounting(
-    asset_ids: list[UUID],
-    restore_targets: Callable[[list[UUID]], Awaitable[None]],
-    get_asset: Callable[[UUID], Awaitable[object]],
-) -> tuple[int, list[UUID]]:
-    """Restore one bounded batch and classify provider-side partial success."""
-
-    try:
-        await restore_targets(asset_ids)
-    except ImmichApiError:
-        async def still_trashed(asset_id: UUID) -> bool:
-            try:
-                return bool((await get_asset(asset_id)).is_trashed)  # type: ignore[attr-defined]
-            except ImmichApiError:
-                return True
-
-        statuses = await asyncio.gather(*(still_trashed(asset_id) for asset_id in asset_ids))
-        return (
-            sum(not trashed for trashed in statuses),
-            [
-                asset_id
-                for asset_id, trashed in zip(asset_ids, statuses, strict=True)
-                if trashed
-            ],
-        )
-    return len(asset_ids), []
 
 
 def create_app(
@@ -811,83 +675,7 @@ def create_app(
             media_type="application/json",
         )
 
-    async def health_payload() -> dict[str, object]:
-        immich_status, database_status = await asyncio.gather(
-            immich.check(),
-            database_health.check(),
-        )
-        database_ready = database_status["status"] in {"ok", "not_configured"}
-        ready = immich_status["status"] == "ok" and database_ready
-        return {
-            "status": "ok" if ready else "degraded",
-            "ready": ready,
-            "environment": runtime_settings.companion_env,
-            "safe_mode": not runtime_settings.allow_destructive_actions,
-            "dependencies": {
-                "immich": immich_status,
-                "companion_database": database_status,
-            },
-        }
-
-    @app.get("/api/live")
-    async def live() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/api/health")
-    async def health() -> dict[str, object]:
-        return await health_payload()
-
-    @app.get("/api/ready")
-    async def ready() -> dict[str, object]:
-        payload = await health_payload()
-        if not payload["ready"]:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=payload,
-            )
-        return payload
-
-    @app.get("/api/version")
-    async def version() -> dict[str, str]:
-        return {
-            "name": "immich-companion",
-            "version": runtime_settings.companion_version,
-            "environment": runtime_settings.companion_env,
-        }
-
-    @app.get("/api/capabilities")
-    async def capabilities() -> dict[str, object]:
-        immich_compatibility = await immich.compatibility_report()
-        return {
-            "destructive_actions": runtime_settings.allow_destructive_actions,
-            "immich_api": runtime_settings.immich_configured,
-            "companion_database": runtime_settings.companion_database_url is not None,
-            "immich_server": immich_compatibility.model_dump(mode="json"),
-            "implemented": [
-                "health",
-                "version",
-                "capabilities",
-                "asset_sync",
-                "asset_search",
-                "asset_details",
-                "asset_previews",
-                "structured_asset_search",
-                "album_filters",
-                "tag_filters",
-                "selection_resolution",
-                "reviewed_asset_actions",
-                "hybrid_staged_sync",
-                "persistent_sync_status",
-                "file_integrity_analysis",
-                "cross_source_duplicate_analysis",
-            ],
-            "planned": [
-                "action_jobs",
-                "exact_dedupe",
-                "tagging",
-                "visual_similarity",
-            ],
-        }
+    register_health_routes(app, runtime_settings, immich, database_health)
 
     def require_asset_repository() -> AssetRepository:
         if asset_repository is None:
@@ -1027,418 +815,6 @@ def create_app(
             return None
         return asset.model_copy(update={"immich_url": immich.public_asset_url(asset.id)})
 
-    @app.post("/api/assets/sync", response_model=AssetSyncResult)
-    async def synchronize_assets() -> AssetSyncResult:
-        require_asset_repository()
-        assert asset_sync is not None
-        try:
-            return await asset_sync.synchronize("full")
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.post("/api/assets/sync/start", response_model=SyncRunStatus)
-    async def start_asset_sync(request: SyncStartRequest) -> SyncRunStatus:
-        require_asset_repository()
-        assert asset_sync is not None
-        return await asset_sync.start(request.mode)
-
-    @app.get("/api/assets/sync/status", response_model=SyncCoordinatorStatus)
-    async def asset_sync_status() -> SyncCoordinatorStatus:
-        require_asset_repository()
-        assert asset_sync is not None
-        current = await asset_sync.status()
-        capabilities = await immich.sync_capabilities()
-        return current.model_copy(update={"capabilities": capabilities})
-
-    @app.get("/api/assets/sync/runs/{run_id}", response_model=SyncRunStatus)
-    async def asset_sync_run(run_id: UUID) -> SyncRunStatus:
-        require_asset_repository()
-        assert asset_sync is not None
-        run = await asset_sync.run_status(run_id)
-        if run is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="The sync run was not found.",
-            )
-        return run
-
-    @app.get("/api/tasks/{task_id}", response_model=TaskStatusView)
-    async def task_status(task_id: UUID) -> TaskStatusView:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        task = await task_coordinator.get_status(task_id)
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        return task
-
-    @app.get("/api/tasks/{task_id}/events", response_model=list[TaskEvent])
-    async def task_events(
-        task_id: UUID,
-        limit: int = Query(default=1000, ge=1, le=5000),
-    ) -> list[TaskEvent]:
-        """Expose durable checkpoints, including opt-in sync memory snapshots."""
-
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        if await task_coordinator.get_status(task_id) is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        return await task_coordinator.task_events(task_id, limit=limit)
-
-    @app.websocket("/api/tasks/stream")
-    async def task_updates_stream(websocket: WebSocket) -> None:
-        """Stream task creation and progress updates before task IDs are known."""
-
-        origin = websocket.headers.get("origin")
-        host = websocket.headers.get("host")
-        if origin and host and urlsplit(origin).netloc != host:
-            await websocket.close(code=1008, reason="WebSocket origin is not allowed")
-            return
-        await websocket.accept()
-        if task_coordinator is None:
-            await websocket.close(code=1011, reason="Task coordinator unavailable")
-            return
-        try:
-            async for task in task_coordinator.stream_all():
-                await websocket.send_json(task.model_dump(mode="json"))
-        except WebSocketDisconnect:
-            return
-
-    @app.websocket("/api/tasks/{task_id}/stream")
-    async def task_stream(websocket: WebSocket, task_id: UUID) -> None:
-        """Stream task snapshots from the central coordinator event channel."""
-
-        origin = websocket.headers.get("origin")
-        host = websocket.headers.get("host")
-        if origin and host and urlsplit(origin).netloc != host:
-            await websocket.close(code=1008, reason="WebSocket origin is not allowed")
-            return
-        await websocket.accept()
-        try:
-            if task_coordinator is None:
-                await websocket.send_json({"error": "The task coordinator is unavailable."})
-                return
-            async for task in task_coordinator.stream(task_id):
-                await websocket.send_json(task.model_dump(mode="json"))
-        except WebSocketDisconnect:
-            return
-
-    @app.get("/api/tasks", response_model=list[TaskStatusView])
-    async def list_tasks(
-        task_type: str | None = Query(default=None, max_length=64),
-        limit: int = Query(default=50, ge=1, le=200),
-        active_only: bool = Query(default=False),
-    ) -> list[TaskStatusView]:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        return await task_coordinator.list_tasks(
-            task_type=task_type, limit=limit, active_only=active_only
-        )
-
-    @app.get("/api/settings/sync", response_model=list[TaskScheduleView])
-    async def sync_schedule_settings() -> list[TaskScheduleView]:
-        if task_coordinator is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        return await task_coordinator.list_schedules()
-
-    @app.get("/api/settings/sync/runtime")
-    async def sync_runtime_settings() -> dict[str, object]:
-        if database is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
-
-    @app.get("/api/settings/duplicates/similarity-runtime")
-    async def similarity_runtime_settings() -> dict[str, object]:
-        if similarity_runtime_settings_repository is None:
-            raise HTTPException(
-                status_code=503,
-                detail="The companion database is not configured.",
-            )
-        return (await similarity_runtime_settings_repository.get()).model_dump()
-
-    @app.put("/api/settings/duplicates/similarity-runtime")
-    async def update_similarity_runtime_settings(
-        request: SimilarityRuntimeSettingsUpdate,
-    ) -> dict[str, object]:
-        if similarity_runtime_settings_repository is None:
-            raise HTTPException(
-                status_code=503,
-                detail="The companion database is not configured.",
-            )
-        return (await similarity_runtime_settings_repository.update(request)).model_dump()
-
-    @app.get(
-        "/api/settings/duplicates/immich-sync",
-        response_model=ImmichDuplicateSyncStatus,
-    )
-    async def immich_duplicate_sync_status() -> ImmichDuplicateSyncStatus:
-        return await require_immich_duplicate_sync_service().status()
-
-    @app.post(
-        "/api/settings/duplicates/immich-sync",
-        response_model=ImmichDuplicateSyncTaskStart,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def start_immich_duplicate_sync() -> ImmichDuplicateSyncTaskStart:
-        return await require_immich_duplicate_sync_service().start()
-
-    @app.get("/api/settings/duplicates/discovery")
-    async def duplicate_discovery_settings() -> dict[str, object]:
-        if duplicate_discovery_settings_repository is None:
-            raise HTTPException(status_code=503, detail="Companion database is unavailable")
-        return (await duplicate_discovery_settings_repository.get()).model_dump()
-
-    @app.put("/api/settings/duplicates/discovery")
-    async def update_duplicate_discovery_settings(
-        request: DuplicateDiscoverySettingsUpdate,
-    ) -> dict[str, object]:
-        if duplicate_discovery_settings_repository is None:
-            raise HTTPException(status_code=503, detail="Companion database is unavailable")
-        return (await duplicate_discovery_settings_repository.update(request)).model_dump()
-
-    @app.get("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
-    async def duplicate_policy_settings() -> DuplicatePolicy:
-        if duplicate_policy_repository is None:
-            raise HTTPException(status_code=503, detail="Companion database is unavailable")
-        return await duplicate_policy_repository.get()
-
-    @app.put("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
-    async def update_duplicate_policy_settings(
-        request: DuplicatePolicy,
-    ) -> DuplicatePolicy:
-        if duplicate_policy_repository is None:
-            raise HTTPException(status_code=503, detail="Companion database is unavailable")
-        return await duplicate_policy_repository.update(request)
-
-    @app.get(
-        "/api/settings/duplicates/libraries",
-        response_model=list[ImmichLibrary],
-    )
-    async def duplicate_policy_libraries() -> list[ImmichLibrary]:
-        try:
-            libraries = await require_immich().list_libraries()
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        return [
-            library
-            for library in libraries
-            if library.library_type is None or library.library_type.upper() == "EXTERNAL"
-        ]
-
-    @app.put("/api/settings/sync/runtime")
-    async def update_sync_runtime_settings(
-        request: SyncRuntimeSettingsUpdate,
-    ) -> dict[str, object]:
-        if database is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        return (
-            await SyncRuntimeSettingsRepository(database, runtime_settings).update(request)
-        ).model_dump()
-
-    @app.put("/api/settings/sync/{schedule_name}", response_model=TaskScheduleView)
-    async def update_sync_schedule(
-        schedule_name: str, request: TaskScheduleUpdate
-    ) -> TaskScheduleView:
-        if task_coordinator is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        try:
-            croniter(request.cron_expression)
-        except (CroniterBadCronError, ValueError) as error:
-            raise HTTPException(status_code=422, detail="Invalid cron expression.") from error
-        schedule = await task_coordinator.update_schedule(
-            schedule_name,
-            enabled=request.enabled,
-            cron_expression=request.cron_expression,
-        )
-        if schedule is None:
-            raise HTTPException(status_code=404, detail="The schedule was not found.")
-        return schedule
-
-    @app.post("/api/tasks/{task_id}/cancel", response_model=TaskStatusView)
-    async def cancel_task(task_id: UUID) -> TaskStatusView:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        task = await task_coordinator.cancel(task_id)
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        return task
-
-    @app.post("/api/tasks/{task_id}/pause", response_model=TaskStatusView)
-    async def pause_task(task_id: UUID) -> TaskStatusView:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        try:
-            task = await task_coordinator.pause(task_id)
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        return task
-
-    @app.post("/api/tasks/{task_id}/resume", response_model=TaskStatusView)
-    async def resume_task(task_id: UUID) -> TaskStatusView:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        try:
-            task = await task_coordinator.resume(task_id)
-        except ValueError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        await task_coordinator.start()
-        return task
-
-    @app.get("/api/assets", response_model=AssetSearchResponse)
-    async def search_assets(
-        query: str | None = Query(default=None, max_length=500),
-        asset_type: Literal["IMAGE", "VIDEO", "AUDIO", "OTHER"] | None = Query(
-            default=None,
-            alias="type",
-        ),
-        taken_after: datetime | None = None,
-        taken_before: datetime | None = None,
-        min_width: int | None = Query(default=None, ge=1),
-        max_width: int | None = Query(default=None, ge=1),
-        min_height: int | None = Query(default=None, ge=1),
-        max_height: int | None = Query(default=None, ge=1),
-        min_aspect_ratio: float | None = Query(default=None, gt=0),
-        max_aspect_ratio: float | None = Query(default=None, gt=0),
-        favorite: bool | None = None,
-        archived: bool | None = None,
-        trashed: bool | None = None,
-        sort_field: AssetSortField = "taken_at",
-        sort_direction: AssetSortDirection = "desc",
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=48, ge=1, le=200),
-    ) -> AssetSearchResponse:
-        repository = require_asset_repository()
-        criteria = AssetSearchQuery(
-            query=query,
-            asset_type=asset_type,
-            taken_after=taken_after,
-            taken_before=taken_before,
-            min_width=min_width,
-            max_width=max_width,
-            min_height=min_height,
-            max_height=max_height,
-            min_aspect_ratio=min_aspect_ratio,
-            max_aspect_ratio=max_aspect_ratio,
-            favorite=favorite,
-            archived=archived,
-            trashed=trashed,
-            sort_field=sort_field,
-            sort_direction=sort_direction,
-            page=page,
-            page_size=page_size,
-        )
-        return add_public_asset_urls(await repository.search(criteria))
-
-    @app.post("/api/assets/search", response_model=AssetSearchResponse)
-    async def search_assets_structured(
-        criteria: StructuredAssetSearchQuery,
-    ) -> AssetSearchResponse:
-        repository = require_asset_repository()
-        return add_public_asset_urls(await repository.search_structured(criteria))
-
-    @app.get("/api/restore", response_model=AssetSearchResponse)
-    async def search_restore_assets(
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=48, ge=1, le=200),
-    ) -> AssetSearchResponse:
-        """List trashed assets directly from Immich, without local index data."""
-
-        try:
-            trashed_assets = [asset async for asset in require_immich().iter_trashed_assets()]
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        total = len(trashed_assets)
-        offset = (page - 1) * page_size
-        return AssetSearchResponse(
-            items=[
-                add_public_asset_url(AssetSummary.from_immich(asset))
-                for asset in trashed_assets[offset : offset + page_size]
-            ],
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=(total + page_size - 1) // page_size,
-        )
-
-    @app.post(
-        "/api/assets/{asset_id}/search-match",
-        response_model=AssetSummary | None,
-    )
-    async def match_asset_search(
-        asset_id: UUID,
-        criteria: AssetSearchMatchRequest,
-    ) -> AssetSummary | None:
-        repository = require_asset_repository()
-        return add_public_asset_url(await repository.find_structured_match(asset_id, criteria))
-
-    @app.get(
-        "/api/assets/duplicates/summary",
-        response_model=DuplicateDiscoverySummary,
-    )
-    async def duplicate_discovery_summary() -> DuplicateDiscoverySummary:
-        if composite_duplicate_repository is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The persisted duplicate projection is unavailable.",
-            )
-        metadata = await composite_duplicate_repository.metadata()
-        group_count, member_count = (
-            await composite_duplicate_repository.unresolved_counts()
-        )
-        return DuplicateDiscoverySummary(
-            authoritative_generation=metadata.authoritative_generation,
-            group_count=group_count,
-            member_count=member_count,
-            evidence_count=metadata.evidence_count,
-            last_success_at=metadata.last_success_at,
-        )
-
-    @app.get(
-        "/api/assets/{asset_id}/summary",
-        response_model=AssetSummary | None,
-    )
-    async def asset_summary(asset_id: UUID) -> AssetSummary | None:
-        """Return one asset summary independently of the active search."""
-
-        repository = require_asset_repository()
-        return add_public_asset_url(await repository.get_asset_summary(asset_id))
-
-    @app.get("/api/albums", response_model=list[AlbumOption])
-    async def search_album_options() -> list[AlbumOption]:
-        repository = require_asset_repository()
-        return await repository.list_albums()
-
     def require_immich() -> ImmichApiClient:
         override = getattr(app.state, "immich_override", None)
         if override is not None:
@@ -1447,1388 +823,93 @@ def create_app(
             raise HTTPException(status_code=503, detail="Immich is not configured.")
         return immich
 
-    def album_management_item(
-        album: ImmichAlbum, *, asset_count: int | None = None
-    ) -> AlbumManagementItem:
-        return AlbumManagementItem(
-            id=album.id,
-            name=album.album_name,
-            description=album.description,
-            album_thumbnail_asset_id=album.album_thumbnail_asset_id,
-            asset_count=album.asset_count if asset_count is None else asset_count,
-            created_at=album.created_at,
-            updated_at=album.updated_at,
-        )
-
-    @app.get("/api/albums/manage", response_model=RelationPage[AlbumManagementItem])
-    async def manage_albums(
-        page: int = Query(1, ge=1),
-        page_size: int = Query(25, ge=1, le=200),
-        search: str | None = Query(None, max_length=255),
-        sort: Literal["name", "asset_count", "description"] = "name",
-        direction: Literal["asc", "desc"] = "asc",
-    ):
-        albums = await require_immich().list_album_catalog()
-        counts = await require_asset_repository().album_asset_counts()
-        if search:
-            needle = search.casefold()
-            albums = [
-                album
-                for album in albums
-                if needle in album.album_name.casefold() or needle in album.description.casefold()
-            ]
-        albums.sort(
-            key=lambda album: (
-                album.album_name.casefold()
-                if sort == "name"
-                else album.description.casefold()
-                if sort == "description"
-                else counts.get(album.id, 0)
-            ),
-            reverse=direction == "desc",
-        )
-        total = len(albums)
-        start = (page - 1) * page_size
-        items = [
-            album_management_item(album, asset_count=counts.get(album.id, 0))
-            for album in albums[start : start + page_size]
-        ]
-        return RelationPage(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=(total + page_size - 1) // page_size,
-        )
-
-    @app.get("/api/albums/manage/{album_id}", response_model=AlbumManagementItem)
-    async def get_managed_album(album_id: UUID) -> AlbumManagementItem:
-        return album_management_item(await require_immich().get_album(album_id))
-
-    @app.post("/api/albums/manage", response_model=AlbumManagementItem)
-    async def create_managed_album(request: AlbumCreateRequest):
-        album = await require_immich().create_album(request.name, request.description)
-        return album_management_item(
-            album
-        )
-
-    @app.post("/api/albums/manage/batch-delete")
-    async def batch_delete_albums(request: RelationBatchDeleteRequest):
-        client = require_immich()
-        completed: list[UUID] = []
-        failed: list[UUID] = []
-        for identifier in request.ids:
-            try:
-                await client.delete_album(identifier)
-            except ImmichApiError:
-                failed.append(identifier)
-            else:
-                completed.append(identifier)
-        return {"completed": completed, "failed": failed, "total": len(request.ids)}
-
-    @app.patch("/api/albums/manage/{album_id}", response_model=AlbumManagementItem)
-    async def update_managed_album(album_id: UUID, request: AlbumUpdateRequest):
-        album = await require_immich().update_album(
-            album_id, name=request.name, description=request.description
-        )
-        return album_management_item(album)
-
-    @app.delete("/api/albums/manage/{album_id}", status_code=204)
-    async def delete_managed_album(album_id: UUID) -> Response:
-        await require_immich().delete_album(album_id)
-        return Response(status_code=204)
-
-    @app.get("/api/tags", response_model=list[TagOption])
-    async def search_tag_options() -> list[TagOption]:
-        repository = require_asset_repository()
-        return await repository.list_tags()
-
-    @app.get("/api/tags/manage", response_model=RelationPage[TagManagementItem])
-    async def manage_tags(
-        page: int = Query(1, ge=1),
-        page_size: int = Query(25, ge=1, le=200),
-        search: str | None = Query(None, max_length=255),
-        sort: Literal["name", "asset_count", "path", "child_count"] = "name",
-        direction: Literal["asc", "desc"] = "asc",
-        flat: bool = False,
-        include_hierarchy: bool = False,
-    ):
-        catalog = await require_immich().list_tag_catalog()
-        counts = await require_asset_repository().tag_asset_counts()
-        tags_by_id = {tag.id: tag for tag in catalog}
-        subtree_ids = tag_subtree_ids(catalog)
-        children_by_parent: dict[UUID, list[ImmichTag]] = {}
-        roots: list[ImmichTag] = []
-        for tag in catalog:
-            if tag.parent_id is not None and tag.parent_id in tags_by_id:
-                children_by_parent.setdefault(tag.parent_id, []).append(tag)
-            else:
-                roots.append(tag)
-
-        def resolve_parent_path(tag: ImmichTag) -> list[str]:
-            path: list[str] = []
-            parent_id = tag.parent_id
-            visited = {tag.id}
-            while parent_id is not None and parent_id not in visited:
-                parent = tags_by_id.get(parent_id)
-                if parent is None:
-                    break
-                path.append(parent.name)
-                visited.add(parent.id)
-                parent_id = parent.parent_id
-            return list(reversed(path))
-
-        parent_paths = {tag.id: resolve_parent_path(tag) for tag in catalog}
-
-        def canonical_path(tag: ImmichTag) -> str:
-            return " / ".join([*parent_paths[tag.id], tag.name])
-
-        def sort_key(tag: ImmichTag) -> str | int:
-            if sort == "asset_count":
-                return counts.get(tag.id, 0)
-            if sort == "child_count":
-                return len(children_by_parent.get(tag.id, []))
-            if sort == "path":
-                return canonical_path(tag).casefold()
-            return tag.name.casefold()
-
-        def management_item(
-            tag: ImmichTag, *, children: list[TagManagementItem] | None = None
-        ) -> TagManagementItem:
-            return TagManagementItem(
-                id=tag.id,
-                name=tag.name,
-                color=tag.color,
-                parent_id=tag.parent_id,
-                parent_path=parent_paths[tag.id],
-                asset_count=counts.get(tag.id, 0),
-                child_count=len(children_by_parent.get(tag.id, [])),
-                real_tag_ids=subtree_ids[tag.id],
-                children=children or [],
-            )
-
-        needle = search.casefold().strip() if search else ""
-        if flat:
-            matching_tags = [
-                tag
-                for tag in catalog
-                if not needle
-                or needle in tag.name.casefold()
-                or (include_hierarchy and needle in canonical_path(tag).casefold())
-            ]
-            matching_tags.sort(key=sort_key, reverse=direction == "desc")
-            total = len(matching_tags)
-            start = (page - 1) * page_size
-            return RelationPage(
-                items=[management_item(tag) for tag in matching_tags[start : start + page_size]],
-                total=total,
-                page=page,
-                page_size=page_size,
-                pages=(total + page_size - 1) // page_size,
-            )
-
-        matching_ids = {tag.id for tag in catalog if not needle or needle in tag.name.casefold()}
-        included_ids = set(matching_ids)
-        for tag in catalog:
-            if tag.id not in matching_ids:
-                continue
-            parent_id = tag.parent_id
-            visited = {tag.id}
-            while parent_id is not None and parent_id not in visited:
-                included_ids.add(parent_id)
-                visited.add(parent_id)
-                parent = tags_by_id.get(parent_id)
-                parent_id = parent.parent_id if parent is not None else None
-
-        def build_node(tag: ImmichTag) -> TagManagementItem | None:
-            if tag.id not in included_ids:
-                return None
-            child_nodes = [
-                node
-                for child in sorted(
-                    children_by_parent.get(tag.id, []), key=sort_key, reverse=direction == "desc"
-                )
-                if (node := build_node(child)) is not None
-            ]
-            return management_item(tag, children=child_nodes)
-
-        visible_roots = [
-            node
-            for root in sorted(roots, key=sort_key, reverse=direction == "desc")
-            if (node := build_node(root)) is not None
-        ]
-        total = len(visible_roots)
-        start = (page - 1) * page_size
-        items = visible_roots[start : start + page_size]
-        return RelationPage(
-            items=items,
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=(total + page_size - 1) // page_size,
-        )
-
-    @app.get("/api/tags/manage/{tag_id}", response_model=TagManagementItem)
-    async def get_managed_tag(tag_id: UUID) -> TagManagementItem:
-        catalog = await require_immich().list_tag_catalog()
-        tags_by_id = {tag.id: tag for tag in catalog}
-        tag = tags_by_id.get(tag_id)
-        if tag is None:
-            raise HTTPException(status_code=404, detail="Tag not found.")
-        path: list[str] = []
-        parent_id = tag.parent_id
-        visited = {tag.id}
-        while parent_id is not None and parent_id not in visited:
-            parent = tags_by_id.get(parent_id)
-            if parent is None:
-                break
-            path.append(parent.name)
-            visited.add(parent.id)
-            parent_id = parent.parent_id
-        return TagManagementItem(
-            id=tag.id,
-            name=tag.name,
-            color=tag.color,
-            parent_id=tag.parent_id,
-            parent_path=list(reversed(path)),
-            asset_count=tag.asset_count,
-            child_count=sum(item.parent_id == tag.id for item in catalog),
-            real_tag_ids=tag_subtree_ids(catalog)[tag.id],
-        )
-
-    @app.post("/api/tags/manage", response_model=TagManagementItem)
-    async def create_managed_tag(request: TagCreateRequest):
-        tag = await require_immich().create_tag(request.name, request.color, request.parent_id)
-        return TagManagementItem(
-            id=tag.id,
-            name=tag.name,
-            color=tag.color,
-            parent_id=tag.parent_id,
-            asset_count=tag.asset_count,
-            real_tag_ids=[tag.id],
-        )
-
-    @app.post("/api/tags/manage/batch-delete")
-    async def batch_delete_tags(request: RelationBatchDeleteRequest):
-        client = require_immich()
-        catalog = await client.list_tag_catalog()
-        children = {tag.parent_id for tag in catalog if tag.parent_id is not None}
-        completed: list[UUID] = []
-        failed: list[UUID] = [identifier for identifier in request.ids if identifier in children]
-        for identifier in request.ids:
-            if identifier in children:
-                continue
-            try:
-                await client.delete_tag(identifier)
-            except ImmichApiError:
-                failed.append(identifier)
-            else:
-                completed.append(identifier)
-        return {"completed": completed, "failed": failed, "total": len(request.ids)}
-
-    @app.patch("/api/tags/manage/{tag_id}", response_model=TagManagementItem)
-    async def update_managed_tag(tag_id: UUID, request: TagUpdateRequest):
-        client = require_immich()
-        tag = await client.update_tag(tag_id, color=request.color)
-        return TagManagementItem(
-            id=tag.id,
-            name=tag.name,
-            color=tag.color,
-            parent_id=tag.parent_id,
-            asset_count=tag.asset_count,
-        )
-
-    @app.delete("/api/tags/manage/{tag_id}", status_code=204)
-    async def delete_managed_tag(tag_id: UUID) -> Response:
-        client = require_immich()
-        if any(tag.parent_id == tag_id for tag in await client.list_tag_catalog()):
-            raise HTTPException(
-                status_code=409, detail="Delete child tags before deleting this parent tag."
-            )
-        await client.delete_tag(tag_id)
-        return Response(status_code=204)
-
-    def require_relation_selections() -> RelationSelectionRepository:
-        if relation_selection_repository is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        return relation_selection_repository
-
-    async def matching_relation_ids(
-        kind: RelationEntityKind, request: RelationSelectAllRequest
-    ) -> list[UUID]:
-        needle = request.query.strip().casefold()
-        if kind == "album":
-            catalog = await require_immich().list_album_catalog()
-            return [
-                album.id
-                for album in catalog
-                if not needle
-                or needle in album.album_name.casefold()
-                or needle in album.description.casefold()
-            ]
-        catalog = await require_immich().list_tag_catalog()
-        return matching_tag_ids(catalog, request.query, request.include_hierarchy)
-
-    def register_relation_selection_routes(kind: RelationEntityKind) -> None:
-        plural = f"{kind}s"
-
-        @app.post(
-            f"/api/{plural}/selections",
-            response_model=SelectionSetView,
-            name=f"create_{kind}_selection",
-        )
-        async def create_relation_selection() -> SelectionSetView:
-            record = await require_relation_selections().create(
-                kind, runtime_settings.action_plan_ttl_seconds
-            )
-            return selection_view(record)
-
-        @app.post(
-            f"/api/{plural}/selections/{{selection_id}}/members",
-            response_model=SelectionSetView,
-            name=f"update_{kind}_selection",
-        )
-        async def update_relation_selection(
-            selection_id: UUID,
-            request: RelationSelectionMembersRequest,
-        ) -> SelectionSetView:
-            try:
-                record = await require_relation_selections().update(
-                    selection_id,
-                    kind,
-                    request.ids,
-                    selected=request.selected,
-                    revision=request.revision,
-                )
-            except ValueError as error:
-                raise HTTPException(status_code=409, detail=str(error)) from error
-            return selection_view(record)
-
-        @app.post(
-            f"/api/{plural}/selections/{{selection_id}}/membership",
-            response_model=SelectionSetMembershipResponse,
-            name=f"{kind}_selection_membership",
-        )
-        async def relation_selection_membership(
-            selection_id: UUID,
-            request: RelationSelectionMembershipRequest,
-        ) -> SelectionSetMembershipResponse:
-            repository = require_relation_selections()
-            record = await repository.get(selection_id, kind)
-            if record is None:
-                raise HTTPException(status_code=404, detail="Selection set was not found.")
-            return SelectionSetMembershipResponse(
-                selection=selection_view(record),
-                selected_ids=await repository.membership(selection_id, kind, request.ids),
-            )
-
-        @app.post(
-            f"/api/{plural}/selections/{{selection_id}}/select-all",
-            response_model=SelectionSetView,
-            name=f"select_all_{kind}_relations",
-        )
-        async def select_all_relations(
-            selection_id: UUID,
-            request: RelationSelectAllRequest,
-        ) -> SelectionSetView:
-            try:
-                ids = await matching_relation_ids(kind, request)
-                record = await require_relation_selections().replace(selection_id, kind, ids)
-            except ValueError as error:
-                raise HTTPException(status_code=409, detail=str(error)) from error
-            return selection_view(record)
-
-        @app.post(
-            f"/api/{plural}/selections/{{selection_id}}/matching",
-            response_model=SelectionSetView,
-            name=f"update_matching_{kind}_relations",
-        )
-        async def update_matching_relations(
-            selection_id: UUID,
-            request: RelationMatchingSelectionRequest,
-        ) -> SelectionSetView:
-            try:
-                ids = await matching_relation_ids(kind, request)
-                record = await require_relation_selections().update_matching(
-                    selection_id,
-                    kind,
-                    ids,
-                    selected=request.selected,
-                    revision=request.revision,
-                )
-            except ValueError as error:
-                raise HTTPException(status_code=409, detail=str(error)) from error
-            return selection_view(record)
-
-        @app.post(
-            f"/api/{plural}/selections/{{selection_id}}/matching-status",
-            response_model=RelationMatchingSelectionState,
-            name=f"{kind}_matching_selection_state",
-        )
-        async def relation_matching_selection_state(
-            selection_id: UUID,
-            request: RelationSelectAllRequest,
-        ) -> RelationMatchingSelectionState:
-            ids = await matching_relation_ids(kind, request)
-            try:
-                selected_count = await require_relation_selections().matching_count(
-                    selection_id, kind, ids
-                )
-            except ValueError as error:
-                raise HTTPException(status_code=409, detail=str(error)) from error
-            return RelationMatchingSelectionState(
-                matching_count=len(set(ids)), selected_matching_count=selected_count
-            )
-
-    register_relation_selection_routes("album")
-    register_relation_selection_routes("tag")
-
-    def collection_plan_view(record) -> CollectionDeletePlan:
-        work = record.relation_work or {}
-        results = (record.result or {}).get("items", [])
-        status_value = record.status
-        if status_value == "planned" and record.expires_at <= datetime.now(UTC):
-            status_value = "expired"
-        return CollectionDeletePlan(
-            id=record.id,
-            entity_kind=work["entity_kind"],
-            selection_id=UUID(work["selection_id"]),
-            target_digest=record.target_digest,
-            target_count=len(record.target_ids),
-            applicable_count=len(record.applicable_ids),
-            skipped_count=len(record.skipped_ids),
-            status=status_value,
-            expires_at=record.expires_at,
-            results=[CollectionDeleteItemResult.model_validate(item) for item in results],
-        )
-
-    @app.post("/api/{kind}s/actions/delete/plan", response_model=CollectionDeletePlan)
-    async def plan_relation_delete(
-        kind: RelationEntityKind, request: CollectionDeletePlanRequest
-    ) -> CollectionDeletePlan:
-        repository = require_relation_selections()
-        if action_repository is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        try:
-            target_ids = await repository.ids(request.selection_id, kind)
-        except ValueError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        if not target_ids:
-            raise HTTPException(status_code=400, detail="No relations are selected.")
-        if kind == "album":
-            existing = {item.id for item in await require_immich().list_album_catalog()}
-            applicable = [identifier for identifier in target_ids if identifier in existing]
-            skipped = [identifier for identifier in target_ids if identifier not in existing]
-        else:
-            tags = await require_immich().list_tag_catalog()
-            applicable, skipped = tag_delete_targets(target_ids, tags)
-        record = await action_repository.create_collection_delete_plan(
-            entity_kind=kind,
-            selection_id=request.selection_id,
-            target_ids=target_ids,
-            applicable_ids=applicable,
-            skipped_ids=skipped,
-            target_digest=selection_digest(target_ids),
-            expires_at=datetime.now(UTC)
-            + timedelta(seconds=runtime_settings.action_plan_ttl_seconds),
-        )
-        return collection_plan_view(record)
-
-    @app.post("/api/{kind}s/actions/delete/execute", response_model=CollectionDeletePlan)
-    async def execute_relation_delete(
-        kind: RelationEntityKind, request: CollectionDeleteExecuteRequest
-    ) -> CollectionDeletePlan:
-        if action_repository is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        service = CollectionDeleteService(
-            action_repository,
-            require_relation_selections(),
-            require_immich(),
-            allow_destructive_actions=runtime_settings.allow_destructive_actions,
-        )
-        try:
-            return collection_plan_view(await service.execute(kind, request.plan_id))
-        except CollectionDeletePlanBusyError as error:
-            raise HTTPException(status_code=409, detail=str(error)) from error
-        except CollectionDeletePlanError as error:
-            code = 404 if "not found" in str(error) else 403 if "safe mode" in str(error) else 409
-            raise HTTPException(status_code=code, detail=str(error)) from error
-
-    @app.post("/api/assets/selection/resolve", response_model=AssetSelectionResolution)
-    async def resolve_asset_selection(
-        selection: AssetSelectionRequest,
-    ) -> AssetSelectionResolution:
-        service = require_action_service()
-        try:
-            resolution = await service.resolve_selection(selection)
-            if selection.selection_id is not None:
-                return resolution.model_copy(update={"ids": [], "missing_ids": []})
-            return resolution
-        except ValueError as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/selection/capabilities",
-        response_model=AssetSelectionCapabilities,
+    register_sync_settings_routes(
+        app,
+        asset_sync=asset_sync,
+        database=database,
+        immich=immich,
+        runtime_settings=runtime_settings,
+        similarity_runtime_settings_repository=similarity_runtime_settings_repository,
+        duplicate_discovery_settings_repository=duplicate_discovery_settings_repository,
+        duplicate_policy_repository=duplicate_policy_repository,
+        task_coordinator=task_coordinator,
+        require_asset_repository=require_asset_repository,
+        require_immich=require_immich,
+        require_immich_duplicate_sync_service=require_immich_duplicate_sync_service,
+        map_immich_error=map_immich_error,
     )
-    async def asset_selection_capabilities(
-        selection: AssetSelectionRequest,
-    ) -> AssetSelectionCapabilities:
-        repository = require_asset_repository()
-        try:
-            return await repository.selection_capabilities(selection)
-        except ValueError as error:
-            raise map_action_error(error) from error
 
-    @app.post(
-        "/api/assets/selection/relationships",
-        response_model=AssetSelectionRelationships,
+    register_asset_routes(
+        app,
+        require_asset_repository=require_asset_repository,
+        require_integrity_service=require_integrity_service,
+        require_immich=require_immich,
+        map_immich_error=map_immich_error,
+        add_public_asset_urls=add_public_asset_urls,
+        add_public_asset_url=add_public_asset_url,
+        composite_duplicate_repository=composite_duplicate_repository,
     )
-    async def asset_selection_relationships(
-        selection: AssetSelectionRequest,
-    ) -> AssetSelectionRelationships:
-        repository = require_asset_repository()
-        try:
-            return await repository.selection_relationships(selection)
-        except ValueError as error:
-            raise map_action_error(error) from error
 
-    @app.post("/api/assets/selection/ids", response_model=list[UUID])
-    async def materialize_asset_selection(selection: AssetSelectionRequest) -> list[UUID]:
-        repository = require_asset_repository()
-        if selection.mode != "all_matching" or selection.expression is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="Select-all materialization requires an all-matching expression.",
-            )
-        return await repository.list_matching_asset_ids(
-            selection.expression, selection.excluded_ids
-        )
-
-    def selection_view(record) -> SelectionSetView:
-        if record.expires_at <= datetime.now(record.expires_at.tzinfo):
-            record.status = "expired"
-        return SelectionSetView(
-            id=record.id,
-            entity_kind=record.entity_kind,
-            revision=record.revision,
-            selected_count=record.selected_count,
-            status=record.status,
-            expires_at=record.expires_at,
-        )
-
-    @app.post("/api/assets/selections", response_model=SelectionSetView)
-    async def create_asset_selection() -> SelectionSetView:
-        repository = require_asset_repository()
-        return selection_view(
-            await repository.create_selection(ttl_seconds=runtime_settings.action_plan_ttl_seconds)
-        )
-
-    @app.post(
-        "/api/assets/selections/{selection_id}/select-all",
-        response_model=SelectionSetView,
+    register_relation_management_routes(
+        app,
+        require_immich=require_immich,
+        require_asset_repository=require_asset_repository,
+        tag_subtree_ids=tag_subtree_ids,
     )
-    async def select_all_asset_selection(
-        selection_id: UUID,
-        expression: StructuredAssetSearchQuery,
-    ) -> SelectionSetView:
-        repository = require_asset_repository()
-        try:
-            record = await repository.replace_selection_with_matching(
-                selection_id, expression.expression
-            )
-        except ValueError as error:
-            raise map_action_error(error) from error
-        return selection_view(record)
 
-    @app.post(
-        "/api/assets/selections/{selection_id}/members",
-        response_model=SelectionSetView,
+    register_action_duplicate_routes(
+        app,
+        relation_selection_repository=relation_selection_repository,
+        runtime_settings=runtime_settings,
+        require_immich=require_immich,
+        require_asset_repository=require_asset_repository,
+        require_action_service=require_action_service,
+        require_integrity_service=require_integrity_service,
+        require_duplicate_service=require_duplicate_service,
+        require_similarity_scan_service=require_similarity_scan_service,
+        require_similarity_index_service=require_similarity_index_service,
+        task_coordinator=task_coordinator,
+        action_repository=action_repository,
+        duplicate_review_repository=duplicate_review_repository,
+        duplicate_discovery=duplicate_discovery,
+        database=database,
+        v2_duplicate_review_state_refresh_service=v2_duplicate_review_state_refresh_service,
+        map_action_error=map_action_error,
+        map_immich_error=map_immich_error,
     )
-    async def update_asset_selection_members(
-        selection_id: UUID,
-        request: SelectionSetMembersRequest,
-    ) -> SelectionSetView:
-        repository = require_asset_repository()
-        try:
-            record = await repository.update_selection_members(
-                selection_id,
-                request.asset_ids,
-                selected=request.selected,
-                revision=request.revision,
-            )
-        except ValueError as error:
-            raise map_action_error(error) from error
-        return selection_view(record)
 
-    @app.post(
-        "/api/assets/selections/{selection_id}/membership",
-        response_model=SelectionSetMembershipResponse,
+    register_duplicate_routes(
+        app,
+        build_similarity_cache_status=build_similarity_cache_status,
+        similarity_cache=similarity_cache,
+        require_similarity_repository=require_similarity_repository,
+        require_integrity_service=require_integrity_service,
+        require_duplicate_service=require_duplicate_service,
+        duplicate_review_repository=duplicate_review_repository,
+        duplicate_discovery=duplicate_discovery,
+        database=database,
+        v2_duplicate_review_state_refresh_service=v2_duplicate_review_state_refresh_service,
+        require_similarity_scan_service=require_similarity_scan_service,
+        require_similarity_index_service=require_similarity_index_service,
+        map_action_error=map_action_error,
+        map_immich_error=map_immich_error,
     )
-    async def asset_selection_membership(
-        selection_id: UUID,
-        request: SelectionSetMembershipRequest,
-    ) -> SelectionSetMembershipResponse:
-        repository = require_asset_repository()
-        record = await repository.get_selection(selection_id)
-        if record is None or record.entity_kind != "asset":
-            raise HTTPException(status_code=404, detail="Selection set was not found.")
-        return SelectionSetMembershipResponse(
-            selection=selection_view(record),
-            selected_ids=await repository.selection_membership(selection_id, request.asset_ids),
-        )
 
-    @app.post("/api/assets/actions/plan", response_model=AssetActionPlan)
-    async def plan_asset_action(request: AssetActionPlanRequest) -> AssetActionPlan:
-        service = require_action_service()
-        try:
-            return await service.plan(request)
-        except (RuntimeError, ValueError) as error:
-            raise map_action_error(error) from error
-
-    @app.post("/api/assets/actions/execute", response_model=AssetActionResult)
-    async def execute_asset_action(
-        request: AssetActionExecuteRequest,
-    ) -> AssetActionResult:
-        service = require_action_service()
-        try:
-            return await service.execute(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except (RuntimeError, ValueError) as error:
-            raise map_action_error(error) from error
-
-    @app.post("/api/assets/actions/execute-task", response_model=AssetActionTaskStart)
-    async def execute_asset_action_task(
-        request: AssetActionExecuteRequest,
-    ) -> AssetActionTaskStart:
-        if task_coordinator is None:
-            raise HTTPException(status_code=503, detail="Task coordinator is unavailable.")
-        task = await task_coordinator.submit(
-            "asset_action",
-            {"plan_id": str(request.plan_id)},
-            priority=80,
-            lane_key="asset_action",
-            deduplication_key=f"plan:{request.plan_id}",
-        )
-        await task_coordinator.start()
-        return AssetActionTaskStart(task_id=task.id)
-
-    @app.get(
-        "/api/assets/{asset_id}/integrity",
-        response_model=AssetIntegrityState,
+    register_media_restore_routes(
+        app,
+        immich=immich,
+        require_immich=require_immich,
+        require_asset_sync=require_asset_sync,
+        require_asset_repository=require_asset_repository,
+        asset_repository=asset_repository,
+        asset_sync=asset_sync,
+        runtime_settings=runtime_settings,
+        task_coordinator=task_coordinator,
+        similarity_cache=similarity_cache,
+        selection_digest=selection_digest,
+        batches=batches,
+        map_immich_error=map_immich_error,
     )
-    async def asset_integrity_state(asset_id: UUID) -> AssetIntegrityState:
-        try:
-            return await require_integrity_service().state(asset_id)
-        except IntegrityAssetUnavailableError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.post(
-        "/api/assets/{asset_id}/integrity/analyze",
-        response_model=AssetIntegrityAnalyzeResponse,
-    )
-    async def analyze_asset_integrity(
-        asset_id: UUID,
-        request: AssetIntegrityAnalyzeRequest,
-        response: Response,
-    ) -> AssetIntegrityAnalyzeResponse:
-        try:
-            result = await require_integrity_service().analyze(asset_id, force=request.force)
-        except IntegrityAssetUnavailableError as error:
-            raise HTTPException(status_code=404, detail=str(error)) from error
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        if result.state == "pending":
-            response.status_code = status.HTTP_202_ACCEPTED
-        return result
-
-    @app.get(
-        "/api/assets/duplicates/cross-source",
-        response_model=CrossSourceDuplicateResult,
-    )
-    async def cross_source_duplicate_result() -> CrossSourceDuplicateResult:
-        try:
-            return await require_duplicate_service().review()
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.get("/api/assets/duplicates/history")
-    async def duplicate_resolution_history(
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=50, ge=1, le=200),
-        days: int | None = Query(default=None, ge=1, le=3650),
-    ) -> dict[str, object]:
-        if duplicate_review_repository is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        since = datetime.now(UTC) - timedelta(days=days) if days is not None else None
-        records, total = await duplicate_review_repository.history(
-            since=since,
-            page=page,
-            page_size=page_size,
-        )
-        items: list[dict[str, object]] = []
-        for record in records:
-            member_ids = list(
-                dict.fromkeys(
-                    str(decision["asset_id"])
-                    for decision in list(record.member_decisions or [])
-                    if isinstance(decision, dict) and decision.get("asset_id")
-                )
-            )
-            items.append(
-                {
-                    "id": str(record.id),
-                    "occurred_at": record.last_reviewed_at or record.updated_at,
-                    "discovery_source": record.discovery_source,
-                    "provider_group_id": record.provider_group_id,
-                    "review_status": record.review_status,
-                    "manual_action": record.manual_action,
-                    "member_count": len(member_ids),
-                    "member_asset_ids": member_ids,
-                }
-            )
-        return {
-            "items": items,
-            "total": total,
-            "page": page,
-            "page_size": page_size,
-            "pages": (total + page_size - 1) // page_size,
-        }
-
-    @app.delete("/api/assets/duplicates/history")
-    async def clear_all_duplicate_resolution_history() -> dict[str, int]:
-        if database is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        from companion.duplicate_resolution_history import clear_all_completed_resolutions
-
-        cleared = await clear_all_completed_resolutions(database)
-        if v2_duplicate_review_state_refresh_service is not None:
-            await v2_duplicate_review_state_refresh_service.refresh_after_change()
-        return {"cleared": cleared}
-
-    @app.delete(
-        "/api/assets/duplicates/history/{resolution_id}",
-        status_code=status.HTTP_204_NO_CONTENT,
-    )
-    async def clear_duplicate_resolution_history(resolution_id: UUID) -> Response:
-        if database is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        from companion.duplicate_resolution_history import clear_completed_resolution
-
-        if not await clear_completed_resolution(database, resolution_id):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="The completed duplicate resolution was not found.",
-            )
-        if v2_duplicate_review_state_refresh_service is not None:
-            await v2_duplicate_review_state_refresh_service.refresh_after_change()
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/search",
-        response_model=CrossSourceDuplicateResult,
-    )
-    async def search_cross_source_duplicates(
-        request: DuplicateAnalysisOptions,
-    ) -> CrossSourceDuplicateResult:
-        try:
-            return await require_duplicate_service().review(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/page",
-        response_model=DuplicateSearchPage,
-    )
-    async def page_cross_source_duplicates(
-        request: DuplicateAnalysisOptions,
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=6, ge=1, le=100),
-        source: Literal["both", "immich", "similarity"] = Query(default="both"),
-        sort: Literal[
-            "reclaimable", "members", "similarity", "date", "discovered"
-        ] = Query(default="reclaimable"),
-        direction: Literal["asc", "desc"] = Query(default="desc"),
-        state: Literal[
-            "all",
-            "needs_review",
-            "auto_ready",
-            "blocked",
-            "actionable",
-            "needs_decisions",
-        ] = Query(default="all"),
-    ) -> DuplicateSearchPage:
-        try:
-            return await require_duplicate_service().review_page(
-                request,
-                page=page,
-                page_size=page_size,
-                source=source,
-                sort=sort,
-                direction=direction,
-                state=state,
-            )
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/selected-page",
-        response_model=DuplicateSearchPage,
-    )
-    async def page_selected_cross_source_duplicates(
-        request: DuplicateAnalysisOptions,
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=6, ge=1, le=100),
-        source: Literal["both", "immich", "similarity"] = Query(default="both"),
-        sort: Literal[
-            "reclaimable", "members", "similarity", "date", "discovered"
-        ] = Query(default="reclaimable"),
-        direction: Literal["asc", "desc"] = Query(default="desc"),
-    ) -> DuplicateSearchPage:
-        try:
-            return await require_duplicate_service().review_selected_page(
-                request,
-                page=page,
-                page_size=page_size,
-                source=source,
-                sort=sort,
-                direction=direction,
-            )
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.get(
-        "/api/assets/duplicates/group-ids",
-        response_model=DuplicateGroupIdsResult,
-    )
-    async def duplicate_group_ids(
-        source: Literal["both", "immich", "similarity"] = Query(default="both"),
-        state: Literal[
-            "all",
-            "needs_review",
-            "auto_ready",
-            "blocked",
-            "actionable",
-            "needs_decisions",
-        ] = Query(default="all"),
-        limit: int = Query(default=10_000, ge=1, le=50_000),
-    ) -> DuplicateGroupIdsResult:
-        if duplicate_discovery is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The persisted duplicate projection is unavailable.",
-            )
-        group_ids = await duplicate_discovery.resolve_matching_group_ids(
-            source=source,
-            state=state,
-            limit=min(50_001, limit + 1),
-        )
-        return DuplicateGroupIdsResult(
-            group_ids=group_ids[:limit],
-            limit_exceeded=len(group_ids) > limit,
-        )
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/analyze",
-        response_model=CrossSourceDuplicateTaskStart,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def analyze_cross_source_duplicates(
-        request: DuplicateAnalysisOptions | None = None,
-    ) -> CrossSourceDuplicateTaskStart:
-        try:
-            return await require_duplicate_service().start(request or DuplicateAnalysisOptions())
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/similarity-scan",
-        response_model=SimilarityScanTaskStart,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def start_similarity_scan(
-        request: SimilarityScanRequest,
-    ) -> SimilarityScanTaskStart:
-        try:
-            return await require_similarity_scan_service().start(request)
-        except SimilarityScanAlreadyRunningError as error:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(error)) from error
-
-    @app.post(
-        "/api/assets/duplicates/similarity-index",
-        response_model=SimilarityIndexTaskStart,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def start_similarity_index() -> SimilarityIndexTaskStart:
-        return await require_similarity_index_service().start()
-
-    @app.get(
-        "/api/assets/duplicates/similarity-index/coverage",
-        response_model=SimilarityIndexCoverage,
-    )
-    async def similarity_index_coverage() -> SimilarityIndexCoverage:
-        return await require_similarity_index_service().coverage()
-
-    @app.get(
-        "/api/assets/duplicates/similarity-scan/latest",
-        response_model=SimilarityScanSummary | None,
-    )
-    async def latest_similarity_scan() -> SimilarityScanSummary | None:
-        return await require_similarity_scan_service().latest()
-
-    @app.get(
-        "/api/assets/duplicates/cache",
-        response_model=SimilarityCacheStatus,
-    )
-    async def similarity_cache_status() -> SimilarityCacheStatus:
-        return await build_similarity_cache_status()
-
-    @app.post(
-        "/api/assets/duplicates/cache/clear",
-        response_model=SimilarityCacheClearResult,
-    )
-    async def clear_similarity_cache(
-        request: SimilarityCacheClearRequest,
-    ) -> SimilarityCacheClearResult:
-        if request.cache == "previews":
-            removed = await asyncio.to_thread(similarity_cache.preview.clear)
-        elif request.cache == "decode":
-            removed = await asyncio.to_thread(similarity_cache.clear_decode)
-        else:
-            removed = await require_similarity_repository().clear_cache(request.cache)
-        return SimilarityCacheClearResult(
-            cache=request.cache,
-            removed_count=removed,
-            status=await build_similarity_cache_status(),
-        )
-
-    @app.put(
-        "/api/assets/duplicates/cross-source/review",
-        response_model=ExactDuplicateGroup,
-    )
-    async def save_cross_source_duplicate_review(
-        request: DuplicateReviewUpdate,
-    ) -> ExactDuplicateGroup:
-        try:
-            return await require_duplicate_service().save_review(
-                request,
-                request.options,
-            )
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.get(
-        "/api/assets/duplicates/workspace",
-        response_model=DuplicateWorkspaceState,
-    )
-    async def duplicate_workspace() -> DuplicateWorkspaceState:
-        try:
-            return await require_duplicate_service().workspace()
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.put(
-        "/api/assets/duplicates/workspace/selection",
-        response_model=DuplicateWorkspaceState,
-    )
-    async def save_duplicate_workspace_selection(
-        request: DuplicateWorkspaceSelectionUpdate,
-    ) -> DuplicateWorkspaceState:
-        try:
-            return await require_duplicate_service().save_workspace_selection(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.patch(
-        "/api/assets/duplicates/workspace/selection",
-        response_model=DuplicateWorkspaceState,
-    )
-    async def update_duplicate_workspace_selection(
-        request: DuplicateWorkspaceSelectionDelta,
-    ) -> DuplicateWorkspaceState:
-        try:
-            return await require_duplicate_service().update_workspace_selection(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except (RuntimeError, ValueError) as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/workspace/membership",
-        response_model=DuplicateWorkspaceMembership,
-    )
-    async def duplicate_workspace_membership(
-        request: DuplicateWorkspaceMembershipRequest,
-    ) -> DuplicateWorkspaceMembership:
-        try:
-            return await require_duplicate_service().workspace_membership(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.put(
-        "/api/assets/duplicates/workspace/group",
-        response_model=DuplicateGroupDraft,
-    )
-    async def save_duplicate_group_draft(
-        request: DuplicateGroupDraftUpdate,
-    ) -> DuplicateGroupDraft:
-        try:
-            return await require_duplicate_service().save_group_draft(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/workspace/apply-rules",
-        response_model=DuplicateWorkspaceState,
-    )
-    async def apply_duplicate_workspace_rules(
-        request: DuplicateAnalysisOptions,
-    ) -> DuplicateWorkspaceState:
-        try:
-            return await require_duplicate_service().apply_rules(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/workspace/reset",
-        response_model=DuplicateWorkspaceState,
-    )
-    async def reset_duplicate_workspace_decisions(
-        request: DuplicateWorkspaceResetRequest,
-    ) -> DuplicateWorkspaceState:
-        try:
-            return await require_duplicate_service().reset_workspace_decisions(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/workspace/auto-select/preview",
-        response_model=DuplicateKeeperSelectionResult,
-    )
-    async def preview_duplicate_keeper_selection(
-        request: DuplicateKeeperSelectionRequest,
-    ) -> DuplicateKeeperSelectionResult:
-        try:
-            return await require_duplicate_service().preview_keeper_selection(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except (RuntimeError, ValueError) as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/workspace/auto-select/apply",
-        response_model=DuplicateKeeperSelectionResult,
-    )
-    async def apply_duplicate_keeper_selection(
-        request: DuplicateKeeperSelectionRequest,
-    ) -> DuplicateKeeperSelectionResult:
-        try:
-            return await require_duplicate_service().apply_keeper_selection(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except (RuntimeError, ValueError) as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/workspace/preset",
-        response_model=DuplicateWorkspaceState,
-    )
-    async def apply_duplicate_workspace_preset(
-        request: DuplicateWorkspacePresetRequest,
-    ) -> DuplicateWorkspaceState:
-        try:
-            return await require_duplicate_service().apply_workspace_preset(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except (RuntimeError, ValueError) as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/{group_id}/similarity-reference",
-        response_model=ExactDuplicateGroup,
-    )
-    async def switch_cross_source_similarity_reference(
-        group_id: str,
-        request: DuplicateSimilarityReferenceRequest,
-    ) -> ExactDuplicateGroup:
-        try:
-            return await require_duplicate_service().similarity_reference(
-                group_id,
-                request,
-            )
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/plan",
-        response_model=DuplicateResolutionPlan,
-    )
-    async def plan_duplicate_resolution(
-        request: DuplicateResolutionPlanRequest,
-    ) -> DuplicateResolutionPlan:
-        try:
-            return await require_duplicate_service().plan(request)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.post(
-        "/api/assets/duplicates/cross-source/execute",
-        response_model=CrossSourceDuplicateTaskStart,
-        status_code=status.HTTP_202_ACCEPTED,
-    )
-    async def execute_duplicate_resolution(
-        request: DuplicateResolutionExecuteRequest,
-    ) -> CrossSourceDuplicateTaskStart:
-        try:
-            return await require_duplicate_service().start_resolution(request)
-        except RuntimeError as error:
-            raise map_action_error(error) from error
-
-    @app.get("/api/assets/{asset_id}", response_model=AssetDetail)
-    async def asset_detail(asset_id: UUID) -> AssetDetail:
-        try:
-            asset = await immich.get_asset(asset_id)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        if asset.is_trashed:
-            raise HTTPException(status_code=404, detail="Trashed assets are available in Restore.")
-        return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
-
-    @app.get("/api/restore/{asset_id}", response_model=AssetDetail)
-    async def restore_asset_detail(asset_id: UUID) -> AssetDetail:
-        try:
-            asset = await require_immich().get_asset(asset_id)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        if not asset.is_trashed:
-            raise HTTPException(status_code=404, detail="The asset is not in Restore.")
-        return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
-
-    @app.post("/api/restore/{asset_id}", status_code=status.HTTP_204_NO_CONTENT)
-    async def restore_asset(asset_id: UUID) -> Response:
-        """Restore one live Immich asset, then refresh its normal workspace data."""
-
-        sync = require_asset_sync()
-        try:
-            asset = await require_immich().get_asset(asset_id)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        if not asset.is_trashed:
-            raise HTTPException(status_code=404, detail="The asset is not in Restore.")
-        try:
-            await sync.restore_targets([asset_id])
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        return Response(status_code=status.HTTP_204_NO_CONTENT)
-
-    @app.post("/api/restore")
-    async def restore_assets(request: RestoreRequest) -> dict[str, object]:
-        """Restore selected or all live Immich trash in paced server-side batches.
-
-        A failed batch is inspected after the Immich call so the response reflects
-        assets that were actually restored even when the provider partially applied
-        the request. Remaining batches continue independently.
-        """
-
-        sync = require_asset_sync()
-        pacing = await sync._runtime_sync_settings.get()
-        if request.all:
-            try:
-                excluded_ids = set(request.excluded_ids)
-                asset_ids = [
-                    asset.id
-                    async for asset in require_immich().iter_trashed_assets()
-                    if asset.id not in excluded_ids
-                ]
-            except ImmichApiError as error:
-                raise map_immich_error(error) from error
-        else:
-            asset_ids = list(dict.fromkeys(request.ids))
-            resolved_assets = []
-            for batch in batches(asset_ids, pacing.full_batch_size):
-                try:
-                    resolved_assets.extend(
-                        await asyncio.gather(
-                            *(require_immich().get_asset(asset_id) for asset_id in batch)
-                        )
-                    )
-                except ImmichApiError as error:
-                    raise map_immich_error(error) from error
-            if any(not asset.is_trashed for asset in resolved_assets):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Some requested assets are no longer in Restore.",
-                )
-        if not asset_ids:
-            raise HTTPException(status_code=404, detail="No matching trashed assets were found.")
-        restore_batches = batches(asset_ids, pacing.full_batch_size)
-        restored_count = 0
-        failed_ids: list[UUID] = []
-        for index, batch in enumerate(restore_batches):
-            batch_restored, batch_failed = await restore_batch_with_accounting(
-                batch,
-                sync.restore_targets,
-                require_immich().get_asset,
-            )
-            restored_count += batch_restored
-            failed_ids.extend(batch_failed)
-            if index < len(restore_batches) - 1:
-                await asyncio.sleep(pacing.full_min_batch_delay_seconds)
-        return {
-            "restored": restored_count,
-            "requested": len(asset_ids),
-            "failed_ids": [str(asset_id) for asset_id in failed_ids],
-        }
-
-    @app.post("/api/assets/{asset_id}/sync", response_model=AssetDetail)
-    async def synchronize_asset(asset_id: UUID) -> AssetDetail:
-        """Refresh one asset and its metadata/relationship snapshot."""
-
-        require_asset_repository()
-        assert asset_sync is not None
-        try:
-            await asset_sync.reconcile_targets([asset_id])
-            asset = await immich.get_asset(asset_id)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        return AssetDetail.from_immich(asset, immich.public_asset_url(asset_id))
-
-    @app.post("/api/assets/sync/selection", response_model=AssetSelectionSyncResult)
-    async def synchronize_asset_selection(
-        request: AssetSelectionRequest,
-    ) -> AssetSelectionSyncResult:
-        """Synchronize the exact backend-resolved selection."""
-
-        repository = require_asset_repository()
-        assert asset_sync is not None
-        resolution = await repository.resolve_selection(
-            request,
-            max_targets=runtime_settings.action_max_targets,
-        )
-        if task_coordinator is not None:
-            task_ids = [*resolution.ids, *resolution.missing_ids]
-            task = await task_coordinator.submit(
-                "asset_selection_sync",
-                {"asset_ids": [str(identifier) for identifier in task_ids]},
-                priority=90,
-                lane_key="asset_repair",
-                deduplication_key="asset-selection-sync:" + selection_digest(task_ids),
-            )
-            await task_coordinator.start()
-            return AssetSelectionSyncResult(
-                requested=len(task_ids),
-                synced=0,
-                task_id=task.id,
-            )
-        await asset_sync.reconcile_targets(resolution.ids)
-        return AssetSelectionSyncResult(requested=len(resolution.ids), synced=len(resolution.ids))
-
-    @app.get("/api/assets/{asset_id}/thumbnail", response_class=Response)
-    async def asset_thumbnail(
-        asset_id: UUID,
-        size: Literal["thumbnail", "preview", "fullsize"] = "thumbnail",
-    ) -> Response:
-        cache_key: str | None = None
-        if size != "fullsize" and asset_repository is not None:
-            synchronized = await asset_repository.get_immich_assets([asset_id])
-            source = synchronized.get(asset_id)
-            if source is not None:
-                source_fingerprint = (
-                    f"{source.file_modified_at.isoformat()}:{source.file_size_bytes}"
-                )
-                cache_key = f"{asset_id}:{size}:{source_fingerprint}"
-        if cache_key is not None:
-            cached = await asyncio.to_thread(similarity_cache.preview.get, cache_key)
-            if cached is not None:
-                headers = {
-                    "Cache-Control": cached.cache_control or "private, max-age=300",
-                    "X-Content-Type-Options": "nosniff",
-                    "X-Companion-Cache": "hit",
-                }
-                if cached.etag:
-                    headers["ETag"] = cached.etag
-                return Response(
-                    content=cached.content,
-                    media_type=cached.media_type,
-                    headers=headers,
-                )
-        try:
-            media = await immich.get_thumbnail(asset_id, size=size)
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        if cache_key is not None:
-            await asyncio.to_thread(
-                similarity_cache.preview.put,
-                cache_key,
-                CachedPreview(
-                    content=media.content,
-                    media_type=media.media_type,
-                    etag=media.etag,
-                    cache_control=media.cache_control,
-                ),
-            )
-        headers = {
-            "Cache-Control": media.cache_control or "private, max-age=300",
-            "X-Content-Type-Options": "nosniff",
-            "X-Companion-Cache": "miss" if cache_key is not None else "bypass",
-        }
-        if media.etag:
-            headers["ETag"] = media.etag
-        return Response(content=media.content, media_type=media.media_type, headers=headers)
-
-    @app.get("/api/assets/{asset_id}/original")
-    async def asset_original(asset_id: UUID) -> StreamingResponse:
-        """Stream an original from Immich without materializing it in Companion."""
-
-        try:
-            return await media_stream_response(immich.stream_original(asset_id))
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-
-    @app.get("/api/assets/{asset_id}/video/playback")
-    async def asset_video_playback(asset_id: UUID, request: Request) -> StreamingResponse:
-        """Proxy Immich's browser-compatible, byte-range-aware video stream."""
-
-        try:
-            return await media_stream_response(
-                immich.stream_video_playback(
-                    asset_id,
-                    range_header=request.headers.get("range"),
-                    if_range_header=request.headers.get("if-range"),
-                )
-            )
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
 
     if runtime_settings.companion_env == "test":
 
@@ -2854,35 +935,7 @@ def create_app(
                 )
             return payload
 
-    frontend_dir = runtime_settings.companion_frontend_dir
-    frontend_index = frontend_dir / "index.html" if frontend_dir else None
-
-    if frontend_index and frontend_index.is_file():
-        frontend_assets = frontend_dir / "static" / "assets"
-        if frontend_assets.is_dir():
-            app.mount(
-                "/static/assets",
-                StaticFiles(directory=frontend_assets),
-                name="frontend-assets",
-            )
-
-        @app.get("/", response_class=FileResponse, include_in_schema=False)
-        async def frontend_index_route() -> FileResponse:
-            return FileResponse(frontend_index)
-
-        @app.get("/{frontend_path:path}", response_class=FileResponse, include_in_schema=False)
-        async def frontend_fallback(frontend_path: str) -> FileResponse:
-            if frontend_path == "api" or frontend_path.startswith("api/"):
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-            return FileResponse(frontend_index)
-    else:
-
-        @app.get("/", include_in_schema=False)
-        async def frontend_unavailable() -> None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Frontend assets are not installed. Run the Vite development server.",
-            )
+    register_frontend_routes(app, runtime_settings.companion_frontend_dir)
 
     app.add_middleware(
         DeploymentBearerAuthMiddleware,
