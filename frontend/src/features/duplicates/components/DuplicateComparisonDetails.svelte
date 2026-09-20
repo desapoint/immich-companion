@@ -161,7 +161,7 @@
         <span>Largest changed region <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.largestChangedRegionPercent) : 'Unavailable'}</b>
         <span>Substantial regions <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.substantialRegionCount ?? '—') : 'Unavailable'}</b>
       </div>
-      <p class="v2-compare-detail-note">The Local changes overlay stays in the originals' raw coordinate space so its cells line up with the image you see. Similarity scoring may separately compensate a bounded global frame translation before measuring residual detail; invalid border area is excluded through overlap cropping rather than shown as change.</p>
+      <p class="v2-compare-detail-note">The Local changes overlay stays in the originals' raw coordinate space so its cells line up with the image you see. Similarity scoring separately uses aligned residuals: matching coverage is the primary signal, while difference magnitude and multiple spatially separated changed zones apply bounded penalties. One localized coherent change is not independently punished just for being coherent.</p>
     </div>
   </details>
 
