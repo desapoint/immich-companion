@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     immich_public_url: HttpUrl | None = None
     immich_api_key: SecretStr | None = None
     immich_api_key_file: Path | None = None
+    companion_auth_token: SecretStr | None = None
     immich_timeout_seconds: float = Field(default=5.0, gt=0, le=60)
     immich_retry_attempts: int = Field(default=3, ge=1, le=5)
     immich_retry_backoff_seconds: float = Field(default=0.15, ge=0, le=5)
@@ -82,6 +83,14 @@ class Settings(BaseSettings):
             value = self.immich_api_key_file.read_text(encoding="utf-8").strip()
             return value or None
         return None
+
+    def resolve_companion_auth_token(self) -> str | None:
+        """Resolve the optional dashboard/API bearer token without exposing it."""
+
+        if self.companion_auth_token is None:
+            return None
+        value = self.companion_auth_token.get_secret_value().strip()
+        return value or None
 
     @property
     def immich_configured(self) -> bool:

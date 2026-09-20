@@ -11,7 +11,13 @@ no media mount and performs no direct database access.
 2. Set `COMPANION_IMMICH_API_KEY` through the stack's secret/environment
    management, set a strong `IMMICH_COMPANION_DB_PASSWORD`, set
    `IMMICH_COMPANION_PUBLIC_IMMICH_URL` to the URL browsers use for Immich, and
-   optionally set `IMMICH_COMPANION_VERSION` to an immutable release or SHA tag.
+   keep the companion host bind on its secure default (`127.0.0.1`). Set
+   `IMMICH_COMPANION_BIND_ADDRESS` only when a trusted reverse proxy or private
+   network is deliberately serving the companion; do not use `0.0.0.0` for a
+   directly internet-facing deployment. If application authentication is
+   enabled in the image, provide `COMPANION_AUTH_TOKEN` through the secret
+   manager rather than committing it to this file. You may also set
+   `IMMICH_COMPANION_VERSION` to an immutable release or SHA tag.
    Keep `ALLOW_DESTRUCTIVE_ACTIONS=false` until trash workflows have been
    validated in staging. `ACTION_MAX_TARGETS` and `ACTION_PLAN_TTL_SECONDS`
    bound action size and review lifetime. `IMMICH_COMPANION_SYNC_BATCH_SIZE`,
@@ -45,7 +51,8 @@ no media mount and performs no direct database access.
 3. Load the original file and the overlay together in the deployment UI or
    Compose command used by the host.
 4. Confirm the companion reports `ready: true` before exposing port 8090 beyond
-   a trusted network.
+   a trusted network. The overlay's loopback bind means the port is not
+   reachable from the LAN until you explicitly opt in to another bind address.
 
 If the dashboard is served through HTTPS, terminate TLS at the reverse proxy
 and forward WebSocket upgrades for `/api/tasks/*/stream`. The browser derives
