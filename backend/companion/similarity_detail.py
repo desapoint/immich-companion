@@ -285,15 +285,15 @@ def _estimate_alignment(
     # to small handheld translations and slight subject movement.
     for shift_y in range(-limit, limit + 1, 2):
         for shift_x in range(-limit, limit + 1, 2):
-            error, overlap = _translation_error(left, right, shift_x, shift_y)
+            error, _ = _translation_error(left, right, shift_x, shift_y)
             if error < best_error:
                 best_error, best_x, best_y = error, shift_x, shift_y
     coarse_x, coarse_y = best_x, best_y
     for shift_y in range(max(-limit, coarse_y - 2), min(limit, coarse_y + 2) + 1):
         for shift_x in range(max(-limit, coarse_x - 2), min(limit, coarse_x + 2) + 1):
-            error, overlap = _translation_error(left, right, shift_x, shift_y)
+            error, _ = _translation_error(left, right, shift_x, shift_y)
             if error < best_error:
-                best_error, best_x, best_y, best_overlap = error, shift_x, shift_y, overlap
+                best_error, best_x, best_y = error, shift_x, shift_y
 
     improvement = (raw_error - best_error) / raw_error
     if (best_x == 0 and best_y == 0) or improvement < DETAIL_ALIGNMENT_MIN_IMPROVEMENT:
