@@ -129,6 +129,15 @@
           <span>Perceptual hash <small class="v2-muted">· 25% weight</small></span><b>{percent(selectedEvidence.perceptualPercent)}</b>
           <span>Color <small class="v2-muted">· 10% weight</small></span><b>{percent(selectedEvidence.colorPercent)}</b>
           <span>Validation evidence</span><b>{validationEvidenceLabel ?? 'Unavailable'}</b>
+          <span>Frame alignment</span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.alignmentApplied ? 'Applied' : 'Not needed') : 'Unavailable'}</b>
+          {#if !localDiagnosticsLoading && localDiagnostics?.available}
+            {#if localDiagnostics.alignmentApplied}
+              <span>Unaligned detail score</span><b>{percent(localDiagnostics.rawSimilarityPercent)}</b>
+              <span>Aligned detail score</span><b>{percent(localDiagnostics.alignedSimilarityPercent)}</b>
+            {:else}
+              <span>Detail score</span><b>{percent(localDiagnostics.alignedSimilarityPercent)}</b>
+            {/if}
+          {/if}
           {#if selectedEvidence.detailChangedPercent !== null && selectedEvidence.detailChangedPercent !== undefined}
             <span>Aligned detail changed area <small class="v2-muted">· scorer</small></span><b>{percent(selectedEvidence.detailChangedPercent)}</b>
             <span>Detail evidence</span><b>{detailSourceLabel(selectedEvidence.detailSource)}</b>
@@ -144,7 +153,7 @@
         {/if}
       </div>
       {#if boundedValidation}<p class="v2-compare-detail-note">At least one side cannot be fully decoded within Companion's 64-megapixel safety limit, or its original/full-size detail evidence was unavailable. Similarity therefore uses bounded Immich-generated visual evidence. The metadata table shows original dimensions and the actual rendition dimensions used when they are known. Bounded validation is review evidence, not full-resolution or destructive proof.</p>{/if}
-      {#if selectedEvidence?.detailChangedPercent !== null && selectedEvidence?.detailChangedPercent !== undefined}<p class="v2-compare-detail-note">The final similarity includes the aligned candidate-detail check. The original images are never warped in the viewer. Difference shows displayed-pixel changes; Local changes deliberately keeps the raw original-coordinate grid.</p>{/if}
+      {#if selectedEvidence?.detailChangedPercent !== null && selectedEvidence?.detailChangedPercent !== undefined}<p class="v2-compare-detail-note">The final similarity uses the aligned detail result when alignment is applied; the unaligned detail score is shown only to explain the effect of compensation. The original images are never warped in the viewer. Difference shows displayed-pixel changes; Local changes deliberately keeps the raw original-coordinate grid.</p>{/if}
     </div>
   </details>
 
