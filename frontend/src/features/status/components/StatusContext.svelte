@@ -28,11 +28,6 @@
       </V2Card>
     </V2Section>
 
-    <V2Section title="Navigation">
-      <V2Card>
-        <span class="v2-small v2-muted">Status is intentionally read-only. Retry appears when status loading fails.</span>
-      </V2Card>
-    </V2Section>
   {:else}
     <V2Card>
       <div class="v2-small v2-muted">{state.kind === 'loading' ? 'Loading environment status…' : 'Live status unavailable.'}</div>
