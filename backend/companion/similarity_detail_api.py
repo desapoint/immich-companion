@@ -70,6 +70,8 @@ def register_similarity_detail_routes(
             largest_changed_region_percent=diagnostics.largest_changed_region_percent,
             substantial_region_count=diagnostics.substantial_region_count,
             aligned_changed_percent=diagnostics.aligned_changed_percent,
+            raw_similarity_percent=diagnostics.raw_similarity_percent,
+            aligned_similarity_percent=diagnostics.aligned_similarity_percent,
             alignment_applied=diagnostics.alignment_applied,
             alignment_shift_percent=diagnostics.alignment_shift_percent,
             alignment_overlap_percent=diagnostics.alignment_overlap_percent,
