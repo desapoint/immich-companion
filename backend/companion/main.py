@@ -25,6 +25,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from companion.action_repository import ActionRepository
+from companion.asset_routes import register_asset_routes
 from companion.action_schema import (
     AssetActionExecuteRequest,
     AssetActionPlan,
@@ -134,6 +135,7 @@ from companion.duplicate_service import (
     CrossSourceDuplicateTaskHandler,
 )
 from companion.frontend_routes import register_frontend_routes
+from companion.health_routes import register_health_routes
 from companion.immich import (
     ImmichAlbum,
     ImmichApiClient,
@@ -809,83 +811,7 @@ def create_app(
             media_type="application/json",
         )
 
-    async def health_payload() -> dict[str, object]:
-        immich_status, database_status = await asyncio.gather(
-            immich.check(),
-            database_health.check(),
-        )
-        database_ready = database_status["status"] in {"ok", "not_configured"}
-        ready = immich_status["status"] == "ok" and database_ready
-        return {
-            "status": "ok" if ready else "degraded",
-            "ready": ready,
-            "environment": runtime_settings.companion_env,
-            "safe_mode": not runtime_settings.allow_destructive_actions,
-            "dependencies": {
-                "immich": immich_status,
-                "companion_database": database_status,
-            },
-        }
-
-    @app.get("/api/live")
-    async def live() -> dict[str, str]:
-        return {"status": "ok"}
-
-    @app.get("/api/health")
-    async def health() -> dict[str, object]:
-        return await health_payload()
-
-    @app.get("/api/ready")
-    async def ready() -> dict[str, object]:
-        payload = await health_payload()
-        if not payload["ready"]:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=payload,
-            )
-        return payload
-
-    @app.get("/api/version")
-    async def version() -> dict[str, str]:
-        return {
-            "name": "immich-companion",
-            "version": runtime_settings.companion_version,
-            "environment": runtime_settings.companion_env,
-        }
-
-    @app.get("/api/capabilities")
-    async def capabilities() -> dict[str, object]:
-        immich_compatibility = await immich.compatibility_report()
-        return {
-            "destructive_actions": runtime_settings.allow_destructive_actions,
-            "immich_api": runtime_settings.immich_configured,
-            "companion_database": runtime_settings.companion_database_url is not None,
-            "immich_server": immich_compatibility.model_dump(mode="json"),
-            "implemented": [
-                "health",
-                "version",
-                "capabilities",
-                "asset_sync",
-                "asset_search",
-                "asset_details",
-                "asset_previews",
-                "structured_asset_search",
-                "album_filters",
-                "tag_filters",
-                "selection_resolution",
-                "reviewed_asset_actions",
-                "hybrid_staged_sync",
-                "persistent_sync_status",
-                "file_integrity_analysis",
-                "cross_source_duplicate_analysis",
-            ],
-            "planned": [
-                "action_jobs",
-                "exact_dedupe",
-                "tagging",
-                "visual_similarity",
-            ],
-        }
+    register_health_routes(app, runtime_settings, immich, database_health)
 
     def require_asset_repository() -> AssetRepository:
         if asset_repository is None:
@@ -1224,130 +1150,6 @@ def create_app(
         await task_coordinator.start()
         return task
 
-    @app.get("/api/assets", response_model=AssetSearchResponse)
-    async def search_assets(
-        query: str | None = Query(default=None, max_length=500),
-        asset_type: Literal["IMAGE", "VIDEO", "AUDIO", "OTHER"] | None = Query(
-            default=None,
-            alias="type",
-        ),
-        taken_after: datetime | None = None,
-        taken_before: datetime | None = None,
-        min_width: int | None = Query(default=None, ge=1),
-        max_width: int | None = Query(default=None, ge=1),
-        min_height: int | None = Query(default=None, ge=1),
-        max_height: int | None = Query(default=None, ge=1),
-        min_aspect_ratio: float | None = Query(default=None, gt=0),
-        max_aspect_ratio: float | None = Query(default=None, gt=0),
-        favorite: bool | None = None,
-        archived: bool | None = None,
-        trashed: bool | None = None,
-        sort_field: AssetSortField = "taken_at",
-        sort_direction: AssetSortDirection = "desc",
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=48, ge=1, le=200),
-    ) -> AssetSearchResponse:
-        repository = require_asset_repository()
-        criteria = AssetSearchQuery(
-            query=query,
-            asset_type=asset_type,
-            taken_after=taken_after,
-            taken_before=taken_before,
-            min_width=min_width,
-            max_width=max_width,
-            min_height=min_height,
-            max_height=max_height,
-            min_aspect_ratio=min_aspect_ratio,
-            max_aspect_ratio=max_aspect_ratio,
-            favorite=favorite,
-            archived=archived,
-            trashed=trashed,
-            sort_field=sort_field,
-            sort_direction=sort_direction,
-            page=page,
-            page_size=page_size,
-        )
-        return add_public_asset_urls(await repository.search(criteria))
-
-    @app.post("/api/assets/search", response_model=AssetSearchResponse)
-    async def search_assets_structured(
-        criteria: StructuredAssetSearchQuery,
-    ) -> AssetSearchResponse:
-        repository = require_asset_repository()
-        return add_public_asset_urls(await repository.search_structured(criteria))
-
-    @app.get("/api/restore", response_model=AssetSearchResponse)
-    async def search_restore_assets(
-        page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=48, ge=1, le=200),
-    ) -> AssetSearchResponse:
-        """List trashed assets directly from Immich, without local index data."""
-
-        try:
-            trashed_assets = [asset async for asset in require_immich().iter_trashed_assets()]
-        except ImmichApiError as error:
-            raise map_immich_error(error) from error
-        total = len(trashed_assets)
-        offset = (page - 1) * page_size
-        return AssetSearchResponse(
-            items=[
-                add_public_asset_url(AssetSummary.from_immich(asset))
-                for asset in trashed_assets[offset : offset + page_size]
-            ],
-            total=total,
-            page=page,
-            page_size=page_size,
-            pages=(total + page_size - 1) // page_size,
-        )
-
-    @app.post(
-        "/api/assets/{asset_id}/search-match",
-        response_model=AssetSummary | None,
-    )
-    async def match_asset_search(
-        asset_id: UUID,
-        criteria: AssetSearchMatchRequest,
-    ) -> AssetSummary | None:
-        repository = require_asset_repository()
-        return add_public_asset_url(await repository.find_structured_match(asset_id, criteria))
-
-    @app.get(
-        "/api/assets/duplicates/summary",
-        response_model=DuplicateDiscoverySummary,
-    )
-    async def duplicate_discovery_summary() -> DuplicateDiscoverySummary:
-        if composite_duplicate_repository is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The persisted duplicate projection is unavailable.",
-            )
-        metadata = await composite_duplicate_repository.metadata()
-        group_count, member_count = (
-            await composite_duplicate_repository.unresolved_counts()
-        )
-        return DuplicateDiscoverySummary(
-            authoritative_generation=metadata.authoritative_generation,
-            group_count=group_count,
-            member_count=member_count,
-            evidence_count=metadata.evidence_count,
-            last_success_at=metadata.last_success_at,
-        )
-
-    @app.get(
-        "/api/assets/{asset_id}/summary",
-        response_model=AssetSummary | None,
-    )
-    async def asset_summary(asset_id: UUID) -> AssetSummary | None:
-        """Return one asset summary independently of the active search."""
-
-        repository = require_asset_repository()
-        return add_public_asset_url(await repository.get_asset_summary(asset_id))
-
-    @app.get("/api/albums", response_model=list[AlbumOption])
-    async def search_album_options() -> list[AlbumOption]:
-        repository = require_asset_repository()
-        return await repository.list_albums()
-
     def require_immich() -> ImmichApiClient:
         override = getattr(app.state, "immich_override", None)
         if override is not None:
@@ -1355,6 +1157,16 @@ def create_app(
         if not runtime_settings.immich_configured:
             raise HTTPException(status_code=503, detail="Immich is not configured.")
         return immich
+
+    register_asset_routes(
+        app,
+        require_asset_repository=require_asset_repository,
+        require_immich=require_immich,
+        map_immich_error=map_immich_error,
+        add_public_asset_urls=add_public_asset_urls,
+        add_public_asset_url=add_public_asset_url,
+        composite_duplicate_repository=composite_duplicate_repository,
+    )
 
     def album_management_item(
         album: ImmichAlbum, *, asset_count: int | None = None

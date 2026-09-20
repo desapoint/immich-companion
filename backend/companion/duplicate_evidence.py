@@ -30,6 +30,7 @@ from companion.discovery import (
     ImmichDuplicateProvider,
 )
 from companion.duplicate_identity import member_set_key, stable_group_key
+from companion.duplicate_contracts import same_normalized_pixels
 from companion.duplicate_keeper_rules import choose_keeper
 from companion.duplicate_policy import DuplicatePolicyRepository
 from companion.duplicate_review_repository import DuplicateReviewRepository
@@ -357,11 +358,6 @@ def _public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         expires_at=record.expires_at,
         destructive=getattr(record, "destructive", True),
     )
-
-
-from companion.duplicate_resolution import DuplicateResolutionMixin
-
-
 
 
 class DuplicateEvidenceMixin:
@@ -807,24 +803,6 @@ class DuplicateEvidenceMixin:
         return result.groups[0]
 
     @staticmethod
-    def _same_normalized_pixels(
-        left: AssetImagePreservationFeatureRecord | None,
-        right: AssetImagePreservationFeatureRecord | None,
-    ) -> bool:
-        """Compare exact decoded pixels only from current original preservation evidence."""
-
-        return bool(
-            left is not None
-            and right is not None
-            and left.origin == "original"
-            and right.origin == "original"
-            and left.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
-            and right.pixel_normalization_version == PIXEL_NORMALIZATION_VERSION
-            and left.pixel_sha256
-            and left.pixel_sha256 == right.pixel_sha256
-        )
-
-    @staticmethod
     def _apply_similarity(
         result: CrossSourceDuplicateResult,
         source_groups: list[DiscoveredGroup],
@@ -865,7 +843,7 @@ class DuplicateEvidenceMixin:
                 edge = edges.get((reference.id, member.id))
                 feature = features.get(member.id)
                 preservation_feature = preservation_features.get(member.id)
-                exact_pixel_match = CrossSourceDuplicateService._same_normalized_pixels(
+                exact_pixel_match = same_normalized_pixels(
                     reference_preservation,
                     preservation_feature,
                 )
