@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -28,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from companion.database import DatabaseManager
 from companion.models import TaskAttemptRecord, TaskLaneRecord, TaskRecord
 from companion.task_coordinator import TaskCancelledError
+from companion.task_schema import TaskResult
 from companion.v2.legacy_task_coordinator import TASK_UPDATE_CHANNEL
 
 # Required broad compatibility kill-switch. Bump for any semantic Appearance-pipeline
@@ -44,6 +46,8 @@ EVIDENCE_BOUND_TASK_TYPES = (
 _REPLACEMENT_SCAN_TASK_TYPE = "similarity_scan"
 _REPLACEMENT_SCAN_LANE_KEY = "asset_integrity"
 _REPLACEMENT_SCAN_PRIORITY = 45
+SIMILARITY_EVIDENCE_DESTROY_TASK_TYPE = "similarity_evidence_destroy"
+DestroyProgress = Callable[[int, int, str], Awaitable[None]]
 
 
 class StaleSimilarityEvidenceEpochError(TaskCancelledError):
@@ -65,6 +69,7 @@ class SimilarityEvidenceDestroyResult:
     state: SimilarityEvidenceGenerationState
     cancelled_task_count: int
     removed_counts: dict[str, int]
+    already_invalidated: bool = field(default=False, kw_only=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,7 +245,9 @@ class SimilarityEvidenceEpochRepository:
         reason_type: str,
         reason_message: str,
         drop_reusable_evidence: bool,
-    ) -> tuple[int, dict[str, int]]:
+        progress: DestroyProgress | None = None,
+        expected_epoch: int | None = None,
+    ) -> tuple[int, dict[str, int], bool]:
         """Advance the epoch and retire writers without discarding reusable features."""
 
         current_descriptor = similarity_generation_fingerprint()
@@ -248,6 +255,7 @@ class SimilarityEvidenceEpochRepository:
 
         # Keep the historical advisory-lock key so destroy requests also serialize with
         # rebuilds issued by an older process during a rolling deployment.
+        await session.execute(text("SET LOCAL lock_timeout = '30s'"))
         await session.execute(
             text(
                 "SELECT pg_advisory_xact_lock(hashtext("
@@ -257,6 +265,8 @@ class SimilarityEvidenceEpochRepository:
         epoch, _code_generation, _recorded, _rebuilt_at = await self._ensure_state(
             session, lock=True
         )
+        if expected_epoch is not None and epoch != expected_epoch:
+            return 0, {}, False
         next_epoch = epoch + 1
         rebuilt_sql = ", rebuilt_at = now()" if update_rebuilt_at else ""
         await session.execute(
@@ -272,6 +282,22 @@ class SimilarityEvidenceEpochRepository:
                 "descriptor": current_descriptor,
             },
         )
+        progress_total = 11 if progress is not None else 1 + 1 + 1 + len(
+            [
+                "scan_pairs",
+                "scans",
+                "pair_results",
+                "detail_features",
+                "bounded_state",
+                "search_features",
+                "pending_asset_changes",
+            ]
+            if drop_reusable_evidence
+            else ["scan_pairs", "scans"]
+        )
+        progress_completed = 1
+        if progress is not None:
+            await progress(progress_completed, progress_total, "Evidence epoch advanced.")
 
         # This is intentionally a hard task boundary instead of the normal cooperative
         # cancel transition. Revoking leases prevents an old worker from completing its
@@ -303,6 +329,13 @@ class SimilarityEvidenceEpochRepository:
         )
         cancelled_task_ids = list(cancelled.scalars().all())
         cancelled_task_count = len(cancelled_task_ids)
+        progress_completed += 1
+        if progress is not None:
+            await progress(
+                progress_completed,
+                progress_total,
+                f"Cancelled {cancelled_task_count} evidence-bound task(s).",
+            )
 
         if cancelled_task_ids:
             await session.execute(
@@ -336,6 +369,13 @@ class SimilarityEvidenceEpochRepository:
                     "last_success_at = NULL WHERE id = 1"
                 )
             )
+            progress_completed += 1
+            if progress is not None:
+                await progress(
+                    progress_completed,
+                    progress_total,
+                    f"Removed {removed['composite_groups']} composite group(s).",
+                )
         else:
             # Keep exact output available, but never expose invalidated similarity
             # membership or scores as though they were current. Similarity-only groups
@@ -371,6 +411,13 @@ class SimilarityEvidenceEpochRepository:
                     ")"
                 )
             )
+            progress_completed += 1
+            if progress is not None:
+                await progress(
+                    progress_completed,
+                    progress_total,
+                    f"Removed {removed['composite_groups']} composite group(s).",
+                )
             await session.execute(
                 text(
                     "DELETE FROM composite_duplicate_group_evidence "
@@ -405,26 +452,40 @@ class SimilarityEvidenceEpochRepository:
         for label, table_name in derived_tables:
             result = await session.execute(text(f"DELETE FROM {table_name}"))
             removed[label] = int(result.rowcount or 0)
+            progress_completed += 1
+            if progress is not None:
+                await progress(
+                    progress_completed,
+                    progress_total,
+                    f"Removed {removed[label]} {label.replace('_', ' ')} row(s).",
+                )
 
-        return cancelled_task_count, removed
+        return cancelled_task_count, removed, True
 
-    async def destroy(self) -> SimilarityEvidenceDestroyResult:
+    async def destroy(
+        self, *, progress: DestroyProgress | None = None, expected_epoch: int | None = None
+    ) -> SimilarityEvidenceDestroyResult:
         """Invalidate all durable Appearance evidence without queuing replacement work."""
 
         async with self._database.sessions() as session, session.begin():
-            cancelled_task_count, removed = await self._invalidate(
+            cancelled_task_count, removed, invalidated = await self._invalidate(
                 session,
                 update_rebuilt_at=False,
                 reason_type="evidence_destroy",
                 reason_message="Retired by similarity evidence destroy",
                 drop_reusable_evidence=True,
+                progress=progress,
+                expected_epoch=expected_epoch,
             )
 
         state = await self.status()
+        if progress is not None and invalidated:
+            await progress(11, 11, "Similarity evidence destruction committed.")
         return SimilarityEvidenceDestroyResult(
             state=state,
             cancelled_task_count=cancelled_task_count,
             removed_counts=removed,
+            already_invalidated=not invalidated,
         )
 
     async def rebuild_in_session(
@@ -438,7 +499,7 @@ class SimilarityEvidenceEpochRepository:
             raise ValueError("A replacement similarity scan payload is required")
         replacement_task_id = uuid4()
         replacement_dedupe_key = _scan_request_key(scan_payload)
-        cancelled_task_count, removed = await self._invalidate(
+        cancelled_task_count, removed, _invalidated = await self._invalidate(
             session,
             update_rebuilt_at=True,
             reason_type="evidence_rebuild",
@@ -508,4 +569,49 @@ class SimilarityEvidenceEpochRepository:
             cancelled_task_count=cancelled_task_count,
             removed_counts=removed,
             task_id=replacement_task_id,
+        )
+
+
+class SimilarityEvidenceDestroyTaskHandler:
+    """Run destroy through the durable coordinator with stage checkpoints."""
+
+    task_type = SIMILARITY_EVIDENCE_DESTROY_TASK_TYPE
+    lane_key = "similarity_evidence_destroy"
+    max_concurrency = 1
+
+    def __init__(self, repository: SimilarityEvidenceEpochRepository) -> None:
+        self._repository = repository
+
+    async def execute(self, context, payload: dict[str, object]) -> TaskResult:
+        total = 11
+
+        async def report(completed: int, _reported_total: int, detail: str) -> None:
+            bounded_total = total
+            await context.checkpoint_sync_step(
+                step="destroy_similarity_evidence",
+                cursor=None,
+                counters={"stages_completed": completed, "stages_total": bounded_total},
+                completed=completed,
+                total=bounded_total,
+                detail=detail,
+            )
+
+        await report(0, total, "Waiting to invalidate similarity evidence.")
+        expected_epoch = payload.get("expected_epoch")
+        result = await self._repository.destroy(
+            progress=report,
+            expected_epoch=expected_epoch if isinstance(expected_epoch, int) else None,
+        )
+        if getattr(result, "already_invalidated", False):
+            await report(11, 11, "Already invalidated by an earlier attempt.")
+        return TaskResult(
+            summary={
+                "epoch": result.state.epoch,
+                "cancelled_task_count": result.cancelled_task_count,
+                "removed_counts": result.removed_counts,
+            },
+            counters={
+                "cancelled_task_count": result.cancelled_task_count,
+                **result.removed_counts,
+            },
         )

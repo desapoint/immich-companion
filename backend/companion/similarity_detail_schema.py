@@ -46,8 +46,9 @@ class SimilarityEvidenceGenerationResponse(BaseModel):
 class SimilarityEvidenceDestroyResponse(BaseModel):
     """Destructive generation invalidation without replacement scan submission."""
 
-    generation: SimilarityEvidenceGenerationResponse
-    cancelled_task_count: int = Field(ge=0)
+    task_id: UUID | None = None
+    generation: SimilarityEvidenceGenerationResponse | None = None
+    cancelled_task_count: int = Field(default=0, ge=0)
     removed_counts: dict[str, int] = Field(default_factory=dict)
 
 

@@ -21,6 +21,10 @@ describe('SimilarityEvidenceGenerationPanel', () => {
     expect(body).toContain('Destroy only leaves the evidence empty until a later similarity scan.');
     expect(body).toContain('Review decisions and resolution history are preserved.');
     expect(body).toContain('Refresh epoch status');
+    expect(source).toContain('Similarity evidence destruction progress');
+    expect(source).toContain('DESTROY_TASK_KEY');
+    expect(source).toContain('monitorDestroy');
+    expect(source).toContain('task.progress?.percent');
   });
 
   it('rebuilds with every saved membership-affecting discovery setting', () => {

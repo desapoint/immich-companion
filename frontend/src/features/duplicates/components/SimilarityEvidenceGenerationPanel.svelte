@@ -8,6 +8,7 @@
   import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import V2Inline from '../../../lib/components/layout/Inline.svelte';
+  import V2Progress from '../../../lib/components/ui/Progress.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
 
   type ApiGeneration = {
@@ -19,18 +20,22 @@
     rebuilt_at: string|null;
   };
   type ApiDestroyResult = {
-    generation: ApiGeneration;
+    task_id?: string;
+    generation?: ApiGeneration;
     cancelled_task_count: number;
     removed_counts: Record<string,number>;
   };
   type ApiRebuildResult = ApiDestroyResult & {
+    generation: ApiGeneration;
     task_id: string;
   };
   type ApiTask = {
     status: string;
     error?: { message?: string }|null;
+    progress?: { detail?: string|null; percent?: number|null };
   };
 
+  const DESTROY_TASK_KEY='immich-companion:v2:similarity-evidence-destroy-task';
   const REBUILD_TASK_KEY='immich-companion:v2:similarity-evidence-rebuild-task';
   const REBUILD_MESSAGE_KEY='immich-companion:v2:similarity-evidence-rebuild-message';
   const sleep=(milliseconds:number)=>new Promise((resolve)=>setTimeout(resolve,milliseconds));
@@ -40,6 +45,8 @@
   let generationError=$state('');
   let destroyOpen=$state(false);
   let destroying=$state(false);
+  let destroyProgress=$state('Destroying the current similarity evidence…');
+  let destroyPercent=$state<number|null>(null);
   let rebuildOpen=$state(false);
   let rebuilding=$state(false);
   let rebuildMessage=$state('');
@@ -86,6 +93,35 @@
     }
   }
 
+  async function monitorDestroy(taskId:string):Promise<void>{
+    destroying=true;
+    rebuildError='';
+    try{
+      for(;;){
+        const task=await requestJson<ApiTask>(`/api/tasks/${encodeURIComponent(taskId)}`);
+        destroyProgress=task.progress?.detail??'Destroying the current similarity evidence…';
+        destroyPercent=typeof task.progress?.percent==='number'?task.progress.percent:null;
+        if(task.status==='completed'){
+          sessionStorage.removeItem(DESTROY_TASK_KEY);
+          sessionStorage.setItem(REBUILD_MESSAGE_KEY,'Similarity evidence destruction completed.');
+          window.location.reload();
+          return;
+        }
+        if(task.status==='failed'||task.status==='cancelled'){
+          sessionStorage.removeItem(DESTROY_TASK_KEY);
+          rebuildError=task.error?.message??`Similarity evidence destruction ${task.status}.`;
+          destroying=false;
+          await loadGeneration();
+          return;
+        }
+        await sleep(1500);
+      }
+    }catch(error){
+      rebuildError=error instanceof Error?error.message:'Similarity evidence destruction status could not be loaded.';
+      destroying=false;
+    }
+  }
+
   async function destroyEvidence():Promise<void>{
     if(rebuilding||destroying)return;
     destroying=true;
@@ -96,8 +132,15 @@
         '/api/v2/duplicates/similarity-evidence/destroy',
         jsonRequest('POST',{}),
       );
-      generation=result.generation;
-      const message=`Evidence epoch ${result.generation.epoch} created. Similarity evidence was destroyed; no scan was queued.`;
+      if(result.task_id){
+        destroyPercent=0;
+        sessionStorage.setItem(DESTROY_TASK_KEY,result.task_id);
+        destroyOpen=false;
+        window.location.reload();
+        return;
+      }
+      if(result.generation)generation=result.generation;
+      const message=`Evidence epoch ${result.generation?.epoch??'next'} created. Similarity evidence was destroyed; no scan was queued.`;
       sessionStorage.removeItem(REBUILD_TASK_KEY);
       sessionStorage.setItem(REBUILD_MESSAGE_KEY,message);
       destroyOpen=false;
@@ -153,6 +196,8 @@
     if(completed){rebuildMessage=completed;sessionStorage.removeItem(REBUILD_MESSAGE_KEY)}
     const taskId=sessionStorage.getItem(REBUILD_TASK_KEY);
     if(taskId)void monitorRebuild(taskId);
+    const destroyTaskId=sessionStorage.getItem(DESTROY_TASK_KEY);
+    if(destroyTaskId)void monitorDestroy(destroyTaskId);
   });
 </script>
 
@@ -176,6 +221,10 @@
     {#if generationError}<small class="v2-rebuild-error">Generation status: {generationError}</small>{/if}
     {#if rebuildMessage}<small class="v2-rebuild-ok">{rebuildMessage}</small>{/if}
     {#if rebuildError}<small class="v2-rebuild-error">{rebuildError}</small>{/if}
+    {#if destroying}
+      <V2Progress value={destroyPercent??undefined} indeterminate={destroyPercent===null} label="Similarity evidence destruction progress"/>
+      <small class="v2-muted" aria-live="polite">{destroyProgress}{#if destroyPercent!==null} · {Math.round(destroyPercent)}%{/if}</small>
+    {/if}
     <V2Inline gap="sm" wrap={true}>
       <V2Button variant="danger" disabled={rebuilding||destroying||generationLoading} onclick={()=>destroyOpen=true}>{destroying?'Destroying similarity evidence…':'Destroy evidence only'}</V2Button>
       <V2Button variant="danger" disabled={rebuilding||destroying||generationLoading} onclick={()=>rebuildOpen=true}>{rebuilding?'Rebuilding similarity evidence…':'Start new evidence epoch & rebuild'}</V2Button>

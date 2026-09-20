@@ -188,6 +188,7 @@ from companion.selection_repository import RelationEntityKind, RelationSelection
 from companion.similarity_cache import CachedPreview, SimilarityCacheManager
 from companion.similarity_detail_api import register_similarity_detail_routes
 from companion.similarity_detail_service import SimilarityDetailRepository
+from companion.similarity_generation import SimilarityEvidenceDestroyTaskHandler
 from companion.similarity_index_service import (
     SimilarityIndexMaintainer,
     SimilarityIndexService,
@@ -756,6 +757,11 @@ def create_app(
             )
         )
 
+    if task_coordinator is not None and detail_repository is not None:
+        task_coordinator.register_handler(
+            SimilarityEvidenceDestroyTaskHandler(detail_repository._evidence_epoch)
+        )
+
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if database is not None:
@@ -786,7 +792,7 @@ def create_app(
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
-    register_similarity_detail_routes(app, detail_repository)
+    register_similarity_detail_routes(app, detail_repository, task_coordinator)
 
     @app.exception_handler(ImmichApiError)
     async def immich_error_handler(_request, error: ImmichApiError) -> Response:
