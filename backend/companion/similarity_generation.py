@@ -255,6 +255,7 @@ class SimilarityEvidenceEpochRepository:
 
         # Keep the historical advisory-lock key so destroy requests also serialize with
         # rebuilds issued by an older process during a rolling deployment.
+        await session.execute(text("SET LOCAL lock_timeout = '30s'"))
         await session.execute(
             text(
                 "SELECT pg_advisory_xact_lock(hashtext("
