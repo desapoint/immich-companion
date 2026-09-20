@@ -41,6 +41,30 @@ def _scene() -> Image.Image:
     return image
 
 
+def _burst_scene(subject_offset: tuple[int, int] = (0, 0)) -> Image.Image:
+    """Synthetic textured scene for nearby handheld frames."""
+
+    image = Image.new("RGB", (640, 640), (85, 105, 140))
+    draw = ImageDraw.Draw(image)
+    for x in range(0, 640, 32):
+        draw.line((x, 0, x, 640), fill=(75 + (x // 32) % 3 * 8, 95, 125), width=2)
+    for y in range(0, 640, 40):
+        draw.line((0, y, 640, y), fill=(80, 100 + (y // 40) % 3 * 7, 130), width=2)
+    draw.rectangle((70, 80, 220, 180), fill=(150, 120, 90))
+    draw.rectangle((445, 110, 575, 250), fill=(90, 150, 110))
+    draw.ellipse((480, 360, 590, 500), fill=(170, 120, 170))
+    offset_x, offset_y = subject_offset
+    draw.ellipse(
+        (250 + offset_x, 110 + offset_y, 410 + offset_x, 270 + offset_y),
+        fill=(230, 185, 150),
+    )
+    draw.rectangle(
+        (290 + offset_x, 260 + offset_y, 380 + offset_x, 520 + offset_y),
+        fill=(205, 75, 100),
+    )
+    return image
+
+
 def _notification_shade_scene(version: int) -> Image.Image:
     """Synthetic shared-UI screenshot whose notification content changes locally."""
 
@@ -95,6 +119,26 @@ def test_local_outfit_and_face_changes_lower_detail_score() -> None:
     assert outfit_score.similarity_percent < face_score.similarity_percent < 100
 
 
+def test_small_handheld_frame_shift_is_compensated_without_warping_raw_grid() -> None:
+    reference_image = _burst_scene().crop((48, 48, 560, 560))
+    selected_image = _burst_scene((5, 3)).crop((64, 56, 576, 568))
+
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    selected = extract_detail_feature(BytesIO(_encoded(selected_image)), "png")
+
+    assert reference is not None and selected is not None
+    score = compare_detail_features(reference, selected)
+    diagnostics = detail_diagnostics(reference, selected)
+
+    assert diagnostics.alignment_applied is True
+    assert 1 < diagnostics.alignment_shift_percent < 10
+    assert diagnostics.alignment_overlap_percent > 90
+    assert diagnostics.changed_percent > diagnostics.aligned_changed_percent
+    assert diagnostics.aligned_changed_percent < diagnostics.changed_percent / 2
+    assert score.changed_percent == pytest.approx(diagnostics.aligned_changed_percent)
+    assert score.similarity_percent > 93
+
+
 def test_jpeg_transcode_of_same_scene_remains_high_similarity() -> None:
     original = extract_detail_feature(BytesIO(_encoded(_scene())), "png")
     transcoded = extract_detail_feature(BytesIO(_encoded(_scene(), "JPEG")), "jpeg")
@@ -138,7 +182,7 @@ def test_alpha_mask_change_remains_visible_even_for_black_pixels() -> None:
     assert diagnostics.substantial_region_count >= 1
 
 
-def test_detail_diagnostics_reuse_scoring_mask_and_expose_grid() -> None:
+def test_detail_diagnostics_keep_raw_grid_separate_from_aligned_score() -> None:
     original_image = _scene()
     changed_image = original_image.copy()
     ImageDraw.Draw(changed_image).rectangle((128, 192, 260, 330), fill=(15, 210, 210))
@@ -162,8 +206,9 @@ def test_detail_diagnostics_reuse_scoring_mask_and_expose_grid() -> None:
     assert all(len(row) == DETAIL_GRID_SIDE for row in identical.tile_changed_percents)
     assert all(value == 0 for row in identical.tile_changed_percents for value in row)
 
-    assert diagnostics.changed_percent == pytest.approx(score.changed_percent)
-    assert diagnostics.localized_changed_percent > diagnostics.changed_percent > 0
+    assert diagnostics.aligned_changed_percent == pytest.approx(score.changed_percent)
+    assert diagnostics.changed_percent > 0
+    assert diagnostics.localized_changed_percent > diagnostics.changed_percent
     assert diagnostics.coherent_changed_percent > 0
     assert diagnostics.largest_changed_region_percent > 0
     assert diagnostics.substantial_region_count >= 1
