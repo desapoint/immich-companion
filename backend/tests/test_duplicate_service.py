@@ -3137,6 +3137,16 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
     assert discovery.full_calls == 0
     assert discovery.identity_calls == 1
 
+    selected = await service.save_workspace_selection(
+        DuplicateWorkspaceSelectionUpdate(
+            selected_group_ids=[PUBLIC_GROUP_ID],
+            active_group_id=PUBLIC_GROUP_ID,
+            revision=3,
+        )
+    )
+    assert selected.selected_group_ids == [PUBLIC_GROUP_ID]
+    assert selected.active_group_id == PUBLIC_GROUP_ID
+
     await service.save_group_draft(
         DuplicateGroupDraftUpdate(
             group_id=PUBLIC_GROUP_ID,
@@ -3149,6 +3159,16 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
     )
     assert discovery.full_calls == 0
     assert discovery.group_calls == 1
+
+    reviewed = await service.save_review(
+        DuplicateReviewUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            manual_action="keep_all",
+            manual_primary_asset_id=None,
+        )
+    )
+    assert reviewed.group_id == PUBLIC_GROUP_ID
+    assert discovery.group_calls == 2
 
 
 @pytest.mark.asyncio
