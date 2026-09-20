@@ -30,6 +30,24 @@ DETAIL_ALPHA_DIFFERENCE_WEIGHT = 0.25
 DETAIL_REGION_TILE_THRESHOLD = 0.20
 # Ignore isolated sub-tile specks that do not cover even 0.1% of the image.
 DETAIL_REGION_MIN_FRACTION = 0.001
+# Estimate only a modest global frame translation. This is intentionally more
+# conservative than general image registration: it compensates handheld/burst
+# framing drift without allowing arbitrary warps to manufacture a match.
+DETAIL_ALIGNMENT_SIDE = 128
+DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION = 0.10
+DETAIL_ALIGNMENT_MIN_IMPROVEMENT = 0.08
+DETAIL_ALIGNMENT_OVERLAP_PENALTY = 0.25
+
+# Detail similarity is coverage-first: unchanged aligned area should dominate the
+# score. One localized semantic change (clothing, face, one object) is therefore
+# intentionally cheaper than the same total changed area split across several
+# distant zones.
+DETAIL_CHANGED_AREA_PENALTY = 25.0
+DETAIL_DIFFERENCE_MAGNITUDE_PENALTY = 12.0
+DETAIL_EXTRA_ZONE_PENALTY = 0.9
+DETAIL_EXTRA_ZONE_CAP = 5
+DETAIL_SPREAD_PENALTY = 4.0
+DETAIL_SPREAD_FULL_WEIGHT_CHANGED_FRACTION = 0.05
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,16 +65,30 @@ class DetailComparison:
 
 @dataclass(frozen=True, slots=True)
 class DetailDiagnostics:
-    """Read-only explanation of the local evidence used by detail comparison."""
+    """Read-only explanation of raw viewer evidence plus aligned scoring evidence."""
 
     changed_percent: float
     localized_changed_percent: float
     coherent_changed_percent: float
     largest_changed_region_percent: float
     substantial_region_count: int
+    aligned_changed_percent: float
+    raw_similarity_percent: float
+    aligned_similarity_percent: float
+    alignment_applied: bool
+    alignment_shift_percent: float
+    alignment_overlap_percent: float
     rows: int
     columns: int
     tile_changed_percents: tuple[tuple[float, ...], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _DetailAlignment:
+    shift_x: int = 0
+    shift_y: int = 0
+    overlap_fraction: float = 1.0
+    applied: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +100,7 @@ class _DetailAnalysis:
     coherent_changed_fraction: float
     largest_region_fraction: float
     substantial_region_count: int
+    spread_fraction: float
     tiles: np.ndarray
 
 
@@ -148,14 +181,15 @@ def _detail_images(
     )
 
 
-def _coherent_region_metrics(tiles: np.ndarray) -> tuple[float, float, int]:
-    """Measure filled, connected tile regions while ignoring sparse edge noise."""
+def _coherent_region_metrics(tiles: np.ndarray) -> tuple[float, float, int, float]:
+    """Measure substantial changed zones and how widely those zones are distributed."""
 
     if tiles.shape != (DETAIL_GRID_SIDE, DETAIL_GRID_SIDE):
         raise ValueError("Detail tile grid dimensions are incompatible")
     active = tiles >= DETAIL_REGION_TILE_THRESHOLD
     visited = np.zeros(active.shape, dtype=np.bool_)
     component_fractions: list[float] = []
+    substantial_tiles: list[tuple[int, int]] = []
     rows, columns = active.shape
 
     for row in range(rows):
@@ -164,9 +198,11 @@ def _coherent_region_metrics(tiles: np.ndarray) -> tuple[float, float, int]:
                 continue
             visited[row, column] = True
             pending = [(row, column)]
+            component_tiles: list[tuple[int, int]] = []
             changed_weight = 0.0
             while pending:
                 current_row, current_column = pending.pop()
+                component_tiles.append((current_row, current_column))
                 changed_weight += float(tiles[current_row, current_column])
                 for row_delta in (-1, 0, 1):
                     for column_delta in (-1, 0, 1):
@@ -185,18 +221,170 @@ def _coherent_region_metrics(tiles: np.ndarray) -> tuple[float, float, int]:
             fraction = changed_weight / tiles.size
             if fraction >= DETAIL_REGION_MIN_FRACTION:
                 component_fractions.append(fraction)
+                substantial_tiles.extend(component_tiles)
+
+    spread_fraction = 0.0
+    if substantial_tiles:
+        changed_rows = [row for row, _ in substantial_tiles]
+        changed_columns = [column for _, column in substantial_tiles]
+        bounding_fraction = (
+            (max(changed_rows) - min(changed_rows) + 1)
+            * (max(changed_columns) - min(changed_columns) + 1)
+            / tiles.size
+        )
+        occupied_fraction = len(set(substantial_tiles)) / tiles.size
+        # A compact region roughly fills its own bounding box and gets almost
+        # no spread penalty. Several distant zones enlarge that box without
+        # increasing changed coverage by the same amount.
+        spread_fraction = max(0.0, bounding_fraction - occupied_fraction)
 
     return (
         sum(component_fractions),
         max(component_fractions, default=0.0),
         len(component_fractions),
+        spread_fraction,
     )
 
 
-def _analyze_detail_features(left: DetailFeature, right: DetailFeature) -> _DetailAnalysis:
-    """Run the shared detail math once so scoring and diagnostics cannot drift."""
+def _alignment_plane(image: Image.Image) -> np.ndarray:
+    """Return exposure-normalized luminance for conservative shift estimation."""
 
-    left_image, right_image = _detail_images(left, right)
+    reduced = image.convert("RGB").resize(
+        (DETAIL_ALIGNMENT_SIDE, DETAIL_ALIGNMENT_SIDE),
+        Image.Resampling.BOX,
+    )
+    pixels = np.asarray(reduced, dtype=np.float32)
+    luminance = (
+        pixels[:, :, 0] * 0.2126
+        + pixels[:, :, 1] * 0.7152
+        + pixels[:, :, 2] * 0.0722
+    )
+    deviation = float(np.std(luminance))
+    if deviation < 1e-6:
+        return luminance - float(np.mean(luminance))
+    return (luminance - float(np.mean(luminance))) / deviation
+
+
+def _translation_overlap(
+    left: np.ndarray,
+    right: np.ndarray,
+    shift_x: int,
+    shift_y: int,
+) -> tuple[np.ndarray, np.ndarray, float]:
+    """Return overlapping planes after translating right into left coordinates."""
+
+    height, width = left.shape[:2]
+    left_x0, left_x1 = max(0, shift_x), min(width, width + shift_x)
+    right_x0, right_x1 = max(0, -shift_x), min(width, width - shift_x)
+    left_y0, left_y1 = max(0, shift_y), min(height, height + shift_y)
+    right_y0, right_y1 = max(0, -shift_y), min(height, height - shift_y)
+    left_crop = left[left_y0:left_y1, left_x0:left_x1]
+    right_crop = right[right_y0:right_y1, right_x0:right_x1]
+    overlap = (left_crop.shape[0] * left_crop.shape[1]) / (height * width)
+    return left_crop, right_crop, overlap
+
+
+def _translation_error(
+    left: np.ndarray,
+    right: np.ndarray,
+    shift_x: int,
+    shift_y: int,
+) -> tuple[float, float]:
+    left_crop, right_crop, overlap = _translation_overlap(
+        left, right, shift_x, shift_y
+    )
+    if left_crop.size == 0:
+        return float("inf"), 0.0
+    error = float(np.mean(np.abs(left_crop - right_crop)))
+    return error + DETAIL_ALIGNMENT_OVERLAP_PENALTY * (1 - overlap), overlap
+
+
+def _estimate_alignment(
+    left_image: Image.Image,
+    right_image: Image.Image,
+) -> _DetailAlignment:
+    """Find a small global translation only when it materially improves overlap."""
+
+    left = _alignment_plane(left_image)
+    right = _alignment_plane(right_image)
+    raw_error, _ = _translation_error(left, right, 0, 0)
+    if raw_error < 1e-6:
+        return _DetailAlignment()
+
+    limit = max(1, round(DETAIL_ALIGNMENT_SIDE * DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION))
+    best_error = raw_error
+    best_x = 0
+    best_y = 0
+    # Coarse-to-fine search keeps pair validation bounded while remaining robust
+    # to small handheld translations and slight subject movement.
+    for shift_y in range(-limit, limit + 1, 2):
+        for shift_x in range(-limit, limit + 1, 2):
+            error, _ = _translation_error(left, right, shift_x, shift_y)
+            if error < best_error:
+                best_error, best_x, best_y = error, shift_x, shift_y
+    coarse_x, coarse_y = best_x, best_y
+    for shift_y in range(max(-limit, coarse_y - 2), min(limit, coarse_y + 2) + 1):
+        for shift_x in range(max(-limit, coarse_x - 2), min(limit, coarse_x + 2) + 1):
+            error, _ = _translation_error(left, right, shift_x, shift_y)
+            if error < best_error:
+                best_error, best_x, best_y = error, shift_x, shift_y
+
+    improvement = (raw_error - best_error) / raw_error
+    if (best_x == 0 and best_y == 0) or improvement < DETAIL_ALIGNMENT_MIN_IMPROVEMENT:
+        return _DetailAlignment()
+
+    scale = DETAIL_SAMPLE_SIDE / DETAIL_ALIGNMENT_SIDE
+    shift_x = round(best_x * scale)
+    shift_y = round(best_y * scale)
+    overlap = (
+        (DETAIL_SAMPLE_SIDE - abs(shift_x))
+        * (DETAIL_SAMPLE_SIDE - abs(shift_y))
+        / (DETAIL_SAMPLE_SIDE * DETAIL_SAMPLE_SIDE)
+    )
+    return _DetailAlignment(
+        shift_x=shift_x,
+        shift_y=shift_y,
+        overlap_fraction=max(0.0, min(1.0, overlap)),
+        applied=True,
+    )
+
+
+def _aligned_detail_images(
+    left_image: Image.Image,
+    right_image: Image.Image,
+    alignment: _DetailAlignment,
+) -> tuple[Image.Image, Image.Image]:
+    """Crop to valid translated overlap, then normalize only that shared region."""
+
+    if not alignment.applied:
+        return left_image, right_image
+    width, height = left_image.size
+    shift_x, shift_y = alignment.shift_x, alignment.shift_y
+    left_box = (
+        max(0, shift_x),
+        max(0, shift_y),
+        min(width, width + shift_x),
+        min(height, height + shift_y),
+    )
+    right_box = (
+        max(0, -shift_x),
+        max(0, -shift_y),
+        min(width, width - shift_x),
+        min(height, height - shift_y),
+    )
+    return (
+        left_image.crop(left_box).resize(
+            (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), Image.Resampling.LANCZOS
+        ),
+        right_image.crop(right_box).resize(
+            (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), Image.Resampling.LANCZOS
+        ),
+    )
+
+
+def _analyze_images(left_image: Image.Image, right_image: Image.Image) -> _DetailAnalysis:
+    """Run the detail math on one already-chosen comparison coordinate space."""
+
     changed_fraction = 0.0
     weighted_changed = 0.0
     weighted_difference = 0.0
@@ -214,9 +402,6 @@ def _analyze_detail_features(left: DetailFeature, right: DetailFeature) -> _Deta
             np.abs(left_pixels[:, :, :3] - right_pixels[:, :, :3]), axis=2
         )
         alpha_difference = np.abs(left_pixels[:, :, 3] - right_pixels[:, :, 3])
-        # Premultiplied RGB reflects how much color is actually visible. The
-        # separate bounded alpha term ensures visibility changes remain visible
-        # even for black artwork without letting tiny alpha noise dominate.
         mean_difference = np.maximum(
             rgb_difference,
             alpha_difference * DETAIL_ALPHA_DIFFERENCE_WEIGHT,
@@ -234,9 +419,12 @@ def _analyze_detail_features(left: DetailFeature, right: DetailFeature) -> _Deta
                 DETAIL_TILE_SIDE,
             ).mean(axis=(1, 3))
             local_fraction = float(np.mean(np.sort(tiles.ravel())[-4:]))
-    coherent_changed_fraction, largest_region_fraction, substantial_region_count = (
-        _coherent_region_metrics(tiles)
-    )
+    (
+        coherent_changed_fraction,
+        largest_region_fraction,
+        substantial_region_count,
+        spread_fraction,
+    ) = _coherent_region_metrics(tiles)
     return _DetailAnalysis(
         changed_fraction=changed_fraction,
         weighted_changed=weighted_changed,
@@ -245,51 +433,94 @@ def _analyze_detail_features(left: DetailFeature, right: DetailFeature) -> _Deta
         coherent_changed_fraction=coherent_changed_fraction,
         largest_region_fraction=largest_region_fraction,
         substantial_region_count=substantial_region_count,
+        spread_fraction=spread_fraction,
         tiles=tiles,
     )
+
+
+def _analyze_detail_features(
+    left: DetailFeature,
+    right: DetailFeature,
+) -> tuple[_DetailAnalysis, _DetailAnalysis, _DetailAlignment]:
+    """Return raw viewer evidence and conservative aligned scoring evidence."""
+
+    left_image, right_image = _detail_images(left, right)
+    raw = _analyze_images(left_image, right_image)
+    alignment = _estimate_alignment(left_image, right_image)
+    aligned_left, aligned_right = _aligned_detail_images(
+        left_image, right_image, alignment
+    )
+    aligned = (
+        _analyze_images(aligned_left, aligned_right)
+        if alignment.applied
+        else raw
+    )
+    return raw, aligned, alignment
+
+
+def _detail_similarity_percent(analysis: _DetailAnalysis) -> float:
+    """Score one chosen comparison space with the coverage-first detail model."""
+
+    changed_area_penalty = DETAIL_CHANGED_AREA_PENALTY * analysis.weighted_changed
+    difference_magnitude_penalty = (
+        DETAIL_DIFFERENCE_MAGNITUDE_PENALTY * analysis.weighted_difference
+    )
+    extra_zone_count = max(0, analysis.substantial_region_count - 1)
+    zone_count_penalty = DETAIL_EXTRA_ZONE_PENALTY * min(
+        extra_zone_count,
+        DETAIL_EXTRA_ZONE_CAP,
+    )
+    spread_weight = min(
+        1.0,
+        analysis.weighted_changed / DETAIL_SPREAD_FULL_WEIGHT_CHANGED_FRACTION,
+    )
+    spread_penalty = DETAIL_SPREAD_PENALTY * analysis.spread_fraction * spread_weight
+    similarity = (
+        100
+        - changed_area_penalty
+        - difference_magnitude_penalty
+        - zone_count_penalty
+        - spread_penalty
+    )
+    return round(max(0.0, min(100.0, similarity)), 2)
 
 
 def compare_detail_features(left: DetailFeature, right: DetailFeature) -> DetailComparison:
     """Score bounded multi-scale differences without claiming pixel identity."""
 
-    analysis = _analyze_detail_features(left, right)
-    # Broad-area and peak-local terms preserve the previous behavior. The
-    # coherent-region term additionally distinguishes filled semantic edits
-    # from sparse resize/compression/antialiasing noise. sqrt() intentionally
-    # gives a small coherent edit more weight than the same changed area
-    # distributed as isolated pixels, while remaining continuous rather than
-    # introducing a hard "region changed => mismatch" rule.
-    coherent_penalty = (
-        24 * math.sqrt(analysis.largest_region_fraction)
-        + 10 * analysis.coherent_changed_fraction
-    )
-    similarity = (
-        100
-        - 30 * analysis.weighted_changed
-        - 2.6 * analysis.local_fraction
-        - 6 * analysis.weighted_difference
-        - coherent_penalty
-    )
+    _raw_analysis, analysis, _alignment = _analyze_detail_features(left, right)
+    # Matching coverage dominates the score. A single localized semantic change
+    # therefore remains highly similar when the rest of the aligned frame is
+    # unchanged. Multiple substantial zones and broad spatial distribution are
+    # bounded secondary penalties so equal changed area scores lower when it is
+    # scattered around the image.
     return DetailComparison(
-        similarity_percent=round(max(0.0, min(100.0, similarity)), 2),
+        similarity_percent=_detail_similarity_percent(analysis),
         changed_percent=round(analysis.changed_fraction * 100, 2),
     )
 
 
 def detail_diagnostics(left: DetailFeature, right: DetailFeature) -> DetailDiagnostics:
-    """Expose the validator's local changed-pixel grid without changing its score."""
+    """Expose raw viewer-grid evidence alongside aligned scoring diagnostics."""
 
-    analysis = _analyze_detail_features(left, right)
+    raw, aligned, alignment = _analyze_detail_features(left, right)
     tile_changed_percents = tuple(
         tuple(round(float(value) * 100, 2) for value in row)
-        for row in analysis.tiles
+        for row in raw.tiles
     )
+    shift_fraction = math.hypot(alignment.shift_x, alignment.shift_y) / DETAIL_SAMPLE_SIDE
     return DetailDiagnostics(
-        changed_percent=round(analysis.changed_fraction * 100, 2),
-        localized_changed_percent=round(analysis.local_fraction * 100, 2),
-        coherent_changed_percent=round(analysis.coherent_changed_fraction * 100, 2),
-        largest_changed_region_percent=round(analysis.largest_region_fraction * 100, 2),
-        substantial_region_count=analysis.substantial_region_count,
+        changed_percent=round(raw.changed_fraction * 100, 2),
+        localized_changed_percent=round(raw.local_fraction * 100, 2),
+        coherent_changed_percent=round(raw.coherent_changed_fraction * 100, 2),
+        largest_changed_region_percent=round(raw.largest_region_fraction * 100, 2),
+        substantial_region_count=raw.substantial_region_count,
+        aligned_changed_percent=round(aligned.changed_fraction * 100, 2),
+        raw_similarity_percent=_detail_similarity_percent(raw),
+        aligned_similarity_percent=_detail_similarity_percent(aligned),
+        alignment_applied=alignment.applied,
+        alignment_shift_percent=round(shift_fraction * 100, 2),
+        alignment_overlap_percent=round(alignment.overlap_fraction * 100, 2),
         rows=DETAIL_GRID_SIDE,
         columns=DETAIL_GRID_SIDE,
         tile_changed_percents=tile_changed_percents,

@@ -9,6 +9,12 @@ export type LocalChangeDiagnostics = {
   coherentChangedPercent?: number | null;
   largestChangedRegionPercent?: number | null;
   substantialRegionCount?: number | null;
+  alignedChangedPercent?: number | null;
+  rawSimilarityPercent?: number | null;
+  alignedSimilarityPercent?: number | null;
+  alignmentApplied?: boolean;
+  alignmentShiftPercent?: number | null;
+  alignmentOverlapPercent?: number | null;
   rows: number;
   columns: number;
   cells: number[][];
@@ -24,6 +30,12 @@ type ApiLocalChangeDiagnostics = {
   coherent_changed_percent?: number | null;
   largest_changed_region_percent?: number | null;
   substantial_region_count?: number | null;
+  aligned_changed_percent?: number | null;
+  raw_similarity_percent?: number | null;
+  aligned_similarity_percent?: number | null;
+  alignment_applied?: boolean;
+  alignment_shift_percent?: number | null;
+  alignment_overlap_percent?: number | null;
   rows: number;
   columns: number;
   cells: number[][];
@@ -52,6 +64,12 @@ export async function loadLocalChangeDiagnostics(
     coherentChangedPercent: value.coherent_changed_percent ?? null,
     largestChangedRegionPercent: value.largest_changed_region_percent ?? null,
     substantialRegionCount: value.substantial_region_count ?? null,
+    alignedChangedPercent: value.aligned_changed_percent ?? null,
+    rawSimilarityPercent: value.raw_similarity_percent ?? null,
+    alignedSimilarityPercent: value.aligned_similarity_percent ?? null,
+    alignmentApplied: value.alignment_applied ?? false,
+    alignmentShiftPercent: value.alignment_shift_percent ?? null,
+    alignmentOverlapPercent: value.alignment_overlap_percent ?? null,
     rows: value.rows,
     columns: value.columns,
     cells: value.cells,

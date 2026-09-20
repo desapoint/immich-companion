@@ -7,7 +7,7 @@ function assetSetKey(ids: readonly string[]): string { return [...ids].sort().jo
 function diagnosticsPairKey(selectedId: string, referenceId: string): string { return `${selectedId}\u0000${referenceId}`; }
 function identicalDiagnostics(assetId: string): LocalChangeDiagnostics {
   const side = 32;
-  return { available: true, selectedAssetId: assetId, referenceAssetId: assetId, changedPercent: 0, localizedChangedPercent: 0, coherentChangedPercent: 0, largestChangedRegionPercent: 0, substantialRegionCount: 0, rows: side, columns: side, cells: Array.from({ length: side }, () => Array<number>(side).fill(0)), source: null };
+  return { available: true, selectedAssetId: assetId, referenceAssetId: assetId, changedPercent: 0, localizedChangedPercent: 0, coherentChangedPercent: 0, largestChangedRegionPercent: 0, substantialRegionCount: 0, alignedChangedPercent: 0, rawSimilarityPercent: 100, alignedSimilarityPercent: 100, alignmentApplied: false, alignmentShiftPercent: 0, alignmentOverlapPercent: 100, rows: side, columns: side, cells: Array.from({ length: side }, () => Array<number>(side).fill(0)), source: null };
 }
 
 export class DuplicateComparisonDataController {
