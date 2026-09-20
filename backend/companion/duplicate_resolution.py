@@ -3,128 +3,69 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-from collections.abc import Mapping
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
-from hashlib import sha256
-from pathlib import Path
-from tempfile import NamedTemporaryFile
 from time import perf_counter
-from typing import Any, Literal
+from typing import Any
 from uuid import UUID
 
-from companion.action_repository import ActionRepository
 from companion.action_service import (
     ActionPlanConflictError,
     ActionPlanNotFoundError,
     DestructiveActionsDisabledError,
 )
-from companion.asset_repository import AssetRepository
-from companion.config import Settings
-from companion.contained_duplicate_resolution import _is_contained_resolution_step
-from companion.discovery import (
-    DiscoveredGroup,
-    GroupDiscoveryProvider,
-    ImmichDuplicateProvider,
+from companion.duplicate_contracts import (
+    action_for_dispositions as _action_for_dispositions,
 )
-from companion.duplicate_identity import member_set_key, stable_group_key
-from companion.duplicate_keeper_rules import choose_keeper
-from companion.duplicate_policy import DuplicatePolicyRepository
-from companion.duplicate_review_repository import DuplicateReviewRepository
+from companion.duplicate_contracts import (
+    contained_native_resolution as _contained_native_resolution,
+)
+from companion.duplicate_contracts import (
+    member_dispositions as _member_dispositions,
+)
+from companion.duplicate_contracts import (
+    metadata_keeper_for_plan as _metadata_keeper_for_plan,
+)
+from companion.duplicate_contracts import (
+    normalize_plan_group as _normalize_plan_group,
+)
+from companion.duplicate_contracts import (
+    plan_digest as _plan_digest,
+)
+from companion.duplicate_contracts import (
+    public_plan as _public_plan,
+)
+from companion.duplicate_contracts import (
+    reviewed_delete_supported as _reviewed_delete_supported,
+)
+from companion.duplicate_contracts import (
+    source_fingerprint as _source_fingerprint,
+)
+from companion.duplicate_contracts import (
+    stable_fingerprint as _stable_fingerprint,
+)
 from companion.duplicate_schema import (
-    COMPLETED_DUPLICATE_REVIEW_STATUSES,
-    CrossSourceDuplicateResult,
     CrossSourceDuplicateTaskStart,
-    DuplicateAdmissionEvidence,
     DuplicateAnalysisOptions,
-    DuplicateGroupDraft,
-    DuplicateGroupDraftUpdate,
-    DuplicateKeeperSelectionRequest,
-    DuplicateKeeperSelectionResult,
-    DuplicateMember,
-    DuplicateMemberEvidence,
-    DuplicatePreservationEvidence,
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
-    DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
-    DuplicateReviewUpdate,
-    DuplicateSearchPage,
-    DuplicateSimilarityEvidence,
-    DuplicateSimilarityReferenceRequest,
-    DuplicateWorkspaceGroupReference,
-    DuplicateWorkspaceMembership,
-    DuplicateWorkspaceMembershipRequest,
-    DuplicateWorkspacePresetRequest,
-    DuplicateWorkspaceResetRequest,
-    DuplicateWorkspaceSelectionDelta,
-    DuplicateWorkspaceSelectionUpdate,
-    DuplicateWorkspaceState,
-    ExactDuplicateGroup,
-)
-from companion.group_decision import (
-    CandidateGroup,
-    CandidateMember,
-    DiscoverySource,
-    GroupClassification,
-    ResolutionPolicy,
-    decide_group,
 )
 from companion.immich import (
-    ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
-    ImmichDuplicateResolution,
 )
-from companion.integrity import decode_immich_sha1
-from companion.integrity_repository import (
-    IntegrityRepository,
-    preservation_feature_freshness,
-    report_freshness,
-)
-from companion.integrity_service import (
-    INTEGRITY_CHUNK_SIZE,
-    INTEGRITY_TASK_TYPE,
-    IntegrityTaskHandler,
-)
-from companion.models import (
-    ActionPlanRecord,
-    AssetImagePreservationFeatureRecord,
-    AssetIntegrityReportRecord,
-    AssetSimilaritySearchFeatureRecord,
-)
-from companion.similarity_features import PIXEL_NORMALIZATION_VERSION
-from companion.similarity_generation import StaleSimilarityEvidenceEpochError
-from companion.similarity_index_service import SimilarityIndexMaintainer
-from companion.similarity_repository import (
-    PairSimilarityEvidence,
-    SimilarityRepository,
-    canonical_pair,
-)
-from companion.similarity_scan_repository import SimilarityScanRepository
-from companion.similarity_search_repository import SimilaritySearchRepository
-from companion.stack_service import StackSelectionError, StackService
+from companion.stack_service import StackSelectionError
 from companion.task_coordinator import (
     PermanentTaskError,
-    RetryableTaskError,
     TaskContext,
-    TaskCoordinator,
 )
 from companion.task_schema import TaskResult
 
+logger = logging.getLogger(__name__)
+
 CROSS_SOURCE_DUPLICATE_TASK_TYPE = "cross_source_duplicates"
 DUPLICATE_RESOLUTION_TASK_TYPE = "duplicate_resolution"
-
-from companion.duplicate_contracts import (
-    contained_native_resolution as _contained_native_resolution,
-    metadata_keeper_for_plan as _metadata_keeper_for_plan,
-    normalize_plan_group as _normalize_plan_group,
-    plan_digest as _plan_digest,
-    public_plan as _public_plan,
-    reviewed_delete_supported as _reviewed_delete_supported,
-)
 
 
 class DuplicateResolutionMixin:

@@ -13,13 +13,13 @@ from typing import Any
 from uuid import UUID
 
 from companion.contained_duplicate_resolution import _is_contained_resolution_step
-from companion.group_decision import DiscoverySource
 from companion.duplicate_identity import member_set_key, stable_group_key
 from companion.duplicate_schema import (
     DuplicateResolutionPlan,
     DuplicateResolutionPlanGroup,
     ExactDuplicateGroup,
 )
+from companion.group_decision import DiscoverySource
 from companion.immich import ImmichDuplicateResolution
 from companion.models import ActionPlanRecord
 
@@ -27,6 +27,81 @@ from companion.models import ActionPlanRecord
 def plan_digest(groups: list[dict[str, Any]]) -> str:
     raw = json.dumps(groups, sort_keys=True, separators=(",", ":"))
     return sha256(raw.encode()).hexdigest()
+
+
+def options_key(options: Any) -> str:
+    raw = json.dumps(options.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+    return sha256(raw.encode()).hexdigest()
+
+
+def stable_fingerprint(value: Any) -> str:
+    raw = json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return sha256(raw.encode()).hexdigest()
+
+
+def source_fingerprint(assets: list[Any]) -> str:
+    return stable_fingerprint(
+        [
+            {
+                "asset_id": str(asset.id),
+                "file_modified_at": asset.file_modified_at.isoformat(),
+                "file_size_bytes": asset.file_size_bytes,
+            }
+            for asset in sorted(assets, key=lambda item: str(item.id))
+        ]
+    )
+
+
+def member_fingerprint(asset_ids: list[UUID]) -> str:
+    return member_set_key(asset_ids)
+
+
+def metadata_int(metadata: dict[str, str], name: str) -> int | None:
+    value = metadata.get(name)
+    try:
+        return int(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def metadata_float(metadata: dict[str, str], name: str) -> float | None:
+    value = metadata.get(name)
+    try:
+        return float(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def member_dispositions(
+    action: str,
+    member_ids: list[UUID],
+    primary_id: UUID | None,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "asset_id": str(asset_id),
+            "disposition": (
+                "keep" if action == "resolve" and asset_id == primary_id
+                else "delete" if action == "resolve"
+                else "stack" if action == "stack_all"
+                else "keep" if action == "keep_all"
+                else "no_change"
+            ),
+            "primary": asset_id == primary_id,
+        }
+        for asset_id in member_ids
+    ]
+
+
+def action_for_dispositions(dispositions: list[str]) -> str:
+    values = set(dispositions)
+    if values == {"keep"}:
+        return "keep_all"
+    if values == {"stack"}:
+        return "stack_all"
+    if dispositions.count("keep") == 1 and dispositions.count("delete") == len(dispositions) - 1:
+        return "resolve"
+    return "mixed"
 
 
 def reviewed_delete_supported(group: ExactDuplicateGroup) -> bool:

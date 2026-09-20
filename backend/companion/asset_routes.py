@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable, Literal
+from typing import Literal
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, Query, status
+from fastapi import FastAPI, HTTPException, Query, Response, status
 
 from companion.asset_schema import (
     AlbumOption,
@@ -20,12 +21,19 @@ from companion.asset_schema import (
 )
 from companion.duplicate_schema import DuplicateDiscoverySummary
 from companion.immich import ImmichApiError
+from companion.integrity_schema import (
+    AssetIntegrityAnalyzeRequest,
+    AssetIntegrityAnalyzeResponse,
+    AssetIntegrityState,
+)
+from companion.integrity_service import IntegrityAssetUnavailableError
 
 
 def register_asset_routes(
     app: FastAPI,
     *,
     require_asset_repository: Callable[[], object],
+    require_integrity_service: Callable[[], object],
     require_immich: Callable[[], object],
     map_immich_error: Callable[[ImmichApiError], HTTPException],
     add_public_asset_urls: Callable[[AssetSearchResponse], AssetSearchResponse],
@@ -33,6 +41,34 @@ def register_asset_routes(
     composite_duplicate_repository: object | None,
 ) -> None:
     """Register search, restore, and asset summary endpoints."""
+
+    @app.get("/api/assets/{asset_id}/integrity", response_model=AssetIntegrityState)
+    async def asset_integrity_state(asset_id: UUID) -> AssetIntegrityState:
+        try:
+            return await require_integrity_service().state(asset_id)
+        except IntegrityAssetUnavailableError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+
+    @app.post(
+        "/api/assets/{asset_id}/integrity/analyze",
+        response_model=AssetIntegrityAnalyzeResponse,
+    )
+    async def analyze_asset_integrity(
+        asset_id: UUID,
+        request: AssetIntegrityAnalyzeRequest,
+        response: Response,
+    ) -> AssetIntegrityAnalyzeResponse:
+        try:
+            result = await require_integrity_service().analyze(asset_id, force=request.force)
+        except IntegrityAssetUnavailableError as error:
+            raise HTTPException(status_code=404, detail=str(error)) from error
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        if result.state == "pending":
+            response.status_code = status.HTTP_202_ACCEPTED
+        return result
 
     @app.get("/api/assets", response_model=AssetSearchResponse)
     async def search_assets(

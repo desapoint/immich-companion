@@ -16,7 +16,11 @@ def register_frontend_routes(app: FastAPI, frontend_dir: Path | None) -> None:
     if frontend_index and frontend_index.is_file():
         frontend_assets = frontend_dir / "static" / "assets"
         if frontend_assets.is_dir():
-            app.mount("/static/assets", StaticFiles(directory=frontend_assets), name="frontend-assets")
+            app.mount(
+                "/static/assets",
+                StaticFiles(directory=frontend_assets),
+                name="frontend-assets",
+            )
 
         @app.get("/", response_class=FileResponse, include_in_schema=False)
         async def frontend_index_route() -> FileResponse:

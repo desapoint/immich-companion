@@ -3,41 +3,23 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
-from typing import Literal
+from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import (
     Float,
     String,
     and_,
-    case,
     cast,
-    delete,
     exists,
     func,
-    literal,
     not_,
     or_,
     select,
     true,
-    tuple_,
-    update,
 )
-from sqlalchemy.dialects.postgresql import insert
 
-from companion.action_schema import (
-    AssetActionOperation,
-    AssetSelectionCapabilities,
-    AssetSelectionRelationship,
-    AssetSelectionRelationships,
-    AssetSelectionRequest,
-    AssetSelectionResolution,
-    AssetSelectionSummary,
-)
 from companion.asset_schema import (
-    AlbumOption,
     AssetAlbumSummary,
     AssetPageSelection,
     AssetSearchMatchRequest,
@@ -50,22 +32,13 @@ from companion.asset_schema import (
     SearchCondition,
     SearchGroup,
     StructuredAssetSearchQuery,
-    TagOption,
 )
-from companion.database import DatabaseManager
-from companion.asset_repository_hydration import (
-    asset_fingerprint as _asset_fingerprint,
-    immich_asset as _immich_asset,
-    similarity_upsert_changes,
-)
-from companion.immich import ImmichAlbum, ImmichAsset, ImmichTag
 from companion.models import (
     AlbumAssetRecord,
     AlbumRecord,
     AssetRecord,
     SelectionSetMemberRecord,
     SelectionSetRecord,
-    SimilarityAssetChangeRecord,
     TagAssetRecord,
     TagRecord,
 )
