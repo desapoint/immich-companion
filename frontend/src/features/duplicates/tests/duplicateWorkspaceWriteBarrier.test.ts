@@ -76,4 +76,21 @@ describe('duplicate workspace write barrier', () => {
     await expect(guarded.saveSelection(['group-a'], null)).resolves.toBeUndefined();
     await expect(guarded.flushDrafts()).rejects.toBe(failure);
   });
+
+  it('waits for selection persistence before loading a selected-group page', async () => {
+    const selection = deferred<void>();
+    const saveSelection = vi.fn(() => selection.promise);
+    const search = vi.fn().mockResolvedValue({ items: [], total: 0, page: 1, pageSize: 6, nextCursor: null });
+    const repository = repositoryStub({ saveSelection, search });
+    const guarded = withDuplicateWorkspaceWriteBarrier(repository);
+
+    await guarded.saveSelection(['group-a'], null);
+    const loading = guarded.search({ state: 'Selected', page: 1, pageSize: 6 });
+    await Promise.resolve();
+    expect(search).not.toHaveBeenCalled();
+
+    selection.resolve();
+    await expect(loading).resolves.toMatchObject({ total: 0 });
+    expect(search).toHaveBeenCalledOnce();
+  });
 });
