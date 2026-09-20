@@ -73,6 +73,8 @@ class DetailDiagnostics:
     largest_changed_region_percent: float
     substantial_region_count: int
     aligned_changed_percent: float
+    raw_similarity_percent: float
+    aligned_similarity_percent: float
     alignment_applied: bool
     alignment_shift_percent: float
     alignment_overlap_percent: float
@@ -456,15 +458,9 @@ def _analyze_detail_features(
     return raw, aligned, alignment
 
 
-def compare_detail_features(left: DetailFeature, right: DetailFeature) -> DetailComparison:
-    """Score bounded multi-scale differences without claiming pixel identity."""
+def _detail_similarity_percent(analysis: _DetailAnalysis) -> float:
+    """Score one chosen comparison space with the coverage-first detail model."""
 
-    _raw_analysis, analysis, _alignment = _analyze_detail_features(left, right)
-    # Matching coverage dominates the score. A single localized semantic change
-    # therefore remains highly similar when the rest of the aligned frame is
-    # unchanged. Multiple substantial zones and broad spatial distribution are
-    # bounded secondary penalties so equal changed area scores lower when it is
-    # scattered around the image.
     changed_area_penalty = DETAIL_CHANGED_AREA_PENALTY * analysis.weighted_changed
     difference_magnitude_penalty = (
         DETAIL_DIFFERENCE_MAGNITUDE_PENALTY * analysis.weighted_difference
@@ -486,8 +482,20 @@ def compare_detail_features(left: DetailFeature, right: DetailFeature) -> Detail
         - zone_count_penalty
         - spread_penalty
     )
+    return round(max(0.0, min(100.0, similarity)), 2)
+
+
+def compare_detail_features(left: DetailFeature, right: DetailFeature) -> DetailComparison:
+    """Score bounded multi-scale differences without claiming pixel identity."""
+
+    _raw_analysis, analysis, _alignment = _analyze_detail_features(left, right)
+    # Matching coverage dominates the score. A single localized semantic change
+    # therefore remains highly similar when the rest of the aligned frame is
+    # unchanged. Multiple substantial zones and broad spatial distribution are
+    # bounded secondary penalties so equal changed area scores lower when it is
+    # scattered around the image.
     return DetailComparison(
-        similarity_percent=round(max(0.0, min(100.0, similarity)), 2),
+        similarity_percent=_detail_similarity_percent(analysis),
         changed_percent=round(analysis.changed_fraction * 100, 2),
     )
 
@@ -508,6 +516,8 @@ def detail_diagnostics(left: DetailFeature, right: DetailFeature) -> DetailDiagn
         largest_changed_region_percent=round(raw.largest_region_fraction * 100, 2),
         substantial_region_count=raw.substantial_region_count,
         aligned_changed_percent=round(aligned.changed_fraction * 100, 2),
+        raw_similarity_percent=_detail_similarity_percent(raw),
+        aligned_similarity_percent=_detail_similarity_percent(aligned),
         alignment_applied=alignment.applied,
         alignment_shift_percent=round(shift_fraction * 100, 2),
         alignment_overlap_percent=round(alignment.overlap_fraction * 100, 2),
