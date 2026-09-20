@@ -21,6 +21,8 @@ class SimilarityLocalDiagnosticsResponse(BaseModel):
     largest_changed_region_percent: float | None = Field(default=None, ge=0, le=100)
     substantial_region_count: int | None = Field(default=None, ge=0)
     aligned_changed_percent: float | None = Field(default=None, ge=0, le=100)
+    raw_similarity_percent: float | None = Field(default=None, ge=0, le=100)
+    aligned_similarity_percent: float | None = Field(default=None, ge=0, le=100)
     alignment_applied: bool = False
     alignment_shift_percent: float | None = Field(default=None, ge=0, le=100)
     alignment_overlap_percent: float | None = Field(default=None, ge=0, le=100)
