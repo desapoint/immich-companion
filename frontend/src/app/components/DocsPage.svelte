@@ -37,13 +37,13 @@
     {#if tab==='Endpoints'}
       <V2Toolbar sticky={false}><b>Endpoints</b><V2Badge text={`${endpoints.length} documented`}/></V2Toolbar>
       <div class="v2-docs">
-      <V2Card title="Companion API"><span class="v2-muted">Select an endpoint to review its purpose and response details.</span></V2Card>
-        {#each endpoints as endpoint}<V2Card><V2Stack gap="sm"><V2Inline gap="sm"><V2Badge tone={endpoint[0]==='GET'?'ok':'warn'} text={endpoint[0]}/><code>{endpoint[1]}</code></V2Inline><span class="v2-muted">{endpoint[2]}</span><V2Button onclick={() => selected = `${endpoint[0]} ${endpoint[1]}`}>Expand endpoint</V2Button></V2Stack></V2Card>{/each}
+        <V2Card title="Companion API"><span class="v2-muted">Select an endpoint to review its purpose and response details.</span></V2Card>
+        {#each endpoints as endpoint (endpoint[1])}<V2Card><V2Stack gap="sm"><V2Inline gap="sm"><V2Badge tone={endpoint[0]==='GET'?'ok':'warn'} text={endpoint[0]}/><code>{endpoint[1]}</code></V2Inline><span class="v2-muted">{endpoint[2]}</span><V2Button onclick={() => selected = `${endpoint[0]} ${endpoint[1]}`}>Expand endpoint</V2Button></V2Stack></V2Card>{/each}
       </div>
     {:else}
       <V2Toolbar sticky={false}><b>Schemas</b><V2Badge text={`${schemas.length} documented`}/></V2Toolbar>
       <div class="v2-docs">
-        {#each schemas as schema}<V2Card><V2Stack gap="sm"><code>{schema[0]}</code><span class="v2-muted">{schema[1]}</span><V2Button onclick={() => selectedSchema = schema[0]}>Inspect schema</V2Button></V2Stack></V2Card>{/each}
+        {#each schemas as schema (schema[0])}<V2Card><V2Stack gap="sm"><code>{schema[0]}</code><span class="v2-muted">{schema[1]}</span><V2Button onclick={() => selectedSchema = schema[0]}>Inspect schema</V2Button></V2Stack></V2Card>{/each}
       </div>
     {/if}
   </V2Zone>
