@@ -783,8 +783,12 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
     requests: list[tuple[str, str, dict[str, object]]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
-        requests.append((request.method, request.url.path, json.loads(request.content)))
-        return httpx.Response(200, json={})
+        body = json.loads(request.content) if request.content else {}
+        requests.append((request.method, request.url.path, body))
+        return httpx.Response(
+            200,
+            json={"count": 2} if request.url.path == "/api/trash/empty" else {},
+        )
 
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
     await client.remove_assets_from_album(album_id, [ASSET_ONE])
@@ -797,6 +801,8 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
     await client.set_assets_favorite([ASSET_TWO], False)
     await client.trash_assets([ASSET_ONE])
     await client.restore_assets([ASSET_ONE])
+    await client.permanently_delete_assets([ASSET_TWO])
+    assert await client.empty_trash() == 2
 
     assert requests == [
         ("DELETE", f"/api/albums/{album_id}/assets", {"ids": [str(ASSET_ONE)]}),
@@ -809,6 +815,8 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
         ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": False}),
         ("DELETE", "/api/assets", {"ids": [str(ASSET_ONE)], "force": False}),
         ("POST", "/api/trash/restore/assets", {"ids": [str(ASSET_ONE)]}),
+        ("DELETE", "/api/assets", {"ids": [str(ASSET_TWO)], "force": True}),
+        ("POST", "/api/trash/empty", {}),
     ]
 
 

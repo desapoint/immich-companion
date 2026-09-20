@@ -161,6 +161,55 @@ class ActionRepository:
             await session.flush()
         return record
 
+    async def create_trash_purge_plan(
+        self,
+        *,
+        selection: dict[str, Any],
+        target_ids: list[UUID],
+        target_count: int,
+        target_digest: str,
+        mode: str,
+        expires_at: datetime,
+    ) -> ActionPlanRecord:
+        """Persist an immutable review of permanent trash deletion targets."""
+
+        record = ActionPlanRecord(
+            action="empty_trash" if mode == "empty_all" else "delete_trash_assets",
+            operation="purge_trash",
+            relation_ids=[],
+            relation_work={"mode": mode, "target_count": target_count},
+            selection=selection,
+            target_ids=[str(identifier) for identifier in target_ids],
+            target_digest=target_digest,
+            applicable_ids=[str(identifier) for identifier in target_ids],
+            skipped_ids=[],
+            missing_ids=[],
+            destructive=True,
+            status="planned",
+            expires_at=expires_at,
+        )
+        async with self._database.sessions() as session, session.begin():
+            session.add(record)
+            await session.flush()
+        return record
+
+    async def claim_trash_purge_plan(self, plan_id: UUID) -> ActionPlanRecord | None:
+        """Atomically claim one unused permanent trash deletion plan."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if (
+                record is None
+                or record.operation != "purge_trash"
+                or record.status != "planned"
+            ):
+                return None
+            record.status = "running"
+            record.executed_at = datetime.now(UTC)
+        return record
+
     async def get_plan(self, plan_id: UUID) -> ActionPlanRecord | None:
         """Load one action plan without changing its persistent state."""
 

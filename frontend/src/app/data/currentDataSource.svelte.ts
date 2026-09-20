@@ -32,11 +32,19 @@ function withDuplicateWorkspacePersistence<T extends ResolvedLibraryDataSource>(
 function withDestructiveActionGuard<T extends ResolvedLibraryDataSource>(source: T): T {
   const guardedAssets = new Proxy(source.assets, {
     get(target, property, receiver) {
-      if (property !== 'trash') return Reflect.get(target, property, receiver);
-      return async (...args: Parameters<typeof source.assets.trash>) => {
+      if (property === 'trash') return async (...args: Parameters<typeof source.assets.trash>) => {
         await requireDestructiveActions();
         return source.assets.trash(...args);
       };
+      if (property === 'planTrashPurge') return async (...args: Parameters<typeof source.assets.planTrashPurge>) => {
+        await requireDestructiveActions();
+        return source.assets.planTrashPurge(...args);
+      };
+      if (property === 'executeTrashPurge') return async (...args: Parameters<typeof source.assets.executeTrashPurge>) => {
+        await requireDestructiveActions();
+        return source.assets.executeTrashPurge(...args);
+      };
+      return Reflect.get(target, property, receiver);
     },
   });
 

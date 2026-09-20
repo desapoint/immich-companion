@@ -10,13 +10,14 @@
   import V2ViewerShell from './ViewerShell.svelte';
   import V2ViewerAssetFacts from './ViewerAssetFacts.svelte';
   import V2ZoomControl from '../../../lib/components/ui/ZoomControl.svelte';
+  import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
   import { isViewerSelectionShortcut } from '../state/viewerSelection';
   import { ViewerViewportController } from '../state/viewportController.svelte';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
   import { errorMessage } from '../../../lib/api/mutationFeedback';
   import type { MediaResource, TrashAssetRecord, ViewerNavigationWindow } from '../../../lib/types/libraryContracts';
 
-  let { open=false, assetId=null, assetIds=[], restoreBusy=false, onclose, onnavigate, onrestore, isselected, ontoggleselection }: { open?:boolean; assetId?:string|null; assetIds?:string[]; restoreBusy?:boolean; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>; onrestore?:(assetId:string)=>boolean|Promise<boolean>; isselected?:(assetId:string)=>boolean; ontoggleselection?:(assetId:string)=>void }=$props();
+  let { open=false, assetId=null, assetIds=[], restoreBusy=false, onclose, onnavigate, onrestore, ondelete, isselected, ontoggleselection }: { open?:boolean; assetId?:string|null; assetIds?:string[]; restoreBusy?:boolean; onclose:()=>void; onnavigate?:(assetId:string,navigation:ViewerNavigationWindow)=>void|Promise<void>; onrestore?:(assetId:string)=>boolean|Promise<boolean>; ondelete?:(assetId:string)=>boolean|Promise<boolean>; isselected?:(assetId:string)=>boolean; ontoggleselection?:(assetId:string)=>void }=$props();
   const camera=new ViewerViewportController();
   const emptyNavigation=():ViewerNavigationWindow=>({previousId:null,nextId:null,position:null,total:0});
   const shortcuts:KeyboardShortcut[]=[
@@ -30,7 +31,7 @@
     {keys:'Space',description:'Select or deselect visible asset'},
   ];
   let currentId=$derived<string|null>(assetId),asset=$state<TrashAssetRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
-  let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),loadRequest=0;
+  let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),confirmDelete=$state(false),loadRequest=0;
   $effect(()=>{const id=currentId;if(!id){asset=undefined;media=null;navigation=emptyNavigation();return}void loadCurrent(id)});
   const fallbackIndex=$derived(currentId?assetIds.indexOf(currentId):-1),isVideo=$derived(asset?.type==='VIDEO');
   const selectionEnabled=$derived(Boolean(isselected&&ontoggleselection)),currentSelected=$derived(Boolean(currentId&&isselected?.(currentId)));
@@ -73,6 +74,15 @@
     if(!restored)return;
     if(fallback&&await libraryData.assets.getTrashById(fallback))currentId=fallback;else onclose();
   }
+  async function permanentlyDelete(){
+    if(!asset||restoreBusy||!ondelete)return;
+    const deletingId=asset.id;
+    const fallback=navigation.nextId??navigation.previousId??(fallbackIndex>=0?(assetIds[fallbackIndex+1]??assetIds[fallbackIndex-1]??null):null);
+    const deleted=await ondelete(deletingId);
+    if(!deleted)return;
+    confirmDelete=false;
+    if(fallback&&await libraryData.assets.getTrashById(fallback))currentId=fallback;else onclose();
+  }
   function editableTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('input,textarea,select,[contenteditable="true"]'))}
   function toggleCurrentSelection(){if(currentId&&ontoggleselection)ontoggleselection(currentId)}
   function handleShortcut(event:KeyboardEvent){
@@ -92,5 +102,6 @@
 <V2ViewerShell {open} title="Restore Viewer" {onclose}>
   {#snippet header()}<V2Inline gap="sm"><V2Button onclick={onclose}>✕</V2Button><b>Restore Viewer</b><V2Badge text={navigationLoading?'Locating…':positionLabel}/>{#if media?.delivery==='transcoded'}<V2Badge text="Transcoded playback"/>{:else if media?.delivery==='decoded'}<V2Badge text="Decoded preview"/>{/if}</V2Inline><V2Inline gap="sm">{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>{/snippet}
   <div class="v2-viewer-stage"><div class="v2-image-stage">{#if loading}<span class="v2-muted">Loading trash asset…</span>{:else if assetError}<V2ErrorState title="Asset unavailable" message={assetError} onretry={()=>currentId&&void loadCurrent(currentId)}/>{:else if mediaError}<V2ErrorState title="Media unavailable" message={mediaError} retryLabel={mediaRefreshing?'Refreshing…':'Retry media'} onretry={()=>void retryMedia()}/>{:else if asset&&media}{#key mediaAttempt}<V2MediaViewport resource={media} assetType={asset.type} alt={asset.original_file_name} controller={camera} onerror={markMediaFailed}/>{/key}{/if}</div><aside class="v2-viewer-info">{#if navigationError}<V2Section title="Navigation"><V2Card><span class="v2-small v2-muted">{navigationError} Loaded-page navigation remains available when possible.</span></V2Card></V2Section>{/if}{#if asset}<V2ViewerAssetFacts filename={asset.original_file_name} width={asset.width} height={asset.height} mimeType={asset.original_mime_type} fileSizeBytes={asset.file_size_bytes} path={asset.restore_path} offline={asset.is_offline} takenAt={asset.taken_at} libraryId={asset.library_id} delivery={media?.delivery}/><V2Section title="Restore boundary"><V2Card><span class="v2-small">Associations are intentionally omitted while this asset is in Immich trash. Restoring it refreshes its normal workspace data.</span></V2Card></V2Section>{:else}<V2Section title="Asset"><V2Card><span class="v2-muted">This item is no longer in trash.</span></V2Card></V2Section>{/if}</aside></div>
-  {#snippet footer()}<V2Button disabled={!canPrevious||navigationLoading||restoreBusy} onclick={previous}>← Previous</V2Button><V2Inline gap="sm"><V2Button variant="primary" disabled={!asset||loading||restoreBusy} onclick={restore}>{restoreBusy?'Restoring…':'Restore visible'}</V2Button></V2Inline><V2Button disabled={!canNext||navigationLoading||restoreBusy} onclick={next}>Next →</V2Button>{/snippet}
+  {#snippet footer()}<V2Button disabled={!canPrevious||navigationLoading||restoreBusy} onclick={previous}>← Previous</V2Button><V2Inline gap="sm">{#if ondelete}<V2Button variant="danger" disabled={!asset||loading||restoreBusy} onclick={()=>confirmDelete=true}>Delete permanently</V2Button>{/if}<V2Button variant="primary" disabled={!asset||loading||restoreBusy} onclick={restore}>{restoreBusy?'Applying…':'Restore visible'}</V2Button></V2Inline><V2Button disabled={!canNext||navigationLoading||restoreBusy} onclick={next}>Next →</V2Button>{/snippet}
 </V2ViewerShell>
+{#if confirmDelete&&asset}<ConfirmDialog title="Permanently delete this asset?" message={`${asset.original_file_name} will be permanently deleted from Immich. This cannot be undone.`} confirmLabel="Delete permanently" icon="trash" destructive pending={restoreBusy} onconfirm={()=>void permanentlyDelete()} onclose={()=>{if(!restoreBusy)confirmDelete=false}}/>{/if}

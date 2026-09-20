@@ -449,6 +449,19 @@ def test_restore_detail_rejects_an_asset_that_immich_reports_as_active() -> None
     assert response.json()["detail"] == "The asset is not in Restore."
 
 
+def test_trash_purge_planning_requires_companion_database() -> None:
+    with TestClient(
+        create_app(settings(allow_destructive_actions=True), pong_transport())
+    ) as client:
+        response = client.post(
+            "/api/trash/purge/plan",
+            json={"ids": ["22222222-2222-4222-8222-222222222222"]},
+        )
+
+    assert response.status_code == 503
+    assert "companion database" in response.json()["detail"].lower()
+
+
 def test_normal_detail_rejects_an_asset_that_immich_reports_as_trashed() -> None:
     asset_id = "11111111-1111-4111-8111-111111111111"
 

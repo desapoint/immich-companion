@@ -1007,6 +1007,27 @@ class ImmichApiClient:
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
+    async def permanently_delete_assets(self, asset_ids: list[UUID]) -> None:
+        """Permanently delete a reviewed batch of assets through Immich."""
+
+        await self._request(
+            "DELETE",
+            "/api/assets",
+            operation="permanently delete assets",
+            json={"ids": [str(asset_id) for asset_id in asset_ids], "force": True},
+        )
+
+    async def empty_trash(self) -> int:
+        """Ask Immich to permanently empty the current API user's trash."""
+
+        response = await self._request(
+            "POST",
+            "/api/trash/empty",
+            operation="empty trash",
+        )
+        payload = response.json()
+        return int(payload.get("count", 0)) if isinstance(payload, dict) else 0
+
     async def list_album_catalog(self) -> list[ImmichAlbum]:
         """Fetch the compact album catalog before any media traversal."""
 
