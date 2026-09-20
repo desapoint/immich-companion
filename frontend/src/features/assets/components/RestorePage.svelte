@@ -28,6 +28,8 @@
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../../lib/api/mutationFeedback';
   import type { MutationResult, TrashAssetRecord, TrashSelectionTarget, ViewerNavigationWindow } from '../../../lib/types/libraryContracts';
 
+  type RestoreMutationResult = MutationResult & { restoredCount?: number; requestedCount?: number };
+
   let { selectionController }: { selectionController: TransientAssetSelectionController } = $props();
   const collection=createCollectionView({pageSize:24,columns:4,resultModeStorageKey:'immichCompanionRestoreResultMode'});
   let sort=$state('deletedAt:desc'),viewer=$state(false),viewerAssetId=$state<string|null>(null),assetGrid=$state<HTMLElement|null>(null),items=$state<TrashAssetRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryTarget=$state<TrashSelectionTarget|null>(null),confirmRestoreAll=$state(false);
@@ -65,6 +67,13 @@
   }
   async function reconcile():Promise<void>{if(!await refresh(true))throw new Error(collectionRequests.error||'Restore was applied, but trash could not be refreshed.')}
   const restorePending=(phase:'applying'|'reconciling')=>pendingOperationFeedback('Restore',phase==='applying'?'applying':'refreshing');
+  function restoreFeedback(result:RestoreMutationResult){
+    if(result.restoredCount===undefined)return mutationFeedback('Restore',result);
+    const failed=result.failed.length,succeeded=result.restoredCount,requested=result.requestedCount??succeeded+failed;
+    if(failed===0)return{tone:'ok' as const,title:'Restore completed',detail:`${succeeded.toLocaleString()} of ${requested.toLocaleString()} assets restored.`,failures:[]};
+    if(succeeded===0)return{tone:'bad' as const,title:'Restore failed',detail:`${failed.toLocaleString()} ${failed===1?'asset':'assets'} failed.`,failures:result.failed};
+    return{tone:'warn' as const,title:'Restore partially completed',detail:`${succeeded.toLocaleString()} of ${requested.toLocaleString()} assets restored · ${failed.toLocaleString()} failed.`,failures:result.failed};
+  }
   async function loadMore(){if(collection.resultMode!=='Infinite'||!nextCursor||loading)return;collection.loadMore(total);await refresh(false)}
   function setAssetColumns(next:number|string){collection.setColumns(next);gridViewportAnchor.adjust()}
   function isSelected(id:string){return isAssetSelected(selection,id)}
@@ -97,9 +106,9 @@
   async function runRestore(nextTarget:TrashSelectionTarget,reconcileSelection:'target'|'single'='target'):Promise<MutationResult|null>{
     if(mutating)return null;
     operations.clearOutcome();
-    const result=await operations.run('Restore',()=>libraryData.assets.restore(nextTarget),{
+    const result=await operations.run('Restore',()=>libraryData.assets.restore(nextTarget) as Promise<RestoreMutationResult>,{
       pending:restorePending,
-      outcome:(value)=>mutationFeedback('Restore',value),
+      outcome:restoreFeedback,
       reconcile,
       reconcileError:'Restore was applied, but the latest trash state could not be loaded.',
     });

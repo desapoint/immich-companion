@@ -25,6 +25,7 @@ services:
     environment:
       COMPANION_ENV: production
       COMPANION_VERSION: ${IMMICH_COMPANION_VERSION:-latest}
+      COMPANION_AUTH_TOKEN: ${COMPANION_AUTH_TOKEN:-}
       IMMICH_URL: http://tailscale:2283
       IMMICH_PUBLIC_URL: ${IMMICH_COMPANION_PUBLIC_IMMICH_URL}
       IMMICH_API_KEY: ${COMPANION_IMMICH_API_KEY}
@@ -60,7 +61,7 @@ services:
     volumes:
       - immich-companion-cache:/cache
     ports:
-      - "${IMMICH_COMPANION_PORT:-8090}:8080"
+      - "${IMMICH_COMPANION_BIND_ADDRESS:-127.0.0.1}:${IMMICH_COMPANION_PORT:-8090}:8080"
     read_only: true
     tmpfs:
       - /tmp

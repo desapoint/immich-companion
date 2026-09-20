@@ -355,6 +355,104 @@ async def test_large_actions_use_runtime_batches_and_pause_between_them(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_late_batch_failure_reports_and_repairs_only_successful_assets() -> None:
+    class FailingImmich(FakeImmich):
+        calls_before_failure = 1
+
+        async def set_assets_archived(self, ids, value):
+            if self.calls_before_failure == 0:
+                raise RuntimeError("later batch failed")
+            self.calls_before_failure -= 1
+            await super().set_assets_archived(ids, value)
+
+    instance, actions, _, sync = service(
+        resolution(), [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}], runtime=RuntimeSettings(1)
+    )
+    immich = FailingImmich()
+    instance._immich = immich  # type: ignore[assignment]
+    plan = await instance.plan(AssetActionPlanRequest(
+        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+        action="archive_toggle",
+    ))
+
+    with pytest.raises(RuntimeError, match="later batch failed"):
+        await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert actions.finished is not None
+    assert actions.finished[0] == "failed"
+    assert actions.finished[1]["applied_ids"] == [str(ASSET_ONE)]
+    assert actions.finished[1]["applied_count"] == 1
+    assert actions.finished[1]["failed_ids"] == [str(ASSET_TWO)]
+    assert sync.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action", ["add_album", "add_tag"])
+async def test_relation_late_batch_failure_preserves_successful_membership(action: str) -> None:
+    class FailingImmich(FakeImmich):
+        calls_before_failure = 1
+
+        async def add_assets_to_album(self, relation_id, ids):
+            if self.calls_before_failure == 0:
+                raise RuntimeError("later relation batch failed")
+            self.calls_before_failure -= 1
+            await super().add_assets_to_album(relation_id, ids)
+
+        async def add_assets_to_tag(self, relation_id, ids):
+            if self.calls_before_failure == 0:
+                raise RuntimeError("later relation batch failed")
+            self.calls_before_failure -= 1
+            await super().add_assets_to_tag(relation_id, ids)
+
+    instance, actions, _, sync = service(
+        resolution(),
+        [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}],
+        runtime=RuntimeSettings(1),
+    )
+    immich = FailingImmich()
+    instance._immich = immich  # type: ignore[assignment]
+    plan = await instance.plan(AssetActionPlanRequest(
+        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+        action=action,
+        relation_ids=[RELATION_ID],
+    ))
+
+    result = await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert actions.finished is not None
+    assert actions.finished[0] == "failed"
+    relation_result = result.relation_results[0]
+    assert relation_result.applied_ids == [ASSET_ONE]
+    assert relation_result.failed_ids == [ASSET_TWO]
+    assert sync.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_failure_keeps_successful_mutation_truthful() -> None:
+    class FailingSync(FakeSync):
+        async def synchronize(self):
+            self.calls += 1
+            raise RuntimeError("reconciliation failed")
+
+    instance, actions, _, _ = service(
+        resolution(), [{ASSET_ONE, ASSET_TWO}, {ASSET_ONE, ASSET_TWO}], sync=FailingSync()
+    )
+    plan = await instance.plan(AssetActionPlanRequest(
+        selection=AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO]),
+        action="archive_toggle",
+    ))
+
+    with pytest.raises(RuntimeError, match="reconciliation failed"):
+        await instance.execute(AssetActionExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert actions.finished is not None
+    assert actions.finished[0] == "failed"
+    assert actions.finished[1]["applied_ids"] == [str(ASSET_ONE), str(ASSET_TWO)]
+    assert actions.finished[1]["applied_count"] == 2
+    assert actions.finished[1]["failed_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_mixed_state_chooses_only_archive_and_favorite_directions() -> None:
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
     instance, _, _, _ = service(resolution(archived=1, favorite=1), [{ASSET_TWO}, {ASSET_TWO}])

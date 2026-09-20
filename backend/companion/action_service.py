@@ -392,7 +392,8 @@ class AssetActionService:
         action_started = perf_counter()
         mutation_seconds = 0.0
         initial: dict[UUID, tuple[list[UUID], list[UUID]]] = {}
-        api_failed: dict[UUID, list[UUID]] = {}
+        applied_by_relation: dict[UUID, list[UUID]] = {}
+        failed_by_relation: dict[UUID, list[UUID]] = {}
         successful_relations: list[UUID] = []
         relation_total = len(target_ids) * len(record.relation_ids)
         relation_processed = 0
@@ -407,12 +408,15 @@ class AssetActionService:
             skipped = [identifier for identifier in target_ids if identifier not in applicable_set]
             initial[relation_id] = (applicable, skipped)
             relation_processed += len(skipped)
-            try:
-                action_batches = self._batches(applicable, operation, batch_size)
-                for index, batch in enumerate(action_batches):
+            applied: list[UUID] = []
+            failed: list[UUID] = []
+            action_batches = self._batches(applicable, operation, batch_size)
+            for index, batch in enumerate(action_batches):
+                try:
                     batch_started = perf_counter()
                     await self._apply(operation, batch, relation_id)
                     mutation_seconds += perf_counter() - batch_started
+                    applied.extend(batch)
                     relation_processed += len(batch)
                     if progress is not None:
                         await progress(
@@ -422,9 +426,13 @@ class AssetActionService:
                         )
                     if index + 1 < len(action_batches):
                         await self._pace_large_action_batch(batch_started, enabled=throttle)
+                except Exception:
+                    failed.extend(item for later in action_batches[index:] for item in later)
+                    break
+            applied_by_relation[relation_id] = applied
+            failed_by_relation[relation_id] = failed
+            if applied:
                 successful_relations.append(relation_id)
-            except Exception:
-                api_failed[relation_id] = applicable
 
         reconciliation_started = perf_counter()
         has_successful_changes = any(
@@ -478,9 +486,9 @@ class AssetActionService:
                 relation_results = [
                     AssetActionRelationResult(
                         relation_id=relation_id,
-                        applied_ids=[],
+                        applied_ids=applied_by_relation[relation_id],
                         skipped_ids=initial[relation_id][1],
-                        failed_ids=initial[relation_id][0],
+                        failed_ids=failed_by_relation[relation_id],
                     )
                     for relation_id in initial
                 ]
@@ -498,21 +506,27 @@ class AssetActionService:
         reconciliation_seconds = perf_counter() - reconciliation_started
         verification_started = perf_counter()
         relation_results: list[AssetActionRelationResult] = []
-        for relation_id, (applicable, skipped) in initial.items():
-            if relation_id in api_failed:
-                failed = api_failed[relation_id]
+        for relation_id, (_, skipped) in initial.items():
+            if failed_by_relation[relation_id]:
+                failed = failed_by_relation[relation_id]
             else:
                 remaining = await self._assets.applicable_action_ids(
                     operation,
-                    applicable,
+                    applied_by_relation[relation_id],
                     relation_id,
                 )
-                failed = [identifier for identifier in applicable if identifier in remaining]
+                failed = [
+                    identifier
+                    for identifier in applied_by_relation[relation_id]
+                    if identifier in remaining
+                ]
             relation_results.append(
                 AssetActionRelationResult(
                     relation_id=relation_id,
                     applied_ids=[
-                        identifier for identifier in applicable if identifier not in failed
+                        identifier
+                        for identifier in applied_by_relation[relation_id]
+                        if identifier not in failed
                     ],
                     skipped_ids=skipped,
                     failed_ids=failed,
@@ -695,6 +709,10 @@ class AssetActionService:
         verification_seconds = 0.0
         deferred_repair = False
         post_action_stacks = None
+        mutation_error: Exception | None = None
+        applied_mutation_ids: list[UUID] = []
+        failed_mutation_ids: list[UUID] = []
+        remaining: set[UUID] = set()
         try:
             repair_ids = applicable_ids
             if operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
@@ -705,16 +723,24 @@ class AssetActionService:
             action_batches = self._batches(applicable_ids, operation, batch_size)
             for index, batch in enumerate(action_batches):
                 batch_started = perf_counter()
-                if operation == "stack":
-                    assert stack_preparation is not None
-                    created = await self._stacks.execute(stack_preparation)
-                else:
-                    await self._apply(operation, batch, relation_id)
+                try:
+                    if operation == "stack":
+                        assert stack_preparation is not None
+                        created = await self._stacks.execute(stack_preparation)
+                    else:
+                        await self._apply(operation, batch, relation_id)
+                except Exception as error:
+                    mutation_error = error
+                    failed_mutation_ids.extend(
+                        item for later in action_batches[index:] for item in later
+                    )
+                    break
                 mutation_seconds += perf_counter() - batch_started
                 if operation == "trash":
                     # Immich's successful response is authoritative. Trashed
                     # assets belong to the live Restore API, not the local index.
                     await self._assets.remove_assets(batch)
+                applied_mutation_ids.extend(batch)
                 updated += len(batch)
                 if progress is not None:
                     await progress(
@@ -724,14 +750,16 @@ class AssetActionService:
                     )
                 if index + 1 < len(action_batches):
                     await self._pace_large_action_batch(batch_started, enabled=throttle)
-            if applicable_ids and operation not in {"trash", "stack"}:
+            if operation not in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
+                repair_ids = applied_mutation_ids
+            if applied_mutation_ids and operation not in {"trash", "stack"}:
                 reconciliation_started = perf_counter()
                 if operation in {"favorite", "unfavorite", "archive", "unarchive"}:
                     enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
                     if enqueue is not None:
                         deferred_repair = await enqueue(repair_ids)
                     if deferred_repair:
-                        await self._assets.apply_asset_action_event(operation, applicable_ids)
+                        await self._assets.apply_asset_action_event(operation, applied_mutation_ids)
                 elif operation in {"set_stack_primary", "remove_from_stack", "remove_stack"}:
                     enqueue = getattr(self._sync, "enqueue_asset_repair_during_sync", None)
                     snapshot = getattr(self._sync, "apply_stack_snapshot_for_targets", None)
@@ -751,7 +779,9 @@ class AssetActionService:
                     )
                 reconciliation_seconds += perf_counter() - reconciliation_started
             verification_started = perf_counter()
-            if operation == "stack":
+            if mutation_error is not None:
+                remaining = set(failed_mutation_ids)
+            elif operation == "stack":
                 # Stacking is a positive state change. The generic applicability
                 # query intentionally returns every asset for this operation, so
                 # it cannot also be used as its post-action verifier. Immich
@@ -774,40 +804,42 @@ class AssetActionService:
                 )
             verification_seconds = perf_counter() - verification_started
         except ImmichApiError as error:
-            result_payload = {
-                "operation": operation,
-                "target_count": len(target_ids),
-                "applied_count": 0,
-                "skipped_count": skipped_count,
-                "applied_ids": [],
-                "skipped_ids": [
-                    str(identifier) for identifier in target_ids if identifier not in applicable_set
-                ],
-                "failed_ids": [str(identifier) for identifier in applicable_ids],
-                "verified": False,
-                "error": error.operation,
-            }
-            await self._actions.finish_plan(claimed.id, "failed", result_payload)
-            raise
+            mutation_error = error
         except Exception as error:
+            mutation_error = error
+
+        if mutation_error is not None:
             result_payload = {
                 "operation": operation,
                 "target_count": len(target_ids),
-                "applied_count": 0,
+                "applied_count": len(applied_mutation_ids),
                 "skipped_count": skipped_count,
-                "applied_ids": [],
+                "applied_ids": [str(identifier) for identifier in applied_mutation_ids],
                 "skipped_ids": [
                     str(identifier) for identifier in target_ids if identifier not in applicable_set
                 ],
-                "failed_ids": [str(identifier) for identifier in applicable_ids],
+                "failed_ids": [str(identifier) for identifier in failed_mutation_ids],
                 "verified": False,
-                "error": type(error).__name__,
+                "error": (
+                    mutation_error.operation
+                    if isinstance(mutation_error, ImmichApiError)
+                    else type(mutation_error).__name__
+                ),
             }
             await self._actions.finish_plan(claimed.id, "failed", result_payload)
-            raise
+            raise mutation_error
 
-        failed_ids = [identifier for identifier in applicable_ids if identifier in remaining]
-        applied_ids = [identifier for identifier in applicable_ids if identifier not in remaining]
+        failed_ids = list(
+            dict.fromkeys(
+                [
+                    *failed_mutation_ids,
+                    *(identifier for identifier in applied_mutation_ids if identifier in remaining),
+                ]
+            )
+        )
+        applied_ids = [
+            identifier for identifier in applied_mutation_ids if identifier not in remaining
+        ]
         skipped_ids = [identifier for identifier in target_ids if identifier not in applicable_set]
         status = "completed" if not failed_ids else "failed"
         result = AssetActionResult(
@@ -834,6 +866,8 @@ class AssetActionService:
             status,
             result.model_dump(mode="json"),
         )
+        if mutation_error is not None:
+            raise mutation_error
         logger.info(
             "Asset action timing: operation=%s targets=%s applied=%s failed=%s "
             "mutation_seconds=%.3f reconciliation_seconds=%.3f "

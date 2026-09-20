@@ -81,6 +81,35 @@ describe('live V2 asset repository',()=>{
     });
   });
 
+  it('sends select-all exclusions to the restore endpoint and preserves failures',async()=>{
+    const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{
+      expect(input).toBe('/api/restore');
+      expect(JSON.parse(String(init?.body))).toEqual({all:true,excluded_ids:[secondId]});
+      return response({restored:1,requested:1,failed_ids:[id]});
+    });
+
+    await expect(createAssetApiProfile(fetcher).assets.restore({kind:'all',excludedIds:[secondId]})).resolves.toEqual({
+      affectedIds:[],
+      failed:[{id,reason:'Asset could not be restored.'}],
+      restoredCount:1,
+      requestedCount:1,
+    });
+  });
+
+  it('deduplicates explicit restore ids and reports partial failures',async()=>{
+    const fetcher=vi.fn<AssetApiFetcher>(async(_input,init)=>{
+      expect(JSON.parse(String(init?.body))).toEqual({ids:[id,secondId]});
+      return response({restored:1,requested:2,failed_ids:[secondId]});
+    });
+
+    await expect(createAssetApiProfile(fetcher).assets.restore({kind:'ids',ids:[id,id,secondId]})).resolves.toEqual({
+      affectedIds:[id],
+      failed:[{id:secondId,reason:'Asset could not be restored.'}],
+      restoredCount:1,
+      requestedCount:2,
+    });
+  });
+
   it('serializes recursive expert groups without flattening them',()=>{
     const expression=assetSearchExpression({mode:'expert',sort:{field:'filename',direction:'asc'},logic:'AND',negated:false,rules:[],groups:[{logic:'OR',negated:false,rules:[{field:'favorite',op:'is',value:'true'}],groups:[{logic:'AND',negated:true,rules:[{field:'filename',op:'contains',value:'copy'}],groups:[]}]}]});
     expect(expression).toEqual({kind:'group',operator:'and',negate:false,children:[{
