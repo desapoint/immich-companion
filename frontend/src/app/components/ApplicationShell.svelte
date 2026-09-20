@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
+  import { Album, BookOpen, CircleGauge, Copy, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import type { SyncRun } from '../../features/status/types/syncContracts';
   import { formatTaskProgressPercent } from '../../features/status/utils/taskProgress';
   import { backgroundTaskPresentation, backgroundTaskStatus } from '../../features/status/state/backgroundTaskStatus.svelte';
   import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../../lib/state/density';
   import { syncStatus } from '../../features/status/state/syncStatus.svelte';
+  import { connectionLabel } from '../../features/status/utils/connectionPresentation';
   import V2Button from '../../lib/components/ui/Button.svelte';
   import V2Progress from '../../lib/components/ui/Progress.svelte';
   import V2Segmented from '../../lib/components/ui/Segmented.svelte';
@@ -25,7 +26,7 @@
     localStorage.setItem(TASK_TRAY_STORAGE_KEY,String(expanded));
   }
 
-  let { activeKey, title, navItems, onnavigate, brand='Immich Companion', connectionLabel='Immich connected', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; connectionLabel?:string; children:import('svelte').Snippet } = $props();
+  let { activeKey, title, navItems, onnavigate, brand='Immich Companion', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; children:import('svelte').Snippet } = $props();
   let density=$state<V2Density>('standard'), taskExpanded=$state(readTaskExpanded()), root=$state<HTMLDivElement>();
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
@@ -116,11 +117,11 @@
       {/each}
       <div class="v2-grow"></div>
       {#each bottomGroups as group (group.label)}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item (item.key)}<a class="v2-nav-button" href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></a>{/each}</nav>{/each}
-      <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel} <small class="v2-muted">v2.x</small></div>
+      <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel(syncStatus.connectionState)} <small class="v2-muted">v2.x</small></div>
     </aside>
 
     <div class="v2-shell">
-      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div><div class="v2-top-actions"><input class="v2-top-search" placeholder="Search current interface…" aria-label="Search current interface"><V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" /><V2Button onclick={()=>setTaskExpanded(true)}>Tasks</V2Button><V2Button ariaLabel="More actions"><Ellipsis size={18} strokeWidth={2.1}/></V2Button></div></header>
+      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div><div class="v2-top-actions"><V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" /><V2Button onclick={()=>setTaskExpanded(true)}>Tasks</V2Button></div></header>
       {@render children()}
     </div>
   </div>
