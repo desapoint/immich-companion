@@ -35,7 +35,7 @@
 
 <V2PageLayout
   title="Status"
-  description="Read-only health, dependency, capability and version overview for Companion and its Immich connection."
+  description="Check Companion, Immich, dependency, capability, and version health at a glance."
 >
   {#snippet context()}
     <StatusContext state={loadState} />
