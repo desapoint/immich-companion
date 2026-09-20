@@ -18,6 +18,7 @@
     onnavigate,
     onmutated,
     onrestore,
+    ondelete,
     onfilterrelation,
     isselected,
     ontoggleselection,
@@ -37,6 +38,7 @@
     onnavigate?: (assetId: string, navigation: ViewerNavigationWindow) => void | Promise<void>;
     onmutated?: () => void | Promise<void>;
     onrestore?: (assetId: string) => boolean | Promise<boolean>;
+    ondelete?: (assetId: string) => boolean | Promise<boolean>;
     onfilterrelation?: (kind: 'album' | 'tag', id: string) => void | Promise<void>;
     isselected?: (assetId: string) => boolean;
     ontoggleselection?: (assetId: string) => void;
@@ -44,7 +46,7 @@
 </script>
 
 {#if mode === 'restore'}
-  <V2RestoreViewer {open} {assetId} {assetIds} {restoreBusy} {onclose} {onnavigate} {onrestore} {isselected} {ontoggleselection} />
+  <V2RestoreViewer {open} {assetId} {assetIds} {restoreBusy} {onclose} {onnavigate} {onrestore} {ondelete} {isselected} {ontoggleselection} />
 {:else}
   <V2AssetViewer {open} {assetId} {assetIds} {resultMode} {collectionPage} {collectionPageSize} {collectionTotal} {startStack} {onclose} {onnavigate} {onmutated} {onfilterrelation} {isselected} {ontoggleselection} />
 {/if}

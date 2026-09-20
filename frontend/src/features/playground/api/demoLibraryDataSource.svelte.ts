@@ -1,7 +1,7 @@
 import {
   addDemoAssetsToAlbum, addDemoTagsToAssets, createDemoAlbum, createDemoTag, deleteDemoAlbums, deleteDemoTags,
   demoAssetById, demoAssetState, indexedDemoAssets, initializeDemoAssetState, removeDemoAssetsFromAlbums,
-  removeDemoAssetsFromStacks, removeDemoCompleteStack, removeDemoTagsFromAssets, restoreDemoTrashAssets,
+  purgeDemoTrashAssets, removeDemoAssetsFromStacks, removeDemoCompleteStack, removeDemoTagsFromAssets, restoreDemoTrashAssets,
   setDemoAssetsArchived, setDemoAssetsFavorite, setDemoStackPrimary, stackDemoAssets, syncDemoAssets,
   trashApiDemoAssets, trashDemoAssets, updateDemoAlbum, updateDemoTag,
 } from '../state/demoAssetState.svelte';
@@ -13,7 +13,7 @@ import type {
   AlbumRecord, AlbumSearchQuery, AssetDetailRecord, AssetRecord, AssetSearchCriteria, AssetSearchGroup, AssetSearchQuery, AssetSearchRule, AssetSelectionWorkspace,
   AssetSelectionCapabilities, AssetSelectionTarget, CollectionRequest, MutationResult, OptionSearchQuery,
   OptionSearchResult, PageResult, RelationOption, TagHierarchyRow, TagRecord, TagSearchQuery, TrashAssetRecord,
-  TrashSearchQuery, TrashSelectionTarget, StackActionPlan, StackResolution,
+  TrashSearchQuery, TrashSelectionTarget, StackActionPlan, StackResolution, TrashPurgePlan,
 } from '../../../lib/types/libraryContracts';
 import type { DuplicateDecision, DuplicateDiscoveryOptions, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateSearchQuery } from '../../duplicates/types/contracts';
 import type { LibraryDataSource } from '../../../app/data/libraryContracts';
@@ -71,6 +71,7 @@ function fixturePath(asset:Pick<AssetRecord,'id'|'asset_type'>|TrashAssetRecord,
 
 export function createDemoLibraryDataSource():LibraryDataSource{
   const stackPlans=new Map<string,{target:AssetSelectionTarget;primaryAssetId:string;resolution:StackResolution|null}>();
+  const trashPurgePlans=new Map<string,{ids:string[];mode:'empty_all'|'selected'}>();
   let stackPlanSequence=0;
   let selectionSequence=0;
   const selectionView=(selection:DemoSelection):AssetSelectionWorkspace=>({...selection.workspace,selectedCount:selection.ids.size});
@@ -125,6 +126,8 @@ export function createDemoLibraryDataSource():LibraryDataSource{
     async sync(target){await delay('sync');const candidates=resolveAssetTarget(target);const failed=candidates.filter((asset)=>seedFor(asset.id)%23===0).map((asset)=>({id:asset.id,reason:'Simulated upstream timeout'}));const failedIds=new Set(failed.map((entry)=>entry.id));const affected=candidates.filter((asset)=>!failedIds.has(asset.id)).map((asset)=>asset.id);syncDemoAssets(affected);return result(affected,failed)},
     async trash(target){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);trashDemoAssets(affected);normalizeDemoStacks();return result(affected)},
     async restore(target){await delay();const affected=resolveTrashTarget(target).map((asset)=>asset.id);restoreDemoTrashAssets(affected);normalizeDemoStacks();return result(affected)},
+    async planTrashPurge(target):Promise<TrashPurgePlan>{await delay();const ids=resolveTrashTarget(target).map((asset)=>asset.id);if(!ids.length)throw new Error('No matching trash assets were found.');const id=`demo-trash-purge-${Date.now()}`;const mode=target.kind==='all'&&!target.excludedIds.length?'empty_all':'selected';trashPurgePlans.set(id,{ids,mode});return{id,mode,targetCount:ids.length,expiresAt:new Date(Date.now()+15*60_000).toISOString(),destructive:true}},
+    async executeTrashPurge(planId){await delay();const plan=trashPurgePlans.get(planId);trashPurgePlans.delete(planId);if(!plan)throw new Error('Trash deletion plan is no longer available.');const ids=existingTrashIds(plan.ids);purgeDemoTrashAssets(ids);return{affectedIds:ids,failed:[],deletedCount:ids.length,requestedCount:plan.ids.length,verified:ids.length===plan.ids.length}},
     async addToAlbum(target,albumId){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);if(!demoAssetState.albums.some((album)=>album.id===albumId))return result([],affected.map((id)=>({id,reason:'Album not found'})));addDemoAssetsToAlbum(affected,albumId);return result(affected)},
     async removeFromAlbums(target,albumIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);removeDemoAssetsFromAlbums(affected,albumIds);return result(affected)},
     async addTags(target,tagIds){await delay();const affected=resolveAssetTarget(target).map((asset)=>asset.id);addDemoTagsToAssets(affected,tagIds);return result(affected)},

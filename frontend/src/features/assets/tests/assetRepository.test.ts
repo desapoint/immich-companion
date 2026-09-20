@@ -110,6 +110,27 @@ describe('live V2 asset repository',()=>{
     });
   });
 
+  it('plans and executes permanent trash deletion through the reviewed endpoints',async()=>{
+    const calls:string[]=[];
+    const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{
+      const path=String(input);calls.push(path);
+      if(path.endsWith('/plan')){
+        expect(JSON.parse(String(init?.body))).toEqual({ids:[id,secondId]});
+        return response({id:'purge-plan-1',mode:'selected',target_count:2,expires_at:'2026-09-20T12:00:00Z',destructive:true});
+      }
+      expect(JSON.parse(String(init?.body))).toEqual({plan_id:'purge-plan-1',confirm:true});
+      return response({requested:2,deleted:1,deleted_ids:[id],failed_ids:[secondId],verified:false});
+    });
+    const assets=createAssetApiProfile(fetcher).assets;
+
+    const plan=await assets.planTrashPurge({kind:'ids',ids:[id,id,secondId]});
+    await expect(assets.executeTrashPurge(plan.id)).resolves.toEqual({
+      affectedIds:[id],failed:[{id:secondId,reason:'Asset is still present in Immich trash.'}],deletedCount:1,requestedCount:2,verified:false,
+    });
+    expect(plan).toMatchObject({id:'purge-plan-1',mode:'selected',targetCount:2,destructive:true});
+    expect(calls).toEqual(['/api/trash/purge/plan','/api/trash/purge/execute']);
+  });
+
   it('serializes recursive expert groups without flattening them',()=>{
     const expression=assetSearchExpression({mode:'expert',sort:{field:'filename',direction:'asc'},logic:'AND',negated:false,rules:[],groups:[{logic:'OR',negated:false,rules:[{field:'favorite',op:'is',value:'true'}],groups:[{logic:'AND',negated:true,rules:[{field:'filename',op:'contains',value:'copy'}],groups:[]}]}]});
     expect(expression).toEqual({kind:'group',operator:'and',negate:false,children:[{

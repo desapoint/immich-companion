@@ -123,6 +123,7 @@ from companion.sync_repository import SyncRepository
 from companion.sync_settings import SyncRuntimeSettingsRepository
 from companion.sync_settings_routes import register_sync_settings_routes
 from companion.task_coordinator import TaskCoordinator
+from companion.trash_purge_service import TrashPurgeService
 from companion.v2_duplicate_review_state import (
     V2DuplicateReviewStateRefreshService,
     V2DuplicateReviewStateRefreshTaskHandler,
@@ -233,6 +234,11 @@ def create_app(
         SimilarityMaintenanceRepository(database) if database is not None else None
     )
     action_repository = ActionRepository(database) if database is not None else None
+    trash_purge_service = (
+        TrashPurgeService(immich, action_repository, runtime_settings)
+        if action_repository is not None
+        else None
+    )
     relation_selection_repository = (
         RelationSelectionRepository(database) if database is not None else None
     )
@@ -909,6 +915,8 @@ def create_app(
         selection_digest=selection_digest,
         batches=batches,
         map_immich_error=map_immich_error,
+        map_action_error=map_action_error,
+        trash_purge_service=trash_purge_service,
     )
 
     if runtime_settings.companion_env == "test":

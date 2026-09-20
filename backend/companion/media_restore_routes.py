@@ -16,6 +16,13 @@ from companion.asset_schema import AssetDetail, AssetSelectionSyncResult
 from companion.immich import ImmichApiClient, ImmichApiError
 from companion.media_proxy import media_stream_response
 from companion.similarity_cache import CachedPreview, SimilarityCacheManager
+from companion.trash_purge_service import (
+    TrashPurgeExecuteRequest,
+    TrashPurgePlan,
+    TrashPurgeResult,
+    TrashPurgeSelection,
+    TrashPurgeService,
+)
 
 
 class RestoreRequest(BaseModel):
@@ -81,6 +88,8 @@ def register_media_restore_routes(
     selection_digest: Callable[[list[UUID]], str],
     batches: Callable[[list[UUID], int], list[list[UUID]]],
     map_immich_error: Callable[[ImmichApiError], HTTPException],
+    map_action_error: Callable[[RuntimeError], HTTPException],
+    trash_purge_service: TrashPurgeService | None,
 ) -> None:
     """Register detail, restore, synchronization, and media proxy endpoints."""
 
@@ -179,6 +188,34 @@ def register_media_restore_routes(
             "requested": len(asset_ids),
             "failed_ids": [str(asset_id) for asset_id in failed_ids],
         }
+
+    def require_trash_purge_service() -> TrashPurgeService:
+        if trash_purge_service is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Permanent trash deletion requires the companion database.",
+            )
+        return trash_purge_service
+
+    @app.post("/api/trash/purge/plan", response_model=TrashPurgePlan)
+    async def plan_trash_purge(request: TrashPurgeSelection) -> TrashPurgePlan:
+        try:
+            return await require_trash_purge_service().plan(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
+
+    @app.post("/api/trash/purge/execute", response_model=TrashPurgeResult)
+    async def execute_trash_purge(
+        request: TrashPurgeExecuteRequest,
+    ) -> TrashPurgeResult:
+        try:
+            return await require_trash_purge_service().execute(request)
+        except ImmichApiError as error:
+            raise map_immich_error(error) from error
+        except RuntimeError as error:
+            raise map_action_error(error) from error
 
     @app.post("/api/assets/{asset_id}/sync", response_model=AssetDetail)
     async def synchronize_asset(asset_id: UUID) -> AssetDetail:

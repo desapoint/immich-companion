@@ -52,6 +52,8 @@ type ApiSelectionRelationships={albums:Array<{id:string;name:string;selected_ass
 type ApiActionPlan={id:string;target_count:number;applicable_count:number;skipped_count:number;missing_ids:string[];stack_conflicts?:Array<{stack_id:string;primary_asset_id:string;member_asset_ids:string[];selected_asset_ids:string[];selected_count:number;member_count:number;includes_unselected:boolean}>;stack_primary_asset_id?:string|null};
 type ApiActionResult={applied_ids:string[];failed_ids:string[];affected_ids?:string[]};
 type ApiRestoreResult={restored:number;requested:number;failed_ids:string[]};
+type ApiTrashPurgePlan={id:string;mode:'empty_all'|'selected';target_count:number;expires_at:string;destructive:true};
+type ApiTrashPurgeResult={requested:number;deleted:number;failed_ids:string[];deleted_ids:string[];verified:boolean};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
 type ApiSelectionWorkspace={id:string;entity_kind?:'asset'|'album'|'tag';revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
 type ApiSelectionMembership={selection:ApiSelectionWorkspace;selected_ids:string[]};
@@ -163,6 +165,8 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
     async sync(target){const resolution=await resolve(target);await requestJson(fetcher,'/api/assets/sync/selection',json(selectionBody(target)));return{affectedIds:resolution.ids,failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))}},
     trash:(target)=>action(target,'trash'),
     async restore(target){const ids=target.kind==='ids'?[...new Set(target.ids)]:[];const body=target.kind==='ids'?{ids}:{all:true,excluded_ids:[...new Set(target.excludedIds)]};const result=await requestJson<ApiRestoreResult>(fetcher,'/api/restore',json(body));const failedIds=[...new Set(result.failed_ids??[])];return{affectedIds:ids.filter((id)=>!failedIds.includes(id)),failed:failedIds.map((id)=>({id,reason:'Asset could not be restored.'})),restoredCount:result.restored,requestedCount:result.requested}},
+    async planTrashPurge(target){const body=target.kind==='ids'?{ids:[...new Set(target.ids)]}:{all:true,excluded_ids:[...new Set(target.excludedIds)]};const plan=await requestJson<ApiTrashPurgePlan>(fetcher,'/api/trash/purge/plan',json(body));return{id:plan.id,mode:plan.mode,targetCount:plan.target_count,expiresAt:plan.expires_at,destructive:true}},
+    async executeTrashPurge(planId){const result=await requestJson<ApiTrashPurgeResult>(fetcher,'/api/trash/purge/execute',json({plan_id:planId,confirm:true}));const failedIds=[...new Set(result.failed_ids??[])];return{affectedIds:[...new Set(result.deleted_ids??[])],failed:failedIds.map((id)=>({id,reason:'Asset is still present in Immich trash.'})),deletedCount:result.deleted,requestedCount:result.requested,verified:result.verified}},
     addToAlbum:(target,albumId)=>action(target,'add_album',[albumId]),removeFromAlbums:(target,albumIds=[])=>action(target,'remove_album',[...albumIds]),
     addTags:(target,tagIds)=>action(target,'add_tag',[...tagIds]),removeTags:(target,tagIds=[])=>action(target,'remove_tag',[...tagIds]),
     planStack,executeStack,
