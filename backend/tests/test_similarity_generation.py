@@ -12,6 +12,7 @@ from sqlalchemy.dialects import postgresql
 import companion.similarity_generation as generation_module
 import companion.similarity_repository as repository_module
 from companion.similarity_generation import (
+    SimilarityEvidenceDestroyTaskHandler,
     SimilarityEvidenceEpochRepository,
     StaleSimilarityEvidenceEpochError,
     similarity_generation_fingerprint,
@@ -338,6 +339,71 @@ async def test_destroy_uses_typed_json_for_cancelled_attempt_details() -> None:
         "search_features": 1,
         "pending_asset_changes": 1,
     }
+
+
+@pytest.mark.asyncio
+async def test_destroy_progress_is_monotonic_and_bounded() -> None:
+    database = _EpochDatabase()
+    repository = SimilarityEvidenceEpochRepository(database)  # type: ignore[arg-type]
+    updates: list[tuple[int, int, str]] = []
+
+    async def progress(completed: int, total: int, detail: str) -> None:
+        updates.append((completed, total, detail))
+
+    await repository.destroy(progress=progress)
+
+    assert updates
+    assert all(total == 11 for _completed, total, _detail in updates)
+    completed = [value for value, _total, _detail in updates]
+    assert completed == sorted(completed)
+    assert completed[0] == 1
+    assert completed[-1] == 11
+    assert all(0 <= value <= 11 for value in completed)
+
+
+@pytest.mark.asyncio
+async def test_destroy_replay_with_same_expected_epoch_is_idempotent() -> None:
+    database = _EpochDatabase()
+    repository = SimilarityEvidenceEpochRepository(database)  # type: ignore[arg-type]
+
+    first = await repository.destroy(expected_epoch=1)
+    replay = await repository.destroy(expected_epoch=1)
+
+    assert first.state.epoch == 2
+    assert first.already_invalidated is False
+    assert replay.state.epoch == 2
+    assert replay.already_invalidated is True
+    assert replay.removed_counts == {}
+
+
+@pytest.mark.asyncio
+async def test_destroy_handler_uses_dedicated_lane_and_reports_completion() -> None:
+    class Context:
+        def __init__(self) -> None:
+            self.progress: list[dict[str, object]] = []
+
+        async def checkpoint_sync_step(self, **values) -> None:
+            self.progress.append(values)
+
+    class Repository:
+        async def destroy(self, *, progress, expected_epoch=None):
+            await progress(1, 11, "Evidence epoch advanced.")
+            await progress(10, 11, "Removed pending asset changes row(s).")
+            return SimpleNamespace(
+                state=SimpleNamespace(epoch=2),
+                cancelled_task_count=0,
+                removed_counts={},
+            )
+
+    handler = SimilarityEvidenceDestroyTaskHandler(Repository())  # type: ignore[arg-type]
+    context = Context()
+    result = await handler.execute(context, {})
+
+    assert handler.lane_key == "similarity_evidence_destroy"
+    assert handler.lane_key != "asset_integrity"
+    assert [item["completed"] for item in context.progress] == [0, 1, 10]
+    assert all(item["total"] == 11 for item in context.progress)
+    assert result.summary["epoch"] == 2
 
 
 @pytest.mark.asyncio

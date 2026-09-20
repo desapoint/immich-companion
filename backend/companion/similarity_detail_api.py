@@ -14,11 +14,14 @@ from companion.similarity_detail_schema import (
     SimilarityLocalDiagnosticsResponse,
 )
 from companion.similarity_detail_service import SimilarityDetailRepository
+from companion.similarity_generation import SIMILARITY_EVIDENCE_DESTROY_TASK_TYPE
+from companion.v2.task_coordinator import TaskCoordinator
 
 
 def register_similarity_detail_routes(
     app: FastAPI,
     repository: SimilarityDetailRepository | None,
+    task_coordinator: TaskCoordinator | None = None,
 ) -> None:
     """Register diagnostics and explicit whole-generation invalidation."""
 
@@ -95,6 +98,15 @@ def register_similarity_detail_routes(
     )
     async def destroy_similarity_evidence() -> SimilarityEvidenceDestroyResponse:
         detail_repository = require_repository()
+        if task_coordinator is not None:
+            generation = await detail_repository.generation_status()
+            task = await task_coordinator.submit(
+                SIMILARITY_EVIDENCE_DESTROY_TASK_TYPE,
+                {"expected_epoch": generation.epoch},
+                priority=80,
+                deduplication_key="similarity-evidence-destroy",
+            )
+            return SimilarityEvidenceDestroyResponse(task_id=task.id)
         result = await detail_repository._evidence_epoch.destroy()  # noqa: SLF001
         return SimilarityEvidenceDestroyResponse(
             generation=generation_response(result.state),
