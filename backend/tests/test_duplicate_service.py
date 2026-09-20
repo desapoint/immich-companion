@@ -1991,7 +1991,8 @@ async def test_workspace_selection_maps_repository_revision_conflict() -> None:
     with pytest.raises(ActionPlanConflictError, match="reload its membership"):
         await service.save_workspace_selection(
             DuplicateWorkspaceSelectionUpdate(
-                selected_group_ids=[PUBLIC_GROUP_ID],
+                selected_group_ids=[],
+                active_group_id=None,
                 revision=1,
             )
         )
@@ -3049,6 +3050,7 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
     class PersistedDiscovery:
         full_calls = 0
         group_calls = 0
+        group_requests = []
         identity_calls = 0
 
         async def discover(self):
@@ -3059,6 +3061,7 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
 
         async def discover_groups(self, group_ids):
             self.group_calls += 1
+            self.group_requests.append(list(group_ids))
             return [discovered] if PUBLIC_GROUP_ID in group_ids else []
 
         async def resolve_identities(self, *, group_ids=None, stable_group_keys=None):
@@ -3158,7 +3161,7 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
         )
     )
     assert discovery.full_calls == 0
-    assert discovery.group_calls == 1
+    assert discovery.group_requests == [[PUBLIC_GROUP_ID]]
 
     reviewed = await service.save_review(
         DuplicateReviewUpdate(
@@ -3168,7 +3171,11 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
         )
     )
     assert reviewed.group_id == PUBLIC_GROUP_ID
-    assert discovery.group_calls == 2
+    assert discovery.group_requests == [
+        [PUBLIC_GROUP_ID],
+        [PUBLIC_GROUP_ID],
+        [PUBLIC_GROUP_ID],
+    ]
 
 
 @pytest.mark.asyncio

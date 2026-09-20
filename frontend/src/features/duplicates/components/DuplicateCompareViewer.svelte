@@ -190,8 +190,8 @@
     { label: 'Added to Immich', selected: selectedData.uploaded, reference: referenceData.uploaded, changed: selectedData.uploaded !== referenceData.uploaded },
   ]);
 
-  $effect(() => { void comparisonData.load(assetIds, open); return () => comparisonData.invalidate(); });
-  $effect(() => { void comparisonData.loadDiagnostics(selectedAsset, referenceAsset, open); return () => comparisonData.invalidate(); });
+  $effect(() => { void comparisonData.load(assetIds, open); });
+  $effect(() => { void comparisonData.loadDiagnostics(selectedAsset, referenceAsset, open); return () => comparisonData.invalidateDiagnostics(); });
 
   function showMemberById(assetId: string) {
     const target = viewerSelectionTargetId(assetIds, assetId);

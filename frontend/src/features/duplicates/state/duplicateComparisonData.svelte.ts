@@ -20,6 +20,7 @@ export class DuplicateComparisonDataController {
   localDiagnosticsError = $state('');
   private loadGeneration = 0;
   private loadedAssetSetKey = '';
+  private loadingAssetSetKey = '';
   private libraryNamesPromise: Promise<Map<string, string>> | null = null;
   private diagnosticsGeneration = 0;
   private readonly diagnosticsCache = new Map<string, LocalChangeDiagnostics>();
@@ -35,8 +36,14 @@ export class DuplicateComparisonDataController {
 
   async load(ids: readonly string[], open: boolean): Promise<void> {
     if (!open) return;
-    const generation = ++this.loadGeneration;
     const requestedKey = assetSetKey(ids);
+    if (requestedKey === this.loadedAssetSetKey) {
+      this.loading = false;
+      return;
+    }
+    if (requestedKey === this.loadingAssetSetKey) return;
+    const generation = ++this.loadGeneration;
+    this.loadingAssetSetKey = requestedKey;
     this.loading = ids.length > 0 && this.loadedAssetSetKey !== requestedKey;
     this.loadError = '';
     try {
@@ -48,7 +55,10 @@ export class DuplicateComparisonDataController {
     } catch (error) {
       if (generation === this.loadGeneration) this.loadError = error instanceof Error ? error.message : 'Could not load comparison assets.';
     } finally {
-      if (generation === this.loadGeneration) this.loading = false;
+      if (generation === this.loadGeneration) {
+        this.loading = false;
+        this.loadingAssetSetKey = '';
+      }
     }
   }
 
@@ -76,7 +86,9 @@ export class DuplicateComparisonDataController {
     }
   }
 
-  invalidate(): void { this.loadGeneration += 1; this.diagnosticsGeneration += 1; }
+  invalidateAssets(): void { this.loadGeneration += 1; this.loadingAssetSetKey = ''; }
+  invalidateDiagnostics(): void { this.diagnosticsGeneration += 1; }
+  invalidate(): void { this.invalidateAssets(); this.invalidateDiagnostics(); }
 
   private getLibraryNames(): Promise<Map<string, string>> {
     this.libraryNamesPromise ??= loadImmichLibraries().then((libraries) => new Map(libraries.map((library) => [library.id, library.name]))).catch(() => new Map());
