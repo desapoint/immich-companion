@@ -71,6 +71,8 @@ export class BackgroundTaskStatusController {
   workflow = $state.raw<{ id: string; presentation: BackgroundTaskPresentation } | null>(null);
   connectionState = $state<TaskConnectionState>('disconnected');
   error = $state('');
+  streamDegraded = $state(false);
+  streamError = $state('');
 
   private subscribers = 0;
   private taskSubscription: TaskSubscription | null = null;
@@ -162,6 +164,7 @@ export class BackgroundTaskStatusController {
   }
 
   private applyTask(task: TaskRecord): void {
+    this.recoverStream();
     if (!BACKGROUND_TASK_TYPES.includes(task.taskType as typeof BACKGROUND_TASK_TYPES[number])) return;
     if (!ACTIVE_TASK_STATES.has(task.status)) {
       this.tasks = this.tasks.filter((candidate) => candidate.id !== task.id);
@@ -182,14 +185,14 @@ export class BackgroundTaskStatusController {
   private scheduleFallbackPolling(): void {
     if (
       this.subscribers === 0
-      || this.connectionState === 'connected'
+      || (this.connectionState === 'connected' && !this.streamDegraded)
       || this.disconnectGraceTimer
       || this.fallbackPollTimer
     ) return;
 
     this.disconnectGraceTimer = setTimeout(() => {
       this.disconnectGraceTimer = null;
-      if (this.subscribers === 0 || this.connectionState === 'connected') return;
+      if (this.subscribers === 0 || (this.connectionState === 'connected' && !this.streamDegraded)) return;
       void this.refresh();
       this.fallbackPollTimer = setInterval(() => void this.refresh(), this.pollIntervalMs);
     }, this.disconnectGraceMs);
@@ -198,10 +201,24 @@ export class BackgroundTaskStatusController {
   private handleConnectionState(state: TaskConnectionState): void {
     this.connectionState = state;
     if (state === 'connected') {
+      this.recoverStream();
       this.clearFallbackTimers();
       return;
     }
     this.scheduleFallbackPolling();
+  }
+
+  private degradeStream(error: Error): void {
+    this.streamDegraded = true;
+    this.streamError = error.message || 'Live task updates are temporarily unavailable.';
+    this.scheduleFallbackPolling();
+  }
+
+  private recoverStream(): void {
+    if (!this.streamDegraded && !this.streamError) return;
+    this.streamDegraded = false;
+    this.streamError = '';
+    this.clearFallbackTimers();
   }
 
   private start(): void {
@@ -210,7 +227,7 @@ export class BackgroundTaskStatusController {
       onTask: (task) => this.applyTask(task),
       onConnectionState: (state) => this.handleConnectionState(state),
       onRecovered: () => void this.refresh(),
-      onError: () => undefined,
+      onError: (error) => this.degradeStream(error),
     });
   }
 
@@ -219,6 +236,8 @@ export class BackgroundTaskStatusController {
     this.taskSubscription?.close();
     this.taskSubscription = null;
     this.connectionState = 'disconnected';
+    this.streamDegraded = false;
+    this.streamError = '';
     this.refreshGeneration += 1;
     this.refreshPromise = null;
     this.refreshQueued = false;
