@@ -3,7 +3,9 @@ import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 
 import type { DuplicateAdmissionEvidence, DuplicateMemberRecord } from '../types/contracts';
+import type { ComparisonMemberData } from '../types/duplicateMember';
 import DuplicateCompareViewer from '../components/DuplicateCompareViewer.svelte';
+import DuplicateComparisonDetails from '../components/DuplicateComparisonDetails.svelte';
 
 const viewerSource = [
   readFileSync(new URL('../components/DuplicateCompareViewer.svelte', import.meta.url), 'utf8'),
@@ -105,6 +107,87 @@ describe('DuplicateCompareViewer', () => {
     expect(body.match(/<details[^>]*v2-compare-metadata-detail[^>]*>/)?.[0] ?? '').toContain('open');
     expect(body.indexOf('data-decision="stack"')).toBeLessThan(body.indexOf('Clear selection'));
     expect(body).not.toContain('Technical group ID');
+  });
+
+  it('shows unaligned and aligned detail scores when frame alignment was applied', () => {
+    const member = (name: string, similarity: string): ComparisonMemberData => ({
+      name,
+      source: 'Immich uploads',
+      size: '4 MB',
+      sizeBytes: 4_000_000,
+      dims: '4000 × 3000',
+      taken: '—',
+      codec: 'image/jpeg',
+      library: 'Immich uploads',
+      libraryId: null,
+      folder: '/',
+      uploaded: '—',
+      similarity,
+    });
+    const { body } = render(DuplicateComparisonDetails, {
+      props: {
+        selectedData: member('selected.jpg', '97.20%'),
+        referenceData: member('reference.jpg', '100.00%'),
+        assetIds: ['selected-id', 'reference-id'],
+        metadataRows: [],
+        hasIndirectLinkedAdmission: false,
+        selectedAdmission: null,
+        admittedByMember: null,
+        admittedByLabel: '—',
+        bestGroupMatchLabel: '—',
+        intermediateImageCount: 0,
+        modeLabel: 'Linked',
+        thresholdLabel: '60.00%',
+        selectedSimilarity: 97.2,
+        belowThreshold: false,
+        selectedEvidence: {
+          structuralPercent: 98,
+          perceptualPercent: 97,
+          colorPercent: 96,
+          detailChangedPercent: 3.5,
+          detailSource: 'original',
+        },
+        validationEvidenceLabel: 'Full-resolution validation',
+        boundedValidation: false,
+        selectedValidatedDimensions: '2048 × 1536',
+        referenceValidatedDimensions: '2048 × 1536',
+        sizeDifferenceLabel: '0 B',
+        sameResolution: true,
+        sameSourceCollection: true,
+        folderScopeLabel: 'Folder',
+        foldersComparable: true,
+        sameFolder: true,
+        localDiagnostics: {
+          available: true,
+          selectedAssetId: 'selected-id',
+          referenceAssetId: 'reference-id',
+          changedPercent: 18.25,
+          localizedChangedPercent: 55,
+          coherentChangedPercent: 12,
+          largestChangedRegionPercent: 8,
+          substantialRegionCount: 1,
+          alignedChangedPercent: 3.5,
+          rawSimilarityPercent: 88.4,
+          alignedSimilarityPercent: 97.2,
+          alignmentApplied: true,
+          alignmentShiftPercent: 3.12,
+          alignmentOverlapPercent: 94.2,
+          rows: 2,
+          columns: 2,
+          cells: [[0, 10], [25, 40]],
+          source: 'original',
+        },
+        localDiagnosticsLoading: false,
+        showMemberById: () => {},
+      },
+    });
+
+    expect(body).toContain('Frame alignment');
+    expect(body).toContain('Applied');
+    expect(body).toContain('Unaligned detail score');
+    expect(body).toContain('88.40%');
+    expect(body).toContain('Aligned detail score');
+    expect(body).toContain('97.20%');
   });
 
   it('lets the page handle a decision before mutating the bound decision map', () => {
