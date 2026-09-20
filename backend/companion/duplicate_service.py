@@ -1754,13 +1754,19 @@ class CrossSourceDuplicateService:
                 member_set_key=getattr(group, "member_set_key", fingerprint),
             ).model_dump(mode="json")
 
-        await self._reviews.save_workspace(
-            selected_groups=[reference(group_id) for group_id in request.selected_group_ids],
-            active_group=(
-                reference(request.active_group_id) if request.active_group_id is not None else None
-            ),
-            revision=request.revision,
-        )
+        try:
+            await self._reviews.save_workspace(
+                selected_groups=[reference(group_id) for group_id in request.selected_group_ids],
+                active_group=(
+                    reference(request.active_group_id) if request.active_group_id is not None else None
+                ),
+                revision=request.revision,
+            )
+        except ValueError as error:
+            # The repository uses ValueError for an optimistic-concurrency miss.
+            # Keep that storage detail out of the HTTP layer so stale viewer writes
+            # become a retryable 409 instead of an opaque 500.
+            raise ActionPlanConflictError(str(error)) from error
         return await self.workspace(request.options)
 
     async def update_workspace_selection(

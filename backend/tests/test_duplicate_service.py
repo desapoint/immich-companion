@@ -1963,6 +1963,41 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workspace_selection_maps_repository_revision_conflict() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    reviews = FakeReviews()
+
+    async def save_workspace_with_conflict(**_values):
+        raise ValueError("Duplicate workspace changed; reload its membership")
+
+    reviews.save_workspace = save_workspace_with_conflict
+    service = CrossSourceDuplicateService(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+    )
+
+    await service.result()
+
+    with pytest.raises(ActionPlanConflictError, match="reload its membership"):
+        await service.save_workspace_selection(
+            DuplicateWorkspaceSelectionUpdate(
+                selected_group_ids=[PUBLIC_GROUP_ID],
+                revision=1,
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_reset_clears_saved_decisions_and_deselects_the_group() -> None:
     content = b"same"
     candidate_group = group(
