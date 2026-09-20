@@ -32,7 +32,7 @@
   const navItems: NavItem[] = [
     { key: 'status', label: 'Status', href: pagePath('status'), group: 'Library' },
     { key: 'assets', label: 'Assets', href: pagePath('assets'), group: 'Library' },
-    { key: 'restore', label: 'Restore', href: pagePath('restore'), group: 'Library' },
+    { key: 'restore', label: 'Trash', href: pagePath('restore'), group: 'Library' },
     { key: 'duplicates', label: 'Duplicates', href: pagePath('duplicates'), group: 'Library' },
     { key: 'albums', label: 'Albums', href: pagePath('albums'), group: 'Organize' },
     { key: 'tags', label: 'Tags', href: pagePath('tags'), group: 'Organize' },
@@ -44,7 +44,7 @@
   const titles: Record<PageKey, string> = {
     status: 'Status',
     assets: 'Assets',
-    restore: 'Restore',
+    restore: 'Trash',
     duplicates: 'Duplicates',
     albums: 'Albums',
     tags: 'Tags',
