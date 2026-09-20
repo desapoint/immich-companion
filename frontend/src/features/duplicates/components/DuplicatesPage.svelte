@@ -219,13 +219,14 @@
     }
   }
   async function applyBulkPreset(decision:DuplicateDecision){if(!capabilities.decisions.includes(decision)||presetApplying)return;presetApplying=true;interactionError='';try{await flushWorkspace();const scope=selectionScope==='All matching'?'all_matching':'current_page';const result=await libraryData.duplicates.applyPreset(decision,scope,groups.map((item)=>item.id),reviewFilter,sourceFilter);if(result.skippedGroupIds.length)interactionError=`${result.skippedGroupIds.length} invalid or unavailable duplicate group${result.skippedGroupIds.length===1?' was':'s were'} skipped.`;await refreshGroups()}catch(error){interactionError=errorMessage(error,'The duplicate preset could not be saved.')}finally{presetApplying=false}}
-  async function keeperRulesApplied(result:DuplicateKeeperSelectionResult){keeperSummary=`${result.appliedGroupCount.toLocaleString()} groups updated by automation · ${result.trashCount.toLocaleString()} automatic Delete decisions`;keeperRulesOpen=false;selectedGroups=[...libraryData.duplicates.selectedGroupIds()];reviewFilter='Selected';collection.reset();interactionError='';await refreshGroups(true,false)}
+  async function keeperRulesApplied(result:DuplicateKeeperSelectionResult){keeperSummary=`${result.appliedGroupCount.toLocaleString()} groups updated by automation · ${result.trashCount.toLocaleString()} automatic Delete decisions`;keeperRulesOpen=false;selectedGroups=[...libraryData.duplicates.selectedGroupIds()];selectionScope='All matching';reviewFilter='Selected';collection.reset();interactionError='';await refreshGroups(true,false)}
   async function selectAllGroups():Promise<void>{
     if(mutating)return;
     selectingAll=true;interactionError='';
     try{
       await flushWorkspace();
       selectedGroups=[...await libraryData.duplicates.selectAllGroups()];
+      selectionScope='All matching';
       sourceFilter='both';
       if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-source-filter',sourceFilter);
       reviewFilter='Selected';
