@@ -61,6 +61,13 @@ export function withDuplicateWorkspaceWriteBarrier(repository: DuplicateReposito
         };
       }
 
+      if (property === 'search') {
+        return async (...args: Parameters<DuplicateRepository['search']>) => {
+          await flushSelection();
+          return target.search(...args);
+        };
+      }
+
       if (property === 'clearDecisions') {
         return async () => {
           // Prevent queued snapshots from being written after the reset. A selection request
