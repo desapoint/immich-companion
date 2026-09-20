@@ -891,6 +891,9 @@ def create_app(
         return asset_repository
 
     def require_asset_sync() -> AssetSyncService:
+        override = getattr(app.state, "asset_sync_override", None)
+        if override is not None:
+            return override
         if asset_sync is None:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -1430,6 +1433,9 @@ def create_app(
         return await repository.list_albums()
 
     def require_immich() -> ImmichApiClient:
+        override = getattr(app.state, "immich_override", None)
+        if override is not None:
+            return override
         if not runtime_settings.immich_configured:
             raise HTTPException(status_code=503, detail="Immich is not configured.")
         return immich
@@ -2654,7 +2660,7 @@ def create_app(
                 excluded_ids = set(request.excluded_ids)
                 asset_ids = [
                     asset.id
-                    for asset in require_immich().iter_trashed_assets()
+                    async for asset in require_immich().iter_trashed_assets()
                     if asset.id not in excluded_ids
                 ]
             except ImmichApiError as error:
