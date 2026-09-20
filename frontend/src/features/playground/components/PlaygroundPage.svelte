@@ -65,7 +65,7 @@
   }
 </script>
 
-<V2PageLayout title="Playground" description="Exercise shared V2 primitives, component states and overlay positioning without touching backend state.">
+<V2PageLayout title="Playground" description="Explore shared controls, feedback states, and overlays without changing backend data.">
   {#snippet headerActions()}
     <V2Inline gap="sm" wrap>
       <V2Button variant="primary" onclick={() => modalOpen = true}>Open popup test</V2Button>
@@ -75,7 +75,7 @@
 
   {#snippet context()}
     <V2Zone>
-      <V2Section title="Coverage">
+      <V2Section title="What this page covers">
         <V2Card>
           <V2Stack gap="xs">
             <span class="v2-small">Single, searchable and multiple selects</span>
