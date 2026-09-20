@@ -1975,6 +1975,11 @@ async def test_workspace_selection_maps_repository_revision_conflict() -> None:
         raise ValueError("Duplicate workspace changed; reload its membership")
 
     reviews.save_workspace = save_workspace_with_conflict
+
+    class PersistedDiscovery:
+        async def resolve_identities(self, *, group_ids=None, stable_group_keys=None):
+            return []
+
     service = CrossSourceDuplicateService(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
@@ -1984,9 +1989,8 @@ async def test_workspace_selection_maps_repository_revision_conflict() -> None:
         SimpleNamespace(),
         SimpleNamespace(),
         reviews,
+        discovery=PersistedDiscovery(),
     )
-
-    await service.result()
 
     with pytest.raises(ActionPlanConflictError, match="reload its membership"):
         await service.save_workspace_selection(
