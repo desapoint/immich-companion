@@ -20,10 +20,12 @@
 
   function diagnosticSummary(value: LocalChangeDiagnostics): string {
     const changed = value.changedPercent?.toFixed(2) ?? '—';
+    const aligned = value.alignedChangedPercent?.toFixed(2) ?? '—';
     const coherent = value.coherentChangedPercent?.toFixed(2) ?? '—';
     const largest = value.largestChangedRegionPercent?.toFixed(2) ?? '—';
     const regions = value.substantialRegionCount ?? '—';
-    return `Changed ${changed}% · coherent ${coherent}% · largest region ${largest}% · ${regions} regions`;
+    const scoring = value.alignmentApplied ? ` · aligned scorer ${aligned}%` : '';
+    return `Raw grid ${changed}%${scoring} · coherent ${coherent}% · largest region ${largest}% · ${regions} regions`;
   }
 </script>
 
@@ -33,7 +35,7 @@
   <div class="local-change-status" role="alert">{error}</div>
 {:else if diagnostics?.available}
   <div class="local-change-note">
-    {diagnosticSummary(diagnostics)} · {sourceLabel(diagnostics.source)} · validator evidence
+    {diagnosticSummary(diagnostics)} · {sourceLabel(diagnostics.source)} · viewer grid stays unwarped
   </div>
 {:else}
   <div class="local-change-status">Localized detail evidence is unavailable for this pair.</div>
