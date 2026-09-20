@@ -130,7 +130,7 @@
           <span>Color <small class="v2-muted">· 10% weight</small></span><b>{percent(selectedEvidence.colorPercent)}</b>
           <span>Validation evidence</span><b>{validationEvidenceLabel ?? 'Unavailable'}</b>
           {#if selectedEvidence.detailChangedPercent !== null && selectedEvidence.detailChangedPercent !== undefined}
-            <span>Detail changed area <small class="v2-muted">· sampled</small></span><b>{percent(selectedEvidence.detailChangedPercent)}</b>
+            <span>Aligned detail changed area <small class="v2-muted">· scorer</small></span><b>{percent(selectedEvidence.detailChangedPercent)}</b>
             <span>Detail evidence</span><b>{detailSourceLabel(selectedEvidence.detailSource)}</b>
           {/if}
           <span>Selected original dimensions</span><b>{selectedData.dims}</b>
@@ -144,7 +144,7 @@
         {/if}
       </div>
       {#if boundedValidation}<p class="v2-compare-detail-note">At least one side cannot be fully decoded within Companion's 64-megapixel safety limit, or its original/full-size detail evidence was unavailable. Similarity therefore uses bounded Immich-generated visual evidence. The metadata table shows original dimensions and the actual rendition dimensions used when they are known. Bounded validation is review evidence, not full-resolution or destructive proof.</p>{/if}
-      {#if selectedEvidence?.detailChangedPercent !== null && selectedEvidence?.detailChangedPercent !== undefined}<p class="v2-compare-detail-note">The final similarity includes this candidate detail check. Difference shows displayed-pixel changes; Local changes shows the validator grid.</p>{/if}
+      {#if selectedEvidence?.detailChangedPercent !== null && selectedEvidence?.detailChangedPercent !== undefined}<p class="v2-compare-detail-note">The final similarity includes the aligned candidate-detail check. The original images are never warped in the viewer. Difference shows displayed-pixel changes; Local changes deliberately keeps the raw original-coordinate grid.</p>{/if}
     </div>
   </details>
 
@@ -152,12 +152,16 @@
     <summary>Local-change validator</summary>
     <div class="v2-compare-detail-body">
       <div class="v2-compare-key-values">
-        <span>Peak local change <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.localizedChangedPercent) : 'Unavailable'}</b>
-        <span>Coherent changed area <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.coherentChangedPercent) : 'Unavailable'}</b>
-        <span>Largest changed region <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.largestChangedRegionPercent) : 'Unavailable'}</b>
-        <span>Substantial regions <small class="v2-muted">· validator</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.substantialRegionCount ?? '—') : 'Unavailable'}</b>
+        <span>Raw changed area <small class="v2-muted">· viewer grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.changedPercent) : 'Unavailable'}</b>
+        <span>Aligned changed area <small class="v2-muted">· scorer</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.alignedChangedPercent) : 'Unavailable'}</b>
+        <span>Frame-shift compensation</span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.alignmentApplied ? `Applied · ${percent(localDiagnostics.alignmentShiftPercent)} shift` : 'Not needed') : 'Unavailable'}</b>
+        <span>Aligned overlap</span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.alignmentOverlapPercent) : 'Unavailable'}</b>
+        <span>Peak local change <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.localizedChangedPercent) : 'Unavailable'}</b>
+        <span>Coherent changed area <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.coherentChangedPercent) : 'Unavailable'}</b>
+        <span>Largest changed region <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.largestChangedRegionPercent) : 'Unavailable'}</b>
+        <span>Substantial regions <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.substantialRegionCount ?? '—') : 'Unavailable'}</b>
       </div>
-      <p class="v2-compare-detail-note">The detail validator uses this local grid and coherent-region topology when scoring candidate similarity. The Local changes view explains that evidence; it is not a separate mismatch rule.</p>
+      <p class="v2-compare-detail-note">The Local changes overlay stays in the originals' raw coordinate space so its cells line up with the image you see. Similarity scoring may separately compensate a bounded global frame translation before measuring residual detail; invalid border area is excluded through overlap cropping rather than shown as change.</p>
     </div>
   </details>
 
