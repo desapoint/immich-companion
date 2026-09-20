@@ -136,6 +136,8 @@ def test_small_handheld_frame_shift_is_compensated_without_warping_raw_grid() ->
     assert diagnostics.changed_percent > diagnostics.aligned_changed_percent
     assert diagnostics.aligned_changed_percent < diagnostics.changed_percent / 2
     assert score.changed_percent == pytest.approx(diagnostics.aligned_changed_percent)
+    assert diagnostics.raw_similarity_percent < diagnostics.aligned_similarity_percent
+    assert diagnostics.aligned_similarity_percent == pytest.approx(score.similarity_percent)
     assert score.similarity_percent > 93
 
 
