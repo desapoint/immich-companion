@@ -4,30 +4,17 @@
   import type { SyncRun } from '../../features/status/types/syncContracts';
   import { formatTaskProgressPercent } from '../../features/status/utils/taskProgress';
   import { backgroundTaskPresentation, backgroundTaskStatus } from '../../features/status/state/backgroundTaskStatus.svelte';
-  import { readV2Density, V2_DENSITY_EVENT, writeV2Density, type V2Density } from '../../lib/state/density';
   import { syncStatus } from '../../features/status/state/syncStatus.svelte';
   import { connectionLabel } from '../../features/status/utils/connectionPresentation';
   import V2Button from '../../lib/components/ui/Button.svelte';
   import V2Progress from '../../lib/components/ui/Progress.svelte';
-  import V2Segmented from '../../lib/components/ui/Segmented.svelte';
   import V2TaskBubble from '../../features/status/components/TaskBubble.svelte';
   import { pagePath } from '../navigation';
 
   type NavItem = { key:string; label:string; href:string; group?:string; position?:'top'|'bottom' };
 
-  const TASK_TRAY_STORAGE_KEY='immich-companion-v2-task-tray-expanded';
-  function readTaskExpanded():boolean{
-    if(typeof localStorage==='undefined')return true;
-    const stored=localStorage.getItem(TASK_TRAY_STORAGE_KEY);
-    return stored===null?true:stored==='true';
-  }
-  function writeTaskExpanded(expanded:boolean):void{
-    if(typeof localStorage==='undefined')return;
-    localStorage.setItem(TASK_TRAY_STORAGE_KEY,String(expanded));
-  }
-
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; children:import('svelte').Snippet } = $props();
-  let density=$state<V2Density>('standard'), taskExpanded=$state(readTaskExpanded()), root=$state<HTMLDivElement>();
+  let taskExpanded=$state(true), root=$state<HTMLDivElement>();
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
@@ -42,10 +29,9 @@
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
   const backgroundTasks=$derived(backgroundTaskStatus.workflow?[backgroundTaskStatus.workflow]:backgroundTaskStatus.tasks.map((task)=>({id:task.id,presentation:backgroundTaskPresentation(task)})));
   const activeTaskCount=$derived((currentRun?1:0)+backgroundTasks.length);
-  const taskOverlayVisible=$derived(taskExpanded || activeTaskCount>0);
+  const taskOverlayVisible=$derived(activeTaskCount>0);
 
-  function setDensity(next:V2Density){density=next;writeV2Density(next)}
-  function setTaskExpanded(expanded:boolean){taskExpanded=expanded;writeTaskExpanded(expanded)}
+  function setTaskExpanded(expanded:boolean){taskExpanded=expanded}
 
   function handleNavigation(event:MouseEvent,item:NavItem):void{
     if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
@@ -76,27 +62,22 @@
   }
 
   onMount(()=>{
-    density=readV2Density();
     const releaseSyncStatus=syncStatus.acquire();
     const releaseBackgroundTasks=backgroundTaskStatus.acquire();
-    const onDensity=(event:Event)=>density=(event as CustomEvent<V2Density>).detail;
     const observer=new ResizeObserver(syncTaskBounds);
     if(root) observer.observe(root);
-    window.addEventListener(V2_DENSITY_EVENT,onDensity);
     window.addEventListener('resize',syncTaskBounds);
     void tick().then(syncTaskBounds);
     return()=>{
       releaseSyncStatus();
       releaseBackgroundTasks();
       observer.disconnect();
-      window.removeEventListener(V2_DENSITY_EVENT,onDensity);
       window.removeEventListener('resize',syncTaskBounds);
     }
   });
 
   $effect(()=>{
     activeKey;
-    density;
     void tick().then(syncTaskBounds);
   });
 </script>
@@ -107,7 +88,7 @@
   </span>
 {/snippet}
 
-<div class="v2-root" data-density={density} data-task-overlay={taskOverlayVisible || undefined} bind:this={root}>
+<div class="v2-root" data-density="condensed" data-task-overlay={taskOverlayVisible || undefined} bind:this={root}>
   <div class="v2-app">
     <aside class="v2-sidebar">
       <div class="v2-brand"><div class="v2-logo"></div><span class="v2-brand-text">{brand}</span></div>
@@ -121,12 +102,12 @@
     </aside>
 
     <div class="v2-shell">
-      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div><div class="v2-top-actions"><V2Segmented items={['Standard','Condensed']} active={density==='standard'?'Standard':'Condensed'} onselect={(value)=>setDensity(value==='Standard'?'standard':'condensed')} ariaLabel="Interface density" /><V2Button onclick={()=>setTaskExpanded(true)}>Tasks</V2Button></div></header>
+      <header class="v2-topbar"><div class="v2-crumb">{brand} / <span class="v2-crumb-current">{title}</span></div></header>
       {@render children()}
     </div>
   </div>
 
-  {#if taskExpanded}
+  {#if taskExpanded && activeTaskCount > 0}
     <div class="v2-tasktray">
       <div class="v2-tasktray-head">
         <div class="v2-task-summary">
@@ -181,11 +162,6 @@
             <span class="v2-task-stat">{item.presentation.total !== null && item.presentation.percent !== null ? formatTaskProgressPercent(item.presentation.percent) : '—'}</span>
           </div>
         {/each}
-        {#if activeTaskCount===0}
-          <div class="v2-task-row">
-            <div class="v2-task-copy"><span>No background task is running</span><small class="v2-muted">Synchronization and duplicate scans appear here while active.</small></div>
-          </div>
-        {/if}
       </div>
     </div>
   {:else if activeTaskCount}
