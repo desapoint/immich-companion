@@ -258,7 +258,7 @@ def test_shared_ui_with_changed_notifications_falls_below_95_percent() -> None:
     assert diagnostics.substantial_region_count >= 2
 
 
-def test_coherent_face_and_swimsuit_edits_are_not_hidden_by_unchanged_background() -> None:
+def test_localized_face_and_outfit_changes_stay_high_when_most_pixels_match() -> None:
     original = Image.new("RGB", (1024, 1024), (90, 115, 145))
     draw = ImageDraw.Draw(original)
     draw.ellipse((300, 80, 720, 500), fill=(235, 190, 155))
@@ -282,9 +282,54 @@ def test_coherent_face_and_swimsuit_edits_are_not_hidden_by_unchanged_background
     assert DETAIL_FEATURE_VERSION == 4
     assert compare_detail_features(reference, reference).similarity_percent == 100
     assert compare_detail_features(reference, jpeg).similarity_percent >= 98.5
-    assert scores[2].similarity_percent < scores[1].similarity_percent < 95
-    assert 95 < scores[0].similarity_percent < 100
+    assert 97 < scores[2].similarity_percent < scores[1].similarity_percent
+    assert scores[1].similarity_percent < scores[0].similarity_percent < 100
     assert 0 < scores[0].changed_percent < scores[1].changed_percent
+    assert scores[1].changed_percent < scores[2].changed_percent
+
+
+def test_equal_changed_area_scores_lower_when_split_across_distant_zones() -> None:
+    original = Image.new("RGB", (1024, 1024), (88, 112, 142))
+    draw = ImageDraw.Draw(original)
+    for offset in range(0, 1024, 64):
+        draw.line((offset, 0, offset, 1024), fill=(80, 103, 132), width=2)
+        draw.line((0, offset, 1024, offset), fill=(80, 103, 132), width=2)
+
+    localized = original.copy()
+    ImageDraw.Draw(localized).rectangle((392, 392, 631, 631), fill=(210, 70, 105))
+
+    two_zones = original.copy()
+    two_draw = ImageDraw.Draw(two_zones)
+    two_draw.rectangle((120, 120, 289, 289), fill=(210, 70, 105))
+    two_draw.rectangle((735, 735, 904, 904), fill=(210, 70, 105))
+
+    four_zones = original.copy()
+    four_draw = ImageDraw.Draw(four_zones)
+    for box in (
+        (100, 100, 219, 219),
+        (804, 100, 923, 219),
+        (100, 804, 219, 923),
+        (804, 804, 923, 923),
+    ):
+        four_draw.rectangle(box, fill=(210, 70, 105))
+
+    reference = extract_detail_feature(BytesIO(_encoded(original)), "png")
+    variants = [
+        extract_detail_feature(BytesIO(_encoded(image)), "png")
+        for image in (localized, two_zones, four_zones)
+    ]
+    assert reference is not None and all(variants)
+
+    scores = [compare_detail_features(reference, variant) for variant in variants]
+    changed = [score.changed_percent for score in scores]
+
+    # Keep the changed coverage comparable so the ordering comes from how many
+    # places changed and how far those zones are distributed, not simply area.
+    assert max(changed) - min(changed) < 1.5
+    assert scores[0].similarity_percent > 97
+    assert scores[0].similarity_percent > scores[1].similarity_percent
+    assert scores[1].similarity_percent > scores[2].similarity_percent
+    assert scores[0].similarity_percent - scores[2].similarity_percent > 3
 
 
 def test_old_256_pixel_detail_sample_cannot_be_scored_as_current() -> None:
