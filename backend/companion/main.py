@@ -9,7 +9,6 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -20,12 +19,9 @@ from fastapi import (
     Query,
     Request,
     Response,
-    WebSocket,
-    WebSocketDisconnect,
     status,
 )
-from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from companion.action_repository import ActionRepository
@@ -137,6 +133,7 @@ from companion.duplicate_service import (
     CrossSourceDuplicateService,
     CrossSourceDuplicateTaskHandler,
 )
+from companion.frontend_routes import register_frontend_routes
 from companion.immich import (
     ImmichAlbum,
     ImmichApiClient,
@@ -220,7 +217,8 @@ from companion.sync_schema import (
 )
 from companion.sync_settings import SyncRuntimeSettingsRepository, SyncRuntimeSettingsUpdate
 from companion.task_coordinator import TaskCoordinator
-from companion.task_schema import TaskEvent, TaskScheduleUpdate, TaskScheduleView, TaskStatusView
+from companion.task_routes import register_task_routes
+from companion.task_schema import TaskScheduleUpdate, TaskScheduleView, TaskStatusView
 from companion.v2_duplicate_review_state import (
     V2DuplicateReviewStateRefreshService,
     V2DuplicateReviewStateRefreshTaskHandler,
@@ -1062,96 +1060,7 @@ def create_app(
             )
         return run
 
-    @app.get("/api/tasks/{task_id}", response_model=TaskStatusView)
-    async def task_status(task_id: UUID) -> TaskStatusView:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        task = await task_coordinator.get_status(task_id)
-        if task is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        return task
-
-    @app.get("/api/tasks/{task_id}/events", response_model=list[TaskEvent])
-    async def task_events(
-        task_id: UUID,
-        limit: int = Query(default=1000, ge=1, le=5000),
-    ) -> list[TaskEvent]:
-        """Expose durable checkpoints, including opt-in sync memory snapshots."""
-
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        if await task_coordinator.get_status(task_id) is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="The task was not found."
-            )
-        return await task_coordinator.task_events(task_id, limit=limit)
-
-    @app.websocket("/api/tasks/stream")
-    async def task_updates_stream(websocket: WebSocket) -> None:
-        """Stream task creation and progress updates before task IDs are known."""
-
-        origin = websocket.headers.get("origin")
-        host = websocket.headers.get("host")
-        if origin and host and urlsplit(origin).netloc != host:
-            await websocket.close(code=1008, reason="WebSocket origin is not allowed")
-            return
-        await websocket.accept()
-        if task_coordinator is None:
-            await websocket.close(code=1011, reason="Task coordinator unavailable")
-            return
-        try:
-            async for task in task_coordinator.stream_all():
-                await websocket.send_json(task.model_dump(mode="json"))
-        except WebSocketDisconnect:
-            return
-
-    @app.websocket("/api/tasks/{task_id}/stream")
-    async def task_stream(websocket: WebSocket, task_id: UUID) -> None:
-        """Stream task snapshots from the central coordinator event channel."""
-
-        origin = websocket.headers.get("origin")
-        host = websocket.headers.get("host")
-        if origin and host and urlsplit(origin).netloc != host:
-            await websocket.close(code=1008, reason="WebSocket origin is not allowed")
-            return
-        await websocket.accept()
-        try:
-            if task_coordinator is None:
-                await websocket.send_json({"error": "The task coordinator is unavailable."})
-                return
-            async for task in task_coordinator.stream(task_id):
-                await websocket.send_json(task.model_dump(mode="json"))
-        except WebSocketDisconnect:
-            return
-
-    @app.get("/api/tasks", response_model=list[TaskStatusView])
-    async def list_tasks(
-        task_type: str | None = Query(default=None, max_length=64),
-        limit: int = Query(default=50, ge=1, le=200),
-        active_only: bool = Query(default=False),
-    ) -> list[TaskStatusView]:
-        if task_coordinator is None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="The companion database is not configured.",
-            )
-        return await task_coordinator.list_tasks(
-            task_type=task_type, limit=limit, active_only=active_only
-        )
-
-    @app.get("/api/settings/sync", response_model=list[TaskScheduleView])
-    async def sync_schedule_settings() -> list[TaskScheduleView]:
-        if task_coordinator is None:
-            raise HTTPException(status_code=503, detail="The companion database is not configured.")
-        return await task_coordinator.list_schedules()
+    register_task_routes(app, task_coordinator)
 
     @app.get("/api/settings/sync/runtime")
     async def sync_runtime_settings() -> dict[str, object]:
@@ -2854,35 +2763,7 @@ def create_app(
                 )
             return payload
 
-    frontend_dir = runtime_settings.companion_frontend_dir
-    frontend_index = frontend_dir / "index.html" if frontend_dir else None
-
-    if frontend_index and frontend_index.is_file():
-        frontend_assets = frontend_dir / "static" / "assets"
-        if frontend_assets.is_dir():
-            app.mount(
-                "/static/assets",
-                StaticFiles(directory=frontend_assets),
-                name="frontend-assets",
-            )
-
-        @app.get("/", response_class=FileResponse, include_in_schema=False)
-        async def frontend_index_route() -> FileResponse:
-            return FileResponse(frontend_index)
-
-        @app.get("/{frontend_path:path}", response_class=FileResponse, include_in_schema=False)
-        async def frontend_fallback(frontend_path: str) -> FileResponse:
-            if frontend_path == "api" or frontend_path.startswith("api/"):
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-            return FileResponse(frontend_index)
-    else:
-
-        @app.get("/", include_in_schema=False)
-        async def frontend_unavailable() -> None:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Frontend assets are not installed. Run the Vite development server.",
-            )
+    register_frontend_routes(app, runtime_settings.companion_frontend_dir)
 
     app.add_middleware(
         DeploymentBearerAuthMiddleware,
