@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
@@ -26,6 +26,7 @@ from fastapi import (
 )
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, model_validator
 
 from companion.action_repository import ActionRepository
 from companion.action_schema import (
@@ -56,7 +57,6 @@ from companion.asset_repository import AssetRepository
 from companion.asset_schema import (
     AlbumOption,
     AssetDetail,
-    AssetRestoreRequest,
     AssetSearchMatchRequest,
     AssetSearchQuery,
     AssetSearchResponse,
@@ -271,6 +271,52 @@ def matching_tag_ids(catalog: list[ImmichTag], query: str, include_hierarchy: bo
     return list(
         dict.fromkeys(descendant_id for tag in matching for descendant_id in subtrees[tag.id])
     )
+
+
+class RestoreRequest(BaseModel):
+    """A bounded restore target with optional server-side exclusions."""
+
+    ids: list[UUID] = Field(default_factory=list, max_length=10_000)
+    all: bool = False
+    excluded_ids: list[UUID] = Field(default_factory=list, max_length=10_000)
+
+    @model_validator(mode="after")
+    def validate_target(self) -> RestoreRequest:
+        if self.all == bool(self.ids):
+            raise ValueError("Specify either one or more ids or all=true.")
+        if self.ids and self.excluded_ids:
+            raise ValueError("excluded_ids are only valid with all=true.")
+        if len(set(self.excluded_ids)) != len(self.excluded_ids):
+            raise ValueError("excluded_ids must be unique.")
+        return self
+
+
+async def restore_batch_with_accounting(
+    asset_ids: list[UUID],
+    restore_targets: Callable[[list[UUID]], Awaitable[None]],
+    get_asset: Callable[[UUID], Awaitable[object]],
+) -> tuple[int, list[UUID]]:
+    """Restore one bounded batch and classify provider-side partial success."""
+
+    try:
+        await restore_targets(asset_ids)
+    except ImmichApiError:
+        async def still_trashed(asset_id: UUID) -> bool:
+            try:
+                return bool((await get_asset(asset_id)).is_trashed)  # type: ignore[attr-defined]
+            except ImmichApiError:
+                return True
+
+        statuses = await asyncio.gather(*(still_trashed(asset_id) for asset_id in asset_ids))
+        return (
+            sum(not trashed for trashed in statuses),
+            [
+                asset_id
+                for asset_id, trashed in zip(asset_ids, statuses, strict=True)
+                if trashed
+            ],
+        )
+    return len(asset_ids), []
 
 
 def create_app(
@@ -2593,14 +2639,24 @@ def create_app(
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post("/api/restore")
-    async def restore_assets(request: AssetRestoreRequest) -> dict[str, int]:
-        """Restore selected or all live Immich trash in paced server-side batches."""
+    async def restore_assets(request: RestoreRequest) -> dict[str, object]:
+        """Restore selected or all live Immich trash in paced server-side batches.
+
+        A failed batch is inspected after the Immich call so the response reflects
+        assets that were actually restored even when the provider partially applied
+        the request. Remaining batches continue independently.
+        """
 
         sync = require_asset_sync()
         pacing = await sync._runtime_sync_settings.get()
         if request.all:
             try:
-                asset_ids = [asset.id async for asset in require_immich().iter_trashed_assets()]
+                excluded_ids = set(request.excluded_ids)
+                asset_ids = [
+                    asset.id
+                    for asset in require_immich().iter_trashed_assets()
+                    if asset.id not in excluded_ids
+                ]
             except ImmichApiError as error:
                 raise map_immich_error(error) from error
         else:
@@ -2623,14 +2679,23 @@ def create_app(
         if not asset_ids:
             raise HTTPException(status_code=404, detail="No matching trashed assets were found.")
         restore_batches = batches(asset_ids, pacing.full_batch_size)
+        restored_count = 0
+        failed_ids: list[UUID] = []
         for index, batch in enumerate(restore_batches):
-            try:
-                await sync.restore_targets(batch)
-            except ImmichApiError as error:
-                raise map_immich_error(error) from error
+            batch_restored, batch_failed = await restore_batch_with_accounting(
+                batch,
+                sync.restore_targets,
+                require_immich().get_asset,
+            )
+            restored_count += batch_restored
+            failed_ids.extend(batch_failed)
             if index < len(restore_batches) - 1:
                 await asyncio.sleep(pacing.full_min_batch_delay_seconds)
-        return {"restored": len(asset_ids)}
+        return {
+            "restored": restored_count,
+            "requested": len(asset_ids),
+            "failed_ids": [str(asset_id) for asset_id in failed_ids],
+        }
 
     @app.post("/api/assets/{asset_id}/sync", response_model=AssetDetail)
     async def synchronize_asset(asset_id: UUID) -> AssetDetail:
