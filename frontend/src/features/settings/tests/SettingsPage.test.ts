@@ -15,6 +15,7 @@ describe('SettingsPage', () => {
     expect(body).toContain('Toast position');
     expect(body).toContain('Open playground');
     expect(body).toContain('Tasks');
+    expect(body).toContain('Interface preferences and local tools.');
     expect(body).toMatch(/aria-selected="true"[^>]*>General<\/button>/);
   });
 });

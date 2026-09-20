@@ -5,7 +5,6 @@
   import SyncSettingsSection from './SyncSettingsSection.svelte';
   import V2ActiveTasksSettings from './ActiveTasksSettings.svelte';
   import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
-  import V2Notice from '../../../lib/components/ui/Notice.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Tabs from '../../../lib/components/ui/Tabs.svelte';
   import V2Toolbar from '../../../lib/components/layout/Toolbar.svelte';
@@ -17,6 +16,7 @@
   let { toastPosition = 'top-right', ontoastpositionchange, onopenplayground }: { toastPosition?: ToastPosition; ontoastpositionchange?: (position: ToastPosition) => void; onopenplayground?: () => void } = $props();
   let tab = $state<SettingsTab>('General');
   let density = $state<V2Density>('standard');
+  const tabDescription = $derived(tab === 'General' ? 'Interface preferences and local tools.' : tab === 'Duplicates' ? 'Duplicate sources and similarity tuning.' : tab === 'Sync' ? 'Run, schedule, and tune synchronization.' : 'Monitor and control background work.');
 
   function setDensity(next: V2Density): void { density = next; writeV2Density(next); }
 
@@ -31,7 +31,7 @@
 <V2PageLayout title="Settings" description="Configure interface behavior and live synchronization controls.">
   {#snippet tabs()}<V2Tabs items={['General', 'Duplicates', 'Sync', 'Tasks']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />{/snippet}
   <V2Zone>
-    <V2Toolbar sticky={false}><b>{tab}</b></V2Toolbar>
+    <V2Toolbar sticky={false}><div class="settings-tab-heading"><b>{tab}</b><span>{tabDescription}</span></div></V2Toolbar>
     {#if tab === 'General'}
       <GeneralSettingsSection {density} {toastPosition} {ontoastpositionchange} {onopenplayground} ondensitychange={setDensity} />
     {:else if tab === 'Duplicates'}
@@ -43,3 +43,8 @@
     {/if}
   </V2Zone>
 </V2PageLayout>
+
+<style>
+  .settings-tab-heading{display:flex;align-items:baseline;gap:.65rem;min-width:0;flex-wrap:wrap}
+  .settings-tab-heading span{color:var(--v2-muted);font-size:.78rem}
+</style>

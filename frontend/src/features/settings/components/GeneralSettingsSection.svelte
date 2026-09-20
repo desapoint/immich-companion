@@ -23,7 +23,7 @@
     <V2Stack gap="sm">
       <span class="v2-small v2-muted">Controls spacing, table row height, card padding and grid thumbnail density throughout V2.</span>
       <V2Segmented items={['Standard', 'Condensed']} active={density === 'standard' ? 'Standard' : 'Condensed'} onselect={(value) => ondensitychange(value === 'Standard' ? 'standard' : 'condensed')} ariaLabel="Interface density" />
-      <span class="v2-small v2-muted">The preference is applied immediately and retained across pages and browser reloads.</span>
+      <span class="v2-small v2-muted">Applied immediately and retained across pages and browser reloads.</span>
     </V2Stack>
   </V2Card>
   <V2Card title="Action notifications">
@@ -31,13 +31,13 @@
     <V2Stack gap="sm">
       <span class="v2-small v2-muted">Choose which corner anchors standard action success, warning and error toasts.</span>
       <SelectField id="settings-toast-position" label="Toast position" value={toastPosition} options={TOAST_POSITIONS} onchange={(value) => ontoastpositionchange?.(value as ToastPosition)} />
-      <span class="v2-small v2-muted">Top positions place each latest notification below the previous one; bottom positions grow upward.</span>
+      <span class="v2-small v2-muted">Top positions stack downward; bottom positions grow upward.</span>
     </V2Stack>
   </V2Card>
   <V2Card title="Component playground">
+    {#snippet actions()}<V2Button variant="primary" onclick={() => onopenplayground?.()}>Open playground</V2Button>{/snippet}
     <V2Stack gap="sm">
       <span class="v2-small v2-muted">Open the static V2 component reference. It behaves the same in demo and live modes and never mutates backend data.</span>
-      <div><V2Button variant="primary" onclick={() => onopenplayground?.()}>Open playground</V2Button></div>
     </V2Stack>
   </V2Card>
 </div>
