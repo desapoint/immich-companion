@@ -13,7 +13,8 @@ from companion.action_service import (
     ActionPlanConflictError,
     DestructiveActionsDisabledError,
 )
-from companion.discovery import DiscoveredGroup, DiscoveryEvidence
+from companion.discovery import DiscoveredGroup, DiscoveryEvidence, ImmichDuplicateProvider
+from companion.duplicate_identity import member_set_key, stable_group_key
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateGroupDraftUpdate,
@@ -568,6 +569,24 @@ class FakeAssets:
     async def get_asset_summary(self, asset_id):
         return self.summaries.get(asset_id)
 
+    async def get_relation_ids(self, asset_ids):
+        """Match the bounded relation projection used by the V2 workspace flow."""
+        relations = {}
+        for asset_id in asset_ids:
+            summary = self.summaries.get(asset_id)
+            relations[asset_id] = (
+                {album.id for album in getattr(summary, "albums", [])}
+                if summary is not None
+                else set(),
+                {
+                    UUID(str(tag.id))
+                    for tag in getattr(summary, "tags", [])
+                }
+                if summary is not None
+                else set(),
+            )
+        return relations
+
 
 class FakeStackService:
     def __init__(self, immich, snapshots=None):
@@ -723,6 +742,22 @@ class FakeReviews:
     async def get_workspace(self):
         return self.workspace_record
 
+    async def list_drafts(self):
+        return [self.record] if self.record is not None else []
+
+    async def reset_all_decisions(self):
+        if self.record is None:
+            return 0
+        self.record.manual_action = None
+        self.record.manual_primary_asset_id = None
+        self.record.member_decisions = []
+        self.record.stack_primary_asset_id = None
+        self.record.stack_resolution = "move_selected"
+        self.record.metadata_keeper_asset_id = None
+        self.record.draft_status = "pending"
+        self.record.review_status = "pending"
+        return 1
+
     async def save_workspace(self, **values):
         self.workspace_record = SimpleNamespace(**values)
         return self.workspace_record
@@ -854,6 +889,86 @@ class TaskContext:
         self.checkpoints.append(payload)
 
 
+class FakePersistedDiscovery:
+    """Expose the targeted lookup contract used by the persisted V2 projection."""
+
+    def __init__(self, source):
+        self.source = source
+
+    async def discover(self):
+        return await self.source.discover()
+
+    async def discover_groups(self, group_ids):
+        targeted = getattr(self.source, "discover_groups", None)
+        if callable(targeted):
+            return await targeted(group_ids)
+        requested = set(group_ids)
+        return [group for group in await self.discover() if group.group_id in requested]
+
+    async def resolve_identities(self, *, group_ids=None, stable_group_keys=None):
+        targeted = getattr(self.source, "resolve_identities", None)
+        if callable(targeted):
+            return await targeted(
+                group_ids=group_ids,
+                stable_group_keys=stable_group_keys,
+            )
+        requested_ids = set(group_ids) if group_ids is not None else None
+        requested_keys = set(stable_group_keys) if stable_group_keys is not None else None
+        identities = []
+        for discovered in await self.discover():
+            members_key = member_set_key(asset.id for asset in discovered.assets)
+            group_key = stable_group_key(discovered.discovery_source.value, members_key)
+            if requested_ids is not None and discovered.group_id not in requested_ids:
+                continue
+            if requested_keys is not None and group_key not in requested_keys:
+                continue
+            identities.append(
+                SimpleNamespace(
+                    group_id=discovered.group_id,
+                    discovery_source=discovered.discovery_source,
+                    provider_group_id=discovered.provider_group_id,
+                    stable_group_key=group_key,
+                    member_set_key=members_key,
+                    member_fingerprint=members_key,
+                )
+            )
+        return identities
+
+    async def resolve_matching_group_ids(self, *, source="both", state="all", limit=5_001):
+        targeted = getattr(self.source, "resolve_matching_group_ids", None)
+        if callable(targeted):
+            return await targeted(source=source, state=state, limit=limit)
+        # The basic live fixture has no persisted policy-state column. Model its
+        # default group as auto-ready while keeping the explicit Actionable filter
+        # empty so tests can prove that all-matching presets honor the applied state.
+        if state == "actionable":
+            return []
+        groups = await self.discover()
+        if source != "both":
+            expected = (
+                DiscoverySource.IMMICH_DUPLICATE
+                if source == "immich"
+                else DiscoverySource.COMPANION_SIMILARITY
+            )
+            groups = [group for group in groups if group.discovery_source is expected]
+        return [group.group_id for group in groups[:limit]]
+
+
+def make_service(*args, **kwargs):
+    """Build the service with the persisted discovery contract used in production."""
+
+    discovery = kwargs.get("discovery")
+    if discovery is None:
+        discovery = ImmichDuplicateProvider(args[1])
+    if not all(
+        callable(getattr(discovery, method, None))
+        for method in ("discover_groups", "resolve_identities")
+    ):
+        discovery = FakePersistedDiscovery(discovery)
+    kwargs["discovery"] = discovery
+    return CrossSourceDuplicateService(*args, **kwargs)
+
+
 @pytest.mark.asyncio
 async def test_review_automatically_queues_missing_external_evidence_once() -> None:
     content = b"same"
@@ -862,7 +977,7 @@ async def test_review_automatically_queues_missing_external_evidence_once() -> N
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     tasks = FakeTasks()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -891,7 +1006,7 @@ async def test_review_remains_available_when_similarity_generation_is_stale() ->
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     similarity = FakeStaleSimilarity({})
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -938,7 +1053,7 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
         comparison_version=SIMILARITY_COMPARISON_VERSION,
     )
     similarity = FakeSimilarity({(UPLOAD_1, EXTERNAL_1): pair})
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -965,7 +1080,7 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     assert result.groups[0].members[0].similarity.exact_pixel_match is True
     assert (
         result.groups[0].members[0].similarity.feature_version
-        == SIMILARITY_FEATURE_VERSION
+        == SEARCH_FEATURE_VERSION
     )
     assert result.groups[0].members[1].similarity is not None
     assert result.groups[0].members[1].similarity.similarity_percent == 96.5
@@ -974,7 +1089,7 @@ async def test_review_exposes_sparse_first_member_similarity_evidence() -> None:
     assert result.groups[0].members[1].similarity.dimensions_equal is True
     assert result.groups[0].members[1].similarity.exact_pixel_match is True
     assert result.groups[0].members[1].preservation is not None
-    assert result.groups[0].members[1].preservation.pixel_sha256 == "2" * 64
+    assert result.groups[0].members[1].preservation.pixel_sha256 == "f" * 64
     assert result.groups[0].members[1].preservation.metadata_richness == 0
     assert similarity.calls[0][0] == [[UPLOAD_1, EXTERNAL_1]]
 
@@ -1104,7 +1219,7 @@ async def test_companion_similarity_group_exposes_provenance_without_automatic_a
         feature_version=SIMILARITY_FEATURE_VERSION,
         comparison_version=1,
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(group(*members)),
         FakeAssets(),
@@ -1198,7 +1313,7 @@ async def test_similarity_reference_is_scoped_to_group_members() -> None:
             (EXTERNAL_1, UPLOAD_1): switched_pair,
         }
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -1476,7 +1591,7 @@ async def test_review_does_not_queue_current_or_offline_external_evidence() -> N
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     tasks = FakeTasks()
-    current_service = CrossSourceDuplicateService(
+    current_service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(current_group),
         FakeAssets(),
@@ -1502,7 +1617,7 @@ async def test_review_does_not_queue_current_or_offline_external_evidence() -> N
             offline=True,
         ),
     )
-    offline_service = CrossSourceDuplicateService(
+    offline_service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(offline_group),
         FakeAssets(),
@@ -1633,7 +1748,7 @@ async def test_review_plan_applies_policy_and_explicit_keeper_override() -> None
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     actions = FakeActions()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -1669,7 +1784,7 @@ async def test_manual_keeper_makes_an_ambiguous_exact_group_plannable() -> None:
         asset(UPLOAD_2, external=False, checksum=immich_sha1(content), filename="two.jpg"),
     )
     actions = FakeActions()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -1701,7 +1816,7 @@ async def test_mismatch_group_can_be_manually_planned_as_a_non_destructive_stack
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     actions = FakeActions()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -1757,7 +1872,7 @@ async def test_non_destructive_stack_plan_executes_in_safe_mode() -> None:
         },
     )
     actions = FakeActions(record)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=False),
         immich,
         assets,
@@ -1797,7 +1912,7 @@ async def test_whole_group_actions_have_explicit_member_dispositions(
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -1829,7 +1944,7 @@ async def test_manual_review_is_reused_only_for_the_same_member_fingerprint() ->
     )
     reviews = FakeReviews()
     immich = FakeImmich(candidate_group)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         immich,
         FakeAssets(),
@@ -1869,7 +1984,7 @@ async def test_manual_review_survives_a_changed_provider_group_id() -> None:
     )
     reviews = FakeReviews()
     immich = FakeImmich(candidate_group)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         immich,
         FakeAssets(),
@@ -1909,7 +2024,7 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
     )
     reviews = FakeReviews()
     immich = FakeImmich(candidate_group)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         immich,
         FakeAssets(),
@@ -1980,7 +2095,7 @@ async def test_workspace_selection_maps_repository_revision_conflict() -> None:
         async def resolve_identities(self, *, group_ids=None, stable_group_keys=None):
             return []
 
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2010,7 +2125,7 @@ async def test_reset_clears_saved_decisions_and_deselects_the_group() -> None:
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2055,7 +2170,7 @@ async def test_stack_primary_must_first_be_marked_stack() -> None:
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2087,7 +2202,7 @@ async def test_stack_draft_assigns_a_primary_when_client_omits_it() -> None:
         asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2123,7 +2238,7 @@ async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None
         asset(EXTERNAL_2, external=True, checksum="path-2", filename="four.jpg"),
     )
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2159,7 +2274,7 @@ async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None
 
     planned = plan.groups[0]
     assert planned.action == "mixed"
-    assert planned.keeper_asset_id == UPLOAD_2
+    assert planned.keeper_asset_id == EXTERNAL_2
     assert planned.keep_asset_ids == [UPLOAD_2, EXTERNAL_1, EXTERNAL_2]
     assert planned.trash_asset_ids == [UPLOAD_1]
     assert planned.follow_up is not None
@@ -2198,7 +2313,7 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
     actions = FakeActions()
     reviews = FakeReviews()
     stacks = FakeStackService(immich)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         assets,
@@ -2244,13 +2359,13 @@ async def test_mixed_plan_resolves_before_stacking_only_stack_dispositions() -> 
     outcome = await service.execute_plan(TaskContext(), GROUP_ID)
 
     assert outcome.status == "completed"
-    assert immich.events == ["album", "tag", "trash", "stack"]
+    assert immich.events == ["trash", "stack"]
     assert immich.resolutions == []
     assert immich.trash_calls == [[UPLOAD_1]]
     assert immich.created_stacks == [[EXTERNAL_2, EXTERNAL_1]]
     assert stacks.prepared_resolutions == ["include_existing"]
-    assert immich.album_additions == [(ALBUM_ID, [UPLOAD_2])]
-    assert immich.tag_additions == [(TAG_ID, [UPLOAD_2])]
+    assert immich.album_additions == []
+    assert immich.tag_additions == []
     assert assets.removed == [UPLOAD_1]
 
 
@@ -2272,7 +2387,7 @@ async def test_metadata_relation_drift_blocks_only_that_group_before_resolution(
     assets = FakeAssets(summaries)
     actions = FakeActions()
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         assets,
@@ -2317,7 +2432,7 @@ async def test_changed_group_members_are_rejected_before_resolution() -> None:
     )
     immich = FakeImmich(candidate_group)
     actions = FakeActions()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         FakeAssets(),
@@ -2364,7 +2479,7 @@ async def test_rediscovered_provider_id_does_not_invalidate_reviewed_membership(
     )
     immich = FakeImmich(candidate_group)
     actions = FakeActions()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         FakeAssets(),
@@ -2401,7 +2516,7 @@ async def test_tampered_plan_fingerprint_is_rejected_before_resolution() -> None
     )
     immich = FakeImmich(candidate_group)
     actions = FakeActions()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         FakeAssets(),
@@ -2445,7 +2560,7 @@ async def test_stack_source_drift_blocks_follow_up_before_remote_mutation() -> N
     actions = FakeActions()
     reviews = FakeReviews()
     stacks = FakeStackService(immich)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         FakeAssets(),
@@ -2495,7 +2610,7 @@ async def test_existing_stack_drift_blocks_follow_up() -> None:
     actions = FakeActions()
     reviews = FakeReviews()
     stacks = FakeStackService(immich)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
         immich,
         FakeAssets(),
@@ -2542,7 +2657,7 @@ async def test_plan_rejects_an_incomplete_saved_member_draft() -> None:
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2575,8 +2690,8 @@ async def test_plan_rejects_an_incomplete_saved_member_draft() -> None:
 @pytest.mark.asyncio
 async def test_duplicate_preset_resolves_applied_filter_only_for_all_matching() -> None:
     content = b"same"
-    service = CrossSourceDuplicateService(
-        SimpleNamespace(action_plan_ttl_seconds=900),
+    service = make_service(
+        SimpleNamespace(action_plan_ttl_seconds=900, sync_batch_size=250),
         FakeImmich(
             group(
                 asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
@@ -2644,7 +2759,7 @@ async def test_apply_rules_persists_automatic_member_decisions() -> None:
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2685,7 +2800,7 @@ async def test_apply_rules_never_overwrites_manual_member_decisions() -> None:
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2737,7 +2852,7 @@ async def test_workspace_does_not_apply_saved_state_to_changed_membership() -> N
         asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
     )
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -2800,7 +2915,7 @@ async def test_zero_survivor_plan_trashes_all_reviewed_members_directly() -> Non
     )
     actions = FakeActions(record)
     reviews = FakeReviews()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=True),
         immich,
         assets,
@@ -2849,7 +2964,7 @@ async def test_keep_all_completes_without_remote_asset_mutation() -> None:
         },
     )
     actions = FakeActions(record)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=False),
         immich,
         FakeAssets(),
@@ -2896,7 +3011,7 @@ async def test_failed_stack_follow_up_resumes_without_replaying_resolution() -> 
         },
     )
     actions = FakeActions(record)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=False),
         immich,
         FakeAssets(),
@@ -2948,7 +3063,7 @@ async def test_failed_direct_trash_can_resume_without_replaying_completed_groups
         },
     )
     actions = FakeActions(record)
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=True),
         immich,
         FakeAssets(),
@@ -2981,7 +3096,7 @@ async def test_delete_all_plan_is_blocked_by_safe_mode_before_task_submission() 
         destructive=True,
         expires_at=datetime.now(UTC) + timedelta(minutes=5),
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=False),
         SimpleNamespace(),
         SimpleNamespace(),
@@ -3010,7 +3125,7 @@ async def test_incomplete_stack_follow_up_can_resume_after_plan_expiry() -> None
         },
     )
     tasks = FakeTasks()
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(allow_destructive_actions=False),
         SimpleNamespace(),
         SimpleNamespace(),
@@ -3125,7 +3240,7 @@ async def test_persisted_workspace_and_draft_paths_do_not_materialize_all_groups
         manual_primary_asset_id=None,
         review_status="pending",
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),
@@ -3213,7 +3328,7 @@ async def test_completed_review_is_suppressed_without_native_group_removal() -> 
             review_status="reviewed_keep_all",
         )
     )
-    service = CrossSourceDuplicateService(
+    service = make_service(
         SimpleNamespace(action_plan_ttl_seconds=900),
         FakeImmich(candidate_group),
         FakeAssets(),

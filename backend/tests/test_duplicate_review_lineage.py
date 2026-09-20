@@ -105,6 +105,7 @@ def _review(*asset_ids: UUID, source: str = "immich_duplicate"):
         stack_primary_asset_id=None,
         stack_resolution="move_selected",
         metadata_keeper_asset_id=None,
+        draft_status="completed",
         review_status="reviewed_resolve",
         last_reviewed_at=NOW,
         updated_at=NOW,
