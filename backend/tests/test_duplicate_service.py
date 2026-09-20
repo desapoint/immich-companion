@@ -568,6 +568,24 @@ class FakeAssets:
     async def get_asset_summary(self, asset_id):
         return self.summaries.get(asset_id)
 
+    async def get_relation_ids(self, asset_ids):
+        """Match the bounded relation projection used by the V2 workspace flow."""
+        relations = {}
+        for asset_id in asset_ids:
+            summary = self.summaries.get(asset_id)
+            relations[asset_id] = (
+                {album.id for album in getattr(summary, "albums", [])}
+                if summary is not None
+                else set(),
+                {
+                    UUID(str(tag.id))
+                    for tag in getattr(summary, "tags", [])
+                }
+                if summary is not None
+                else set(),
+            )
+        return relations
+
 
 class FakeStackService:
     def __init__(self, immich, snapshots=None):
@@ -722,6 +740,22 @@ class FakeReviews:
 
     async def get_workspace(self):
         return self.workspace_record
+
+    async def list_drafts(self):
+        return [self.record] if self.record is not None else []
+
+    async def reset_all_decisions(self):
+        if self.record is None:
+            return 0
+        self.record.manual_action = None
+        self.record.manual_primary_asset_id = None
+        self.record.member_decisions = []
+        self.record.stack_primary_asset_id = None
+        self.record.stack_resolution = "move_selected"
+        self.record.metadata_keeper_asset_id = None
+        self.record.draft_status = "pending"
+        self.record.review_status = "pending"
+        return 1
 
     async def save_workspace(self, **values):
         self.workspace_record = SimpleNamespace(**values)
