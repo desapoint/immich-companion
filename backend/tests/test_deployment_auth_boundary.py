@@ -8,7 +8,9 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient, WebSocketDisconnect
 
+from companion.config import Settings
 from companion.deployment_auth_boundary import DeploymentBearerAuthMiddleware
+from companion.main import create_app
 
 
 async def private_endpoint(request: object) -> PlainTextResponse:
@@ -100,3 +102,19 @@ def test_configured_boundary_closes_unauthenticated_websocket() -> None:
         pass
 
     assert error.value.code == 1008
+
+
+def test_application_factory_installs_configured_boundary() -> None:
+    credentials = base64.b64encode(b"companion:strong-test-token").decode("ascii")
+    app = create_app(Settings(companion_auth_token="strong-test-token"))
+
+    with TestClient(app) as client:
+        missing = client.get("/api/version")
+        authorized = client.get(
+            "/api/version", headers={"Authorization": f"Basic {credentials}"}
+        )
+        liveness = client.get("/api/live")
+
+    assert missing.status_code == 401
+    assert authorized.status_code == 200
+    assert liveness.status_code == 200

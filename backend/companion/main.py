@@ -86,6 +86,7 @@ from companion.composite_duplicate_sync import (
 )
 from companion.config import Settings, get_settings
 from companion.database import DatabaseManager, PostgresHealthClient
+from companion.deployment_auth_boundary import DeploymentBearerAuthMiddleware
 from companion.discovery import (
     CompositeGroupDiscoveryProvider,
     ImmichDuplicateProvider,
@@ -2877,6 +2878,10 @@ def create_app(
                 detail="Frontend assets are not installed. Run the Vite development server.",
             )
 
+    app.add_middleware(
+        DeploymentBearerAuthMiddleware,
+        token=runtime_settings.resolve_companion_auth_token(),
+    )
     return app
 
 

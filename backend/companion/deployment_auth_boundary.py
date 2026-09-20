@@ -1,8 +1,8 @@
-"""Optional bearer authentication for deployments behind a public listener.
+"""Optional browser and API authentication for deployments behind a public listener.
 
 The boundary is deliberately opt-in so local development and existing
-reverse-proxy deployments keep their current behavior until the application
-factory installs it with a configured token.
+authenticated reverse-proxy deployments keep their current behavior when no
+application token is configured.
 """
 
 from __future__ import annotations

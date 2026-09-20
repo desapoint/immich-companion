@@ -85,7 +85,7 @@ class Settings(BaseSettings):
         return None
 
     def resolve_companion_auth_token(self) -> str | None:
-        """Resolve the optional dashboard/API bearer token without exposing it."""
+        """Resolve the optional dashboard/API authentication token without exposing it."""
 
         if self.companion_auth_token is None:
             return None
