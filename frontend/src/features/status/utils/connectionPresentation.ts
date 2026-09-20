@@ -2,10 +2,10 @@ import type { TaskConnectionState } from '../types/syncContracts';
 
 export function connectionLabel(state: TaskConnectionState): string {
   switch (state) {
-    case 'connected': return 'Live';
-    case 'connecting': return 'Connecting';
-    case 'reconnecting': return 'Reconnecting';
-    default: return 'Disconnected';
+    case 'connected': return 'Live updates';
+    case 'connecting': return 'Connecting live updates';
+    case 'reconnecting': return 'Reconnecting live updates';
+    default: return 'Live updates unavailable';
   }
 }
 

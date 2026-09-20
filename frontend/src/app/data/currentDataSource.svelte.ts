@@ -5,9 +5,19 @@ import { withDuplicateWorkspaceWriteBarrier } from '../../features/duplicates/st
 import type { LiveLibraryDataSource } from './liveContracts';
 
 let destructiveCapabilityPromise: Promise<CapabilityAvailability> | null = null;
+let destructiveCapabilityResult: Exclude<CapabilityAvailability, { state: 'unavailable' }> | null = null;
 
 export function destructiveActionsAvailability(): Promise<CapabilityAvailability> {
-  destructiveCapabilityPromise ??= destructiveActionAvailability();
+  if (destructiveCapabilityResult) return Promise.resolve(destructiveCapabilityResult);
+  if (destructiveCapabilityPromise) return destructiveCapabilityPromise;
+  destructiveCapabilityPromise = destructiveActionAvailability()
+    .then((result) => {
+      if (result.state !== 'unavailable') destructiveCapabilityResult = result;
+      return result;
+    })
+    .finally(() => {
+      destructiveCapabilityPromise = null;
+    });
   return destructiveCapabilityPromise;
 }
 
