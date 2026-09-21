@@ -20,7 +20,7 @@ export class OperationController {
   action = $state('');
   retry = $state<(() => Promise<void>) | null>(null);
   private revision = 0;
-  private pendingReconcile: { run: () => Promise<void>; context: string; revision: number } | null = null;
+  private pendingReconcile: { run: () => Promise<void>; context: string; revision: number; outcome: OperationFeedback | null } | null = null;
   private reconcileTask: Promise<void> | null = null;
 
   clearError(): void {
@@ -39,11 +39,13 @@ export class OperationController {
     this.retry = null;
   }
 
-  private scheduleReconcile(run: () => Promise<void>, context: string, revision: number): void {
+  private scheduleReconcile(run: () => Promise<void>, context: string, revision: number, outcome: OperationFeedback, pending: OperationFeedback): void {
     // A refresh loads the current collection, so only the newest queued refresh
     // is useful. Keep one active request and one trailing request at most.
-    this.pendingReconcile = { run, context, revision };
+    this.pendingReconcile = { run, context, revision, outcome };
     this.reconciling = true;
+    this.phase = 'reconciling';
+    this.feedback = pending;
     if (this.reconcileTask) return;
     this.reconcileTask = Promise.resolve().then(() => this.drainReconciles());
   }
@@ -55,8 +57,10 @@ export class OperationController {
         this.pendingReconcile = null;
         try {
           await job.run();
+          if (job.revision === this.revision) this.feedback = job.outcome;
         } catch (error) {
           if (job.revision === this.revision) {
+            this.feedback = job.outcome;
             const detail = errorMessage(error, '');
             this.error = detail ? `${job.context} ${detail}` : job.context;
           }
@@ -65,6 +69,11 @@ export class OperationController {
     } finally {
       this.reconcileTask = null;
       this.reconciling = false;
+      if (!this.pendingReconcile) {
+        this.busy = false;
+        this.phase = 'idle';
+        this.action = '';
+      }
     }
   }
 
@@ -102,13 +111,20 @@ export class OperationController {
           () => options.reconcile!(result),
           options.reconcileError ?? `${action} was applied, but the latest state could not be loaded.`,
           revision,
+          outcome,
+          options.pending('reconciling'),
         );
       }
       return result;
     } finally {
-      this.busy = false;
-      this.phase = 'idle';
-      this.action = '';
+      // Keep the operation locked while the trailing reconciliation is active.
+      // The confirmation dialog and page controls must not look idle between
+      // the mutation response and the refreshed collection.
+      if (!this.reconciling) {
+        this.busy = false;
+        this.phase = 'idle';
+        this.action = '';
+      }
     }
   }
 }
