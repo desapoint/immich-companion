@@ -15,6 +15,7 @@ class DuplicateDiscoverySettings(BaseModel):
     include_exact: bool = True
     include_similar: bool = True
     similarity_threshold: float = Field(default=95.0, ge=50, le=100)
+    maximum_perceptual_distance: int = Field(default=12, ge=0, le=64)
     validation_mode: Literal["reference", "linked", "strict"] = "strict"
     max_link_depth: int = Field(default=2, ge=0, le=64)
     max_candidates: int = Field(default=8, ge=1, le=64)
@@ -30,6 +31,7 @@ class DuplicateDiscoverySettingsUpdate(DuplicateDiscoverySettings):
 MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS = frozenset(
     {
         "similarity_threshold",
+        "maximum_perceptual_distance",
         "validation_mode",
         "max_link_depth",
         "max_candidates",
@@ -65,6 +67,7 @@ class DuplicateDiscoverySettingsRepository:
                 include_exact=record.include_exact,
                 include_similar=record.include_similar,
                 similarity_threshold=record.similarity_threshold,
+                maximum_perceptual_distance=record.maximum_perceptual_distance,
                 validation_mode=record.validation_mode,
                 max_link_depth=record.max_link_depth,
                 max_candidates=record.max_candidates,

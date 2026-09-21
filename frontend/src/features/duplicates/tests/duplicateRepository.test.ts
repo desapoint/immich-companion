@@ -742,11 +742,11 @@ describe('live V2 duplicate repository', () => {
     const progress: number[] = [];
     const repository = createDuplicateRepository(taskRepository);
 
-    const result = await repository.runDiscovery({similarityThreshold:90,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
+    const result = await repository.runDiscovery({similarityThreshold:90,maximumPerceptualDistance:14,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
 
     expect(result).toEqual({groupCount:1,candidateCount:2});
     expect(progress).toEqual([25,98,99]);
-    expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1]});
+    expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1],maximum_perceptual_distance:14});
     const discoveryCalls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
     expect(discoveryCalls.filter((path) => path.endsWith('/cross-source/analyze'))).toHaveLength(1);
     expect(discoveryCalls.filter((path) => path.endsWith('/similarity-scan'))).toHaveLength(1);

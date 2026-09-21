@@ -31,9 +31,10 @@ describe('SimilarityEvidenceGenerationPanel', () => {
     expect(source).toContain('similarity_threshold:preferences.similarityThreshold');
     expect(source).toContain('validation_mode:preferences.validationMode');
     expect(source).toContain('max_link_depth:preferences.maxLinkDepth');
+    expect(source).toContain('maximum_perceptual_distance:preferences.maximumPerceptualDistance');
     expect(source).toContain(
       'maximum_neighbors_per_asset:Math.min(64,Math.max(1,preferences.maxCandidates))',
     );
-    expect(source).toContain('threshold, validation mode, link depth, and candidate limit');
+    expect(source).toContain('threshold, dHash distance, validation mode, link depth, and candidate limit');
   });
 });

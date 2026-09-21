@@ -7,6 +7,7 @@ export type DuplicateDiscoveryState = {
   includeExact: boolean;
   includeSimilar: boolean;
   similarityThreshold: string;
+  maximumPerceptualDistance: string;
   validationMode: SimilarityValidationMode;
   maxLinkDepth: string;
   maxCandidates: string;
@@ -35,6 +36,7 @@ type DiscoveryDependencies = {
   runOperation: <T>(action: string, runner: () => Promise<T>, options: OperationRunOptions<T>) => Promise<T | null>;
   runDiscovery: (options: {
     similarityThreshold: number;
+    maximumPerceptualDistance: number;
     validationMode: SimilarityValidationMode;
     maxLinkDepth: number;
     anchorAssetId?: string;
@@ -61,11 +63,13 @@ export class DuplicateDiscoveryController {
     try {
       const current = dependencies.getState();
       const normalizedThreshold = Math.min(100, Math.max(50, Number(current.similarityThreshold) || 95));
+      const normalizedPerceptualDistance = Math.min(64, Math.max(0, Math.round(Number(current.maximumPerceptualDistance) || 0)));
       const normalizedCandidates = Math.min(64, Math.max(1, Math.round(Number(current.maxCandidates) || 8)));
       const normalizedLinkDepth = Math.min(64, Math.max(0, Math.round(Number(current.maxLinkDepth) || 0)));
       dependencies.setState({
         ...current,
         similarityThreshold: String(normalizedThreshold),
+        maximumPerceptualDistance: String(normalizedPerceptualDistance),
         maxLinkDepth: String(normalizedLinkDepth),
         maxCandidates: String(normalizedCandidates),
       });
@@ -77,6 +81,7 @@ export class DuplicateDiscoveryController {
             includeExact: state.includeExact,
             includeSimilar: state.includeSimilar,
             similarityThreshold: normalizedThreshold,
+            maximumPerceptualDistance: normalizedPerceptualDistance,
             validationMode: state.validationMode,
             maxLinkDepth: normalizedLinkDepth,
             maxCandidates: normalizedCandidates,
@@ -86,6 +91,7 @@ export class DuplicateDiscoveryController {
             includeExact: saved.includeExact,
             includeSimilar: saved.includeSimilar,
             similarityThreshold: String(saved.similarityThreshold),
+            maximumPerceptualDistance: String(saved.maximumPerceptualDistance),
             validationMode: saved.validationMode,
             maxLinkDepth: String(saved.maxLinkDepth),
             maxCandidates: String(saved.maxCandidates),
@@ -100,6 +106,7 @@ export class DuplicateDiscoveryController {
       await dependencies.runOperation('Duplicate discovery',
         () => dependencies.runDiscovery({
           similarityThreshold: normalizedThreshold,
+          maximumPerceptualDistance: normalizedPerceptualDistance,
           validationMode: finalState.validationMode,
           maxLinkDepth: normalizedLinkDepth,
           anchorAssetId,
