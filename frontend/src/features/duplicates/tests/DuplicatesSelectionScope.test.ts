@@ -11,4 +11,9 @@ describe('duplicate bulk-action scope', () => {
   it('switches to all matching after keeper automation updates the selection', () => {
     expect(pageSource).toContain("selectedGroups=[...libraryData.duplicates.selectedGroupIds()];selectionScope='All matching';reviewFilter='Selected'");
   });
+
+  it('awaits selection writes before hydrating a refreshed page', () => {
+    expect(pageSource).toContain("try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}");
+    expect(pageSource).toContain("selectionScope==='All matching'&&persistedSelection.length>selectedGroups.length");
+  });
 });

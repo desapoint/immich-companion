@@ -136,7 +136,10 @@
     groupLoads+=1;
     try{
       if(reuseCachedGroups){
-        void flushWorkspace().catch((error)=>interactionError=errorMessage(error,'Duplicate choices could not be saved.'));
+        // Page changes can immediately hydrate a new response. Await pending
+        // draft and selection writes first so the response cannot restore an
+        // older, page-local workspace over the durable all-matching selection.
+        try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
       }else{
         try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
       }
@@ -245,7 +248,8 @@
     // page refresh can temporarily leave the local page model behind it, so
     // repair the local count before deciding that the action is unavailable.
     const persistedSelection=libraryData.duplicates.selectedGroupIds();
-    if(persistedSelection.length&&!selectedGroups.length)selectedGroups=[...persistedSelection];
+    if(selectionScope==='All matching'&&persistedSelection.length>selectedGroups.length)selectedGroups=[...persistedSelection];
+    else if(persistedSelection.length&&!selectedGroups.length)selectedGroups=[...persistedSelection];
     if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}
     void prepareReview('all',null,currentResolution(stackWorkspace,decisions))
   }
