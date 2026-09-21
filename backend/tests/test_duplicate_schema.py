@@ -9,6 +9,7 @@ from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
     DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
+    DuplicateSearchPage,
     DuplicateWorkspaceSelectionDelta,
 )
 
@@ -130,3 +131,11 @@ def test_duplicate_selection_delta_rejects_overlapping_intent() -> None:
             added_group_ids=["group-a"],
             removed_group_ids=["group-a"],
         )
+
+
+def test_duplicate_search_page_accepts_the_largest_ui_page_size() -> None:
+    page = DuplicateSearchPage(items=[], total=0, page=1, page_size=192, pages=0)
+
+    assert page.page_size == 192
+    with pytest.raises(ValueError):
+        DuplicateSearchPage(items=[], total=0, page=1, page_size=201, pages=0)

@@ -90,7 +90,7 @@ def register_duplicate_routes(
     async def page_cross_source_duplicates(
         request: DuplicateAnalysisOptions,
         page: int = Query(1, ge=1),
-        page_size: int = Query(6, ge=1, le=100),
+        page_size: int = Query(6, ge=1, le=200),
         source: Literal["both", "immich", "similarity"] = "both",
         sort: Literal["reclaimable", "members", "similarity", "date", "discovered"] = "reclaimable",
         direction: Literal["asc", "desc"] = "desc",
@@ -114,7 +114,7 @@ def register_duplicate_routes(
     async def page_selected_cross_source_duplicates(
         request: DuplicateAnalysisOptions,
         page: int = Query(1, ge=1),
-        page_size: int = Query(6, ge=1, le=100),
+        page_size: int = Query(6, ge=1, le=200),
         source: Literal["both", "immich", "similarity"] = "both",
         sort: Literal["reclaimable", "members", "similarity", "date", "discovered"] = "reclaimable",
         direction: Literal["asc", "desc"] = "desc",
