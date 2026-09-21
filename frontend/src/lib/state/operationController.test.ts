@@ -12,7 +12,7 @@ const pending = (phase: 'applying' | 'reconciling') => ({
 const outcome = () => ({ tone: 'ok' as const, title: 'done', detail: 'done', failures: [] });
 
 describe('OperationController', () => {
-  it('returns after apply while a refresh runs in the background', async () => {
+  it('keeps the operation locked while a refresh runs in the background', async () => {
     const operation = new OperationController();
     let releaseApply!: () => void;
     let releaseReconcile!: () => void;
@@ -32,12 +32,13 @@ describe('OperationController', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(await run).toEqual({ id: 'x' });
-    expect(operation.busy).toBe(false);
+    expect(operation.busy).toBe(true);
     expect(operation.reconciling).toBe(true);
-    expect(operation.phase).toBe('idle');
-    expect(operation.feedback?.tone).toBe('ok');
+    expect(operation.phase).toBe('reconciling');
+    expect(operation.feedback?.tone).toBe('pending');
     releaseReconcile();
     await operation.waitForReconciliation();
+    expect(operation.busy).toBe(false);
     expect(operation.phase).toBe('idle');
     expect(operation.reconciling).toBe(false);
     expect(operation.feedback?.tone).toBe('ok');
@@ -70,7 +71,7 @@ describe('OperationController', () => {
     expect(operation.retry).toBe(retry);
   });
 
-  it('allows another action during refresh and coalesces queued refreshes', async () => {
+  it('rejects another action while refresh is still running', async () => {
     const operation = new OperationController();
     let release!: () => void;
     const firstRefresh = new Promise<void>((resolve) => release = resolve);
@@ -78,23 +79,24 @@ describe('OperationController', () => {
     await operation.run('First', async () => 1, { pending, outcome, reconcile: async () => { refreshes.push('first'); await firstRefresh; } });
     await Promise.resolve();
     expect(operation.reconciling).toBe(true);
-    await operation.run('Second', async () => 2, { pending, outcome, reconcile: async () => { refreshes.push('second'); } });
-    await operation.run('Third', async () => 3, { pending, outcome, reconcile: async () => { refreshes.push('third'); } });
+    expect(await operation.run('Second', async () => 2, { pending, outcome, reconcile: async () => { refreshes.push('second'); } })).toBeNull();
+    expect(await operation.run('Third', async () => 3, { pending, outcome, reconcile: async () => { refreshes.push('third'); } })).toBeNull();
     release();
     await operation.waitForReconciliation();
-    expect(refreshes).toEqual(['first', 'third']);
+    expect(refreshes).toEqual(['first']);
     expect(operation.feedback?.title).toBe('done');
   });
 
-  it('does not let an older refresh failure overwrite a newer action', async () => {
+  it('reports a refresh failure after the operation remains locked', async () => {
     const operation = new OperationController();
     let fail!: (error: Error) => void;
     const firstRefresh = new Promise<void>((_resolve, reject) => fail = reject);
     await operation.run('First', async () => 1, { pending, outcome, reconcile: () => firstRefresh });
     await Promise.resolve();
-    await operation.run('Second', async () => 2, { pending, outcome, reconcile: async () => {} });
+    expect(await operation.run('Second', async () => 2, { pending, outcome, reconcile: async () => {} })).toBeNull();
     fail(new Error('old failure'));
     await operation.waitForReconciliation();
-    expect(operation.error).toBe('');
+    expect(operation.error).toContain('old failure');
+    expect(operation.busy).toBe(false);
   });
 });

@@ -14,7 +14,7 @@ const target={kind:'ids' as const,ids:['asset-1']};
 const success:MutationResult={affectedIds:['asset-1'],failed:[]};
 
 describe('AssetMutationController',()=>{
-  it('releases action controls before refreshing the collection',async()=>{
+  it('keeps action controls locked while refreshing the collection',async()=>{
     const execute=deferred<MutationResult>();
     const refresh=deferred<void>();
     const controller=new AssetMutationController(()=>refresh.promise,()=>{});
@@ -28,9 +28,10 @@ describe('AssetMutationController',()=>{
     await Promise.resolve();
     await Promise.resolve();
     expect(await pending).toEqual(success);
-    expect(controller.busy).toBe(false);
+    expect(controller.busy).toBe(true);
     expect(controller.reconciling).toBe(true);
-    expect(controller.feedback?.tone).toBe('ok');
+    expect(controller.phase).toBe('refreshing');
+    expect(controller.feedback).toMatchObject({tone:'pending',title:'Favorite applied',detail:'Refreshing latest asset state…'});
 
     refresh.resolve();
     await controller.waitForReconciliation();

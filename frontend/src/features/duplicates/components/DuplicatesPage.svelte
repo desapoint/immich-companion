@@ -26,6 +26,7 @@
   import V2Inline from '../../../lib/components/layout/Inline.svelte';
   import V2LazyAssetMedia from '../../assets/components/LazyAssetMedia.svelte';
   import OperationToast from '../../../lib/components/app/OperationToast.svelte';
+  import OperationFeedback from '../../../lib/components/app/OperationFeedback.svelte';
   import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
   import V2RoundCheckbox from '../../../lib/components/ui/RoundCheckbox.svelte';
   import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
@@ -136,7 +137,10 @@
     groupLoads+=1;
     try{
       if(reuseCachedGroups){
-        void flushWorkspace().catch((error)=>interactionError=errorMessage(error,'Duplicate choices could not be saved.'));
+        // Page changes can immediately hydrate a new response. Await pending
+        // draft and selection writes first so the response cannot restore an
+        // older, page-local workspace over the durable all-matching selection.
+        try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
       }else{
         try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
       }
@@ -148,6 +152,11 @@
         apply:(response,mode)=>{
           groups=mode==='append'?[...groups,...response.items]:response.items;
           hydrateWorkspace(response.items,mode==='replace'&&!reuseCachedGroups);
+          // `search()` restores the complete durable workspace, while the
+          // page response only contains one page of groups. Always adopt the
+          // repository selection after hydration so a hard refresh cannot
+          // reduce an all-matching selection to the visible page.
+          selectedGroups=[...libraryData.duplicates.selectedGroupIds()];
           total=response.total;
           nextCursor=response.nextCursor;
           collection.clampPage(total);
@@ -239,7 +248,17 @@
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection();if(reviewFilter==='Selected'&&!checked){groups=groups.filter((item)=>item.id!==id);total=Math.max(0,total-1);collection.clampPage(total)}}
   function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
   async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{await flushWorkspace();const groupIds=scope==='group'&&groupId?[groupId]:[];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){interactionError=errorMessage(error,'Duplicate actions could not be prepared.')}finally{planPreparing=false}}
-  function requestReviewAll(){interactionError='';if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}void prepareReview('all',null,currentResolution(stackWorkspace,decisions))}
+  function requestReviewAll(){
+    interactionError='';
+    // The durable workspace is authoritative for all-matching selections. A
+    // page refresh can temporarily leave the local page model behind it, so
+    // repair the local count before deciding that the action is unavailable.
+    const persistedSelection=libraryData.duplicates.selectedGroupIds();
+    if(selectionScope==='All matching'&&persistedSelection.length>selectedGroups.length)selectedGroups=[...persistedSelection];
+    else if(persistedSelection.length&&!selectedGroups.length)selectedGroups=[...persistedSelection];
+    if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}
+    void prepareReview('all',null,currentResolution(stackWorkspace,decisions))
+  }
   function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';const label=duplicateGroupTitle(item);if(!groupComplete(item,decisions)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(stackWorkspace,item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(stackWorkspace,item,decisions))}
   async function refillAfterGroupReview(groupId:string,label:string):Promise<void>{
     const remaining=groups.filter((item)=>item.id!==groupId);
@@ -281,7 +300,7 @@
       reconcileError:`${label} was reviewed, but the latest groups could not be loaded.`,
     });
   }
-  async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);pendingReview=null}
+  async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);await operations.waitForReconciliation();pendingReview=null}
   async function runDiscovery(anchorAssetId?:string){await discovery.run(anchorAssetId)}
   async function revalidateFromReference(assetId:string){
     if(mutating||!activeGroup)return;
@@ -340,13 +359,14 @@
 </script>
 
 <V2PageLayout title="Duplicates" description="Review similar assets, choose keepers, and apply duplicate actions safely.">
-  {#snippet headerActions()}<V2Inline gap="sm"><V2Segmented items={[{value:'Current page',label:'Current page only'},{value:'All matching',label:'All matching filters'}]} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Duplicate bulk-action scope"/><V2Button disabled={!discoveryReady||loading||mutating} onclick={()=>void runDiscovery()}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Run discovery'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||!selectedGroups.length||mutating} onclick={()=>requestReviewAll()}>Review actions{selectedGroups.length?` (${selectedGroups.length})`:''}</V2Button></V2Inline>{/snippet}
+  {#snippet headerActions()}<V2Inline gap="sm"><V2Segmented items={[{value:'Current page',label:'Current page only'},{value:'All matching',label:'All matching filters'}]} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Duplicate bulk-action scope"/><V2Button disabled={!discoveryReady||loading||mutating} onclick={()=>void runDiscovery()}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Run discovery'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||mutating} onclick={()=>requestReviewAll()}>Review actions{selectedGroups.length?` (${selectedGroups.length})`:''}</V2Button></V2Inline>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} ariaLabel="Duplicate sections" onselect={(value)=>{tab=value as DuplicateTab;if(tab==='Resolution history')void refreshHistory()}}/>{/snippet}
   {#snippet context()}<V2Zone>{#if tab==='Review'}<DuplicateReviewControls sourceFilter={sourceFilter} reviewFilter={reviewFilter} reviewFilterOptions={reviewFilterOptions} selectionScope={selectionScope} groupCount={groups.length} mutating={mutating} keeperSummary={keeperSummary} decisions={capabilities.decisions} bulkPresetDisabled={bulkPresetDisabled} onsourcefilter={setSourceFilter} onreviewfilter={setReviewFilter} onselectionchange={(value)=>selectionScope=value} onopenkeeper={()=>keeperRulesOpen=true} onpreset={applyBulkPreset}/>{:else if tab==='Rules & discovery'}<DuplicateDiscoveryIntro />{:else}<DuplicateHistoryControls historyRange={historyRange} canViewHistory={capabilities.canViewHistory} mutating={mutating} reconciling={operations.reconciling} onrangechange={(value)=>{historyRange=value as typeof historyRange;void refreshHistory()}} onrefresh={refreshHistory} onclearall={()=>historyClearAll=true}/>{/if}</V2Zone>{/snippet}
 
   <V2Zone>
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
     {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
+    {#if planPreparing}<OperationFeedback feedback={{tone:'pending',title:'Preparing duplicate actions',detail:'Saving your choices and checking the current groups…',failures:[]}}/>{:else if feedback?.tone==='pending'}<OperationFeedback {feedback}/>{/if}
     <OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll():undefined}/>
     {#if tab==='Rules & discovery'}<V2SimilarityEvidenceGenerationPanel/>{/if}
     {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" {sort} sortFields={[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'date',label:'Date'},{value:'discovered',label:'Recently discovered'}]} pageSize={collection.pageSize} pageSizes={[6,12,24,48,96,192]} batchLabel="page" resultMode={collection.resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={reviewLoading||mutating} onclick={()=>void selectAllGroups()}>{selectingAll?'Selecting…':'Select all groups'}</V2Button><V2Button disabled={reviewLoading||mutating} onclick={()=>void refreshGroups(true,false)}>Refresh groups</V2Button><V2Button disabled={mutating} onclick={()=>void clearAllDecisions()}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
@@ -373,7 +393,7 @@
 {#if historyDetailId}<V2DuplicateHistoryDetail resolutionId={historyDetailId} onclose={()=>historyDetailId=null}/>{/if}
 
 <DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} groupSimilarity={activeGroup?.groupSimilarity??null} groupMembers={activeGroup?.members??[]} validationMode={activeGroup?.similarityValidationMode??null} similarityThreshold={activeGroup?.similarityThresholdPercent??null} assetIds={activeAssetIds} similarities={activeSimilarities} similarityEvidence={activeSimilarityEvidence} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} selectedForReview={selectedGroups.includes(group)} disabled={mutating} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} ongroupnavigate={navigateCompareGroup} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} ondecisionclear={(assetId)=>clearDecision(group,assetId)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onrevalidate={activeGroup?.similarityValidationMode?revalidateFromReference:undefined} onclose={()=>{compare=false;persistSelection()}}/>
-{#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
+{#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} pendingLabel={operations.phase==='reconciling'?'Refreshing results…':'Applying actions…'} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
 {#if historyClearTarget}<ConfirmDialog title="Clear this resolution?" message="This removes Companion's completed-resolution record so a currently discovered matching group can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear resolution" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearHistoryResolution()} onclose={()=>{if(!mutating)historyClearTarget=null}}/>{/if}
 {#if historyClearAll}<ConfirmDialog title="Clear all resolution history?" message="This removes every completed duplicate-resolution record in Companion, including history outside the currently selected date range, so matching groups can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear all resolution history" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearAllHistoryResolutions()} onclose={()=>{if(!mutating)historyClearAll=false}}/>{/if}
 

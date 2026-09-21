@@ -17,6 +17,7 @@
     children,
     detail,
     pending = false,
+    pendingLabel = 'Applying…',
     confirmDisabled = false,
     destructive = false,
     onconfirm,
@@ -31,6 +32,7 @@
     children?: Snippet;
     detail?: Snippet;
     pending?: boolean;
+    pendingLabel?: string;
     confirmDisabled?: boolean;
     destructive?: boolean;
     onconfirm: () => void;
@@ -69,7 +71,7 @@
       {#if pending}
         <span class="v2-confirmation-loading" aria-live="polite">
           <LoadingSpinner size="14px" thickness="2px" />
-          <span>Applying…</span>
+          <span>{pendingLabel}</span>
         </span>
       {:else}
         {confirmLabel}

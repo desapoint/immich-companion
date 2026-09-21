@@ -158,7 +158,7 @@ class DuplicateEvidenceMixin:
 
         options = await self._options(options)
         page = max(1, page)
-        page_size = max(1, min(page_size, 100))
+        page_size = max(1, min(page_size, 200))
         discover_page = getattr(self._discovery, "discover_page", None)
         if not callable(discover_page):
             raise RuntimeError(
@@ -215,7 +215,7 @@ class DuplicateEvidenceMixin:
         discovered = await discover_selected_page(
             workspace.selected_group_ids,
             page=max(1, page),
-            page_size=max(1, min(page_size, 100)),
+            page_size=max(1, min(page_size, 200)),
             source=source,
             sort=sort,
             direction=direction,

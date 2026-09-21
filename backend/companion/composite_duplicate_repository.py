@@ -617,7 +617,7 @@ class CompositeDuplicateRepository:
         """Read one ordered SQL-filtered page before hydrating its members."""
 
         page = max(1, page)
-        page_size = max(1, min(page_size, 100))
+        page_size = max(1, min(page_size, 200))
         selected_group_ids = (
             list(dict.fromkeys(group_ids))
             if group_ids is not None
