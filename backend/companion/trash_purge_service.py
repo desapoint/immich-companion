@@ -130,7 +130,7 @@ class TrashPurgeService:
         mode = "empty_all" if selection.all and not selection.excluded_ids else "selected"
         if mode == "empty_all":
             target_count, target_digest = await self._all_snapshot()
-            target_ids: list[UUID] = []
+            target_ids = []
         else:
             target_ids = await self._resolve_selected(selection)
             target_count = len(target_ids)
@@ -168,9 +168,9 @@ class TrashPurgeService:
         record = await self._actions.get_plan(request.plan_id)
         if record is None or record.operation != "purge_trash":
             raise ActionPlanNotFoundError("Trash deletion plan was not found")
-        if record.status != "planned":
+        if record.status not in {"planned", "running"}:
             raise ActionPlanConflictError("Trash deletion plan has already been used")
-        if record.expires_at <= datetime.now(UTC):
+        if record.status == "planned" and record.expires_at <= datetime.now(UTC):
             await self._actions.finish_plan(record.id, "expired", {"error": "expired"})
             raise ActionPlanConflictError("Trash deletion plan has expired")
         if not self._settings.allow_destructive_actions:
@@ -180,9 +180,12 @@ class TrashPurgeService:
 
         mode = str(record.relation_work.get("mode", "selected"))
         requested = int(record.relation_work.get("target_count", 0))
+        was_running = record.status == "running"
         if mode == "empty_all":
             current_count, current_digest = await self._all_snapshot()
-            if current_count != requested or current_digest != record.target_digest:
+            if not was_running and (
+                current_count != requested or current_digest != record.target_digest
+            ):
                 await self._actions.finish_plan(
                     record.id, "drifted", {"error": "trash_changed_after_review"}
                 )
@@ -190,9 +193,23 @@ class TrashPurgeService:
             claimed = await self._actions.claim_trash_purge_plan(record.id)
             if claimed is None:
                 raise ActionPlanConflictError("Trash deletion plan could not be claimed")
-            reported = await self._immich.empty_trash()
+            lease_token = str((getattr(claimed, "result", None) or {}).get("purge_lease_token", ""))
+            prior = dict(getattr(claimed, "result", None) or {})
+            # If the previous executor died before the provider call, the snapshot is
+            # unchanged and retrying is safe. Once the snapshot differs, never issue a
+            # second empty-all mutation: it could include assets trashed after review.
+            if not prior.get("empty_attempted") or (
+                was_running and current_digest == record.target_digest
+            ):
+                checkpoint = {"empty_attempted": True}
+                await self._checkpoint(record.id, checkpoint, lease_token)
+                reported = await self._immich.empty_trash()
+            else:
+                reported = prior.get("reported_deleted", 0)
             remaining_count, _ = await self._all_snapshot()
             deleted = max(0, requested - remaining_count)
+            failed_ids: list[UUID] = []
+            deleted_ids: list[UUID] = []
             verified = remaining_count == 0
             result = {
                 "requested": requested,
@@ -200,69 +217,136 @@ class TrashPurgeService:
                 "reported_deleted": reported,
                 "remaining": remaining_count,
                 "failed_ids": [],
+                "deleted_ids": [],
                 "verified": verified,
             }
-            await self._actions.finish_plan(
-                record.id, "completed" if verified else "partial", result
-            )
+            await self._checkpoint(record.id, result, lease_token)
+            await self._finish(record.id, "completed" if verified else "partial", result, lease_token)
             return TrashPurgeResult(
                 plan_id=record.id,
                 requested=requested,
                 deleted=deleted,
-                failed_ids=[],
-                deleted_ids=[],
+                failed_ids=failed_ids,
+                deleted_ids=deleted_ids,
                 verified=verified,
                 status="completed" if verified else "partial",
             )
 
         target_ids = [UUID(value) for value in record.target_ids]
-        current_ids = await self._resolve_selected(
-            TrashPurgeSelection(ids=target_ids)
-        )
-        if selection_digest(current_ids) != record.target_digest:
-            await self._actions.finish_plan(
-                record.id, "drifted", {"error": "trash_changed_after_review"}
-            )
-            raise ActionPlanConflictError("Selected trash assets changed after review")
+        if not was_running:
+            current_ids = await self._resolve_selected(TrashPurgeSelection(ids=target_ids))
+            if selection_digest(current_ids) != record.target_digest:
+                await self._actions.finish_plan(
+                    record.id, "drifted", {"error": "trash_changed_after_review"}
+                )
+                raise ActionPlanConflictError("Selected trash assets changed after review")
         claimed = await self._actions.claim_trash_purge_plan(record.id)
         if claimed is None:
             raise ActionPlanConflictError("Trash deletion plan could not be claimed")
 
+        lease_token = str((getattr(claimed, "result", None) or {}).get("purge_lease_token", ""))
+        prior = dict(getattr(claimed, "result", None) or {})
+        completed_ids = {UUID(value) for value in prior.get("deleted_ids", [])}
         failed_ids: list[UUID] = []
         batch_size = min(self._settings.sync_full_batch_size, 1000)
         for offset in range(0, len(target_ids), batch_size):
-            batch = target_ids[offset : offset + batch_size]
+            batch = [
+                asset_id
+                for asset_id in target_ids[offset : offset + batch_size]
+                if asset_id not in completed_ids
+            ]
+            if not batch:
+                continue
+            if was_running:
+                # A crash can happen after Immich mutates but before the checkpoint commits.
+                # Fresh executions go directly to the provider without N+1 reads.
+                already_deleted = await asyncio.gather(
+                    *(self._is_deleted(asset_id) for asset_id in batch)
+                )
+                completed_ids.update(
+                    asset_id
+                    for asset_id, deleted in zip(batch, already_deleted, strict=True)
+                    if deleted
+                )
+                batch = [
+                    asset_id
+                    for asset_id, deleted in zip(batch, already_deleted, strict=True)
+                    if not deleted
+                ]
+                if not batch:
+                    await self._checkpoint(record.id, {"deleted_ids": self._ordered_ids(target_ids, completed_ids)}, lease_token)
+                    continue
             try:
                 await self._immich.permanently_delete_assets(batch)
             except ImmichApiError:
-                pass
+                deleted_states = await asyncio.gather(
+                    *(self._is_deleted(asset_id) for asset_id in batch)
+                )
+                completed_ids.update(
+                    asset_id
+                    for asset_id, deleted in zip(batch, deleted_states, strict=True)
+                    if deleted
+                )
+                failed_ids.extend(
+                    asset_id
+                    for asset_id, deleted in zip(batch, deleted_states, strict=True)
+                    if not deleted
+                )
             else:
-                continue
-            deleted_states = await asyncio.gather(
-                *(self._is_deleted(asset_id) for asset_id in batch)
+                completed_ids.update(batch)
+            await self._checkpoint(
+                record.id,
+                {
+                    "deleted_ids": self._ordered_ids(target_ids, completed_ids),
+                    "failed_ids": self._ordered_ids(target_ids, set(failed_ids)),
+                },
+                lease_token,
             )
-            failed_ids.extend(
-                asset_id
-                for asset_id, deleted in zip(batch, deleted_states, strict=True)
-                if not deleted
-            )
-        deleted = len(target_ids) - len(failed_ids)
+        failed_ids = [asset_id for asset_id in target_ids if asset_id not in completed_ids]
+        deleted = len(completed_ids)
         verified = not failed_ids
         result = {
             "requested": len(target_ids),
             "deleted": deleted,
-            "failed_ids": [str(asset_id) for asset_id in failed_ids],
+            "failed_ids": self._ordered_ids(target_ids, set(failed_ids)),
+            "deleted_ids": self._ordered_ids(target_ids, completed_ids),
             "verified": verified,
         }
-        await self._actions.finish_plan(
-            record.id, "completed" if verified else "partial", result
-        )
+        await self._finish(record.id, "completed" if verified else "partial", result, lease_token)
         return TrashPurgeResult(
             plan_id=record.id,
             requested=len(target_ids),
             deleted=deleted,
             failed_ids=failed_ids,
-            deleted_ids=[asset_id for asset_id in target_ids if asset_id not in failed_ids],
+            deleted_ids=[asset_id for asset_id in target_ids if asset_id in completed_ids],
             verified=verified,
             status="completed" if verified else "partial",
         )
+
+    @staticmethod
+    def _ordered_ids(target_ids: list[UUID], selected: set[UUID]) -> list[str]:
+        return [str(asset_id) for asset_id in target_ids if asset_id in selected]
+
+    async def _checkpoint(self, plan_id: UUID, result: dict[str, object], lease_token: str) -> None:
+        checkpoint = getattr(self._actions, "checkpoint_trash_purge_plan", None)
+        if checkpoint is not None:
+            try:
+                await checkpoint(plan_id, result, lease_token=lease_token)
+            except ValueError as error:
+                raise ActionPlanConflictError("Trash deletion plan was reclaimed") from error
+        else:
+            # Lightweight fakes and older repository adapters retain the same semantics
+            # in memory; the production repository always takes the transactional path.
+            record = await self._actions.get_plan(plan_id)
+            if record is not None:
+                record.result = {**(record.result or {}), **result}
+
+    async def _finish(
+        self, plan_id: UUID, status: str, result: dict[str, object], lease_token: str
+    ) -> None:
+        finish = getattr(self._actions, "finish_trash_purge_plan", None)
+        if finish is None:
+            await self._actions.finish_plan(plan_id, status, result)
+            return
+        if not await finish(plan_id, status, result, lease_token=lease_token):
+            raise ActionPlanConflictError("Trash deletion plan was reclaimed")
