@@ -239,7 +239,16 @@
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection();if(reviewFilter==='Selected'&&!checked){groups=groups.filter((item)=>item.id!==id);total=Math.max(0,total-1);collection.clampPage(total)}}
   function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
   async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{await flushWorkspace();const groupIds=scope==='group'&&groupId?[groupId]:[];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){interactionError=errorMessage(error,'Duplicate actions could not be prepared.')}finally{planPreparing=false}}
-  function requestReviewAll(){interactionError='';if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}void prepareReview('all',null,currentResolution(stackWorkspace,decisions))}
+  function requestReviewAll(){
+    interactionError='';
+    // The durable workspace is authoritative for all-matching selections. A
+    // page refresh can temporarily leave the local page model behind it, so
+    // repair the local count before deciding that the action is unavailable.
+    const persistedSelection=libraryData.duplicates.selectedGroupIds();
+    if(persistedSelection.length&&!selectedGroups.length)selectedGroups=[...persistedSelection];
+    if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}
+    void prepareReview('all',null,currentResolution(stackWorkspace,decisions))
+  }
   function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';const label=duplicateGroupTitle(item);if(!groupComplete(item,decisions)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(stackWorkspace,item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(stackWorkspace,item,decisions))}
   async function refillAfterGroupReview(groupId:string,label:string):Promise<void>{
     const remaining=groups.filter((item)=>item.id!==groupId);
@@ -340,7 +349,7 @@
 </script>
 
 <V2PageLayout title="Duplicates" description="Review similar assets, choose keepers, and apply duplicate actions safely.">
-  {#snippet headerActions()}<V2Inline gap="sm"><V2Segmented items={[{value:'Current page',label:'Current page only'},{value:'All matching',label:'All matching filters'}]} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Duplicate bulk-action scope"/><V2Button disabled={!discoveryReady||loading||mutating} onclick={()=>void runDiscovery()}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Run discovery'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||!selectedGroups.length||mutating} onclick={()=>requestReviewAll()}>Review actions{selectedGroups.length?` (${selectedGroups.length})`:''}</V2Button></V2Inline>{/snippet}
+  {#snippet headerActions()}<V2Inline gap="sm"><V2Segmented items={[{value:'Current page',label:'Current page only'},{value:'All matching',label:'All matching filters'}]} active={selectionScope} onselect={(value)=>selectionScope=value as typeof selectionScope} ariaLabel="Duplicate bulk-action scope"/><V2Button disabled={!discoveryReady||loading||mutating} onclick={()=>void runDiscovery()}>{mutating?(operations.phase==='reconciling'?'Refreshing…':'Working…'):'Run discovery'}</V2Button><V2Button variant="primary" disabled={!capabilities.canApplyDecisions||mutating} onclick={()=>requestReviewAll()}>Review actions{selectedGroups.length?` (${selectedGroups.length})`:''}</V2Button></V2Inline>{/snippet}
   {#snippet tabs()}<V2Tabs items={['Review','Rules & discovery','Resolution history']} active={tab} ariaLabel="Duplicate sections" onselect={(value)=>{tab=value as DuplicateTab;if(tab==='Resolution history')void refreshHistory()}}/>{/snippet}
   {#snippet context()}<V2Zone>{#if tab==='Review'}<DuplicateReviewControls sourceFilter={sourceFilter} reviewFilter={reviewFilter} reviewFilterOptions={reviewFilterOptions} selectionScope={selectionScope} groupCount={groups.length} mutating={mutating} keeperSummary={keeperSummary} decisions={capabilities.decisions} bulkPresetDisabled={bulkPresetDisabled} onsourcefilter={setSourceFilter} onreviewfilter={setReviewFilter} onselectionchange={(value)=>selectionScope=value} onopenkeeper={()=>keeperRulesOpen=true} onpreset={applyBulkPreset}/>{:else if tab==='Rules & discovery'}<DuplicateDiscoveryIntro />{:else}<DuplicateHistoryControls historyRange={historyRange} canViewHistory={capabilities.canViewHistory} mutating={mutating} reconciling={operations.reconciling} onrangechange={(value)=>{historyRange=value as typeof historyRange;void refreshHistory()}} onrefresh={refreshHistory} onclearall={()=>historyClearAll=true}/>{/if}</V2Zone>{/snippet}
 
