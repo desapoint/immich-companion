@@ -620,6 +620,7 @@ class DuplicateDiscoverySettingsRecord(Base):
     include_exact: Mapped[bool] = mapped_column(Boolean, nullable=False)
     include_similar: Mapped[bool] = mapped_column(Boolean, nullable=False)
     similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False)
+    maximum_perceptual_distance: Mapped[int] = mapped_column(Integer, nullable=False)
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False)
     max_candidates: Mapped[int] = mapped_column(Integer, nullable=False)

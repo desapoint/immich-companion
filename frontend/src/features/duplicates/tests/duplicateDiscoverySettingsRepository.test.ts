@@ -20,6 +20,7 @@ describe('duplicate discovery settings repository', () => {
       include_exact: false,
       include_similar: true,
       similarity_threshold: 92.5,
+      maximum_perceptual_distance: 14,
       validation_mode: 'linked',
       max_link_depth: 3,
       max_candidates: 16,
@@ -30,6 +31,7 @@ describe('duplicate discovery settings repository', () => {
       includeExact: false,
       includeSimilar: true,
       similarityThreshold: 92.5,
+      maximumPerceptualDistance: 14,
       validationMode: 'linked',
       maxLinkDepth: 3,
       maxCandidates: 16,
@@ -40,7 +42,7 @@ describe('duplicate discovery settings repository', () => {
     );
   });
 
-  it('defaults older settings responses to a depth limit of two', async () => {
+  it('defaults fields missing from older settings responses', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => response({
       include_exact: true,
       include_similar: true,
@@ -51,6 +53,7 @@ describe('duplicate discovery settings repository', () => {
 
     await expect(duplicateDiscoverySettingsRepository.load()).resolves.toMatchObject({
       maxLinkDepth: 2,
+      maximumPerceptualDistance: 12,
     });
   });
 
@@ -61,6 +64,7 @@ describe('duplicate discovery settings repository', () => {
         include_exact: true,
         include_similar: true,
         similarity_threshold: 97,
+        maximum_perceptual_distance: 14,
         validation_mode: 'strict',
         max_link_depth: 2,
         max_candidates: 12,
@@ -69,6 +73,7 @@ describe('duplicate discovery settings repository', () => {
         include_exact: true,
         include_similar: true,
         similarity_threshold: 97,
+        maximum_perceptual_distance: 14,
         validation_mode: 'strict',
         max_link_depth: 2,
         max_candidates: 12,
@@ -80,11 +85,13 @@ describe('duplicate discovery settings repository', () => {
       includeExact: true,
       includeSimilar: true,
       similarityThreshold: 97,
+      maximumPerceptualDistance: 14,
       validationMode: 'strict',
       maxLinkDepth: 2,
       maxCandidates: 12,
     })).resolves.toMatchObject({
       similarityThreshold: 97,
+      maximumPerceptualDistance: 14,
       maxLinkDepth: 2,
       maxCandidates: 12,
     });

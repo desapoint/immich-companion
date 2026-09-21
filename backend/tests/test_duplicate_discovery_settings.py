@@ -19,6 +19,7 @@ def test_duplicate_discovery_settings_defaults_match_v2_discovery_defaults() -> 
     assert settings.include_exact is True
     assert settings.include_similar is True
     assert settings.similarity_threshold == 95.0
+    assert settings.maximum_perceptual_distance == 12
     assert settings.validation_mode == "strict"
     assert settings.max_link_depth == 2
     assert settings.max_candidates == 8
@@ -39,6 +40,8 @@ def test_every_discovery_setting_is_explicitly_classified_for_generation_impact(
     [
         ("similarity_threshold", 49.9),
         ("similarity_threshold", 100.1),
+        ("maximum_perceptual_distance", -1),
+        ("maximum_perceptual_distance", 65),
         ("validation_mode", "unknown"),
         ("max_link_depth", -1),
         ("max_link_depth", 65),
@@ -93,6 +96,7 @@ def _record(**overrides):
     ("field", "value"),
     [
         ("similarity_threshold", 94.0),
+        ("maximum_perceptual_distance", 14),
         ("validation_mode", "linked"),
         ("max_link_depth", 4),
         ("max_candidates", 12),

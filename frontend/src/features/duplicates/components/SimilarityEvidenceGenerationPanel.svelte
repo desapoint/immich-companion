@@ -168,7 +168,7 @@
           max_link_depth:preferences.maxLinkDepth,
           anchor_asset_id:null,
           scope:'all_eligible_assets',
-          maximum_perceptual_distance:12,
+          maximum_perceptual_distance:preferences.maximumPerceptualDistance,
           maximum_aspect_difference:0.05,
           maximum_neighbors_per_asset:Math.min(64,Math.max(1,preferences.maxCandidates)),
           maximum_matches:5000,
@@ -265,7 +265,7 @@
     {#snippet detail()}
       <V2Stack gap="sm">
         <span>Active similarity scan/index work is cancelled. Search fingerprints, detailed validation, pair scores, completed similarity scans, unavailable markers, and the derived duplicate projection are invalidated.</span>
-        <span>Review decisions and resolution history are not deleted. A fresh full-library similarity scan is durably queued in the same server transaction using your saved discovery threshold, validation mode, link depth, and candidate limit.</span>
+        <span>Review decisions and resolution history are not deleted. A fresh full-library similarity scan is durably queued in the same server transaction using your saved discovery threshold, dHash distance, validation mode, link depth, and candidate limit.</span>
       </V2Stack>
     {/snippet}
   </V2ConfirmDialog>

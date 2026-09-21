@@ -199,7 +199,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           max_link_depth: Math.min(64, Math.max(0, Math.round(options.maxLinkDepth))),
           anchor_asset_id: options.anchorAssetId,
           scope: 'all_eligible_assets',
-          maximum_perceptual_distance: 12,
+          maximum_perceptual_distance: Math.min(64, Math.max(0, Math.round(options.maximumPerceptualDistance))),
           maximum_aspect_difference: 0.05,
           maximum_neighbors_per_asset: Math.min(64, Math.max(1, options.maxCandidates)),
           maximum_matches: 5000,
