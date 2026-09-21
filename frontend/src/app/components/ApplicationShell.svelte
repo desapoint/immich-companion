@@ -98,7 +98,7 @@
       {/each}
       <div class="v2-grow"></div>
       {#each bottomGroups as group (group.label)}<nav class="v2-nav" aria-label={group.label||'Secondary navigation'}>{#each group.items as item (item.key)}<a class="v2-nav-button" href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{@render navIcon(item.key)}<span class="v2-nav-text">{item.label}</span></a>{/each}</nav>{/each}
-      <div class="v2-connection"><span class="v2-dot"></span>{connectionLabel(syncStatus.connectionState)} <small class="v2-muted">v2.x</small></div>
+      <div class="v2-connection" title="Task-stream connection for live updates; this does not represent overall Immich or server health."><span class="v2-dot"></span><span>{connectionLabel(syncStatus.connectionState)}</span><small class="v2-muted">Task updates · v2.x</small></div>
     </aside>
 
     <div class="v2-shell">

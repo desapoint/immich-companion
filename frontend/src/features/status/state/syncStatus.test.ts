@@ -234,4 +234,36 @@ describe('SyncStatusController', () => {
 
     release();
   });
+
+  it('polls while a connected stream is degraded and clears fallback on valid data', async () => {
+    vi.useFakeTimers();
+    let handlers!: Parameters<TaskRepository['subscribe']>[0];
+    const statusRequest = vi.fn(async () => activeStatus);
+    const controller = new SyncStatusController({
+      sync: { status: statusRequest },
+      tasks: { subscribe: (next) => { handlers = next; return { close: () => undefined }; } },
+    }, 30_000, 10_000);
+
+    const release = controller.acquire();
+    await Promise.resolve();
+    await Promise.resolve();
+    handlers.onConnectionState('connected');
+    handlers.onError?.(new Error('malformed task update'));
+
+    expect(controller.connectionState).toBe('connected');
+    expect(controller.streamDegraded).toBe(true);
+    expect(controller.stale).toBe(true);
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(statusRequest).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(statusRequest).toHaveBeenCalledTimes(3);
+
+    handlers.onTask(task);
+    expect(controller.streamDegraded).toBe(false);
+    expect(controller.streamError).toBe('');
+    expect(controller.stale).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(statusRequest).toHaveBeenCalledTimes(3);
+    release();
+  });
 });

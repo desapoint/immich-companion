@@ -109,6 +109,37 @@ describe('background task status', () => {
     release();
   });
 
+  it('falls back to polling when the connected stream is degraded and recovers on valid data', async () => {
+    vi.useFakeTimers();
+    let handlers!: Parameters<TaskRepository['subscribe']>[0];
+    const listActive = vi.fn(async () => []);
+    const controller = new BackgroundTaskStatusController({
+      listActive,
+      subscribe: (next) => { handlers = next; return { close: () => undefined }; },
+    }, 30_000, 10_000);
+
+    const release = controller.acquire();
+    await Promise.resolve();
+    await Promise.resolve();
+    handlers.onConnectionState('connected');
+    handlers.onError?.(new Error('malformed task update'));
+
+    expect(controller.connectionState).toBe('connected');
+    expect(controller.streamDegraded).toBe(true);
+    expect(controller.streamError).toBe('malformed task update');
+    await vi.advanceTimersByTimeAsync(10_001);
+    expect(listActive).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(listActive).toHaveBeenCalledTimes(3);
+
+    handlers.onTask(similarityTask);
+    expect(controller.streamDegraded).toBe(false);
+    expect(controller.streamError).toBe('');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(listActive).toHaveBeenCalledTimes(3);
+    release();
+  });
+
   it('shares one task subscription across consumers', () => {
     const close = vi.fn();
     const subscribe = vi.fn(() => ({ close }));

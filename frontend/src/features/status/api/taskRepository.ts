@@ -134,7 +134,7 @@ export function createTaskRepository(): TaskRepository {
       },
       onmessage: (value) => {
         if (!isApiTask(value)) {
-          publishError(new Error('Ignored malformed task update from the live task stream.'));
+          publishError(new Error('The live task stream sent an invalid task update.'));
           return;
         }
         publishTask(normalizeTask(value));

@@ -84,6 +84,8 @@ export class SyncStatusController {
   loading = $state(false);
   error = $state('');
   lastUpdatedAt = $state<number | null>(null);
+  streamDegraded = $state(false);
+  streamError = $state('');
 
   private subscribers = 0;
   private taskSubscription: TaskSubscription | null = null;
@@ -100,7 +102,10 @@ export class SyncStatusController {
   ) {}
 
   get stale(): boolean {
-    return this.connectionState === 'reconnecting' || this.connectionState === 'disconnected' || Boolean(this.error);
+    return this.connectionState === 'reconnecting'
+      || this.connectionState === 'disconnected'
+      || this.streamDegraded
+      || Boolean(this.error);
   }
 
   acquire(): () => void {
@@ -155,6 +160,7 @@ export class SyncStatusController {
   }
 
   private applyTask(task: TaskRecord): boolean {
+    this.recoverStream();
     if (!this.status) return false;
 
     let matched = false;
@@ -195,14 +201,14 @@ export class SyncStatusController {
   private scheduleFallbackPolling(): void {
     if (
       this.subscribers === 0
-      || this.connectionState === 'connected'
+      || (this.connectionState === 'connected' && !this.streamDegraded)
       || this.disconnectGraceTimer
       || this.fallbackPollTimer
     ) return;
 
     this.disconnectGraceTimer = setTimeout(() => {
       this.disconnectGraceTimer = null;
-      if (this.subscribers === 0 || this.connectionState === 'connected') return;
+      if (this.subscribers === 0 || (this.connectionState === 'connected' && !this.streamDegraded)) return;
       void this.refresh();
       this.fallbackPollTimer = setInterval(() => void this.refresh(), this.pollIntervalMs);
     }, this.disconnectGraceMs);
@@ -211,10 +217,24 @@ export class SyncStatusController {
   private handleConnectionState(state: TaskConnectionState): void {
     this.connectionState = state;
     if (state === 'connected') {
+      this.recoverStream();
       this.clearFallbackTimers();
       return;
     }
     this.scheduleFallbackPolling();
+  }
+
+  private degradeStream(error: Error): void {
+    this.streamDegraded = true;
+    this.streamError = error.message || 'Live task updates are temporarily unavailable.';
+    this.scheduleFallbackPolling();
+  }
+
+  private recoverStream(): void {
+    if (!this.streamDegraded && !this.streamError) return;
+    this.streamDegraded = false;
+    this.streamError = '';
+    this.clearFallbackTimers();
   }
 
   private start(): void {
@@ -227,7 +247,7 @@ export class SyncStatusController {
       },
       onConnectionState: (state) => this.handleConnectionState(state),
       onRecovered: () => void this.refresh(),
-      onError: () => undefined,
+      onError: (error) => this.degradeStream(error),
     });
   }
 
@@ -236,6 +256,8 @@ export class SyncStatusController {
     this.taskSubscription?.close();
     this.taskSubscription = null;
     this.connectionState = 'disconnected';
+    this.streamDegraded = false;
+    this.streamError = '';
     this.refreshGeneration += 1;
     this.refreshPromise = null;
     this.refreshQueued = false;
