@@ -213,7 +213,7 @@
 
           {#if rule.target==='matching_members'&&matchConditions.length===0}<p class="automation-warning">Matching members needs at least one Match filter condition.</p>{/if}
           {#if rule.nonMatchAction&&rule.nonMatchAction!=='none'}<p class="automation-warning">A Non-match action is configured. Preview and Generate decisions are disabled until Non-match execution is implemented.</p>{/if}
-        </div>        </div>
+        </div>
       </V2Stack>
     </V2Card>
   {/each}
