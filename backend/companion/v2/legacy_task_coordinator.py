@@ -41,6 +41,10 @@ class TaskCancelledError(RuntimeError):
     """Raised when a handler observes a cancellation request."""
 
 
+class TaskAlreadyActiveError(RuntimeError):
+    """Raised when a scheduled submission coalesces with active work."""
+
+
 class TaskHandler(Protocol):
     """Protocol implemented by each domain task type."""
 
@@ -93,6 +97,7 @@ def _public_schedule(record: TaskScheduleRecord) -> TaskScheduleView:
         deduplication_policy=record.deduplication_policy,
         blocked_by=record.blocked_by or [],
         next_run_at=record.next_run_at,
+        last_run_at=record.last_run_at,
         task_type=record.task_type,
         payload=record.payload or {},
         priority=record.priority,
@@ -136,6 +141,7 @@ class TaskRepository:
         lane_key: str,
         max_concurrency: int,
         task_id: UUID | None = None,
+        schedule_name: str | None = None,
     ) -> TaskStatusView:
         now = datetime.now(UTC)
         async with self._database.sessions() as session, session.begin():
@@ -174,6 +180,10 @@ class TaskRepository:
                     .with_for_update()
                 )
                 if existing is not None:
+                    if schedule_name is not None:
+                        raise TaskAlreadyActiveError(
+                            f"Active task already owns {deduplication_key}"
+                        )
                     return _public(existing)  # type: ignore[return-value]
             record = TaskRecord(
                 id=task_id or uuid4(),
@@ -182,6 +192,7 @@ class TaskRepository:
                 priority=priority,
                 status="queued",
                 deduplication_key=deduplication_key,
+                schedule_name=schedule_name,
                 lane_key=lane_key,
                 checkpoint={},
                 counters={},
@@ -290,9 +301,18 @@ class TaskRepository:
                 record.status = "recovering" if recovering else "running"
                 record.lease_owner = worker_id
                 record.lease_expires_at = now + lease_duration
+                first_start = record.started_at is None
                 record.started_at = record.started_at or now
                 record.heartbeat_at = now
                 record.attempt += 1
+                if first_start and record.schedule_name is not None:
+                    schedule = await session.scalar(
+                        select(TaskScheduleRecord)
+                        .where(TaskScheduleRecord.name == record.schedule_name)
+                        .with_for_update()
+                    )
+                    if schedule is not None:
+                        schedule.last_run_at = now
                 attempt = TaskAttemptRecord(
                     task_id=record.id,
                     attempt=record.attempt,
@@ -604,10 +624,6 @@ class TaskRepository:
                 schedule.priority = priority
                 schedule.deduplication_policy = deduplication_policy
                 schedule.blocked_by = list(blocked_by or [])
-                if schedule.cron_expression:
-                    schedule.next_run_at = croniter(
-                        schedule.cron_expression, now
-                    ).get_next(datetime)
 
     async def claim_due_schedules(self) -> list[TaskScheduleRecord]:
         now = datetime.now(UTC)
@@ -630,6 +646,19 @@ class TaskRepository:
                         schedule.next_run_at += timedelta(seconds=schedule.interval_seconds)
                 claimed.append(schedule)
         return claimed
+
+    async def defer_schedule(self, name: str, *, retry_seconds: int = 60) -> None:
+        """Retry a claimed schedule soon when it could not be dispatched."""
+
+        retry_at = datetime.now(UTC) + timedelta(seconds=retry_seconds)
+        async with self._database.sessions() as session, session.begin():
+            schedule = await session.scalar(
+                select(TaskScheduleRecord)
+                .where(TaskScheduleRecord.name == name)
+                .with_for_update()
+            )
+            if schedule is not None and schedule.enabled:
+                schedule.next_run_at = min(schedule.next_run_at, retry_at)
 
     async def list_schedules(self) -> list[TaskScheduleView]:
         async with self._database.sessions() as session:
@@ -912,6 +941,7 @@ class TaskCoordinator:
         lane_key: str | None = None,
         max_concurrency: int | None = None,
         task_id: UUID | None = None,
+        schedule_name: str | None = None,
     ) -> TaskStatusView:
         handler = self._handlers.get(task_type)
         if handler is None:
@@ -924,6 +954,7 @@ class TaskCoordinator:
             lane_key=lane_key or handler.lane_key,
             max_concurrency=max_concurrency or handler.max_concurrency,
             task_id=task_id,
+            schedule_name=schedule_name,
         )
         await self._publish(task.id)
         return task
@@ -1115,8 +1146,9 @@ class TaskCoordinator:
         while not self._stopping.is_set():
             for schedule in await self._repository.claim_due_schedules():
                 dedupe = (
-                    f"{schedule.task_type}:{schedule.payload['mode']}"
+                    f"asset-sync:{schedule.payload['mode']}"
                     if schedule.deduplication_policy == "coalesce"
+                    and schedule.task_type == "asset_sync"
                     and isinstance(schedule.payload.get("mode"), str)
                     else (
                         f"schedule:{schedule.name}"
@@ -1124,10 +1156,15 @@ class TaskCoordinator:
                         else f"schedule:{schedule.name}:{schedule.next_run_at.isoformat()}"
                     )
                 )
-                if any(
-                    await self._repository.find_active(schedule.task_type, blocked_key)
-                    for blocked_key in schedule.blocked_by or []
-                ):
+                blocked = False
+                for blocked_key in schedule.blocked_by or []:
+                    if await self._repository.find_active(
+                        schedule.task_type, blocked_key
+                    ):
+                        blocked = True
+                        break
+                if blocked:
+                    await self._repository.defer_schedule(schedule.name)
                     continue
                 try:
                     await self.submit(
@@ -1135,10 +1172,12 @@ class TaskCoordinator:
                         schedule.payload,
                         priority=schedule.priority,
                         deduplication_key=dedupe,
+                        schedule_name=schedule.name,
                     )
-                except ValueError:
+                except (TaskAlreadyActiveError, ValueError):
                     # Handler registration may complete just after startup; the
-                    # next schedule tick will retry without taking the worker down.
+                    # same work may already be active. Defer without losing the tick.
+                    await self._repository.defer_schedule(schedule.name)
                     continue
             await asyncio.sleep(1)
 

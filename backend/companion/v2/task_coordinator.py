@@ -14,13 +14,11 @@ from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import cast, select, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import select, text
 
 from companion.database import DatabaseManager
 from companion.models import TaskAttemptRecord, TaskEventRecord, TaskRecord
 from companion.runtime_metrics import reclaim_process_memory
-from companion.task_schema import TaskScheduleView
 from companion.v2.legacy_task_coordinator import (
     TASK_UPDATE_CHANNEL,
     PermanentTaskError,
@@ -43,28 +41,7 @@ class TaskPausedError(RuntimeError):
 
 
 class TaskRepository(_TaskRepository):
-    """Add V2 task controls and truthful schedule execution history."""
-
-    async def list_schedules(self) -> list[TaskScheduleView]:
-        schedules = await super().list_schedules()
-        if not schedules:
-            return schedules
-
-        async with self._database.sessions() as session:
-            enriched: list[TaskScheduleView] = []
-            for schedule in schedules:
-                last_run_at = await session.scalar(
-                    select(TaskRecord.started_at)
-                    .where(
-                        TaskRecord.task_type == schedule.task_type,
-                        TaskRecord.started_at.is_not(None),
-                        cast(TaskRecord.payload, JSONB).contains(schedule.payload),
-                    )
-                    .order_by(TaskRecord.started_at.desc())
-                    .limit(1)
-                )
-                enriched.append(schedule.model_copy(update={"last_run_at": last_run_at}))
-            return enriched
+    """Add V2 task controls to the durable task repository."""
 
     async def control_state(self, task_id: UUID, worker_id: UUID) -> str:
         async with self._database.sessions() as session:

@@ -500,6 +500,7 @@ class TaskRecord(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0, index=True)
     status: Mapped[str] = mapped_column(String(24), default="queued", index=True)
     deduplication_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    schedule_name: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
     lane_key: Mapped[str] = mapped_column(String(128), index=True)
     checkpoint: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     counters: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
@@ -577,6 +578,9 @@ class TaskScheduleRecord(Base):
     priority: Mapped[int] = mapped_column(Integer, default=0)
     deduplication_policy: Mapped[str] = mapped_column(String(32), default="window")
     blocked_by: Mapped[list[str]] = mapped_column(JSON, default=list)
+    last_run_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
