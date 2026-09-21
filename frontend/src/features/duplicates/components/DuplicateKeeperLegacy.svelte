@@ -147,7 +147,8 @@
 
   const normalizedKeeperRules=$derived(keeperRules.map(normalizeKeeperRule).filter((rule)=>!keeperRuleNeedsValue(rule)||rule.value.trim().length>0));
   const rulesValid=$derived(rules.length>0&&rules.every(automationRuleValid));
-  const canRun=$derived(rulesValid&&normalizedKeeperRules.length>0&&!busy&&(scope==='all_matching'||groupIds.length>0));
+  const hasUiOnlyNonMatchActions=$derived(rules.some((rule)=>Boolean(rule.nonMatchAction&&rule.nonMatchAction!=='none')));
+  const canRun=$derived(rulesValid&&normalizedKeeperRules.length>0&&!hasUiOnlyNonMatchActions&&!busy&&(scope==='all_matching'||groupIds.length>0));
 
   function markDirty(){preview=null;error=''}
   function applyAutomationPreset(value:string){preset=value as AutomationPresetName;rules=automationPreset(preset,automationRuleId,conditionId);markDirty()}
@@ -155,7 +156,12 @@
   function removeAutomationRule(id:number){rules=rules.filter((rule)=>rule.id!==id);markDirty()}
   function moveAutomationRule(index:number,direction:-1|1){const target=index+direction;if(target<0||target>=rules.length)return;const copy=[...rules];[copy[index],copy[target]]=[copy[target],copy[index]];rules=copy;markDirty()}
   function updateAutomationRule(id:number,patch:Partial<DuplicateAutomationUiRule>){rules=rules.map((rule)=>rule.id===id?{...rule,...patch}:rule);markDirty()}
-  function addCondition(ruleId:number){rules=rules.map((rule)=>rule.id===ruleId?{...rule,conditions:[...rule.conditions,newAutomationCondition(conditionId())]}:rule);markDirty()}
+  function addCondition(ruleId:number,scope:DuplicateAutomationConditionScope='member'){
+    const condition=scope==='group'
+      ?newAutomationCondition(conditionId(),'group','classification','is','exact file')
+      :newAutomationCondition(conditionId(),scope);
+    rules=rules.map((rule)=>rule.id===ruleId?{...rule,conditions:[...rule.conditions,condition]}:rule);markDirty();
+  }
   function removeCondition(ruleId:number,condition:number){rules=rules.map((rule)=>rule.id===ruleId?{...rule,conditions:rule.conditions.filter((item)=>item.id!==condition)}:rule);markDirty()}
   function updateCondition(ruleId:number,conditionIdValue:number,patch:Partial<DuplicateAutomationUiCondition>){
     rules=rules.map((rule)=>{
@@ -283,7 +289,7 @@
   onMount(()=>{void Promise.all([loadOptions('album'),loadOptions('tag')])});
 </script>
 
-<V2Modal id="duplicate-automation-rules" title="Automation rules" description="Apply ordered group and member rules to generate reviewable decision drafts. Rules may decide only part of a group; untouched members stay undecided for manual review. Nothing is trashed until you review and execute a complete draft." size="xl" onclose={onclose}>
+<V2Modal id="duplicate-automation-rules" title="Automation rules" description="Build expert-style rules in three stages: search for qualifying duplicate groups, filter members into Match and Non-match sets, then assign actions. Existing Match execution remains available; Non-match actions are UI-only on this branch." size="xl" onclose={onclose}>
   <V2Stack gap="md">
     <V2Card>
       <V2Stack gap="sm">
@@ -297,6 +303,8 @@
     </V2Card>
 
     <DuplicateAutomationRulesEditor rules={rules} {albumOptions} {tagOptions} {albumLoading} {tagLoading} updateRule={updateAutomationRule} addRule={addAutomationRule} removeRule={removeAutomationRule} moveRule={moveAutomationRule} {addCondition} {removeCondition} {updateCondition} {loadOptions} {conditionInputKind} {placeholder} {setConditionRelations}/>
+
+    {#if hasUiOnlyNonMatchActions}<p class="automation-warning">Non-match actions are visible for the UI design, but are not executable yet. Preview and Generate decisions stay disabled until the evaluator and persistence path support them.</p>{/if}
 
     <DuplicateKeeperPriorityEditor rules={keeperRules} presetName={keeperPresetName} {albumOptions} {tagOptions} {albumLoading} {tagLoading} setPreset={applyKeeperPreset} updateRule={updateKeeperRule} addRule={addKeeperRule} removeRule={removeKeeperRule} moveRule={moveKeeperRule} {loadOptions}/>
 
