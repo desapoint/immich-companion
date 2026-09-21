@@ -300,7 +300,7 @@
       reconcileError:`${label} was reviewed, but the latest groups could not be loaded.`,
     });
   }
-  async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);pendingReview=null}
+  async function confirmPendingReview(){const review=pendingReview;if(!review||mutating)return;if(review.scope==='group'&&review.groupId!==null)await applyGroupDecisionSet(review.groupId,review.plan);else await applyDecisionSet(review.plan);await operations.waitForReconciliation();pendingReview=null}
   async function runDiscovery(anchorAssetId?:string){await discovery.run(anchorAssetId)}
   async function revalidateFromReference(assetId:string){
     if(mutating||!activeGroup)return;
