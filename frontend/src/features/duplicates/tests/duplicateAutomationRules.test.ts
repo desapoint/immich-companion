@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AssetRecord, DuplicateGroupRecord, DuplicateKeeperRule } from '../types/contracts';
 import {
+  automationPreset,
   evaluateDuplicateAutomation,
   type DuplicateAutomationExistingDecision,
   type DuplicateAutomationUiRule,
@@ -91,6 +92,14 @@ function rule(overrides: Partial<DuplicateAutomationUiRule> = {}): DuplicateAuto
 }
 
 describe('duplicate automation rules', () => {
+  it('keeps the new Non-match branch inert in existing presets', () => {
+    let ruleId = 1;
+    let conditionId = 1;
+    const rules = automationPreset('Protect uploads for review', () => ruleId++, () => conditionId++);
+    expect(rules).toHaveLength(1);
+    expect(rules[0].nonMatchAction).toBe('none');
+  });
+
   it('keeps matching upload members and leaves the rest undecided', () => {
     const upload = asset({ library_id: null });
     const externalA = asset();
