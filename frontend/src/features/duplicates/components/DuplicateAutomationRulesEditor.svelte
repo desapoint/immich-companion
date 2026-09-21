@@ -43,6 +43,12 @@
   const nonMatchActionOptions=[{value:'none',label:'No action'},...automationActionOptions];
 
   function relationValues(value: string): string[] { return value.split(',').map((part) => part.trim()).filter(Boolean); }
+  function actionSubtitle(value: string): string {
+    if(value==='none')return 'Leave this member set unchanged.';
+    return automationActionOptions.find((item)=>item.value===value)?.subtitle??'';
+  }
+  function flowSubtitle(value: string): string { return automationFlowOptions.find((item)=>item.value===value)?.subtitle??''; }
+  function scrollToKeeper(): void { document.getElementById('automation-keeper-priority')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 </script>
 
 <div class="automation-heading">
@@ -148,32 +154,66 @@
           <div class="stage-heading">
             <div>
               <V2Badge text="3 · Actions"/>
-              <h4>Act on Match and Non-match sets</h4>
-              <p>The Match branch remains wired to the current automation evaluator. The Non-match branch is intentionally UI-only on this branch.</p>
+              <h4>Map Match and Non-match sets to actions</h4>
+              <p>Each branch describes what should happen after the member filter partitions a qualifying group. Match keeps the current evaluator behavior; Non-match is presented now but stays non-executable on this UI branch.</p>
             </div>
             <V2Inline gap="sm" wrap>
               <V2Button disabled title="UI-only branch: search navigation is not wired yet">View search</V2Button>
               <V2Button disabled title="UI-only branch: member highlighting is not wired yet">Show member matches</V2Button>
             </V2Inline>
           </div>
+
+          <div class="action-map">
+            <div class="action-map-step"><V2Badge text="Search"/><span>qualifying groups</span></div>
+            <span class="action-map-arrow">→</span>
+            <div class="action-map-step"><V2Badge text="Match filter"/><span>Match / Non-match</span></div>
+            <span class="action-map-arrow">→</span>
+            <div class="action-map-step"><V2Badge text="Actions"/><span>decision drafts</span></div>
+          </div>
+
           <div class="branch-grid">
             <div class="action-branch action-branch--match">
-              <V2Inline justify="between" wrap><strong>Match</strong><V2Badge text="Current execution"/></V2Inline>
-              <SelectField id={'automation-target-'+rule.id} label="Apply Match action to" value={rule.target} options={[...automationTargetOptions]} onchange={(value)=>updateRule(rule.id,{target:value as DuplicateAutomationUiRule['target']})}/>
+              <V2Inline justify="between" wrap>
+                <V2Inline gap="sm" wrap><V2Badge text="MATCH"/><strong>Matching members</strong></V2Inline>
+                <V2Badge text="Executable"/>
+              </V2Inline>
+              <span class="v2-small v2-muted">Members that satisfy the Match filter enter this branch.</span>
+              <SelectField id={'automation-target-'+rule.id} label="Apply action to" value={rule.target} options={[...automationTargetOptions]} onchange={(value)=>updateRule(rule.id,{target:value as DuplicateAutomationUiRule['target']})}/>
               <SelectField id={'automation-action-'+rule.id} label="Action" value={rule.action} options={[...automationActionOptions]} onchange={(value)=>updateRule(rule.id,{action:value as DuplicateAutomationUiRule['action']})}/>
-              {#if rule.action==='resolve_keeper'}<span class="v2-small v2-muted">Uses the keeper priority rules below to choose the survivor.</span>{/if}
+              <div class="action-description">{actionSubtitle(rule.action)}</div>
+              {#if rule.action==='resolve_keeper'}
+                <div class="keeper-link">
+                  <div><V2Badge text="Keeper resolution"/><p>Resolve this target set to one survivor using the shared keeper strategy.</p></div>
+                  <V2Button onclick={scrollToKeeper}>Configure keeper strategy</V2Button>
+                </div>
+              {/if}
             </div>
+
             <div class="action-branch action-branch--nonmatch">
-              <V2Inline justify="between" wrap><strong>Non-match</strong><V2Badge text="UI only"/></V2Inline>
+              <V2Inline justify="between" wrap>
+                <V2Inline gap="sm" wrap><V2Badge text="NON-MATCH"/><strong>Other selected members</strong></V2Inline>
+                <V2Badge text="UI only"/>
+              </V2Inline>
+              <span class="v2-small v2-muted">Members in the qualifying group that do not satisfy the Match filter enter this branch.</span>
               <SelectField id={'automation-non-match-action-'+rule.id} label="Action" value={rule.nonMatchAction??'none'} options={nonMatchActionOptions} onchange={(value)=>updateRule(rule.id,{nonMatchAction:value as DuplicateAutomationBranchAction})}/>
-              <span class="v2-small v2-muted">This branch will act on selected members that do not satisfy the Match filter. Execution wiring is deliberately deferred.</span>
-              {#if rule.nonMatchAction==='resolve_keeper'}<span class="v2-small v2-muted">Keeper resolution will use the keeper priority rules below once this branch is wired.</span>{/if}
+              <div class="action-description">{actionSubtitle(rule.nonMatchAction??'none')}</div>
+              {#if rule.nonMatchAction==='resolve_keeper'}
+                <div class="keeper-link keeper-link--pending">
+                  <div><V2Badge text="Keeper resolution"/><p>This branch will use the same shared keeper strategy when Non-match execution is implemented.</p></div>
+                  <V2Button onclick={scrollToKeeper}>Configure keeper strategy</V2Button>
+                </div>
+              {/if}
             </div>
           </div>
-          <SelectField id={'automation-flow-'+rule.id} label="After this rule" value={rule.flow} options={[...automationFlowOptions]} onchange={(value)=>updateRule(rule.id,{flow:value as DuplicateAutomationUiRule['flow']})}/>
+
+          <div class="flow-row">
+            <SelectField id={'automation-flow-'+rule.id} label="After this rule" value={rule.flow} options={[...automationFlowOptions]} onchange={(value)=>updateRule(rule.id,{flow:value as DuplicateAutomationUiRule['flow']})}/>
+            <div class="flow-description"><span class="v2-field-label">Flow behavior</span><span>{flowSubtitle(rule.flow)}</span></div>
+          </div>
+
           {#if rule.target==='matching_members'&&matchConditions.length===0}<p class="automation-warning">Matching members needs at least one Match filter condition.</p>{/if}
           {#if rule.nonMatchAction&&rule.nonMatchAction!=='none'}<p class="automation-warning">A Non-match action is configured. Preview and Generate decisions are disabled until Non-match execution is implemented.</p>{/if}
-        </div>
+        </div>        </div>
       </V2Stack>
     </V2Card>
   {/each}
@@ -187,8 +227,9 @@
   .stage-heading{margin-bottom:10px}.stage-heading h4{margin-top:6px}.empty-stage{padding:.75rem;border:1px dashed var(--v2-line);border-radius:.55rem;color:var(--v2-text-muted)}
   .condition-row{display:grid;grid-template-columns:minmax(130px,.8fr) minmax(170px,1.2fr) minmax(140px,.9fr) minmax(170px,1fr) minmax(80px,.4fr) auto;gap:10px;align-items:end}
   .condition-row--member{grid-template-columns:minmax(100px,.55fr) minmax(180px,1.25fr) minmax(150px,1fr) minmax(180px,1.2fr) auto}.member-scope{display:grid;gap:6px;align-self:stretch;align-content:end;padding-bottom:7px}
-  .branch-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px}.action-branch{display:grid;gap:10px;padding:.75rem;border:1px solid var(--v2-line);border-radius:.6rem;background:var(--v2-surface)}.action-branch--nonmatch{border-style:dashed}
+  .action-map{display:flex;align-items:center;gap:8px;margin-bottom:10px;padding:.55rem .7rem;border:1px dashed var(--v2-line);border-radius:.55rem}.action-map-step{display:flex;align-items:center;gap:6px}.action-map-arrow{color:var(--v2-text-muted)}
+  .branch-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:10px}.action-branch{display:grid;gap:10px;padding:.75rem;border:1px solid var(--v2-line);border-radius:.6rem;background:var(--v2-surface)}.action-branch--match{border-inline-start:3px solid var(--v2-accent,#8b5cf6)}.action-branch--nonmatch{border-style:dashed}.action-description{min-height:34px;padding:.45rem .55rem;border-radius:.45rem;background:color-mix(in srgb,var(--v2-accent,#8b5cf6) 5%,transparent);color:var(--v2-text-muted);font-size:.9rem}.keeper-link{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:.65rem;border:1px solid color-mix(in srgb,var(--v2-accent,#8b5cf6) 34%,var(--v2-line));border-radius:.55rem}.keeper-link p{margin:5px 0 0;color:var(--v2-text-muted);font-size:.85rem}.keeper-link--pending{border-style:dashed}.flow-row{display:grid;grid-template-columns:minmax(220px,.7fr) minmax(0,1.3fr);gap:12px;align-items:end}.flow-description{display:grid;gap:6px;min-height:40px;padding:.45rem .55rem;border:1px dashed var(--v2-line);border-radius:.45rem;color:var(--v2-text-muted);font-size:.9rem}
   .no-value{min-height:40px;display:flex;align-items:center;color:var(--v2-text-muted);font-size:.9rem}.automation-warning{margin:0;color:var(--v2-danger)}
-  @media(max-width:1050px){.condition-row,.condition-row--member{grid-template-columns:1fr 1fr 1fr}.branch-grid{grid-template-columns:1fr}}
-  @media(max-width:760px){.condition-row,.condition-row--member{grid-template-columns:1fr}.automation-heading,.automation-rule-header,.stage-heading{align-items:stretch;flex-direction:column}}
+  @media(max-width:1050px){.condition-row,.condition-row--member{grid-template-columns:1fr 1fr 1fr}.branch-grid,.flow-row{grid-template-columns:1fr}}
+  @media(max-width:760px){.condition-row,.condition-row--member{grid-template-columns:1fr}.automation-heading,.automation-rule-header,.stage-heading,.keeper-link{align-items:stretch;flex-direction:column}.action-map{align-items:flex-start;flex-direction:column}.action-map-arrow{display:none}}
 </style>
