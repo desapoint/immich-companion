@@ -253,6 +253,31 @@ describe('live V2 duplicate repository', () => {
     expect(calls.some((call) => call.path.endsWith('/cross-source/search'))).toBe(false);
   });
 
+  it('rebases a stale workspace selection write once before reporting failure', async () => {
+    const writes: Record<string, unknown>[] = [];
+    let selectionWrites = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      if (path.includes('/group-ids?')) return response({ group_ids: [group.group_id], limit_exceeded: false });
+      if (path.endsWith('/workspace/selection')) {
+        const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+        writes.push(body);
+        selectionWrites += 1;
+        if (selectionWrites === 1) return response({ detail: 'Duplicate workspace changed; reload its membership' }, 409);
+        return response({ ...emptyWorkspace, revision: 5, selected_group_ids: body.selected_group_ids });
+      }
+      if (path.endsWith('/workspace')) return response({ ...emptyWorkspace, revision: 4, selected_group_ids: [] });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    await expect(repository.selectAllGroups()).resolves.toEqual([group.group_id]);
+
+    expect(selectionWrites).toBe(2);
+    expect(writes[1]).toMatchObject({ revision: 4, selected_group_ids: [group.group_id] });
+    expect(repository.selectedGroupIds()).toEqual([group.group_id]);
+  });
+
   it('sends the applied review filter with backend-resolved all-matching presets', async () => {
     const requests: Record<string, unknown>[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

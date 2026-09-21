@@ -1,4 +1,4 @@
-import { jsonRequest, requestJson } from '../../../lib/api/http';
+import { ApiError, jsonRequest, requestJson } from '../../../lib/api/http';
 import type {
   DuplicateDecision,
   DuplicateDiscoveryOptions,
@@ -61,12 +61,27 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       ...workspace.selected_group_ids.filter((groupId) => !visibleGroupIds.has(groupId)),
       ...groupIds,
     ];
-    workspace = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/selection', jsonRequest('PUT', {
+    const write = (ids: readonly string[], revision: number | undefined) => requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace/selection', jsonRequest('PUT', {
       options: ANALYSIS_OPTIONS,
-      selected_group_ids: [...new Set(selectedGroupIds)],
+      selected_group_ids: [...new Set(ids)],
       active_group_id: activeGroupId,
-      revision: workspace.revision,
+      revision,
     }));
+    try {
+      workspace = await write(selectedGroupIds, workspace.revision);
+    } catch (error) {
+      // A page refresh or another tab can advance the optimistic workspace
+      // revision between queued selection writes. Rebase once against the
+      // durable workspace so a transient 409 cannot leave review actions
+      // pointing at a selection that only exists in local state.
+      if (!(error instanceof ApiError) || error.kind !== 'conflict') throw error;
+      workspace = await requestJson<ApiDuplicateWorkspace>('/api/assets/duplicates/workspace', { method: 'GET' });
+      const rebased = [
+        ...workspace.selected_group_ids.filter((groupId) => !visibleGroupIds.has(groupId)),
+        ...groupIds,
+      ];
+      workspace = await write(rebased, workspace.revision);
+    }
   };
 
   const selectedPage = async (
