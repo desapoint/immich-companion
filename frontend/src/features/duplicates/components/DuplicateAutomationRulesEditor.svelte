@@ -120,7 +120,7 @@
             <V2Button onclick={()=>addCondition(rule.id,'member')}><Plus size={15}/> Match condition</V2Button>
           </div>
           {#if matchConditions.length===0}
-            <div class="empty-stage automation-warning">Add at least one member condition to make the Match set explicit.</div>
+            <div class="empty-stage">No member filter. Whole-group and remaining-member actions can still use the qualifying group; a Matching members target needs a Match condition.</div>
           {:else}
             <div class="condition-list">
               {#each matchConditions as condition (condition.id)}
