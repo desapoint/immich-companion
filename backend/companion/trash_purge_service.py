@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import UUID
@@ -86,7 +85,8 @@ class TrashPurgeService:
         async for asset in self._immich.iter_trashed_assets():
             count += 1
             accumulator = _unordered_snapshot_add(accumulator, asset.id)
-        return count, f"{count}:{accumulator:064x}"
+        snapshot = f"{count}:{accumulator:064x}"
+        return count, sha256(snapshot.encode()).hexdigest()
 
     async def _resolve_selected(self, selection: TrashPurgeSelection) -> list[UUID]:
         if selection.ids:
@@ -232,8 +232,12 @@ class TrashPurgeService:
         batch_size = min(self._settings.sync_full_batch_size, 1000)
         for offset in range(0, len(target_ids), batch_size):
             batch = target_ids[offset : offset + batch_size]
-            with suppress(ImmichApiError):
+            try:
                 await self._immich.permanently_delete_assets(batch)
+            except ImmichApiError:
+                pass
+            else:
+                continue
             deleted_states = await asyncio.gather(
                 *(self._is_deleted(asset_id) for asset_id in batch)
             )

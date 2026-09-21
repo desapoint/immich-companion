@@ -119,6 +119,7 @@ async def test_complete_trash_uses_immich_empty_endpoint_after_drift_check() -> 
 
     assert plan.mode == "empty_all"
     assert plan.target_count == 2
+    assert len(actions.record.target_digest) == 64
     assert immich.empty_calls == 1
     assert result.deleted == 2
     assert result.verified is True
@@ -139,3 +140,50 @@ async def test_selective_all_with_exclusions_uses_force_delete() -> None:
     assert plan.mode == "selected"
     assert immich.permanent_calls == [[ASSET_ONE]]
     assert immich.trashed == {ASSET_TWO}
+
+
+@pytest.mark.asyncio
+async def test_successful_force_delete_does_not_depend_on_follow_up_asset_reads() -> None:
+    class NoPostDeleteReadsImmich(FakeImmich):
+        async def get_asset(self, asset_id: UUID):
+            if self.permanent_calls:
+                raise AssertionError("successful deletion must not require a follow-up read")
+            return await super().get_asset(asset_id)
+
+    immich = NoPostDeleteReadsImmich()
+    actions = FakeActions()
+    service = TrashPurgeService(immich, actions, settings())
+
+    plan = await service.plan(TrashPurgeSelection(ids=[ASSET_ONE, ASSET_TWO]))
+    result = await service.execute(
+        TrashPurgeExecuteRequest(plan_id=plan.id, confirm=True)
+    )
+
+    assert result.deleted_ids == [ASSET_ONE, ASSET_TWO]
+    assert result.failed_ids == []
+    assert result.deleted == 2
+    assert result.verified is True
+
+
+@pytest.mark.asyncio
+async def test_failed_force_delete_is_verified_for_partial_provider_success() -> None:
+    class PartiallyDeletingImmich(FakeImmich):
+        async def permanently_delete_assets(self, asset_ids: list[UUID]) -> None:
+            self.permanent_calls.append(list(asset_ids))
+            self.trashed.discard(asset_ids[0])
+            raise ImmichApiError("permanently delete assets", 500)
+
+    immich = PartiallyDeletingImmich()
+    actions = FakeActions()
+    service = TrashPurgeService(immich, actions, settings())
+
+    plan = await service.plan(TrashPurgeSelection(ids=[ASSET_ONE, ASSET_TWO]))
+    result = await service.execute(
+        TrashPurgeExecuteRequest(plan_id=plan.id, confirm=True)
+    )
+
+    assert result.deleted_ids == [ASSET_ONE]
+    assert result.failed_ids == [ASSET_TWO]
+    assert result.deleted == 1
+    assert result.verified is False
+    assert result.status == "partial"
