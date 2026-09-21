@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
@@ -193,8 +193,40 @@ class ActionRepository:
             await session.flush()
         return record
 
-    async def claim_trash_purge_plan(self, plan_id: UUID) -> ActionPlanRecord | None:
-        """Atomically claim one unused permanent trash deletion plan."""
+    async def claim_trash_purge_plan(
+        self, plan_id: UUID, *, stale_after: timedelta = timedelta(minutes=5)
+    ) -> ActionPlanRecord | None:
+        """Atomically claim a new or safely abandoned trash deletion plan."""
+
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if (
+                record is None
+                or record.operation != "purge_trash"
+                or record.status not in {"planned", "running"}
+            ):
+                return None
+            if record.status == "running" and (
+                record.executed_at is None or record.executed_at > now - stale_after
+            ):
+                return None
+            if record.status == "planned" and record.expires_at <= now:
+                return None
+            record.status = "running"
+            record.executed_at = now
+            record.result = {
+                **(record.result or {}),
+                "purge_lease_token": str(uuid4()),
+            }
+        return record
+
+    async def checkpoint_trash_purge_plan(
+        self, plan_id: UUID, result: dict[str, Any], *, lease_token: str
+    ) -> None:
+        """Durably checkpoint one bounded trash purge pass."""
 
         async with self._database.sessions() as session, session.begin():
             record = await session.scalar(
@@ -203,12 +235,38 @@ class ActionRepository:
             if (
                 record is None
                 or record.operation != "purge_trash"
-                or record.status != "planned"
+                or record.status != "running"
+                or (record.result or {}).get("purge_lease_token") != lease_token
             ):
-                return None
-            record.status = "running"
+                raise ValueError("Trash purge plan is no longer owned")
+            record.result = {**(record.result or {}), **result}
             record.executed_at = datetime.now(UTC)
-        return record
+
+    async def finish_trash_purge_plan(
+        self,
+        plan_id: UUID,
+        status: ActionPlanStatus,
+        result: dict[str, Any],
+        *,
+        lease_token: str,
+    ) -> bool:
+        """Finalize a purge only if this executor still owns its lease."""
+
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(ActionPlanRecord).where(ActionPlanRecord.id == plan_id).with_for_update()
+            )
+            if (
+                record is None
+                or record.operation != "purge_trash"
+                or record.status != "running"
+                or (record.result or {}).get("purge_lease_token") != lease_token
+            ):
+                return False
+            record.status = status
+            record.result = {**(record.result or {}), **result}
+            record.executed_at = datetime.now(UTC)
+        return True
 
     async def get_plan(self, plan_id: UUID) -> ActionPlanRecord | None:
         """Load one action plan without changing its persistent state."""
