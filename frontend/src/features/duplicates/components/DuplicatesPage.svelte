@@ -151,6 +151,11 @@
         apply:(response,mode)=>{
           groups=mode==='append'?[...groups,...response.items]:response.items;
           hydrateWorkspace(response.items,mode==='replace'&&!reuseCachedGroups);
+          // `search()` restores the complete durable workspace, while the
+          // page response only contains one page of groups. Always adopt the
+          // repository selection after hydration so a hard refresh cannot
+          // reduce an all-matching selection to the visible page.
+          selectedGroups=[...libraryData.duplicates.selectedGroupIds()];
           total=response.total;
           nextCursor=response.nextCursor;
           collection.clampPage(total);
