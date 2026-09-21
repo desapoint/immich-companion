@@ -138,6 +138,7 @@
   let preset=$state<AutomationPresetName>('Protect uploads for review');
   let rules=$state<DuplicateAutomationUiRule[]>(automationPreset('Protect uploads for review',automationRuleId,conditionId));
   let keeperPresetName=$state<KeeperPresetName>('Highest quality');
+  let keeperMode=$state<'preset'|'expert'>('preset');
   let keeperRules=$state<DuplicateKeeperUiRule[]>(keeperPreset('Highest quality',keeperId));
   let overwriteManual=$state(false);
   let preview=$state<AutomationSummary|null>(null);
@@ -148,6 +149,7 @@
   const normalizedKeeperRules=$derived(keeperRules.map(normalizeKeeperRule).filter((rule)=>!keeperRuleNeedsValue(rule)||rule.value.trim().length>0));
   const rulesValid=$derived(rules.length>0&&rules.every(automationRuleValid));
   const hasUiOnlyNonMatchActions=$derived(rules.some((rule)=>Boolean(rule.nonMatchAction&&rule.nonMatchAction!=='none')));
+  const keeperUsageCount=$derived(rules.reduce((count,rule)=>count+(rule.action==='resolve_keeper'?1:0)+(rule.nonMatchAction==='resolve_keeper'?1:0),0));
   const canRun=$derived(rulesValid&&normalizedKeeperRules.length>0&&!hasUiOnlyNonMatchActions&&!busy&&(scope==='all_matching'||groupIds.length>0));
 
   function markDirty(){preview=null;error=''}
@@ -185,7 +187,8 @@
     markDirty();
   }
 
-  function applyKeeperPreset(value:string){keeperPresetName=value as KeeperPresetName;keeperRules=keeperPreset(keeperPresetName,keeperId);markDirty()}
+  function setKeeperMode(value:'preset'|'expert'){keeperMode=value}
+  function applyKeeperPreset(value:string){keeperPresetName=value as KeeperPresetName;keeperMode='preset';keeperRules=keeperPreset(keeperPresetName,keeperId);markDirty()}
   function updateKeeperRule(id:number,patch:Partial<DuplicateKeeperUiRule>){
     keeperRules=keeperRules.map((rule)=>{
       if(rule.id!==id)return rule;
@@ -193,11 +196,11 @@
       if(patch.field||patch.effect){const operators=keeperOperatorOptions(next.field,next.effect);if(!operators.some((item)=>item.value===next.operator)){next.operator=(operators[0]?.value??'is') as DuplicateKeeperUiRule['operator'];next.value=''}}
       if(patch.operator&&!keeperRuleNeedsValue(next))next.value='';
       return next;
-    });markDirty();
+    });keeperMode='expert';markDirty();
   }
-  function addKeeperRule(){keeperRules=[...keeperRules,newKeeperRule(keeperId())];markDirty()}
-  function removeKeeperRule(id:number){keeperRules=keeperRules.filter((rule)=>rule.id!==id);markDirty()}
-  function moveKeeperRule(index:number,direction:-1|1){const target=index+direction;if(target<0||target>=keeperRules.length)return;const copy=[...keeperRules];[copy[index],copy[target]]=[copy[target],copy[index]];keeperRules=copy;markDirty()}
+  function addKeeperRule(){keeperMode='expert';keeperRules=[...keeperRules,newKeeperRule(keeperId())];markDirty()}
+  function removeKeeperRule(id:number){keeperMode='expert';keeperRules=keeperRules.filter((rule)=>rule.id!==id);markDirty()}
+  function moveKeeperRule(index:number,direction:-1|1){const target=index+direction;if(target<0||target>=keeperRules.length)return;const copy=[...keeperRules];[copy[index],copy[target]]=[copy[target],copy[index]];keeperMode='expert';keeperRules=copy;markDirty()}
 
   async function loadOptions(kind:'album'|'tag',query=''){
     if(kind==='album')albumLoading=true;else tagLoading=true;
@@ -306,7 +309,7 @@
 
     {#if hasUiOnlyNonMatchActions}<p class="automation-warning">Non-match actions are visible for the UI design, but are not executable yet. Preview and Generate decisions stay disabled until the evaluator and persistence path support them.</p>{/if}
 
-    <DuplicateKeeperPriorityEditor rules={keeperRules} presetName={keeperPresetName} {albumOptions} {tagOptions} {albumLoading} {tagLoading} setPreset={applyKeeperPreset} updateRule={updateKeeperRule} addRule={addKeeperRule} removeRule={removeKeeperRule} moveRule={moveKeeperRule} {loadOptions}/>
+    <DuplicateKeeperPriorityEditor rules={keeperRules} presetName={keeperPresetName} mode={keeperMode} usageCount={keeperUsageCount} {albumOptions} {tagOptions} {albumLoading} {tagLoading} setMode={setKeeperMode} setPreset={applyKeeperPreset} updateRule={updateKeeperRule} addRule={addKeeperRule} removeRule={removeKeeperRule} moveRule={moveKeeperRule} {loadOptions}/>
 
     {#if preview}
       <V2Card><V2Stack gap="sm"><strong>{preview.wouldApplyGroupCount.toLocaleString()} groups would receive automation changes</strong><div class="preview-grid"><span><b>{preview.matchedGroupCount.toLocaleString()}</b> in scope</span><span><b>{preview.completeGroupCount.toLocaleString()}</b> complete drafts</span><span><b>{preview.partialGroupCount.toLocaleString()}</b> partial drafts</span><span><b>{preview.manualReviewGroupCount.toLocaleString()}</b> need manual review</span><span><b>{preview.keepCount.toLocaleString()}</b> automatic Keep</span><span><b>{preview.trashCount.toLocaleString()}</b> automatic Delete</span><span><b>{preview.stackCount.toLocaleString()}</b> automatic Stack</span><span><b>{preview.undecidedMemberCount.toLocaleString()}</b> members left undecided</span><span><b>{preview.preservedManualGroupCount.toLocaleString()}</b> groups preserving manual choices</span><span><b>{preview.ambiguousGroupCount.toLocaleString()}</b> safely left ambiguous</span><span><b>{preview.blockedGroupCount.toLocaleString()}</b> blocked groups skipped</span></div>{#if preview.limitExceeded}<p class="automation-warning">The matching set exceeds the {MAX_AUTOMATION_GROUPS.toLocaleString()}-group safety limit. Narrow the current filters before applying.</p>{/if}</V2Stack></V2Card>
