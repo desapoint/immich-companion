@@ -221,7 +221,12 @@ class TrashPurgeService:
                 "verified": verified,
             }
             await self._checkpoint(record.id, result, lease_token)
-            await self._finish(record.id, "completed" if verified else "partial", result, lease_token)
+            await self._finish(
+                record.id,
+                "completed" if verified else "partial",
+                result,
+                lease_token,
+            )
             return TrashPurgeResult(
                 plan_id=record.id,
                 requested=requested,
@@ -274,7 +279,11 @@ class TrashPurgeService:
                     if not deleted
                 ]
                 if not batch:
-                    await self._checkpoint(record.id, {"deleted_ids": self._ordered_ids(target_ids, completed_ids)}, lease_token)
+                    await self._checkpoint(
+                        record.id,
+                        {"deleted_ids": self._ordered_ids(target_ids, completed_ids)},
+                        lease_token,
+                    )
                     continue
             try:
                 await self._immich.permanently_delete_assets(batch)
