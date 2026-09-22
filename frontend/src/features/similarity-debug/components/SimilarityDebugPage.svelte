@@ -58,10 +58,6 @@
     return value === null || value === undefined ? '—' : `${value.toFixed(digits)}%`;
   }
 
-  function formatRatio(value: number | null | undefined): string {
-    return value === null || value === undefined ? '—' : value.toFixed(4);
-  }
-
   function pairStatus(pair: SimilarityDebugPair | undefined): string {
     if (!pair?.evidence_available) return 'No evidence';
     if (pair.would_pass_pair_pipeline) return 'Pass';
@@ -168,15 +164,13 @@
   }
 
   async function setAnchorFromList(assetId: string): Promise<void> {
-    if (!selected.has(assetId)) {
-      selected = new Set([...selected, assetId]);
-      response = null;
-    }
+    if (!selected.has(assetId)) return;
+    const hadResponse = Boolean(response);
     const previousTarget = comparisonSelectedId && comparisonSelectedId !== assetId && selected.has(comparisonSelectedId)
       ? comparisonSelectedId
       : checkedIds.find((id) => id !== assetId) ?? '';
     anchorAssetId = assetId;
-    if (!response && checkedIds.length < 2) return;
+    if (!hadResponse) return;
     const preferredPairKey = previousTarget ? pairKey(assetId, previousTarget) : '';
     await analyze(preferredPairKey);
     if (comparisonOpen && previousTarget && pairByKey.has(preferredPairKey)) {
@@ -202,11 +196,19 @@
   }
 
   function anchorSettingChanged(): void {
+    if (anchorAssetId) {
+      void setAnchorFromList(anchorAssetId);
+      return;
+    }
     if (response) void analyze(activePairKey);
   }
 
   function remove(assetId: string): void {
     removeSimilarityDebugAsset(assetId);
+    response = null;
+    activePairKey = '';
+    comparisonOpen = false;
+    if (anchorAssetId === assetId) anchorAssetId = '';
     void refreshBasket();
   }
 
@@ -300,6 +302,9 @@
                     <span class="v2-small v2-muted">Comparison anchor</span>
                   {:else}
                     <V2Button disabled={!inGroup || running} onclick={() => void setAnchorFromList(assetId)}>Set as anchor</V2Button>
+                  {/if}
+                  {#if response && inGroup && !isAnchor}
+                    <V2Button variant="primary" onclick={() => openAgainstAnchor(assetId)}>Compare</V2Button>
                   {/if}
                   <V2Button onclick={() => remove(assetId)}>Remove</V2Button>
                 </div>
