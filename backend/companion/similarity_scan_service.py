@@ -275,7 +275,7 @@ class SimilarityScanTaskHandler:
                             str(request.anchor_asset_id) if request.anchor_asset_id else None
                         ),
                         "scope": request.scope,
-                        "result_limit_reached": completed.result_limit_reached,
+                        "result_limit_reached": getattr(completed, "result_limit_reached", None),
                         "maximum_matches": request.maximum_matches,
                         "recovered_completed_scan": True,
                     },
@@ -285,7 +285,7 @@ class SimilarityScanTaskHandler:
                         pairs_scored=completed.candidate_count,
                         matches_retained=completed.match_count,
                         retained_match_limit=request.maximum_matches,
-                        result_limit_reached=int(completed.result_limit_reached is True),
+                        result_limit_reached=int(getattr(completed, "result_limit_reached", None) is True),
                     ),
                 )
             if self._indexer is not None:
