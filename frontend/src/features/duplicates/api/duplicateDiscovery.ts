@@ -54,7 +54,8 @@ export async function waitForTask(
   rangeEnd = 98,
   onprogress?: (progress: DuplicateDiscoveryProgress) => void,
 ): Promise<TaskRecord> {
-  if (!tasks.subscribeTask) {
+  const subscribeTask = tasks.subscribeTask;
+  if (!subscribeTask) {
     for (;;) {
       const task = await tasks.get(taskId);
       onprogress?.(discoveryProgress(task, similarity, rangeStart, rangeEnd));
@@ -127,7 +128,7 @@ export async function waitForTask(
       }
     };
 
-    const created = tasks.subscribeTask(taskId, {
+    const created = subscribeTask(taskId, {
       onTask: (task) => {
         streamHealthy = true;
         clearFallback();
