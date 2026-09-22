@@ -1,6 +1,7 @@
 import { errorMessage, type OperationFeedback } from '../api/mutationFeedback';
 
 export type OperationPhase = 'idle' | 'applying' | 'reconciling';
+export type OperationErrorHandler = (message: string) => void;
 
 export type OperationRunOptions<TResult> = {
   pending: (phase: Exclude<OperationPhase, 'idle'>) => OperationFeedback;
@@ -23,13 +24,20 @@ export class OperationController {
   private pendingReconcile: { run: () => Promise<void>; context: string; revision: number; outcome: OperationFeedback | null } | null = null;
   private reconcileTask: Promise<void> | null = null;
 
+  constructor(private readonly onError?: OperationErrorHandler) {}
+
+  private publishError(message: string): void {
+    this.error = message;
+    if (message) this.onError?.(message);
+  }
+
   clearError(): void {
     this.error = '';
   }
 
   setError(error: unknown, fallback = 'The operation could not be completed.'): void {
     this.feedback = null;
-    this.error = errorMessage(error, fallback);
+    this.publishError(errorMessage(error, fallback));
   }
 
   clearOutcome(): void {
@@ -62,7 +70,7 @@ export class OperationController {
           if (job.revision === this.revision) {
             this.feedback = job.outcome;
             const detail = errorMessage(error, '');
-            this.error = detail ? `${job.context} ${detail}` : job.context;
+            this.publishError(detail ? `${job.context} ${detail}` : job.context);
           }
         }
       }
@@ -97,7 +105,7 @@ export class OperationController {
         result = await runner();
       } catch (error) {
         this.feedback = null;
-        this.error = errorMessage(error, `${action} could not be completed.`);
+        this.publishError(errorMessage(error, `${action} could not be completed.`));
         return null;
       }
 

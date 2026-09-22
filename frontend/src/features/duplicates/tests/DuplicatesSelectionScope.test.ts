@@ -13,7 +13,7 @@ describe('duplicate bulk-action scope', () => {
   });
 
   it('awaits selection writes before hydrating a refreshed page', () => {
-    expect(pageSource).toContain("try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}");
+    expect(pageSource).toContain("try{await flushWorkspace()}catch(error){surfaceInteractionError(error,'Duplicate choices could not be saved before refreshing.','Duplicate choices could not be saved');return false}");
     expect(pageSource).toContain("selectionScope==='All matching'&&persistedSelection.length>selectedGroups.length");
   });
 
