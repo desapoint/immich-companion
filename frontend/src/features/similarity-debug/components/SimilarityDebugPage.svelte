@@ -413,7 +413,7 @@
 <style>
   .similarity-debug-page{display:grid;gap:var(--v2-space-4);min-width:0}
   .similarity-debug-group-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;min-width:0;flex-wrap:wrap}.similarity-debug-group-toolbar>div{display:grid;gap:3px;min-width:0;flex:1 1 360px}.similarity-debug-group-toolbar :global(.v2-badge){max-width:min(100%,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .similarity-debug-assets{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:var(--v2-space-3);align-items:stretch}
+  .similarity-debug-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr));gap:var(--v2-space-3);align-items:stretch}
   .similarity-debug-asset-tile{position:relative;display:grid;grid-template-rows:auto minmax(150px,1fr) auto auto;gap:8px;min-width:0;overflow:hidden;padding:8px;border:1px solid var(--v2-line);border-radius:9px;background:var(--v2-surface)}
   .similarity-debug-asset-tile.selected{outline:1px solid color-mix(in srgb,var(--v2-accent) 45%,transparent)}
   .similarity-debug-asset-tile.anchor{outline:2px solid var(--v2-accent)}
