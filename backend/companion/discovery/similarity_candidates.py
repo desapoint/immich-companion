@@ -119,14 +119,22 @@ class _HammingBkTree:
         return matches
 
 
+def perceptual_hash_distance(left_hash: str, right_hash: str) -> int:
+    """Return the production Hamming distance for two fixed-width perceptual hashes."""
+
+    return (int(left_hash, 16) ^ int(right_hash, 16)).bit_count()
+
+
 def _aspect_ratio(feature: SimilarityCandidateFeature) -> float:
     return feature.width / feature.height
 
 
-def _aspect_difference(
+def aspect_ratio_difference(
     left: SimilarityCandidateFeature,
     right: SimilarityCandidateFeature,
 ) -> float:
+    """Return the production normalized aspect-ratio difference for one pair."""
+
     left_ratio = _aspect_ratio(left)
     right_ratio = _aspect_ratio(right)
     return abs(left_ratio - right_ratio) / max(left_ratio, right_ratio)
@@ -223,7 +231,7 @@ class BoundedSimilarityCandidateIndex:
             if self._neighbor_counts.get(candidate_id, 0) >= self._maximum_neighbors_per_asset:
                 continue
             candidate = self._by_id[candidate_id]
-            if _aspect_difference(feature, candidate) > self._maximum_aspect_difference:
+            if aspect_ratio_difference(feature, candidate) > self._maximum_aspect_difference:
                 continue
             if feature.asset_id.int < candidate_id.int:
                 low, high = feature.asset_id, candidate_id
