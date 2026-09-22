@@ -466,6 +466,29 @@ async def test_sync_service_submits_one_isolated_durable_rebuild() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sync_service_propagates_child_rebuild_error() -> None:
+    class Tasks:
+        async def submit(self, *_args, **_kwargs):
+            return SimpleNamespace(id=TASK_ID)
+
+        async def start(self):
+            return None
+
+        async def wait(self, task_id):
+            assert task_id == TASK_ID
+            return SimpleNamespace(
+                status="failed",
+                error={"type": "RuntimeError", "message": "asset hydration failed"},
+            )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Composite duplicate rebuild failed: asset hydration failed",
+    ):
+        await CompositeDuplicateSyncService(Tasks()).refresh_and_wait()
+
+
+@pytest.mark.asyncio
 async def test_follow_up_handler_runs_only_after_delegate_success() -> None:
     events: list[str] = []
 
