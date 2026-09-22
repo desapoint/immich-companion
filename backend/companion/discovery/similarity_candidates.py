@@ -177,7 +177,11 @@ class BoundedSimilarityCandidateIndex:
         if maximum_neighbors_per_asset < 1:
             raise ValueError("maximum_neighbors_per_asset must be positive")
 
-        by_id = {feature.asset_id: feature for feature in (features or ())}
+        by_id: dict[UUID, SimilarityCandidateFeature] = {}
+        assets_received = 0
+        for feature in features or ():
+            assets_received += 1
+            by_id[feature.asset_id] = feature
         self.ordered_features = sorted(
             by_id.values(),
             key=lambda feature: feature.asset_id.int,
@@ -195,6 +199,8 @@ class BoundedSimilarityCandidateIndex:
         self._processed = 0
         self._active_index_assets = 0
         self._last_asset_id: UUID | None = None
+        if stats is not None:
+            stats.assets_received = assets_received
 
     @property
     def processed(self) -> int:
@@ -210,7 +216,10 @@ class BoundedSimilarityCandidateIndex:
         if count < 1:
             raise ValueError("count must be positive")
         stop = min(len(self.ordered_features), self._processed + count)
-        return self.process_batch(self.ordered_features[self._processed : stop])
+        return self._process_batch(
+            self.ordered_features[self._processed : stop],
+            count_received=False,
+        )
 
     def process_batch(
         self,
@@ -222,6 +231,14 @@ class BoundedSimilarityCandidateIndex:
             {feature.asset_id: feature for feature in features}.values(),
             key=lambda feature: feature.asset_id.int,
         )
+        return self._process_batch(ordered, count_received=True)
+
+    def _process_batch(
+        self,
+        ordered: list[SimilarityCandidateFeature],
+        *,
+        count_received: bool,
+    ) -> list[SimilarityCandidatePair]:
         emitted: list[SimilarityCandidatePair] = []
         for feature in ordered:
             if (
@@ -230,7 +247,7 @@ class BoundedSimilarityCandidateIndex:
             ):
                 raise ValueError("Candidate feature batches must be strictly increasing")
             self._last_asset_id = feature.asset_id
-            if self._stats is not None:
+            if self._stats is not None and count_received:
                 self._stats.assets_received += 1
             emitted.extend(self._process_feature(feature))
             self._processed += 1
