@@ -147,7 +147,11 @@ class FakeAssets:
     async def get_immich_assets(self, asset_ids: list[UUID]) -> dict[UUID, ImmichAsset]:
         self.requested = asset_ids
         self.calls.append(asset_ids)
-        return {asset_id: self.values[asset_id] for asset_id in asset_ids if asset_id in self.values}
+        return {
+            asset_id: self.values[asset_id]
+            for asset_id in asset_ids
+            if asset_id in self.values
+        }
 
 
 @pytest.mark.asyncio
