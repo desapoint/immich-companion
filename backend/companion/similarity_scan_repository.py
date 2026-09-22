@@ -318,7 +318,7 @@ class SimilarityScanRepository:
             match_count=record.match_count,
             result_limit_reached=record.result_limit_reached,
             completed_at=record.completed_at,
-            pair_evidence_pruned_at=record.pair_evidence_pruned_at,
+            pair_evidence_pruned_at=getattr(record, "pair_evidence_pruned_at", None),
         )
 
     async def latest_completed_parameters(
@@ -359,7 +359,7 @@ class SimilarityScanRepository:
             if (
                 record is None
                 or record.status != "completed"
-                or record.pair_evidence_pruned_at is not None
+                or getattr(record, "pair_evidence_pruned_at", None) is not None
             ):
                 return
 
@@ -438,7 +438,7 @@ class SimilarityScanRepository:
                 if (
                     record is None
                     or record.status != "completed"
-                    or record.pair_evidence_pruned_at is not None
+                    or getattr(record, "pair_evidence_pruned_at", None) is not None
                 ):
                     continue
                 await session.execute(
@@ -514,7 +514,7 @@ class SimilarityScanRepository:
             if (
                 record is None
                 or record.status != "completed"
-                or record.pair_evidence_pruned_at is not None
+                or getattr(record, "pair_evidence_pruned_at", None) is not None
             ):
                 return {}
             pair_statement = (
@@ -571,7 +571,7 @@ class SimilarityScanRepository:
             match_count=record.match_count,
             result_limit_reached=record.result_limit_reached,
             completed_at=record.completed_at,
-            pair_evidence_pruned_at=record.pair_evidence_pruned_at,
+            pair_evidence_pruned_at=getattr(record, "pair_evidence_pruned_at", None),
         )
 
     async def latest_completed(self) -> SimilarityScanSnapshot | None:
@@ -591,7 +591,7 @@ class SimilarityScanRepository:
             if (
                 record is None
                 or record.completed_at is None
-                or record.pair_evidence_pruned_at is not None
+                or getattr(record, "pair_evidence_pruned_at", None) is not None
             ):
                 return None
             pair_statement = (
