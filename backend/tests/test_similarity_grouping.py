@@ -5,6 +5,7 @@ from uuid import UUID
 
 from companion.similarity_grouping import (
     SimilarityGroupingEdge,
+    SimilarityGroupValidator,
     cohesive_similarity_groups,
     validated_similarity_groups,
 )
@@ -121,6 +122,31 @@ def test_reference_linked_and_strict_validation_retain_admission_evidence() -> N
     )
     assert rebuilt[0].anchor_asset_id == D
     assert rebuilt[0].asset_ids == (C, D)
+
+
+def test_incremental_validator_matches_one_shot_validation() -> None:
+    edges = (
+        edge(A, B, 98),
+        edge(A, C, 94),
+        edge(B, C, 93),
+        edge(C, D, 96),
+    )
+    validator = SimilarityGroupValidator(
+        mode="linked",
+        threshold=92,
+        preferred_anchor_asset_id=A,
+        max_link_depth=2,
+    )
+    validator.add_edges(edges[:2])
+    validator.add_edges(edges[2:])
+
+    assert validator.groups() == validated_similarity_groups(
+        edges,
+        mode="linked",
+        threshold=92,
+        preferred_anchor_asset_id=A,
+        max_link_depth=2,
+    )
 
 
 def test_validation_is_deterministic_across_edge_order() -> None:
