@@ -44,6 +44,7 @@ __all__ = ["ASPECT_RATIO_RELATIVE_TOLERANCE", "AssetRepository", "similarity_ups
 
 
 ASPECT_RATIO_RELATIVE_TOLERANCE = 0.001
+ASSET_HYDRATION_BATCH_SIZE = 1_000
 
 
 class AssetRepository(AssetSearchMixin, AssetSelectionMixin, AssetCatalogRelationMixin):
@@ -84,21 +85,25 @@ class AssetRepository(AssetSearchMixin, AssetSelectionMixin, AssetCatalogRelatio
         )
 
     async def get_immich_assets(self, asset_ids: list[UUID]) -> dict[UUID, ImmichAsset]:
-        """Load active synchronized assets without calling Immich per member."""
+        """Load active synchronized assets without issuing one unbounded IN query."""
 
         if not asset_ids:
             return {}
+        unique_ids = list(dict.fromkeys(asset_ids))
+        records: list[AssetRecord] = []
         async with self._database.sessions() as session:
-            records = list(
-                (
-                    await session.scalars(
-                        select(AssetRecord).where(
-                            AssetRecord.id.in_(set(asset_ids)),
-                            AssetRecord.is_trashed.is_(False),
+            for offset in range(0, len(unique_ids), ASSET_HYDRATION_BATCH_SIZE):
+                batch = unique_ids[offset : offset + ASSET_HYDRATION_BATCH_SIZE]
+                records.extend(
+                    (
+                        await session.scalars(
+                            select(AssetRecord).where(
+                                AssetRecord.id.in_(batch),
+                                AssetRecord.is_trashed.is_(False),
+                            )
                         )
-                    )
-                ).all()
-            )
+                    ).all()
+                )
         return {record.id: self._immich_asset(record) for record in records}
 
     @staticmethod
