@@ -137,8 +137,19 @@ def _group_result(
 
 
 def _strict_groups(scores: dict[tuple[UUID, UUID], float]) -> list[frozenset[UUID]]:
-    def cohesive(asset_ids: frozenset[UUID]) -> bool:
-        return all(_pair(left, right) in scores for left, right in combinations(asset_ids, 2))
+    def cohesive_extension(
+        current: frozenset[UUID],
+        proposed: frozenset[UUID],
+    ) -> bool:
+        # Existing groups are already cohesive. Only relationships involving newly
+        # proposed members need to be checked, avoiding repeated O(group²) rescans.
+        added = proposed - current
+        return all(
+            _pair(asset_id, member_id) in scores
+            for asset_id in added
+            for member_id in proposed
+            if member_id != asset_id
+        )
 
     groups: list[frozenset[UUID]] = []
     memberships: dict[UUID, set[int]] = {}
@@ -147,8 +158,9 @@ def _strict_groups(scores: dict[tuple[UUID, UUID], float]) -> list[frozenset[UUI
     ):
         candidates: list[tuple[int, frozenset[UUID]]] = []
         for index in memberships.get(left, set()) | memberships.get(right, set()):
-            proposed = groups[index] | {left, right}
-            if cohesive(proposed):
+            current = groups[index]
+            proposed = current | {left, right}
+            if cohesive_extension(current, proposed):
                 candidates.append((index, proposed))
         if candidates:
             index, proposed = min(
