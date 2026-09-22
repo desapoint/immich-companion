@@ -416,6 +416,8 @@ class SimilarityScanSummary(BaseModel):
     asset_count: int
     candidate_count: int
     match_count: int
+    maximum_matches: int = Field(default=5000, ge=1, le=50_000)
+    result_limit_reached: bool | None = None
     completed_at: datetime
 
 
