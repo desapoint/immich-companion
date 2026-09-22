@@ -81,6 +81,7 @@ class SimilarityScanRunSummary:
     asset_count: int
     candidate_count: int
     match_count: int
+    result_limit_reached: bool | None
     completed_at: datetime
 
 
@@ -181,6 +182,7 @@ class SimilarityScanRepository:
         asset_count: int,
         candidate_count: int,
         pairs: list[SimilarityScanPair],
+        result_limit_reached: bool = False,
         evidence_epoch: int | None = None,
     ) -> None:
         normalized = normalize_scan_pairs(pairs)
@@ -233,6 +235,7 @@ class SimilarityScanRepository:
             record.asset_count = asset_count
             record.candidate_count = candidate_count
             record.match_count = len(normalized)
+            record.result_limit_reached = result_limit_reached
             record.completed_at = completed_at
             record.error = None
 
@@ -299,6 +302,7 @@ class SimilarityScanRepository:
             asset_count=record.asset_count,
             candidate_count=record.candidate_count,
             match_count=record.match_count,
+            result_limit_reached=record.result_limit_reached,
             completed_at=record.completed_at,
         )
 
