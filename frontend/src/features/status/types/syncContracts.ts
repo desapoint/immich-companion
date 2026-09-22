@@ -95,6 +95,12 @@ export interface TaskRepository {
     onRecovered?: () => void;
     onError?: (error: Error) => void;
   }): TaskSubscription;
+  subscribeTask?(taskId: string, handlers: {
+    onTask: (task: TaskRecord) => void;
+    onConnectionState: (state: TaskConnectionState) => void;
+    onRecovered?: () => void;
+    onError?: (error: Error) => void;
+  }): TaskSubscription;
 }
 
 export interface SyncDataRepository {

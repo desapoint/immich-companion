@@ -516,6 +516,39 @@ describe('live V2 duplicate repository', () => {
     });
   });
 
+  it('reattaches to the existing resolution task when execute reports a conflict', async () => {
+    const taskRepository = {
+      list: vi.fn(async () => [{
+        id: 'task-1',
+        taskType: 'duplicate_resolution',
+        status: 'running',
+        payload: { plan_id: 'plan-1' },
+      }]),
+      get: vi.fn(async () => ({
+        status: 'completed',
+        result: { summary: { failed_group_ids: [] } },
+      })),
+    } as unknown as TaskRepository;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith('/cross-source/execute')) {
+        return response({ detail: 'Duplicate resolution plan has already been used' }, 409);
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(taskRepository);
+
+    const result = await repository.executePlan({
+      id: 'plan-1',
+      resolution: { decisions: {}, stacks: [] },
+      groupIds: [],
+    });
+
+    expect(result).toEqual({ affectedIds: [], failed: [] });
+    expect(taskRepository.list).toHaveBeenCalledWith('duplicate_resolution', 20);
+    expect(taskRepository.get).toHaveBeenCalledWith('task-1');
+  });
+
   it('rejects incomplete groups before creating an action plan', async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL) => String(input).endsWith('/workspace') ? response(emptyWorkspace) : response(asPage(duplicateResult)));
     vi.stubGlobal('fetch', fetcher);

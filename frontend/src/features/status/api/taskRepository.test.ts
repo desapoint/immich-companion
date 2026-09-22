@@ -57,6 +57,35 @@ describe('V2 TaskRepository live stream', () => {
     expect(FakeWebSocket.instances[0].closed).toBe(true);
   });
 
+  it('opens a dedicated WebSocket for one task and publishes its snapshots', () => {
+    const tasks = vi.fn();
+    const states: string[] = [];
+    const repository = createTaskRepository();
+    const subscription = repository.subscribeTask?.('task-1', {
+      onTask: tasks,
+      onConnectionState: (state) => states.push(state),
+    });
+
+    expect(subscription).toBeDefined();
+    expect(FakeWebSocket.instances).toHaveLength(1);
+    expect(FakeWebSocket.instances[0].url).toBe('ws://localhost/api/tasks/task-1/stream');
+    expect(states).toEqual(['connecting']);
+
+    FakeWebSocket.instances[0].open();
+    FakeWebSocket.instances[0].message({ id: 'task-1', task_type: 'duplicate_resolution', status: 'running' });
+
+    expect(states).toEqual(['connecting', 'connected']);
+    expect(tasks).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'task-1',
+      taskType: 'duplicate_resolution',
+      status: 'running',
+    }));
+
+    subscription?.close();
+    expect(FakeWebSocket.instances[0].closed).toBe(true);
+    expect(states.at(-1)).toBe('disconnected');
+  });
+
   it('uses bounded backoff and publishes recovery after reconnect', () => {
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0.5);

@@ -153,6 +153,64 @@ export function createTaskRepository(): TaskRepository {
     });
   };
 
+  const subscribeTask = (taskId: string, handlers: TaskHandlers): TaskSubscription => {
+    let taskSocket: JsonSocketSubscription | null = null;
+    let taskReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let taskReconnectAttempt = 0;
+    let taskHasConnected = false;
+    let closed = false;
+
+    const connectTask = (reconnecting = false): void => {
+      if (closed || taskSocket) return;
+      handlers.onConnectionState(reconnecting ? 'reconnecting' : 'connecting');
+      taskSocket = openJsonSocket<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/stream`, {
+        onopen: () => {
+          const recovered = taskHasConnected;
+          taskReconnectAttempt = 0;
+          taskHasConnected = true;
+          handlers.onConnectionState('connected');
+          if (recovered) handlers.onRecovered?.();
+        },
+        onmessage: (value) => {
+          if (!isApiTask(value)) {
+            handlers.onError?.(new Error('The task stream sent an invalid task update.'));
+            return;
+          }
+          if (value.id !== taskId) {
+            handlers.onError?.(new Error('The task stream sent an update for a different task.'));
+            return;
+          }
+          handlers.onTask(normalizeTask(value));
+        },
+        oninvalid: (error) => handlers.onError?.(error),
+        onclose: () => {
+          taskSocket = null;
+          if (closed) return;
+          handlers.onConnectionState('reconnecting');
+          const delay = taskReconnectDelayMs(taskReconnectAttempt++);
+          taskReconnectTimer = setTimeout(() => {
+            taskReconnectTimer = null;
+            connectTask(true);
+          }, delay);
+        },
+      });
+    };
+
+    connectTask();
+
+    return {
+      close() {
+        if (closed) return;
+        closed = true;
+        if (taskReconnectTimer) clearTimeout(taskReconnectTimer);
+        taskReconnectTimer = null;
+        taskSocket?.close();
+        taskSocket = null;
+        handlers.onConnectionState('disconnected');
+      },
+    };
+  };
+
   return {
     get: async (taskId, signal) => validatedTask(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}`, { signal })),
     pause: async (taskId) => validatedTask(await requestJson<unknown>(`/api/tasks/${encodeURIComponent(taskId)}/pause`, { method: 'POST' })),
@@ -168,6 +226,7 @@ export function createTaskRepository(): TaskRepository {
       if (!Array.isArray(values)) throw new Error('Active task list response did not match the expected task contract.');
       return values.map(validatedTask);
     },
+    subscribeTask,
     subscribe(handlers): TaskSubscription {
       let closed = false;
       subscribers.add(handlers);
