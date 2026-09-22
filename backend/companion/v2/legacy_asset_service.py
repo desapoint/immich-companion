@@ -1538,10 +1538,12 @@ class AssetSyncService:
             asset.model_copy(update={"exif_info": None, "people": [], "tags": [], "stack": None})
             for asset in batch
         ]
+        # Full and incremental syncs both keep per-image Appearance evidence warm.
+        # Candidate allocation and pair scoring remain explicit discovery work.
         created, updated, unchanged = await self._assets.upsert_asset_batch(
             lightweight_batch,
             run.generation,
-            track_similarity_changes=run.mode == "incremental",
+            track_similarity_changes=True,
         )
         counters["assets_seen"] += created + updated + unchanged
         counters["assets_created"] += created
