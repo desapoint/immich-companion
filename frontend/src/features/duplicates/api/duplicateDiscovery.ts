@@ -28,6 +28,8 @@ export function discoveryProgress(
     ? null
     : Math.min(rangeEnd, rangeStart + (rangeEnd - rangeStart) * rawPercent / 100);
   const matches = numericProgress(task.counters.matches_retained);
+  const retainedLimit = similarity ? numericProgress(task.payload.maximum_matches) : null;
+  const retentionLimitReached = similarity && task.counters.result_limit_reached === 1;
   const queuedDetail = similarity
     ? 'Queued behind active asset-integrity work; the similarity phase will start automatically.'
     : 'Queued behind active asset-integrity work; exact duplicate analysis will start automatically.';
@@ -37,9 +39,14 @@ export function discoveryProgress(
   const fallbackPhase = task.status === 'queued'
     ? (similarity ? 'Waiting for similarity scan' : 'Waiting for exact analysis')
     : (similarity ? 'Preparing similarity scan' : 'Preparing exact matches');
+  const retentionDetail = matches === null
+    ? ''
+    : retainedLimit === null
+      ? `${matches.toLocaleString()} matches retained`
+      : `${matches.toLocaleString()} / ${retainedLimit.toLocaleString()} matches retained${retentionLimitReached ? ' · RETENTION LIMIT REACHED' : ''}`;
   return {
     label: `Duplicate discovery · ${phases[rawPhase] ?? fallbackPhase}`,
-    detail: matches === null ? detail : `${detail} · ${matches.toLocaleString()} matches retained`,
+    detail: retentionDetail ? `${detail} · ${retentionDetail}` : detail,
     completed: numericProgress(task.progress.completed) ?? 0,
     total: numericProgress(task.progress.total),
     percent: overallPercent,
