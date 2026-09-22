@@ -116,6 +116,7 @@
   function pairStatus(pair: SimilarityDebugPair | undefined): string {
     if (!pair?.evidence_available) return 'No evidence';
     if (pair.would_pass_pair_pipeline) return 'Pass';
+    if (pair.exclusion_reason === 'invalid_candidate_feature') return 'Invalid feature';
     if (pair.exclusion_reason === 'perceptual_distance') return 'pHash gate';
     if (pair.exclusion_reason === 'aspect_ratio') return 'Aspect gate';
     if (pair.exclusion_reason === 'similarity_threshold') return 'Score gate';
