@@ -134,12 +134,21 @@ export class DuplicateDiscoveryController {
           outcome: (result) => {
             const retained = result.retainedMatchCount;
             const limit = result.retainedMatchLimit;
+            const retentionState = result.retentionLimitReached === true
+              ? 'retention limit reached'
+              : result.retentionLimitReached === false
+                ? 'retention limit not reached'
+                : 'retention limit status unavailable';
             const retention = retained === null || limit === null
               ? ''
-              : ` · ${retained.toLocaleString()} / ${limit.toLocaleString()} matches retained · ${result.retentionLimitReached ? 'retention limit reached' : 'retention limit not reached'}`;
+              : ` · ${retained.toLocaleString()} / ${limit.toLocaleString()} matches retained · ${retentionState}`;
             return {
-              tone: result.retentionLimitReached ? 'warn' : 'ok',
-              title: result.retentionLimitReached ? 'Discovery completed · retention limit reached' : 'Discovery completed',
+              tone: result.retentionLimitReached === true ? 'warn' : result.retentionLimitReached === null ? 'warn' : 'ok',
+              title: result.retentionLimitReached === true
+                ? 'Discovery completed · retention limit reached'
+                : result.retentionLimitReached === null
+                  ? 'Discovery completed · retention status unavailable'
+                  : 'Discovery completed',
               detail: `${result.groupCount} groups · ${result.candidateCount} candidates${retention}`,
               failures: [],
             };
