@@ -307,8 +307,11 @@ def create_app(
     )
     source_duplicate_discovery = (
         CompositeGroupDiscoveryProvider(
-            exact_duplicate_discovery,
+            # Similarity can carry tens of thousands of retained relationships, so keep
+            # it in the streaming slot and retain the typically smaller Immich snapshot
+            # only for exact-member-set coalescing.
             SimilarityDuplicateProvider(similarity_scan_repository, asset_repository),
+            exact_duplicate_discovery,
         )
         if similarity_scan_repository is not None
         and asset_repository is not None
