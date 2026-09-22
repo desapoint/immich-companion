@@ -9,6 +9,7 @@ type ApiDuplicateDiscoverySettings = {
   validation_mode: SimilarityValidationMode;
   max_link_depth?: number;
   max_candidates: number;
+  maximum_matches?: number;
 };
 
 export type DuplicateDiscoverySettings = {
@@ -19,6 +20,7 @@ export type DuplicateDiscoverySettings = {
   validationMode: SimilarityValidationMode;
   maxLinkDepth: number;
   maxCandidates: number;
+  maximumMatches: number;
 };
 
 function normalize(value: ApiDuplicateDiscoverySettings): DuplicateDiscoverySettings {
@@ -30,6 +32,7 @@ function normalize(value: ApiDuplicateDiscoverySettings): DuplicateDiscoverySett
     validationMode: value.validation_mode,
     maxLinkDepth: value.max_link_depth ?? 2,
     maxCandidates: value.max_candidates,
+    maximumMatches: value.maximum_matches ?? 5000,
   };
 }
 
@@ -42,6 +45,7 @@ function payload(value: DuplicateDiscoverySettings): ApiDuplicateDiscoverySettin
     validation_mode: value.validationMode,
     max_link_depth: value.maxLinkDepth,
     max_candidates: value.maxCandidates,
+    maximum_matches: value.maximumMatches,
   };
 }
 
