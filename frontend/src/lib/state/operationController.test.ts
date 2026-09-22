@@ -99,4 +99,32 @@ describe('OperationController', () => {
     expect(operation.error).toContain('old failure');
     expect(operation.busy).toBe(false);
   });
+
+  it('notifies an error handler when the operation fails before reconciliation', async () => {
+    const onError = vi.fn();
+    const operation = new OperationController(onError);
+
+    expect(await operation.run('Save', async () => {
+      throw new Error('A stack needs at least two surviving members');
+    }, { pending, outcome })).toBeNull();
+
+    expect(operation.error).toBe('A stack needs at least two surviving members');
+    expect(onError).toHaveBeenCalledWith('A stack needs at least two surviving members');
+  });
+
+  it('notifies an error handler when reconciliation fails', async () => {
+    const onError = vi.fn();
+    const operation = new OperationController(onError);
+    await operation.run('Save', async () => ({ id: 'x' }), {
+      pending,
+      outcome,
+      reconcile: async () => { throw new Error('refresh failed'); },
+      reconcileError: 'Save was applied, but latest state could not be loaded.',
+    });
+    await operation.waitForReconciliation();
+
+    expect(onError).toHaveBeenCalledWith(
+      'Save was applied, but latest state could not be loaded. refresh failed',
+    );
+  });
 });
