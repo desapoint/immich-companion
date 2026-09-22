@@ -23,6 +23,7 @@ def test_duplicate_discovery_settings_defaults_match_v2_discovery_defaults() -> 
     assert settings.validation_mode == "strict"
     assert settings.max_link_depth == 2
     assert settings.max_candidates == 8
+    assert settings.maximum_matches == 5000
 
 
 def test_every_discovery_setting_is_explicitly_classified_for_generation_impact() -> None:
@@ -47,6 +48,8 @@ def test_every_discovery_setting_is_explicitly_classified_for_generation_impact(
         ("max_link_depth", 65),
         ("max_candidates", 0),
         ("max_candidates", 65),
+        ("maximum_matches", 0),
+        ("maximum_matches", 50_001),
     ],
 )
 def test_duplicate_discovery_settings_reject_invalid_values(field: str, value: object) -> None:
@@ -100,6 +103,7 @@ def _record(**overrides):
         ("validation_mode", "linked"),
         ("max_link_depth", 4),
         ("max_candidates", 12),
+        ("maximum_matches", 12_000),
     ],
 )
 async def test_membership_affecting_setting_change_only_persists_configuration(
