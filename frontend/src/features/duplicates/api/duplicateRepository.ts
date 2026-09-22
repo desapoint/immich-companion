@@ -283,8 +283,23 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
       return { id: plan.id, resolution, groupIds: groups.map((group) => group.group_id), destructive: plan.destructive };
     },
     async executePlan(plan: DuplicatePreparedPlan) {
-      const started = await requestJson<TaskStart>('/api/assets/duplicates/cross-source/execute', jsonRequest('POST', { plan_id: plan.id }));
-      const completed = await waitForTask(tasks, started.task_id);
+      let taskId: string;
+      try {
+        const started = await requestJson<TaskStart>('/api/assets/duplicates/cross-source/execute', jsonRequest('POST', { plan_id: plan.id }));
+        taskId = started.task_id;
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.kind !== 'conflict') throw error;
+        let existing: TaskRecord | undefined;
+        try {
+          existing = (await tasks.list('duplicate_resolution', 20))
+            .find((task) => task.payload.plan_id === plan.id);
+        } catch {
+          throw error;
+        }
+        if (!existing) throw error;
+        taskId = existing.id;
+      }
+      const completed = await waitForTask(tasks, taskId);
       const summary = completed.result?.summary as Record<string, unknown> | undefined;
       const rawFailed = summary?.failed_group_ids;
       const failed = Array.isArray(rawFailed) ? rawFailed.filter((id: unknown): id is string => typeof id === 'string') : [];
