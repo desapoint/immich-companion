@@ -340,6 +340,43 @@ async def test_similarity_provider_hydrates_validated_groups_in_batches() -> Non
 
 
 @pytest.mark.asyncio
+async def test_similarity_provider_bounds_asset_hydration_by_unique_member_budget(
+    monkeypatch,
+) -> None:
+    import companion.discovery.similarity_duplicates as similarity_duplicates
+
+    monkeypatch.setattr(
+        similarity_duplicates,
+        "SIMILARITY_GROUP_HYDRATION_ASSET_BUDGET",
+        2,
+    )
+    current = snapshot(
+        SCAN_ONE,
+        (
+            scan_pair(LOW, HIGH, 99),
+            scan_pair(THIRD, FOURTH, 98),
+        ),
+    )
+    assets = FakeAssets(
+        {
+            LOW: asset(LOW),
+            HIGH: asset(HIGH),
+            THIRD: asset(THIRD),
+            FOURTH: asset(FOURTH),
+        }
+    )
+    provider = SimilarityDuplicateProvider(FakeScans(current), assets)
+
+    batches = [
+        batch
+        async for batch in provider.discover_batches(batch_size=10)
+    ]
+
+    assert len(batches) == 2
+    assert assets.calls == [[LOW, HIGH], [THIRD, FOURTH]]
+
+
+@pytest.mark.asyncio
 async def test_similarity_provider_places_explicit_revalidation_anchor_first() -> None:
     current = snapshot(
         SCAN_ONE,
