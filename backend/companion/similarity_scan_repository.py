@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import delete, func, insert, or_, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
 from companion.similarity_generation import SimilarityEvidenceEpochRepository
 from companion.similarity_grouping import (
     SIMILARITY_GROUPING_VERSION,
+    SimilarityGroupingEdge,
     SimilarityValidationMode,
 )
 from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, PairSimilarityEvidence
 from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
+
+SIMILARITY_SCAN_WRITE_BATCH_SIZE = 1_000
+SIMILARITY_SCAN_READ_BATCH_SIZE = 1_000
+SIMILARITY_SCAN_PAIR_RETENTION_GENERATIONS = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +89,33 @@ class SimilarityScanRunSummary:
     match_count: int
     result_limit_reached: bool | None
     completed_at: datetime
+    pair_evidence_pruned_at: datetime | None = None
+
+
+def _pair_values(scan_id: UUID, pairs: list[SimilarityScanPair]) -> list[dict[str, object]]:
+    return [
+        {
+            "scan_id": scan_id,
+            "asset_id_low": pair.asset_id_low,
+            "asset_id_high": pair.asset_id_high,
+            "asset_low_source_sha256": pair.asset_low_source_sha256,
+            "asset_high_source_sha256": pair.asset_high_source_sha256,
+            "similarity_percent": pair.evidence.similarity_percent,
+            "structural_percent": pair.evidence.structural_percent,
+            "perceptual_percent": pair.evidence.perceptual_percent,
+            "color_percent": pair.evidence.color_percent,
+            "normalized_luminance_mae": pair.evidence.normalized_luminance_mae,
+            "normalized_luminance_rmse": pair.evidence.normalized_luminance_rmse,
+            "normalized_luminance_ssim": pair.evidence.normalized_luminance_ssim,
+            "aspect_ratio_difference": pair.evidence.aspect_ratio_difference,
+            "dimensions_equal": pair.evidence.dimensions_equal,
+            "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
+            "exact_pixel_match": pair.evidence.exact_pixel_match,
+            "detail_changed_percent": pair.evidence.detail_changed_percent,
+            "detail_source": pair.evidence.detail_source,
+        }
+        for pair in pairs
+    ]
 
 
 def normalize_scan_pairs(pairs: list[SimilarityScanPair]) -> list[SimilarityScanPair]:
@@ -194,29 +227,6 @@ class SimilarityScanRepository:
             else await self.current_evidence_epoch()
         )
         completed_at = datetime.now(UTC)
-        values = [
-            {
-                "scan_id": scan_id,
-                "asset_id_low": pair.asset_id_low,
-                "asset_id_high": pair.asset_id_high,
-                "asset_low_source_sha256": pair.asset_low_source_sha256,
-                "asset_high_source_sha256": pair.asset_high_source_sha256,
-                "similarity_percent": pair.evidence.similarity_percent,
-                "structural_percent": pair.evidence.structural_percent,
-                "perceptual_percent": pair.evidence.perceptual_percent,
-                "color_percent": pair.evidence.color_percent,
-                "normalized_luminance_mae": pair.evidence.normalized_luminance_mae,
-                "normalized_luminance_rmse": pair.evidence.normalized_luminance_rmse,
-                "normalized_luminance_ssim": pair.evidence.normalized_luminance_ssim,
-                "aspect_ratio_difference": pair.evidence.aspect_ratio_difference,
-                "dimensions_equal": pair.evidence.dimensions_equal,
-                "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
-                "exact_pixel_match": pair.evidence.exact_pixel_match,
-                "detail_changed_percent": pair.evidence.detail_changed_percent,
-                "detail_source": pair.evidence.detail_source,
-            }
-            for pair in normalized
-        ]
         async with self._database.sessions() as session, session.begin():
             await self._evidence_epoch.assert_current(session, expected_epoch)
             record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
@@ -229,8 +239,12 @@ class SimilarityScanRepository:
                 for pair in normalized
             ):
                 raise ValueError("Similarity pair evidence versions do not match the scan")
-            if values:
-                await session.execute(insert(SimilarityScanPairRecord), values)
+            for offset in range(0, len(normalized), SIMILARITY_SCAN_WRITE_BATCH_SIZE):
+                batch = normalized[offset : offset + SIMILARITY_SCAN_WRITE_BATCH_SIZE]
+                await session.execute(
+                    insert(SimilarityScanPairRecord),
+                    _pair_values(scan_id, batch),
+                )
             record.status = "completed"
             record.asset_count = asset_count
             record.candidate_count = candidate_count
@@ -304,6 +318,7 @@ class SimilarityScanRepository:
             match_count=record.match_count,
             result_limit_reached=record.result_limit_reached,
             completed_at=record.completed_at,
+            pair_evidence_pruned_at=record.pair_evidence_pruned_at,
         )
 
     async def latest_completed_parameters(
@@ -328,6 +343,113 @@ class SimilarityScanRepository:
             return None
         return record.id, self._parameters(record)
 
+    async def iter_grouping_edges(
+        self,
+        scan_id: UUID,
+        *,
+        batch_size: int = SIMILARITY_SCAN_READ_BATCH_SIZE,
+    ) -> AsyncIterator[list[SimilarityGroupingEdge]]:
+        """Stream only the compact fields required to rebuild similarity groups."""
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+
+        async with self._database.sessions() as session:
+            record = await session.get(SimilarityScanRecord, scan_id)
+            if (
+                record is None
+                or record.status != "completed"
+                or record.pair_evidence_pruned_at is not None
+            ):
+                return
+
+        last_low: UUID | None = None
+        last_high: UUID | None = None
+        while True:
+            filters = [SimilarityScanPairRecord.scan_id == scan_id]
+            if last_low is not None and last_high is not None:
+                filters.append(
+                    or_(
+                        SimilarityScanPairRecord.asset_id_low > last_low,
+                        and_(
+                            SimilarityScanPairRecord.asset_id_low == last_low,
+                            SimilarityScanPairRecord.asset_id_high > last_high,
+                        ),
+                    )
+                )
+            statement = (
+                select(
+                    SimilarityScanPairRecord.asset_id_low,
+                    SimilarityScanPairRecord.asset_id_high,
+                    SimilarityScanPairRecord.similarity_percent,
+                )
+                .where(*filters)
+                .order_by(
+                    SimilarityScanPairRecord.asset_id_low,
+                    SimilarityScanPairRecord.asset_id_high,
+                )
+                .limit(batch_size)
+            )
+            async with self._database.sessions() as session:
+                rows = list((await session.execute(statement)).all())
+            if not rows:
+                return
+            yield [
+                SimilarityGroupingEdge(
+                    asset_id_low=row.asset_id_low,
+                    asset_id_high=row.asset_id_high,
+                    similarity_percent=row.similarity_percent,
+                )
+                for row in rows
+            ]
+            last_low = rows[-1].asset_id_low
+            last_high = rows[-1].asset_id_high
+
+    async def prune_completed_pair_evidence(
+        self,
+        *,
+        keep_completed_generations: int = SIMILARITY_SCAN_PAIR_RETENTION_GENERATIONS,
+    ) -> int:
+        """Prune heavy pair payloads while preserving immutable scan metadata rows."""
+
+        if keep_completed_generations < 1:
+            raise ValueError("keep_completed_generations must be positive")
+
+        statement = (
+            select(SimilarityScanRecord.id)
+            .where(SimilarityScanRecord.status == "completed")
+            .order_by(
+                SimilarityScanRecord.completed_at.desc(),
+                SimilarityScanRecord.id.desc(),
+            )
+        )
+        async with self._database.sessions() as session:
+            completed_ids = list((await session.scalars(statement)).all())
+
+        pruned = 0
+        pruned_at = datetime.now(UTC)
+        for old_scan_id in completed_ids[keep_completed_generations:]:
+            async with self._database.sessions() as session, session.begin():
+                record = await session.get(
+                    SimilarityScanRecord,
+                    old_scan_id,
+                    with_for_update=True,
+                )
+                if (
+                    record is None
+                    or record.status != "completed"
+                    or record.pair_evidence_pruned_at is not None
+                ):
+                    continue
+                await session.execute(
+                    delete(SimilarityScanPairRecord).where(
+                        SimilarityScanPairRecord.scan_id == old_scan_id
+                    )
+                )
+                record.pair_evidence_pruned_at = pruned_at
+                pruned += 1
+        return pruned
+
     async def replace_asset_pairs(
         self,
         scan_id: UUID,
@@ -340,29 +462,6 @@ class SimilarityScanRepository:
 
         expected_epoch = await self.current_evidence_epoch()
         normalized = normalize_scan_pairs(pairs)
-        values = [
-            {
-                "scan_id": scan_id,
-                "asset_id_low": pair.asset_id_low,
-                "asset_id_high": pair.asset_id_high,
-                "asset_low_source_sha256": pair.asset_low_source_sha256,
-                "asset_high_source_sha256": pair.asset_high_source_sha256,
-                "similarity_percent": pair.evidence.similarity_percent,
-                "structural_percent": pair.evidence.structural_percent,
-                "perceptual_percent": pair.evidence.perceptual_percent,
-                "color_percent": pair.evidence.color_percent,
-                "normalized_luminance_mae": pair.evidence.normalized_luminance_mae,
-                "normalized_luminance_rmse": pair.evidence.normalized_luminance_rmse,
-                "normalized_luminance_ssim": pair.evidence.normalized_luminance_ssim,
-                "aspect_ratio_difference": pair.evidence.aspect_ratio_difference,
-                "dimensions_equal": pair.evidence.dimensions_equal,
-                "exact_thumbnail_match": pair.evidence.exact_thumbnail_match,
-                "exact_pixel_match": pair.evidence.exact_pixel_match,
-                "detail_changed_percent": pair.evidence.detail_changed_percent,
-                "detail_source": pair.evidence.detail_source,
-            }
-            for pair in normalized
-        ]
         async with self._database.sessions() as session, session.begin():
             await self._evidence_epoch.assert_current(session, expected_epoch)
             record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
@@ -377,8 +476,12 @@ class SimilarityScanRepository:
                     ),
                 )
             )
-            if values:
-                await session.execute(insert(SimilarityScanPairRecord), values)
+            for offset in range(0, len(normalized), SIMILARITY_SCAN_WRITE_BATCH_SIZE):
+                batch = normalized[offset : offset + SIMILARITY_SCAN_WRITE_BATCH_SIZE]
+                await session.execute(
+                    insert(SimilarityScanPairRecord),
+                    _pair_values(scan_id, batch),
+                )
             match_count = await session.scalar(
                 select(func.count())
                 .select_from(SimilarityScanPairRecord)
