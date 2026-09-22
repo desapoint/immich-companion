@@ -4,6 +4,7 @@ export type DuplicateAutomationConditionScope = 'group' | 'member' | 'any_member
 export type DuplicateAutomationLogic = 'all' | 'any';
 export type DuplicateAutomationTarget = 'matching_members' | 'remaining_members' | 'whole_group';
 export type DuplicateAutomationAction = 'keep' | 'delete' | 'stack' | 'resolve_keeper' | 'leave_undecided' | 'manual_review';
+export type DuplicateAutomationBranchAction = DuplicateAutomationAction | 'none';
 export type DuplicateAutomationFlow = 'continue' | 'stop_affected' | 'stop_group';
 export type DuplicateAutomationGroupField =
   | 'classification' | 'review_state' | 'member_count' | 'group_similarity' | 'discovery_source'
@@ -24,6 +25,7 @@ export type DuplicateAutomationUiRule = {
   conditions: DuplicateAutomationUiCondition[];
   target: DuplicateAutomationTarget;
   action: DuplicateAutomationAction;
+  nonMatchAction?: DuplicateAutomationBranchAction;
   flow: DuplicateAutomationFlow;
 };
 export type DuplicateAutomationExistingDecision = {

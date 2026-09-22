@@ -80,13 +80,13 @@ export function newAutomationCondition(id: number, scope: DuplicateAutomationCon
   return { id, scope, field, operator, value, count: 1 };
 }
 export function newAutomationRule(id: number, conditionId: number): DuplicateAutomationUiRule {
-  return { id, logic: 'all', conditions: [newAutomationCondition(conditionId)], target: 'matching_members', action: 'keep', flow: 'stop_group' };
+  return { id, logic: 'all', conditions: [newAutomationCondition(conditionId)], target: 'matching_members', action: 'keep', nonMatchAction: 'none', flow: 'stop_group' };
 }
 export const automationPresetNames = ['Protect uploads for review', 'Resolve exact copies', 'Keep groups below 98%', 'Protect favorites for review'] as const;
 export type AutomationPresetName = typeof automationPresetNames[number];
 export function automationPreset(name: AutomationPresetName, nextRuleId: () => number, nextConditionId: () => number): DuplicateAutomationUiRule[] {
   const condition = (scope: DuplicateAutomationConditionScope, field: DuplicateAutomationConditionField, operator: DuplicateKeeperRuleOperator, value = '') => newAutomationCondition(nextConditionId(), scope, field, operator, value);
-  const rule = (conditions: DuplicateAutomationUiCondition[], target: DuplicateAutomationTarget, action: DuplicateAutomationAction, flow: DuplicateAutomationFlow = 'stop_group'): DuplicateAutomationUiRule => ({ id: nextRuleId(), logic: 'all', conditions, target, action, flow });
+  const rule = (conditions: DuplicateAutomationUiCondition[], target: DuplicateAutomationTarget, action: DuplicateAutomationAction, flow: DuplicateAutomationFlow = 'stop_group'): DuplicateAutomationUiRule => ({ id: nextRuleId(), logic: 'all', conditions, target, action, nonMatchAction: 'none', flow });
   if (name === 'Resolve exact copies') return [rule([condition('group', 'classification', 'is', 'exact file, exact pixels')], 'whole_group', 'resolve_keeper')];
   if (name === 'Keep groups below 98%') return [rule([condition('group', 'group_similarity', 'lt', '98')], 'whole_group', 'keep')];
   if (name === 'Protect favorites for review') return [rule([condition('member', 'favorite', 'is_true')], 'matching_members', 'keep')];
