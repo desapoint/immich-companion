@@ -622,14 +622,14 @@ class SimilarityScanTaskHandler:
                         "phase": "reference_enrichment",
                         "scan_id": str(scan_id),
                         "feature_snapshot": snapshot_key,
-                        "candidate_assets_processed": len(ordered_features),
+                        "candidate_assets_processed": asset_count,
                         "pairs_scored": total,
                     },
                     counters=telemetry(
-                        assets_with_current_features=len(features),
+                        assets_with_current_features=asset_count,
                         candidate_pairs=total,
                         candidate_pair_limit=(
-                            len(features) * request.maximum_neighbors_per_asset // 2
+                            candidate_pair_limit
                         ),
                         pairs_scored=total,
                         matches_retained=len(matches),
@@ -651,15 +651,13 @@ class SimilarityScanTaskHandler:
                 )
                 await context.ensure_active()
                 enrichment_started = perf_counter()
-                enriched = await self._similarity.reference_edges(
+                reference_pairs_enriched = await self._enrich_reference_groups(
                     missing_reference_groups,
-                    feature_by_id,
-                    **_epoch_kwargs(self._similarity.reference_edges, evidence_epoch),
+                    evidence_epoch=evidence_epoch,
                 )
                 pair_scoring_milliseconds += round(
                     (perf_counter() - enrichment_started) * 1000
                 )
-                reference_pairs_enriched = len(enriched)
                 if reference_pairs_enriched != reference_pairs_required:
                     raise PermanentTaskError(
                         "Similarity reference enrichment did not produce every "
@@ -670,14 +668,14 @@ class SimilarityScanTaskHandler:
                         "phase": "reference_enrichment",
                         "scan_id": str(scan_id),
                         "feature_snapshot": snapshot_key,
-                        "candidate_assets_processed": len(ordered_features),
+                        "candidate_assets_processed": asset_count,
                         "pairs_scored": total,
                     },
                     counters=telemetry(
-                        assets_with_current_features=len(features),
+                        assets_with_current_features=asset_count,
                         candidate_pairs=total,
                         candidate_pair_limit=(
-                            len(features) * request.maximum_neighbors_per_asset // 2
+                            candidate_pair_limit
                         ),
                         pairs_scored=total,
                         matches_retained=len(matches),
@@ -702,14 +700,14 @@ class SimilarityScanTaskHandler:
                     "phase": "finalizing",
                     "scan_id": str(scan_id),
                     "feature_snapshot": snapshot_key,
-                    "candidate_assets_processed": len(ordered_features),
+                    "candidate_assets_processed": asset_count,
                     "pairs_scored": total,
                 },
                 counters=telemetry(
-                    assets_with_current_features=len(features),
+                    assets_with_current_features=asset_count,
                     candidate_pairs=total,
                     candidate_pair_limit=(
-                        len(features) * request.maximum_neighbors_per_asset // 2
+                        candidate_pair_limit
                     ),
                     pairs_scored=total,
                     matches_retained=len(matches),
@@ -729,7 +727,7 @@ class SimilarityScanTaskHandler:
             await context.ensure_active()
             await self._scans.complete(
                 scan_id,
-                asset_count=len(features),
+                asset_count=asset_count,
                 candidate_count=total,
                 pairs=matches,
                 result_limit_reached=result_limit_reached,
@@ -768,10 +766,10 @@ class SimilarityScanTaskHandler:
                 },
             },
             counters=telemetry(
-                assets_with_current_features=len(features),
+                assets_with_current_features=asset_count,
                 candidate_pairs=total,
                 candidate_pair_limit=(
-                    len(features) * request.maximum_neighbors_per_asset // 2
+                    candidate_pair_limit
                 ),
                 pairs_scored=total,
                 matches_retained=len(matches),
