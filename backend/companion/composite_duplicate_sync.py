@@ -320,7 +320,15 @@ class CompositeDuplicateSyncService:
         task_id = await self.start()
         completed = await self._tasks.wait(task_id)
         if completed.status != "completed":
-            raise RuntimeError("Composite duplicate rebuild did not complete")
+            error_message = None
+            if isinstance(completed.error, dict):
+                value = completed.error.get("message")
+                if isinstance(value, str) and value:
+                    error_message = value
+            detail = f": {error_message}" if error_message else ""
+            raise RuntimeError(
+                f"Composite duplicate rebuild {completed.status}{detail}"
+            )
         return completed
 
     async def start_after_source_change(self) -> object | None:
