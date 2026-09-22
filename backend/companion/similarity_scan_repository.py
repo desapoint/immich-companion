@@ -511,7 +511,11 @@ class SimilarityScanRepository:
             return {}
         async with self._database.sessions() as session:
             record = await session.get(SimilarityScanRecord, scan_id)
-            if record is None or record.status != "completed":
+            if (
+                record is None
+                or record.status != "completed"
+                or record.pair_evidence_pruned_at is not None
+            ):
                 return {}
             pair_statement = (
                 select(SimilarityScanPairRecord)
@@ -567,6 +571,7 @@ class SimilarityScanRepository:
             match_count=record.match_count,
             result_limit_reached=record.result_limit_reached,
             completed_at=record.completed_at,
+            pair_evidence_pruned_at=record.pair_evidence_pruned_at,
         )
 
     async def latest_completed(self) -> SimilarityScanSnapshot | None:
@@ -583,7 +588,11 @@ class SimilarityScanRepository:
         )
         async with self._database.sessions() as session:
             record = await session.scalar(statement)
-            if record is None or record.completed_at is None:
+            if (
+                record is None
+                or record.completed_at is None
+                or record.pair_evidence_pruned_at is not None
+            ):
                 return None
             pair_statement = (
                 select(SimilarityScanPairRecord)
