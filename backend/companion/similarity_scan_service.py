@@ -468,9 +468,14 @@ class SimilarityScanTaskHandler:
             )
             accepted: list[tuple[float, int, int, SimilarityScanPair]] = []
             processed = 0
+            scoring_snapshot_digest = _feature_snapshot_digest()
+            scoring_asset_count = 0
 
             async for feature_batch in self._candidate_feature_batches():
                 await context.ensure_active()
+                for feature in feature_batch:
+                    _update_feature_snapshot_digest(scoring_snapshot_digest, feature)
+                    scoring_asset_count += 1
                 phase_started = perf_counter()
                 emitted = await asyncio.to_thread(
                     candidate_index.process_batch,
@@ -578,8 +583,10 @@ class SimilarityScanTaskHandler:
                 )
 
             total = processed
-            final_asset_count, final_snapshot_key = await self._candidate_snapshot()
-            if final_asset_count != asset_count or final_snapshot_key != snapshot_key:
+            if (
+                scoring_asset_count != asset_count
+                or scoring_snapshot_digest.hexdigest() != snapshot_key
+            ):
                 raise PermanentTaskError(
                     "Similarity scan fingerprint snapshot changed during candidate scoring; "
                     "retry after asset synchronization settles."
