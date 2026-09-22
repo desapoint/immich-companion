@@ -83,19 +83,28 @@ def _request_key(request: SimilarityScanRequest) -> str:
     return sha256(raw.encode()).hexdigest()
 
 
-def _feature_snapshot_key(features: list[Any]) -> str:
-    """Fingerprint the ordered candidate inputs used by a durable scan checkpoint."""
-
+def _feature_snapshot_digest():
     digest = sha256()
     digest.update(f"candidate-index-v{CANDIDATE_INDEX_VERSION}\n".encode())
-    for feature in features:
-        digest.update(
-            (
-                f"{feature.asset_id}:{feature.model_version}:{feature.feature_version}:"
-                f"{feature.source_identity}:{feature.width}:{feature.height}:"
-                f"{feature.perceptual_hash}\n"
-            ).encode()
-        )
+    return digest
+
+
+def _update_feature_snapshot_digest(digest, feature: Any) -> None:
+    digest.update(
+        (
+            f"{feature.asset_id}:{feature.model_version}:{feature.feature_version}:"
+            f"{feature.source_identity}:{feature.width}:{feature.height}:"
+            f"{feature.perceptual_hash}\n"
+        ).encode()
+    )
+
+
+def _feature_snapshot_key(features: list[Any]) -> str:
+    """Fingerprint ordered candidate inputs used by a durable scan checkpoint."""
+
+    digest = _feature_snapshot_digest()
+    for feature in sorted(features, key=lambda item: item.asset_id.int):
+        _update_feature_snapshot_digest(digest, feature)
     return digest.hexdigest()
 
 
@@ -211,6 +220,68 @@ class SimilarityScanTaskHandler:
         self._similarity = similarity
         self._scans = scans
         self._indexer = indexer
+
+    async def _candidate_feature_batches(self):
+        reader = getattr(self._features, "iter_current_candidates", None)
+        if callable(reader):
+            async for batch in reader(batch_size=SIMILARITY_INDEX_BATCH_SIZE):
+                yield batch
+            return
+        values = sorted(
+            await self._features.list_current(),
+            key=lambda feature: feature.asset_id.int,
+        )
+        for offset in range(0, len(values), SIMILARITY_INDEX_BATCH_SIZE):
+            yield values[offset : offset + SIMILARITY_INDEX_BATCH_SIZE]
+
+    async def _candidate_snapshot(self) -> tuple[int, str]:
+        digest = _feature_snapshot_digest()
+        count = 0
+        async for batch in self._candidate_feature_batches():
+            for feature in batch:
+                _update_feature_snapshot_digest(digest, feature)
+                count += 1
+        return count, digest.hexdigest()
+
+    async def _current_features(self, asset_ids: list[UUID]) -> dict[UUID, Any]:
+        unique_ids = list(dict.fromkeys(asset_ids))
+        reader = getattr(self._features, "get_current_many", None)
+        if callable(reader):
+            return await reader(unique_ids)
+        values = await self._features.list_current()
+        requested = set(unique_ids)
+        return {feature.asset_id: feature for feature in values if feature.asset_id in requested}
+
+    async def _enrich_reference_groups(
+        self,
+        groups: list[list[UUID]],
+        *,
+        evidence_epoch: int | None,
+    ) -> int:
+        pair_groups = [
+            [group[0], member]
+            for group in groups
+            for member in group[1:]
+        ]
+        enriched_count = 0
+        for offset in range(0, len(pair_groups), SIMILARITY_SCORE_BATCH_SIZE):
+            batch = pair_groups[offset : offset + SIMILARITY_SCORE_BATCH_SIZE]
+            asset_ids = list(
+                dict.fromkeys(asset_id for pair in batch for asset_id in pair)
+            )
+            features = await self._current_features(asset_ids)
+            if len(features) != len(asset_ids):
+                raise PermanentTaskError(
+                    "Similarity scan coverage changed during reference enrichment; "
+                    "retry after asset synchronization settles."
+                )
+            enriched = await self._similarity.reference_edges(
+                batch,
+                features,
+                **_epoch_kwargs(self._similarity.reference_edges, evidence_epoch),
+            )
+            enriched_count += len(enriched)
+        return enriched_count
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
         started = perf_counter()
