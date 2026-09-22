@@ -171,6 +171,35 @@ async def test_similarity_provider_publishes_latest_pair_with_scan_provenance() 
 
 
 @pytest.mark.asyncio
+async def test_similarity_provider_ignores_pruned_pair_generation() -> None:
+    current = snapshot(SCAN_ONE)
+
+    class PrunedScans(FakeScans):
+        async def latest_completed_summary(self) -> SimilarityScanRunSummary | None:
+            summary = await super().latest_completed_summary()
+            assert summary is not None
+            return SimilarityScanRunSummary(
+                id=summary.id,
+                parameters=summary.parameters,
+                asset_count=summary.asset_count,
+                candidate_count=summary.candidate_count,
+                match_count=summary.match_count,
+                result_limit_reached=summary.result_limit_reached,
+                completed_at=summary.completed_at,
+                pair_evidence_pruned_at=NOW,
+            )
+
+    scans = PrunedScans(current)
+    groups = await SimilarityDuplicateProvider(
+        scans,
+        FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH)}),
+    ).discover()
+
+    assert groups == []
+    assert scans.edge_batches == 0
+
+
+@pytest.mark.asyncio
 async def test_similarity_group_id_remains_stable_across_equivalent_scans() -> None:
     assets = FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH)})
     first = SimilarityDuplicateProvider(FakeScans(snapshot(SCAN_ONE)), assets)
