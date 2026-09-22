@@ -20,7 +20,7 @@ class SimilarityDebugRequest(BaseModel):
     maximum_aspect_difference: float = Field(default=0.05, ge=0, le=1)
 
     @model_validator(mode="after")
-    def normalize_assets(self) -> "SimilarityDebugRequest":
+    def normalize_assets(self) -> SimilarityDebugRequest:
         self.asset_ids = list(dict.fromkeys(self.asset_ids))
         if len(self.asset_ids) < 2:
             raise ValueError("Choose at least two distinct assets to compare")
