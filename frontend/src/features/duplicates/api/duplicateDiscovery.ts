@@ -28,7 +28,7 @@ export function discoveryProgress(
     ? null
     : Math.min(rangeEnd, rangeStart + (rangeEnd - rangeStart) * rawPercent / 100);
   const matches = numericProgress(task.counters.matches_retained);
-  const retainedLimit = similarity ? numericProgress(task.payload.maximum_matches) : null;
+  const retainedLimit = similarity ? numericProgress(task.payload?.maximum_matches) : null;
   const retentionLimitReached = similarity && task.counters.result_limit_reached === 1;
   const queuedDetail = similarity
     ? 'Queued behind active asset-integrity work; the similarity phase will start automatically.'
