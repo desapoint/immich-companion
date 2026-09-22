@@ -785,7 +785,7 @@ describe('live V2 duplicate repository', () => {
     const taskRepository = {
       get: vi.fn()
         .mockResolvedValueOnce({status:'completed',progress:{phase:'complete',completed:10,total:10,percent:100,detail:'Exact evidence ready'},counters:{}})
-        .mockResolvedValueOnce({status:'completed',progress:{phase:'similarity_finalizing',completed:50,total:50,percent:100,detail:'Similarity scan ready'},counters:{candidate_pairs:50,matches_retained:8}}),
+        .mockResolvedValueOnce({status:'completed',payload:{maximum_matches:12000},progress:{phase:'similarity_finalizing',completed:50,total:50,percent:100,detail:'Similarity scan ready'},counters:{candidate_pairs:50,matches_retained:8,retained_match_limit:12000,result_limit_reached:0},result:{summary:{result_limit_reached:false}}}),
     } as unknown as TaskRepository;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
@@ -800,11 +800,11 @@ describe('live V2 duplicate repository', () => {
     const progress: number[] = [];
     const repository = createDuplicateRepository(taskRepository);
 
-    const result = await repository.runDiscovery({similarityThreshold:90,maximumPerceptualDistance:14,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20},(update)=>{if(update.percent!==null)progress.push(update.percent)});
+    const result = await repository.runDiscovery({similarityThreshold:90,maximumPerceptualDistance:14,validationMode:'linked',maxLinkDepth:2,anchorAssetId:ASSET_IDS[1],includeSimilar:true,includeExact:true,maxCandidates:20,maximumMatches:12000},(update)=>{if(update.percent!==null)progress.push(update.percent)});
 
-    expect(result).toEqual({groupCount:1,candidateCount:2});
+    expect(result).toEqual({groupCount:1,candidateCount:2,retainedMatchCount:8,retainedMatchLimit:12000,retentionLimitReached:false});
     expect(progress).toEqual([25,98,99]);
-    expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1],maximum_perceptual_distance:14});
+    expect(similarityBody).toMatchObject({validation_mode:'linked',max_link_depth:2,anchor_asset_id:ASSET_IDS[1],maximum_perceptual_distance:14,maximum_matches:12000});
     const discoveryCalls = vi.mocked(fetch).mock.calls.map(([input]) => String(input));
     expect(discoveryCalls.filter((path) => path.endsWith('/cross-source/analyze'))).toHaveLength(1);
     expect(discoveryCalls.filter((path) => path.endsWith('/similarity-scan'))).toHaveLength(1);
@@ -850,4 +850,30 @@ it('shows projection publication as an explicit discovery loading phase', async 
   expect(progress.label).toBe('Duplicate discovery · Publishing duplicate results');
   expect(progress.detail).toBe('Publishing duplicate results…');
   expect(progress.percent).toBeNull();
+});
+
+
+it('shows retained-match usage and a definitive cap warning in discovery progress', () => {
+  const task = {
+    id: 'similarity-task',
+    status: 'running',
+    payload: { maximum_matches: 5000 },
+    progress: {
+      phase: 'similarity_scoring',
+      completed: 500,
+      total: 1000,
+      percent: 50,
+      detail: 'Scored 500 of 1000 candidate pairs',
+    },
+    counters: {
+      matches_retained: 5000,
+      retained_match_limit: 5000,
+      result_limit_reached: 1,
+    },
+  } as unknown as TaskRecord;
+
+  const progress = discoveryProgress(task, true, 25, 98);
+
+  expect(progress.detail).toContain('5,000 / 5,000 matches retained');
+  expect(progress.detail).toContain('RETENTION LIMIT REACHED');
 });

@@ -9,6 +9,7 @@ import DuplicateComparisonDetails from '../components/DuplicateComparisonDetails
 
 const viewerSource = [
   readFileSync(new URL('../components/DuplicateCompareViewer.svelte', import.meta.url), 'utf8'),
+  readFileSync(new URL('../components/DuplicateComparisonHeader.svelte', import.meta.url), 'utf8'),
   readFileSync(new URL('../components/DuplicateComparisonDetails.svelte', import.meta.url), 'utf8'),
 ].join('\n');
 
@@ -341,6 +342,17 @@ describe('DuplicateCompareViewer', () => {
     expect(viewerSource).toContain("void navigateGroup('previous')");
     expect(viewerSource).toContain("event.shiftKey && event.key === 'ArrowRight'");
     expect(viewerSource).toContain("void navigateGroup('next')");
+  });
+
+  it('adds only the currently viewed duplicate asset to similarity debug', () => {
+    expect(viewerSource).toContain('function addCurrentToDebug()');
+    expect(viewerSource).toContain('const assetId = assetIds[member];');
+    expect(viewerSource).toContain('addSimilarityDebugAssets([assetId])');
+    expect(viewerSource).not.toContain('addPairToDebug');
+    expect(viewerSource).not.toContain('[assetIds[reference], assetIds[member]]');
+    expect(viewerSource).toContain('Add image to debug');
+    expect(viewerSource).not.toContain('Add pair to debug');
+    expect(viewerSource).toContain('disabled={!hasSelectedAsset}');
   });
 
   it('keeps inspection navigation enabled while write controls are disabled', () => {

@@ -186,6 +186,8 @@ class SimilarityScanService:
             asset_count=run.asset_count,
             candidate_count=run.candidate_count,
             match_count=run.match_count,
+            maximum_matches=run.parameters.maximum_matches,
+            result_limit_reached=run.result_limit_reached,
             completed_at=run.completed_at,
         )
 
@@ -237,6 +239,7 @@ class SimilarityScanTaskHandler:
         fingerprint_failure_reasons: dict[UUID, str] = {}
         candidate_discovery_milliseconds = 0
         pair_scoring_milliseconds = 0
+        result_limit_reached = False
 
         def telemetry(**values: int) -> dict[str, int]:
             memory = process_memory_snapshot()
@@ -263,6 +266,7 @@ class SimilarityScanTaskHandler:
             scan_id = await self._scans.prepare(parameters, scan_id=task_id)
             completed = await self._scans.completed_summary(scan_id)
             if completed is not None:
+                recovered_limit_reached = getattr(completed, "result_limit_reached", None)
                 return TaskResult(
                     summary={
                         "scan_id": str(scan_id),
@@ -272,7 +276,8 @@ class SimilarityScanTaskHandler:
                             str(request.anchor_asset_id) if request.anchor_asset_id else None
                         ),
                         "scope": request.scope,
-                        "result_limit_reached": completed.match_count == request.maximum_matches,
+                        "result_limit_reached": recovered_limit_reached,
+                        "maximum_matches": request.maximum_matches,
                         "recovered_completed_scan": True,
                     },
                     counters=telemetry(
@@ -280,6 +285,12 @@ class SimilarityScanTaskHandler:
                         candidate_pairs=completed.candidate_count,
                         pairs_scored=completed.candidate_count,
                         matches_retained=completed.match_count,
+                        retained_match_limit=request.maximum_matches,
+                        **(
+                            {"result_limit_reached": int(recovered_limit_reached)}
+                            if recovered_limit_reached is not None
+                            else {}
+                        ),
                     ),
                 )
             if self._indexer is not None:
@@ -437,6 +448,8 @@ class SimilarityScanTaskHandler:
                     ),
                     pairs_scored=resume_scored,
                     matches_retained=0,
+                    retained_match_limit=request.maximum_matches,
+                    result_limit_reached=0,
                 ),
                 progress={
                     "phase": "similarity_scoring",
@@ -484,8 +497,10 @@ class SimilarityScanTaskHandler:
                     )
                     if len(accepted) < request.maximum_matches:
                         heapq.heappush(accepted, ranked)
-                    elif ranked[:3] > accepted[0][:3]:
-                        heapq.heapreplace(accepted, ranked)
+                    else:
+                        result_limit_reached = True
+                        if ranked[:3] > accepted[0][:3]:
+                            heapq.heapreplace(accepted, ranked)
                 processed += len(batch)
                 if processed < resume_scored:
                     continue
@@ -505,6 +520,8 @@ class SimilarityScanTaskHandler:
                         ),
                         pairs_scored=processed,
                         matches_retained=len(accepted),
+                        retained_match_limit=request.maximum_matches,
+                        result_limit_reached=int(result_limit_reached),
                     ),
                     progress={
                         "phase": "similarity_scoring",
@@ -537,6 +554,8 @@ class SimilarityScanTaskHandler:
                         ),
                         pairs_scored=total,
                         matches_retained=len(matches),
+                        retained_match_limit=request.maximum_matches,
+                        result_limit_reached=int(result_limit_reached),
                         reference_pairs_required=reference_pairs_required,
                         reference_pairs_enriched=0,
                     ),
@@ -583,6 +602,8 @@ class SimilarityScanTaskHandler:
                         ),
                         pairs_scored=total,
                         matches_retained=len(matches),
+                        retained_match_limit=request.maximum_matches,
+                        result_limit_reached=int(result_limit_reached),
                         reference_pairs_required=reference_pairs_required,
                         reference_pairs_enriched=reference_pairs_enriched,
                     ),
@@ -613,6 +634,8 @@ class SimilarityScanTaskHandler:
                     ),
                     pairs_scored=total,
                     matches_retained=len(matches),
+                    retained_match_limit=request.maximum_matches,
+                    result_limit_reached=int(result_limit_reached),
                     reference_pairs_required=reference_pairs_required,
                     reference_pairs_enriched=reference_pairs_enriched,
                 ),
@@ -630,6 +653,7 @@ class SimilarityScanTaskHandler:
                 asset_count=len(features),
                 candidate_count=total,
                 pairs=matches,
+                result_limit_reached=result_limit_reached,
                 **_epoch_kwargs(self._scans.complete, evidence_epoch),
             )
         except TaskCancelledError:
@@ -653,7 +677,8 @@ class SimilarityScanTaskHandler:
                     str(request.anchor_asset_id) if request.anchor_asset_id else None
                 ),
                 "scope": request.scope,
-                "result_limit_reached": len(matches) == request.maximum_matches,
+                "result_limit_reached": result_limit_reached,
+                "maximum_matches": request.maximum_matches,
                 "fingerprints_excluded_after_retry": len(excluded_ids),
                 "excluded_asset_ids": [str(identifier) for identifier in excluded_ids[:100]],
                 "excluded_asset_ids_truncated": len(excluded_ids) > 100,
@@ -671,6 +696,8 @@ class SimilarityScanTaskHandler:
                 ),
                 pairs_scored=total,
                 matches_retained=len(matches),
+                retained_match_limit=request.maximum_matches,
+                result_limit_reached=int(result_limit_reached),
                 reference_pairs_required=reference_pairs_required,
                 reference_pairs_enriched=reference_pairs_enriched,
             ),

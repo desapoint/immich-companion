@@ -19,6 +19,7 @@ class DuplicateDiscoverySettings(BaseModel):
     validation_mode: Literal["reference", "linked", "strict"] = "strict"
     max_link_depth: int = Field(default=2, ge=0, le=64)
     max_candidates: int = Field(default=8, ge=1, le=64)
+    maximum_matches: int = Field(default=5000, ge=1, le=50_000)
 
 
 class DuplicateDiscoverySettingsUpdate(DuplicateDiscoverySettings):
@@ -35,6 +36,7 @@ MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS = frozenset(
         "validation_mode",
         "max_link_depth",
         "max_candidates",
+        "maximum_matches",
     }
 )
 
@@ -71,6 +73,7 @@ class DuplicateDiscoverySettingsRepository:
                 validation_mode=record.validation_mode,
                 max_link_depth=record.max_link_depth,
                 max_candidates=record.max_candidates,
+                maximum_matches=record.maximum_matches,
             )
 
     async def update(

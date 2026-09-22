@@ -203,11 +203,15 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     },
     async runDiscovery(options: DuplicateDiscoveryOptions, onprogress) {
       const exactEnd = options.includeSimilar ? 25 : 98;
+      let retainedMatchCount: number | null = null;
+      let retainedMatchLimit: number | null = null;
+      let retentionLimitReached: boolean | null = null;
       if (options.includeExact) {
         const started = await requestJson<TaskStart>('/api/assets/duplicates/cross-source/analyze', jsonRequest('POST', ANALYSIS_OPTIONS));
         await waitForTask(tasks, started.task_id, false, 0, exactEnd, onprogress);
       }
       if (options.includeSimilar) {
+        const maximumMatches = Math.min(50_000, Math.max(1, Math.round(options.maximumMatches)));
         const started = await requestJson<TaskStart>('/api/assets/duplicates/similarity-scan', jsonRequest('POST', {
           similarity_threshold: options.similarityThreshold,
           validation_mode: options.validationMode,
@@ -217,13 +221,26 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           maximum_perceptual_distance: Math.min(64, Math.max(0, Math.round(options.maximumPerceptualDistance))),
           maximum_aspect_difference: 0.05,
           maximum_neighbors_per_asset: Math.min(64, Math.max(1, options.maxCandidates)),
-          maximum_matches: 5000,
+          maximum_matches: maximumMatches,
         }));
-        await waitForTask(tasks, started.task_id, true, options.includeExact ? exactEnd : 0, 98, onprogress);
+        const completed = await waitForTask(tasks, started.task_id, true, options.includeExact ? exactEnd : 0, 98, onprogress);
+        retainedMatchCount = Number.isFinite(completed.counters.matches_retained) ? completed.counters.matches_retained : null;
+        retainedMatchLimit = Number.isFinite(completed.counters.retained_match_limit) ? completed.counters.retained_match_limit : maximumMatches;
+        const rawSummary = completed.result?.summary;
+        const summary = typeof rawSummary === 'object' && rawSummary !== null && !Array.isArray(rawSummary)
+          ? rawSummary as Record<string, unknown>
+          : null;
+        retentionLimitReached = typeof summary?.result_limit_reached === 'boolean'
+          ? summary.result_limit_reached
+          : completed.counters.result_limit_reached === 1
+            ? true
+            : completed.counters.result_limit_reached === 0
+              ? false
+              : null;
       }
       const result = await requestJson<ApiDuplicateSummary>('/api/assets/duplicates/summary');
       onprogress?.({label:'Duplicate discovery · Preparing results',detail:'Preparing the completed duplicate groups for refresh…',completed:1,total:1,percent:99});
-      return { groupCount: result.group_count, candidateCount: result.member_count };
+      return { groupCount: result.group_count, candidateCount: result.member_count, retainedMatchCount, retainedMatchLimit, retentionLimitReached };
     },
     async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
       const uniqueGroupIds = [...new Set(groupIds)];

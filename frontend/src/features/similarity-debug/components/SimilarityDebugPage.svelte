@@ -299,14 +299,20 @@
 
                 <div class="similarity-debug-tile-actions">
                   {#if isAnchor}
-                    <span class="v2-small v2-muted">Comparison anchor</span>
+                    <span class="similarity-debug-anchor-status v2-small v2-muted">Comparison anchor</span>
                   {:else}
-                    <V2Button disabled={!inGroup || running} onclick={() => void setAnchorFromList(assetId)}>Set as anchor</V2Button>
+                    <div class="similarity-debug-action-anchor">
+                      <V2Button block disabled={!inGroup || running} onclick={() => void setAnchorFromList(assetId)}>Set as anchor</V2Button>
+                    </div>
                   {/if}
                   {#if response && inGroup && !isAnchor}
-                    <V2Button variant="primary" onclick={() => openAgainstAnchor(assetId)}>Compare</V2Button>
+                    <div class="similarity-debug-action-compare">
+                      <V2Button block variant="primary" onclick={() => openAgainstAnchor(assetId)}>Compare</V2Button>
+                    </div>
                   {/if}
-                  <V2Button onclick={() => remove(assetId)}>Remove</V2Button>
+                  <div class="similarity-debug-action-remove" class:wide={!response || !inGroup || isAnchor}>
+                    <V2Button block onclick={() => remove(assetId)}>Remove</V2Button>
+                  </div>
                 </div>
               </article>
             {/each}
@@ -406,13 +412,19 @@
 
 <style>
   .similarity-debug-page{display:grid;gap:var(--v2-space-4);min-width:0}
-  .similarity-debug-group-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.similarity-debug-group-toolbar>div{display:grid;gap:3px}
-  .similarity-debug-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:var(--v2-space-3)}
-  .similarity-debug-asset-tile{position:relative;display:grid;grid-template-rows:auto minmax(150px,1fr) auto auto;gap:8px;min-width:0;padding:8px;border:1px solid var(--v2-line);border-radius:9px;background:var(--v2-surface)}
+  .similarity-debug-group-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px;min-width:0;flex-wrap:wrap}.similarity-debug-group-toolbar>div{display:grid;gap:3px;min-width:0;flex:1 1 360px}.similarity-debug-group-toolbar :global(.v2-badge){max-width:min(100%,360px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .similarity-debug-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(220px,100%),1fr));gap:var(--v2-space-3);align-items:stretch}
+  .similarity-debug-asset-tile{position:relative;display:grid;grid-template-rows:auto minmax(150px,1fr) auto auto;gap:8px;min-width:0;overflow:hidden;padding:8px;border:1px solid var(--v2-line);border-radius:9px;background:var(--v2-surface)}
   .similarity-debug-asset-tile.selected{outline:1px solid color-mix(in srgb,var(--v2-accent) 45%,transparent)}
   .similarity-debug-asset-tile.anchor{outline:2px solid var(--v2-accent)}
-  .similarity-debug-tile-top,.similarity-debug-tile-actions{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0}
-  .similarity-debug-selection-control{display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--v2-muted);cursor:pointer}
+  .similarity-debug-tile-top{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0}
+  .similarity-debug-tile-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;align-items:stretch;min-width:0}
+  .similarity-debug-action-anchor,.similarity-debug-anchor-status{grid-column:1/-1}
+  .similarity-debug-action-compare,.similarity-debug-action-remove{min-width:0}
+  .similarity-debug-action-remove.wide{grid-column:1/-1}
+  .similarity-debug-anchor-status{display:flex;align-items:center;min-height:34px;padding:0 2px}
+  .similarity-debug-tile-actions :global(.v2-button){width:100%;min-width:0;max-width:100%;padding:7px 8px;white-space:normal;line-height:1.15;text-align:center}
+  .similarity-debug-selection-control{display:flex;align-items:center;gap:6px;min-width:0;font-size:.72rem;color:var(--v2-muted);cursor:pointer}
   .similarity-debug-tile-media{position:relative;display:block;width:100%;min-height:150px;padding:0;overflow:hidden;border:0;border-radius:7px;background:var(--v2-image-workzone);cursor:pointer}
   .similarity-debug-tile-media:disabled{cursor:default;opacity:.72}
   .similarity-debug-tile-media :global(img),.similarity-debug-tile-media :global(video){width:100%;height:100%;object-fit:cover}
@@ -422,4 +434,8 @@
   .similarity-debug-error{color:#ef9a9a}
   .similarity-debug-matrix-wrap{overflow:auto}.similarity-debug-matrix{border-collapse:collapse;width:max-content;min-width:100%;font-size:.75rem}.similarity-debug-matrix th,.similarity-debug-matrix td{border:1px solid var(--v2-line);padding:5px;max-width:150px}.similarity-debug-matrix th{background:var(--v2-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.similarity-debug-matrix td.same{text-align:center;color:var(--v2-muted)}.similarity-debug-matrix td[data-pass="true"]{background:color-mix(in srgb,#3fb950 10%,transparent)}.similarity-debug-matrix td[data-pass="false"]{background:color-mix(in srgb,#f85149 8%,transparent)}.similarity-debug-matrix button{display:grid;gap:2px;width:100%;padding:5px;border:0;border-radius:5px;background:transparent;color:inherit;text-align:left;cursor:pointer}.similarity-debug-matrix button.active{outline:2px solid var(--v2-accent)}.similarity-debug-matrix button small{color:var(--v2-muted)}
   .similarity-debug-group{display:grid;gap:6px;padding:10px 0;border-bottom:1px solid var(--v2-line)}.similarity-debug-group:last-child{border-bottom:0}.similarity-debug-group>span{color:var(--v2-muted);font-size:.75rem}.similarity-debug-admissions{display:flex;flex-wrap:wrap;gap:6px}.similarity-debug-admissions span{padding:5px 7px;border:1px solid var(--v2-line);border-radius:6px;font-size:.72rem}
+  @media(max-width:560px){
+    .similarity-debug-assets{grid-template-columns:1fr}
+    .similarity-debug-group-toolbar :global(.v2-badge){max-width:100%}
+  }
 </style>

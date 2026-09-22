@@ -24,6 +24,7 @@ describe('duplicate discovery settings repository', () => {
       validation_mode: 'linked',
       max_link_depth: 3,
       max_candidates: 16,
+      maximum_matches: 12000,
     }));
     vi.stubGlobal('fetch', fetcher);
 
@@ -35,6 +36,7 @@ describe('duplicate discovery settings repository', () => {
       validationMode: 'linked',
       maxLinkDepth: 3,
       maxCandidates: 16,
+      maximumMatches: 12000,
     });
     expect(fetcher).toHaveBeenCalledWith(
       '/api/settings/duplicates/discovery',
@@ -54,6 +56,7 @@ describe('duplicate discovery settings repository', () => {
     await expect(duplicateDiscoverySettingsRepository.load()).resolves.toMatchObject({
       maxLinkDepth: 2,
       maximumPerceptualDistance: 12,
+      maximumMatches: 5000,
     });
   });
 
@@ -68,6 +71,7 @@ describe('duplicate discovery settings repository', () => {
         validation_mode: 'strict',
         max_link_depth: 2,
         max_candidates: 12,
+        maximum_matches: 15000,
       });
       return response({
         include_exact: true,
@@ -77,6 +81,7 @@ describe('duplicate discovery settings repository', () => {
         validation_mode: 'strict',
         max_link_depth: 2,
         max_candidates: 12,
+        maximum_matches: 15000,
       });
     });
     vi.stubGlobal('fetch', fetcher);
@@ -89,11 +94,13 @@ describe('duplicate discovery settings repository', () => {
       validationMode: 'strict',
       maxLinkDepth: 2,
       maxCandidates: 12,
+      maximumMatches: 15000,
     })).resolves.toMatchObject({
       similarityThreshold: 97,
       maximumPerceptualDistance: 14,
       maxLinkDepth: 2,
       maxCandidates: 12,
+      maximumMatches: 15000,
     });
   });
 });
