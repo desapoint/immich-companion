@@ -95,6 +95,7 @@ from companion.migrate import run_migrations
 from companion.relation_routes import register_relation_management_routes
 from companion.selection_repository import RelationSelectionRepository
 from companion.similarity_cache import SimilarityCacheManager
+from companion.similarity_debug_api import register_similarity_debug_routes
 from companion.similarity_detail_api import register_similarity_detail_routes
 from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_generation import SimilarityEvidenceDestroyTaskHandler
@@ -663,6 +664,12 @@ def create_app(
         lifespan=lifespan,
     )
     register_similarity_detail_routes(app, detail_repository, task_coordinator)
+    register_similarity_debug_routes(
+        app,
+        search_feature_repository,
+        similarity_repository,
+        detail_repository,
+    )
 
     @app.exception_handler(ImmichApiError)
     async def immich_error_handler(_request, error: ImmichApiError) -> Response:

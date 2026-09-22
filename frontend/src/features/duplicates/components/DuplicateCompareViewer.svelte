@@ -28,6 +28,8 @@
   } from '../types/contracts';
   import { formatByteDifference } from '../../../lib/utils/fileSize';
   import { DuplicateComparisonDataController } from '../state/duplicateComparisonData.svelte';
+  import { addSimilarityDebugAssets } from '../../similarity-debug/state/similarityDebugBasket';
+  import { useOptionalToasts } from '../../../app/state/toasts.svelte';
 
   let {
     open,
@@ -98,6 +100,7 @@
   let diffBinary = $state(true);
   let diffTolerance = $state(8);
   const comparisonData = new DuplicateComparisonDataController();
+  const toasts = useOptionalToasts();
 
   const emptyData: ComparisonMemberData = {
     name: 'Unknown asset', source: '—', size: '—', sizeBytes: null, dims: '—', taken: '—',
@@ -237,6 +240,16 @@
     reference = member;
     showMember(reference);
   }
+  function addPairToDebug() {
+    const ids = [...new Set([assetIds[reference], assetIds[member]].filter((id): id is string => Boolean(id)))];
+    if (!ids.length) return;
+    const added = addSimilarityDebugAssets(ids);
+    toasts?.push({
+      tone: added ? 'success' : 'warning',
+      title: 'Similarity debug',
+      message: added ? `Added ${added} image${added === 1 ? '' : 's'} to the similarity debug list.` : 'This pair is already in the similarity debug list.',
+    });
+  }
   async function revalidate() {
     if (disabled) return;
     const assetId = assetIds[reference];
@@ -263,7 +276,7 @@
 <svelte:window onkeydown={handleShortcut}/>
 
 <V2ViewerShell {open} title="Duplicate comparison" kind="compare" {onclose}>
-  {#snippet header()}<DuplicateComparisonHeader {groupTitle} {matchLabel} {activeCount} {selectedForReview} {boundedValidation} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} {disabled} hasSelectedAsset={Boolean(selectedAsset)} hasReference={Boolean(assetIds[reference])} {onclose} onpreviousgroup={()=>void navigateGroup('previous')} onprevious={prev} onnext={next} onnextgroup={()=>void navigateGroup('next')} onreference={()=>void setReference()} onrevalidate={onrevalidate?()=>void revalidate():undefined}/>{/snippet}
+  {#snippet header()}<DuplicateComparisonHeader {groupTitle} {matchLabel} {activeCount} {selectedForReview} {boundedValidation} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} {disabled} hasSelectedAsset={Boolean(selectedAsset)} hasReference={Boolean(assetIds[reference])} {onclose} onpreviousgroup={()=>void navigateGroup('previous')} onprevious={prev} onnext={next} onnextgroup={()=>void navigateGroup('next')} onreference={()=>void setReference()} ondebug={addPairToDebug} onrevalidate={onrevalidate?()=>void revalidate():undefined}/>{/snippet}
   <div class="v2-compare-main"><section class="v2-compare-visual">
     {#if comparisonData.loading}<div class="v2-compare-media-status" role="status">Loading comparison media…</div>{:else if comparisonData.loadError}<div class="v2-compare-media-status" role="alert">{comparisonData.loadError}</div>{:else}<V2ImageComparison {selectedResource} {referenceResource} selectedLabel={selectedData.name} referenceLabel={referenceData.name} bind:mode bind:opacity bind:split bind:diffHue bind:diffContrast bind:diffBinary bind:diffTolerance localDiagnostics={comparisonData.localDiagnostics} localDiagnosticsLoading={comparisonData.localDiagnosticsLoading} localDiagnosticsError={comparisonData.localDiagnosticsError}/>{/if}
     <div class="v2-filmstrip">{#each assetIds as assetId,index (assetId)}{@const asset=assetById.get(assetId)}{@const data=memberData[index]??emptyData}{@const evidence=similarityEvidence[assetId]??null}<button class="v2-thumb" class:active={index===member} class:reference={index===reference} onclick={()=>showMember(index)}>{#if asset}<span class="v2-thumb-media"><V2LazyAssetMedia cacheKey={`duplicate-compare-thumbnail:${asset.id}`} resolve={()=>libraryData.media.thumbnail(asset)} alt={data.name}/></span>{/if}<small>{data.name}</small><small class="v2-muted">{data.size} · {data.similarity}{usesBoundedValidation(evidence)?' · Bounded validation':''}</small></button>{/each}</div>

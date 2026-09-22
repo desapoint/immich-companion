@@ -8,6 +8,7 @@
   import AlbumsPage from '../features/albums/components/AlbumsPage.svelte';
   import V2AssetsPage from '../features/assets/components/AssetsPage.svelte';
   import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
+  import SimilarityDebugPage from '../features/similarity-debug/components/SimilarityDebugPage.svelte';
   import PlaygroundPage from '../features/playground/components/PlaygroundPage.svelte';
   import V2RestorePage from '../features/assets/components/RestorePage.svelte';
   import SettingsPage from '../features/settings/components/SettingsPage.svelte';
@@ -34,6 +35,7 @@
     { key: 'assets', label: 'Assets', href: pagePath('assets'), group: 'Library' },
     { key: 'restore', label: 'Trash', href: pagePath('restore'), group: 'Library' },
     { key: 'duplicates', label: 'Duplicates', href: pagePath('duplicates'), group: 'Library' },
+    { key: 'similarity-debug', label: 'Similarity debug', href: pagePath('similarity-debug'), group: 'Library' },
     { key: 'albums', label: 'Albums', href: pagePath('albums'), group: 'Organize' },
     { key: 'tags', label: 'Tags', href: pagePath('tags'), group: 'Organize' },
     { key: 'settings', label: 'Settings', href: pagePath('settings'), position: 'bottom' },
@@ -46,6 +48,7 @@
     assets: 'Assets',
     restore: 'Trash',
     duplicates: 'Duplicates',
+    'similarity-debug': 'Similarity debug',
     albums: 'Albums',
     tags: 'Tags',
     settings: 'Settings',
@@ -103,6 +106,8 @@
     <V2RestorePage selectionController={restoreSelection} />
   {:else if activeKey === 'duplicates'}
     <DuplicatesPage />
+  {:else if activeKey === 'similarity-debug'}
+    <SimilarityDebugPage />
   {:else if activeKey === 'albums'}
     <AlbumsPage onfilterassets={(albumIds)=>openAssetsWithFilter({albumIds})}/>
   {:else if activeKey === 'tags'}
