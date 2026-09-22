@@ -33,6 +33,8 @@
   let running = $state(false);
   let error = $state('');
   let comparisonOpen = $state(false);
+  let comparisonReferenceId = $state('');
+  let comparisonSelectedId = $state('');
 
   let similarityThreshold = $state(95);
   let validationMode = $state<SimilarityDebugValidationMode>('strict');
@@ -106,8 +108,10 @@
     if (checked) next.add(assetId);
     else next.delete(assetId);
     selected = next;
+    if (!checked && anchorAssetId === assetId) anchorAssetId = '';
     response = null;
     activePairKey = '';
+    comparisonOpen = false;
   }
 
   async function analyze(preferredPairKey = ''): Promise<void> {
@@ -118,19 +122,28 @@
     running = true;
     error = '';
     try {
+      const effectiveAnchor = anchorAssetId && checkedIds.includes(anchorAssetId) ? anchorAssetId : checkedIds[0] ?? '';
+      anchorAssetId = effectiveAnchor;
       const nextResponse = await runSimilarityDebug({
         asset_ids: checkedIds,
         similarity_threshold: similarityThreshold,
         validation_mode: validationMode,
         max_link_depth: maxLinkDepth,
-        anchor_asset_id: anchorAssetId && checkedIds.includes(anchorAssetId) ? anchorAssetId : null,
+        anchor_asset_id: effectiveAnchor || null,
         maximum_perceptual_distance: maximumPerceptualDistance,
         maximum_aspect_difference: maximumAspectDifference,
       });
       response = nextResponse;
       const preferredExists = preferredPairKey && nextResponse.pairs.some((candidate) => pairKey(candidate.asset_id_left, candidate.asset_id_right) === preferredPairKey);
+      const anchorPair = nextResponse.pairs.find((candidate) => candidate.asset_id_left === effectiveAnchor || candidate.asset_id_right === effectiveAnchor);
       const first = nextResponse.pairs[0];
-      activePairKey = preferredExists ? preferredPairKey : first ? pairKey(first.asset_id_left, first.asset_id_right) : '';
+      activePairKey = preferredExists
+        ? preferredPairKey
+        : anchorPair
+          ? pairKey(anchorPair.asset_id_left, anchorPair.asset_id_right)
+          : first
+            ? pairKey(first.asset_id_left, first.asset_id_right)
+            : '';
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Similarity diagnostics failed.';
       response = null;
@@ -140,23 +153,52 @@
     }
   }
 
-  function openPair(left: string, right: string): void {
-    const key = pairKey(left, right);
+  function openPair(referenceAssetId: string, selectedAssetId: string): void {
+    const key = pairKey(referenceAssetId, selectedAssetId);
     if (!pairByKey.has(key)) return;
     activePairKey = key;
+    comparisonReferenceId = referenceAssetId;
+    comparisonSelectedId = selectedAssetId;
     comparisonOpen = true;
+  }
+
+  function openAgainstAnchor(assetId: string): void {
+    if (!response || !anchorAssetId || assetId === anchorAssetId || !selected.has(assetId)) return;
+    openPair(anchorAssetId, assetId);
+  }
+
+  async function setAnchorFromList(assetId: string): Promise<void> {
+    if (!selected.has(assetId)) {
+      selected = new Set([...selected, assetId]);
+      response = null;
+    }
+    const previousTarget = comparisonSelectedId && comparisonSelectedId !== assetId && selected.has(comparisonSelectedId)
+      ? comparisonSelectedId
+      : checkedIds.find((id) => id !== assetId) ?? '';
+    anchorAssetId = assetId;
+    if (!response && checkedIds.length < 2) return;
+    const preferredPairKey = previousTarget ? pairKey(assetId, previousTarget) : '';
+    await analyze(preferredPairKey);
+    if (comparisonOpen && previousTarget && pairByKey.has(preferredPairKey)) {
+      comparisonReferenceId = assetId;
+      comparisonSelectedId = previousTarget;
+    }
   }
 
   async function setAnchorFromViewer(assetId: string, compareWithAssetId: string): Promise<void> {
     anchorAssetId = assetId;
     const preferredPairKey = pairKey(assetId, compareWithAssetId);
     await analyze(preferredPairKey);
+    comparisonReferenceId = assetId;
+    comparisonSelectedId = compareWithAssetId;
     comparisonOpen = Boolean(activePairKey);
   }
 
-  function pairChangedFromViewer(key: string): void {
+  function pairChangedFromViewer(key: string, referenceAssetId: string, selectedAssetId: string): void {
     if (!pairByKey.has(key)) return;
     activePairKey = key;
+    comparisonReferenceId = referenceAssetId;
+    comparisonSelectedId = selectedAssetId;
   }
 
   function anchorSettingChanged(): void {
@@ -175,6 +217,9 @@
     selected = new Set();
     response = null;
     activePairKey = '';
+    comparisonOpen = false;
+    comparisonReferenceId = '';
+    comparisonSelectedId = '';
   }
 
   onMount(() => {
@@ -198,34 +243,70 @@
   {/snippet}
 
   <div class="similarity-debug-page">
-    <V2Section title="Debug images">
+    <V2Section title="Debug group">
       {#if loadingAssets}
         <V2Card><span class="v2-muted">Loading debug images…</span></V2Card>
       {:else if !assetIds.length}
         <V2Card><span class="v2-muted">Add images from Assets Viewer or Duplicate comparison, then return here to inspect them.</span></V2Card>
       {:else}
-        <div class="similarity-debug-assets">
-          {#each assetIds as assetId (assetId)}
-            {@const asset = assetById.get(assetId)}
-            {@const evidence = resultAssetById.get(assetId)}
-            <V2Card class="similarity-debug-asset-card">
-              <label class="similarity-debug-asset-select">
-                <input type="checkbox" checked={selected.has(assetId)} onchange={(event) => toggle(assetId, event.currentTarget.checked)}>
-                <span class="similarity-debug-thumb">
+        <V2Card>
+          <div class="similarity-debug-group-toolbar">
+            <div>
+              <b>{checkedIds.length} of {assetIds.length} images in this debug group</b>
+              <span class="v2-small v2-muted">Select the images you want analyzed. Choose one as the anchor, then click another selected image to compare it against the anchor.</span>
+            </div>
+            {#if anchorAssetId}
+              <V2Badge tone="ok" text={`Anchor: ${assetName(anchorAssetId)}`}/>
+            {:else}
+              <V2Badge text="Anchor: automatic on analyze"/>
+            {/if}
+          </div>
+
+          <div class="similarity-debug-assets">
+            {#each assetIds as assetId (assetId)}
+              {@const asset = assetById.get(assetId)}
+              {@const evidence = resultAssetById.get(assetId)}
+              {@const inGroup = selected.has(assetId)}
+              {@const isAnchor = anchorAssetId === assetId}
+              <article class="similarity-debug-asset-tile" class:selected={inGroup} class:anchor={isAnchor}>
+                <div class="similarity-debug-tile-top">
+                  <label class="similarity-debug-selection-control" title={inGroup ? 'Remove from debug group' : 'Add to debug group'}>
+                    <input type="checkbox" checked={inGroup} onchange={(event) => toggle(assetId, event.currentTarget.checked)}>
+                    <span>{inGroup ? 'Selected' : 'Select'}</span>
+                  </label>
+                  {#if isAnchor}<V2Badge tone="ok" text="Anchor"/>{/if}
+                </div>
+
+                <button
+                  type="button"
+                  class="similarity-debug-tile-media"
+                  disabled={!response || !inGroup || isAnchor}
+                  title={response && inGroup && !isAnchor ? `Compare ${assetName(assetId)} to anchor` : assetName(assetId)}
+                  onclick={() => openAgainstAnchor(assetId)}
+                >
                   {#if asset}<V2LazyAssetMedia cacheKey={`similarity-debug:${asset.id}`} resolve={() => libraryData.media.thumbnail(asset)} alt={asset.original_file_name}/>{/if}
-                </span>
-                <span class="similarity-debug-asset-copy">
+                </button>
+
+                <div class="similarity-debug-asset-copy">
                   <b title={asset?.original_file_name ?? assetId}>{asset?.original_file_name ?? assetId}</b>
                   <small>{asset?.width ?? '—'} × {asset?.height ?? '—'}</small>
                   {#if evidence}
                     <small data-state={evidence.evidence_state}>{evidence.evidence_state === 'current' ? `Current · ${evidence.fingerprint_origin ?? 'unknown source'}` : evidence.reason ?? evidence.evidence_state}</small>
                   {/if}
-                </span>
-              </label>
-              <V2Button onclick={() => remove(assetId)}>Remove</V2Button>
-            </V2Card>
-          {/each}
-        </div>
+                </div>
+
+                <div class="similarity-debug-tile-actions">
+                  {#if isAnchor}
+                    <span class="v2-small v2-muted">Comparison anchor</span>
+                  {:else}
+                    <V2Button disabled={!inGroup || running} onclick={() => void setAnchorFromList(assetId)}>Set as anchor</V2Button>
+                  {/if}
+                  <V2Button onclick={() => remove(assetId)}>Remove</V2Button>
+                </div>
+              </article>
+            {/each}
+          </div>
+        </V2Card>
       {/if}
     </V2Section>
 
@@ -286,6 +367,8 @@
         {assets}
         pairs={response.pairs}
         pair={activePair}
+        referenceAssetId={comparisonReferenceId}
+        selectedAssetId={comparisonSelectedId}
         {anchorAssetId}
         {validationMode}
         {similarityThreshold}
@@ -318,10 +401,16 @@
 
 <style>
   .similarity-debug-page{display:grid;gap:var(--v2-space-4);min-width:0}
-  .similarity-debug-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:var(--v2-space-3)}
-  .similarity-debug-asset-card{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0}
-  .similarity-debug-asset-select{display:flex;align-items:center;gap:10px;min-width:0;cursor:pointer}
-  .similarity-debug-thumb{position:relative;display:block;width:64px;height:64px;flex:0 0 64px;overflow:hidden;border-radius:7px;background:var(--v2-image-workzone)}
+  .similarity-debug-group-toolbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:12px}.similarity-debug-group-toolbar>div{display:grid;gap:3px}
+  .similarity-debug-assets{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:var(--v2-space-3)}
+  .similarity-debug-asset-tile{position:relative;display:grid;grid-template-rows:auto minmax(150px,1fr) auto auto;gap:8px;min-width:0;padding:8px;border:1px solid var(--v2-line);border-radius:9px;background:var(--v2-surface)}
+  .similarity-debug-asset-tile.selected{outline:1px solid color-mix(in srgb,var(--v2-accent) 45%,transparent)}
+  .similarity-debug-asset-tile.anchor{outline:2px solid var(--v2-accent)}
+  .similarity-debug-tile-top,.similarity-debug-tile-actions{display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0}
+  .similarity-debug-selection-control{display:flex;align-items:center;gap:6px;font-size:.72rem;color:var(--v2-muted);cursor:pointer}
+  .similarity-debug-tile-media{position:relative;display:block;width:100%;min-height:150px;padding:0;overflow:hidden;border:0;border-radius:7px;background:var(--v2-image-workzone);cursor:pointer}
+  .similarity-debug-tile-media:disabled{cursor:default;opacity:.72}
+  .similarity-debug-tile-media :global(img),.similarity-debug-tile-media :global(video){width:100%;height:100%;object-fit:cover}
   .similarity-debug-asset-copy{display:grid;gap:3px;min-width:0}.similarity-debug-asset-copy b,.similarity-debug-asset-copy small{overflow:hidden;text-overflow:ellipsis}.similarity-debug-asset-copy b{white-space:nowrap}.similarity-debug-asset-copy small{color:var(--v2-muted);font-size:.72rem}
   .similarity-debug-asset-copy small[data-state="unavailable"],.similarity-debug-asset-copy small[data-state="missing_or_stale"]{color:#e3c66f}
   .similarity-debug-settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}.similarity-debug-settings label{display:grid;gap:5px;color:var(--v2-muted);font-size:.75rem}.similarity-debug-settings input,.similarity-debug-settings select{min-width:0;padding:7px 8px;border:1px solid var(--v2-line);border-radius:6px;background:var(--v2-surface);color:var(--v2-text)}
