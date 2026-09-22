@@ -186,6 +186,8 @@ class SimilarityScanService:
             asset_count=run.asset_count,
             candidate_count=run.candidate_count,
             match_count=run.match_count,
+            maximum_matches=run.parameters.maximum_matches,
+            result_limit_reached=run.result_limit_reached,
             completed_at=run.completed_at,
         )
 
