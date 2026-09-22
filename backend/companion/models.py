@@ -307,6 +307,7 @@ class SimilarityScanRecord(Base):
     maximum_aspect_difference: Mapped[float] = mapped_column(Float, nullable=False)
     maximum_neighbors_per_asset: Mapped[int] = mapped_column(Integer, nullable=False)
     maximum_matches: Mapped[int] = mapped_column(Integer, nullable=False)
+    result_limit_reached: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     asset_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     candidate_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     match_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -624,6 +625,7 @@ class DuplicateDiscoverySettingsRecord(Base):
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False)
     max_candidates: Mapped[int] = mapped_column(Integer, nullable=False)
+    maximum_matches: Mapped[int] = mapped_column(Integer, nullable=False, default=5000)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
