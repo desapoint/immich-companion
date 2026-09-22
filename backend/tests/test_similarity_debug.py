@@ -3,6 +3,7 @@
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -112,6 +113,7 @@ class Details:
         )
 
 
+@pytest.mark.asyncio
 async def test_debug_scores_pair_even_when_candidate_gate_would_reject_it() -> None:
     features = Features({
         A: _feature(A, "0000000000000000"),
@@ -142,6 +144,7 @@ async def test_debug_scores_pair_even_when_candidate_gate_would_reject_it() -> N
     assert result.groups == []
 
 
+@pytest.mark.asyncio
 async def test_debug_simulates_grouping_from_pairs_that_pass_pair_local_gates() -> None:
     features = Features({
         A: _feature(A, "0000000000000000"),
@@ -176,6 +179,7 @@ async def test_debug_simulates_grouping_from_pairs_that_pass_pair_local_gates() 
     assert result.neighbor_allocation_simulated is False
 
 
+@pytest.mark.asyncio
 async def test_debug_returns_missing_evidence_without_attempting_pair_score() -> None:
     features = Features({A: _feature(A, "0000000000000000")})
     similarity = Similarity({})
