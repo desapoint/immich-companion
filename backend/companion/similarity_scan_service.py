@@ -401,36 +401,32 @@ class SimilarityScanTaskHandler:
                         )
                     excluded_ids = pending
                     index_counters["fingerprints_excluded_after_retry"] = len(pending)
-            features = await self._features.list_current()
-            if self._indexer is not None and len(features) != coverage.current_count:
+            asset_count, snapshot_key = await self._candidate_snapshot()
+            if self._indexer is not None and asset_count != coverage.current_count:
                 raise PermanentTaskError(
                     "Similarity scan coverage changed during fingerprint snapshot; "
                     "retry after asset synchronization settles."
                 )
-            if self._indexer is not None and coverage.eligible_count > 0 and not features:
+            if self._indexer is not None and coverage.eligible_count > 0 and not asset_count:
                 raise PermanentTaskError(
                     "No current library fingerprints are available for candidate search."
                 )
-            feature_by_id = {feature.asset_id: feature for feature in features}
-            candidate_index = BoundedSimilarityCandidateIndex(
-                features,
-                maximum_perceptual_distance=request.maximum_perceptual_distance,
-                maximum_aspect_difference=request.maximum_aspect_difference,
-                maximum_neighbors_per_asset=request.maximum_neighbors_per_asset,
-                stats=candidate_stats,
-            )
-            ordered_features = candidate_index.ordered_features
-            snapshot_key = await asyncio.to_thread(_feature_snapshot_key, ordered_features)
+
             saved = dict(getattr(task, "checkpoint", {}) or {})
             same_snapshot = saved.get("feature_snapshot") == snapshot_key
             saved_phase = str(saved.get("phase", "")) if same_snapshot else ""
             resume_index = (
-                min(len(ordered_features), int(saved.get("candidate_assets_processed", 0)))
+                min(asset_count, int(saved.get("candidate_assets_processed", 0)))
                 if saved_phase in ("candidate_index", "scoring")
                 else 0
             )
             resume_scored = (
-                max(0, int(saved.get("pairs_scored", 0))) if saved_phase == "scoring" else 0
+                max(0, int(saved.get("pairs_scored", 0)))
+                if saved_phase == "scoring"
+                else 0
+            )
+            candidate_pair_limit = (
+                asset_count * request.maximum_neighbors_per_asset // 2
             )
             if saved_phase != "scoring":
                 await context.checkpoint(
@@ -439,156 +435,128 @@ class SimilarityScanTaskHandler:
                         "scan_id": str(scan_id),
                         "feature_snapshot": snapshot_key,
                         "candidate_assets_processed": resume_index,
+                        "pairs_scored": 0,
                     },
                     counters=telemetry(
-                        assets_with_current_features=len(ordered_features),
+                        assets_with_current_features=asset_count,
                         candidate_assets_processed=resume_index,
-                        candidate_pair_limit=(
-                            len(ordered_features) * request.maximum_neighbors_per_asset // 2
-                        ),
+                        candidate_pairs=0,
+                        candidate_pair_limit=candidate_pair_limit,
+                        pairs_scored=0,
                     ),
                     progress={
                         "phase": "similarity_candidates",
                         "completed": resume_index,
-                        "total": len(ordered_features),
+                        "total": asset_count,
                         "percent": round(
-                            35 + 10 * resume_index / max(1, len(ordered_features)), 1
+                            35 + 10 * resume_index / max(1, asset_count), 1
                         ),
                         "detail": (
                             f"Resuming candidate index after {resume_index} fingerprints…"
                             if resume_index
-                            else f"Indexing {len(ordered_features)} visual fingerprints…"
+                            else f"Indexing {asset_count} visual fingerprints…"
                         ),
                     },
                 )
-            while candidate_index.processed < len(ordered_features):
+
+            candidate_index = BoundedSimilarityCandidateIndex(
+                maximum_perceptual_distance=request.maximum_perceptual_distance,
+                maximum_aspect_difference=request.maximum_aspect_difference,
+                maximum_neighbors_per_asset=request.maximum_neighbors_per_asset,
+                stats=candidate_stats,
+                retain_pairs=False,
+            )
+            accepted: list[tuple[float, int, int, SimilarityScanPair]] = []
+            processed = 0
+
+            async for feature_batch in self._candidate_feature_batches():
                 await context.ensure_active()
                 phase_started = perf_counter()
-                await asyncio.to_thread(candidate_index.process_next, SIMILARITY_INDEX_BATCH_SIZE)
+                emitted = await asyncio.to_thread(
+                    candidate_index.process_batch,
+                    feature_batch,
+                )
                 candidate_discovery_milliseconds += round(
                     (perf_counter() - phase_started) * 1000
                 )
+
+                for offset in range(0, len(emitted), SIMILARITY_SCORE_BATCH_SIZE):
+                    await context.ensure_active()
+                    batch = emitted[offset : offset + SIMILARITY_SCORE_BATCH_SIZE]
+                    asset_ids = list(
+                        dict.fromkeys(
+                            asset_id
+                            for pair in batch
+                            for asset_id in (pair.asset_id_low, pair.asset_id_high)
+                        )
+                    )
+                    feature_by_id = await self._current_features(asset_ids)
+                    if len(feature_by_id) != len(asset_ids):
+                        raise PermanentTaskError(
+                            "Similarity scan coverage changed during candidate scoring; "
+                            "retry after asset synchronization settles."
+                        )
+                    scoring_started = perf_counter()
+                    edges = await self._similarity.reference_edges(
+                        [[pair.asset_id_low, pair.asset_id_high] for pair in batch],
+                        feature_by_id,
+                        **_epoch_kwargs(
+                            self._similarity.reference_edges,
+                            evidence_epoch,
+                        ),
+                    )
+                    pair_scoring_milliseconds += round(
+                        (perf_counter() - scoring_started) * 1000
+                    )
+                    for pair in batch:
+                        evidence = edges.get((pair.asset_id_low, pair.asset_id_high))
+                        if (
+                            evidence is None
+                            or evidence.similarity_percent
+                            < request.similarity_threshold
+                        ):
+                            continue
+                        low_feature = feature_by_id[pair.asset_id_low]
+                        high_feature = feature_by_id[pair.asset_id_high]
+                        match = SimilarityScanPair(
+                            asset_id_low=pair.asset_id_low,
+                            asset_id_high=pair.asset_id_high,
+                            asset_low_source_sha256=low_feature.source_identity,
+                            asset_high_source_sha256=high_feature.source_identity,
+                            evidence=evidence,
+                        )
+                        ranked = (
+                            evidence.similarity_percent,
+                            -pair.asset_id_low.int,
+                            -pair.asset_id_high.int,
+                            match,
+                        )
+                        if len(accepted) < request.maximum_matches:
+                            heapq.heappush(accepted, ranked)
+                        else:
+                            result_limit_reached = True
+                            if ranked[:3] > accepted[0][:3]:
+                                heapq.heapreplace(accepted, ranked)
+                    processed += len(batch)
+
                 processed_assets = candidate_index.processed
-                if processed_assets < resume_index or saved_phase == "scoring":
+                if processed_assets < resume_index:
                     continue
-                await context.checkpoint(
-                    checkpoint={
-                        "phase": "candidate_index",
-                        "scan_id": str(scan_id),
-                        "feature_snapshot": snapshot_key,
-                        "candidate_assets_processed": processed_assets,
-                    },
-                    counters=telemetry(
-                        assets_with_current_features=len(ordered_features),
-                        candidate_assets_processed=processed_assets,
-                        candidate_pairs=len(candidate_index.pairs),
-                        candidate_pair_limit=(
-                            len(ordered_features) * request.maximum_neighbors_per_asset // 2
-                        ),
-                    ),
-                    progress={
-                        "phase": "similarity_candidates",
-                        "completed": processed_assets,
-                        "total": len(ordered_features),
-                        "percent": round(
-                            35 + 10 * processed_assets / max(1, len(ordered_features)), 1
-                        ),
-                        "detail": (
-                            f"Indexed {processed_assets} of {len(ordered_features)} fingerprints"
-                        ),
-                    },
-                )
-            candidates = candidate_index.pairs
-            total = len(candidates)
-            resume_scored = min(total, resume_scored)
-            accepted: list[tuple[float, int, int, SimilarityScanPair]] = []
-            processed = 0
-            await context.checkpoint(
-                checkpoint={
-                    "phase": "scoring",
-                    "scan_id": str(scan_id),
-                    "feature_snapshot": snapshot_key,
-                    "candidate_assets_processed": len(ordered_features),
-                    "pairs_scored": resume_scored,
-                },
-                counters=telemetry(
-                    assets_with_current_features=len(features),
-                    candidate_pairs=total,
-                    candidate_pair_limit=(
-                        len(features) * request.maximum_neighbors_per_asset // 2
-                    ),
-                    pairs_scored=resume_scored,
-                    matches_retained=0,
-                    retained_match_limit=request.maximum_matches,
-                    result_limit_reached=0,
-                ),
-                progress={
-                    "phase": "similarity_scoring",
-                    "completed": resume_scored,
-                    "total": total,
-                    "percent": round(45 + 50 * resume_scored / max(1, total), 1),
-                    "detail": (
-                        f"Restoring scoring state after {resume_scored} candidate pairs…"
-                        if resume_scored
-                        else f"Scoring {total} bounded candidate pairs…"
-                    ),
-                },
-            )
-            for offset in range(0, total, SIMILARITY_SCORE_BATCH_SIZE):
-                await context.ensure_active()
-                batch = candidates[offset : offset + SIMILARITY_SCORE_BATCH_SIZE]
-                phase_started = perf_counter()
-                edges = await self._similarity.reference_edges(
-                    [[pair.asset_id_low, pair.asset_id_high] for pair in batch],
-                    feature_by_id,
-                    **_epoch_kwargs(self._similarity.reference_edges, evidence_epoch),
-                )
-                pair_scoring_milliseconds += round((perf_counter() - phase_started) * 1000)
-                for pair in batch:
-                    evidence = edges.get((pair.asset_id_low, pair.asset_id_high))
-                    if (
-                        evidence is None
-                        or evidence.similarity_percent < request.similarity_threshold
-                    ):
-                        continue
-                    low_feature = feature_by_id[pair.asset_id_low]
-                    high_feature = feature_by_id[pair.asset_id_high]
-                    match = SimilarityScanPair(
-                        asset_id_low=pair.asset_id_low,
-                        asset_id_high=pair.asset_id_high,
-                        asset_low_source_sha256=low_feature.source_identity,
-                        asset_high_source_sha256=high_feature.source_identity,
-                        evidence=evidence,
-                    )
-                    ranked = (
-                        evidence.similarity_percent,
-                        -pair.asset_id_low.int,
-                        -pair.asset_id_high.int,
-                        match,
-                    )
-                    if len(accepted) < request.maximum_matches:
-                        heapq.heappush(accepted, ranked)
-                    else:
-                        result_limit_reached = True
-                        if ranked[:3] > accepted[0][:3]:
-                            heapq.heapreplace(accepted, ranked)
-                processed += len(batch)
-                if processed < resume_scored:
+                if saved_phase == "scoring" and processed < resume_scored:
                     continue
                 await context.checkpoint(
                     checkpoint={
                         "phase": "scoring",
                         "scan_id": str(scan_id),
                         "feature_snapshot": snapshot_key,
-                        "candidate_assets_processed": len(ordered_features),
+                        "candidate_assets_processed": processed_assets,
                         "pairs_scored": processed,
                     },
                     counters=telemetry(
-                        assets_with_current_features=len(features),
-                        candidate_pairs=total,
-                        candidate_pair_limit=(
-                            len(features) * request.maximum_neighbors_per_asset // 2
-                        ),
+                        assets_with_current_features=asset_count,
+                        candidate_assets_processed=processed_assets,
+                        candidate_pairs=processed,
+                        candidate_pair_limit=candidate_pair_limit,
                         pairs_scored=processed,
                         matches_retained=len(accepted),
                         retained_match_limit=request.maximum_matches,
@@ -596,12 +564,52 @@ class SimilarityScanTaskHandler:
                     ),
                     progress={
                         "phase": "similarity_scoring",
-                        "completed": processed,
-                        "total": total,
-                        "percent": round(45 + 50 * processed / max(1, total), 1),
-                        "detail": f"Scored {processed} of {total} candidate pairs",
+                        "completed": processed_assets,
+                        "total": asset_count,
+                        "percent": round(
+                            35 + 60 * processed_assets / max(1, asset_count),
+                            1,
+                        ),
+                        "detail": (
+                            f"Indexed {processed_assets} of {asset_count} fingerprints · "
+                            f"scored {processed} candidate pairs"
+                        ),
                     },
                 )
+
+            total = processed
+            final_asset_count, final_snapshot_key = await self._candidate_snapshot()
+            if final_asset_count != asset_count or final_snapshot_key != snapshot_key:
+                raise PermanentTaskError(
+                    "Similarity scan fingerprint snapshot changed during candidate scoring; "
+                    "retry after asset synchronization settles."
+                )
+            await context.checkpoint(
+                checkpoint={
+                    "phase": "scoring",
+                    "scan_id": str(scan_id),
+                    "feature_snapshot": snapshot_key,
+                    "candidate_assets_processed": asset_count,
+                    "pairs_scored": total,
+                },
+                counters=telemetry(
+                    assets_with_current_features=asset_count,
+                    candidate_assets_processed=asset_count,
+                    candidate_pairs=total,
+                    candidate_pair_limit=candidate_pair_limit,
+                    pairs_scored=total,
+                    matches_retained=len(accepted),
+                    retained_match_limit=request.maximum_matches,
+                    result_limit_reached=int(result_limit_reached),
+                ),
+                progress={
+                    "phase": "similarity_scoring",
+                    "completed": total,
+                    "total": total,
+                    "percent": 95.0,
+                    "detail": f"Scored {total} bounded candidate pairs",
+                },
+            )
             matches = [item[3] for item in accepted]
             missing_reference_groups = _missing_reference_groups(matches, request)
             reference_pairs_required = sum(
