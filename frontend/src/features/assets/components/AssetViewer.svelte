@@ -25,6 +25,7 @@
   import { isViewerSelectionShortcut } from '../state/viewerSelection';
   import type { AssetDetailRecord, AssetRecord, AssetSelectionTarget, MediaResource, MutationResult, ViewerNavigationWindow } from '../../../lib/types/libraryContracts';
   import { assetViewerShortcuts } from '../state/viewerShortcuts';
+  import { addSimilarityDebugAssets } from '../../similarity-debug/state/similarityDebugBasket';
 
   type RelationDialog='album'|'tags'|null;
   type RemoveRelationDialog='album'|'tags'|null;
@@ -273,6 +274,11 @@
   async function applyCreatedRelation(kind:'album'|'tag',value:string){if(!asset||actionBusy)return;const id=asset.id;let result:MutationResult|null=null;if(kind==='album'){result=await mutations.run('Add to album',()=>libraryData.assets.addToAlbum(target(id),value),target(id));publishMutation('Add to album')}else{result=await mutations.run('Add tags',()=>libraryData.assets.addTags(target(id),[value]),target(id));publishMutation('Add tags')}await reconcilePage(result)}
   function interactiveTarget(target:EventTarget|null):boolean{return target instanceof Element&&Boolean(target.closest('button,a[href],input,textarea,select,[contenteditable="true"],[role="button"]'))}
   function toggleCurrentSelection(){if(currentId&&ontoggleselection)ontoggleselection(currentId)}
+  function addCurrentToDebug(){
+    if(!currentId)return;
+    const added=addSimilarityDebugAssets([currentId]);
+    toasts?.push({tone:added?'success':'warning',title:'Similarity debug',message:added?'Added this image to the similarity debug list.':'This image is already in the similarity debug list.'});
+  }
   function handleShortcut(event:KeyboardEvent){const onInteractiveControl=interactiveTarget(event.target);if(!open||event.defaultPrevented||event.ctrlKey||event.metaKey||event.altKey||onInteractiveControl)return;if(isViewerSelectionShortcut(event,onInteractiveControl)&&currentId&&ontoggleselection){event.preventDefault();toggleCurrentSelection();return}if(event.key==='ArrowLeft'&&canPrevious&&!navigationLoading&&!actionBusy){event.preventDefault();previous();return}if(event.key==='ArrowRight'&&canNext&&!navigationLoading&&!actionBusy){event.preventDefault();next();return}if((event.key==='f'||event.key==='F')&&asset&&!loading&&!actionBusy){event.preventDefault();void favorite();return}if((event.key==='a'||event.key==='A')&&asset&&!loading&&!actionBusy){event.preventDefault();void archive();return}if(isVideo)return;if(event.key==='+'||event.key==='='){event.preventDefault();camera.setZoom(camera.zoom*1.25);return}if(event.key==='-'||event.key==='−'){event.preventDefault();camera.setZoom(camera.zoom/1.25);return}if(event.key==='0'){event.preventDefault();camera.fit();return}if(event.key==='1'){event.preventDefault();camera.actual()}}
 </script>
 
@@ -286,7 +292,7 @@
       {#if currentRemovedFromStack}<V2Badge tone="warn" text="Removed from stack"/>{/if}
       {#if actionStatus}<V2Badge text={actionStatus}/>{/if}{#if asset?.is_offline}<V2Badge text="Source offline"/>{/if}{#if needsVideoProxy}<V2Badge text="Transcoded playback"/>{:else if needsDecodedImage}<V2Badge text="Decoded preview"/>{/if}
     </V2Inline>
-    <V2Inline gap="sm">{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
+    <V2Inline gap="sm"><V2Button disabled={!currentId} onclick={addCurrentToDebug}>Add to debug</V2Button>{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
   {/snippet}
   <div class="v2-viewer-workarea">
     {#if actionFeedback?.tone==='pending'}<div class="v2-viewer-operation-feedback"><OperationFeedback feedback={actionFeedback}/></div>{/if}
