@@ -7,11 +7,9 @@
   import V2Badge from '../../../lib/components/ui/Badge.svelte';
   import V2Inline from '../../../lib/components/layout/Inline.svelte';
   import V2LazyAssetMedia from '../../assets/components/LazyAssetMedia.svelte';
-  import V2ImageComparison, { type ComparisonMode } from '../../duplicates/components/ImageComparison.svelte';
+  import SimilarityDebugCompareViewer from './SimilarityDebugCompareViewer.svelte';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
-  import { assetThumbnailUrl } from '../../../lib/utils/viewerMedia';
-  import type { AssetRecord, MediaResource } from '../../../lib/types/libraryContracts';
-  import type { LocalChangeDiagnostics } from '../../duplicates/utils/localChangeDiagnostics';
+  import type { AssetRecord } from '../../../lib/types/libraryContracts';
   import {
     clearSimilarityDebugAssets,
     readSimilarityDebugAssets,
@@ -34,13 +32,7 @@
   let loadingAssets = $state(false);
   let running = $state(false);
   let error = $state('');
-  let comparisonMode = $state<ComparisonMode>('Side by side');
-  let comparisonSplit = $state(50);
-  let comparisonOpacity = $state(50);
-  let diffHue = $state(190);
-  let diffContrast = $state(180);
-  let diffBinary = $state(true);
-  let diffTolerance = $state(8);
+  let comparisonOpen = $state(false);
 
   let similarityThreshold = $state(95);
   let validationMode = $state<SimilarityDebugValidationMode>('strict');
@@ -55,54 +47,9 @@
   const resultAssetById = $derived(new Map((response?.assets ?? []).map((asset) => [asset.asset_id, asset])));
   const pairByKey = $derived(new Map((response?.pairs ?? []).map((pair) => [pairKey(pair.asset_id_left, pair.asset_id_right), pair])));
   const activePair = $derived(pairByKey.get(activePairKey) ?? null);
-  const activeLeftAsset = $derived(activePair ? assetById.get(activePair.asset_id_left) : undefined);
-  const activeRightAsset = $derived(activePair ? assetById.get(activePair.asset_id_right) : undefined);
-  const activeLeftResource = $derived(comparisonResource(activeLeftAsset));
-  const activeRightResource = $derived(comparisonResource(activeRightAsset));
-  const activeLocalDiagnostics = $derived(toLocalDiagnostics(activePair));
 
   function pairKey(left: string, right: string): string {
     return left < right ? `${left}\u0000${right}` : `${right}\u0000${left}`;
-  }
-
-  function comparisonResource(asset: AssetRecord | undefined): MediaResource {
-    if (!asset) {
-      return { url: '', fallbackUrls: [], mimeType: null, posterUrl: null, delivery: 'preview', originalMimeType: null, expiresAt: null };
-    }
-    return {
-      url: assetThumbnailUrl(asset.id, 'preview'),
-      fallbackUrls: [assetThumbnailUrl(asset.id, 'thumbnail')],
-      mimeType: 'image/jpeg',
-      posterUrl: null,
-      delivery: 'preview',
-      originalMimeType: asset.original_mime_type,
-      expiresAt: null,
-    };
-  }
-
-  function toLocalDiagnostics(pair: SimilarityDebugPair | null): LocalChangeDiagnostics | null {
-    const local = pair?.local_diagnostics;
-    if (!pair || !local) return null;
-    return {
-      available: true,
-      selectedAssetId: pair.asset_id_left,
-      referenceAssetId: pair.asset_id_right,
-      changedPercent: local.changed_percent,
-      localizedChangedPercent: local.localized_changed_percent,
-      coherentChangedPercent: local.coherent_changed_percent,
-      largestChangedRegionPercent: local.largest_changed_region_percent,
-      substantialRegionCount: local.substantial_region_count,
-      alignedChangedPercent: local.aligned_changed_percent,
-      rawSimilarityPercent: local.raw_similarity_percent,
-      alignedSimilarityPercent: local.aligned_similarity_percent,
-      alignmentApplied: local.alignment_applied,
-      alignmentShiftPercent: local.alignment_shift_percent,
-      alignmentOverlapPercent: local.alignment_overlap_percent,
-      rows: local.rows,
-      columns: local.columns,
-      cells: local.cells,
-      source: local.source,
-    };
   }
 
   function formatPercent(value: number | null | undefined, digits = 1): string {
@@ -163,16 +110,15 @@
     activePairKey = '';
   }
 
-  async function analyze(): Promise<void> {
+  async function analyze(preferredPairKey = ''): Promise<void> {
     if (checkedIds.length < 2) {
       error = 'Choose at least two debug images.';
       return;
     }
     running = true;
     error = '';
-    activePairKey = '';
     try {
-      response = await runSimilarityDebug({
+      const nextResponse = await runSimilarityDebug({
         asset_ids: checkedIds,
         similarity_threshold: similarityThreshold,
         validation_mode: validationMode,
@@ -181,14 +127,40 @@
         maximum_perceptual_distance: maximumPerceptualDistance,
         maximum_aspect_difference: maximumAspectDifference,
       });
-      const first = response.pairs[0];
-      if (first) activePairKey = pairKey(first.asset_id_left, first.asset_id_right);
+      response = nextResponse;
+      const preferredExists = preferredPairKey && nextResponse.pairs.some((candidate) => pairKey(candidate.asset_id_left, candidate.asset_id_right) === preferredPairKey);
+      const first = nextResponse.pairs[0];
+      activePairKey = preferredExists ? preferredPairKey : first ? pairKey(first.asset_id_left, first.asset_id_right) : '';
     } catch (reason) {
       error = reason instanceof Error ? reason.message : 'Similarity diagnostics failed.';
       response = null;
+      activePairKey = '';
     } finally {
       running = false;
     }
+  }
+
+  function openPair(left: string, right: string): void {
+    const key = pairKey(left, right);
+    if (!pairByKey.has(key)) return;
+    activePairKey = key;
+    comparisonOpen = true;
+  }
+
+  async function setAnchorFromViewer(assetId: string, compareWithAssetId: string): Promise<void> {
+    anchorAssetId = assetId;
+    const preferredPairKey = pairKey(assetId, compareWithAssetId);
+    await analyze(preferredPairKey);
+    comparisonOpen = Boolean(activePairKey);
+  }
+
+  function pairChangedFromViewer(key: string): void {
+    if (!pairByKey.has(key)) return;
+    activePairKey = key;
+  }
+
+  function anchorSettingChanged(): void {
+    if (response) void analyze(activePairKey);
   }
 
   function remove(assetId: string): void {
@@ -262,7 +234,7 @@
         <div class="similarity-debug-settings">
           <label>Similarity threshold <input type="number" min="50" max="100" step="0.1" bind:value={similarityThreshold}></label>
           <label>Validation mode <select bind:value={validationMode}><option value="reference">Reference</option><option value="linked">Linked</option><option value="strict">Strict</option></select></label>
-          <label>Anchor <select bind:value={anchorAssetId}><option value="">Automatic</option>{#each checkedIds as id}<option value={id}>{assetName(id)}</option>{/each}</select></label>
+          <label>Anchor <select bind:value={anchorAssetId} onchange={anchorSettingChanged}><option value="">Automatic</option>{#each checkedIds as id}<option value={id}>{assetName(id)}</option>{/each}</select></label>
           <label>Max link depth <input type="number" min="0" max="64" step="1" bind:value={maxLinkDepth}></label>
           <label>Max pHash distance <input type="number" min="0" max="64" step="1" bind:value={maximumPerceptualDistance}></label>
           <label>Max aspect difference <input type="number" min="0" max="1" step="0.01" bind:value={maximumAspectDifference}></label>
@@ -293,7 +265,7 @@
                       {:else}
                         {@const pair = pairByKey.get(pairKey(rowId, columnId))}
                         <td data-pass={pair?.would_pass_pair_pipeline ? 'true' : 'false'}>
-                          <button type="button" class:active={activePairKey === pairKey(rowId, columnId)} onclick={() => activePairKey = pairKey(rowId, columnId)}>
+                          <button type="button" class:active={activePairKey === pairKey(rowId, columnId)} onclick={() => openPair(rowId, columnId)}>
                             <b>{formatPercent(pair?.similarity_percent)}</b>
                             <small>{pairStatus(pair)}</small>
                           </button>
@@ -308,81 +280,19 @@
         </V2Card>
       </V2Section>
 
-      {#if activePair}
-        <V2Section title="Selected pair diagnostics">
-          <div class="similarity-debug-detail-grid">
-            <div class="similarity-debug-visual">
-              <V2Card title="Visual comparison">
-                <div class="similarity-debug-visual-stage">
-                  <V2ImageComparison
-                    selectedResource={activeLeftResource}
-                    referenceResource={activeRightResource}
-                    selectedLabel={assetName(activePair.asset_id_left)}
-                    referenceLabel={assetName(activePair.asset_id_right)}
-                    bind:mode={comparisonMode}
-                    bind:split={comparisonSplit}
-                    bind:opacity={comparisonOpacity}
-                    bind:diffHue
-                    bind:diffContrast
-                    bind:diffBinary
-                    bind:diffTolerance
-                    localDiagnostics={activeLocalDiagnostics}
-                  />
-                </div>
-              </V2Card>
-            </div>
-            <V2Card title={`${assetName(activePair.asset_id_left)} ↔ ${assetName(activePair.asset_id_right)}`}>
-              <div class="similarity-debug-kv">
-                <span>Final similarity</span><b>{formatPercent(activePair.similarity_percent)}</b>
-                <span>Would pass pair-local pipeline</span><b data-pass={activePair.would_pass_pair_pipeline}>{activePair.would_pass_pair_pipeline ? 'Yes' : 'No'}</b>
-                <span>Exclusion reason</span><b>{activePair.exclusion_reason ?? 'None'}</b>
-                <span>pHash distance</span><b data-pass={activePair.perceptual_gate_pass}>{activePair.perceptual_distance ?? '—'} / {activePair.maximum_perceptual_distance}</b>
-                <span>Aspect difference</span><b data-pass={activePair.aspect_gate_pass}>{formatRatio(activePair.aspect_ratio_difference)} / {activePair.maximum_aspect_difference.toFixed(4)}</b>
-                <span>Score threshold</span><b data-pass={activePair.similarity_threshold_pass}>{formatPercent(activePair.similarity_percent)} / {formatPercent(activePair.similarity_threshold)}</b>
-                <span>Neighbor allocation</span><b>Not simulated</b>
-                <span>Structure</span><b>{formatPercent(activePair.structural_percent)}</b>
-                <span>Perceptual score</span><b>{formatPercent(activePair.perceptual_percent)}</b>
-                <span>Color</span><b>{formatPercent(activePair.color_percent)}</b>
-                <span>Luminance MAE</span><b>{activePair.normalized_luminance_mae ?? '—'}</b>
-                <span>Luminance RMSE</span><b>{activePair.normalized_luminance_rmse ?? '—'}</b>
-                <span>Luminance SSIM</span><b>{activePair.normalized_luminance_ssim ?? '—'}</b>
-                <span>Dimensions equal</span><b>{activePair.dimensions_equal === null ? '—' : activePair.dimensions_equal ? 'Yes' : 'No'}</b>
-                <span>Exact thumbnail</span><b>{activePair.exact_thumbnail_match === null ? '—' : activePair.exact_thumbnail_match ? 'Yes' : 'No'}</b>
-                <span>Aligned detail changed</span><b>{formatPercent(activePair.detail_changed_percent)}</b>
-                <span>Detail source</span><b>{activePair.detail_source ?? '—'}</b>
-                <span>Model</span><b>{activePair.model_version ?? '—'} / f{activePair.feature_version ?? '—'} / c{activePair.comparison_version ?? '—'}</b>
-              </div>
-            </V2Card>
-
-            <V2Card title="Localized detail diagnostics">
-              {#if activePair.local_diagnostics}
-                {@const local = activePair.local_diagnostics}
-                <div class="similarity-debug-kv">
-                  <span>Raw detail similarity</span><b>{formatPercent(local.raw_similarity_percent)}</b>
-                  <span>Aligned detail similarity</span><b>{formatPercent(local.aligned_similarity_percent)}</b>
-                  <span>Raw changed area</span><b>{formatPercent(local.changed_percent)}</b>
-                  <span>Aligned changed area</span><b>{formatPercent(local.aligned_changed_percent)}</b>
-                  <span>Peak local change</span><b>{formatPercent(local.localized_changed_percent)}</b>
-                  <span>Coherent changed area</span><b>{formatPercent(local.coherent_changed_percent)}</b>
-                  <span>Largest changed region</span><b>{formatPercent(local.largest_changed_region_percent)}</b>
-                  <span>Substantial regions</span><b>{local.substantial_region_count}</b>
-                  <span>Alignment applied</span><b>{local.alignment_applied ? 'Yes' : 'No'}</b>
-                  <span>Alignment shift</span><b>{formatPercent(local.alignment_shift_percent)}</b>
-                  <span>Alignment overlap</span><b>{formatPercent(local.alignment_overlap_percent)}</b>
-                  <span>Evidence source</span><b>{local.source}</b>
-                </div>
-                <div class="similarity-debug-cell-grid" style={`--columns:${local.columns}`}>
-                  {#each local.cells.flat() as value, index}
-                    <span title={`Cell ${index + 1}: ${formatPercent(value)}`} style={`--change:${Math.max(8, Math.round(value))}%`}>{Math.round(value)}</span>
-                  {/each}
-                </div>
-              {:else}
-                <span class="v2-muted">Localized detail evidence is unavailable for this pair.</span>
-              {/if}
-            </V2Card>
-          </div>
-        </V2Section>
-      {/if}
+      <SimilarityDebugCompareViewer
+        open={comparisonOpen && Boolean(activePair)}
+        assetIds={checkedIds}
+        {assets}
+        pairs={response.pairs}
+        pair={activePair}
+        {anchorAssetId}
+        {validationMode}
+        {similarityThreshold}
+        onclose={() => comparisonOpen = false}
+        onpairchange={pairChangedFromViewer}
+        onsetanchor={setAnchorFromViewer}
+      />
 
       <V2Section title="Selected-set group simulation">
         <V2Card>
@@ -417,8 +327,5 @@
   .similarity-debug-settings{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}.similarity-debug-settings label{display:grid;gap:5px;color:var(--v2-muted);font-size:.75rem}.similarity-debug-settings input,.similarity-debug-settings select{min-width:0;padding:7px 8px;border:1px solid var(--v2-line);border-radius:6px;background:var(--v2-surface);color:var(--v2-text)}
   .similarity-debug-error{color:#ef9a9a}
   .similarity-debug-matrix-wrap{overflow:auto}.similarity-debug-matrix{border-collapse:collapse;width:max-content;min-width:100%;font-size:.75rem}.similarity-debug-matrix th,.similarity-debug-matrix td{border:1px solid var(--v2-line);padding:5px;max-width:150px}.similarity-debug-matrix th{background:var(--v2-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.similarity-debug-matrix td.same{text-align:center;color:var(--v2-muted)}.similarity-debug-matrix td[data-pass="true"]{background:color-mix(in srgb,#3fb950 10%,transparent)}.similarity-debug-matrix td[data-pass="false"]{background:color-mix(in srgb,#f85149 8%,transparent)}.similarity-debug-matrix button{display:grid;gap:2px;width:100%;padding:5px;border:0;border-radius:5px;background:transparent;color:inherit;text-align:left;cursor:pointer}.similarity-debug-matrix button.active{outline:2px solid var(--v2-accent)}.similarity-debug-matrix button small{color:var(--v2-muted)}
-  .similarity-debug-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:var(--v2-space-3)}.similarity-debug-visual{grid-column:1/-1;min-width:0}.similarity-debug-visual-stage{height:min(62vh,620px);min-height:420px;overflow:hidden}.similarity-debug-visual-stage :global(.v2-compare-component){height:100%}.similarity-debug-kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;align-items:baseline}.similarity-debug-kv span{color:var(--v2-muted)}.similarity-debug-kv b{text-align:right;overflow-wrap:anywhere}.similarity-debug-kv b[data-pass="true"]{color:#8fd694}.similarity-debug-kv b[data-pass="false"]{color:#ef9a9a}
-  .similarity-debug-cell-grid{display:grid;grid-template-columns:repeat(var(--columns),minmax(22px,1fr));gap:2px;margin-top:12px;max-height:280px;overflow:auto}.similarity-debug-cell-grid span{display:grid;place-items:center;aspect-ratio:1;background:color-mix(in srgb,var(--v2-accent) var(--change),transparent);font-size:9px;color:var(--v2-text)}
   .similarity-debug-group{display:grid;gap:6px;padding:10px 0;border-bottom:1px solid var(--v2-line)}.similarity-debug-group:last-child{border-bottom:0}.similarity-debug-group>span{color:var(--v2-muted);font-size:.75rem}.similarity-debug-admissions{display:flex;flex-wrap:wrap;gap:6px}.similarity-debug-admissions span{padding:5px 7px;border:1px solid var(--v2-line);border-radius:6px;font-size:.72rem}
-  @media(max-width:720px){.similarity-debug-kv{grid-template-columns:1fr}.similarity-debug-kv b{text-align:left}}
 </style>
