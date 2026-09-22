@@ -82,7 +82,7 @@
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]),historyClearTarget=$state<DuplicateHistoryRecord|null>(null),historyClearAll=$state(false),historyDetailId=$state<string|null>(null);
   let cacheTelemetry=$state.raw<SimilarityCacheStatus|null>(null),cacheLoading=$state(false);
   let planPreparing=$state(false),groupLoads=$state(0),groupNavigationLoading=$state(false),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
-  const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController((message)=>{pendingReview=null;openErrorDialog('Duplicate operation failed',message)});
+  const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController((message)=>{pendingReview=null;historyClearTarget=null;historyClearAll=false;openErrorDialog('Duplicate operation failed',message)});
   const reviewLoading=$derived(initialLoading||groupLoads>0||groupRequests.loading),loading=$derived(reviewLoading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing||presetApplying||selectingAll),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
   const activeGroup=$derived(groups.find((item)=>item.id===group)),activeGroupIndex=$derived(groups.findIndex((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),activeCompareStack=$derived(stackForAsset(stackWorkspace,activeAssetIds[member]??'')),decisionCount=$derived(Object.keys(decisions).length);
