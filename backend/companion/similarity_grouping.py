@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from itertools import combinations
 from typing import Literal
@@ -170,129 +171,175 @@ def _strict_groups(scores: dict[tuple[UUID, UUID], float]) -> list[frozenset[UUI
     return sorted(maximal, key=_member_key)
 
 
+class SimilarityGroupValidator:
+    """Incrementally collect accepted edges before deterministic group validation."""
+
+    def __init__(
+        self,
+        *,
+        mode: SimilarityValidationMode,
+        threshold: float,
+        preferred_anchor_asset_id: UUID | None = None,
+        max_link_depth: int = 2,
+    ) -> None:
+        if mode not in {"reference", "linked", "strict"}:
+            raise ValueError(f"Unsupported similarity validation mode: {mode}")
+        if not 0 <= threshold <= 100:
+            raise ValueError("threshold must be between 0 and 100")
+        if not 0 <= max_link_depth <= 64:
+            raise ValueError("max_link_depth must be between 0 and 64")
+        self._mode = mode
+        self._threshold = threshold
+        self._preferred_anchor_asset_id = preferred_anchor_asset_id
+        self._max_link_depth = max_link_depth
+        self._scores: dict[tuple[UUID, UUID], float] = {}
+
+    def add_edges(self, edges: Iterable[SimilarityGroupingEdge]) -> None:
+        """Merge one bounded edge batch into compact score state."""
+
+        for edge in edges:
+            if edge.similarity_percent < self._threshold:
+                continue
+            key = (edge.asset_id_low, edge.asset_id_high)
+            self._scores[key] = max(self._scores.get(key, 0.0), edge.similarity_percent)
+
+    def groups(self) -> tuple[ValidatedSimilarityGroup, ...]:
+        """Finalize deterministic groups without retaining rich edge objects."""
+
+        scores = self._scores
+        if not scores:
+            return ()
+
+        mode = self._mode
+        preferred_anchor_asset_id = self._preferred_anchor_asset_id
+        max_link_depth = self._max_link_depth
+
+        if mode == "strict":
+            results: list[ValidatedSimilarityGroup] = []
+            for group in _strict_groups(scores):
+                anchor = (
+                    preferred_anchor_asset_id
+                    if preferred_anchor_asset_id in group
+                    else min(group, key=lambda asset_id: asset_id.int)
+                )
+                parents = {
+                    asset_id: (anchor, scores[_pair(anchor, asset_id)], 0)
+                    for asset_id in group
+                    if asset_id != anchor
+                }
+                results.append(
+                    _group_result(
+                        group,
+                        anchor=anchor,
+                        mode=mode,
+                        parents=parents,
+                        scores=scores,
+                    )
+                )
+            return tuple(results)
+
+        results: list[ValidatedSimilarityGroup] = []
+        for component in _components(scores):
+            anchor = (
+                preferred_anchor_asset_id
+                if preferred_anchor_asset_id in component
+                else min(component, key=lambda asset_id: asset_id.int)
+            )
+            if mode == "reference":
+                members = frozenset(
+                    {anchor}
+                    | {
+                        asset_id
+                        for asset_id in component
+                        if asset_id != anchor and _pair(anchor, asset_id) in scores
+                    }
+                )
+                parents = {
+                    asset_id: (anchor, scores[_pair(anchor, asset_id)], 0)
+                    for asset_id in members
+                    if asset_id != anchor
+                }
+            else:
+                # A linked group starts with every member that qualifies directly
+                # against the reference. Only members that cannot meet the reference
+                # threshold may be admitted transitively through another accepted member.
+                accepted = {anchor}
+                parents: dict[UUID, tuple[UUID, float, int]] = {}
+                direct_members = sorted(
+                    (
+                        asset_id
+                        for asset_id in component
+                        if asset_id != anchor and _pair(anchor, asset_id) in scores
+                    ),
+                    key=lambda asset_id: asset_id.int,
+                )
+                for asset_id in direct_members:
+                    parents[asset_id] = (anchor, scores[_pair(anchor, asset_id)], 0)
+                    accepted.add(asset_id)
+
+                # User-facing linked depth counts only transitive expansion layers:
+                # depth 0 = direct reference matches, depth 1 = matches reached through
+                # those direct matches, depth 2 = one additional expansion, and so on.
+                # Expand one complete frontier at a time so displayed depth is the
+                # shortest expansion depth rather than an artifact of greedy edge order.
+                frontier = set(direct_members)
+                for link_depth in range(1, max_link_depth + 1):
+                    if not frontier:
+                        break
+                    next_parents: dict[UUID, tuple[UUID, float, int]] = {}
+                    for candidate in component - accepted:
+                        choices = [
+                            (scores[_pair(parent, candidate)], parent)
+                            for parent in frontier
+                            if _pair(parent, candidate) in scores
+                        ]
+                        if not choices:
+                            continue
+                        score, parent = min(
+                            choices,
+                            key=lambda item: (-item[0], item[1].int),
+                        )
+                        next_parents[candidate] = (parent, score, link_depth)
+                    if not next_parents:
+                        break
+                    parents.update(next_parents)
+                    frontier = set(next_parents)
+                    accepted.update(frontier)
+                members = frozenset(accepted)
+            if len(members) >= 2:
+                results.append(
+                    _group_result(
+                        members,
+                        anchor=anchor,
+                        mode=mode,
+                        parents=parents,
+                        scores=scores,
+                    )
+                )
+        return tuple(results)
+
+
 def validated_similarity_groups(
-    edges: tuple[SimilarityGroupingEdge, ...],
+    edges: Iterable[SimilarityGroupingEdge],
     *,
     mode: SimilarityValidationMode,
     threshold: float,
     preferred_anchor_asset_id: UUID | None = None,
     max_link_depth: int = 2,
 ) -> tuple[ValidatedSimilarityGroup, ...]:
-    """Validate bounded candidate components and retain deterministic admission evidence."""
+    """Validate candidate edges while retaining deterministic admission evidence."""
 
-    if mode not in {"reference", "linked", "strict"}:
-        raise ValueError(f"Unsupported similarity validation mode: {mode}")
-    if not 0 <= threshold <= 100:
-        raise ValueError("threshold must be between 0 and 100")
-    if not 0 <= max_link_depth <= 64:
-        raise ValueError("max_link_depth must be between 0 and 64")
-    scores: dict[tuple[UUID, UUID], float] = {}
-    for edge in edges:
-        if edge.similarity_percent >= threshold:
-            key = (edge.asset_id_low, edge.asset_id_high)
-            scores[key] = max(scores.get(key, 0.0), edge.similarity_percent)
-    if not scores:
-        return ()
-
-    if mode == "strict":
-        results: list[ValidatedSimilarityGroup] = []
-        for group in _strict_groups(scores):
-            anchor = (
-                preferred_anchor_asset_id
-                if preferred_anchor_asset_id in group
-                else min(group, key=lambda asset_id: asset_id.int)
-            )
-            parents = {
-                asset_id: (anchor, scores[_pair(anchor, asset_id)], 0)
-                for asset_id in group
-                if asset_id != anchor
-            }
-            results.append(
-                _group_result(
-                    group, anchor=anchor, mode=mode, parents=parents, scores=scores
-                )
-            )
-        return tuple(results)
-
-    results = []
-    for component in _components(scores):
-        anchor = (
-            preferred_anchor_asset_id
-            if preferred_anchor_asset_id in component
-            else min(component, key=lambda asset_id: asset_id.int)
-        )
-        if mode == "reference":
-            members = frozenset(
-                {anchor}
-                | {
-                    asset_id
-                    for asset_id in component
-                    if asset_id != anchor and _pair(anchor, asset_id) in scores
-                }
-            )
-            parents = {
-                asset_id: (anchor, scores[_pair(anchor, asset_id)], 0)
-                for asset_id in members
-                if asset_id != anchor
-            }
-        else:
-            # A linked group starts with every member that qualifies directly
-            # against the reference. Only members that cannot meet the reference
-            # threshold may be admitted transitively through another accepted member.
-            accepted = {anchor}
-            parents: dict[UUID, tuple[UUID, float, int]] = {}
-            direct_members = sorted(
-                (
-                    asset_id
-                    for asset_id in component
-                    if asset_id != anchor and _pair(anchor, asset_id) in scores
-                ),
-                key=lambda asset_id: asset_id.int,
-            )
-            for asset_id in direct_members:
-                parents[asset_id] = (anchor, scores[_pair(anchor, asset_id)], 0)
-                accepted.add(asset_id)
-
-            # User-facing linked depth counts only transitive expansion layers:
-            # depth 0 = direct reference matches, depth 1 = matches reached through
-            # those direct matches, depth 2 = one additional expansion, and so on.
-            # Expand one complete frontier at a time so displayed depth is the
-            # shortest expansion depth rather than an artifact of greedy edge order.
-            frontier = set(direct_members)
-            for link_depth in range(1, max_link_depth + 1):
-                if not frontier:
-                    break
-                next_parents: dict[UUID, tuple[UUID, float, int]] = {}
-                for candidate in component - accepted:
-                    choices = [
-                        (scores[_pair(parent, candidate)], parent)
-                        for parent in frontier
-                        if _pair(parent, candidate) in scores
-                    ]
-                    if not choices:
-                        continue
-                    score, parent = min(
-                        choices,
-                        key=lambda item: (-item[0], item[1].int),
-                    )
-                    next_parents[candidate] = (parent, score, link_depth)
-                if not next_parents:
-                    break
-                parents.update(next_parents)
-                frontier = set(next_parents)
-                accepted.update(frontier)
-            members = frozenset(accepted)
-        if len(members) >= 2:
-            results.append(
-                _group_result(
-                    members, anchor=anchor, mode=mode, parents=parents, scores=scores
-                )
-            )
-    return tuple(results)
-
+    validator = SimilarityGroupValidator(
+        mode=mode,
+        threshold=threshold,
+        preferred_anchor_asset_id=preferred_anchor_asset_id,
+        max_link_depth=max_link_depth,
+    )
+    validator.add_edges(edges)
+    return validator.groups()
 
 def cohesive_similarity_groups(
-    edges: tuple[SimilarityGroupingEdge, ...],
+    edges: Iterable[SimilarityGroupingEdge],
 ) -> tuple[CohesiveSimilarityGroup, ...]:
     """Compatibility wrapper for the original strict accepted-edge behavior."""
 
