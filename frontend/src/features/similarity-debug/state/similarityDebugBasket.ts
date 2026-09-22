@@ -2,7 +2,9 @@ export const SIMILARITY_DEBUG_STORAGE_KEY = 'immichCompanionV2SimilarityDebugAss
 export const SIMILARITY_DEBUG_CHANGED_EVENT = 'immich-companion-similarity-debug-changed';
 const MAX_DEBUG_ASSETS = 12;
 
-function storage(): Storage | null {
+type DebugStorage = Pick<Storage, 'getItem' | 'setItem'>;
+
+function browserStorage(): DebugStorage | null {
   return typeof window === 'undefined' ? null : window.localStorage;
 }
 
@@ -10,8 +12,7 @@ function normalize(assetIds: readonly string[]): string[] {
   return [...new Set(assetIds.filter(Boolean))].slice(0, MAX_DEBUG_ASSETS);
 }
 
-export function readSimilarityDebugAssets(): string[] {
-  const target = storage();
+export function readSimilarityDebugAssets(target: DebugStorage | null = browserStorage()): string[] {
   if (!target) return [];
   try {
     const value = JSON.parse(target.getItem(SIMILARITY_DEBUG_STORAGE_KEY) ?? '[]');
@@ -21,24 +22,31 @@ export function readSimilarityDebugAssets(): string[] {
   }
 }
 
-function write(assetIds: readonly string[]): string[] {
+function write(assetIds: readonly string[], target: DebugStorage | null): string[] {
   const value = normalize(assetIds);
-  const target = storage();
   target?.setItem(SIMILARITY_DEBUG_STORAGE_KEY, JSON.stringify(value));
-  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent(SIMILARITY_DEBUG_CHANGED_EVENT, { detail: value }));
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(SIMILARITY_DEBUG_CHANGED_EVENT, { detail: value }));
+  }
   return value;
 }
 
-export function addSimilarityDebugAssets(assetIds: readonly string[]): number {
-  const before = readSimilarityDebugAssets();
-  const after = write([...before, ...assetIds]);
+export function addSimilarityDebugAssets(
+  assetIds: readonly string[],
+  target: DebugStorage | null = browserStorage(),
+): number {
+  const before = readSimilarityDebugAssets(target);
+  const after = write([...before, ...assetIds], target);
   return after.length - before.length;
 }
 
-export function removeSimilarityDebugAsset(assetId: string): void {
-  write(readSimilarityDebugAssets().filter((item) => item !== assetId));
+export function removeSimilarityDebugAsset(
+  assetId: string,
+  target: DebugStorage | null = browserStorage(),
+): void {
+  write(readSimilarityDebugAssets(target).filter((item) => item !== assetId), target);
 }
 
-export function clearSimilarityDebugAssets(): void {
-  write([]);
+export function clearSimilarityDebugAssets(target: DebugStorage | null = browserStorage()): void {
+  write([], target);
 }
