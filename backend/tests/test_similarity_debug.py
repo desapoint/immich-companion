@@ -58,10 +58,18 @@ class Features:
         self.current = current
 
     async def get_current_many(self, asset_ids):
-        return {asset_id: self.current[asset_id] for asset_id in asset_ids if asset_id in self.current}
+        return {
+            asset_id: self.current[asset_id]
+            for asset_id in asset_ids
+            if asset_id in self.current
+        }
 
     async def get_many(self, asset_ids):
-        return {asset_id: self.current[asset_id] for asset_id in asset_ids if asset_id in self.current}
+        return {
+            asset_id: self.current[asset_id]
+            for asset_id in asset_ids
+            if asset_id in self.current
+        }
 
     async def unavailable_reason(self, asset_id):
         return None
