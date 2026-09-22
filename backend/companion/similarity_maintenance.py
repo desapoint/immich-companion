@@ -1,4 +1,4 @@
-"""Incremental, durable Appearance maintenance driven by synchronized asset changes."""
+"""Durable Appearance maintenance driven by synchronized asset changes."""
 
 from __future__ import annotations
 
@@ -12,8 +12,7 @@ from companion.database import DatabaseManager
 from companion.integrity_service import INTEGRITY_TASK_TYPE
 from companion.models import SimilarityAssetChangeRecord
 from companion.similarity_index_service import SimilarityIndexMaintainer
-from companion.similarity_repository import SimilarityRepository
-from companion.similarity_scan_repository import SimilarityScanPair, SimilarityScanRepository
+from companion.similarity_scan_repository import SimilarityScanRepository
 from companion.similarity_search_repository import SimilaritySearchRepository
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
@@ -83,7 +82,7 @@ class SimilarityMaintenanceRepository:
 
 
 class SimilarityMaintenanceService:
-    """Submit at most one low-priority incremental maintenance worker."""
+    """Submit at most one low-priority Appearance maintenance worker."""
 
     def __init__(self, tasks: TaskCoordinator, changes: SimilarityMaintenanceRepository) -> None:
         self._tasks = tasks
@@ -104,7 +103,7 @@ class SimilarityMaintenanceService:
 
 
 class SimilarityMaintenanceTaskHandler:
-    """Refresh changed features and only their incident review relationships."""
+    """Refresh per-image Appearance evidence without running duplicate discovery."""
 
     task_type = SIMILARITY_MAINTENANCE_TASK_TYPE
     lane_key = INTEGRITY_TASK_TYPE
@@ -116,109 +115,51 @@ class SimilarityMaintenanceTaskHandler:
         changes: SimilarityMaintenanceRepository,
         indexer: SimilarityIndexMaintainer,
         features: SimilaritySearchRepository,
-        similarity: SimilarityRepository,
         scans: SimilarityScanRepository,
     ) -> None:
         self._changes = changes
         self._indexer = indexer
         self._features = features
-        self._similarity = similarity
         self._scans = scans
 
-    async def _candidate_ids(self, asset_id: UUID) -> list[UUID]:
-        if not await self._features.has_current(asset_id):
-            return []
-        target = await self._features.get(asset_id)
-        active = await self._scans.latest_completed_parameters()
-        if target is None or active is None or target.height <= 0:
-            return []
-        _, parameters = active
-        target_hash = int(target.perceptual_hash, 16)
-        target_ratio = target.width / target.height
-        ranked: list[tuple[int, int, UUID]] = []
-        for candidate in await self._features.list_current():
-            if candidate.asset_id == asset_id or candidate.height <= 0:
-                continue
-            try:
-                distance = (target_hash ^ int(candidate.perceptual_hash, 16)).bit_count()
-            except ValueError:
-                continue
-            if distance > parameters.maximum_perceptual_distance:
-                continue
-            ratio = candidate.width / candidate.height
-            aspect_difference = abs(target_ratio - ratio) / max(target_ratio, ratio)
-            if aspect_difference > parameters.maximum_aspect_difference:
-                continue
-            ranked.append((distance, candidate.asset_id.int, candidate.asset_id))
-            ranked.sort(key=lambda item: (item[0], item[1]))
-            del ranked[parameters.maximum_neighbors_per_asset :]
-        return [item[2] for item in ranked]
+    async def _invalidate_asset_pairs(self, asset_id: UUID) -> bool:
+        """Remove stale published relationships without allocating new candidates."""
 
-    async def _reconcile_asset(self, context: TaskContext, asset_id: UUID) -> int:
         active = await self._scans.latest_completed_parameters()
         if active is None:
-            return 0
-        scan_id, parameters = active
-        candidate_ids = await self._candidate_ids(asset_id)
-        feature_map = await self._features.get_many([asset_id, *candidate_ids])
-        target = feature_map.get(asset_id) if await self._features.has_current(asset_id) else None
-        pairs: list[SimilarityScanPair] = []
-        if target is not None and candidate_ids:
-            edges = await self._similarity.reference_edges(
-                [[asset_id, candidate_id] for candidate_id in candidate_ids],
-                feature_map,
-            )
-            for candidate_id in candidate_ids:
-                evidence = edges.get((asset_id, candidate_id))
-                candidate = feature_map.get(candidate_id)
-                if (
-                    evidence is None
-                    or candidate is None
-                    or evidence.similarity_percent < parameters.similarity_threshold
-                ):
-                    continue
-                low, high = (
-                    (target, candidate)
-                    if target.asset_id.int < candidate.asset_id.int
-                    else (candidate, target)
-                )
-                pairs.append(
-                    SimilarityScanPair(
-                        asset_id_low=low.asset_id,
-                        asset_id_high=high.asset_id,
-                        asset_low_source_sha256=low.source_identity,
-                        asset_high_source_sha256=high.source_identity,
-                        evidence=evidence,
-                    )
-                )
+            return False
+        scan_id, _ = active
         await self._scans.replace_asset_pairs(
             scan_id,
             asset_id,
-            pairs,
+            [],
             asset_count=await self._features.count_current(),
         )
-        return len(pairs)
+        return True
 
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         del payload
         processed = int(context.task.counters.get("assets_processed", 0))
         features_refreshed = int(context.task.counters.get("features_refreshed", 0))
         deletes_reconciled = int(context.task.counters.get("deletes_reconciled", 0))
-        pairs_reconciled = int(context.task.counters.get("pairs_reconciled", 0))
+        scan_assets_invalidated = int(
+            context.task.counters.get("scan_assets_invalidated", 0)
+        )
         while batch := await self._changes.pending(SIMILARITY_MAINTENANCE_BATCH_SIZE):
             for change in batch:
                 await context.ensure_active()
-                feature_current = (
-                    await self._features.has_current(change.asset_id)
-                    if change.operation == "upsert"
-                    else False
-                )
-                if change.operation == "upsert" and not feature_current:
-                    if await self._indexer.fingerprint_changed_asset(context, change.asset_id):
+                if change.operation == "upsert":
+                    feature_current = await self._features.has_current(change.asset_id)
+                    if not feature_current and await self._indexer.fingerprint_changed_asset(
+                        context, change.asset_id
+                    ):
                         features_refreshed += 1
-                else:
+                elif change.operation == "delete":
                     deletes_reconciled += 1
-                pairs_reconciled += await self._reconcile_asset(context, change.asset_id)
+
+                if await self._invalidate_asset_pairs(change.asset_id):
+                    scan_assets_invalidated += 1
+
                 await self._changes.acknowledge(change)
                 processed += 1
                 pending = await self._changes.count()
@@ -228,7 +169,7 @@ class SimilarityMaintenanceTaskHandler:
                         "assets_processed": processed,
                         "features_refreshed": features_refreshed,
                         "deletes_reconciled": deletes_reconciled,
-                        "pairs_reconciled": pairs_reconciled,
+                        "scan_assets_invalidated": scan_assets_invalidated,
                         "assets_pending": pending,
                     },
                     progress={
@@ -236,16 +177,23 @@ class SimilarityMaintenanceTaskHandler:
                         "completed": processed,
                         "total": processed + pending,
                         "percent": round(processed / max(1, processed + pending) * 100, 1),
-                        "detail": f"Maintained {processed} changed assets; {pending} pending",
+                        "detail": (
+                            f"Indexed {processed} changed assets; {pending} pending. "
+                            "Candidate discovery is deferred."
+                        ),
                     },
                 )
         return TaskResult(
-            summary={"incremental": True, "full_scan_started": False},
+            summary={
+                "incremental": True,
+                "full_scan_started": False,
+                "discovery_deferred": True,
+            },
             counters={
                 "assets_processed": processed,
                 "features_refreshed": features_refreshed,
                 "deletes_reconciled": deletes_reconciled,
-                "pairs_reconciled": pairs_reconciled,
+                "scan_assets_invalidated": scan_assets_invalidated,
                 "assets_pending": 0,
             },
         )

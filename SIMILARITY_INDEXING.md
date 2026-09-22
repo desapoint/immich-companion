@@ -87,10 +87,25 @@ Search and detail evidence are generated together from one canonical bounded
 pixel representation. A search fingerprint without its matching current detail record is not
 considered complete/current visual evidence and is re-queued for indexing.
 
-Candidate discovery, full-library scans, incremental maintenance, duplicate
-review, and Localized Changes therefore do not perform another media download
-or image decode after indexing. Pair scoring combines the cached search and
-localized-detail evidence. Localized Changes is a read-only cache operation.
+Candidate discovery, full-library scans, duplicate review, and Localized
+Changes therefore do not perform another media download or image decode after
+indexing. Pair scoring combines the cached search and localized-detail evidence.
+Localized Changes is a read-only cache operation.
+
+### Sync-time indexing vs explicit discovery
+
+Successful full and incremental asset synchronization queue only images whose
+content-derived source identity is new or changed. Background Appearance
+maintenance refreshes the reusable search fingerprint and localized-detail
+feature for those images. It also removes any incident pairs from the latest
+completed scan when their source changed or disappeared so stale duplicate
+relationships are not published.
+
+Sync-time maintenance does **not** allocate perceptual-hash neighbors, score
+candidate pairs, or add new similarity relationships. Those operations remain
+part of an explicit user-requested similarity discovery scan. A discovery scan
+first catches up any missing/stale Appearance evidence, then performs candidate
+lookup, pair scoring, thresholding, grouping, and publication.
 
 Native Immich duplicate groups are also prepared through the same visual
 indexer before review, so they do not bypass the cache-completeness invariant.
@@ -156,8 +171,8 @@ A visual fingerprint or localized-detail match never becomes exact-file proof.
 - Search and localized-detail features are written from the same normalized
   pixels and source identity.
 - A search-only cache entry is not exposed as current.
-- Full scans and incremental scoring perform cache-only pair scoring and no
-  second detail media stage.
+- Full discovery scans perform cache-only pair scoring after indexing and no
+  second detail media stage; sync-time maintenance does not score pairs.
 - Linked groups receive a post-group reference-completion pass so every
   successfully indexed member has direct comparison evidence to the stable
   reference, even when membership was admitted transitively through another

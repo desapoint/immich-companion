@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
@@ -14,7 +13,6 @@ from companion.similarity_maintenance import (
     SimilarityMaintenanceService,
     SimilarityMaintenanceTaskHandler,
 )
-from companion.similarity_repository import PairSimilarityEvidence
 from companion.similarity_scan_repository import SimilarityScanParameters
 
 
@@ -51,29 +49,25 @@ class FakeIndexer:
 
 
 class FakeFeatures:
-    current: set[UUID] = set()
+    def __init__(self, current: set[UUID] | None = None, count: int = 120) -> None:
+        self.current = current or set()
+        self.count = count
 
-    async def has_current(self, _asset_id: UUID) -> bool:
-        return _asset_id in self.current
-
-    async def get(self, _asset_id: UUID):
-        return None
-
-    async def get_many(self, _asset_ids: list[UUID]):
-        return {}
-
-    async def list_current(self):
-        return []
+    async def has_current(self, asset_id: UUID) -> bool:
+        return asset_id in self.current
 
     async def count_current(self) -> int:
-        return 120
+        return self.count
 
 
 class FakeScans:
-    def __init__(self) -> None:
-        self.reconciled: list[UUID] = []
+    def __init__(self, *, active: bool = True) -> None:
+        self.active = active
+        self.invalidated: list[UUID] = []
 
     async def latest_completed_parameters(self):
+        if not self.active:
+            return None
         return UUID(int=999), SimilarityScanParameters(
             model_version="appearance-v1",
             feature_version=4,
@@ -96,7 +90,7 @@ class FakeScans:
     ) -> None:
         assert pairs == []
         assert asset_count == 120
-        self.reconciled.append(asset_id)
+        self.invalidated.append(asset_id)
 
 
 class FakeContext:
@@ -115,71 +109,54 @@ class FakeContext:
 
 
 @pytest.mark.asyncio
-async def test_incremental_below_threshold_pair_stays_cache_only() -> None:
-    asset_id, neighbor_id = UUID(int=1), UUID(int=2)
-
-    class Features:
-        async def has_current(self, _asset_id):
-            return True
-
-        async def get(self, _asset_id):
-            return SimpleNamespace(
-                asset_id=asset_id, height=100, width=100, perceptual_hash="0" * 16
-            )
-
-        async def list_current(self):
-            return [
-                SimpleNamespace(
-                    asset_id=neighbor_id, height=100, width=100,
-                    perceptual_hash="0" * 16,
-                )
-            ]
-
-        async def get_many(self, _asset_ids):
-            return {
-                identifier: SimpleNamespace(asset_id=identifier, source_identity=str(identifier))
-                for identifier in (asset_id, neighbor_id)
-            }
-
-        async def count_current(self):
-            return 2
-
-    class Scans(FakeScans):
-        async def latest_completed_parameters(self):
-            scan_id, parameters = await super().latest_completed_parameters()
-            return scan_id, replace(parameters, similarity_threshold=95)
-
-        async def replace_asset_pairs(self, _scan_id, _asset_id, pairs, *, asset_count):
-            assert pairs == []
-            assert asset_count == 2
-
-    class Similarity:
-        calls = 0
-
-        async def reference_edges(self, groups, _features):
-            self.calls += 1
-            return {
-                (left, right): PairSimilarityEvidence(
-                    similarity_percent=94, structural_percent=94,
-                    perceptual_percent=94, color_percent=94,
-                    exact_thumbnail_match=False, exact_pixel_match=False,
-                    model_version="appearance-preview-v1", feature_version=2,
-                    comparison_version=1,
-                )
-                for left, right in groups
-            }
-
-    similarity = Similarity()
+async def test_maintenance_indexes_asset_and_invalidates_stale_scan_without_discovery() -> None:
+    asset_id = UUID(int=1)
+    changes = FakeChanges(
+        [SimilarityAssetChange(asset_id, "upsert", "source-1", datetime.now(UTC))]
+    )
+    indexer = FakeIndexer()
+    scans = FakeScans()
     handler = SimilarityMaintenanceTaskHandler(
-        FakeChanges([]),
-        FakeIndexer(),
-        Features(),
-        similarity,
-        Scans(),
+        changes,
+        indexer,
+        FakeFeatures(),
+        scans,
     )
 
-    assert await handler._reconcile_asset(FakeContext(), asset_id) == 0
-    assert similarity.calls == 1
+    result = await handler.execute(FakeContext(), {})
+
+    assert indexer.asset_ids == [asset_id]
+    assert scans.invalidated == [asset_id]
+    assert changes.acknowledged == [asset_id]
+    assert result.summary == {
+        "incremental": True,
+        "full_scan_started": False,
+        "discovery_deferred": True,
+    }
+    assert result.counters["features_refreshed"] == 1
+    assert result.counters["scan_assets_invalidated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_maintenance_does_not_require_completed_scan_to_index_asset() -> None:
+    asset_id = UUID(int=2)
+    changes = FakeChanges(
+        [SimilarityAssetChange(asset_id, "upsert", "source-2", datetime.now(UTC))]
+    )
+    indexer = FakeIndexer()
+    scans = FakeScans(active=False)
+    handler = SimilarityMaintenanceTaskHandler(
+        changes,
+        indexer,
+        FakeFeatures(),
+        scans,
+    )
+
+    result = await handler.execute(FakeContext(), {})
+
+    assert indexer.asset_ids == [asset_id]
+    assert scans.invalidated == []
+    assert result.counters["scan_assets_invalidated"] == 0
 
 
 @pytest.mark.asyncio
@@ -247,8 +224,29 @@ def test_incremental_detection_excludes_unchanged_overlap_assets():
     assert len(changes) == 120
 
 
+def test_change_detection_reuses_known_size_when_lightweight_sync_omits_it() -> None:
+    asset_id = UUID(int=1)
+    modified_at = datetime(2026, 1, 2, tzinfo=UTC)
+    asset = SimpleNamespace(
+        id=asset_id,
+        asset_type="IMAGE",
+        file_size_bytes=None,
+        file_modified_at=modified_at,
+    )
+    existing = {
+        asset_id: (
+            "generic-sync-fingerprint",
+            1,
+            42_000,
+            modified_at,
+        )
+    }
+
+    assert similarity_upsert_changes([asset], existing) == []
+
+
 @pytest.mark.asyncio
-async def test_incremental_pipeline_only_processes_changes_and_resumes_without_duplicates():
+async def test_index_maintenance_only_processes_changes_and_resumes_without_duplicates():
     now = datetime.now(UTC)
     added = [UUID(int=index) for index in range(1, 101)]
     modified = [UUID(int=index) for index in range(101, 121)]
@@ -269,7 +267,6 @@ async def test_incremental_pipeline_only_processes_changes_and_resumes_without_d
         changes,
         indexer,
         FakeFeatures(),
-        SimpleNamespace(),
         scans,
     )
 
@@ -281,28 +278,33 @@ async def test_incremental_pipeline_only_processes_changes_and_resumes_without_d
 
     assert set(indexer.asset_ids) == set([*added, *modified])
     assert len(indexer.asset_ids) == 120
-    assert set(scans.reconciled) == set([*added, *modified, *deleted])
-    assert len(scans.reconciled) == 130
+    assert set(scans.invalidated) == set([*added, *modified, *deleted])
+    assert len(scans.invalidated) == 130
     assert set(changes.acknowledged) == set([*added, *modified, *deleted])
     assert len(changes.acknowledged) == 130
     assert changes.changes == []
-    assert result.summary == {"incremental": True, "full_scan_started": False}
+    assert result.summary["discovery_deferred"] is True
     assert result.counters["assets_pending"] == 0
 
 
 @pytest.mark.asyncio
-async def test_incremental_worker_reuses_fingerprint_committed_by_library_index() -> None:
+async def test_worker_reuses_fingerprint_committed_by_library_index_without_counting_delete(
+) -> None:
     asset_id = UUID(int=500)
     change = SimilarityAssetChange(asset_id, "upsert", "source-500", datetime.now(UTC))
     changes = FakeChanges([change])
     indexer = FakeIndexer()
-    features = FakeFeatures()
-    features.current = {asset_id}
+    features = FakeFeatures(current={asset_id})
     handler = SimilarityMaintenanceTaskHandler(
-        changes, indexer, features, SimpleNamespace(), FakeScans()
+        changes,
+        indexer,
+        features,
+        FakeScans(),
     )
 
-    await handler.execute(FakeContext(), {})
+    result = await handler.execute(FakeContext(), {})
 
     assert indexer.asset_ids == []
     assert changes.acknowledged == [asset_id]
+    assert result.counters["deletes_reconciled"] == 0
+    assert result.counters["scan_assets_invalidated"] == 1

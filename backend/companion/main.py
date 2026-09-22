@@ -597,14 +597,12 @@ def create_app(
         and similarity_maintenance_repository is not None
         and similarity_index_maintainer is not None
         and search_feature_repository is not None
-        and similarity_repository is not None
         and similarity_scan_repository is not None
     ):
         similarity_maintenance_handler = SimilarityMaintenanceTaskHandler(
             similarity_maintenance_repository,
             similarity_index_maintainer,
             search_feature_repository,
-            similarity_repository,
             similarity_scan_repository,
         )
         task_coordinator.register_handler(
