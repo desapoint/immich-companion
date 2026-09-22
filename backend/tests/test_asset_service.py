@@ -250,6 +250,7 @@ class FakeAssetRepository:
         self.calls: list[str] = []
         self.assets: list[ImmichAsset] = []
         self.asset_batch_sizes: list[int] = []
+        self.asset_similarity_tracking: list[bool] = []
         self.stack_payloads: list[tuple[dict[str, object], list[UUID]]] = []
 
     async def upsert_album_catalog(self, albums, _generation):
@@ -265,6 +266,7 @@ class FakeAssetRepository:
     ):
         self.calls.append("assets")
         self.asset_batch_sizes.append(len(assets))
+        self.asset_similarity_tracking.append(track_similarity_changes)
         self.assets.extend(assets)
         return len(assets), 0, 0
 
@@ -524,6 +526,7 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert immich.calls.index("tag_catalog") < immich.calls.index("assets")
     assert immich.calls.index("assets") < immich.calls.index("album_memberships")
     assert counters["assets_seen"] == 2
+    assert assets.asset_similarity_tracking == [True]
     assert counters["album_memberships"] == 1
     assert counters["tag_memberships"] == 1
     assert assets.stack_payloads[0][0]["primaryAssetId"] == str(ASSET_ONE)
@@ -576,6 +579,7 @@ async def test_incremental_sync_finalizes_missing_assets_inside_completed_window
     counters = await service._execute(run, OWNER_ID)
 
     assert counters["assets_removed"] == 1
+    assert assets.asset_similarity_tracking == [True]
     assert assets.calls[-2:] == ["finalize", "counts"]
     assert syncs.checkpoints[-1] == ("finalizing", "validated")
 
