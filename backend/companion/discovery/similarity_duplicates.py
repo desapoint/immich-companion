@@ -13,6 +13,7 @@ from companion.similarity_grouping import (
     SIMILARITY_GROUPING_VERSION,
     SimilarityGroupingEdge,
     SimilarityGroupValidator,
+    ValidatedSimilarityGroup,
 )
 from companion.similarity_scan_repository import SimilarityScanRunSummary
 
@@ -142,7 +143,7 @@ class SimilarityDuplicateProvider:
             return
         summary, validated_groups = state
 
-        pending: list[object] = []
+        pending: list[ValidatedSimilarityGroup] = []
         pending_asset_ids: set[UUID] = set()
 
         async def flush() -> list[DiscoveredGroup]:
