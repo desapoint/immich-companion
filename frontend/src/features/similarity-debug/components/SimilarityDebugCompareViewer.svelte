@@ -17,6 +17,8 @@
     assets = [],
     pairs = [],
     pair = null,
+    referenceAssetId = '',
+    selectedAssetId = '',
     anchorAssetId = '',
     validationMode,
     similarityThreshold,
@@ -29,11 +31,13 @@
     assets?: AssetRecord[];
     pairs?: SimilarityDebugPair[];
     pair?: SimilarityDebugPair | null;
+    referenceAssetId?: string;
+    selectedAssetId?: string;
     anchorAssetId?: string;
     validationMode: SimilarityDebugValidationMode;
     similarityThreshold: number;
     onclose: () => void;
-    onpairchange: (pairKey: string) => void;
+    onpairchange: (pairKey: string, referenceAssetId: string, selectedAssetId: string) => void;
     onsetanchor: (assetId: string, compareWithAssetId: string) => void | Promise<void>;
   } = $props();
 
@@ -47,8 +51,8 @@
 
   const assetById = $derived(new Map(assets.map((asset) => [asset.id, asset])));
   const pairByKey = $derived(new Map(pairs.map((candidate) => [pairKey(candidate.asset_id_left, candidate.asset_id_right), candidate])));
-  const referenceId = $derived(pair?.asset_id_left ?? '');
-  const selectedId = $derived(pair?.asset_id_right ?? '');
+  const referenceId = $derived(referenceAssetId || pair?.asset_id_left || '');
+  const selectedId = $derived(selectedAssetId || pair?.asset_id_right || '');
   const referenceAsset = $derived(referenceId ? assetById.get(referenceId) : undefined);
   const selectedAsset = $derived(selectedId ? assetById.get(selectedId) : undefined);
   const referenceResource = $derived(comparisonResource(referenceAsset));
@@ -132,7 +136,7 @@
   function selectAgainstReference(assetId: string): void {
     if (!referenceId || assetId === referenceId) return;
     const key = pairKey(referenceId, assetId);
-    if (pairByKey.has(key)) onpairchange(key);
+    if (pairByKey.has(key)) onpairchange(key, referenceId, assetId);
   }
 
   function step(direction: 'previous' | 'next'): void {
