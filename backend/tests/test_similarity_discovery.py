@@ -13,10 +13,12 @@ from companion.discovery import (
 )
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
+from companion.similarity_grouping import SimilarityGroupingEdge
 from companion.similarity_repository import PairSimilarityEvidence
 from companion.similarity_scan_repository import (
     SimilarityScanPair,
     SimilarityScanParameters,
+    SimilarityScanRunSummary,
     SimilarityScanSnapshot,
 )
 
@@ -106,19 +108,46 @@ def snapshot(
 class FakeScans:
     def __init__(self, value: SimilarityScanSnapshot | None) -> None:
         self.value = value
+        self.edge_batches = 0
 
-    async def latest_completed(self) -> SimilarityScanSnapshot | None:
-        return self.value
+    async def latest_completed_summary(self) -> SimilarityScanRunSummary | None:
+        if self.value is None:
+            return None
+        return SimilarityScanRunSummary(
+            id=self.value.id,
+            parameters=self.value.parameters,
+            asset_count=self.value.asset_count,
+            candidate_count=self.value.candidate_count,
+            match_count=len(self.value.pairs),
+            result_limit_reached=False,
+            completed_at=self.value.completed_at,
+        )
+
+    async def iter_grouping_edges(self, scan_id: UUID, *, batch_size: int = 1_000):
+        assert self.value is not None
+        assert scan_id == self.value.id
+        del batch_size
+        for pair in self.value.pairs:
+            self.edge_batches += 1
+            yield [
+                SimilarityGroupingEdge(
+                    asset_id_low=pair.asset_id_low,
+                    asset_id_high=pair.asset_id_high,
+                    similarity_percent=pair.evidence.similarity_percent,
+                )
+            ]
 
 
 class FakeAssets:
     def __init__(self, values: dict[UUID, ImmichAsset]) -> None:
         self.values = values
         self.requested: list[UUID] = []
+        self.calls: list[list[UUID]] = []
 
     async def get_immich_assets(self, asset_ids: list[UUID]) -> dict[UUID, ImmichAsset]:
         self.requested = asset_ids
-        return self.values
+        self.calls.append(asset_ids)
+        return {asset_id: self.values[asset_id] for asset_id in asset_ids if asset_id in self.values}
 
 
 @pytest.mark.asyncio
@@ -242,6 +271,39 @@ async def test_similarity_provider_applies_persisted_link_depth_limit() -> None:
     assert evidence[HIGH].link_depth == 0
     assert evidence[THIRD].link_depth == 1
     assert FOURTH not in evidence
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_hydrates_validated_groups_in_batches() -> None:
+    current = snapshot(
+        SCAN_ONE,
+        (
+            scan_pair(LOW, HIGH, 99),
+            scan_pair(THIRD, FOURTH, 98),
+        ),
+    )
+    assets = FakeAssets(
+        {
+            LOW: asset(LOW),
+            HIGH: asset(HIGH),
+            THIRD: asset(THIRD),
+            FOURTH: asset(FOURTH),
+        }
+    )
+    scans = FakeScans(current)
+    provider = SimilarityDuplicateProvider(scans, assets)
+
+    batches = [
+        batch
+        async for batch in provider.discover_batches(batch_size=1)
+    ]
+
+    assert [[member.id for member in batch[0].assets] for batch in batches] == [
+        [LOW, HIGH],
+        [THIRD, FOURTH],
+    ]
+    assert assets.calls == [[LOW, HIGH], [THIRD, FOURTH]]
+    assert scans.edge_batches == 2
 
 
 @pytest.mark.asyncio
