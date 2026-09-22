@@ -239,7 +239,9 @@ class SimilarityDebugService:
                         admitted_by_asset_id=item.admitted_by_asset_id,
                         admission_similarity_percent=item.admission_similarity_percent,
                         best_group_match_asset_id=item.best_group_match_asset_id,
-                        best_group_match_similarity_percent=item.best_group_match_similarity_percent,
+                        best_group_match_similarity_percent=(
+                            item.best_group_match_similarity_percent
+                        ),
                         link_depth=item.link_depth,
                     )
                     for item in group.admission_evidence
