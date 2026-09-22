@@ -365,6 +365,11 @@ def create_app(
         composite_duplicate_handler = CompositeDuplicateRebuildTaskHandler(
             source_duplicate_discovery,
             composite_duplicate_repository,
+            after_publish=(
+                similarity_scan_repository.prune_completed_pair_evidence
+                if similarity_scan_repository is not None
+                else None
+            ),
         )
         task_coordinator.register_handler(
             FollowUpTaskHandler(
