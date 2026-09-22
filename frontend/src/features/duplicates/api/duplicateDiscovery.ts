@@ -2,6 +2,7 @@ import type { DuplicateDiscoveryProgress } from '../types/contracts';
 import type { TaskRecord, TaskRepository } from '../../status/types/syncContracts';
 
 const TERMINAL_TASK_STATES = new Set(['completed', 'failed', 'cancelled']);
+const FALLBACK_POLL_INTERVAL_MS = 1000;
 
 function numericProgress(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -53,13 +54,104 @@ export async function waitForTask(
   rangeEnd = 98,
   onprogress?: (progress: DuplicateDiscoveryProgress) => void,
 ): Promise<TaskRecord> {
-  for (;;) {
-    const task = await tasks.get(taskId);
-    onprogress?.(discoveryProgress(task, similarity, rangeStart, rangeEnd));
-    if (TERMINAL_TASK_STATES.has(task.status)) {
-      if (task.status !== 'completed') throw new Error(task.error?.message ?? `Duplicate task ${task.status}.`);
-      return task;
+  if (!tasks.subscribeTask) {
+    for (;;) {
+      const task = await tasks.get(taskId);
+      onprogress?.(discoveryProgress(task, similarity, rangeStart, rangeEnd));
+      if (TERMINAL_TASK_STATES.has(task.status)) {
+        if (task.status !== 'completed') throw new Error(task.error?.message ?? `Duplicate task ${task.status}.`);
+        return task;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
-    await new Promise((resolve) => setTimeout(resolve, 500));
   }
+
+  return await new Promise<TaskRecord>((resolve, reject) => {
+    let subscription: ReturnType<NonNullable<TaskRepository['subscribeTask']>> | null = null;
+    let fallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    let pollInFlight = false;
+    let settled = false;
+    let streamHealthy = false;
+
+    const clearFallback = (): void => {
+      if (fallbackTimer) clearTimeout(fallbackTimer);
+      fallbackTimer = null;
+    };
+
+    const cleanup = (): void => {
+      clearFallback();
+      subscription?.close();
+      subscription = null;
+    };
+
+    const fail = (error: unknown): void => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error instanceof Error ? error : new Error('Duplicate task monitoring failed.'));
+    };
+
+    const acceptTask = (task: TaskRecord): boolean => {
+      if (settled || task.id !== taskId) return false;
+      onprogress?.(discoveryProgress(task, similarity, rangeStart, rangeEnd));
+      if (!TERMINAL_TASK_STATES.has(task.status)) return false;
+      settled = true;
+      cleanup();
+      if (task.status === 'completed') resolve(task);
+      else reject(new Error(task.error?.message ?? `Duplicate task ${task.status}.`));
+      return true;
+    };
+
+    const scheduleFallback = (delay = FALLBACK_POLL_INTERVAL_MS): void => {
+      if (settled || streamHealthy || pollInFlight || fallbackTimer) return;
+      fallbackTimer = setTimeout(() => {
+        fallbackTimer = null;
+        void poll();
+      }, delay);
+    };
+
+    const poll = async (): Promise<void> => {
+      if (settled || pollInFlight) return;
+      pollInFlight = true;
+      try {
+        const task = await tasks.get(taskId);
+        if (!settled) acceptTask(task);
+      } catch (error) {
+        if (!subscription) {
+          fail(error);
+          return;
+        }
+      } finally {
+        pollInFlight = false;
+        if (!settled && !streamHealthy) scheduleFallback();
+      }
+    };
+
+    const created = tasks.subscribeTask(taskId, {
+      onTask: (task) => {
+        streamHealthy = true;
+        clearFallback();
+        acceptTask(task);
+      },
+      onConnectionState: (state) => {
+        streamHealthy = state === 'connected';
+        if (streamHealthy) clearFallback();
+        else scheduleFallback(0);
+      },
+      onRecovered: () => {
+        streamHealthy = true;
+        clearFallback();
+      },
+      onError: () => {
+        streamHealthy = false;
+        scheduleFallback(0);
+      },
+    });
+    subscription = created;
+    if (settled) {
+      created.close();
+      return;
+    }
+    void poll();
+  });
 }
