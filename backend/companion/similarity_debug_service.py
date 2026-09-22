@@ -134,17 +134,36 @@ class SimilarityDebugService:
                 )
                 continue
 
-            perceptual_distance = perceptual_hash_distance(
-                left_feature.perceptual_hash,
-                right_feature.perceptual_hash,
+            try:
+                perceptual_distance = perceptual_hash_distance(
+                    left_feature.perceptual_hash,
+                    right_feature.perceptual_hash,
+                )
+            except ValueError:
+                perceptual_distance = None
+            if min(
+                left_feature.width,
+                left_feature.height,
+                right_feature.width,
+                right_feature.height,
+            ) > 0:
+                aspect_difference = aspect_ratio_difference(left_feature, right_feature)
+            else:
+                aspect_difference = None
+            perceptual_pass = (
+                perceptual_distance is not None
+                and perceptual_distance <= request.maximum_perceptual_distance
             )
-            aspect_difference = aspect_ratio_difference(left_feature, right_feature)
-            perceptual_pass = perceptual_distance <= request.maximum_perceptual_distance
-            aspect_pass = aspect_difference <= request.maximum_aspect_difference
+            aspect_pass = (
+                aspect_difference is not None
+                and aspect_difference <= request.maximum_aspect_difference
+            )
             candidate_pass = perceptual_pass and aspect_pass
             threshold_pass = evidence.similarity_percent >= request.similarity_threshold
             pair_pass = candidate_pass and threshold_pass
-            if not perceptual_pass:
+            if perceptual_distance is None or aspect_difference is None:
+                exclusion_reason = "invalid_candidate_feature"
+            elif not perceptual_pass:
                 exclusion_reason = "perceptual_distance"
             elif not aspect_pass:
                 exclusion_reason = "aspect_ratio"
