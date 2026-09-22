@@ -220,6 +220,7 @@ class SimilarityScanTaskHandler:
         self._similarity = similarity
         self._scans = scans
         self._indexer = indexer
+        self._legacy_feature_cache: list[Any] | None = None
 
     async def _candidate_feature_batches(self):
         reader = getattr(self._features, "iter_current_candidates", None)
@@ -227,10 +228,12 @@ class SimilarityScanTaskHandler:
             async for batch in reader(batch_size=SIMILARITY_INDEX_BATCH_SIZE):
                 yield batch
             return
-        values = sorted(
-            await self._features.list_current(),
-            key=lambda feature: feature.asset_id.int,
-        )
+        if self._legacy_feature_cache is None:
+            self._legacy_feature_cache = sorted(
+                await self._features.list_current(),
+                key=lambda feature: feature.asset_id.int,
+            )
+        values = self._legacy_feature_cache
         for offset in range(0, len(values), SIMILARITY_INDEX_BATCH_SIZE):
             yield values[offset : offset + SIMILARITY_INDEX_BATCH_SIZE]
 
@@ -248,9 +251,17 @@ class SimilarityScanTaskHandler:
         reader = getattr(self._features, "get_current_many", None)
         if callable(reader):
             return await reader(unique_ids)
-        values = await self._features.list_current()
+        if self._legacy_feature_cache is None:
+            self._legacy_feature_cache = sorted(
+                await self._features.list_current(),
+                key=lambda feature: feature.asset_id.int,
+            )
         requested = set(unique_ids)
-        return {feature.asset_id: feature for feature in values if feature.asset_id in requested}
+        return {
+            feature.asset_id: feature
+            for feature in self._legacy_feature_cache
+            if feature.asset_id in requested
+        }
 
     async def _enrich_reference_groups(
         self,
@@ -284,6 +295,7 @@ class SimilarityScanTaskHandler:
         return enriched_count
 
     async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
+        self._legacy_feature_cache = None
         started = perf_counter()
         request = SimilarityScanRequest.model_validate(payload)
         parameters = SimilarityScanParameters(
@@ -484,6 +496,41 @@ class SimilarityScanTaskHandler:
                 candidate_discovery_milliseconds += round(
                     (perf_counter() - phase_started) * 1000
                 )
+                processed_assets = candidate_index.processed
+                if (
+                    processed == 0
+                    and saved_phase != "scoring"
+                    and processed_assets >= resume_index
+                ):
+                    await context.checkpoint(
+                        checkpoint={
+                            "phase": "candidate_index",
+                            "scan_id": str(scan_id),
+                            "feature_snapshot": snapshot_key,
+                            "candidate_assets_processed": processed_assets,
+                            "pairs_scored": 0,
+                        },
+                        counters=telemetry(
+                            assets_with_current_features=asset_count,
+                            candidate_assets_processed=processed_assets,
+                            candidate_pairs=len(emitted),
+                            candidate_pair_limit=candidate_pair_limit,
+                            pairs_scored=0,
+                        ),
+                        progress={
+                            "phase": "similarity_candidates",
+                            "completed": processed_assets,
+                            "total": asset_count,
+                            "percent": round(
+                                35
+                                + 10 * processed_assets / max(1, asset_count),
+                                1,
+                            ),
+                            "detail": (
+                                f"Indexed {processed_assets} of {asset_count} fingerprints"
+                            ),
+                        },
+                    )
 
                 for offset in range(0, len(emitted), SIMILARITY_SCORE_BATCH_SIZE):
                     await context.ensure_active()
@@ -544,7 +591,6 @@ class SimilarityScanTaskHandler:
                                 heapq.heapreplace(accepted, ranked)
                     processed += len(batch)
 
-                processed_assets = candidate_index.processed
                 if processed_assets < resume_index:
                     continue
                 if saved_phase == "scoring" and processed < resume_scored:
