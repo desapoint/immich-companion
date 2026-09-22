@@ -280,7 +280,7 @@
                 </div>
                 <div class="similarity-debug-cell-grid" style={`--columns:${local.columns}`}>
                   {#each local.cells.flat() as value, index}
-                    <span title={`Cell ${index + 1}: ${formatPercent(value)}`} style={`--change:${Math.max(0.08, value / 100)}`}>{Math.round(value)}</span>
+                    <span title={`Cell ${index + 1}: ${formatPercent(value)}`} style={`--change:${Math.max(8, Math.round(value))}%`}>{Math.round(value)}</span>
                   {/each}
                 </div>
               {:else}
@@ -325,7 +325,7 @@
   .similarity-debug-error{color:#ef9a9a}
   .similarity-debug-matrix-wrap{overflow:auto}.similarity-debug-matrix{border-collapse:collapse;width:max-content;min-width:100%;font-size:.75rem}.similarity-debug-matrix th,.similarity-debug-matrix td{border:1px solid var(--v2-line);padding:5px;max-width:150px}.similarity-debug-matrix th{background:var(--v2-surface);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.similarity-debug-matrix td.same{text-align:center;color:var(--v2-muted)}.similarity-debug-matrix td[data-pass="true"]{background:color-mix(in srgb,#3fb950 10%,transparent)}.similarity-debug-matrix td[data-pass="false"]{background:color-mix(in srgb,#f85149 8%,transparent)}.similarity-debug-matrix button{display:grid;gap:2px;width:100%;padding:5px;border:0;border-radius:5px;background:transparent;color:inherit;text-align:left;cursor:pointer}.similarity-debug-matrix button.active{outline:2px solid var(--v2-accent)}.similarity-debug-matrix button small{color:var(--v2-muted)}
   .similarity-debug-detail-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:var(--v2-space-3)}.similarity-debug-kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;align-items:baseline}.similarity-debug-kv span{color:var(--v2-muted)}.similarity-debug-kv b{text-align:right;overflow-wrap:anywhere}.similarity-debug-kv b[data-pass="true"]{color:#8fd694}.similarity-debug-kv b[data-pass="false"]{color:#ef9a9a}
-  .similarity-debug-cell-grid{display:grid;grid-template-columns:repeat(var(--columns),minmax(22px,1fr));gap:2px;margin-top:12px;max-height:280px;overflow:auto}.similarity-debug-cell-grid span{display:grid;place-items:center;aspect-ratio:1;background:color-mix(in srgb,var(--v2-accent) calc(var(--change) * 100%),transparent);font-size:9px;color:var(--v2-text)}
+  .similarity-debug-cell-grid{display:grid;grid-template-columns:repeat(var(--columns),minmax(22px,1fr));gap:2px;margin-top:12px;max-height:280px;overflow:auto}.similarity-debug-cell-grid span{display:grid;place-items:center;aspect-ratio:1;background:color-mix(in srgb,var(--v2-accent) var(--change),transparent);font-size:9px;color:var(--v2-text)}
   .similarity-debug-group{display:grid;gap:6px;padding:10px 0;border-bottom:1px solid var(--v2-line)}.similarity-debug-group:last-child{border-bottom:0}.similarity-debug-group>span{color:var(--v2-muted);font-size:.75rem}.similarity-debug-admissions{display:flex;flex-wrap:wrap;gap:6px}.similarity-debug-admissions span{padding:5px 7px;border:1px solid var(--v2-line);border-radius:6px;font-size:.72rem}
   @media(max-width:720px){.similarity-debug-kv{grid-template-columns:1fr}.similarity-debug-kv b{text-align:left}}
 </style>
