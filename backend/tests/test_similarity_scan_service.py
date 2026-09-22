@@ -176,6 +176,54 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
 
 
 @pytest.mark.asyncio
+async def test_scan_streams_candidate_features_and_bounded_scoring_hydration() -> None:
+    values = [feature(number, 0) for number in range(1, 1_502)]
+
+    class StreamingFeatures:
+        def __init__(self) -> None:
+            self.iter_calls = 0
+            self.max_hydration = 0
+            self.by_id = {item.asset_id: item for item in values}
+
+        async def iter_current_candidates(self, *, batch_size: int):
+            self.iter_calls += 1
+            for offset in range(0, len(values), batch_size):
+                yield values[offset : offset + batch_size]
+
+        async def get_current_many(self, asset_ids):
+            self.max_hydration = max(self.max_hydration, len(asset_ids))
+            return {
+                asset_id: self.by_id[asset_id]
+                for asset_id in asset_ids
+                if asset_id in self.by_id
+            }
+
+        async def list_current(self):
+            pytest.fail("Streaming scan must not hydrate the full feature snapshot")
+
+    features = StreamingFeatures()
+    scans = FakeScans()
+    result = await SimilarityScanTaskHandler(
+        features,  # type: ignore[arg-type]
+        FakeSimilarity(),
+        scans,
+    ).execute(
+        FakeContext(),
+        SimilarityScanRequest(
+            maximum_perceptual_distance=0,
+            maximum_neighbors_per_asset=1,
+            maximum_matches=1_000,
+        ).model_dump(mode="json"),
+    )
+
+    assert scans.completed is not None
+    assert scans.completed[1]["asset_count"] == len(values)
+    assert result.counters["pairs_scored"] == scans.completed[1]["candidate_count"]
+    assert features.iter_calls == 2
+    assert features.max_hydration <= 1_000
+
+
+@pytest.mark.asyncio
 async def test_scan_reports_retention_limit_only_after_an_extra_qualifying_match() -> None:
     scans = FakeScans()
     context = FakeContext()
