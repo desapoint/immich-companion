@@ -48,6 +48,24 @@ def test_v2_single_group_and_preset_paths_do_not_call_full_result_hydration() ->
         assert "await self._snapshot(" not in source
 
 
+def test_similarity_scan_streams_features_and_candidate_pairs() -> None:
+    from companion.similarity_scan_service import SimilarityScanTaskHandler
+    from companion.similarity_search_repository import SimilaritySearchRepository
+
+    source = inspect.getsource(SimilarityScanTaskHandler.execute)
+    assert "features = await self._features.list_current()" not in source
+    assert "candidate_index.pairs" not in source
+    assert "retain_pairs=False" in source
+    assert "_candidate_feature_batches" in source
+    assert "_current_features" in source
+
+    repository_source = inspect.getsource(
+        SimilaritySearchRepository.iter_current_candidates
+    )
+    assert ".limit(batch_size)" in repository_source
+    assert "after_asset_id" in repository_source
+
+
 def test_similarity_projection_uses_bounded_repository_reads() -> None:
     from companion.asset_repository import AssetRepository
     from companion.discovery.similarity_duplicates import SimilarityDuplicateProvider
