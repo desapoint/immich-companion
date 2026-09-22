@@ -3,6 +3,7 @@ export const PAGE_KEYS = [
   'assets',
   'restore',
   'duplicates',
+  'similarity-debug',
   'albums',
   'tags',
   'settings',
