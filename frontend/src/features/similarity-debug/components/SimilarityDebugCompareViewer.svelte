@@ -231,7 +231,7 @@
 
         <div class="similarity-debug-pair-roles">
           <div class:anchor={referenceId === anchorAssetId}>
-            <span class="v2-small v2-muted">Anchor side</span>
+            <span class="v2-small v2-muted">{referenceId === anchorAssetId ? 'Anchor side' : 'Reference side'}</span>
             <b title={assetName(referenceId)}>{assetName(referenceId)}</b>
             {#if referenceId === anchorAssetId}
               <V2Badge tone="ok" text="Anchor"/>
@@ -268,7 +268,7 @@
                 {/if}
                 <small>{assetName(assetId)}</small>
                 <small class="v2-muted">
-                  {assetId === referenceId ? 'Anchor side' : assetId === anchorAssetId ? 'Anchor' : 'Compare'}
+                  {assetId === anchorAssetId ? 'Anchor' : assetId === referenceId ? 'Reference side' : 'Compare'}
                 </small>
               </button>
               {#if assetId !== anchorAssetId && assetId !== referenceId}
@@ -280,7 +280,7 @@
           {/each}
         </div>
       {:else}
-        <div class="similarity-debug-empty">Choose a pair from the matrix to inspect it.</div>
+        <div class="similarity-debug-empty">Choose an image from the debug group or a pair from the matrix to inspect it.</div>
       {/if}
     </section>
 
