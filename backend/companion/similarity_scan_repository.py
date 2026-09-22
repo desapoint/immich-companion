@@ -386,6 +386,9 @@ class SimilarityScanRepository:
             )
             record.asset_count = asset_count
             record.match_count = int(match_count or 0)
+            # Incremental pair replacement does not replay the whole candidate set,
+            # so the original full-scan cap verdict is no longer definitive.
+            record.result_limit_reached = None
 
     async def pair_evidence(
         self,
