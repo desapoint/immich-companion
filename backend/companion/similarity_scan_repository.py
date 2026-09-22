@@ -23,6 +23,7 @@ from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 SIMILARITY_SCAN_WRITE_BATCH_SIZE = 1_000
 SIMILARITY_SCAN_READ_BATCH_SIZE = 1_000
 SIMILARITY_SCAN_PAIR_RETENTION_GENERATIONS = 3
+SIMILARITY_SCAN_PRUNE_BATCH_SIZE = 32
 
 
 @dataclass(frozen=True, slots=True)
@@ -409,46 +410,48 @@ class SimilarityScanRepository:
         self,
         *,
         keep_completed_generations: int = SIMILARITY_SCAN_PAIR_RETENTION_GENERATIONS,
+        prune_batch_size: int = SIMILARITY_SCAN_PRUNE_BATCH_SIZE,
     ) -> int:
-        """Prune heavy pair payloads while preserving immutable scan metadata rows."""
+        """Prune a bounded batch of old pair payloads while keeping scan metadata."""
 
         if keep_completed_generations < 1:
             raise ValueError("keep_completed_generations must be positive")
+        if prune_batch_size < 1:
+            raise ValueError("prune_batch_size must be positive")
 
         statement = (
             select(SimilarityScanRecord.id)
-            .where(SimilarityScanRecord.status == "completed")
+            .where(
+                SimilarityScanRecord.status == "completed",
+                SimilarityScanRecord.pair_evidence_pruned_at.is_(None),
+            )
             .order_by(
-                SimilarityScanRecord.completed_at.desc(),
+                SimilarityScanRecord.completed_at.desc().nulls_last(),
                 SimilarityScanRecord.id.desc(),
             )
+            .offset(keep_completed_generations)
+            .limit(prune_batch_size)
+            .with_for_update(skip_locked=True)
         )
-        async with self._database.sessions() as session:
-            completed_ids = list((await session.scalars(statement)).all())
-
-        pruned = 0
         pruned_at = datetime.now(UTC)
-        for old_scan_id in completed_ids[keep_completed_generations:]:
-            async with self._database.sessions() as session, session.begin():
-                record = await session.get(
-                    SimilarityScanRecord,
-                    old_scan_id,
-                    with_for_update=True,
+        async with self._database.sessions() as session, session.begin():
+            old_scan_ids = list((await session.scalars(statement)).all())
+            if not old_scan_ids:
+                return 0
+            await session.execute(
+                delete(SimilarityScanPairRecord).where(
+                    SimilarityScanPairRecord.scan_id.in_(old_scan_ids)
                 )
-                if (
-                    record is None
-                    or record.status != "completed"
-                    or getattr(record, "pair_evidence_pruned_at", None) is not None
-                ):
-                    continue
-                await session.execute(
-                    delete(SimilarityScanPairRecord).where(
-                        SimilarityScanPairRecord.scan_id == old_scan_id
-                    )
+            )
+            await session.execute(
+                update(SimilarityScanRecord)
+                .where(
+                    SimilarityScanRecord.id.in_(old_scan_ids),
+                    SimilarityScanRecord.pair_evidence_pruned_at.is_(None),
                 )
-                record.pair_evidence_pruned_at = pruned_at
-                pruned += 1
-        return pruned
+                .values(pair_evidence_pruned_at=pruned_at)
+            )
+        return len(old_scan_ids)
 
     async def replace_asset_pairs(
         self,
