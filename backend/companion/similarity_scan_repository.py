@@ -459,6 +459,7 @@ class SimilarityScanRepository:
             asset_count=record.asset_count,
             candidate_count=record.candidate_count,
             match_count=record.match_count,
+            result_limit_reached=record.result_limit_reached,
             completed_at=record.completed_at,
         )
 
