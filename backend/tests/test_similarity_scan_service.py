@@ -166,17 +166,25 @@ async def test_scan_scores_bounded_candidates_and_publishes_only_threshold_match
         if checkpoint["progress"]["phase"] == "similarity_scoring"
     ]
     assert {item["total"] for item in scoring} == {3}
+    finalizing = next(
+        checkpoint
+        for checkpoint in context.checkpoints
+        if checkpoint["progress"]["phase"] == "similarity_finalizing"
+    )
+    assert finalizing["counters"]["retained_match_limit"] == 1
+    assert finalizing["counters"]["result_limit_reached"] == 0
 
 
 @pytest.mark.asyncio
 async def test_scan_reports_retention_limit_only_after_an_extra_qualifying_match() -> None:
     scans = FakeScans()
+    context = FakeContext()
     result = await SimilarityScanTaskHandler(
         FakeFeatures(),
         FakeSimilarity(),
         scans,
     ).execute(
-        FakeContext(),
+        context,
         SimilarityScanRequest(
             similarity_threshold=90,
             maximum_matches=1,
@@ -190,6 +198,12 @@ async def test_scan_reports_retention_limit_only_after_an_extra_qualifying_match
     assert result.counters["retained_match_limit"] == 1
     assert result.counters["result_limit_reached"] == 1
     assert result.summary["result_limit_reached"] is True
+    scoring = [
+        checkpoint
+        for checkpoint in context.checkpoints
+        if checkpoint["progress"]["phase"] == "similarity_scoring"
+    ]
+    assert scoring[-1]["counters"]["result_limit_reached"] == 1
 
 
 @pytest.mark.asyncio
