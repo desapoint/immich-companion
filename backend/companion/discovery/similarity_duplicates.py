@@ -12,7 +12,7 @@ from companion.immich import ImmichAsset
 from companion.similarity_grouping import (
     SIMILARITY_GROUPING_VERSION,
     SimilarityGroupingEdge,
-    validated_similarity_groups,
+    SimilarityGroupValidator,
 )
 from companion.similarity_scan_repository import SimilarityScanRunSummary
 
@@ -51,18 +51,16 @@ class SimilarityDuplicateProvider:
         if summary is None or summary.pair_evidence_pruned_at is not None:
             return None
 
-        edges: list[SimilarityGroupingEdge] = []
-        async for batch in self._scans.iter_grouping_edges(summary.id):
-            edges.extend(batch)
         parameters = summary.parameters
-        validated_groups = validated_similarity_groups(
-            tuple(edges),
+        validator = SimilarityGroupValidator(
             mode=parameters.validation_mode,
             threshold=parameters.similarity_threshold,
             preferred_anchor_asset_id=parameters.anchor_asset_id,
             max_link_depth=parameters.max_link_depth,
         )
-        return summary, validated_groups
+        async for batch in self._scans.iter_grouping_edges(summary.id):
+            validator.add_edges(batch)
+        return summary, validator.groups()
 
     @staticmethod
     def _materialize_group(
