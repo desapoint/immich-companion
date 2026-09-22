@@ -22,22 +22,30 @@ def similarity_upsert_changes(
 ) -> list[tuple[UUID, str, str | None]]:
     """Return image changes that can invalidate content-derived evidence."""
 
-    return [
-        (
-            asset.id,
-            "upsert",
-            hashlib.sha256(
-                f"{asset.file_size_bytes}:{asset.file_modified_at.isoformat()}".encode()
-            ).hexdigest(),
+    changes: list[tuple[UUID, str, str | None]] = []
+    for asset in assets:
+        if asset.asset_type != "IMAGE":
+            continue
+        previous = existing.get(asset.id)
+        previous_size = previous[2] if previous is not None else None
+        size_changed = (
+            asset.file_size_bytes is not None and asset.file_size_bytes != previous_size
         )
-        for asset in assets
-        if asset.asset_type == "IMAGE"
-        and (
-            asset.id not in existing
-            or existing[asset.id][2] != asset.file_size_bytes
-            or existing[asset.id][3] != asset.file_modified_at
+        modified_changed = (
+            previous is None or previous[3] != asset.file_modified_at
         )
-    ]
+        if previous is not None and not size_changed and not modified_changed:
+            continue
+        effective_size = (
+            asset.file_size_bytes
+            if asset.file_size_bytes is not None
+            else previous_size
+        )
+        source_fingerprint = hashlib.sha256(
+            f"{effective_size}:{asset.file_modified_at.isoformat()}".encode()
+        ).hexdigest()
+        changes.append((asset.id, "upsert", source_fingerprint))
+    return changes
 
 
 def immich_asset(record: AssetRecord) -> ImmichAsset:
