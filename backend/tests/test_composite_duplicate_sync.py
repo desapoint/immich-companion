@@ -378,6 +378,72 @@ async def test_rebuild_handler_streams_bounded_batches_when_supported() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rebuild_handler_runs_post_publish_retention_cleanup() -> None:
+    source_group = DiscoveredGroup(
+        group_id="immich:retention-1",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="retention-1",
+        assets=(asset(ASSET_1), asset(ASSET_2)),
+    )
+
+    class Discovery:
+        async def discover(self):
+            return [source_group]
+
+    class Repository:
+        async def replace_snapshot(self, groups):
+            assert groups == [source_group]
+            return CompositeDuplicateSnapshotMetadata(6, 1, 2, 1, NOW)
+
+    cleanup_calls = 0
+
+    async def cleanup():
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        return 2
+
+    result = await CompositeDuplicateRebuildTaskHandler(
+        Discovery(),
+        Repository(),
+        after_publish=cleanup,
+    ).execute(Context(), {})
+
+    assert cleanup_calls == 1
+    assert result.counters["similarity_pair_generations_pruned"] == 2
+
+
+@pytest.mark.asyncio
+async def test_rebuild_cleanup_failure_does_not_invalidate_published_projection() -> None:
+    source_group = DiscoveredGroup(
+        group_id="immich:retention-failure",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="retention-failure",
+        assets=(asset(ASSET_1), asset(ASSET_2)),
+    )
+
+    class Discovery:
+        async def discover(self):
+            return [source_group]
+
+    class Repository:
+        async def replace_snapshot(self, groups):
+            assert groups == [source_group]
+            return CompositeDuplicateSnapshotMetadata(7, 1, 2, 1, NOW)
+
+    async def cleanup():
+        raise RuntimeError("retention cleanup unavailable")
+
+    result = await CompositeDuplicateRebuildTaskHandler(
+        Discovery(),
+        Repository(),
+        after_publish=cleanup,
+    ).execute(Context(), {})
+
+    assert result.summary["generation"] == 7
+    assert "similarity_pair_generations_pruned" not in result.counters
+
+
+@pytest.mark.asyncio
 async def test_sync_service_submits_one_isolated_durable_rebuild() -> None:
     class Tasks:
         submitted = None
@@ -397,6 +463,29 @@ async def test_sync_service_submits_one_isolated_durable_rebuild() -> None:
     assert tasks.submitted[0] == (COMPOSITE_DUPLICATE_REBUILD_TASK_TYPE, {})
     assert "deduplication_key" not in tasks.submitted[1]
     assert tasks.started == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_service_propagates_child_rebuild_error() -> None:
+    class Tasks:
+        async def submit(self, *_args, **_kwargs):
+            return SimpleNamespace(id=TASK_ID)
+
+        async def start(self):
+            return None
+
+        async def wait(self, task_id):
+            assert task_id == TASK_ID
+            return SimpleNamespace(
+                status="failed",
+                error={"type": "RuntimeError", "message": "asset hydration failed"},
+            )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Composite duplicate rebuild failed: asset hydration failed",
+    ):
+        await CompositeDuplicateSyncService(Tasks()).refresh_and_wait()
 
 
 @pytest.mark.asyncio

@@ -153,9 +153,12 @@ class CompositeDuplicateRebuildTaskHandler:
         self,
         discovery: GroupDiscoveryProvider,
         repository: CompositeDuplicateRepository,
+        *,
+        after_publish: Callable[[], Awaitable[object]] | None = None,
     ) -> None:
         self._discovery = discovery
         self._repository = repository
+        self._after_publish = after_publish
         # The persisted composite projection includes the latest similarity scan. Capture
         # the same database-backed epoch used by similarity writers so a rebuild cannot
         # publish groups discovered before a manual evidence reset. Lightweight test
@@ -252,11 +255,25 @@ class CompositeDuplicateRebuildTaskHandler:
                 metadata = await publish()
         except CompositeDuplicateSnapshotAssetMissingError as error:
             raise PermanentTaskError(str(error)) from error
+        pruned_pair_generations = 0
+        if self._after_publish is not None:
+            try:
+                cleanup_result = await self._after_publish()
+                if isinstance(cleanup_result, int) and not isinstance(cleanup_result, bool):
+                    pruned_pair_generations = cleanup_result
+            except Exception:
+                logger.exception(
+                    "Post-publish duplicate projection cleanup failed; "
+                    "published projection remains authoritative"
+                )
+
         counters = {
             "groups": metadata.group_count,
             "members": metadata.member_count,
             "evidence": metadata.evidence_count,
         }
+        if pruned_pair_generations:
+            counters["similarity_pair_generations_pruned"] = pruned_pair_generations
         await context.checkpoint(
             checkpoint={"phase": "published", "generation": metadata.authoritative_generation},
             counters=counters,
@@ -303,7 +320,15 @@ class CompositeDuplicateSyncService:
         task_id = await self.start()
         completed = await self._tasks.wait(task_id)
         if completed.status != "completed":
-            raise RuntimeError("Composite duplicate rebuild did not complete")
+            error_message = None
+            if isinstance(completed.error, dict):
+                value = completed.error.get("message")
+                if isinstance(value, str) and value:
+                    error_message = value
+            detail = f": {error_message}" if error_message else ""
+            raise RuntimeError(
+                f"Composite duplicate rebuild {completed.status}{detail}"
+            )
         return completed
 
     async def start_after_source_change(self) -> object | None:

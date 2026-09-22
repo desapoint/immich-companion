@@ -318,6 +318,9 @@ class SimilarityScanRecord(Base):
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
+    pair_evidence_pruned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class SimilarityScanPairRecord(Base):
