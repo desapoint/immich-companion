@@ -296,6 +296,7 @@ class BoundedSimilarityCandidateIndex:
             if self._neighbor_counts[candidate_id] >= self._maximum_neighbors_per_asset:
                 tree.remove(candidate_id)
                 self._active_features.pop(candidate_id, None)
+                self._neighbor_counts.pop(candidate_id, None)
                 self._active_index_assets -= 1
 
         if self._neighbor_counts.get(feature.asset_id, 0) < self._maximum_neighbors_per_asset:
@@ -313,6 +314,8 @@ class BoundedSimilarityCandidateIndex:
                     stats.peak_active_index_assets,
                     self._active_index_assets,
                 )
+        else:
+            self._neighbor_counts.pop(feature.asset_id, None)
         return emitted
 
 
