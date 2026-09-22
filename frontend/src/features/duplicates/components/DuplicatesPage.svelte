@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import ConfirmDialog from '../../../lib/components/ui/ConfirmDialog.svelte';
+  import NoticeDialog from '../../../lib/components/ui/NoticeDialog.svelte';
   import V2Badge from '../../../lib/components/ui/Badge.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Card from '../../../lib/components/ui/Card.svelte';
@@ -70,17 +71,18 @@
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
   type DuplicateSortField='reclaimable'|'members'|'similarity'|'date'|'discovered';
   type PendingReview={scope:'all'|'group';groupId:string|null;plan:DuplicatePreparedPlan};
+  type DuplicateErrorDialog={title:string;message:string};
   const collection=createCollectionView({pageSize:6,resultModeStorageKey:'immichCompanionDuplicateResultMode'});
   let tab=$state<DuplicateTab>('Review'),compare=$state(false),group=$state(''),member=$state(0),reference=$state(0),selectionScope=$state<'Current page'|'All matching'>(typeof sessionStorage!=='undefined'&&sessionStorage.getItem('immich-companion:v2:duplicate-selection-scope')==='All matching'?'All matching':'Current page'),presetApplying=$state(false),selectingAll=$state(false);
   let decisions=$state<Record<string,DuplicateDecision>>({}),stackWorkspace=$state(createDuplicateStackWorkspace()),selectedGroups=$state<string[]>([]),reviewFilter=$state<DuplicateState|'All groups'|'Auto-ready'|'Selected'>('Actionable'),sort=$state('reclaimable:desc');
   let sourceFilter=$state<DuplicateSourceFilter>(typeof sessionStorage!=='undefined'&&['immich','similarity'].includes(sessionStorage.getItem('immich-companion:v2:duplicate-source-filter')??'')?sessionStorage.getItem('immich-companion:v2:duplicate-source-filter') as DuplicateSourceFilter:'both');
-  let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null),interactionError=$state('');
+  let groups=$state<DuplicateGroupRecord[]>([]),total=$state(0),nextCursor=$state<string|null>(null),retryResolution=$state<DuplicateResolutionPlan|null>(null),pendingReview=$state<PendingReview|null>(null),interactionError=$state(''),errorDialog=$state<DuplicateErrorDialog|null>(null);
   let capabilities=$state<DuplicateCapabilities>({canRunDiscovery:false,canApplyDecisions:false,canViewHistory:false,reviewFilters:['All groups'],decisions:[]});
   let similarityThreshold=$state('95'),maximumPerceptualDistance=$state('12'),validationMode=$state<SimilarityValidationMode>('strict'),maxLinkDepth=$state('2'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('8'),discoverySummary=$state('');
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]),historyClearTarget=$state<DuplicateHistoryRecord|null>(null),historyClearAll=$state(false),historyDetailId=$state<string|null>(null);
   let cacheTelemetry=$state.raw<SimilarityCacheStatus|null>(null),cacheLoading=$state(false);
   let planPreparing=$state(false),groupLoads=$state(0),groupNavigationLoading=$state(false),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
-  const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController();
+  const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController((message)=>{pendingReview=null;openErrorDialog('Duplicate operation failed',message)});
   const reviewLoading=$derived(initialLoading||groupLoads>0||groupRequests.loading),loading=$derived(reviewLoading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing||presetApplying||selectingAll),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
   const activeGroup=$derived(groups.find((item)=>item.id===group)),activeGroupIndex=$derived(groups.findIndex((item)=>item.id===group)),activeAssetIds=$derived(activeGroup?.members.map((item)=>item.asset.id)??[]),activeCompareStack=$derived(stackForAsset(stackWorkspace,activeAssetIds[member]??'')),decisionCount=$derived(Object.keys(decisions).length);
@@ -101,7 +103,7 @@
     isReady: () => discoveryReady,
     isMutating: () => mutating,
     clearOutcome: () => operations.clearOutcome(),
-    setError: (message) => interactionError=message,
+    setError: (message) => {interactionError=message;openErrorDialog('Duplicate discovery could not start',message)},
     setSummary: (summary) => discoverySummary=summary,
     resetWorkspace: () => stackWorkspace=createDuplicateStackWorkspace(),
     pending,
@@ -114,10 +116,12 @@
   });
   $effect(()=>{if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-selection-scope',selectionScope)});
 
+  function openErrorDialog(title:string,message:string){const detail=message.trim();if(!detail)return;errorDialog={title,message:detail}}
+  function surfaceInteractionError(error:unknown,fallback:string,title='Duplicate review could not continue'):string{const message=errorMessage(error,fallback);interactionError=message;openErrorDialog(title,message);return message}
   function hydrateWorkspace(items:DuplicateGroupRecord[],replace:boolean){const hydrated=persistence.hydrateWorkspace(items,replace,decisions,stackWorkspace,selectedGroups);decisions=hydrated.decisions;stackWorkspace=hydrated.stackWorkspace;selectedGroups=hydrated.selectedGroups}
   async function flushWorkspace():Promise<void>{await persistence.flushWorkspace(groups,(item)=>groupResolution(stackWorkspace,item,decisions))}
-  function scheduleDraft(item:DuplicateGroupRecord){persistence.scheduleDraft(item,()=>groupResolution(stackWorkspace,item,decisions),(error)=>interactionError=errorMessage(error,'Duplicate choices could not be saved.'))}
-  function persistSelection(){persistence.persistSelection(selectedGroups,compare?group:null,(error)=>interactionError=errorMessage(error,'Duplicate group selection could not be saved.'))}
+  function scheduleDraft(item:DuplicateGroupRecord){persistence.scheduleDraft(item,()=>groupResolution(stackWorkspace,item,decisions),(error)=>surfaceInteractionError(error,'Duplicate choices could not be saved.','Duplicate choices could not be saved'))}
+  function persistSelection(){persistence.persistSelection(selectedGroups,compare?group:null,(error)=>surfaceInteractionError(error,'Duplicate group selection could not be saved.','Duplicate selection could not be saved'))}
 
   $effect(()=>{
     let next=stackWorkspace;
@@ -140,9 +144,9 @@
         // Page changes can immediately hydrate a new response. Await pending
         // draft and selection writes first so the response cannot restore an
         // older, page-local workspace over the durable all-matching selection.
-        try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
+        try{await flushWorkspace()}catch(error){surfaceInteractionError(error,'Duplicate choices could not be saved before refreshing.','Duplicate choices could not be saved');return false}
       }else{
-        try{await flushWorkspace()}catch(error){interactionError=errorMessage(error,'Duplicate choices could not be saved before refreshing.');return false}
+        try{await flushWorkspace()}catch(error){surfaceInteractionError(error,'Duplicate choices could not be saved before refreshing.','Duplicate choices could not be saved');return false}
       }
       if(reset){nextCursor=null;if(collection.resultMode==='Infinite')collection.reset()}
       const query=collection.resultMode==='Pagination'?{state:reviewFilter,source:sourceFilter,sort:parseSort(),page:collection.page,pageSize:collection.pageSize,reuseCachedGroups}:{state:reviewFilter,source:sourceFilter,sort:parseSort(),pageSize:collection.pageSize,cursor:reset?null:nextCursor,reuseCachedGroups};
@@ -198,14 +202,14 @@
       if(target)activateCompareGroup(target,0);
     }finally{groupNavigationLoading=false}
   }
-  async function switchReference(assetId:string){if(mutating||!activeGroup)return;const updated=await libraryData.duplicates.switchReference(activeGroup.id,assetId),ids=updated.members.map((entry)=>entry.asset.id);groups=groups.map((item)=>item.id===updated.id?updated:item);reference=Math.max(0,ids.indexOf(updated.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',assetId)))}
+  async function switchReference(assetId:string){if(mutating||!activeGroup)return;try{const updated=await libraryData.duplicates.switchReference(activeGroup.id,assetId),ids=updated.members.map((entry)=>entry.asset.id);groups=groups.map((item)=>item.id===updated.id?updated:item);reference=Math.max(0,ids.indexOf(updated.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',assetId)))}catch(error){surfaceInteractionError(error,'The duplicate comparison reference could not be changed.','Reference change failed')}}
   function setDecision(groupId:string,assetId:string,decision:DuplicateDecision){if(mutating||!capabilities.decisions.includes(decision))return;const item=groups.find((entry)=>entry.id===groupId),wasComplete=item?groupComplete(item,decisions):false;const next={...decisions,[assetId]:decision};decisions=next;stackWorkspace=decision==='stack'?assignAssetToActiveStack(stackWorkspace,groupId,assetId):removeAssetFromPendingStack(stackWorkspace,assetId);if(item){if(!wasComplete&&groupComplete(item,next)&&!selectedGroups.includes(item.id)){selectedGroups=[...selectedGroups,item.id];persistSelection()}scheduleDraft(item)}}
-  function clearDecision(groupId:string,assetId:string){if(mutating||!decisions[assetId])return;const next={...decisions};delete next[assetId];decisions=next;stackWorkspace=removeAssetFromPendingStack(stackWorkspace,assetId);selectedGroups=selectedGroups.filter((id)=>id!==groupId);persistSelection();const item=groups.find((entry)=>entry.id===groupId);if(!item)return;const resolution=groupResolution(stackWorkspace,item,decisions);if(Object.keys(resolution.decisions).length){scheduleDraft(item);return}persistence.cancelDraft(item.id);void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>interactionError=errorMessage(error,'Duplicate choice could not be cleared.'))}
+  function clearDecision(groupId:string,assetId:string){if(mutating||!decisions[assetId])return;const next={...decisions};delete next[assetId];decisions=next;stackWorkspace=removeAssetFromPendingStack(stackWorkspace,assetId);selectedGroups=selectedGroups.filter((id)=>id!==groupId);persistSelection();const item=groups.find((entry)=>entry.id===groupId);if(!item)return;const resolution=groupResolution(stackWorkspace,item,decisions);if(Object.keys(resolution.decisions).length){scheduleDraft(item);return}persistence.cancelDraft(item.id);void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>surfaceInteractionError(error,'Duplicate choice could not be cleared.','Duplicate choice could not be cleared'))}
   function setStackPrimary(assetId:string){if(mutating||decisions[assetId]!=='stack')return;stackWorkspace=setPendingStackPrimary(stackWorkspace,assetId);const item=groups.find((entry)=>entry.members.some((entry)=>entry.asset.id===assetId));if(item)scheduleDraft(item)}
   function newStack(groupId:string){stackWorkspace=createPendingStack(stackWorkspace,groupId)}
   function chooseStack(groupId:string,stackId:string){stackWorkspace=selectPendingStack(stackWorkspace,groupId,stackId)}
   function presetGroup(item:DuplicateGroupRecord,decision:DuplicateDecision){if(!capabilities.decisions.includes(decision))return;const next={...decisions};for(const member of item.members)next[member.asset.id]=decision;decisions=next;stackWorkspace=decision==='stack'?assignGroupToSingleStack(stackWorkspace,item):clearGroupStacks(stackWorkspace,item.id);if(!selectedGroups.includes(item.id)){selectedGroups=[...selectedGroups,item.id];persistSelection()}scheduleDraft(item)}
-  function clearGroupChoices(item:DuplicateGroupRecord){const groupIds=new Set(item.members.map((member)=>member.asset.id));decisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>!groupIds.has(id))) as Record<string,DuplicateDecision>;stackWorkspace=clearGroupStacks(stackWorkspace,item.id);selectedGroups=selectedGroups.filter((id)=>id!==item.id);persistSelection();void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>interactionError=errorMessage(error,'Duplicate choices could not be cleared.'))}
+  function clearGroupChoices(item:DuplicateGroupRecord){const groupIds=new Set(item.members.map((member)=>member.asset.id));decisions=Object.fromEntries(Object.entries(decisions).filter(([id])=>!groupIds.has(id))) as Record<string,DuplicateDecision>;stackWorkspace=clearGroupStacks(stackWorkspace,item.id);selectedGroups=selectedGroups.filter((id)=>id!==item.id);persistSelection();void libraryData.duplicates.saveDraft(item.id,{decisions:{},stacks:[]}).catch((error)=>surfaceInteractionError(error,'Duplicate choices could not be cleared.','Duplicate choices could not be cleared'))}
   async function clearAllDecisions():Promise<void>{
     if(mutating)return;
     persistence.dispose();
@@ -228,7 +232,7 @@
       for(const item of groups)if(Object.keys(groupResolution(stackWorkspace,item,decisions).decisions).length)scheduleDraft(item);
     }
   }
-  async function applyBulkPreset(decision:DuplicateDecision){if(!capabilities.decisions.includes(decision)||presetApplying)return;presetApplying=true;interactionError='';try{await flushWorkspace();const scope=selectionScope==='All matching'?'all_matching':'current_page';const result=await libraryData.duplicates.applyPreset(decision,scope,groups.map((item)=>item.id),reviewFilter,sourceFilter);if(result.skippedGroupIds.length)interactionError=`${result.skippedGroupIds.length} invalid or unavailable duplicate group${result.skippedGroupIds.length===1?' was':'s were'} skipped.`;await refreshGroups()}catch(error){interactionError=errorMessage(error,'The duplicate preset could not be saved.')}finally{presetApplying=false}}
+  async function applyBulkPreset(decision:DuplicateDecision){if(!capabilities.decisions.includes(decision)||presetApplying)return;presetApplying=true;interactionError='';try{await flushWorkspace();const scope=selectionScope==='All matching'?'all_matching':'current_page';const result=await libraryData.duplicates.applyPreset(decision,scope,groups.map((item)=>item.id),reviewFilter,sourceFilter);if(result.skippedGroupIds.length)interactionError=`${result.skippedGroupIds.length} invalid or unavailable duplicate group${result.skippedGroupIds.length===1?' was':'s were'} skipped.`;await refreshGroups()}catch(error){surfaceInteractionError(error,'The duplicate preset could not be saved.','Duplicate preset could not be saved')}finally{presetApplying=false}}
   async function keeperRulesApplied(result:DuplicateKeeperSelectionResult){keeperSummary=`${result.appliedGroupCount.toLocaleString()} groups updated by automation · ${result.trashCount.toLocaleString()} automatic Delete decisions`;keeperRulesOpen=false;selectedGroups=[...libraryData.duplicates.selectedGroupIds()];selectionScope='All matching';reviewFilter='Selected';collection.reset();interactionError='';await refreshGroups(true,false)}
   async function selectAllGroups():Promise<void>{
     if(mutating)return;
@@ -242,12 +246,12 @@
       reviewFilter='Selected';
       collection.reset();
       await refreshGroups(true,false);
-    }catch(error){interactionError=errorMessage(error,'All duplicate groups could not be selected.')}finally{selectingAll=false}
+    }catch(error){surfaceInteractionError(error,'All duplicate groups could not be selected.','Duplicate selection failed')}finally{selectingAll=false}
   }
   const bulkPresetDisabled=$derived(mutating||presetApplying||(selectionScope==='Current page'&&!groups.length));
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection();if(reviewFilter==='Selected'&&!checked){groups=groups.filter((item)=>item.id!==id);total=Math.max(0,total-1);collection.clampPage(total)}}
   function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
-  async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{await flushWorkspace();const groupIds=scope==='group'&&groupId?[groupId]:[];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){interactionError=errorMessage(error,'Duplicate actions could not be prepared.')}finally{planPreparing=false}}
+  async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{await flushWorkspace();const groupIds=scope==='group'&&groupId?[groupId]:[];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){surfaceInteractionError(error,'Duplicate actions could not be prepared.','Duplicate review could not continue')}finally{planPreparing=false}}
   function requestReviewAll(){
     interactionError='';
     // The durable workspace is authoritative for all-matching selections. A
@@ -352,8 +356,8 @@
     if(cleared!==null){historyClearAll=false;historyClearTarget=null;historyDetailId=null}
   }
 
-  async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){interactionError=errorMessage(error,'Similarity cache status could not be loaded.')}finally{cacheLoading=false}}
-  async function clearCache(cache:SimilarityCacheKind){if(cacheLoading)return;cacheLoading=true;interactionError='';try{cacheTelemetry=await libraryData.duplicates.clearCache(cache)}catch(error){interactionError=errorMessage(error,'The disposable similarity cache could not be cleared.')}finally{cacheLoading=false}}
+  async function refreshCacheStatus(){cacheLoading=true;try{cacheTelemetry=await libraryData.duplicates.cacheStatus()}catch(error){surfaceInteractionError(error,'Similarity cache status could not be loaded.','Similarity cache request failed')}finally{cacheLoading=false}}
+  async function clearCache(cache:SimilarityCacheKind){if(cacheLoading)return;cacheLoading=true;interactionError='';try{cacheTelemetry=await libraryData.duplicates.clearCache(cache)}catch(error){surfaceInteractionError(error,'The disposable similarity cache could not be cleared.','Similarity cache could not be cleared')}finally{cacheLoading=false}}
 
   onMount(()=>{void(async()=>{try{await libraryData.initialize();collection.hydrate();capabilities=await libraryData.duplicates.capabilities();try{const saved=await duplicateDiscoverySettingsRepository.load();includeExact=saved.includeExact;includeSimilar=saved.includeSimilar;similarityThreshold=String(saved.similarityThreshold);maximumPerceptualDistance=String(saved.maximumPerceptualDistance);validationMode=saved.validationMode;maxLinkDepth=String(saved.maxLinkDepth);maxCandidates=String(saved.maxCandidates)}catch(error){interactionError=errorMessage(error,'Saved duplicate discovery settings could not be loaded from Companion.')}if(!capabilities.reviewFilters.includes(reviewFilter))reviewFilter=capabilities.reviewFilters[0]??'All groups';void refreshHistory();void refreshCacheStatus();await refreshGroups(true,true)}catch(error){groupRequests.setError(errorMessage(error,'The duplicate data source could not be initialized.'))}finally{initialLoading=false}})();return()=>{groupRequests.cancel();historyRequests.cancel();persistence.dispose()}});
 </script>
@@ -393,6 +397,7 @@
 {#if historyDetailId}<V2DuplicateHistoryDetail resolutionId={historyDetailId} onclose={()=>historyDetailId=null}/>{/if}
 
 <DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} groupSimilarity={activeGroup?.groupSimilarity??null} groupMembers={activeGroup?.members??[]} validationMode={activeGroup?.similarityValidationMode??null} similarityThreshold={activeGroup?.similarityThresholdPercent??null} assetIds={activeAssetIds} similarities={activeSimilarities} similarityEvidence={activeSimilarityEvidence} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} selectedForReview={selectedGroups.includes(group)} disabled={mutating} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} ongroupnavigate={navigateCompareGroup} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} ondecisionclear={(assetId)=>clearDecision(group,assetId)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onrevalidate={activeGroup?.similarityValidationMode?revalidateFromReference:undefined} onclose={()=>{compare=false;persistSelection()}}/>
+{#if errorDialog}<NoticeDialog id="duplicate-review-error" title={errorDialog.title} message={errorDialog.message} onclose={()=>errorDialog=null}/>{/if}
 {#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} pendingLabel={operations.phase==='reconciling'?'Refreshing results…':'Applying actions…'} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
 {#if historyClearTarget}<ConfirmDialog title="Clear this resolution?" message="This removes Companion's completed-resolution record so a currently discovered matching group can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear resolution" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearHistoryResolution()} onclose={()=>{if(!mutating)historyClearTarget=null}}/>{/if}
 {#if historyClearAll}<ConfirmDialog title="Clear all resolution history?" message="This removes every completed duplicate-resolution record in Companion, including history outside the currently selected date range, so matching groups can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear all resolution history" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearAllHistoryResolutions()} onclose={()=>{if(!mutating)historyClearAll=false}}/>{/if}
