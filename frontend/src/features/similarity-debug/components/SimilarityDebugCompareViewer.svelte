@@ -207,7 +207,7 @@
     <div class="v2-compare-header-actions">
       <V2Button disabled={!comparisonTargets.length} onclick={() => step('previous')}>← Previous image</V2Button>
       <V2Button disabled={!comparisonTargets.length} onclick={() => step('next')}>Next image →</V2Button>
-      <V2Button disabled={!selectedId || !referenceId || selectedId === anchorAssetId} onclick={() => setAnchor(selectedId, referenceId)}>Set selected as anchor</V2Button>
+      <V2Button disabled={!selectedId || !referenceId || selectedId === anchorAssetId} onclick={() => setAnchor(selectedId, referenceId)}>Set as anchor</V2Button>
     </div>
   {/snippet}
 
@@ -217,8 +217,8 @@
         <V2ImageComparison
           {selectedResource}
           {referenceResource}
-          selectedLabel={assetName(selectedId)}
-          referenceLabel={assetName(referenceId)}
+          selectedLabel={`${assetName(selectedId)}${selectedId === anchorAssetId ? ' · Anchor' : ''}`}
+          referenceLabel={`${assetName(referenceId)}${referenceId === anchorAssetId ? ' · Anchor' : ''}`}
           bind:mode
           bind:opacity
           bind:split
@@ -231,7 +231,7 @@
 
         <div class="similarity-debug-pair-roles">
           <div class:anchor={referenceId === anchorAssetId}>
-            <span class="v2-small v2-muted">Reference side</span>
+            <span class="v2-small v2-muted">Anchor side</span>
             <b title={assetName(referenceId)}>{assetName(referenceId)}</b>
             {#if referenceId === anchorAssetId}
               <V2Badge tone="ok" text="Anchor"/>
@@ -268,7 +268,7 @@
                 {/if}
                 <small>{assetName(assetId)}</small>
                 <small class="v2-muted">
-                  {assetId === referenceId ? 'Reference side' : assetId === anchorAssetId ? 'Anchor' : 'Compare'}
+                  {assetId === referenceId ? 'Anchor side' : assetId === anchorAssetId ? 'Anchor' : 'Compare'}
                 </small>
               </button>
               {#if assetId !== anchorAssetId && assetId !== referenceId}
