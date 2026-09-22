@@ -15,6 +15,7 @@
     removeSimilarityDebugAsset,
     SIMILARITY_DEBUG_CHANGED_EVENT,
   } from '../state/similarityDebugBasket';
+  import { duplicateDiscoverySettingsRepository } from '../../duplicates/api/duplicateDiscoverySettingsRepository';
   import {
     runSimilarityDebug,
     type SimilarityDebugPair,
@@ -36,6 +37,7 @@
   let maxLinkDepth = $state(2);
   let maximumPerceptualDistance = $state(12);
   let maximumAspectDifference = $state(0.05);
+  let maximumNeighborsPerAsset = $state(8);
   let anchorAssetId = $state<string>('');
 
   const checkedIds = $derived(assetIds.filter((id) => selected.has(id)));
@@ -67,6 +69,19 @@
 
   function assetName(assetId: string): string {
     return assetById.get(assetId)?.original_file_name ?? assetId;
+  }
+
+  async function loadDiscoveryDefaults(): Promise<void> {
+    try {
+      const settings = await duplicateDiscoverySettingsRepository.load();
+      similarityThreshold = settings.similarityThreshold;
+      validationMode = settings.validationMode;
+      maxLinkDepth = settings.maxLinkDepth;
+      maximumPerceptualDistance = settings.maximumPerceptualDistance;
+      maximumNeighborsPerAsset = settings.maxCandidates;
+    } catch {
+      // Keep schema defaults when persisted discovery settings are unavailable.
+    }
   }
 
   async function refreshBasket(): Promise<void> {
@@ -135,6 +150,7 @@
   }
 
   onMount(() => {
+    void loadDiscoveryDefaults();
     void refreshBasket();
     const listener = () => void refreshBasket();
     window.addEventListener(SIMILARITY_DEBUG_CHANGED_EVENT, listener);
@@ -194,10 +210,11 @@
           <label>Max link depth <input type="number" min="0" max="64" step="1" bind:value={maxLinkDepth}></label>
           <label>Max pHash distance <input type="number" min="0" max="64" step="1" bind:value={maximumPerceptualDistance}></label>
           <label>Max aspect difference <input type="number" min="0" max="1" step="0.01" bind:value={maximumAspectDifference}></label>
+          <label>Library neighbor cap <input type="number" value={maximumNeighborsPerAsset} disabled></label>
         </div>
         <V2Inline gap="sm" wrap>
           <V2Button variant="primary" disabled={running || checkedIds.length < 2} onclick={() => void analyze()}>{running ? 'Analyzing…' : `Analyze ${checkedIds.length} selected`}</V2Button>
-          <span class="v2-small v2-muted">Every checked pair is scored even when the normal candidate gates would reject it.</span>
+          <span class="v2-small v2-muted">Every checked pair is scored even when the normal candidate gates would reject it. The saved library neighbor cap is shown for context but is not simulated.</span>
         </V2Inline>
         {#if error}<p class="similarity-debug-error" role="alert">{error}</p>{/if}
       </V2Card>
