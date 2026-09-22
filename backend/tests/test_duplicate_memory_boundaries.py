@@ -55,6 +55,8 @@ def test_similarity_projection_uses_bounded_repository_reads() -> None:
 
     provider_source = inspect.getsource(SimilarityDuplicateProvider._validated_groups)
     assert "iter_grouping_edges" in provider_source
+    assert "SimilarityGroupValidator" in provider_source
+    assert "edges: list" not in provider_source
     assert "latest_completed()" not in provider_source
 
     discovery_source = inspect.getsource(SimilarityDuplicateProvider.discover_batches)
@@ -74,6 +76,8 @@ def test_similarity_pair_retention_preserves_scan_metadata_rows() -> None:
     assert "delete(SimilarityScanPairRecord)" in source
     assert "delete(SimilarityScanRecord)" not in source
     assert "pair_evidence_pruned_at" in source
+    assert ".offset(keep_completed_generations)" in source
+    assert ".limit(prune_batch_size)" in source
 
 
 def test_composite_snapshot_publication_consumes_bounded_group_batches() -> None:
