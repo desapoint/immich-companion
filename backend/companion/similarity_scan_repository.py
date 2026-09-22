@@ -468,7 +468,11 @@ class SimilarityScanRepository:
         async with self._database.sessions() as session, session.begin():
             await self._evidence_epoch.assert_current(session, expected_epoch)
             record = await session.get(SimilarityScanRecord, scan_id, with_for_update=True)
-            if record is None or record.status != "completed":
+            if (
+                record is None
+                or record.status != "completed"
+                or getattr(record, "pair_evidence_pruned_at", None) is not None
+            ):
                 return
             await session.execute(
                 delete(SimilarityScanPairRecord).where(
