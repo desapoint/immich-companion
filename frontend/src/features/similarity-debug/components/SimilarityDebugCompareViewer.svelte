@@ -198,7 +198,7 @@
       <V2Badge text={modeLabel(validationMode)}/>
       <V2Badge text={`${formatPercent(similarityThreshold)} threshold`}/>
       {#if pair}
-        <V2Badge tone={pair.would_pass_pair_pipeline ? 'ok' : 'warn'} text={pairStatus(pair)}/>
+        <V2Badge tone={pair.would_pass_pair_pipeline ? 'ok' : 'bad'} text={pairStatus(pair)}/>
       {/if}
       {#if anchorAssetId}
         <V2Badge text={`Anchor: ${assetName(anchorAssetId)}`}/>
@@ -289,10 +289,42 @@
         <div class="v2-compare-header-zone">
           <V2Section title="Quick comparison">
             <div class="similarity-debug-summary">
-              <div><span>Final similarity</span><b>{formatPercent(pair.similarity_percent)}</b></div>
-              <div><span>Pair-local pipeline</span><b data-pass={pair.would_pass_pair_pipeline}>{pair.would_pass_pair_pipeline ? 'Pass' : 'Reject'}</b></div>
+              <div>
+                <span>Evidence available</span>
+                <div class="similarity-debug-gate-value">
+                  <b>{pair.evidence_available ? 'Current pair evidence' : 'Unavailable'}</b>
+                  <V2Badge class="similarity-debug-gate-badge" tone={pair.evidence_available ? 'ok' : 'bad'} text={pair.evidence_available ? 'Pass' : 'Fail'}/>
+                </div>
+              </div>
+              <div>
+                <span>Final similarity</span>
+                <div class="similarity-debug-gate-value">
+                  <b>{formatPercent(pair.similarity_percent)}</b>
+                  <V2Badge class="similarity-debug-gate-badge" tone={pair.similarity_threshold_pass ? 'ok' : 'bad'} text={pair.similarity_threshold_pass ? 'Pass' : 'Fail'}/>
+                </div>
+              </div>
+              <div>
+                <span>Candidate gates</span>
+                <div class="similarity-debug-gate-value">
+                  <b>{pair.candidate_pair_pass ? 'Eligible candidate' : 'Rejected candidate'}</b>
+                  <V2Badge class="similarity-debug-gate-badge" tone={pair.candidate_pair_pass ? 'ok' : 'bad'} text={pair.candidate_pair_pass ? 'Pass' : 'Fail'}/>
+                </div>
+              </div>
+              <div>
+                <span>Score threshold</span>
+                <div class="similarity-debug-gate-value">
+                  <b>{formatPercent(pair.similarity_percent)} / {formatPercent(pair.similarity_threshold)}</b>
+                  <V2Badge class="similarity-debug-gate-badge" tone={pair.similarity_threshold_pass ? 'ok' : 'bad'} text={pair.similarity_threshold_pass ? 'Pass' : 'Fail'}/>
+                </div>
+              </div>
+              <div>
+                <span>Pair-local pipeline</span>
+                <div class="similarity-debug-gate-value">
+                  <b>{pair.would_pass_pair_pipeline ? 'Continues' : 'Stops here'}</b>
+                  <V2Badge class="similarity-debug-gate-badge" tone={pair.would_pass_pair_pipeline ? 'ok' : 'bad'} text={pair.would_pass_pair_pipeline ? 'Pass' : 'Fail'}/>
+                </div>
+              </div>
               <div><span>Reason</span><b>{pair.exclusion_reason ?? 'None'}</b></div>
-              <div><span>Score threshold</span><b data-pass={pair.similarity_threshold_pass}>{formatPercent(pair.similarity_percent)} / {formatPercent(pair.similarity_threshold)}</b></div>
               <div><span>Configured anchor</span><b>{anchorAssetId ? assetName(anchorAssetId) : 'Automatic'}</b></div>
               <div><span>Neighbor allocation</span><b>Not simulated</b></div>
             </div>
@@ -302,8 +334,16 @@
         <div class="similarity-debug-sidebar-scroll">
           <V2Section title="Pipeline evidence">
             <div class="similarity-debug-kv">
-              <span>pHash distance</span><b data-pass={pair.perceptual_gate_pass}>{pair.perceptual_distance ?? '—'} / {pair.maximum_perceptual_distance}</b>
-              <span>Aspect difference</span><b data-pass={pair.aspect_gate_pass}>{formatRatio(pair.aspect_ratio_difference)} / {pair.maximum_aspect_difference.toFixed(4)}</b>
+              <span>pHash distance</span>
+              <div class="similarity-debug-gate-value">
+                <b>{pair.perceptual_distance ?? '—'} / {pair.maximum_perceptual_distance}</b>
+                <V2Badge class="similarity-debug-gate-badge" tone={pair.perceptual_gate_pass ? 'ok' : 'bad'} text={pair.perceptual_gate_pass ? 'Pass' : 'Fail'}/>
+              </div>
+              <span>Aspect difference</span>
+              <div class="similarity-debug-gate-value">
+                <b>{formatRatio(pair.aspect_ratio_difference)} / {pair.maximum_aspect_difference.toFixed(4)}</b>
+                <V2Badge class="similarity-debug-gate-badge" tone={pair.aspect_gate_pass ? 'ok' : 'bad'} text={pair.aspect_gate_pass ? 'Pass' : 'Fail'}/>
+              </div>
               <span>Structure</span><b>{formatPercent(pair.structural_percent)}</b>
               <span>Perceptual score</span><b>{formatPercent(pair.perceptual_percent)}</b>
               <span>Color</span><b>{formatPercent(pair.color_percent)}</b>
@@ -316,33 +356,6 @@
               <span>Detail source</span><b>{pair.detail_source ?? '—'}</b>
               <span>Evidence version</span><b>{pair.model_version ?? '—'} / f{pair.feature_version ?? '—'} / c{pair.comparison_version ?? '—'}</b>
             </div>
-          </V2Section>
-
-          <V2Section title="Localized detail diagnostics">
-            {#if pair.local_diagnostics}
-              {@const local = pair.local_diagnostics}
-              <div class="similarity-debug-kv">
-                <span>Raw detail similarity</span><b>{formatPercent(local.raw_similarity_percent)}</b>
-                <span>Aligned detail similarity</span><b>{formatPercent(local.aligned_similarity_percent)}</b>
-                <span>Raw changed area</span><b>{formatPercent(local.changed_percent)}</b>
-                <span>Aligned changed area</span><b>{formatPercent(local.aligned_changed_percent)}</b>
-                <span>Peak local change</span><b>{formatPercent(local.localized_changed_percent)}</b>
-                <span>Coherent changed area</span><b>{formatPercent(local.coherent_changed_percent)}</b>
-                <span>Largest changed region</span><b>{formatPercent(local.largest_changed_region_percent)}</b>
-                <span>Substantial regions</span><b>{local.substantial_region_count}</b>
-                <span>Alignment applied</span><b>{local.alignment_applied ? 'Yes' : 'No'}</b>
-                <span>Alignment shift</span><b>{formatPercent(local.alignment_shift_percent)}</b>
-                <span>Alignment overlap</span><b>{formatPercent(local.alignment_overlap_percent)}</b>
-                <span>Evidence source</span><b>{local.source}</b>
-              </div>
-              <div class="similarity-debug-cell-grid" style={`--columns:${local.columns}`}>
-                {#each local.cells.flat() as value, index}
-                  <span title={`Cell ${index + 1}: ${formatPercent(value)}`} style={`--change:${Math.max(8, Math.round(value))}%`}>{Math.round(value)}</span>
-                {/each}
-              </div>
-            {:else}
-              <span class="v2-muted">Localized detail evidence is unavailable for this pair.</span>
-            {/if}
           </V2Section>
         </div>
       {/if}
@@ -382,11 +395,9 @@
   .similarity-debug-summary>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:baseline}
   .similarity-debug-summary span,.similarity-debug-kv span{color:var(--v2-muted)}
   .similarity-debug-summary b,.similarity-debug-kv b{text-align:right;overflow-wrap:anywhere}
-  .similarity-debug-summary b[data-pass="true"],.similarity-debug-kv b[data-pass="true"]{color:#8fd694}
-  .similarity-debug-summary b[data-pass="false"],.similarity-debug-kv b[data-pass="false"]{color:#ef9a9a}
   .similarity-debug-kv{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 12px;align-items:baseline}
-  .similarity-debug-cell-grid{display:grid;grid-template-columns:repeat(var(--columns),minmax(22px,1fr));gap:2px;margin-top:12px;max-height:260px;overflow:auto}
-  .similarity-debug-cell-grid span{display:grid;place-items:center;aspect-ratio:1;background:color-mix(in srgb,var(--v2-accent) var(--change),transparent);font-size:9px;color:var(--v2-text)}
+  .similarity-debug-gate-value{display:inline-flex;align-items:center;justify-content:flex-end;gap:6px;min-width:0}
+  :global(.similarity-debug-gate-badge){min-height:18px;padding:1px 6px;font-size:.62rem;letter-spacing:.04em}
   .similarity-debug-footer-copy,.similarity-debug-footer-actions{display:flex;align-items:center;gap:10px;min-width:0}
   .similarity-debug-footer-copy{flex:1 1 auto}
   .similarity-debug-footer-copy span{color:var(--v2-muted);font-size:.75rem}
@@ -399,6 +410,7 @@
     .similarity-debug-pair-roles{grid-template-columns:1fr}
     .similarity-debug-summary>div,.similarity-debug-kv{grid-template-columns:1fr}
     .similarity-debug-summary b,.similarity-debug-kv b{text-align:left}
+    .similarity-debug-gate-value{justify-content:flex-start;flex-wrap:wrap}
     .similarity-debug-footer-copy,.similarity-debug-footer-actions{align-items:flex-start}
   }
 </style>
