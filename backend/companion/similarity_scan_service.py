@@ -266,6 +266,7 @@ class SimilarityScanTaskHandler:
             scan_id = await self._scans.prepare(parameters, scan_id=task_id)
             completed = await self._scans.completed_summary(scan_id)
             if completed is not None:
+                recovered_limit_reached = getattr(completed, "result_limit_reached", None)
                 return TaskResult(
                     summary={
                         "scan_id": str(scan_id),
@@ -275,7 +276,7 @@ class SimilarityScanTaskHandler:
                             str(request.anchor_asset_id) if request.anchor_asset_id else None
                         ),
                         "scope": request.scope,
-                        "result_limit_reached": getattr(completed, "result_limit_reached", None),
+                        "result_limit_reached": recovered_limit_reached,
                         "maximum_matches": request.maximum_matches,
                         "recovered_completed_scan": True,
                     },
@@ -285,7 +286,11 @@ class SimilarityScanTaskHandler:
                         pairs_scored=completed.candidate_count,
                         matches_retained=completed.match_count,
                         retained_match_limit=request.maximum_matches,
-                        result_limit_reached=int(getattr(completed, "result_limit_reached", None) is True),
+                        **(
+                            {"result_limit_reached": int(recovered_limit_reached)}
+                            if recovered_limit_reached is not None
+                            else {}
+                        ),
                     ),
                 )
             if self._indexer is not None:
@@ -629,6 +634,8 @@ class SimilarityScanTaskHandler:
                     ),
                     pairs_scored=total,
                     matches_retained=len(matches),
+                    retained_match_limit=request.maximum_matches,
+                    result_limit_reached=int(result_limit_reached),
                     reference_pairs_required=reference_pairs_required,
                     reference_pairs_enriched=reference_pairs_enriched,
                 ),
