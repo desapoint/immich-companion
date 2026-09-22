@@ -851,3 +851,29 @@ it('shows projection publication as an explicit discovery loading phase', async 
   expect(progress.detail).toBe('Publishing duplicate results…');
   expect(progress.percent).toBeNull();
 });
+
+
+it('shows retained-match usage and a definitive cap warning in discovery progress', () => {
+  const task = {
+    id: 'similarity-task',
+    status: 'running',
+    payload: { maximum_matches: 5000 },
+    progress: {
+      phase: 'similarity_scoring',
+      completed: 500,
+      total: 1000,
+      percent: 50,
+      detail: 'Scored 500 of 1000 candidate pairs',
+    },
+    counters: {
+      matches_retained: 5000,
+      retained_match_limit: 5000,
+      result_limit_reached: 1,
+    },
+  } as unknown as TaskRecord;
+
+  const progress = discoveryProgress(task, true, 25, 98);
+
+  expect(progress.detail).toContain('5,000 / 5,000 matches retained');
+  expect(progress.detail).toContain('RETENTION LIMIT REACHED');
+});
