@@ -16,6 +16,8 @@ from companion.similarity_grouping import (
 )
 from companion.similarity_scan_repository import SimilarityScanRunSummary
 
+SIMILARITY_GROUP_HYDRATION_ASSET_BUDGET = 1_000
+
 
 class _ScanReader(Protocol):
     async def latest_completed_summary(self) -> SimilarityScanRunSummary | None: ...
@@ -140,18 +142,37 @@ class SimilarityDuplicateProvider:
             return
         summary, validated_groups = state
 
-        for offset in range(0, len(validated_groups), batch_size):
-            batch = validated_groups[offset : offset + batch_size]
-            asset_ids = sorted(
-                {asset_id for group in batch for asset_id in group.asset_ids},
-                key=lambda asset_id: asset_id.int,
-            )
+        pending: list[object] = []
+        pending_asset_ids: set[UUID] = set()
+
+        async def flush() -> list[DiscoveredGroup]:
+            asset_ids = sorted(pending_asset_ids, key=lambda asset_id: asset_id.int)
             assets = await self._assets.get_immich_assets(asset_ids)
-            groups = [
+            return [
                 group
-                for validated in batch
+                for validated in pending
                 if (group := self._materialize_group(summary, validated, assets)) is not None
             ]
+
+        for validated in validated_groups:
+            additional_assets = sum(
+                1 for asset_id in validated.asset_ids if asset_id not in pending_asset_ids
+            )
+            if pending and (
+                len(pending) >= batch_size
+                or len(pending_asset_ids) + additional_assets
+                > SIMILARITY_GROUP_HYDRATION_ASSET_BUDGET
+            ):
+                groups = await flush()
+                if groups:
+                    yield groups
+                pending = []
+                pending_asset_ids = set()
+            pending.append(validated)
+            pending_asset_ids.update(validated.asset_ids)
+
+        if pending:
+            groups = await flush()
             if groups:
                 yield groups
 
