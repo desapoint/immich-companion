@@ -7,15 +7,15 @@
   import V2CompareSideBySide from './CompareSideBySide.svelte';
   import V2CompareSwipe from './CompareSwipe.svelte';
   import V2CompareTransparency from './CompareTransparency.svelte';
-  import V2Segmented from '../../../lib/components/ui/Segmented.svelte';
+  import ComparisonModeSelector from './ComparisonModeSelector.svelte';
   import V2ZoomControl from '../../../lib/components/ui/ZoomControl.svelte';
   import type { MediaResource } from '../../../lib/types/libraryContracts';
   import type { LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
+  import type { ComparisonImagePair } from '../types/comparisonLayer';
+  import type { ComparisonMode } from '../types/comparisonMode';
   import { mediaResourceSources, nextMediaSourceIndex } from '../../../lib/api/mediaSources';
   import { ViewerViewportController } from '../../assets/state/viewportController.svelte';
   import { ViewportRegistrationController } from '../../assets/state/viewportRegistration';
-
-  export type ComparisonMode = 'Side by side' | 'Swipe' | 'Transparency' | 'Difference' | 'Local changes' | 'Flicker';
 
   let {
     selectedResource,
@@ -77,6 +77,10 @@
   const referenceIndex = $derived(referenceSelection.key === referenceKey ? referenceSelection.index : 0);
   const selectedSrc = $derived(selectedSources[selectedIndex] ?? '');
   const referenceSrc = $derived(referenceSources[referenceIndex] ?? '');
+  const comparisonPair = $derived<ComparisonImagePair>({
+    selected: { src: selectedSrc, label: selectedLabel, onload: selectedLoaded, onerror: selectedFailed },
+    reference: { src: referenceSrc, label: referenceLabel, onload: referenceLoaded, onerror: referenceFailed },
+  });
 
   function selectedFailed(): void {
     const next = nextMediaSourceIndex(selectedIndex, selectedSources.length);
@@ -93,10 +97,6 @@
       Math.max(selectedNatural.width, referenceNatural.width, 1),
       Math.max(selectedNatural.height, referenceNatural.height, 1),
     );
-  }
-
-  function changeMode(next: string): void {
-    mode = next as ComparisonMode;
   }
 
   function setViewport(node: HTMLElement | null): void {
@@ -162,7 +162,7 @@
 
 <div class="v2-compare-component">
   <div class="v2-compare-component-tools">
-    <V2Segmented items={['Side by side','Swipe','Transparency','Difference','Local changes','Flicker']} active={mode} onselect={changeMode} ariaLabel="Comparison mode" />
+    <ComparisonModeSelector bind:mode />
     <div class="v2-compare-zoom-tools">
       <V2ZoomControl
         value={camera.zoom}
@@ -201,30 +201,16 @@
       />
     {:else if mode === 'Swipe'}
       <V2CompareSwipe
-        {selectedSrc}
-        {referenceSrc}
-        {selectedLabel}
-        {referenceLabel}
+        pair={comparisonPair}
         transform={camera.transform}
         bind:split
-        onselectedload={selectedLoaded}
-        onreferenceload={referenceLoaded}
-        onselectederror={selectedFailed}
-        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {:else if mode === 'Transparency'}
       <V2CompareTransparency
-        {selectedSrc}
-        {referenceSrc}
-        {selectedLabel}
-        {referenceLabel}
+        pair={comparisonPair}
         transform={camera.transform}
         bind:opacity
-        onselectedload={selectedLoaded}
-        onreferenceload={referenceLoaded}
-        onselectederror={selectedFailed}
-        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {:else if mode === 'Difference'}
@@ -267,15 +253,8 @@
       />
     {:else}
       <V2CompareFlicker
-        {selectedSrc}
-        {referenceSrc}
-        {selectedLabel}
-        {referenceLabel}
+        pair={comparisonPair}
         transform={camera.transform}
-        onselectedload={selectedLoaded}
-        onreferenceload={referenceLoaded}
-        onselectederror={selectedFailed}
-        onreferenceerror={referenceFailed}
         onviewport={setViewport}
       />
     {/if}

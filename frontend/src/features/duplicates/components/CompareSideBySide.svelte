@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { createViewportAttachment } from '../state/comparisonViewportAttachment';
 
   let {
     selectedSrc,
@@ -25,15 +25,10 @@
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
-  let viewport = $state<HTMLElement | null>(null);
-
-  onMount(() => {
-    onviewport?.(viewport);
-    return () => onviewport?.(null);
-  });
+  const viewportAttachment = createViewportAttachment((node) => onviewport?.(node));
 </script>
 
-<div class="v2-compare-pane" bind:this={viewport}>
+<div class="v2-compare-pane" {@attach viewportAttachment}>
   <span class="v2-compare-label">{referenceLabel}</span>
   <div class="v2-compare-transform" style={`transform:${transform}`}>
     <img src={referenceSrc} alt={referenceLabel} onload={onreferenceload} onerror={onreferenceerror}>

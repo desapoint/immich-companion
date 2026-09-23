@@ -7,6 +7,7 @@ on:
     tags:
       - "v*"
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft]
   workflow_dispatch:
 
 concurrency:
@@ -78,6 +79,7 @@ jobs:
         run: ruff check companion tests
 
   build:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     needs: [frontend, backend]
     runs-on: ubuntu-latest
     steps:
