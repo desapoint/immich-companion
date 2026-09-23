@@ -21,6 +21,13 @@ retained root.
 
 The manifest records each route, viewport, the active scroll target, its
 scrollable height, scroll positions, navigation failures, and browser/page errors.
+When the rendered fixture exposes safe interaction targets, it also records
+`interactionStates` and captures viewport images for the mobile More menu,
+the Assets expert-search drawer and viewer, Duplicate tabs/comparison viewer,
+and non-General Settings tabs. These states are best-effort: empty libraries,
+unavailable duplicate groups, or an in-progress seed simply omit the affected
+state while retaining the base route capture. The interaction pass does not
+run discovery, apply duplicate decisions, or perform other mutating actions.
 On phones the active target is normally `window`; on larger layouts it is
 normally `.v2-content`. The harness detects this from the rendered page instead
 of assuming that the document is the scrolling surface. Warnings and errors are reported

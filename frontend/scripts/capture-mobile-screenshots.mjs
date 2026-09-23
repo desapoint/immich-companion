@@ -148,6 +148,89 @@ async function captureScrollSegments(page, directory, prefix) {
   return { target, scrollPositions: positions };
 }
 
+async function clickRoleIfPresent(page, role, name, timeout = 1_500) {
+  const target = page.getByRole(role, { name, exact: true }).first();
+  if (await target.count() === 0) return false;
+  try {
+    await target.click({ timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function captureInteraction(page, directory, prefix, capture, state, settle = true) {
+  if (settle) await settlePage(page);
+  const filename = `${prefix}-${safeName(state)}.png`;
+  await page.screenshot({ path: path.join(directory, filename), fullPage: false });
+  capture.files.push(`${path.basename(directory)}/${filename}`);
+  capture.interactionStates ??= [];
+  capture.interactionStates.push({ name: state, file: `${path.basename(directory)}/${filename}` });
+}
+
+async function captureInteractionStates(page, route, directory, prefix, capture) {
+  // These interactions intentionally avoid mutations. They are guarded because
+  // a live environment may have an empty library or no duplicate groups yet.
+  const taskSurface = page.locator('.v2-tasktray, .v2-task-bubbles').first();
+  if (await taskSurface.count() && await taskSurface.isVisible().catch(() => false)) {
+    await captureInteraction(page, directory, prefix, capture, 'task-progress');
+  }
+
+  if (route.path === '/' || route.path === '/assets' || route.path === '/restore' || route.path === '/duplicates') {
+    if (await clickRoleIfPresent(page, 'button', 'More')) {
+      await captureInteraction(page, directory, prefix, capture, 'more-navigation');
+      await clickRoleIfPresent(page, 'button', 'Close');
+    }
+  }
+
+  if (route.path === '/assets') {
+    if (await clickRoleIfPresent(page, 'button', 'Convert to expert')) {
+      await captureInteraction(page, directory, prefix, capture, 'expert-search-drawer');
+      await page.keyboard.press('Escape').catch(() => {});
+    }
+    // A viewer is useful even when the asset API returns a different fixture
+    // shape, so discover the rendered tile instead of assuming an asset id.
+    const tile = page.locator('.v2-asset-main').first();
+    if (await tile.count() && await tile.isVisible().catch(() => false)) {
+      try {
+        await tile.click({ timeout: 1_500 });
+        await captureInteraction(page, directory, prefix, capture, 'asset-viewer');
+        await page.keyboard.press('Escape').catch(() => {});
+      } catch {
+        // Empty or loading fixture: the stable base route remains recorded.
+      }
+    }
+  }
+
+  if (route.path === '/duplicates') {
+    for (const tab of ['Rules & discovery', 'Resolution history']) {
+      if (await clickRoleIfPresent(page, 'tab', tab)) {
+        await captureInteraction(page, directory, prefix, capture, `duplicates-${tab}`);
+      }
+    }
+    // Return to Review before looking for a comparison overlay.
+    await clickRoleIfPresent(page, 'tab', 'Review');
+    const compare = page.getByRole('button', { name: 'Compare', exact: true }).first();
+    if (await compare.count() && await compare.isVisible().catch(() => false)) {
+      try {
+        await compare.click({ timeout: 1_500 });
+        await captureInteraction(page, directory, prefix, capture, 'duplicate-comparison');
+        await page.keyboard.press('Escape').catch(() => {});
+      } catch {
+        // Duplicate groups can disappear while the seed worker is reconciling.
+      }
+    }
+  }
+
+  if (route.path === '/settings') {
+    for (const tab of ['Duplicates', 'Sync', 'Tasks']) {
+      if (await clickRoleIfPresent(page, 'tab', tab)) {
+        await captureInteraction(page, directory, prefix, capture, `settings-${tab}`);
+      }
+    }
+  }
+}
+
 async function main() {
   const outputRoot = await nextGenerationDirectory();
   await mkdir(outputRoot, { recursive: true });
@@ -197,6 +280,7 @@ async function main() {
           capture.scrollTarget = segments.target;
           capture.scrollPositions = segments.scrollPositions;
           capture.title = await page.title().catch(() => '');
+          await captureInteractionStates(page, route, directory, prefix, capture);
         } catch (error) {
           capture.navigationError = error instanceof Error ? error.message : String(error);
         }
