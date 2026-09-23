@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Album, BookOpen, CircleGauge, Copy, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
+  import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import type { SyncRun } from '../../features/status/types/syncContracts';
   import { formatTaskProgressPercent } from '../../features/status/utils/taskProgress';
@@ -14,7 +14,7 @@
   type NavItem = { key:string; label:string; href:string; group?:string; position?:'top'|'bottom' };
 
   let { activeKey, title, navItems, onnavigate, brand='Immich Companion', children }: { activeKey:string; title:string; navItems:NavItem[]; onnavigate:(key:string)=>void; brand?:string; children:import('svelte').Snippet } = $props();
-  let taskExpanded=$state(true), root=$state<HTMLDivElement>();
+  let taskExpanded=$state(true), mobileMenuOpen=$state(false), root=$state<HTMLDivElement>();
 
   function groupItems(items:NavItem[]){const groups:{label:string;items:NavItem[]}[]=[];for(const item of items){const label=item.group??'';let group=groups.find((entry)=>entry.label===label);if(!group){group={label,items:[]};groups.push(group)}group.items.push(item)}return groups}
   const topGroups=$derived(groupItems(navItems.filter((item)=>item.position!=='bottom'))), bottomGroups=$derived(groupItems(navItems.filter((item)=>item.position==='bottom')));
@@ -23,8 +23,9 @@
     {key:'assets',label:'Assets'},
     {key:'duplicates',label:'Review'},
     {key:'albums',label:'Manage'},
-    {key:'settings',label:'More'},
   ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??pagePath(mobileItem.key as Parameters<typeof pagePath>[0]) })));
+  const mobileMenuItems=$derived(navItems.filter((item)=>['restore','albums','tags','similarity-debug','settings','docs'].includes(item.key)));
+  const mobileMenuActive=$derived(mobileMenuItems.some((item)=>item.key===activeKey));
   const currentRun=$derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
   const backgroundTasks=$derived(backgroundTaskStatus.workflow?[backgroundTaskStatus.workflow]:backgroundTaskStatus.tasks.map((task)=>({id:task.id,presentation:backgroundTaskPresentation(task)})));
@@ -36,7 +37,12 @@
   function handleNavigation(event:MouseEvent,item:NavItem):void{
     if(event.button!==0||event.metaKey||event.ctrlKey||event.shiftKey||event.altKey)return;
     event.preventDefault();
+    mobileMenuOpen=false;
     onnavigate(item.key);
+  }
+
+  function handleWindowKeydown(event:KeyboardEvent):void{
+    if(event.key==='Escape')mobileMenuOpen=false;
   }
 
   function syncTaskBounds(): void {
@@ -81,6 +87,8 @@
     void tick().then(syncTaskBounds);
   });
 </script>
+
+<svelte:window onkeydown={handleWindowKeydown}/>
 
 {#snippet navIcon(key:string)}
   <span class="v2-nav-icon" aria-hidden="true">
@@ -171,5 +179,18 @@
     </div>
   {/if}
 
-  <nav class="v2-mobile-nav" aria-label="Mobile navigation">{#each mobileItems as item (item.key)}<a href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{item.label}</a>{/each}</nav>
+  {#if mobileMenuOpen}
+    <div class="v2-mobile-more-menu" role="dialog" aria-label="More navigation">
+      <div class="v2-mobile-more-head"><b>More destinations</b><button type="button" onclick={()=>mobileMenuOpen=false}>Close</button></div>
+      <nav aria-label="Additional mobile navigation">
+        {#each mobileMenuItems as item (item.key)}
+          <a href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{@render navIcon(item.key)}<span>{item.label}</span></a>
+        {/each}
+      </nav>
+    </div>
+  {/if}
+  <nav class="v2-mobile-nav" aria-label="Mobile navigation">
+    {#each mobileItems as item (item.key)}<a href={item.href} aria-current={item.key===activeKey?'page':undefined} onclick={(event)=>handleNavigation(event,item)}>{@render navIcon(item.key)}<span>{item.label}</span></a>{/each}
+    <button type="button" aria-expanded={mobileMenuOpen} aria-current={mobileMenuActive?'page':undefined} onclick={()=>mobileMenuOpen=!mobileMenuOpen}><span class="v2-nav-icon" aria-hidden="true"><Ellipsis size={18}/></span><span>More</span></button>
+  </nav>
 </div>
