@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, delete, func, insert, or_, select, update
+from sqlalchemy import and_, delete, func, insert, or_, select, tuple_, update
 
 from companion.database import DatabaseManager
 from companion.models import SimilarityScanPairRecord, SimilarityScanRecord
@@ -17,7 +17,11 @@ from companion.similarity_grouping import (
     SimilarityGroupingEdge,
     SimilarityValidationMode,
 )
-from companion.similarity_repository import SIMILARITY_COMPARISON_VERSION, PairSimilarityEvidence
+from companion.similarity_repository import (
+    SIMILARITY_COMPARISON_VERSION,
+    PairSimilarityEvidence,
+    canonical_pair,
+)
 from companion.similarity_search_features import SEARCH_CONFIG_FINGERPRINT
 
 SIMILARITY_SCAN_WRITE_BATCH_SIZE = 1_000
@@ -537,6 +541,84 @@ class SimilarityScanRepository:
                 )
             )
             pair_records = list((await session.scalars(pair_statement)).all())
+
+        evidence: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
+        for pair in pair_records:
+            if source_identities is not None and (
+                source_identities.get(pair.asset_id_low) != pair.asset_low_source_sha256
+                or source_identities.get(pair.asset_id_high) != pair.asset_high_source_sha256
+            ):
+                continue
+            evidence[(pair.asset_id_low, pair.asset_id_high)] = PairSimilarityEvidence(
+                similarity_percent=pair.similarity_percent,
+                structural_percent=pair.structural_percent,
+                perceptual_percent=pair.perceptual_percent,
+                color_percent=pair.color_percent,
+                exact_thumbnail_match=pair.exact_thumbnail_match,
+                exact_pixel_match=pair.exact_pixel_match,
+                model_version=record.model_version,
+                feature_version=record.feature_version,
+                comparison_version=record.comparison_version,
+                normalized_luminance_mae=pair.normalized_luminance_mae,
+                normalized_luminance_rmse=pair.normalized_luminance_rmse,
+                normalized_luminance_ssim=pair.normalized_luminance_ssim,
+                aspect_ratio_difference=pair.aspect_ratio_difference,
+                dimensions_equal=pair.dimensions_equal,
+                detail_changed_percent=pair.detail_changed_percent,
+                detail_source=pair.detail_source,
+            )
+        return evidence
+
+    async def pair_evidence_for_pairs(
+        self,
+        scan_id: UUID,
+        pairs: list[tuple[UUID, UUID]],
+        *,
+        source_identities: dict[UUID, str] | None = None,
+    ) -> dict[tuple[UUID, UUID], PairSimilarityEvidence]:
+        """Return persisted evidence for only the explicitly requested scan pairs.
+
+        Pair lookup is bounded in batches so large duplicate groups scale with the
+        displayed reference-to-member relationships instead of every retained
+        relationship among all members in the group.
+        """
+
+        requested_pairs = list(
+            dict.fromkeys(
+                canonical_pair(left, right)
+                for left, right in pairs
+                if left != right
+            )
+        )
+        if not requested_pairs:
+            return {}
+
+        pair_records: list[SimilarityScanPairRecord] = []
+        async with self._database.sessions() as session:
+            record = await session.get(SimilarityScanRecord, scan_id)
+            if (
+                record is None
+                or record.status != "completed"
+                or getattr(record, "pair_evidence_pruned_at", None) is not None
+            ):
+                return {}
+            for offset in range(0, len(requested_pairs), SIMILARITY_SCAN_READ_BATCH_SIZE):
+                batch = requested_pairs[offset : offset + SIMILARITY_SCAN_READ_BATCH_SIZE]
+                pair_statement = (
+                    select(SimilarityScanPairRecord)
+                    .where(
+                        SimilarityScanPairRecord.scan_id == scan_id,
+                        tuple_(
+                            SimilarityScanPairRecord.asset_id_low,
+                            SimilarityScanPairRecord.asset_id_high,
+                        ).in_(batch),
+                    )
+                    .order_by(
+                        SimilarityScanPairRecord.asset_id_low,
+                        SimilarityScanPairRecord.asset_id_high,
+                    )
+                )
+                pair_records.extend((await session.scalars(pair_statement)).all())
 
         evidence: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
         for pair in pair_records:
