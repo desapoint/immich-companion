@@ -6,6 +6,8 @@ from collections.abc import Iterable
 from hashlib import sha256
 from uuid import UUID
 
+INDEXED_GROUP_ID_MAX_BYTES = 512
+
 
 def member_set_key(asset_ids: Iterable[UUID]) -> str:
     """Return an order-independent identity for one exact member set."""
