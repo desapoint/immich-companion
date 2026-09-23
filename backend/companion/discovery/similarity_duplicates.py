@@ -8,7 +8,7 @@ from typing import Protocol
 from uuid import UUID
 
 from companion.discovery.base import DiscoveredGroup
-from companion.duplicate_identity import member_set_key
+from companion.duplicate_identity import INDEXED_GROUP_ID_MAX_BYTES, member_set_key
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
 from companion.similarity_grouping import (
@@ -44,29 +44,41 @@ def _similarity_group_ids(
     summary: SimilarityScanRunSummary,
     validated: ValidatedSimilarityGroup,
 ) -> tuple[str, str]:
-    """Return bounded deterministic IDs without embedding every member UUID."""
+    """Preserve existing small IDs and hash only oversized indexed identities."""
 
     parameters = summary.parameters
-    members_digest = member_set_key(validated.asset_ids)
-    group_kind = (
-        "pair"
-        if len(validated.asset_ids) == 2
-        else f"cohesion-{SIMILARITY_GROUPING_VERSION}"
+    version_key = (
+        f"{parameters.model_version}:"
+        f"{parameters.feature_version}:"
+        f"{parameters.comparison_version}:"
+        f"{parameters.config_fingerprint[:12]}:"
+        f"{parameters.validation_mode}:"
     )
-    stable_identity = ":".join(
-        (
-            parameters.model_version,
-            str(parameters.feature_version),
-            str(parameters.comparison_version),
-            parameters.config_fingerprint[:12],
-            parameters.validation_mode,
-            group_kind,
-            members_digest,
-        )
+    cohesion_key = (
+        ""
+        if len(validated.asset_ids) == 2
+        else f"cohesion-{SIMILARITY_GROUPING_VERSION}:"
+    )
+    stable_prefix = f"companion:{version_key}{cohesion_key}"
+    provider_prefix = f"{summary.id}:{cohesion_key}"
+    member_key_bytes = len(validated.asset_ids) * 36 + len(validated.asset_ids) - 1
+
+    if (
+        len(stable_prefix.encode()) + member_key_bytes <= INDEXED_GROUP_ID_MAX_BYTES
+        and len(provider_prefix.encode()) + member_key_bytes
+        <= INDEXED_GROUP_ID_MAX_BYTES
+    ):
+        member_key = ":".join(str(asset_id) for asset_id in validated.asset_ids)
+        return f"{stable_prefix}{member_key}", f"{provider_prefix}{member_key}"
+
+    members_digest = member_set_key(validated.asset_ids)
+    group_kind = cohesion_key.removesuffix(":") or "pair"
+    stable_identity = (
+        f"{version_key}{group_kind}:{members_digest}"
     )
     stable_digest = sha256(stable_identity.encode()).hexdigest()
-    group_id = f"companion:{stable_digest}"
-    provider_group_id = f"{summary.id}:{group_kind}:{members_digest}"
+    group_id = f"companion:sha256:{stable_digest}"
+    provider_group_id = f"{summary.id}:{group_kind}:sha256:{members_digest}"
     return group_id, provider_group_id
 
 
