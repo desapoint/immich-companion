@@ -41,6 +41,7 @@ from companion.similarity_grouping import SimilarityAdmissionEvidence, Validated
 
 SNAPSHOT_STATE_ID = 1
 WRITE_BATCH_SIZE = 1_000
+COMPOSITE_GROUP_ID_MAX_BYTES = 512
 
 
 def _unresolved_review_filter():
@@ -840,6 +841,16 @@ class CompositeDuplicateRepository:
                 if not groups:
                     continue
                 batch_ids = [group.group_id for group in groups]
+                oversized_ids = [
+                    group_id
+                    for group_id in batch_ids
+                    if len(group_id.encode()) > COMPOSITE_GROUP_ID_MAX_BYTES
+                ]
+                if oversized_ids:
+                    raise ValueError(
+                        "Composite duplicate group ID exceeds the bounded indexed-key "
+                        f"limit of {COMPOSITE_GROUP_ID_MAX_BYTES} bytes"
+                    )
                 duplicate_ids = seen_group_ids.intersection(batch_ids)
                 if duplicate_ids or len(set(batch_ids)) != len(batch_ids):
                     duplicate_id = sorted(duplicate_ids or set(batch_ids))[0]
