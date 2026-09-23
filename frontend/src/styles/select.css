@@ -57,3 +57,9 @@
 .v2-select-option-list button{
   padding:7px 6px;
 }
+
+@media(max-width:620px){
+  .v2-select-trigger,
+  .v2-select-clear{min-height:44px}
+  .v2-select-option-list button{min-height:44px}
+}
