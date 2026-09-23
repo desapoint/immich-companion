@@ -51,6 +51,7 @@ const routes = [
 const settleMs = Number(process.env.MOBILE_SCREENSHOT_SETTLE_MS ?? 750);
 const navigationTimeoutMs = Number(process.env.MOBILE_SCREENSHOT_TIMEOUT_MS ?? 15_000);
 const scrollStepRatio = 0.85;
+const scrollValidationRoutes = new Set(['/albums', '/tags', '/docs', '/playground']);
 
 function safeName(value) {
   return value.replace(/[^a-z0-9_-]+/gi, '-').replace(/^-|-$/g, '').toLowerCase();
@@ -75,11 +76,54 @@ async function settlePage(page) {
   await page.waitForTimeout(settleMs);
 }
 
-async function captureScrollSegments(page, directory, prefix, viewportHeight) {
-  const documentHeight = await page.evaluate(() =>
-    Math.max(document.body?.scrollHeight ?? 0, document.documentElement.scrollHeight),
-  );
-  const maxScroll = Math.max(0, documentHeight - viewportHeight);
+async function detectScrollTarget(page) {
+  return page.evaluate(() => {
+    const candidates = [
+      { selector: '.v2-content', element: document.querySelector('.v2-content') },
+      { selector: 'main', element: document.querySelector('main') },
+    ];
+    const elementTarget = candidates.find(({ element }) =>
+      element instanceof HTMLElement && element.scrollHeight > element.clientHeight + 1,
+    );
+    if (elementTarget?.element instanceof HTMLElement) {
+      const element = elementTarget.element;
+      return {
+        kind: 'element',
+        selector: elementTarget.selector,
+        scrollHeight: element.scrollHeight,
+        viewportHeight: element.clientHeight,
+        maxScroll: Math.max(0, element.scrollHeight - element.clientHeight),
+      };
+    }
+
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    return {
+      kind: 'window',
+      selector: 'window',
+      scrollHeight: Math.max(document.body?.scrollHeight ?? 0, scrollingElement.scrollHeight),
+      viewportHeight: window.innerHeight,
+      maxScroll: Math.max(0, scrollingElement.scrollHeight - window.innerHeight),
+    };
+  });
+}
+
+async function scrollTo(page, target, position) {
+  return page.evaluate(({ target: scrollTarget, position: scrollPosition }) => {
+    if (scrollTarget.kind === 'window') {
+      window.scrollTo(0, scrollPosition);
+      return Math.round(window.scrollY);
+    }
+    const element = document.querySelector(scrollTarget.selector);
+    if (!(element instanceof HTMLElement)) return null;
+    element.scrollTo({ top: scrollPosition, behavior: 'instant' });
+    return Math.round(element.scrollTop);
+  }, { target, position });
+}
+
+async function captureScrollSegments(page, directory, prefix) {
+  const target = await detectScrollTarget(page);
+  const maxScroll = target.maxScroll;
+  const viewportHeight = target.viewportHeight;
   const positions = [];
   for (let position = 0; position < maxScroll; position += Math.max(1, viewportHeight * scrollStepRatio)) {
     positions.push(Math.round(position));
@@ -87,15 +131,21 @@ async function captureScrollSegments(page, directory, prefix, viewportHeight) {
   if (maxScroll > 0 && positions.at(-1) !== Math.round(maxScroll)) positions.push(Math.round(maxScroll));
 
   for (const [index, position] of positions.entries()) {
-    await page.evaluate((scrollY) => window.scrollTo(0, scrollY), position);
+    const actualPosition = await scrollTo(page, target, position);
+    if (actualPosition === null || Math.abs(actualPosition - position) > 1) {
+      throw new Error(`Scroll target ${target.selector} did not reach ${position} (actual: ${actualPosition})`);
+    }
     await page.waitForTimeout(50);
     await page.screenshot({
-      path: path.join(directory, `${prefix}-scroll-${String(index + 1).padStart(3, '0')}.png`),
+      path: path.join(directory, `${prefix}-viewport-${String(index + 1).padStart(3, '0')}.png`),
       fullPage: false,
     });
   }
-  await page.evaluate(() => window.scrollTo(0, 0));
-  return { documentHeight, scrollPositions: positions };
+  const resetPosition = await scrollTo(page, target, 0);
+  if (resetPosition === null || resetPosition > 1) {
+    throw new Error(`Scroll target ${target.selector} did not reset (actual: ${resetPosition})`);
+  }
+  return { target, scrollPositions: positions };
 }
 
 async function main() {
@@ -136,15 +186,15 @@ async function main() {
           });
           await settlePage(page);
           await page.screenshot({
-            path: path.join(directory, `${prefix}-full.png`),
+            path: path.join(directory, `${prefix}-document.png`),
             fullPage: true,
           });
-          capture.files.push(`${viewport.name}/${prefix}-full.png`);
-          const segments = await captureScrollSegments(page, directory, prefix, viewport.height);
+          capture.files.push(`${viewport.name}/${prefix}-document.png`);
+          const segments = await captureScrollSegments(page, directory, prefix);
           for (let index = 0; index < segments.scrollPositions.length; index += 1) {
-            capture.files.push(`${viewport.name}/${prefix}-scroll-${String(index + 1).padStart(3, '0')}.png`);
+            capture.files.push(`${viewport.name}/${prefix}-viewport-${String(index + 1).padStart(3, '0')}.png`);
           }
-          capture.documentHeight = segments.documentHeight;
+          capture.scrollTarget = segments.target;
           capture.scrollPositions = segments.scrollPositions;
           capture.title = await page.title().catch(() => '');
         } catch (error) {
@@ -164,6 +214,10 @@ async function main() {
   const failed = manifest.captures.filter((capture) => capture.navigationError);
   const errors = manifest.captures.reduce((total, capture) => total + capture.errors.length, 0);
   const screenshotCount = manifest.captures.reduce((total, capture) => total + capture.files.length, 0);
+  const missingScrollCoverage = manifest.captures.filter((capture) =>
+    capture.viewport === 'tablet' && scrollValidationRoutes.has(capture.route)
+      && capture.scrollTarget?.maxScroll > 0 && capture.scrollPositions?.length < 2,
+  );
   await writeFile(
     path.join(outputRoot, 'summary.json'),
     `${JSON.stringify({
@@ -174,11 +228,12 @@ async function main() {
       screenshots: screenshotCount,
       browserAndPageWarningsOrErrors: errors,
       navigationFailures: failed.length,
+      missingScrollCoverage: missingScrollCoverage.map(({ route }) => route),
     }, null, 2)}\n`,
   );
   console.log(`Captured ${manifest.captures.length} route/viewport combinations in ${outputRoot}`);
   console.log(`Browser/page warnings and errors: ${errors}; navigation failures: ${failed.length}`);
-  if (failed.length) process.exitCode = 1;
+  if (failed.length || missingScrollCoverage.length) process.exitCode = 1;
 }
 
 main().catch((error) => {
