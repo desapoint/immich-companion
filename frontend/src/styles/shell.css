@@ -33,3 +33,5 @@
 .v2-context::-webkit-scrollbar,.v2-content::-webkit-scrollbar,.v2-inspector::-webkit-scrollbar{width:10px;height:10px}
 .v2-context::-webkit-scrollbar-thumb,.v2-content::-webkit-scrollbar-thumb,.v2-inspector::-webkit-scrollbar-thumb{background:#475970;border-radius:10px;border:2px solid #111821}
 .v2-context::-webkit-scrollbar-track,.v2-content::-webkit-scrollbar-track,.v2-inspector::-webkit-scrollbar-track{background:#111821}
+
+.v2-mobile-more-menu{display:none}

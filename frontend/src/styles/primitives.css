@@ -18,3 +18,11 @@
 .v2-segmented{width:max-content;max-width:100%;display:inline-flex;border:1px solid var(--v2-line);border-radius:8px;overflow:hidden}.v2-segmented button{flex:0 0 auto;border:0;border-radius:0;background:transparent;color:var(--v2-text);padding:7px 10px;cursor:pointer}.v2-segmented button:disabled{cursor:default}.v2-segmented button[aria-pressed="true"]{background:var(--v2-accent-2);color:#eaf1ff}
 .v2-menu{width:100%;display:grid;gap:3px}.v2-menu button{width:100%;display:flex;align-items:center;min-height:36px;border:1px solid transparent;border-radius:8px;background:transparent;color:#adbac9;text-align:left;padding:7px 9px;cursor:pointer}.v2-menu button:hover{background:#141d28}.v2-menu button[aria-current="page"]{background:var(--v2-accent-2);color:#e8efff}
 .v2-expression{font-size:11px;color:var(--v2-muted);border:1px dashed #3b4d64;border-radius:8px;padding:8px}
+
+@media(max-width:620px){
+  .v2-button{min-height:44px}
+  .v2-button[data-icon-only="true"]{width:44px;height:44px}
+  .v2-tab{min-height:44px;padding-block:10px}
+  .v2-segmented button{min-height:44px}
+  .v2-menu button{min-height:44px}
+}

@@ -285,14 +285,14 @@
 <svelte:window onkeydown={handleShortcut}/>
 <V2ViewerShell {open} title="Assets Viewer" {onclose}>
   {#snippet header()}
-    <V2Inline gap="sm" wrap>
+    <V2Inline gap="sm" wrap class="viewer-header-identity">
       <V2Button onclick={onclose}>✕</V2Button><b>Assets Viewer</b><V2Badge text={navigationLoading&&!stackActive?'Locating…':positionLabel}/>
       {#if stackActive}<V2Badge text={`Stack · ${stackPositionLabel}`}/>{/if}
       {#if !currentMatchesLive}<V2Badge tone="warn" text="No longer matches current search"/>{/if}
       {#if currentRemovedFromStack}<V2Badge tone="warn" text="Removed from stack"/>{/if}
       {#if actionStatus}<V2Badge text={actionStatus}/>{/if}{#if asset?.is_offline}<V2Badge text="Source offline"/>{/if}{#if needsVideoProxy}<V2Badge text="Transcoded playback"/>{:else if needsDecodedImage}<V2Badge text="Decoded preview"/>{/if}
     </V2Inline>
-    <V2Inline gap="sm"><V2Button disabled={!currentId} onclick={addCurrentToDebug}>Add to debug</V2Button>{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
+    <V2Inline gap="sm" class="viewer-header-actions"><V2Button disabled={!currentId} onclick={addCurrentToDebug}>Add to debug</V2Button>{#if selectionEnabled}<V2Button active={currentSelected} disabled={!currentId} title={currentSelected?'Deselect shown asset (Space)':'Select shown asset (Space)'} ariaLabel={currentSelected?'Deselect shown asset':'Select shown asset'} ariaPressed={currentSelected} ariaKeyshortcuts="Space" onclick={toggleCurrentSelection}>{currentSelected?'Selected':'Select'}</V2Button>{/if}{#if !isVideo}<V2ZoomControl value={camera.zoom} onzoomout={()=>camera.setZoom(camera.zoom/1.25)} onzoomin={()=>camera.setZoom(camera.zoom*1.25)}/><V2Button onclick={()=>camera.fit()} title="Reset zoom and fit image">Fit</V2Button><V2Button onclick={()=>camera.actual()} title="Actual pixel size">1:1</V2Button>{/if}<V2KeyboardShortcuts {shortcuts}/></V2Inline>
   {/snippet}
   <div class="v2-viewer-workarea">
     {#if actionFeedback?.tone==='pending'}<div class="v2-viewer-operation-feedback"><OperationFeedback feedback={actionFeedback}/></div>{/if}
@@ -326,9 +326,9 @@
   </div>
 
   {#snippet footer()}
-    <V2Button disabled={!canPrevious||navigationLoading||actionBusy} onclick={previous}>← Previous</V2Button>
-    <V2Inline gap="sm" wrap={true}><V2Button disabled={!asset||loading||actionBusy} onclick={favorite}>{asset?.is_favorite?'Unfavorite':'Favorite'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={archive}>{asset?.is_archived?'Unarchive':'Archive'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('album')}>Album</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('tags')}>Tags</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={sync}>Sync</V2Button>{#if asset?.tags.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('tags')}>Remove tags…</V2Button><V2Button disabled={actionBusy} onclick={removeAllTags}>Remove all tags</V2Button>{/if}{#if asset?.albums.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('album')}>Remove from albums…</V2Button><V2Button disabled={actionBusy} onclick={removeAllAlbums}>Remove all albums</V2Button>{/if}<V2Button variant="danger" disabled={!asset||loading||actionBusy} onclick={trash}>Trash</V2Button></V2Inline>
-    <V2Button disabled={!canNext||navigationLoading||actionBusy} onclick={next}>Next →</V2Button>
+    <div class="viewer-footer-prev"><V2Button disabled={!canPrevious||navigationLoading||actionBusy} onclick={previous}>← Previous</V2Button></div>
+    <div class="viewer-footer-actions"><V2Button disabled={!asset||loading||actionBusy} onclick={favorite}>{asset?.is_favorite?'Unfavorite':'Favorite'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={archive}>{asset?.is_archived?'Unarchive':'Archive'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('album')}>Album</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('tags')}>Tags</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={sync}>Sync</V2Button>{#if asset?.tags.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('tags')}>Remove tags…</V2Button><V2Button disabled={actionBusy} onclick={removeAllTags}>Remove all tags</V2Button>{/if}{#if asset?.albums.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('album')}>Remove from albums…</V2Button><V2Button disabled={actionBusy} onclick={removeAllAlbums}>Remove all albums</V2Button>{/if}<V2Button variant="danger" disabled={!asset||loading||actionBusy} onclick={trash}>Trash</V2Button></div>
+    <div class="viewer-footer-next"><V2Button disabled={!canNext||navigationLoading||actionBusy} onclick={next}>Next →</V2Button></div>
   {/snippet}
 </V2ViewerShell>
 
@@ -342,4 +342,30 @@
 <style>
   .v2-viewer-workarea{position:relative;min-height:0;display:grid;grid-template-rows:minmax(0,1fr) auto}.v2-viewer-operation-feedback{position:absolute;z-index:4;top:10px;left:50%;width:min(440px,calc(100% - 24px));transform:translateX(-50%);pointer-events:none}.v2-stack-inspection-bar{display:grid;gap:8px;padding:9px 12px 7px;border-top:1px solid var(--v2-line);background:#0d131b;min-width:0}.v2-stack-inspection-head{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
   .viewer-relation>b,.viewer-status-grid b{color:var(--v2-muted);font-size:.7rem;text-transform:uppercase;letter-spacing:.05em}.viewer-relations{display:grid;gap:.85rem}.viewer-relation{display:grid;gap:.4rem}.viewer-pills{display:flex;flex-wrap:wrap;gap:.35rem}.viewer-pills :global(.v2-badge){font-size:8px}.viewer-status-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.viewer-status-grid div{display:grid;gap:.25rem}
+
+  :global(.viewer-header-identity),:global(.viewer-header-actions),.viewer-footer-actions{min-width:0}
+  .viewer-footer-actions{display:flex;align-items:center;gap:var(--v2-space-2);flex-wrap:wrap}
+  :global(.viewer-footer-prev),:global(.viewer-footer-next){display:contents}
+
+  @media(max-width:620px){
+    :global(.viewer-header-identity){flex:1 1 100%;}
+    :global(.viewer-header-actions){flex:1 1 100%;}
+    :global(.viewer-header-actions) :global(.v2-button){white-space:nowrap;}
+    .viewer-footer-actions{flex:1 1 auto;}
+  }
+
+  @media(max-width:380px){
+    :global(.viewer-header-actions){display:grid;grid-template-columns:repeat(5,minmax(0,auto));align-items:stretch;width:100%;}
+    :global(.viewer-header-actions)>:global(.v2-button:first-child){grid-column:1 / -1;justify-self:stretch;}
+    :global(.viewer-header-actions)>:global(.v2-button:first-child),:global(.viewer-header-actions)>:global(.v2-button){min-width:0;}
+    :global(.viewer-header-actions)>:global(.v2-button:first-child){width:100%;}
+    :global(.v2-viewer-bottom:has(.viewer-footer-actions)){display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);align-items:start;}
+    :global(.viewer-footer-prev),:global(.viewer-footer-next){display:block;width:100%;}
+    :global(.viewer-footer-prev){grid-column:1;grid-row:1;}
+    :global(.viewer-footer-next){grid-column:2;grid-row:1;}
+    :global(.viewer-footer-prev) :global(.v2-button),:global(.viewer-footer-next) :global(.v2-button){width:100%;}
+    .viewer-footer-actions{grid-column:1 / -1;grid-row:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));width:100%;}
+    .viewer-footer-actions :global(.v2-button){width:100%;min-width:0;padding-inline:5px;white-space:normal;text-align:center;}
+    .viewer-footer-actions :global(.v2-button:last-child){grid-column:1 / -1;}
+  }
 </style>
