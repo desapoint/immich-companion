@@ -321,16 +321,31 @@ class DuplicateEvidenceMixin:
 
         exposed: dict[tuple[UUID, UUID], PairSimilarityEvidence] = {}
         for scan_id, scan_groups in by_scan.items():
-            asset_ids = list(
-                dict.fromkeys(
-                    asset.id for group in scan_groups for asset in group.assets
+            requested_pairs = [
+                (group.assets[0].id, member.id)
+                for group in scan_groups
+                if len(group.assets) >= 2
+                for member in group.assets[1:]
+            ]
+            pair_reader = getattr(self._scan_evidence, "pair_evidence_for_pairs", None)
+            if callable(pair_reader):
+                persisted = await pair_reader(
+                    scan_id,
+                    requested_pairs,
+                    source_identities=source_identities,
                 )
-            )
-            persisted = await self._scan_evidence.pair_evidence(
-                scan_id,
-                asset_ids,
-                source_identities=source_identities,
-            )
+            else:
+                # Compatibility path for alternate scan-evidence implementations.
+                asset_ids = list(
+                    dict.fromkeys(
+                        asset.id for group in scan_groups for asset in group.assets
+                    )
+                )
+                persisted = await self._scan_evidence.pair_evidence(
+                    scan_id,
+                    asset_ids,
+                    source_identities=source_identities,
+                )
             for group in scan_groups:
                 if len(group.assets) < 2:
                     continue
