@@ -33,7 +33,11 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from companion.database import DatabaseManager
 from companion.discovery.base import DiscoveredGroup, DiscoveryEvidence
-from companion.duplicate_identity import member_set_key, stable_group_key
+from companion.duplicate_identity import (
+    INDEXED_GROUP_ID_MAX_BYTES,
+    member_set_key,
+    stable_group_key,
+)
 from companion.duplicate_schema import COMPLETED_DUPLICATE_REVIEW_STATUSES
 from companion.group_decision import DiscoverySource
 from companion.models import AssetRecord, Base, DuplicateGroupReviewRecord
@@ -41,6 +45,17 @@ from companion.similarity_grouping import SimilarityAdmissionEvidence, Validated
 
 SNAPSHOT_STATE_ID = 1
 WRITE_BATCH_SIZE = 1_000
+
+
+def _validate_composite_group_id(group_id: str) -> None:
+    """Reject provider IDs that cannot safely serve as indexed relational keys."""
+
+    size = len(group_id.encode())
+    if size > INDEXED_GROUP_ID_MAX_BYTES:
+        raise ValueError(
+            "Composite duplicate group ID exceeds the bounded indexed-key "
+            f"limit of {INDEXED_GROUP_ID_MAX_BYTES} bytes"
+        )
 
 
 def _unresolved_review_filter():
@@ -840,6 +855,8 @@ class CompositeDuplicateRepository:
                 if not groups:
                     continue
                 batch_ids = [group.group_id for group in groups]
+                for group_id in batch_ids:
+                    _validate_composite_group_id(group_id)
                 duplicate_ids = seen_group_ids.intersection(batch_ids)
                 if duplicate_ids or len(set(batch_ids)) != len(batch_ids):
                     duplicate_id = sorted(duplicate_ids or set(batch_ids))[0]

@@ -48,6 +48,33 @@ def test_v2_single_group_and_preset_paths_do_not_call_full_result_hydration() ->
         assert "await self._snapshot(" not in source
 
 
+def test_similarity_scan_streams_features_and_candidate_pairs() -> None:
+    from companion.similarity_scan_service import SimilarityScanTaskHandler
+    from companion.similarity_search_repository import SimilaritySearchRepository
+
+    source = inspect.getsource(SimilarityScanTaskHandler.execute)
+    assert "features = await self._features.list_current()" not in source
+    assert "candidate_index.pairs" not in source
+    assert "retain_pairs=False" in source
+    assert "_candidate_feature_batches" in source
+    assert "_current_features" in source
+
+    repository_source = inspect.getsource(
+        SimilaritySearchRepository.iter_current_candidates
+    )
+    assert ".limit(batch_size)" in repository_source
+    assert "after_asset_id" in repository_source
+
+
+def test_composite_group_ids_are_bounded_before_database_insert() -> None:
+    from companion.composite_duplicate_repository import _validate_composite_group_id
+    from companion.duplicate_identity import INDEXED_GROUP_ID_MAX_BYTES
+
+    _validate_composite_group_id("a" * INDEXED_GROUP_ID_MAX_BYTES)
+    with pytest.raises(ValueError, match="bounded indexed-key limit"):
+        _validate_composite_group_id("a" * (INDEXED_GROUP_ID_MAX_BYTES + 1))
+
+
 def test_similarity_projection_uses_bounded_repository_reads() -> None:
     from companion.asset_repository import AssetRepository
     from companion.discovery.similarity_duplicates import SimilarityDuplicateProvider

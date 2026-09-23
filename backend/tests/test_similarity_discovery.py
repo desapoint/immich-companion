@@ -11,9 +11,10 @@ from companion.discovery import (
     DiscoveredGroup,
     SimilarityDuplicateProvider,
 )
+from companion.discovery.similarity_duplicates import _similarity_group_ids
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
-from companion.similarity_grouping import SimilarityGroupingEdge
+from companion.similarity_grouping import SimilarityGroupingEdge, ValidatedSimilarityGroup
 from companion.similarity_repository import PairSimilarityEvidence
 from companion.similarity_scan_repository import (
     SimilarityScanPair,
@@ -210,6 +211,78 @@ async def test_similarity_group_id_remains_stable_across_equivalent_scans() -> N
 
     assert first_group.group_id == second_group.group_id
     assert first_group.provider_group_id != second_group.provider_group_id
+
+
+def test_similarity_small_group_ids_keep_legacy_shape() -> None:
+    current = snapshot(SCAN_ONE)
+    summary = SimilarityScanRunSummary(
+        id=current.id,
+        parameters=current.parameters,
+        asset_count=current.asset_count,
+        candidate_count=current.candidate_count,
+        match_count=len(current.pairs),
+        result_limit_reached=False,
+        completed_at=current.completed_at,
+    )
+    validated = ValidatedSimilarityGroup(
+        asset_ids=(LOW, HIGH),
+        anchor_asset_id=LOW,
+        validation_mode="strict",
+        minimum_similarity_percent=98.5,
+        maximum_similarity_percent=98.5,
+        pair_count=1,
+        admission_evidence=(),
+    )
+
+    group_id, provider_group_id = _similarity_group_ids(summary, validated)
+
+    member_key = f"{LOW}:{HIGH}"
+    version_key = (
+        "companion-image-v1:1:1:"
+        f"{current.parameters.config_fingerprint[:12]}:strict:"
+    )
+    assert group_id == f"companion:{version_key}{member_key}"
+    assert provider_group_id == f"{SCAN_ONE}:{member_key}"
+
+
+def test_similarity_group_ids_stay_bounded_for_very_large_groups() -> None:
+    current = snapshot(SCAN_ONE)
+    summary = SimilarityScanRunSummary(
+        id=current.id,
+        parameters=current.parameters,
+        asset_count=current.asset_count,
+        candidate_count=current.candidate_count,
+        match_count=len(current.pairs),
+        result_limit_reached=False,
+        completed_at=current.completed_at,
+    )
+    asset_ids = tuple(UUID(int=index + 1) for index in range(5_000))
+    validated = ValidatedSimilarityGroup(
+        asset_ids=asset_ids,
+        anchor_asset_id=asset_ids[0],
+        validation_mode="linked",
+        minimum_similarity_percent=95,
+        maximum_similarity_percent=100,
+        pair_count=len(asset_ids) - 1,
+        admission_evidence=(),
+    )
+
+    group_id, provider_group_id = _similarity_group_ids(summary, validated)
+
+    assert len(group_id.encode()) < 128
+    assert len(provider_group_id.encode()) < 160
+    assert group_id == _similarity_group_ids(summary, validated)[0]
+
+    reversed_group = ValidatedSimilarityGroup(
+        asset_ids=tuple(reversed(asset_ids)),
+        anchor_asset_id=asset_ids[0],
+        validation_mode="linked",
+        minimum_similarity_percent=95,
+        maximum_similarity_percent=100,
+        pair_count=len(asset_ids) - 1,
+        admission_evidence=(),
+    )
+    assert _similarity_group_ids(summary, reversed_group)[0] == group_id
 
 
 @pytest.mark.asyncio

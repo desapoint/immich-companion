@@ -96,6 +96,30 @@ def test_incremental_batches_match_single_pass_output() -> None:
     assert index.pairs == expected
 
 
+def test_streaming_batches_match_one_shot_without_retaining_pairs() -> None:
+    features = [feature(number, number // 5) for number in range(1, 101)]
+    expected = bounded_similarity_candidates(
+        features,
+        maximum_neighbors_per_asset=4,
+    )
+    stats = SimilarityCandidateStats()
+    index = BoundedSimilarityCandidateIndex(
+        maximum_neighbors_per_asset=4,
+        stats=stats,
+        retain_pairs=False,
+    )
+
+    emitted = []
+    for offset in range(0, len(features), 13):
+        emitted.extend(index.process_batch(features[offset : offset + 13]))
+
+    assert emitted == expected
+    assert index.pairs == []
+    assert index.processed == len(features)
+    assert stats.assets_received == len(features)
+    assert stats.pairs_emitted == len(expected)
+
+
 def test_identical_hash_capacity_stays_degree_bounded() -> None:
     asset_count = 10_000
     maximum_neighbors = 8

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -31,6 +33,21 @@ from companion.similarity_search_features import (
     SEARCH_MODEL_VERSION,
     search_source_identity,
 )
+
+SIMILARITY_CANDIDATE_FEATURE_BATCH_SIZE = 1_000
+
+
+@dataclass(frozen=True, slots=True)
+class SimilarityCandidateSearchFeature:
+    """Compact current feature row required by candidate discovery."""
+
+    asset_id: UUID
+    model_version: str
+    feature_version: int
+    source_identity: str
+    width: int
+    height: int
+    perceptual_hash: str
 
 
 class SimilaritySearchRepository:
@@ -425,6 +442,67 @@ class SimilaritySearchRepository:
         )
         async with self._database.sessions() as session:
             return int(await session.scalar(statement) or 0)
+
+    async def iter_current_candidates(
+        self,
+        *,
+        batch_size: int = SIMILARITY_CANDIDATE_FEATURE_BATCH_SIZE,
+    ) -> AsyncIterator[list[SimilarityCandidateSearchFeature]]:
+        """Keyset-stream compact current feature rows in deterministic asset order."""
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be positive")
+        after_asset_id: UUID | None = None
+        while True:
+            statement = (
+                select(
+                    AssetSimilaritySearchFeatureRecord.asset_id,
+                    AssetSimilaritySearchFeatureRecord.model_version,
+                    AssetSimilaritySearchFeatureRecord.feature_version,
+                    AssetSimilaritySearchFeatureRecord.source_identity,
+                    AssetSimilaritySearchFeatureRecord.width,
+                    AssetSimilaritySearchFeatureRecord.height,
+                    AssetSimilaritySearchFeatureRecord.perceptual_hash,
+                )
+                .join(
+                    AssetRecord,
+                    AssetRecord.id == AssetSimilaritySearchFeatureRecord.asset_id,
+                )
+                .join(
+                    AssetSimilarityDetailFeatureRecord,
+                    AssetSimilarityDetailFeatureRecord.asset_id
+                    == AssetSimilaritySearchFeatureRecord.asset_id,
+                )
+                .where(
+                    *self._eligible(),
+                    self._complete_current(),
+                    *(
+                        [AssetSimilaritySearchFeatureRecord.asset_id > after_asset_id]
+                        if after_asset_id is not None
+                        else []
+                    ),
+                )
+                .order_by(AssetSimilaritySearchFeatureRecord.asset_id)
+                .limit(batch_size)
+            )
+            async with self._database.sessions() as session:
+                rows = list((await session.execute(statement)).all())
+            if not rows:
+                return
+            batch = [
+                SimilarityCandidateSearchFeature(
+                    asset_id=row.asset_id,
+                    model_version=row.model_version,
+                    feature_version=row.feature_version,
+                    source_identity=row.source_identity,
+                    width=row.width,
+                    height=row.height,
+                    perceptual_hash=row.perceptual_hash,
+                )
+                for row in rows
+            ]
+            yield batch
+            after_asset_id = batch[-1].asset_id
 
     async def list_current(self) -> list[AssetSimilaritySearchFeatureRecord]:
         statement = (
