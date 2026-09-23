@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { createViewportAttachment } from '../state/comparisonViewportAttachment';
   import V2RangeSlider from '../../../lib/components/ui/RangeSlider.svelte';
   import V2Toggle from '../../../lib/components/ui/Toggle.svelte';
 
@@ -190,18 +190,11 @@
     scheduleRender();
   }
 
-  onMount(() => {
-    onviewport?.(viewport);
-    const observer = viewport && typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(scheduleRender)
-      : null;
-    if (viewport) observer?.observe(viewport);
-    scheduleRender();
-    return () => {
-      observer?.disconnect();
-      if (renderFrame !== null) cancelAnimationFrame(renderFrame);
-      onviewport?.(null);
-    };
+  const viewportAttachment = createViewportAttachment((node) => {
+    viewport = node;
+    onviewport?.(node);
+  }, scheduleRender, () => {
+    if (renderFrame !== null) cancelAnimationFrame(renderFrame);
   });
 
   $effect(() => {
@@ -219,7 +212,7 @@
 <div
   class="v2-compare-overlay mode-difference"
   class:controls-open={controlsOpen}
-  bind:this={viewport}
+  {@attach viewportAttachment}
   role="group"
   aria-label="Difference comparison"
   onmouseenter={showControls}

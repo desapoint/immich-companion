@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { createViewportAttachment } from '../state/comparisonViewportAttachment';
   import type { LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
   import LocalChangeControls from './LocalChangeControls.svelte';
   import LocalChangeDiagnosticStatus from './LocalChangeDiagnosticStatus.svelte';
@@ -170,25 +170,18 @@
     ].join(';');
   });
 
-  onMount(() => {
-    onviewport?.(viewport);
-    measureViewport();
-    const observer = viewport && typeof ResizeObserver !== 'undefined'
-      ? new ResizeObserver(measureViewport)
-      : null;
-    if (viewport) observer?.observe(viewport);
-    return () => {
-      observer?.disconnect();
-      if (hoverTimer) clearTimeout(hoverTimer);
-      onviewport?.(null);
-    };
+  const viewportAttachment = createViewportAttachment((node) => {
+    viewport = node;
+    onviewport?.(node);
+  }, measureViewport, () => {
+    if (hoverTimer) clearTimeout(hoverTimer);
   });
 </script>
 
 <div
   class="v2-compare-overlay mode-local-changes"
   class:controls-open={controlsOpen}
-  bind:this={viewport}
+  {@attach viewportAttachment}
   role="group"
   aria-label="Localized change comparison"
   onmouseenter={showControls}
