@@ -127,6 +127,13 @@
 <V2PageLayout title="Albums" description="Create and organize albums, then use them to filter your asset workspace.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!selection.active||mutating} onclick={deleteSelected}>Delete selected{selection.selectedCount?` (${selection.selectedCount})`:''}</V2Button><V2Button variant="primary" disabled={mutating} onclick={openCreate}>Create album</V2Button></V2Inline>{/snippet}
   {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={queryDraft} placeholder="Search albums…" oninput={(event)=>queryDraft=event.currentTarget.value} onkeydown={handleSearchKeydown}><V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button></V2Stack></V2Section></V2Zone>{/snippet}
+  <div class="v2-mobile-collection-search" aria-label="Album search">
+    <label for="albums-mobile-search">Search albums</label>
+    <div class="v2-mobile-collection-search-controls">
+      <input id="albums-mobile-search" value={queryDraft} placeholder="Search albums…" oninput={(event)=>queryDraft=event.currentTarget.value} onkeydown={handleSearchKeydown}>
+      <V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button>
+    </div>
+  </div>
   <V2Zone>
     {#if loadError}<V2ErrorState title="Albums could not be loaded" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     <OperationToast {feedback} error={operationError} failureTitle="Album operation failed" retryLabel={retryDeletePlan?'Retry saved plan':retryDeleteIds.length?'Retry failed':''} onretry={retryDeletePlan?()=>{pendingPlan=retryDeletePlan;deleteDialogOpen=true}:retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>

@@ -137,6 +137,15 @@
 <V2PageLayout title="Tags" description="Search, organize, and maintain hierarchical tags in the active data source.">
   {#snippet headerActions()}<V2Inline gap="sm"><V2Button disabled={!selection.active||mutating} onclick={deleteSelected}>Delete selected{selection.selectedCount?` (${selection.selectedCount})`:''}</V2Button><V2Button variant="primary" disabled={mutating||preparingCreate} onclick={()=>void openCreate()}>{#if preparingCreate}<span class="v2-tag-create-pending"><LoadingSpinner size="0.9rem" thickness="0.11rem"/><span>Preparing…</span></span>{:else}Create tag{/if}</V2Button></V2Inline>{/snippet}
   {#snippet context()}<V2Zone><V2Section title="Search"><V2Stack gap="sm"><input value={query} placeholder="Search tags…" oninput={(event)=>query=event.currentTarget.value} onkeydown={handleSearchKeydown}><V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>includeHierarchy=checked}/><V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button><p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and canonical parent paths.':'Matches tag names only.'}</p></V2Stack></V2Section><V2Section title="Hierarchy"><V2Card><V2Stack gap="xs"><b>{resultTotal} matching hierarchy rows</b><span class="v2-small v2-muted">Hierarchy construction, descendant IDs and aggregate counts come from the data provider.</span></V2Stack></V2Card></V2Section></V2Zone>{/snippet}
+  <div class="v2-mobile-collection-search" aria-label="Tag search">
+    <label for="tags-mobile-search">Search tags</label>
+    <div class="v2-mobile-collection-search-controls">
+      <input id="tags-mobile-search" value={query} placeholder="Search tags…" oninput={(event)=>query=event.currentTarget.value} onkeydown={handleSearchKeydown}>
+      <V2Button variant="primary" disabled={loading||mutating} onclick={submitSearch}>Search</V2Button>
+    </div>
+    <V2Toggle label="Match through parent hierarchy" checked={includeHierarchy} onchange={(checked)=>includeHierarchy=checked}/>
+    <p class="v2-text-block v2-small v2-muted">{includeHierarchy?'Matches tag names and canonical parent paths.':'Matches tag names only.'}</p>
+  </div>
   <V2Zone>
     {#if loadError}<V2ErrorState title="Tags could not be loaded" message={loadError} onretry={()=>void refresh(true)}/>{/if}
     <OperationToast {feedback} error={operationError} failureTitle="Tag operation failed" retryLabel={retryDeletePlan?'Retry saved plan':retryDeleteIds.length?'Retry failed':''} onretry={retryDeletePlan?()=>{pendingPlan=retryDeletePlan;deleteDialogOpen=true}:retryDeleteIds.length?()=>requestDelete([...retryDeleteIds]):undefined}/>
