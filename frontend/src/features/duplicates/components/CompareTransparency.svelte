@@ -1,34 +1,21 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import V2RangeSlider from '../../../lib/components/ui/RangeSlider.svelte';
+  import ComparisonImageLayer from './ComparisonImageLayer.svelte';
+  import type { ComparisonImagePair } from '../types/comparisonLayer';
+  import { createViewportAttachment } from '../state/comparisonViewportAttachment';
 
   let {
-    selectedSrc,
-    referenceSrc,
-    selectedLabel,
-    referenceLabel,
+    pair,
     transform,
     opacity = $bindable(50),
-    onselectedload,
-    onreferenceload,
-    onselectederror,
-    onreferenceerror,
     onviewport,
   }: {
-    selectedSrc: string;
-    referenceSrc: string;
-    selectedLabel: string;
-    referenceLabel: string;
+    pair: ComparisonImagePair;
     transform: string;
     opacity?: number;
-    onselectedload?: (event: Event) => void;
-    onreferenceload?: (event: Event) => void;
-    onselectederror?: () => void;
-    onreferenceerror?: () => void;
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
-  let viewport = $state<HTMLElement | null>(null);
   let controlsOpen = $state(false);
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -42,16 +29,20 @@
     hoverTimer = setTimeout(() => (controlsOpen = false), 80);
   }
 
-  onMount(() => {
-    onviewport?.(viewport);
-    return () => onviewport?.(null);
-  });
+  const viewportAttachment = createViewportAttachment(
+    (node) => onviewport?.(node),
+    undefined,
+    () => {
+      if (hoverTimer) clearTimeout(hoverTimer);
+      hoverTimer = undefined;
+    },
+  );
 </script>
 
 <div
   class="v2-compare-overlay mode-transparency"
   class:controls-open={controlsOpen}
-  bind:this={viewport}
+  {@attach viewportAttachment}
   role="group"
   aria-label="Transparency comparison"
   onmouseenter={showControls}
@@ -59,8 +50,8 @@
   onfocusin={showControls}
   onfocusout={hideControlsSoon}
 >
-  <div class="v2-compare-layer"><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceSrc} alt={referenceLabel} onload={onreferenceload} onerror={onreferenceerror}></div></div>
-  <div class="v2-compare-layer top" style={`opacity:${opacity / 100}`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedSrc} alt={selectedLabel} onload={onselectedload} onerror={onselectederror}></div></div>
+  <ComparisonImageLayer image={pair.reference} {transform} />
+  <ComparisonImageLayer image={pair.selected} {transform} top opacity={opacity / 100} />
   <div class="v2-compare-floating-controls v2-compare-hover">
     <V2RangeSlider label="Transparency" min={0} max={100} bind:value={opacity} suffix="%" track="fill" width={160} ariaLabel="Overlay transparency" />
   </div>

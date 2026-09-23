@@ -1,7 +1,8 @@
 <script lang="ts">
   import V2ViewerShell from '../../assets/components/ViewerShell.svelte';
   import V2LazyAssetMedia from '../../assets/components/LazyAssetMedia.svelte';
-  import V2ImageComparison, { type ComparisonMode } from '../../duplicates/components/ImageComparison.svelte';
+  import V2ImageComparison from '../../duplicates/components/ImageComparison.svelte';
+  import type { ComparisonMode } from '../../duplicates/types/comparisonMode';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2Badge from '../../../lib/components/ui/Badge.svelte';

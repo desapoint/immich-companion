@@ -1,29 +1,17 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import ComparisonImageLayer from './ComparisonImageLayer.svelte';
+  import type { ComparisonImagePair } from '../types/comparisonLayer';
+  import { createViewportAttachment } from '../state/comparisonViewportAttachment';
 
   let {
-    selectedSrc,
-    referenceSrc,
-    selectedLabel,
-    referenceLabel,
+    pair,
     transform,
     split = $bindable(50),
-    onselectedload,
-    onreferenceload,
-    onselectederror,
-    onreferenceerror,
     onviewport,
   }: {
-    selectedSrc: string;
-    referenceSrc: string;
-    selectedLabel: string;
-    referenceLabel: string;
+    pair: ComparisonImagePair;
     transform: string;
     split?: number;
-    onselectedload?: (event: Event) => void;
-    onreferenceload?: (event: Event) => void;
-    onselectederror?: () => void;
-    onreferenceerror?: () => void;
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
@@ -63,15 +51,15 @@
     try { (event.currentTarget as HTMLElement).releasePointerCapture?.(event.pointerId); } catch {}
   }
 
-  onMount(() => {
-    onviewport?.(viewport);
-    return () => onviewport?.(null);
+  const viewportAttachment = createViewportAttachment((node) => {
+    viewport = node;
+    onviewport?.(node);
   });
 </script>
 
-<div class="v2-compare-overlay mode-swipe" bind:this={viewport}>
-  <div class="v2-compare-layer selected-side" style={`clip-path:inset(0 0 0 ${split}%)`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={selectedSrc} alt={selectedLabel} onload={onselectedload} onerror={onselectederror}></div></div>
-  <div class="v2-compare-layer top" style={`clip-path:inset(0 ${100 - split}% 0 0)`}><div class="v2-compare-transform" style={`transform:${transform}`}><img src={referenceSrc} alt={referenceLabel} onload={onreferenceload} onerror={onreferenceerror}></div></div>
+<div class="v2-compare-overlay mode-swipe" {@attach viewportAttachment}>
+  <ComparisonImageLayer image={pair.selected} {transform} clipPath={`inset(0 0 0 ${split}%)`} />
+  <ComparisonImageLayer image={pair.reference} {transform} top clipPath={`inset(0 ${100 - split}% 0 0)`} />
   <div class="v2-compare-split-line" style={`left:${split}%`}></div>
   <div class="v2-compare-split-handle" style={`left:${split}%`}>↔</div>
   <button

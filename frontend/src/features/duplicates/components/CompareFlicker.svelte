@@ -1,32 +1,20 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { FlickerHoldController } from '../state/flickerHold';
+  import ComparisonImageLayer from './ComparisonImageLayer.svelte';
+  import type { ComparisonImagePair } from '../types/comparisonLayer';
+  import { createViewportAttachment } from '../state/comparisonViewportAttachment';
 
   let {
-    selectedSrc,
-    referenceSrc,
-    selectedLabel,
-    referenceLabel,
+    pair,
     transform,
-    onselectedload,
-    onreferenceload,
-    onselectederror,
-    onreferenceerror,
     onviewport,
   }: {
-    selectedSrc: string;
-    referenceSrc: string;
-    selectedLabel: string;
-    referenceLabel: string;
+    pair: ComparisonImagePair;
     transform: string;
-    onselectedload?: (event: Event) => void;
-    onreferenceload?: (event: Event) => void;
-    onselectederror?: () => void;
-    onreferenceerror?: () => void;
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
-  let viewport = $state<HTMLElement | null>(null);
   let showReference = $state(false);
   const hold = new FlickerHoldController((active) => (showReference = active));
 
@@ -64,10 +52,7 @@
     hold.cancel();
   }
 
-  onMount(() => {
-    onviewport?.(viewport);
-    return () => onviewport?.(null);
-  });
+  const viewportAttachment = createViewportAttachment((node) => onviewport?.(node));
 
   onDestroy(cancelHold);
 </script>
@@ -76,20 +61,21 @@
 
 <div
   class="v2-compare-overlay mode-flicker"
-  bind:this={viewport}
+  {@attach viewportAttachment}
   role="group"
   aria-label="Flicker comparison"
 >
-  <div class="v2-compare-layer v2-flicker-selected" class:inactive={showReference} aria-hidden={showReference}>
-    <div class="v2-compare-transform" style={`transform:${transform}`}>
-      <img src={selectedSrc} alt={selectedLabel} onload={onselectedload} onerror={onselectederror}>
-    </div>
-  </div>
-  <div class="v2-compare-layer top v2-flicker-reference" class:reference-visible={showReference} aria-hidden={!showReference}>
-    <div class="v2-compare-transform" style={`transform:${transform}`}>
-      <img src={referenceSrc} alt={referenceLabel} onload={onreferenceload} onerror={onreferenceerror}>
-    </div>
-  </div>
+  <ComparisonImageLayer
+    image={pair.selected}
+    {transform}
+    visible={!showReference}
+  />
+  <ComparisonImageLayer
+    image={pair.reference}
+    {transform}
+    top
+    visible={showReference}
+  />
 
   <div class="v2-compare-floating-controls v2-flicker-controls">
     <button

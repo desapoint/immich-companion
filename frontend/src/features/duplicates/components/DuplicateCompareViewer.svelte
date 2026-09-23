@@ -1,5 +1,6 @@
 <script lang="ts">
-  import V2ImageComparison, { type ComparisonMode } from './ImageComparison.svelte';
+  import V2ImageComparison from './ImageComparison.svelte';
+  import type { ComparisonMode } from '../types/comparisonMode';
   import V2LazyAssetMedia from '../../assets/components/LazyAssetMedia.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2ViewerShell from '../../assets/components/ViewerShell.svelte';
