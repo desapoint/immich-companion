@@ -10,7 +10,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.app.json",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:browser": "playwright test"
+    "test:browser": "playwright test",
+    "screenshots:mobile": "node scripts/capture-mobile-screenshots.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.62.1",
