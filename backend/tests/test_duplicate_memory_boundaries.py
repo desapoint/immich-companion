@@ -67,14 +67,12 @@ def test_similarity_scan_streams_features_and_candidate_pairs() -> None:
 
 
 def test_composite_group_ids_are_bounded_before_database_insert() -> None:
-    from companion.composite_duplicate_repository import (
-        COMPOSITE_GROUP_ID_MAX_BYTES,
-        _validate_composite_group_id,
-    )
+    from companion.composite_duplicate_repository import _validate_composite_group_id
+    from companion.duplicate_identity import INDEXED_GROUP_ID_MAX_BYTES
 
-    _validate_composite_group_id("a" * COMPOSITE_GROUP_ID_MAX_BYTES)
+    _validate_composite_group_id("a" * INDEXED_GROUP_ID_MAX_BYTES)
     with pytest.raises(ValueError, match="bounded indexed-key limit"):
-        _validate_composite_group_id("a" * (COMPOSITE_GROUP_ID_MAX_BYTES + 1))
+        _validate_composite_group_id("a" * (INDEXED_GROUP_ID_MAX_BYTES + 1))
 
 
 def test_similarity_projection_uses_bounded_repository_reads() -> None:
