@@ -28,7 +28,7 @@
     confirmLabel: string;
     cancelLabel?: string;
     icon?: IconName;
-    size?: 'sm' | 'md' | 'lg' | 'xl';
+    size?: 'sm' | 'md' | 'wide' | 'lg' | 'xl';
     children?: Snippet;
     detail?: Snippet;
     pending?: boolean;

@@ -3,7 +3,7 @@
   import { onMount, tick } from 'svelte';
 
   type ModalRuntime = { nextId: number; stack: number[] };
-  type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
+  type ModalSize = 'sm' | 'md' | 'wide' | 'lg' | 'xl';
 
   let {
     id,
