@@ -17,4 +17,10 @@ describe('duplicate comparison loading lifecycle', () => {
     expect(controllerSource).toContain('if (requestedKey === this.loadingAssetSetKey) return;');
     expect(controllerSource).toContain('this.loadingAssetSetKey = \'\';');
   });
+
+  it('uses the shared original-first media contract for comparison images', () => {
+    expect(controllerSource).toContain('return libraryData.media.view(asset);');
+    expect(controllerSource).not.toContain("assetThumbnailUrl(asset.id, 'preview')");
+    expect(controllerSource).not.toContain("mimeType: 'image/jpeg'");
+  });
 });
