@@ -23,6 +23,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionPlanRequest,
     DuplicateReviewUpdate,
     DuplicateSimilarityReferenceRequest,
+    DuplicateStackPlanOverride,
     DuplicateWorkspacePresetRequest,
     DuplicateWorkspaceResetRequest,
     DuplicateWorkspaceSelectionUpdate,
@@ -1843,6 +1844,87 @@ async def test_mismatch_group_can_be_manually_planned_as_a_non_destructive_stack
     assert plan.groups[0].trash_asset_ids == []
     assert plan.groups[0].follow_up is not None
     assert plan.groups[0].follow_up.type == "stack"
+
+
+@pytest.mark.asyncio
+async def test_one_duplicate_group_can_create_multiple_resulting_stacks() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(UPLOAD_2, external=False, checksum=immich_sha1(content), filename="two.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path-1", filename="three.jpg"),
+        asset(EXTERNAL_2, external=True, checksum="path-2", filename="four.jpg"),
+    )
+    immich = FakeImmich(candidate_group)
+    assets = FakeAssets()
+    actions = FakeActions()
+    reviews = FakeReviews()
+    stacks = FakeStackService(immich)
+    service = make_service(
+        SimpleNamespace(action_plan_ttl_seconds=900, allow_destructive_actions=True),
+        immich,
+        assets,
+        FakeReports([
+            report(EXTERNAL_1, content),
+            report(EXTERNAL_2, content),
+        ]),
+        actions,
+        SimpleNamespace(),
+        FakeRuntimeSettings(),
+        reviews,
+        stacks=stacks,
+    )
+    current = (await service.result()).groups[0]
+    await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(asset_id=asset_id, disposition="stack")
+                for asset_id in [UPLOAD_1, UPLOAD_2, EXTERNAL_1, EXTERNAL_2]
+            ],
+            stack_primary_asset_id=UPLOAD_1,
+        )
+    )
+
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            group_ids=[PUBLIC_GROUP_ID],
+            stack_overrides={
+                PUBLIC_GROUP_ID: [
+                    DuplicateStackPlanOverride(
+                        primary_asset_id=UPLOAD_1,
+                        member_asset_ids=[UPLOAD_1, UPLOAD_2],
+                    ),
+                    DuplicateStackPlanOverride(
+                        primary_asset_id=EXTERNAL_1,
+                        member_asset_ids=[EXTERNAL_1, EXTERNAL_2],
+                    ),
+                ]
+            },
+        )
+    )
+
+    assert len(plan.groups[0].follow_ups) == 2
+    assert [item.member_asset_ids for item in plan.groups[0].follow_ups] == [
+        [UPLOAD_1, UPLOAD_2],
+        [EXTERNAL_1, EXTERNAL_2],
+    ]
+    assert {item.asset_id for item in plan.groups[0].members if item.primary} == {
+        UPLOAD_1,
+        EXTERNAL_1,
+    }
+    actions.record = created_plan_record(actions, destructive=False)
+
+    outcome = await service.execute_plan(TaskContext(), GROUP_ID)
+
+    assert outcome.status == "completed"
+    assert immich.created_stacks == [
+        [UPLOAD_1, UPLOAD_2],
+        [EXTERNAL_1, EXTERNAL_2],
+    ]
+    assert stacks.prepared_resolutions == ["move_selected", "move_selected"]
+    assert set(assets.refreshed) == {UPLOAD_1, UPLOAD_2, EXTERNAL_1, EXTERNAL_2}
 
 
 @pytest.mark.asyncio

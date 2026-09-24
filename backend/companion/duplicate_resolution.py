@@ -68,6 +68,14 @@ CROSS_SOURCE_DUPLICATE_TASK_TYPE = "cross_source_duplicates"
 DUPLICATE_RESOLUTION_TASK_TYPE = "duplicate_resolution"
 
 
+def _stack_follow_ups(planned: dict[str, Any]) -> list[dict[str, Any]]:
+    follow_ups = planned.get("follow_ups")
+    if isinstance(follow_ups, list):
+        return follow_ups
+    follow_up = planned.get("follow_up")
+    return [follow_up] if isinstance(follow_up, dict) else []
+
+
 class DuplicateResolutionMixin:
     """Planning, review-state persistence, and resolution execution."""
 
@@ -253,7 +261,30 @@ class DuplicateResolutionMixin:
                     "stack_resolution",
                     "move_selected",
                 )
-                if stack_ids:
+                requested_stacks = request.stack_overrides.get(group.group_id)
+                if requested_stacks is not None:
+                    assigned_stack_ids: list[UUID] = []
+                    for requested_stack in requested_stacks:
+                        requested_ids = list(requested_stack.member_asset_ids)
+                        if not set(requested_ids).issubset(member_ids):
+                            raise ActionPlanConflictError(
+                                "A requested stack references a non-member asset"
+                            )
+                        if set(assigned_stack_ids).intersection(requested_ids):
+                            raise ActionPlanConflictError(
+                                "An asset cannot belong to multiple resulting stacks"
+                            )
+                        assigned_stack_ids.extend(requested_ids)
+                    if set(assigned_stack_ids) != set(stack_ids):
+                        raise ActionPlanConflictError(
+                            "Requested stacks must contain every Stack disposition exactly once"
+                        )
+                    stack_primary_id = (
+                        requested_stacks[0].primary_asset_id
+                        if requested_stacks
+                        else None
+                    )
+                elif stack_ids:
                     if stack_primary_id not in stack_ids:
                         preferred = (
                             group.effective_primary_asset_id
@@ -264,6 +295,62 @@ class DuplicateResolutionMixin:
                         )
                 else:
                     stack_primary_id = None
+                stack_follow_ups = (
+                    [
+                        {
+                            "type": "stack",
+                            "primary_asset_id": str(requested_stack.primary_asset_id),
+                            "resolution": requested_stack.resolution,
+                            "member_asset_ids": [
+                                str(requested_stack.primary_asset_id),
+                                *(
+                                    str(asset_id)
+                                    for asset_id in requested_stack.member_asset_ids
+                                    if asset_id != requested_stack.primary_asset_id
+                                ),
+                            ],
+                            "source_fingerprint": _source_fingerprint(
+                                [
+                                    member
+                                    for member in group.members
+                                    if member.id in requested_stack.member_asset_ids
+                                ]
+                            ),
+                            "conflict_fingerprint": None,
+                        }
+                        for requested_stack in requested_stacks
+                    ]
+                    if requested_stacks is not None
+                    else [
+                        {
+                            "type": "stack",
+                            "primary_asset_id": str(stack_primary_id),
+                            "resolution": stack_resolution,
+                            "member_asset_ids": [
+                                str(stack_primary_id),
+                                *(
+                                    str(asset_id)
+                                    for asset_id in stack_ids
+                                    if asset_id != stack_primary_id
+                                ),
+                            ],
+                            "source_fingerprint": _source_fingerprint(
+                                [
+                                    member
+                                    for member in group.members
+                                    if member.id in stack_ids
+                                ]
+                            ),
+                            "conflict_fingerprint": None,
+                        }
+                    ]
+                    if stack_primary_id is not None
+                    else []
+                )
+                stack_primary_ids = {
+                    UUID(follow_up["primary_asset_id"])
+                    for follow_up in stack_follow_ups
+                }
                 metadata_keeper_id = _metadata_keeper_for_plan(
                     keep_ids,
                     trash_ids,
@@ -329,17 +416,6 @@ class DuplicateResolutionMixin:
                         ],
                         "source_fingerprint": relation_fingerprint,
                     }
-                stack_source_fingerprint = (
-                    _source_fingerprint(
-                        [
-                            member
-                            for member in group.members
-                            if member.id in stack_ids
-                        ]
-                    )
-                    if stack_ids
-                    else None
-                )
                 plan_groups.append(
                     {
                         "group_id": group.group_id,
@@ -361,25 +437,8 @@ class DuplicateResolutionMixin:
                             str(asset_id) for asset_id in trash_ids
                         ],
                         "metadata_work": metadata_work,
-                        "follow_up": (
-                            {
-                                "type": "stack",
-                                "primary_asset_id": str(stack_primary_id),
-                                "resolution": stack_resolution,
-                                "member_asset_ids": [
-                                    str(stack_primary_id),
-                                    *(
-                                        str(asset_id)
-                                        for asset_id in stack_ids
-                                        if asset_id != stack_primary_id
-                                    ),
-                                ],
-                                "source_fingerprint": stack_source_fingerprint,
-                                "conflict_fingerprint": None,
-                            }
-                            if stack_primary_id is not None
-                            else None
-                        ),
+                        "follow_up": stack_follow_ups[0] if stack_follow_ups else None,
+                        "follow_ups": stack_follow_ups,
                         "execution_state": "pending",
                         "member_fingerprint": group.member_fingerprint,
                         "members": [
@@ -391,10 +450,7 @@ class DuplicateResolutionMixin:
                                     else dispositions[index]
                                 ),
                                 "primary": member.id
-                                in {
-                                    stack_primary_id,
-                                    metadata_keeper_id,
-                                },
+                                in stack_primary_ids | {metadata_keeper_id},
                             }
                             for index, member in enumerate(group.members)
                         ],
@@ -414,21 +470,21 @@ class DuplicateResolutionMixin:
         stack_plan_groups = [
             planned
             for planned in plan_groups
-            if planned["follow_up"] is not None
+            if _stack_follow_ups(planned)
         ]
         if stack_plan_groups and self._stacks is not None:
             stack_snapshot = await self._stacks.stack_snapshot()
             for planned in stack_plan_groups:
-                follow_up = planned["follow_up"]
-                member_ids = [
-                    UUID(value) for value in follow_up["member_asset_ids"]
-                ]
-                follow_up["conflict_fingerprint"] = _stable_fingerprint(
-                    self._stacks.select_conflict_snapshot(
-                        member_ids,
-                        stack_snapshot,
+                for follow_up in _stack_follow_ups(planned):
+                    member_ids = [
+                        UUID(value) for value in follow_up["member_asset_ids"]
+                    ]
+                    follow_up["conflict_fingerprint"] = _stable_fingerprint(
+                        self._stacks.select_conflict_snapshot(
+                            member_ids,
+                            stack_snapshot,
+                        )
                     )
-                )
         plan_groups.sort(key=lambda item: item["group_id"])
         record = await self._actions.create_duplicate_plan(
             groups=plan_groups,
@@ -555,11 +611,14 @@ class DuplicateResolutionMixin:
                     and not _reviewed_delete_supported(live_group)
                 )
                 or (
-                    planned.get("follow_up") is not None
+                    bool(_stack_follow_ups(planned))
                     and any(
                         member.is_offline
                         for member in live_group.members
-                        if str(member.id) in planned["follow_up"]["member_asset_ids"]
+                        if any(
+                            str(member.id) in follow_up["member_asset_ids"]
+                            for follow_up in _stack_follow_ups(planned)
+                        )
                     )
                 )
             ):
@@ -590,11 +649,11 @@ class DuplicateResolutionMixin:
         pacing = await self._runtime_sync_settings.get()
         batch_size = pacing.full_batch_size
         total_steps = len(raw_groups) + sum(
-            planned.get("follow_up") is not None for planned in raw_groups
+            len(_stack_follow_ups(planned)) for planned in raw_groups
         )
         completed_steps = sum(
-            2
-            if execution_state(planned) == "completed" and planned.get("follow_up") is not None
+            1 + len(_stack_follow_ups(planned))
+            if execution_state(planned) == "completed"
             else 1
             if execution_state(planned) in {"follow_up_pending", "completed"}
             else 0
@@ -727,7 +786,7 @@ class DuplicateResolutionMixin:
                 trashed_ids.extend(group_trash_ids)
                 state = (
                     "follow_up_pending"
-                    if planned.get("follow_up") is not None
+                    if _stack_follow_ups(planned)
                     else "completed"
                 )
                 stored_execution[identifier] = {"state": state, "error": None}
@@ -752,62 +811,73 @@ class DuplicateResolutionMixin:
             await context.ensure_active()
             identifier = planned["group_id"]
             try:
-                follow_up = planned["follow_up"]
-                member_ids = [UUID(value) for value in follow_up["member_asset_ids"]]
-                refreshed_assets: list[ImmichAsset] = []
-                for asset_id in member_ids:
-                    asset = await self._immich.get_asset(asset_id)
-                    refreshed_assets.append(asset)
-                expected_source = follow_up.get("source_fingerprint")
-                if (
-                    expected_source is not None
-                    and _source_fingerprint(refreshed_assets) != expected_source
-                ):
-                    raise ActionPlanConflictError("Stack member files changed after review")
-                expected_conflicts = follow_up.get("conflict_fingerprint")
-                if expected_conflicts is not None and (
-                    self._stacks is None
-                    or _stable_fingerprint(await self._stacks.conflict_snapshot(member_ids))
-                    != expected_conflicts
-                ):
-                    raise ActionPlanConflictError("Existing stack memberships changed after review")
-                stack_ids = {
-                    str(asset.stack.get("id"))
-                    for asset in refreshed_assets
-                    if asset.stack is not None and asset.stack.get("id") is not None
-                }
-                existing_stack_complete = (
-                    bool(stack_ids)
-                    and len(stack_ids) == 1
-                    and all(asset.stack is not None for asset in refreshed_assets)
-                )
-                if not existing_stack_complete:
-                    if self._stacks is None:
-                        raise StackSelectionError("Shared stack execution is unavailable")
-                    preparation = await self._stacks.prepare(
-                        member_ids,
-                        follow_up.get("resolution", "move_selected"),
-                        UUID(follow_up["primary_asset_id"]),
-                    )
-                    if not await self._stacks.execute(preparation):
-                        raise ImmichApiError("verify created stack")
-                    refreshed_assets = [
-                        await self._immich.get_asset(asset_id) for asset_id in member_ids
+                for follow_up in _stack_follow_ups(planned):
+                    member_ids = [
+                        UUID(value) for value in follow_up["member_asset_ids"]
                     ]
-                if (
-                    any(asset.stack is None for asset in refreshed_assets)
-                    or len(
-                        {
-                            str(asset.stack.get("id"))
-                            for asset in refreshed_assets
-                            if asset.stack is not None
-                        }
+                    refreshed_assets: list[ImmichAsset] = []
+                    for asset_id in member_ids:
+                        asset = await self._immich.get_asset(asset_id)
+                        refreshed_assets.append(asset)
+                    expected_source = follow_up.get("source_fingerprint")
+                    if (
+                        expected_source is not None
+                        and _source_fingerprint(refreshed_assets) != expected_source
+                    ):
+                        raise ActionPlanConflictError(
+                            "Stack member files changed after review"
+                        )
+                    expected_conflicts = follow_up.get("conflict_fingerprint")
+                    if expected_conflicts is not None and (
+                        self._stacks is None
+                        or _stable_fingerprint(
+                            await self._stacks.conflict_snapshot(member_ids)
+                        )
+                        != expected_conflicts
+                    ):
+                        raise ActionPlanConflictError(
+                            "Existing stack memberships changed after review"
+                        )
+                    stack_ids = {
+                        str(asset.stack.get("id"))
+                        for asset in refreshed_assets
+                        if asset.stack is not None and asset.stack.get("id") is not None
+                    }
+                    existing_stack_complete = (
+                        bool(stack_ids)
+                        and len(stack_ids) == 1
+                        and all(asset.stack is not None for asset in refreshed_assets)
                     )
-                    != 1
-                ):
-                    raise ImmichApiError("verify created stack")
-                for asset in refreshed_assets:
-                    await self._assets.refresh_asset(asset)
+                    if not existing_stack_complete:
+                        if self._stacks is None:
+                            raise StackSelectionError(
+                                "Shared stack execution is unavailable"
+                            )
+                        preparation = await self._stacks.prepare(
+                            member_ids,
+                            follow_up.get("resolution", "move_selected"),
+                            UUID(follow_up["primary_asset_id"]),
+                        )
+                        if not await self._stacks.execute(preparation):
+                            raise ImmichApiError("verify created stack")
+                        refreshed_assets = [
+                            await self._immich.get_asset(asset_id)
+                            for asset_id in member_ids
+                        ]
+                    if (
+                        any(asset.stack is None for asset in refreshed_assets)
+                        or len(
+                            {
+                                str(asset.stack.get("id"))
+                                for asset in refreshed_assets
+                                if asset.stack is not None
+                            }
+                        )
+                        != 1
+                    ):
+                        raise ImmichApiError("verify created stack")
+                    for asset in refreshed_assets:
+                        await self._assets.refresh_asset(asset)
             except ActionPlanConflictError:
                 if identifier not in failed_ids:
                     failed_ids.append(identifier)
@@ -843,7 +913,7 @@ class DuplicateResolutionMixin:
                     identifier,
                     "completed",
                 )
-                completed_steps += 1
+                completed_steps += len(_stack_follow_ups(planned))
             await checkpoint("Completing post-resolution Immich stacks…")
 
         successful_ids = {
@@ -862,7 +932,7 @@ class DuplicateResolutionMixin:
         stacked_ids = {
             planned["group_id"]
             for planned in raw_groups
-            if planned.get("follow_up") is not None and planned["group_id"] in successful_ids
+            if _stack_follow_ups(planned) and planned["group_id"] in successful_ids
         }
 
         if self._reviews is not None:

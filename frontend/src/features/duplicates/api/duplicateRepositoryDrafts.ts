@@ -26,7 +26,6 @@ export function createDuplicateDraftController({
     const group = rawGroups.get(groupId);
     if (!group) throw new Error(`Duplicate group ${groupId} is no longer available.`);
     const scoped = groupResolution(resolution, group);
-    if (scoped.stacks.length > 1) throw new Error('Immich can create only one resulting stack per duplicate group.');
     if (scoped.stacks.some((stack) => stack.assetIds.length === 1)) throw new Error('A stack needs at least two images.');
     const memberIds = group.members.map((member) => member.id);
     const primary = primaryFor(scoped, memberIds);

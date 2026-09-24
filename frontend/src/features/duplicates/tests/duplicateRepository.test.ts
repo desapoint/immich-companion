@@ -119,6 +119,62 @@ function tasks(): TaskRepository {
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
 describe('live V2 duplicate repository', () => {
+  it('plans multiple resulting stacks for one duplicate group', async () => {
+    const ids = [
+      ...ASSET_IDS,
+      '44444444-4444-4444-8444-444444444444',
+      '55555555-5555-4555-8555-555555555555',
+    ];
+    const multiStackGroup = {
+      ...group,
+      members: ids.map((id, index) => ({
+        ...group.members[index % group.members.length],
+        id,
+        original_file_name: `stack-${index}.jpg`,
+      })),
+    };
+    let planBody: Record<string, unknown> | null = null;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      if (path.includes('/cross-source/page?')) return response(asPage({ group_count: 1, groups: [multiStackGroup] }));
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.endsWith('/workspace/group')) return response({
+        group_id: group.group_id,
+        member_fingerprint: group.member_fingerprint,
+        decisions: body.decisions,
+        stack_primary_asset_id: ids[0],
+        stack_resolution: 'move_selected',
+        status: 'completed',
+        stale: false,
+      });
+      if (path.endsWith('/cross-source/plan')) {
+        planBody = body;
+        return response({ id: 'multi-stack-plan', destructive: false });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    await expect(repository.prepareDecisions({
+      decisions: Object.fromEntries(ids.map((id) => [id, 'stack' as const])),
+      stacks: [
+        { id: 'stack-1', groupId: group.group_id, label: 'Stack 1', assetIds: ids.slice(0, 2), primaryAssetId: ids[0] },
+        { id: 'stack-2', groupId: group.group_id, label: 'Stack 2', assetIds: ids.slice(2), primaryAssetId: ids[2] },
+      ],
+    }, [group.group_id])).resolves.toMatchObject({ id: 'multi-stack-plan' });
+
+    expect(planBody).toMatchObject({
+      stack_overrides: {
+        [group.group_id]: [
+          { primary_asset_id: ids[0], member_asset_ids: ids.slice(0, 2), resolution: 'move_selected' },
+          { primary_asset_id: ids[2], member_asset_ids: ids.slice(2), resolution: 'move_selected' },
+        ],
+      },
+    });
+  });
+
   it('uses server source filtering before pagination and includes overlapping sources', async () => {
     const similar = {
       ...group,
