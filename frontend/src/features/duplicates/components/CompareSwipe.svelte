@@ -1,5 +1,6 @@
 <script lang="ts">
   import ComparisonImageLayer from './ComparisonImageLayer.svelte';
+  import ComparisonRectMask from './ComparisonRectMask.svelte';
   import type { ComparisonImagePair } from '../types/comparisonLayer';
   import { createViewportAttachment } from '../state/comparisonViewportAttachment';
 
@@ -58,8 +59,12 @@
 </script>
 
 <div class="v2-compare-overlay mode-swipe" {@attach viewportAttachment}>
-  <ComparisonImageLayer image={pair.selected} {transform} clipPath={`inset(0 0 0 ${split}%)`} />
-  <ComparisonImageLayer image={pair.reference} {transform} top clipPath={`inset(0 ${100 - split}% 0 0)`} />
+  <ComparisonRectMask side="right" {split}>
+    <ComparisonImageLayer image={pair.selected} {transform} />
+  </ComparisonRectMask>
+  <ComparisonRectMask side="left" {split}>
+    <ComparisonImageLayer image={pair.reference} {transform} top />
+  </ComparisonRectMask>
   <div class="v2-compare-split-line" style={`left:${split}%`}></div>
   <div class="v2-compare-split-handle" style={`left:${split}%`}>↔</div>
   <button

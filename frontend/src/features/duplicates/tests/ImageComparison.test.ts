@@ -27,7 +27,7 @@ describe('ImageComparison', () => {
     expect(body).toContain('src="/reference/fullsize"');
   });
 
-  it('renders Flicker with both layers loaded and the reference hidden until held', () => {
+  it('renders Flicker with exactly one active image layer', () => {
     const { body } = render(ImageComparison, {
       props: {
         selectedResource: resource('/selected/fullsize', ['/selected/preview']),
@@ -40,10 +40,9 @@ describe('ImageComparison', () => {
     expect(body).toContain('mode-flicker');
     expect(body).toContain('Hold to show reference');
     expect(body).toContain('aria-pressed="false"');
-    expect(body).toContain('style="visibility:visible" aria-hidden="false"');
-    expect(body).toContain('style="visibility:hidden" aria-hidden="true"');
     expect(body).toContain('src="/selected/fullsize"');
-    expect(body).toContain('src="/reference/fullsize"');
+    expect(body).not.toContain('src="/reference/fullsize"');
+    expect(body.match(/v2-compare-layer/g)).toHaveLength(1);
   });
 
   it('clips both swipe layers to complementary sides so transparency cannot reveal the hidden image', async () => {
@@ -59,8 +58,9 @@ describe('ImageComparison', () => {
       },
     });
 
-    expect(body).toContain('style="clip-path:inset(0 0 0 40%);visibility:visible" aria-hidden="false"');
-    expect(body).toContain('style="clip-path:inset(0 60% 0 0);visibility:visible" aria-hidden="false"');
+    expect(body).toContain('clip-path: inset(0 0 0 40%)');
+    expect(body).toContain('clip-path: inset(0 60% 0 0)');
+    expect(body.match(/v2-compare-layer/g)).toHaveLength(2);
   });
 
   it('uses shared hover controls for Local Changes presentation settings', () => {
