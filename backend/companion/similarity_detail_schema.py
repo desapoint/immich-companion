@@ -25,7 +25,10 @@ class SimilarityLocalDiagnosticsResponse(BaseModel):
     aligned_similarity_percent: float | None = Field(default=None, ge=0, le=100)
     alignment_applied: bool = False
     alignment_shift_percent: float | None = Field(default=None, ge=0, le=100)
+    alignment_rotation_degrees: int = Field(default=0, ge=-5, le=5)
     alignment_overlap_percent: float | None = Field(default=None, ge=0, le=100)
+    comparison_max_displacement_percent: int = Field(default=10, ge=0, le=20)
+    comparison_max_rotation_degrees: int = Field(default=0, ge=0, le=5)
     rows: int = Field(default=0, ge=0)
     columns: int = Field(default=0, ge=0)
     cells: list[list[float]] = Field(default_factory=list)

@@ -212,12 +212,19 @@ def create_app(
     search_feature_repository = (
         SimilaritySearchRepository(database) if database is not None else None
     )
+    duplicate_discovery_settings_repository = (
+        DuplicateDiscoverySettingsRepository(database) if database is not None else None
+    )
     similarity_runtime_settings_repository = (
         SimilarityRuntimeSettingsRepository(database, runtime_settings)
         if database is not None
         else None
     )
-    detail_repository = SimilarityDetailRepository(database) if database is not None else None
+    detail_repository = (
+        SimilarityDetailRepository(database, duplicate_discovery_settings_repository)
+        if database is not None
+        else None
+    )
     similarity_repository = (
         SimilarityRepository(
             database,
@@ -248,9 +255,6 @@ def create_app(
     )
     duplicate_policy_repository = (
         DuplicatePolicyRepository(database) if database is not None else None
-    )
-    duplicate_discovery_settings_repository = (
-        DuplicateDiscoverySettingsRepository(database) if database is not None else None
     )
     runtime_sync_settings = (
         SyncRuntimeSettingsRepository(database, runtime_settings) if database is not None else None

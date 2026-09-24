@@ -12,6 +12,8 @@ from companion.asset_schema import (
     AssetSyncResult,
 )
 from companion.duplicate_discovery_settings import (
+    ComparisonAlignmentSettingsUpdate,
+    DuplicateDiscoverySettingsPatch,
     DuplicateDiscoverySettingsUpdate,
 )
 from companion.duplicate_policy import DuplicatePolicy
@@ -135,6 +137,34 @@ def register_sync_settings_routes(
         if duplicate_discovery_settings_repository is None:
             raise HTTPException(status_code=503, detail="Companion database is unavailable")
         return (await duplicate_discovery_settings_repository.update(request)).model_dump()
+
+    @app.patch("/api/settings/duplicates/discovery")
+    async def patch_duplicate_discovery_settings(
+        request: DuplicateDiscoverySettingsPatch,
+    ) -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (
+            await duplicate_discovery_settings_repository.update_discovery_settings(request)
+        ).model_dump()
+
+    @app.get("/api/settings/duplicates/comparison-alignment")
+    async def comparison_alignment_settings() -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (
+            await duplicate_discovery_settings_repository.comparison_alignment()
+        ).model_dump()
+
+    @app.put("/api/settings/duplicates/comparison-alignment")
+    async def update_comparison_alignment_settings(
+        request: ComparisonAlignmentSettingsUpdate,
+    ) -> dict[str, object]:
+        if duplicate_discovery_settings_repository is None:
+            raise HTTPException(status_code=503, detail="Companion database is unavailable")
+        return (
+            await duplicate_discovery_settings_repository.update_comparison_alignment(request)
+        ).model_dump()
 
     @app.get("/api/settings/duplicates/policy", response_model=DuplicatePolicy)
     async def duplicate_policy_settings() -> DuplicatePolicy:

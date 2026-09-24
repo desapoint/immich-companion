@@ -163,7 +163,7 @@
       <div class="v2-compare-key-values">
         <span>Raw changed area <small class="v2-muted">· viewer grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.changedPercent) : 'Unavailable'}</b>
         <span>Aligned changed area <small class="v2-muted">· scorer</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.alignedChangedPercent) : 'Unavailable'}</b>
-        <span>Frame-shift compensation</span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.alignmentApplied ? `Applied · ${percent(localDiagnostics.alignmentShiftPercent)} shift` : 'Not needed') : 'Unavailable'}</b>
+        <span>Frame alignment</span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? (localDiagnostics.alignmentApplied ? `Applied · ${percent(localDiagnostics.alignmentShiftPercent)} shift${localDiagnostics.alignmentRotationDegrees ? ` · ${localDiagnostics.alignmentRotationDegrees}° rotation` : ''}` : 'Not needed') : 'Unavailable'}</b>
         <span>Aligned overlap</span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.alignmentOverlapPercent) : 'Unavailable'}</b>
         <span>Peak local change <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.localizedChangedPercent) : 'Unavailable'}</b>
         <span>Coherent changed area <small class="v2-muted">· raw grid</small></span><b>{localDiagnosticsLoading ? 'Calculating…' : localDiagnostics?.available ? percent(localDiagnostics.coherentChangedPercent) : 'Unavailable'}</b>

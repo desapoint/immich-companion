@@ -9,6 +9,7 @@ describe('DuplicateSettingsSection', () => {
 
     expect(body).toContain('Duplicate sources');
     expect(body).toContain('Similarity engine');
+    expect(body).toContain('Localized comparison alignment');
     expect(body).toContain('Duplicate policy');
     expect(body).toContain('Coming later');
   });

@@ -2,12 +2,15 @@ import type { AssetRecord, DuplicateSimilarityEvidence, MediaResource } from '..
 import { libraryData } from '../../../app/data/currentDataSource.svelte';
 import { loadLocalChangeDiagnostics, type LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
 import { loadImmichLibraries } from '../../../lib/api/duplicatePolicyApi';
+import { comparisonAlignmentSettingsRepository } from '../api/comparisonAlignmentSettingsRepository';
 
 function assetSetKey(ids: readonly string[]): string { return [...ids].sort().join('\u0000'); }
-function diagnosticsPairKey(selectedId: string, referenceId: string): string { return `${selectedId}\u0000${referenceId}`; }
+function diagnosticsPairKey(selectedId: string, referenceId: string, displacement: number, rotation: number): string {
+  return `${selectedId}\u0000${referenceId}\u0000${displacement}\u0000${rotation}`;
+}
 function identicalDiagnostics(assetId: string): LocalChangeDiagnostics {
   const side = 32;
-  return { available: true, selectedAssetId: assetId, referenceAssetId: assetId, changedPercent: 0, localizedChangedPercent: 0, coherentChangedPercent: 0, largestChangedRegionPercent: 0, substantialRegionCount: 0, alignedChangedPercent: 0, rawSimilarityPercent: 100, alignedSimilarityPercent: 100, alignmentApplied: false, alignmentShiftPercent: 0, alignmentOverlapPercent: 100, rows: side, columns: side, cells: Array.from({ length: side }, () => Array<number>(side).fill(0)), source: null };
+  return { available: true, selectedAssetId: assetId, referenceAssetId: assetId, changedPercent: 0, localizedChangedPercent: 0, coherentChangedPercent: 0, largestChangedRegionPercent: 0, substantialRegionCount: 0, alignedChangedPercent: 0, rawSimilarityPercent: 100, alignedSimilarityPercent: 100, alignmentApplied: false, alignmentShiftPercent: 0, alignmentRotationDegrees: 0, alignmentOverlapPercent: 100, rows: side, columns: side, cells: Array.from({ length: side }, () => Array<number>(side).fill(0)), source: null };
 }
 
 export class DuplicateComparisonDataController {
@@ -74,13 +77,37 @@ export class DuplicateComparisonDataController {
     this.localDiagnosticsLoading = false;
     if (!open || !selectedId || !referenceId || selected?.asset_type !== 'IMAGE' || reference?.asset_type !== 'IMAGE') return;
     if (selectedId === referenceId) { this.localDiagnostics = identicalDiagnostics(selectedId); return; }
-    const key = diagnosticsPairKey(selectedId, referenceId), cached = this.diagnosticsCache.get(key);
-    if (cached) { this.localDiagnostics = cached; return; }
     this.localDiagnosticsLoading = true;
     try {
-      const result = await loadLocalChangeDiagnostics(selectedId, referenceId, controller.signal);
+      // Verify the server's current comparison limits before trusting a cached
+      // pair. This lets another browser's saved settings invalidate local results.
+      const settings = await comparisonAlignmentSettingsRepository.load(controller.signal);
       if (generation !== this.diagnosticsGeneration) return;
-      this.diagnosticsCache.set(key, result);
+      const key = diagnosticsPairKey(
+        selectedId,
+        referenceId,
+        settings.maxDisplacementPercent,
+        settings.maxRotationDegrees,
+      );
+      const cached = this.diagnosticsCache.get(key);
+      if (cached) {
+        this.localDiagnostics = cached;
+        return;
+      }
+      const result = await loadLocalChangeDiagnostics(
+        selectedId,
+        referenceId,
+        controller.signal,
+        settings,
+      );
+      if (generation !== this.diagnosticsGeneration) return;
+      const resultKey = diagnosticsPairKey(
+        selectedId,
+        referenceId,
+        result.comparisonMaxDisplacementPercent ?? settings.maxDisplacementPercent,
+        result.comparisonMaxRotationDegrees ?? settings.maxRotationDegrees,
+      );
+      this.diagnosticsCache.set(resultKey, result);
       this.localDiagnostics = result;
     } catch (error) {
       if (generation !== this.diagnosticsGeneration || controller.signal.aborted) return;

@@ -89,7 +89,7 @@ export class DuplicateDiscoveryController {
       const state = dependencies.getState();
       if (!anchorAssetId) {
         try {
-          const saved = await duplicateDiscoverySettingsRepository.save({
+          const saved = await duplicateDiscoverySettingsRepository.patchDiscovery({
             includeExact: state.includeExact,
             includeSimilar: state.includeSimilar,
             similarityThreshold: normalizedThreshold,

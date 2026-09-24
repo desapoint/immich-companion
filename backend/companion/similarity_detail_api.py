@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, status
 
 from companion.duplicate_schema import SimilarityScanRequest
 from companion.similarity_detail_schema import (
@@ -50,16 +50,44 @@ def register_similarity_detail_routes(
     async def similarity_local_change_diagnostics(
         selected_asset_id: UUID,
         reference_asset_id: UUID,
+        comparison_max_displacement_percent: int | None = Query(default=None, ge=0, le=20),
+        comparison_max_rotation_degrees: int | None = Query(default=None, ge=0, le=5),
     ) -> SimilarityLocalDiagnosticsResponse:
-        stored = await require_repository().diagnostics(
-            selected_asset_id,
-            reference_asset_id,
-        )
+        if (comparison_max_displacement_percent is None) != (
+            comparison_max_rotation_degrees is None
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Both comparison alignment settings must be supplied together.",
+            )
+        detail_repository = require_repository()
+        if comparison_max_displacement_percent is None:
+            # Old API clients continue to use persisted server settings.
+            stored = await detail_repository.diagnostics(selected_asset_id, reference_asset_id)
+        else:
+            # New clients pin the diagnostic computation to the exact values they
+            # used to identify the cache entry, avoiding a second settings read/race.
+            stored = await detail_repository.diagnostics(
+                selected_asset_id,
+                reference_asset_id,
+                comparison_max_displacement_percent=comparison_max_displacement_percent,
+                comparison_max_rotation_degrees=comparison_max_rotation_degrees,
+            )
         if stored is None:
             return SimilarityLocalDiagnosticsResponse(
                 available=False,
                 selected_asset_id=selected_asset_id,
                 reference_asset_id=reference_asset_id,
+                comparison_max_displacement_percent=(
+                    comparison_max_displacement_percent
+                    if comparison_max_displacement_percent is not None
+                    else 10
+                ),
+                comparison_max_rotation_degrees=(
+                    comparison_max_rotation_degrees
+                    if comparison_max_rotation_degrees is not None
+                    else 0
+                ),
             )
 
         diagnostics = stored.diagnostics
@@ -77,7 +105,10 @@ def register_similarity_detail_routes(
             aligned_similarity_percent=diagnostics.aligned_similarity_percent,
             alignment_applied=diagnostics.alignment_applied,
             alignment_shift_percent=diagnostics.alignment_shift_percent,
+            alignment_rotation_degrees=diagnostics.alignment_rotation_degrees,
             alignment_overlap_percent=diagnostics.alignment_overlap_percent,
+            comparison_max_displacement_percent=stored.comparison_max_displacement_percent,
+            comparison_max_rotation_degrees=stored.comparison_max_rotation_degrees,
             rows=diagnostics.rows,
             columns=diagnostics.columns,
             cells=[list(row) for row in diagnostics.tile_changed_percents],

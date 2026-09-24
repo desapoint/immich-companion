@@ -17,6 +17,7 @@ from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from companion.database import DatabaseManager
+from companion.duplicate_discovery_settings import DuplicateDiscoverySettingsRepository
 from companion.immich import ImmichApiClient, ImmichApiError, ImmichAsset
 from companion.models import (
     AssetRecord,
@@ -65,14 +66,21 @@ def _accepts_parameter(callable_object: object, parameter: str) -> bool:
 class StoredDetailDiagnostics:
     diagnostics: DetailDiagnostics
     source: DetailEvidenceSource
+    comparison_max_displacement_percent: int = 10
+    comparison_max_rotation_degrees: int = 0
 
 
 class SimilarityDetailRepository:
     """Reuse detail samples only with their current coarse source identity."""
 
-    def __init__(self, database: DatabaseManager) -> None:
+    def __init__(
+        self,
+        database: DatabaseManager,
+        duplicate_settings: DuplicateDiscoverySettingsRepository | None = None,
+    ) -> None:
         self._database = database
         self._evidence_epoch = SimilarityEvidenceEpochRepository(database)
+        self._duplicate_settings = duplicate_settings
 
     async def current_evidence_epoch(self) -> int:
         return await self._evidence_epoch.capture_epoch()
@@ -123,7 +131,12 @@ class SimilarityDetailRepository:
         return {record.asset_id: record for record in records}
 
     async def diagnostics(
-        self, selected_asset_id: UUID, reference_asset_id: UUID
+        self,
+        selected_asset_id: UUID,
+        reference_asset_id: UUID,
+        *,
+        comparison_max_displacement_percent: int | None = None,
+        comparison_max_rotation_degrees: int | None = None,
     ) -> StoredDetailDiagnostics | None:
         """Compare two already-cached detail samples without generating new work."""
 
@@ -150,9 +163,33 @@ class SimilarityDetailRepository:
             source = "transcoded"
         else:
             source = "original"
+        settings = None
+        if comparison_max_displacement_percent is None or comparison_max_rotation_degrees is None:
+            settings = (
+                await self._duplicate_settings.get()
+                if self._duplicate_settings is not None
+                else None
+            )
+        displacement = (
+            comparison_max_displacement_percent
+            if comparison_max_displacement_percent is not None
+            else settings.comparison_max_displacement_percent if settings is not None else 10
+        )
+        rotation = (
+            comparison_max_rotation_degrees
+            if comparison_max_rotation_degrees is not None
+            else settings.comparison_max_rotation_degrees if settings is not None else 0
+        )
         return StoredDetailDiagnostics(
-            diagnostics=detail_diagnostics(selected_feature, reference_feature),
+            diagnostics=detail_diagnostics(
+                selected_feature,
+                reference_feature,
+                max_shift_fraction=displacement / 100,
+                max_rotation_degrees=rotation,
+            ),
             source=source,
+            comparison_max_displacement_percent=displacement,
+            comparison_max_rotation_degrees=rotation,
         )
 
     async def save(

@@ -76,7 +76,10 @@ def test_local_change_route_returns_unavailable_when_cached_pair_is_missing() ->
         "aligned_similarity_percent": None,
         "alignment_applied": False,
         "alignment_shift_percent": None,
+        "alignment_rotation_degrees": 0,
         "alignment_overlap_percent": None,
+        "comparison_max_displacement_percent": 10,
+        "comparison_max_rotation_degrees": 0,
         "rows": 0,
         "columns": 0,
         "cells": [],
@@ -101,21 +104,35 @@ def test_local_change_route_serializes_cached_grid_and_source() -> None:
             rows=2,
             columns=2,
             tile_changed_percents=((0.0, 25.0), (75.0, 100.0)),
+            alignment_rotation_degrees=-2,
         ),
         source="transcoded",
+        comparison_max_displacement_percent=15,
+        comparison_max_rotation_degrees=3,
     )
 
     class Repository:
-        async def diagnostics(self, selected_asset_id, reference_asset_id):
+        async def diagnostics(
+            self,
+            selected_asset_id,
+            reference_asset_id,
+            *,
+            comparison_max_displacement_percent=None,
+            comparison_max_rotation_degrees=None,
+        ):
             assert selected_asset_id == SELECTED
             assert reference_asset_id == REFERENCE
+            assert comparison_max_displacement_percent == 15
+            assert comparison_max_rotation_degrees == 3
             return result
 
     app = FastAPI()
     register_similarity_detail_routes(app, Repository())  # type: ignore[arg-type]
 
     with TestClient(app) as client:
-        response = client.get(_path())
+        response = client.get(
+            _path() + "&comparison_max_displacement_percent=15&comparison_max_rotation_degrees=3"
+        )
 
     assert response.status_code == 200
     assert response.json() == {
@@ -132,7 +149,10 @@ def test_local_change_route_serializes_cached_grid_and_source() -> None:
         "aligned_similarity_percent": 97.2,
         "alignment_applied": True,
         "alignment_shift_percent": 3.12,
+        "alignment_rotation_degrees": -2,
         "alignment_overlap_percent": 94.2,
+        "comparison_max_displacement_percent": 15,
+        "comparison_max_rotation_degrees": 3,
         "rows": 2,
         "columns": 2,
         "cells": [[0.0, 25.0], [75.0, 100.0]],

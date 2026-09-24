@@ -16,6 +16,10 @@ from companion.similarity_detail import (
     DETAIL_GRID_SIDE,
     DETAIL_SAMPLE_BYTES,
     DetailFeature,
+    _aligned_detail_images,
+    _analyze_images,
+    _detail_images,
+    _DetailAlignment,
     compare_detail_features,
     detail_diagnostics,
     extract_detail_feature,
@@ -132,13 +136,83 @@ def test_small_handheld_frame_shift_is_compensated_without_warping_raw_grid() ->
 
     assert diagnostics.alignment_applied is True
     assert 1 < diagnostics.alignment_shift_percent < 10
-    assert diagnostics.alignment_overlap_percent > 90
+    assert 90 < diagnostics.alignment_overlap_percent < 100
     assert diagnostics.changed_percent > diagnostics.aligned_changed_percent
     assert diagnostics.aligned_changed_percent < diagnostics.changed_percent / 2
     assert score.changed_percent == pytest.approx(diagnostics.aligned_changed_percent)
     assert diagnostics.raw_similarity_percent < diagnostics.aligned_similarity_percent
     assert diagnostics.aligned_similarity_percent == pytest.approx(score.similarity_percent)
     assert score.similarity_percent > 93
+
+
+def test_rotation_search_is_disabled_by_default_and_honors_configured_limit(monkeypatch) -> None:
+    reference_image = _burst_scene().crop((48, 48, 560, 560))
+    rolled_image = reference_image.rotate(3, resample=Image.Resampling.BICUBIC)
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    rolled = extract_detail_feature(BytesIO(_encoded(rolled_image)), "png")
+
+    assert reference is not None and rolled is not None
+
+    def unexpected_rotation(*_args, **_kwargs):
+        raise AssertionError("default comparison must not run rotational search")
+
+    monkeypatch.setattr(Image.Image, "rotate", unexpected_rotation)
+    default_diagnostics = detail_diagnostics(reference, rolled)
+    zero_limit_diagnostics = detail_diagnostics(reference, rolled, max_rotation_degrees=0)
+    assert default_diagnostics == zero_limit_diagnostics
+    assert default_diagnostics.alignment_rotation_degrees == 0
+
+    monkeypatch.undo()
+    configured_diagnostics = detail_diagnostics(
+        reference,
+        rolled,
+        max_rotation_degrees=3,
+    )
+
+    assert configured_diagnostics.alignment_rotation_degrees == -3
+    assert (
+        configured_diagnostics.aligned_changed_percent
+        < default_diagnostics.aligned_changed_percent
+    )
+    assert (
+        configured_diagnostics.aligned_similarity_percent
+        > default_diagnostics.aligned_similarity_percent
+    )
+    assert 0 < configured_diagnostics.alignment_overlap_percent < 100
+
+
+def test_rotation_padding_is_excluded_but_source_transparency_is_counted() -> None:
+    opaque = Image.new("RGBA", (512, 512), (40, 70, 100, 255))
+    opaque_feature = extract_detail_feature(BytesIO(_encoded(opaque)), "png")
+    assert opaque_feature is not None
+    left, right = _detail_images(opaque_feature, opaque_feature)
+    aligned_left, aligned_right, valid_pixels = _aligned_detail_images(
+        left,
+        right,
+        _DetailAlignment(rotation_degrees=3, applied=True),
+    )
+    assert valid_pixels is not None
+
+    unmasked = _analyze_images(aligned_left, aligned_right)
+    masked = _analyze_images(aligned_left, aligned_right, valid_pixels)
+    assert unmasked.changed_fraction > 0
+    assert masked.changed_fraction == 0
+
+    changed = opaque.copy()
+    changed.putalpha(255)
+    changed_draw = ImageDraw.Draw(changed)
+    changed_draw.rectangle((220, 220, 290, 290), fill=(40, 70, 100, 0))
+    changed_feature = extract_detail_feature(BytesIO(_encoded(changed)), "png")
+    assert changed_feature is not None
+    _, changed_image = _detail_images(opaque_feature, changed_feature)
+    _, aligned_changed, changed_validity = _aligned_detail_images(
+        left,
+        changed_image,
+        _DetailAlignment(rotation_degrees=3, applied=True),
+    )
+    assert changed_validity is not None
+    genuine_transparency = _analyze_images(left, aligned_changed, changed_validity)
+    assert genuine_transparency.changed_fraction > 0
 
 
 def test_jpeg_transcode_of_same_scene_remains_high_similarity() -> None:

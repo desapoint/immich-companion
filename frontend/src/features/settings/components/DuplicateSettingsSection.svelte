@@ -3,6 +3,7 @@
   import V2ImmichDuplicateSyncSettings from '../../duplicates/components/ImmichDuplicateSyncSettings.svelte';
   import V2Notice from '../../../lib/components/ui/Notice.svelte';
   import SimilarityRuntimeSettings from './SimilarityRuntimeSettings.svelte';
+  import ComparisonAlignmentSettings from './ComparisonAlignmentSettings.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import V2Badge from '../../../lib/components/ui/Badge.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
@@ -14,6 +15,7 @@
   </V2Section>
   <V2Section title="Similarity engine">
     <SimilarityRuntimeSettings />
+    <ComparisonAlignmentSettings />
   </V2Section>
   <V2Section title="Duplicate policy">
     <V2Card title="Policy controls">
