@@ -929,16 +929,21 @@ class DuplicateResolutionMixin:
 
         pacing = await self._runtime_sync_settings.get()
         batch_size = pacing.full_batch_size
-        total_steps = len(raw_groups) + sum(
-            len(_stack_follow_ups(planned)) for planned in raw_groups
-        )
+        all_stack_destinations = _unique_stack_destinations(raw_groups)
+        total_steps = len(raw_groups) + len(all_stack_destinations)
         completed_steps = sum(
-            1 + len(_stack_follow_ups(planned))
-            if execution_state(planned) == "completed"
-            else 1
-            if execution_state(planned) in {"follow_up_pending", "completed"}
-            else 0
+            execution_state(planned) in {"follow_up_pending", "completed"}
             for planned in raw_groups
+        ) + sum(
+            all(
+                execution_state(next(
+                    planned
+                    for planned in raw_groups
+                    if planned["group_id"] == group_id
+                )) == "completed"
+                for group_id in participants
+            )
+            for _, participants in all_stack_destinations.values()
         )
         resolved_ids: set[str] = {
             planned["group_id"]
@@ -1087,115 +1092,174 @@ class DuplicateResolutionMixin:
 
         resolution_done = perf_counter()
 
-        stack_groups = [item for item in raw_groups if execution_state(item) == "follow_up_pending"]
-        for planned in stack_groups:
+        group_by_id = {planned["group_id"]: planned for planned in raw_groups}
+        destinations_by_group: dict[str, set[str]] = {
+            planned["group_id"]: {
+                _destination_id(planned, follow_up, index)
+                for index, follow_up in enumerate(_stack_follow_ups(planned))
+            }
+            for planned in raw_groups
+        }
+        successful_destination_ids = {
+            destination_id
+            for destination_id, (_, participants) in all_stack_destinations.items()
+            if participants
+            and all(
+                execution_state(group_by_id[group_id]) == "completed"
+                for group_id in participants
+                if group_id in group_by_id
+            )
+        }
+        for destination_id, (follow_up, participants) in all_stack_destinations.items():
+            participant_states = {
+                group_id: execution_state(group_by_id[group_id])
+                for group_id in participants
+                if group_id in group_by_id
+            }
+            if not any(state == "follow_up_pending" for state in participant_states.values()):
+                continue
             await context.ensure_active()
-            identifier = planned["group_id"]
-            try:
-                for follow_up in _stack_follow_ups(planned):
-                    member_ids = [
-                        UUID(value) for value in follow_up["member_asset_ids"]
-                    ]
-                    refreshed_assets: list[ImmichAsset] = []
-                    for asset_id in member_ids:
-                        asset = await self._immich.get_asset(asset_id)
-                        refreshed_assets.append(asset)
-                    expected_source = follow_up.get("source_fingerprint")
-                    if (
-                        expected_source is not None
-                        and _source_fingerprint(refreshed_assets) != expected_source
-                    ):
-                        raise ActionPlanConflictError(
-                            "Stack member files changed after review"
-                        )
-                    expected_conflicts = follow_up.get("conflict_fingerprint")
-                    if expected_conflicts is not None and (
-                        self._stacks is None
-                        or _stable_fingerprint(
-                            await self._stacks.conflict_snapshot(member_ids)
-                        )
-                        != expected_conflicts
-                    ):
-                        raise ActionPlanConflictError(
-                            "Existing stack memberships changed after review"
-                        )
-                    stack_ids = {
-                        str(asset.stack.get("id"))
-                        for asset in refreshed_assets
-                        if asset.stack is not None and asset.stack.get("id") is not None
+            blocked_participants = [
+                group_id
+                for group_id, state in participant_states.items()
+                if state not in {"follow_up_pending", "completed"}
+            ]
+            if blocked_participants:
+                for group_id, state in participant_states.items():
+                    if state != "follow_up_pending":
+                        continue
+                    if group_id not in failed_ids:
+                        failed_ids.append(group_id)
+                    stored_execution[group_id] = {
+                        "state": "failed",
+                        "error": "shared_stack_dependency_failed",
                     }
-                    existing_stack_complete = (
-                        bool(stack_ids)
-                        and len(stack_ids) == 1
-                        and all(asset.stack is not None for asset in refreshed_assets)
+                    await self._actions.record_duplicate_group_execution(
+                        plan_id,
+                        group_id,
+                        "failed",
+                        error="shared_stack_dependency_failed",
                     )
-                    if not existing_stack_complete:
-                        if self._stacks is None:
-                            raise StackSelectionError(
-                                "Shared stack execution is unavailable"
-                            )
-                        preparation = await self._stacks.prepare(
-                            member_ids,
-                            follow_up.get("resolution", "move_selected"),
-                            UUID(follow_up["primary_asset_id"]),
+                continue
+            try:
+                member_ids = [
+                    UUID(value) for value in follow_up["member_asset_ids"]
+                ]
+                refreshed_assets: list[ImmichAsset] = []
+                for asset_id in member_ids:
+                    asset = await self._immich.get_asset(asset_id)
+                    refreshed_assets.append(asset)
+                expected_source = follow_up.get("source_fingerprint")
+                if (
+                    expected_source is not None
+                    and _source_fingerprint(refreshed_assets) != expected_source
+                ):
+                    raise ActionPlanConflictError(
+                        "Stack member files changed after review"
+                    )
+                expected_conflicts = follow_up.get("conflict_fingerprint")
+                if expected_conflicts is not None and (
+                    self._stacks is None
+                    or _stable_fingerprint(
+                        await self._stacks.conflict_snapshot(member_ids)
+                    )
+                    != expected_conflicts
+                ):
+                    raise ActionPlanConflictError(
+                        "Existing stack memberships changed after review"
+                    )
+                stack_ids = {
+                    str(asset.stack.get("id"))
+                    for asset in refreshed_assets
+                    if asset.stack is not None and asset.stack.get("id") is not None
+                }
+                existing_stack_complete = (
+                    bool(stack_ids)
+                    and len(stack_ids) == 1
+                    and all(asset.stack is not None for asset in refreshed_assets)
+                )
+                if not existing_stack_complete:
+                    if self._stacks is None:
+                        raise StackSelectionError(
+                            "Shared stack execution is unavailable"
                         )
-                        if not await self._stacks.execute(preparation):
-                            raise ImmichApiError("verify created stack")
-                        refreshed_assets = [
-                            await self._immich.get_asset(asset_id)
-                            for asset_id in member_ids
-                        ]
-                    if (
-                        any(asset.stack is None for asset in refreshed_assets)
-                        or len(
-                            {
-                                str(asset.stack.get("id"))
-                                for asset in refreshed_assets
-                                if asset.stack is not None
-                            }
-                        )
-                        != 1
-                    ):
+                    preparation = await self._stacks.prepare(
+                        member_ids,
+                        follow_up.get("resolution", "move_selected"),
+                        UUID(follow_up["primary_asset_id"]),
+                    )
+                    if not await self._stacks.execute(preparation):
                         raise ImmichApiError("verify created stack")
-                    for asset in refreshed_assets:
-                        await self._assets.refresh_asset(asset)
+                    refreshed_assets = [
+                        await self._immich.get_asset(asset_id)
+                        for asset_id in member_ids
+                    ]
+                if (
+                    any(asset.stack is None for asset in refreshed_assets)
+                    or len(
+                        {
+                            str(asset.stack.get("id"))
+                            for asset in refreshed_assets
+                            if asset.stack is not None
+                        }
+                    )
+                    != 1
+                ):
+                    raise ImmichApiError("verify created stack")
+                for asset in refreshed_assets:
+                    await self._assets.refresh_asset(asset)
             except ActionPlanConflictError:
-                if identifier not in failed_ids:
-                    failed_ids.append(identifier)
-                if identifier not in drifted_ids:
-                    drifted_ids.append(identifier)
-                stored_execution[identifier] = {
-                    "state": "drifted",
-                    "error": "stack_input_drift",
-                }
-                await self._actions.record_duplicate_group_execution(
-                    plan_id,
-                    identifier,
-                    "drifted",
-                    error="stack_input_drift",
-                )
+                for group_id in participants:
+                    if group_id not in group_by_id:
+                        continue
+                    if group_id not in failed_ids:
+                        failed_ids.append(group_id)
+                    if group_id not in drifted_ids:
+                        drifted_ids.append(group_id)
+                    stored_execution[group_id] = {
+                        "state": "drifted",
+                        "error": "stack_input_drift",
+                    }
+                    await self._actions.record_duplicate_group_execution(
+                        plan_id,
+                        group_id,
+                        "drifted",
+                        error="stack_input_drift",
+                    )
             except (ImmichApiError, StackSelectionError):
-                if identifier not in failed_ids:
-                    failed_ids.append(identifier)
-                stored_execution[identifier] = {
-                    "state": "follow_up_pending",
-                    "error": "stack_follow_up_failed",
-                }
-                await self._actions.record_duplicate_group_execution(
-                    plan_id,
-                    identifier,
-                    "follow_up_pending",
-                    error="stack_follow_up_failed",
-                )
+                for group_id in participants:
+                    if group_id not in group_by_id:
+                        continue
+                    if group_id not in failed_ids:
+                        failed_ids.append(group_id)
+                    stored_execution[group_id] = {
+                        "state": "follow_up_pending",
+                        "error": "stack_follow_up_failed",
+                    }
+                    await self._actions.record_duplicate_group_execution(
+                        plan_id,
+                        group_id,
+                        "follow_up_pending",
+                        error="stack_follow_up_failed",
+                    )
             else:
-                stored_execution[identifier] = {"state": "completed", "error": None}
-                await self._actions.record_duplicate_group_execution(
-                    plan_id,
-                    identifier,
-                    "completed",
-                )
-                completed_steps += len(_stack_follow_ups(planned))
+                successful_destination_ids.add(destination_id)
+                completed_steps += 1
             await checkpoint("Completing post-resolution Immich stacks…")
+
+        for planned in raw_groups:
+            identifier = planned["group_id"]
+            if execution_state(planned) != "follow_up_pending":
+                continue
+            destination_ids = destinations_by_group[identifier]
+            if not destination_ids.issubset(successful_destination_ids):
+                continue
+            stored_execution[identifier] = {"state": "completed", "error": None}
+            await self._actions.record_duplicate_group_execution(
+                plan_id,
+                identifier,
+                "completed",
+            )
 
         successful_ids = {
             planned["group_id"] for planned in raw_groups if execution_state(planned) == "completed"
