@@ -134,8 +134,10 @@ export function actionFor(decisions: Record<string, DuplicateDecision>): 'resolv
 
 export function primaryFor(resolution: DuplicateResolutionPlan, memberIds: readonly string[]): string | null {
   const stack = resolution.stacks.find((candidate) => candidate.assetIds.some((id) => memberIds.includes(id)));
-  if (stack?.primaryAssetId) return stack.primaryAssetId;
-  return memberIds.find((id) => resolution.decisions[id] === 'keep') ?? memberIds.find((id) => resolution.decisions[id] !== 'delete') ?? null;
+  if (stack?.primaryAssetId && resolution.decisions[stack.primaryAssetId] === 'stack') return stack.primaryAssetId;
+  return memberIds.find((id) => resolution.decisions[id] === 'stack')
+    ?? memberIds.find((id) => resolution.decisions[id] === 'keep')
+    ?? null;
 }
 
 export function groupResolution(resolution: DuplicateResolutionPlan, group: ApiDuplicateGroup): DuplicateResolutionPlan {

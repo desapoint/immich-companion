@@ -14,6 +14,8 @@
   import DuplicateHistoryControls from './DuplicateHistoryControls.svelte';
   import DuplicateHistoryList from './DuplicateHistoryList.svelte';
   import DuplicateReviewControls from './DuplicateReviewControls.svelte';
+  import DuplicateReviewIssueNotice from './DuplicateReviewIssueNotice.svelte';
+  import DuplicateReviewProgress from './DuplicateReviewProgress.svelte';
   import V2DuplicateHistoryDetail from './DuplicateHistoryDetail.svelte';
   import V2DuplicateAdmissionEvidence from './DuplicateAdmissionEvidence.svelte';
   import V2DuplicateCachePanel from './DuplicateCachePanel.svelte';
@@ -47,7 +49,6 @@
     clearGroupStacks,
     createDuplicateStackWorkspace,
     createPendingStack,
-    invalidPendingStacks,
     removeAssetFromPendingStack,
     resolutionStacks,
     selectPendingStack,
@@ -67,6 +68,8 @@
   import { currentResolution, groupComplete, groupHasInvalidStack, groupResolution } from '../state/duplicateReviewHelpers';
   import { DuplicatePagePersistence } from '../state/duplicatePagePersistence.svelte';
   import { DuplicateDiscoveryController } from '../state/duplicateDiscoveryController';
+  import { duplicateGroupAnchorId, duplicateReviewIssues, type DuplicateReviewIssue } from '../state/duplicateReviewPreflight';
+  import type { DuplicateReviewProgressPhase } from '../types/reviewProgress';
 
   type DuplicateTab='Review'|'Rules & discovery'|'Resolution history';
   type DuplicateSortField='reclaimable'|'members'|'similarity'|'date'|'discovered';
@@ -81,7 +84,7 @@
   let similarityThreshold=$state('95'),maximumPerceptualDistance=$state('12'),validationMode=$state<SimilarityValidationMode>('strict'),maxLinkDepth=$state('2'),includeSimilar=$state(true),includeExact=$state(true),maxCandidates=$state('8'),maximumMatches=$state('5000'),discoverySummary=$state(''),discoveryRetention=$state<{count:number;limit:number;reached:boolean}|null>(null);
   let historyRange=$state<'Last 30 days'|'Last 90 days'|'All history'>('Last 30 days'),history=$state<DuplicateHistoryRecord[]>([]),historyClearTarget=$state<DuplicateHistoryRecord|null>(null),historyClearAll=$state(false),historyDetailId=$state<string|null>(null);
   let cacheTelemetry=$state.raw<SimilarityCacheStatus|null>(null),cacheLoading=$state(false);
-  let planPreparing=$state(false),groupLoads=$state(0),groupNavigationLoading=$state(false),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
+  let planPreparing=$state(false),reviewProgressPhase=$state<DuplicateReviewProgressPhase|null>(null),groupLoads=$state(0),groupNavigationLoading=$state(false),initialLoading=$state(true),keeperRulesOpen=$state(false),keeperSummary=$state('');
   const groupRequests=new CollectionRequestController(),historyRequests=new CollectionRequestController(),operations=new OperationController((message)=>{pendingReview=null;historyClearTarget=null;historyClearAll=false;openErrorDialog('Duplicate operation failed',message)});
   const reviewLoading=$derived(initialLoading||groupLoads>0||groupRequests.loading),loading=$derived(reviewLoading||historyRequests.loading),loadError=$derived(groupRequests.error||historyRequests.error),mutating=$derived(operations.busy||planPreparing||presetApplying||selectingAll),operationError=$derived(operations.error),feedback=$derived(operations.feedback);
 
@@ -89,7 +92,10 @@
   const activeSimilarities=$derived(Object.fromEntries(activeGroup?.members.map((item)=>[item.asset.id,item.similarity])??[]));
   const activeSimilarityEvidence=$derived(Object.fromEntries(activeGroup?.members.map((item)=>[item.asset.id,item.similarityEvidence])??[]));
   const reviewFilterOptions=$derived(capabilities.reviewFilters.map(String));
-  const invalidStackCount=$derived(invalidPendingStacks(stackWorkspace).length);
+  const reviewIssues=$derived(duplicateReviewIssues(stackWorkspace,decisions));
+  const reviewIssue=$derived(reviewIssues[0]??null);
+  const invalidStackCount=$derived(reviewIssues.length);
+  const reviewConfirmationPhase=$derived<DuplicateReviewProgressPhase>(operations.phase==='reconciling'?'refreshing':operations.phase==='applying'?'applying':'ready');
   const discoveryReady=$derived(capabilities.canRunDiscovery&&(includeExact||includeSimilar));
   const groupNavigationState=$derived({resultMode:collection.resultMode,page:collection.page,pageSize:collection.pageSize,total,loadedCount:groups.length,currentIndex:activeGroupIndex,hasNextCursor:Boolean(nextCursor)});
   const previousGroupPlan=$derived(duplicateViewerGroupNavigationPlan('previous',groupNavigationState));
@@ -176,19 +182,31 @@
   }
   async function reconcileGroups(action:string):Promise<void>{if(!await refreshGroups()&&groupRequests.error)throw new Error(groupRequests.error||`${action} was applied, but duplicate groups could not be refreshed.`)}
   function pending(action:string){return(phase:'applying'|'reconciling')=>pendingOperationFeedback(action,phase==='applying'?'applying':'refreshing')}
-  async function loadMore(){if(!nextCursor||groupRequests.loading)return;collection.loadMore(total);await refreshGroups(false,true)}
-  function setPage(value:number){collection.setPage(value);void refreshGroups(true,true);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'auto'})}
-  function setPageSize(value:number){collection.setPageSize(value,total);void refreshGroups(true,true)}
-  function setMode(value:ResultMode){collection.setMode(value);void refreshGroups(true,true)}
-  function setSort(value:string){sort=value;collection.reset();interactionError='';void refreshGroups(true,true)}
-  function setReviewFilter(value:string){reviewFilter=value as typeof reviewFilter;collection.reset();interactionError='';void refreshGroups(true,true)}
-  function setSourceFilter(value:string){sourceFilter=value as DuplicateSourceFilter;if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-source-filter',sourceFilter);collection.reset();interactionError='';void refreshGroups(true,true)}
+  async function loadMore(){if(!nextCursor||groupRequests.loading||blockForReviewIssue())return;collection.loadMore(total);await refreshGroups(false,true)}
+  function viewReviewIssue(issue:DuplicateReviewIssue|null=reviewIssue){
+    if(!issue)return;
+    tab='Review';
+    requestAnimationFrame(()=>{
+      const target=document.getElementById(duplicateGroupAnchorId(issue.groupId));
+      target?.scrollIntoView({behavior:'smooth',block:'center'});
+      target?.focus({preventScroll:true});
+    });
+  }
+  function blockForReviewIssue():boolean{if(!reviewIssue)return false;interactionError='';viewReviewIssue(reviewIssue);return true}
+  function keepReviewIssue(issue:DuplicateReviewIssue){if(!capabilities.decisions.includes('keep')||mutating)return;setDecision(issue.groupId,issue.assetId,'keep')}
+  function setPage(value:number){if(blockForReviewIssue())return;collection.setPage(value);void refreshGroups(true,true);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'auto'})}
+  function setPageSize(value:number){if(blockForReviewIssue())return;collection.setPageSize(value,total);void refreshGroups(true,true)}
+  function setMode(value:ResultMode){if(blockForReviewIssue())return;collection.setMode(value);void refreshGroups(true,true)}
+  function setSort(value:string){if(blockForReviewIssue())return;sort=value;collection.reset();interactionError='';void refreshGroups(true,true)}
+  function setReviewFilter(value:string){if(blockForReviewIssue())return;reviewFilter=value as typeof reviewFilter;collection.reset();interactionError='';void refreshGroups(true,true)}
+  function setSourceFilter(value:string){if(blockForReviewIssue())return;sourceFilter=value as DuplicateSourceFilter;if(typeof sessionStorage!=='undefined')sessionStorage.setItem('immich-companion:v2:duplicate-source-filter',sourceFilter);collection.reset();interactionError='';void refreshGroups(true,true)}
   function activateCompareGroup(item:DuplicateGroupRecord,index=0){const ids=item.members.map((entry)=>entry.asset.id);group=item.id;reference=Math.max(0,ids.indexOf(item.referenceAssetId??''));member=Math.max(0,ids.indexOf(comparisonTargetId(ids,ids[reference]??'',ids[index]??'')));compare=true;persistSelection()}
   function openCompare(nextGroup:string,index:number){const item=groups.find((candidate)=>candidate.id===nextGroup);if(item)activateCompareGroup(item,index)}
   async function navigateCompareGroup(direction:DuplicateViewerGroupDirection){
     if(!compare||mutating||reviewLoading||groupNavigationLoading)return;
     const plan=duplicateViewerGroupNavigationPlan(direction,{resultMode:collection.resultMode,page:collection.page,pageSize:collection.pageSize,total,loadedCount:groups.length,currentIndex:groups.findIndex((item)=>item.id===group),hasNextCursor:Boolean(nextCursor)});
     if(!plan)return;
+    if(plan.kind!=='loaded'&&blockForReviewIssue())return;
     groupNavigationLoading=true;
     try{
       let target:DuplicateGroupRecord|undefined;
@@ -256,9 +274,21 @@
   const bulkPresetDisabled=$derived(mutating||presetApplying||(selectionScope==='Current page'&&!groups.length));
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection();if(reviewFilter==='Selected'&&!checked){groups=groups.filter((item)=>item.id!==id);total=Math.max(0,total-1);collection.clampPage(total)}}
   function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
-  async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){planPreparing=true;try{await flushWorkspace();const groupIds=scope==='group'&&groupId?[groupId]:[];const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);pendingReview={scope,groupId,plan}}catch(error){surfaceInteractionError(error,'Duplicate actions could not be prepared.','Duplicate review could not continue')}finally{planPreparing=false}}
+  async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){
+    if(blockForReviewIssue())return;
+    planPreparing=true;reviewProgressPhase='saving';
+    try{
+      await flushWorkspace();
+      reviewProgressPhase='planning';
+      const groupIds=scope==='group'&&groupId?[groupId]:[];
+      const plan=await libraryData.duplicates.prepareDecisions(resolution,groupIds);
+      pendingReview={scope,groupId,plan};
+    }catch(error){surfaceInteractionError(error,'Duplicate actions could not be prepared.','Duplicate review could not continue')}
+    finally{planPreparing=false;reviewProgressPhase=null}
+  }
   function requestReviewAll(){
     interactionError='';
+    if(blockForReviewIssue())return;
     // The durable workspace is authoritative for all-matching selections. A
     // page refresh can temporarily leave the local page model behind it, so
     // repair the local count before deciding that the action is unavailable.
@@ -268,7 +298,7 @@
     if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}
     void prepareReview('all',null,currentResolution(stackWorkspace,decisions))
   }
-  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';const label=duplicateGroupTitle(item);if(!groupComplete(item,decisions)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(stackWorkspace,item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(stackWorkspace,item,decisions))}
+  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';if(blockForReviewIssue())return;const label=duplicateGroupTitle(item);if(!groupComplete(item,decisions)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(stackWorkspace,item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(stackWorkspace,item,decisions))}
   async function refillAfterGroupReview(groupId:string,label:string):Promise<void>{
     const remaining=groups.filter((item)=>item.id!==groupId);
     const query=collection.resultMode==='Pagination'?{state:reviewFilter,source:sourceFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,source:sourceFilter,pageSize:collection.pageSize,cursor:null};
@@ -375,20 +405,21 @@
   <V2Zone>
     {#if loadError}<V2ErrorState title="Duplicate data unavailable" message={loadError} onretry={()=>void (tab==='Resolution history'?refreshHistory():refreshGroups())}/>{/if}
     {#if interactionError}<V2ErrorState title="Duplicate review needs attention" message={interactionError}/>{/if}
-    {#if planPreparing}<OperationFeedback feedback={{tone:'pending',title:'Preparing duplicate actions',detail:'Saving your choices and checking the current groups…',failures:[]}}/>{:else if feedback?.tone==='pending'}<OperationFeedback {feedback}/>{/if}
+    {#if reviewIssue}<DuplicateReviewIssueNotice issue={reviewIssue} issueCount={reviewIssues.length} canKeep={capabilities.decisions.includes('keep')&&!mutating} onview={()=>viewReviewIssue(reviewIssue)} onkeep={()=>keepReviewIssue(reviewIssue)}/>{/if}
+    {#if feedback?.tone==='pending'}<OperationFeedback {feedback}/>{/if}
     <OperationToast {feedback} error={operationError} failureTitle="Duplicate operation failed" retryLabel={retryResolution?'Retry failed':''} onretry={retryResolution?()=>requestReviewAll():undefined}/>
     {#if tab==='Rules & discovery'}<V2SimilarityEvidenceGenerationPanel/>{/if}
     {#if tab==='Review'}<V2Toolbar><V2Badge text={`${total} groups`}/><V2Badge tone="ok" text={`${groups.filter((item)=>item.state==='Actionable').length} loaded ready`}/><V2Badge text={`${decisionCount} decisions`}/>{#if invalidStackCount}<V2Badge tone="warn" text={`${invalidStackCount} incomplete stack${invalidStackCount===1?'':'s'}`}/>{/if}{#snippet actions()}<V2CollectionControls id="duplicate-results" {sort} sortFields={[{value:'reclaimable',label:'Reclaimable space'},{value:'members',label:'Group size'},{value:'similarity',label:'Similarity'},{value:'date',label:'Date'},{value:'discovered',label:'Recently discovered'}]} pageSize={collection.pageSize} pageSizes={[6,12,24,48,96,192]} batchLabel="page" resultMode={collection.resultMode} onsort={setSort} onpagesize={setPageSize} onmode={setMode}/><V2Button disabled={reviewLoading||mutating} onclick={()=>void selectAllGroups()}>{selectingAll?'Selecting…':'Select all groups'}</V2Button><V2Button disabled={reviewLoading||mutating} onclick={()=>void refreshGroups(true,false)}>Refresh groups</V2Button><V2Button disabled={mutating} onclick={()=>void clearAllDecisions()}>Clear decisions</V2Button>{/snippet}</V2Toolbar>
     {#each groups as item (item.id)}
       {@const groupStacks=stacksForGroup(stackWorkspace,item.id)}
-      <V2Card class="v2-duplicate-group"><V2Stack gap="md"><V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><span class="v2-duplicate-group-selector"><V2RoundCheckbox checked={selectedGroups.includes(item.id)} disabled={mutating} ariaLabel={`${selectedGroups.includes(item.id)?'Deselect':'Select'} ${duplicateGroupTitle(item)}`} onclick={()=>toggleGroup(item.id,!selectedGroups.includes(item.id))}/><button class="v2-duplicate-group-title" type="button" disabled={mutating} title={duplicateGroupTitle(item)} onclick={()=>toggleGroup(item.id,!selectedGroups.includes(item.id))}>{duplicateGroupTitle(item)}</button></span><V2Badge text={`${item.members.length} assets`}/><V2Badge text={duplicateKindLabel(item.kind)}/>{#each duplicateSourceLabels(item.discoverySources) as source (source)}<V2Badge text={source}/>{/each}{#if item.groupSimilarity!==null}<V2Badge text={`${formatSimilarityPercent(item.groupSimilarity)} group similarity`}/>{/if}{#if item.similarityValidationMode}<V2Badge text={`${item.similarityValidationMode} validation`}/>{/if}<V2Badge tone={item.state==='Actionable'?'ok':item.state==='Blocked'?'bad':'warn'} text={item.state}/></V2Inline><V2Inline gap="sm" wrap={true}>{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'keep')}>Keep all</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'delete')}>Delete all</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'stack')}>Stack all</V2Button>{/if}<V2Button disabled={mutating} onclick={()=>clearGroupChoices(item)}>Clear choices</V2Button><V2Button onclick={()=>openCompare(item.id,0)}>Compare</V2Button><V2Button variant="primary" disabled={mutating||!capabilities.canApplyDecisions||!groupComplete(item,decisions)||groupHasInvalidStack(stackWorkspace,item)} title={!groupComplete(item,decisions)?'Choose an action for every asset first':groupHasInvalidStack(stackWorkspace,item)?'Complete the pending stack first':'Review only this group'} onclick={()=>requestReviewGroup(item)}>Review group</V2Button></V2Inline></V2Inline>
+      <div id={duplicateGroupAnchorId(item.id)} class="duplicate-group-anchor" tabindex="-1"><V2Card class="v2-duplicate-group"><V2Stack gap="md"><V2Inline justify="between" align="start" wrap={true}><V2Inline gap="sm" wrap={true}><span class="v2-duplicate-group-selector"><V2RoundCheckbox checked={selectedGroups.includes(item.id)} disabled={mutating} ariaLabel={`${selectedGroups.includes(item.id)?'Deselect':'Select'} ${duplicateGroupTitle(item)}`} onclick={()=>toggleGroup(item.id,!selectedGroups.includes(item.id))}/><button class="v2-duplicate-group-title" type="button" disabled={mutating} title={duplicateGroupTitle(item)} onclick={()=>toggleGroup(item.id,!selectedGroups.includes(item.id))}>{duplicateGroupTitle(item)}</button></span><V2Badge text={`${item.members.length} assets`}/><V2Badge text={duplicateKindLabel(item.kind)}/>{#each duplicateSourceLabels(item.discoverySources) as source (source)}<V2Badge text={source}/>{/each}{#if item.groupSimilarity!==null}<V2Badge text={`${formatSimilarityPercent(item.groupSimilarity)} group similarity`}/>{/if}{#if item.similarityValidationMode}<V2Badge text={`${item.similarityValidationMode} validation`}/>{/if}<V2Badge tone={item.state==='Actionable'?'ok':item.state==='Blocked'?'bad':'warn'} text={item.state}/></V2Inline><V2Inline gap="sm" wrap={true}>{#if capabilities.decisions.includes('keep')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'keep')}>Keep all</V2Button>{/if}{#if capabilities.decisions.includes('delete')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'delete')}>Delete all</V2Button>{/if}{#if capabilities.decisions.includes('stack')}<V2Button disabled={mutating} onclick={()=>presetGroup(item,'stack')}>Stack all</V2Button>{/if}<V2Button disabled={mutating} onclick={()=>clearGroupChoices(item)}>Clear choices</V2Button><V2Button onclick={()=>openCompare(item.id,0)}>Compare</V2Button><V2Button variant="primary" disabled={mutating||!capabilities.canApplyDecisions||!groupComplete(item,decisions)||groupHasInvalidStack(stackWorkspace,item)} title={!groupComplete(item,decisions)?'Choose an action for every asset first':groupHasInvalidStack(stackWorkspace,item)?'Complete the pending stack first':'Review only this group'} onclick={()=>requestReviewGroup(item)}>Review group</V2Button></V2Inline></V2Inline>
       {#if capabilities.decisions.includes('stack')}<V2DuplicateStackControls stacks={groupStacks} activeStackId={stackWorkspace.activeByGroup[item.id]??null} disabled={mutating} onselect={(stackId)=>chooseStack(item.id,stackId)} oncreate={()=>newStack(item.id)}/>{/if}
       <div class="v2-duplicate-members">
       {#each item.members as member,index (member.asset.id)}
         {@const pendingStack=stackForAsset(stackWorkspace,member.asset.id)}
         <div class="v2-duplicate-member"><div class="v2-duplicate-image-wrap"><button class="v2-duplicate-image" onclick={()=>openCompare(item.id,index)}><V2LazyAssetMedia cacheKey={`duplicate-thumbnail:${member.asset.id}`} resolve={()=>libraryData.media.thumbnail(member.asset)} alt={member.asset.original_file_name}/>{#if pendingStack}<span class="v2-stack-primary-badge">{pendingStack.label}{pendingStack.primaryAssetId===member.asset.id?' · Primary':''}</span>{/if}<span class="v2-duplicate-image-meta"><span class="v2-duplicate-image-meta-heading"><b>{member.asset.original_file_name}</b>{#if member.similarity!==null}<span class="v2-duplicate-image-similarity">{formatSimilarityPercent(member.similarity)}</span>{/if}</span><small>{duplicateListMemberMeta(member.asset,null)}</small></span></button><V2DuplicateAdmissionEvidence {member} members={item.members} mode={item.similarityValidationMode}/></div><V2DuplicateDecisionControls decision={decisions[member.asset.id]} stackLabel={pendingStack?.label??'Stack'} isPrimary={pendingStack?.primaryAssetId===member.asset.id} decisions={capabilities.decisions} disabled={mutating} ondecision={(decision)=>setDecision(item.id,member.asset.id,decision)} onprimary={()=>setStackPrimary(member.asset.id)}/></div>
       {/each}
-    </div></V2Stack></V2Card>{/each}
+    </div></V2Stack></V2Card></div>{/each}
     {#if !loading && total===0}<V2Card><V2Stack gap="xs"><b>No duplicate groups found</b><span class="v2-muted">Try another source or review state, or run discovery to look for new matches.</span></V2Stack></V2Card>{/if}
     {#if total>0}<V2CollectionFooter resultMode={collection.resultMode} page={collection.page} pageSize={collection.pageSize} {total} loaded={groups.length} noun="groups" onpage={setPage} onloadmore={loadMore}/>{/if}
   {:else if tab==='Rules & discovery'}<V2Toolbar sticky={false}><b>Rules & discovery</b><V2Badge text={capabilities.canRunDiscovery?'Available':'Unavailable'}/></V2Toolbar><V2Card title="Duplicate discovery"><V2Stack gap="md"><V2Checkbox label="Verify duplicate groups reported by Immich" checked={includeExact} onchange={(checked)=>includeExact=checked}/><V2Checkbox label="Find visually similar images" checked={includeSimilar} onchange={(checked)=>includeSimilar=checked}/>{#if includeSimilar}<V2Field label="Minimum visual similarity (%)" type="number" min={50} max={100} step={0.1} value={similarityThreshold} onchange={(value)=>similarityThreshold=value}/><PerceptualDistanceSetting value={maximumPerceptualDistance} onchange={(value)=>maximumPerceptualDistance=String(value)}/><V2DuplicateValidationSettings mode={validationMode} onchange={(mode)=>validationMode=mode}/>{#if validationMode==='linked'}<V2Field label="Maximum link depth" type="number" min={0} max={64} step={1} value={maxLinkDepth} onchange={(value)=>maxLinkDepth=value}/><span class="v2-small v2-muted">0 keeps only direct matches to the group reference. 1 also allows matches found from those direct matches. 2 allows one more linked expansion. This value matches the link-depth number shown on indirectly linked image pills.</span>{/if}<V2Field label="Comparison candidates per image" type="number" min={1} max={64} step={1} value={maxCandidates} onchange={(value)=>maxCandidates=value}/><V2Field label="Maximum retained similarity matches" type="number" min={1} max={50000} step={1} value={maximumMatches} onchange={(value)=>maximumMatches=value}/><span class="v2-small v2-muted">The retained-match limit defaults to 5,000 and can be raised to 50,000. When more above-threshold pairs are found, Companion keeps the strongest matches and reports that the retention limit was reached. Higher candidate and retention limits increase scan work, memory, and stored result size. These discovery defaults are stored in Companion's database and shared across browsers when discovery is run. Running discovery explicitly revalidates group membership; changing the comparison reference does not.</span>{/if}<V2Button variant="primary" disabled={!discoveryReady||mutating} onclick={()=>void runDiscovery()}>{mutating?(operations.phase==='reconciling'?'Refreshing results…':'Running discovery…'):'Run duplicate discovery'}</V2Button>{#if !includeExact&&!includeSimilar}<span class="v2-small v2-muted">Select at least one discovery method.</span>{/if}{#if discoveryRetention}<V2Inline gap="sm" wrap={true}><V2Badge tone={discoveryRetention.reached?'bad':'ok'} text={discoveryRetention.reached?'Retention limit reached':'Retention limit not reached'}/><span class="v2-small v2-muted">{discoveryRetention.count.toLocaleString()} / {discoveryRetention.limit.toLocaleString()} similarity matches retained{discoveryRetention.reached?' · additional qualifying matches were found and not retained':''}.</span></V2Inline>{/if}{#if discoverySummary}<span class="v2-small v2-muted">{discoverySummary}</span>{/if}</V2Stack></V2Card><V2DuplicateCachePanel status={cacheTelemetry} loading={cacheLoading} onrefresh={()=>void refreshCacheStatus()} onclear={(cache)=>void clearCache(cache)}/>
@@ -397,13 +428,18 @@
 </V2PageLayout>
 
 {#if reviewLoading && tab==='Review'}<V2CollectionLoadingOverlay label="Loading duplicate groups…" />{/if}
+{#if planPreparing && reviewProgressPhase}<DuplicateReviewProgress phase={reviewProgressPhase} overlay={true}/>{/if}
 
 {#if keeperRulesOpen}<DuplicateKeeperModal groupIds={groups.map((item)=>item.id)} initialScope={selectionScope==='All matching'?'all_matching':'current_page'} {reviewFilter} {sourceFilter} onclose={()=>keeperRulesOpen=false} onapplied={(result)=>void keeperRulesApplied(result)}/>{/if}
 {#if historyDetailId}<V2DuplicateHistoryDetail resolutionId={historyDetailId} onclose={()=>historyDetailId=null}/>{/if}
 
 <DuplicateCompareViewer open={compare} groupTitle={activeGroup?duplicateGroupTitle(activeGroup):'Duplicate comparison'} groupKind={activeGroup?.kind??''} groupSimilarity={activeGroup?.groupSimilarity??null} groupMembers={activeGroup?.members??[]} validationMode={activeGroup?.similarityValidationMode??null} similarityThreshold={activeGroup?.similarityThresholdPercent??null} assetIds={activeAssetIds} similarities={activeSimilarities} similarityEvidence={activeSimilarityEvidence} decisionOptions={capabilities.decisions} stackLabel={activeCompareStack?.label??'Stack'} stackPrimary={activeCompareStack?.primaryAssetId===activeAssetIds[member]} selectedForReview={selectedGroups.includes(group)} disabled={mutating} {canPreviousGroup} {canNextGroup} {groupNavigationLoading} ongroupnavigate={navigateCompareGroup} bind:member bind:reference bind:decisions ondecisionchange={(assetId,decision)=>setDecision(group,assetId,decision)} ondecisionclear={(assetId)=>clearDecision(group,assetId)} onstackprimary={setStackPrimary} onreferencechange={switchReference} onrevalidate={activeGroup?.similarityValidationMode?revalidateFromReference:undefined} onclose={()=>{compare=false;persistSelection()}}/>
 {#if errorDialog}<NoticeDialog id="duplicate-review-error" title={errorDialog.title} message={errorDialog.message} onclose={()=>errorDialog=null}/>{/if}
-{#if pendingReview}<ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} pendingLabel={operations.phase==='reconciling'?'Refreshing results…':'Applying actions…'} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}/>{/if}
+{#if pendingReview}
+  <ConfirmDialog title={pendingReview.scope==='group'?`Review ${groupDisplayName(pendingReview.groupId)}?`:'Review duplicate actions?'} message={pendingReview.scope==='group'?'The action plan is ready. Execute the Keep, Delete and Stack choices for this group now? Other groups and their current choices will be left untouched.':`The frozen plan contains ${pendingReview.plan.groupIds.length} selected duplicate ${pendingReview.plan.groupIds.length===1?'group':'groups'}. Execute its saved Keep, Delete and Stack choices?`} confirmLabel={pendingReview.scope==='group'?'Execute group plan':'Execute action plan'} icon="check" destructive={pendingReview.plan.destructive??Object.values(pendingReview.plan.resolution.decisions).includes('delete')} pending={mutating} pendingLabel={operations.phase==='reconciling'?'Refreshing results…':'Applying actions…'} onconfirm={()=>void confirmPendingReview()} onclose={()=>{if(!mutating)pendingReview=null}}>
+    {#snippet detail()}<DuplicateReviewProgress phase={reviewConfirmationPhase}/>{/snippet}
+  </ConfirmDialog>
+{/if}
 {#if historyClearTarget}<ConfirmDialog title="Clear this resolution?" message="This removes Companion's completed-resolution record so a currently discovered matching group can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear resolution" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearHistoryResolution()} onclose={()=>{if(!mutating)historyClearTarget=null}}/>{/if}
 {#if historyClearAll}<ConfirmDialog title="Clear all resolution history?" message="This removes every completed duplicate-resolution record in Companion, including history outside the currently selected date range, so matching groups can be reviewed again. It does not restore trashed assets, undo stacks, or reverse changes already applied in Immich." confirmLabel="Clear all resolution history" icon="trash" destructive={true} pending={mutating} onconfirm={()=>void clearAllHistoryResolutions()} onclose={()=>{if(!mutating)historyClearAll=false}}/>{/if}
 
@@ -417,4 +453,6 @@
   .v2-duplicate-group-title{display:block;min-width:0;max-width:min(34rem,60vw);overflow:hidden;border:0;padding:4px 2px;background:transparent;color:inherit;font:inherit;font-weight:700;text-align:left;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
   .v2-duplicate-group-title:focus-visible{outline:2px solid var(--v2-accent);outline-offset:2px;border-radius:4px}
   .v2-duplicate-group-title:disabled{cursor:default;opacity:.55}
+  .duplicate-group-anchor{border-radius:var(--v2-radius)}
+  .duplicate-group-anchor:focus{outline:2px solid var(--v2-warn, #f0ad4e);outline-offset:4px}
 </style>
