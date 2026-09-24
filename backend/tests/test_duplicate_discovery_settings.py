@@ -28,6 +28,7 @@ def test_duplicate_discovery_settings_defaults_match_v2_discovery_defaults() -> 
     assert settings.maximum_perceptual_distance == 12
     assert settings.comparison_max_displacement_percent == 10
     assert settings.comparison_max_rotation_degrees == 0
+    assert settings.comparison_max_zoom_percent == 0
     assert settings.validation_mode == "strict"
     assert settings.max_link_depth == 2
     assert settings.max_candidates == 8
@@ -57,9 +58,11 @@ def test_every_discovery_setting_is_explicitly_classified_for_generation_impact(
         ("maximum_perceptual_distance", -1),
         ("maximum_perceptual_distance", 65),
         ("comparison_max_displacement_percent", -1),
-        ("comparison_max_displacement_percent", 21),
+        ("comparison_max_displacement_percent", 51),
         ("comparison_max_rotation_degrees", -1),
-        ("comparison_max_rotation_degrees", 6),
+        ("comparison_max_rotation_degrees", 31),
+        ("comparison_max_zoom_percent", -1),
+        ("comparison_max_zoom_percent", 51),
         ("validation_mode", "unknown"),
         ("max_link_depth", -1),
         ("max_link_depth", 65),
@@ -123,6 +126,9 @@ def _record(**overrides):
         ("maximum_matches", 12_000),
         ("comparison_max_displacement_percent", 14),
         ("comparison_max_rotation_degrees", 3),
+        ("comparison_max_displacement_percent", 50),
+        ("comparison_max_rotation_degrees", 30),
+        ("comparison_max_zoom_percent", 50),
     ],
 )
 async def test_membership_affecting_setting_change_only_persists_configuration(
@@ -182,7 +188,11 @@ async def test_first_persisted_nondefault_membership_configuration_only_persists
 @pytest.mark.asyncio
 async def test_legacy_full_update_preserves_alignment_fields_omitted_from_payload() -> None:
     database = _Database(
-        _record(comparison_max_displacement_percent=17, comparison_max_rotation_degrees=4)
+        _record(
+            comparison_max_displacement_percent=17,
+            comparison_max_rotation_degrees=4,
+            comparison_max_zoom_percent=28,
+        )
     )
     repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
 
@@ -201,8 +211,10 @@ async def test_legacy_full_update_preserves_alignment_fields_omitted_from_payloa
 
     assert saved.comparison_max_displacement_percent == 17
     assert saved.comparison_max_rotation_degrees == 4
+    assert saved.comparison_max_zoom_percent == 28
     assert database.session.record.comparison_max_displacement_percent == 17
     assert database.session.record.comparison_max_rotation_degrees == 4
+    assert database.session.record.comparison_max_zoom_percent == 28
 
 
 @pytest.mark.asyncio

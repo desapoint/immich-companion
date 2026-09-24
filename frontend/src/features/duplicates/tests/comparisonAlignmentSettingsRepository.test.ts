@@ -12,12 +12,14 @@ describe('comparison alignment settings repository', () => {
     const fetcher = vi.fn(async () => new Response(JSON.stringify({
       comparison_max_displacement_percent: 14,
       comparison_max_rotation_degrees: 2,
+      comparison_max_zoom_percent: 12,
     }), { status: 200, headers: { 'content-type': 'application/json' } }));
     vi.stubGlobal('fetch', fetcher);
 
     await expect(comparisonAlignmentSettingsRepository.load()).resolves.toEqual({
       maxDisplacementPercent: 14,
       maxRotationDegrees: 2,
+      maxZoomPercent: 12,
     });
     expect(fetcher).toHaveBeenCalledWith(
       '/api/settings/duplicates/comparison-alignment',
@@ -31,10 +33,12 @@ describe('comparison alignment settings repository', () => {
       expect(JSON.parse(String(init?.body))).toEqual({
         comparison_max_displacement_percent: 15,
         comparison_max_rotation_degrees: 3,
+        comparison_max_zoom_percent: 4,
       });
       return new Response(JSON.stringify({
         comparison_max_displacement_percent: 15,
         comparison_max_rotation_degrees: 3,
+        comparison_max_zoom_percent: 4,
       }), { status: 200, headers: { 'content-type': 'application/json' } });
     });
     vi.stubGlobal('fetch', fetcher);
@@ -42,6 +46,7 @@ describe('comparison alignment settings repository', () => {
     await expect(comparisonAlignmentSettingsRepository.save({
       maxDisplacementPercent: 15,
       maxRotationDegrees: 3,
-    })).resolves.toEqual({ maxDisplacementPercent: 15, maxRotationDegrees: 3 });
+      maxZoomPercent: 4,
+    })).resolves.toEqual({ maxDisplacementPercent: 15, maxRotationDegrees: 3, maxZoomPercent: 4 });
   });
 });

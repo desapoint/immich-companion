@@ -16,8 +16,9 @@ class DuplicateDiscoverySettings(BaseModel):
     include_similar: bool = True
     similarity_threshold: float = Field(default=95.0, ge=50, le=100)
     maximum_perceptual_distance: int = Field(default=12, ge=0, le=64)
-    comparison_max_displacement_percent: int = Field(default=10, ge=0, le=20)
-    comparison_max_rotation_degrees: int = Field(default=0, ge=0, le=5)
+    comparison_max_displacement_percent: int = Field(default=10, ge=0, le=50)
+    comparison_max_rotation_degrees: int = Field(default=0, ge=0, le=30)
+    comparison_max_zoom_percent: int = Field(default=0, ge=0, le=50)
     validation_mode: Literal["reference", "linked", "strict"] = "strict"
     max_link_depth: int = Field(default=2, ge=0, le=64)
     max_candidates: int = Field(default=8, ge=1, le=64)
@@ -50,8 +51,9 @@ class DuplicateDiscoverySettingsPatch(BaseModel):
 
 
 class ComparisonAlignmentSettings(BaseModel):
-    comparison_max_displacement_percent: int = Field(default=10, ge=0, le=20)
-    comparison_max_rotation_degrees: int = Field(default=0, ge=0, le=5)
+    comparison_max_displacement_percent: int = Field(default=10, ge=0, le=50)
+    comparison_max_rotation_degrees: int = Field(default=0, ge=0, le=30)
+    comparison_max_zoom_percent: int = Field(default=0, ge=0, le=50)
 
 
 class ComparisonAlignmentSettingsUpdate(ComparisonAlignmentSettings):
@@ -79,7 +81,11 @@ ORCHESTRATION_ONLY_DISCOVERY_FIELDS = frozenset({"include_exact", "include_simil
 # These values affect only the interactive comparison diagnostics. They do not
 # change which assets are discovered or the evidence generation.
 COMPARISON_ONLY_DISCOVERY_FIELDS = frozenset(
-    {"comparison_max_displacement_percent", "comparison_max_rotation_degrees"}
+    {
+        "comparison_max_displacement_percent",
+        "comparison_max_rotation_degrees",
+        "comparison_max_zoom_percent",
+    }
 )
 
 
@@ -110,6 +116,7 @@ class DuplicateDiscoverySettingsRepository:
                 maximum_perceptual_distance=record.maximum_perceptual_distance,
                 comparison_max_displacement_percent=record.comparison_max_displacement_percent,
                 comparison_max_rotation_degrees=record.comparison_max_rotation_degrees,
+                comparison_max_zoom_percent=record.comparison_max_zoom_percent,
                 validation_mode=record.validation_mode,
                 max_link_depth=record.max_link_depth,
                 max_candidates=record.max_candidates,
@@ -148,6 +155,7 @@ class DuplicateDiscoverySettingsRepository:
                 maximum_perceptual_distance=record.maximum_perceptual_distance,
                 comparison_max_displacement_percent=record.comparison_max_displacement_percent,
                 comparison_max_rotation_degrees=record.comparison_max_rotation_degrees,
+                comparison_max_zoom_percent=record.comparison_max_zoom_percent,
                 validation_mode=record.validation_mode,
                 max_link_depth=record.max_link_depth,
                 max_candidates=record.max_candidates,
@@ -181,6 +189,7 @@ class DuplicateDiscoverySettingsRepository:
                 maximum_perceptual_distance=record.maximum_perceptual_distance,
                 comparison_max_displacement_percent=record.comparison_max_displacement_percent,
                 comparison_max_rotation_degrees=record.comparison_max_rotation_degrees,
+                comparison_max_zoom_percent=record.comparison_max_zoom_percent,
                 validation_mode=record.validation_mode,
                 max_link_depth=record.max_link_depth,
                 max_candidates=record.max_candidates,
@@ -193,6 +202,7 @@ class DuplicateDiscoverySettingsRepository:
         return ComparisonAlignmentSettings(
             comparison_max_displacement_percent=settings.comparison_max_displacement_percent,
             comparison_max_rotation_degrees=settings.comparison_max_rotation_degrees,
+            comparison_max_zoom_percent=settings.comparison_max_zoom_percent,
         )
 
     async def update_comparison_alignment(
@@ -211,9 +221,19 @@ class DuplicateDiscoverySettingsRepository:
                     **DuplicateDiscoverySettings().model_dump(),
                 )
                 session.add(record)
-            record.comparison_max_displacement_percent = (
-                value.comparison_max_displacement_percent
-            )
-            record.comparison_max_rotation_degrees = value.comparison_max_rotation_degrees
+            supplied_fields = value.model_fields_set
+            if "comparison_max_displacement_percent" in supplied_fields:
+                record.comparison_max_displacement_percent = (
+                    value.comparison_max_displacement_percent
+                )
+            if "comparison_max_rotation_degrees" in supplied_fields:
+                record.comparison_max_rotation_degrees = value.comparison_max_rotation_degrees
+            if "comparison_max_zoom_percent" in supplied_fields:
+                record.comparison_max_zoom_percent = value.comparison_max_zoom_percent
             await session.flush()
-        return value
+            result = ComparisonAlignmentSettings(
+                comparison_max_displacement_percent=record.comparison_max_displacement_percent,
+                comparison_max_rotation_degrees=record.comparison_max_rotation_degrees,
+                comparison_max_zoom_percent=record.comparison_max_zoom_percent,
+            )
+        return result

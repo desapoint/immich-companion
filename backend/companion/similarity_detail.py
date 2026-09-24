@@ -36,6 +36,7 @@ DETAIL_REGION_MIN_FRACTION = 0.001
 DETAIL_ALIGNMENT_SIDE = 128
 DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION = 0.10
 DETAIL_ALIGNMENT_MAX_ROTATION_DEGREES = 0
+DETAIL_ALIGNMENT_MAX_ZOOM_PERCENT = 0
 DETAIL_ALIGNMENT_MIN_IMPROVEMENT = 0.08
 DETAIL_ALIGNMENT_OVERLAP_PENALTY = 0.25
 
@@ -83,6 +84,7 @@ class DetailDiagnostics:
     columns: int
     tile_changed_percents: tuple[tuple[float, ...], ...]
     alignment_rotation_degrees: int = 0
+    alignment_zoom_percent: float = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +92,7 @@ class _DetailAlignment:
     shift_x: int = 0
     shift_y: int = 0
     rotation_degrees: int = 0
+    zoom_percent: float = 0
     overlap_fraction: float = 1.0
     applied: bool = False
 
@@ -315,14 +318,137 @@ def _translation_error(
     return error + DETAIL_ALIGNMENT_OVERLAP_PENALTY * (1 - valid_overlap), valid_overlap
 
 
+def _inclusive_candidates(limit: int, step: int) -> tuple[int, ...]:
+    """Return a symmetric stepped grid that always contains both limits."""
+
+    if limit < 0 or step < 1:
+        raise ValueError("Candidate limit must be nonnegative and step must be positive")
+    positive = range(0, limit + 1, step)
+    return tuple(sorted({-limit, limit, *positive, *(-candidate for candidate in positive)}))
+
+
+def _transform_alignment_frame(
+    image: Image.Image,
+    zoom_percent: int,
+    rotation_degrees: int,
+    *,
+    resample: Image.Resampling,
+    fillcolor: int | tuple[int, ...],
+) -> tuple[Image.Image, Image.Image]:
+    """Scale into a centered fixed-size canvas, then rotate image and mask."""
+
+    width, height = image.size
+    validity = Image.new("L", image.size, color=255)
+    scale = 1 + zoom_percent / 100
+    if scale != 1:
+        scaled_size = (
+            max(1, round(width * scale)),
+            max(1, round(height * scale)),
+        )
+        image = image.resize(scaled_size, resample)
+        validity = validity.resize(scaled_size, Image.Resampling.NEAREST)
+        offset = (
+            (width - scaled_size[0]) // 2,
+            (height - scaled_size[1]) // 2,
+        )
+        canvas = Image.new(image.mode, (width, height), fillcolor)
+        mask_canvas = Image.new("L", (width, height), color=0)
+        canvas.paste(image, offset)
+        mask_canvas.paste(validity, offset)
+        image, validity = canvas, mask_canvas
+    if rotation_degrees:
+        image = image.rotate(
+            rotation_degrees,
+            resample=resample,
+            expand=False,
+            fillcolor=fillcolor,
+        )
+        validity = validity.rotate(
+            rotation_degrees,
+            # Bicubic rotation marks edge pixels touched by interpolation as
+            # synthetic; scoring masks accept only pixels that stay fully valid.
+            resample=Image.Resampling.BICUBIC,
+            expand=False,
+            fillcolor=0,
+        )
+    return image, validity
+
+
+def _estimate_legacy_alignment(
+    left_image: Image.Image,
+    right_image: Image.Image,
+) -> _DetailAlignment:
+    """Preserve the exact persisted-evidence translation algorithm and scoring."""
+
+    left = _alignment_plane(left_image)
+    right = _alignment_plane(right_image)
+    raw_error, _ = _translation_error(left, right, 0, 0)
+    if raw_error < 1e-6:
+        return _DetailAlignment()
+
+    limit = round(DETAIL_ALIGNMENT_SIDE * DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION)
+    best_error = raw_error
+    best_x = 0
+    best_y = 0
+    best_overlap = 1.0
+    angle_best_error = raw_error
+    angle_best_x = 0
+    angle_best_y = 0
+    angle_best_overlap = 1.0
+    for shift_y in range(-limit, limit + 1, 2):
+        for shift_x in range(-limit, limit + 1, 2):
+            error, overlap = _translation_error(left, right, shift_x, shift_y)
+            if error < angle_best_error:
+                angle_best_error = error
+                angle_best_x = shift_x
+                angle_best_y = shift_y
+                angle_best_overlap = overlap
+    coarse_x, coarse_y = angle_best_x, angle_best_y
+    for shift_y in range(max(-limit, coarse_y - 2), min(limit, coarse_y + 2) + 1):
+        for shift_x in range(max(-limit, coarse_x - 2), min(limit, coarse_x + 2) + 1):
+            error, overlap = _translation_error(left, right, shift_x, shift_y)
+            if error < angle_best_error:
+                angle_best_error = error
+                angle_best_x = shift_x
+                angle_best_y = shift_y
+                angle_best_overlap = overlap
+    if angle_best_error < best_error:
+        best_error = angle_best_error
+        best_x = angle_best_x
+        best_y = angle_best_y
+        best_overlap = angle_best_overlap
+
+    improvement = (raw_error - best_error) / raw_error
+    if (best_x == 0 and best_y == 0) or improvement < DETAIL_ALIGNMENT_MIN_IMPROVEMENT:
+        return _DetailAlignment()
+    scale = DETAIL_SAMPLE_SIDE / DETAIL_ALIGNMENT_SIDE
+    return _DetailAlignment(
+        shift_x=round(best_x * scale),
+        shift_y=round(best_y * scale),
+        overlap_fraction=max(0.0, min(1.0, best_overlap)),
+        applied=True,
+    )
+
+
 def _estimate_alignment(
     left_image: Image.Image,
     right_image: Image.Image,
     *,
     max_shift_fraction: float = DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION,
     max_rotation_degrees: int = DETAIL_ALIGNMENT_MAX_ROTATION_DEGREES,
+    max_zoom_percent: int = DETAIL_ALIGNMENT_MAX_ZOOM_PERCENT,
 ) -> _DetailAlignment:
-    """Find a bounded global translation and optional small rotation."""
+    """Find bounded scale, rotation, and translation using staged search."""
+
+    # The default comparator feeds persisted similarity validation. Keep its
+    # historical 2px grid and +/-2 refinement byte-for-byte in behavior; the
+    # expanded search is only entered for explicitly configured diagnostics.
+    if (
+        max_shift_fraction == DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION
+        and max_rotation_degrees == DETAIL_ALIGNMENT_MAX_ROTATION_DEGREES
+        and max_zoom_percent == DETAIL_ALIGNMENT_MAX_ZOOM_PERCENT
+    ):
+        return _estimate_legacy_alignment(left_image, right_image)
 
     left = _alignment_plane(left_image)
     original_right = _alignment_plane(right_image)
@@ -337,79 +463,94 @@ def _estimate_alignment(
     best_rotation = 0
     best_overlap = 1.0
     # A zero-degree limit follows the original single-angle search exactly.
-    rotation_candidates = (0,)
-    if max_rotation_degrees > 0:
-        rotation_candidates = (
-            0,
-            *(
-                degree
-                for offset in range(1, max_rotation_degrees + 1)
-                for degree in (-offset, offset)
-            ),
-        )
-    for rotation in rotation_candidates:
-        right = original_right
-        right_validity = None
-        if rotation:
-            right_validity = np.asarray(
-                Image.new(
-                    "L",
-                    (DETAIL_ALIGNMENT_SIDE, DETAIL_ALIGNMENT_SIDE),
-                    color=255,
-                ).rotate(
-                    rotation,
-                    resample=Image.Resampling.BICUBIC,
-                    expand=False,
-                    fillcolor=0,
-                ),
-                dtype=np.uint8,
-            ) == 255
-            right = np.asarray(
-                Image.fromarray(original_right.astype(np.float32)).rotate(
-                    rotation,
-                    resample=Image.Resampling.BILINEAR,
-                    expand=False,
-                    fillcolor=0,
-                ),
-                dtype=np.float32,
+    zoom_candidates = (
+        (0,)
+        if max_zoom_percent == 0
+        else tuple(
+            sorted(
+                {
+                    0,
+                    -max_zoom_percent,
+                    max_zoom_percent,
+                    *range(-max_zoom_percent, max_zoom_percent + 1, 10),
+                }
             )
-        angle_best_error = raw_error
-        angle_best_x = 0
-        angle_best_y = 0
-        angle_best_overlap = 1.0
-        # Coarse-to-fine search bounds work per angle and matches the legacy
-        # translation search when rotation is disabled.
-        for shift_y in range(-limit, limit + 1, 2):
-            for shift_x in range(-limit, limit + 1, 2):
-                error, overlap = _translation_error(
-                    left, right, shift_x, shift_y, right_validity
-                )
-                if error < angle_best_error:
-                    angle_best_error = error
-                    angle_best_x = shift_x
-                    angle_best_y = shift_y
-                    angle_best_overlap = overlap
-        coarse_x, coarse_y = angle_best_x, angle_best_y
-        for shift_y in range(max(-limit, coarse_y - 2), min(limit, coarse_y + 2) + 1):
-            for shift_x in range(max(-limit, coarse_x - 2), min(limit, coarse_x + 2) + 1):
-                error, overlap = _translation_error(
-                    left, right, shift_x, shift_y, right_validity
-                )
-                if error < angle_best_error:
-                    angle_best_error = error
-                    angle_best_x = shift_x
-                    angle_best_y = shift_y
-                    angle_best_overlap = overlap
-        if angle_best_error < best_error:
-            best_error = angle_best_error
-            best_x = angle_best_x
-            best_y = angle_best_y
-            best_rotation = rotation
-            best_overlap = angle_best_overlap
+        )
+    )
+
+    def transformed(zoom: int, rotation: int) -> tuple[np.ndarray, np.ndarray]:
+        image, validity = _transform_alignment_frame(
+            Image.fromarray(original_right.astype(np.float32)),
+            zoom,
+            rotation,
+            resample=Image.Resampling.BILINEAR,
+            fillcolor=0,
+        )
+        return np.asarray(image, dtype=np.float32), np.asarray(validity, dtype=np.uint8) == 255
+
+    def search(
+        zooms: tuple[int, ...],
+        rotations: tuple[int, ...],
+        step: int,
+        radius: int | None = None,
+    ) -> None:
+        nonlocal best_error, best_x, best_y, best_rotation, best_overlap, best_zoom
+        for zoom in zooms:
+            for rotation in rotations:
+                right, valid = transformed(zoom, rotation)
+                if radius is None:
+                    xs = _inclusive_candidates(limit, step)
+                    ys = xs
+                else:
+                    xs = range(max(-limit, best_x - radius), min(limit, best_x + radius) + 1, step)
+                    ys = range(max(-limit, best_y - radius), min(limit, best_y + radius) + 1, step)
+                local = (best_error, best_x, best_y, best_rotation, best_overlap, best_zoom)
+                for sy in ys:
+                    for sx in xs:
+                        error, overlap = _translation_error(left, right, sx, sy, valid)
+                        if error < local[0]:
+                            local = (error, sx, sy, rotation, overlap, zoom)
+                if local[0] < best_error:
+                    best_error, best_x, best_y, best_rotation, best_overlap, best_zoom = local
+
+    best_zoom = 0
+    coarse_rotations = (
+        tuple(
+            sorted(
+                {
+                    0,
+                    -max_rotation_degrees,
+                    max_rotation_degrees,
+                    *range(-max_rotation_degrees, max_rotation_degrees + 1, 5),
+                }
+            )
+        )
+        if max_rotation_degrees
+        else (0,)
+    )
+    search(zoom_candidates, coarse_rotations, 12)
+    if max_zoom_percent:
+        fine_zooms = tuple(
+            z
+            for z in range(
+                max(-max_zoom_percent, best_zoom - 5),
+                min(max_zoom_percent, best_zoom + 5) + 1,
+                1,
+            )
+        )
+    else:
+        fine_zooms = (0,)
+    fine_rotations = tuple(
+        range(
+            max(-max_rotation_degrees, best_rotation - 2),
+            min(max_rotation_degrees, best_rotation + 2) + 1,
+        )
+    )
+    search(fine_zooms, fine_rotations, 1, radius=6)
 
     improvement = (raw_error - best_error) / raw_error
     if (
-        (best_x == 0 and best_y == 0 and best_rotation == 0)
+        (best_x == 0 and best_y == 0 and best_rotation == 0 and best_zoom == 0)
         or improvement < DETAIL_ALIGNMENT_MIN_IMPROVEMENT
     ):
         return _DetailAlignment()
@@ -421,6 +562,7 @@ def _estimate_alignment(
         shift_x=shift_x,
         shift_y=shift_y,
         rotation_degrees=best_rotation,
+        zoom_percent=best_zoom,
         overlap_fraction=max(0.0, min(1.0, best_overlap)),
         applied=True,
     )
@@ -436,19 +578,12 @@ def _aligned_detail_images(
     if not alignment.applied:
         return left_image, right_image, None
     right_validity = None
-    if alignment.rotation_degrees:
-        right_validity = Image.new(
-            "L", (DETAIL_SAMPLE_SIDE, DETAIL_SAMPLE_SIDE), color=255
-        ).rotate(
+    if alignment.rotation_degrees or alignment.zoom_percent:
+        right_image, right_validity = _transform_alignment_frame(
+            right_image,
+            alignment.zoom_percent,
             alignment.rotation_degrees,
             resample=Image.Resampling.BICUBIC,
-            expand=False,
-            fillcolor=0,
-        )
-        right_image = right_image.rotate(
-            alignment.rotation_degrees,
-            resample=Image.Resampling.BICUBIC,
-            expand=False,
             fillcolor=(0, 0, 0, 0),
         )
     width, height = left_image.size
@@ -585,6 +720,7 @@ def _analyze_detail_features(
     *,
     max_shift_fraction: float = DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION,
     max_rotation_degrees: int = DETAIL_ALIGNMENT_MAX_ROTATION_DEGREES,
+    max_zoom_percent: int = DETAIL_ALIGNMENT_MAX_ZOOM_PERCENT,
 ) -> tuple[_DetailAnalysis, _DetailAnalysis, _DetailAlignment]:
     """Return raw viewer evidence and conservative aligned scoring evidence."""
 
@@ -595,6 +731,7 @@ def _analyze_detail_features(
         right_image,
         max_shift_fraction=max_shift_fraction,
         max_rotation_degrees=max_rotation_degrees,
+        max_zoom_percent=max_zoom_percent,
     )
     aligned_left, aligned_right, valid_pixels = _aligned_detail_images(
         left_image, right_image, alignment
@@ -655,6 +792,7 @@ def detail_diagnostics(
     *,
     max_shift_fraction: float = DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION,
     max_rotation_degrees: int = DETAIL_ALIGNMENT_MAX_ROTATION_DEGREES,
+    max_zoom_percent: int = DETAIL_ALIGNMENT_MAX_ZOOM_PERCENT,
 ) -> DetailDiagnostics:
     """Expose raw viewer-grid evidence alongside aligned scoring diagnostics."""
 
@@ -663,6 +801,7 @@ def detail_diagnostics(
         right,
         max_shift_fraction=max_shift_fraction,
         max_rotation_degrees=max_rotation_degrees,
+        max_zoom_percent=max_zoom_percent,
     )
     tile_changed_percents = tuple(
         tuple(round(float(value) * 100, 2) for value in row)
@@ -683,6 +822,7 @@ def detail_diagnostics(
         alignment_applied=alignment.applied,
         alignment_shift_percent=round(shift_fraction * 100, 2),
         alignment_rotation_degrees=alignment.rotation_degrees,
+        alignment_zoom_percent=alignment.zoom_percent,
         alignment_overlap_percent=round(alignment.overlap_fraction * 100, 2),
         rows=DETAIL_GRID_SIDE,
         columns=DETAIL_GRID_SIDE,

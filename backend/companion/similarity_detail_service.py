@@ -68,6 +68,7 @@ class StoredDetailDiagnostics:
     source: DetailEvidenceSource
     comparison_max_displacement_percent: int = 10
     comparison_max_rotation_degrees: int = 0
+    comparison_max_zoom_percent: int = 0
 
 
 class SimilarityDetailRepository:
@@ -137,6 +138,7 @@ class SimilarityDetailRepository:
         *,
         comparison_max_displacement_percent: int | None = None,
         comparison_max_rotation_degrees: int | None = None,
+        comparison_max_zoom_percent: int | None = None,
     ) -> StoredDetailDiagnostics | None:
         """Compare two already-cached detail samples without generating new work."""
 
@@ -164,7 +166,11 @@ class SimilarityDetailRepository:
         else:
             source = "original"
         settings = None
-        if comparison_max_displacement_percent is None or comparison_max_rotation_degrees is None:
+        if (
+            comparison_max_displacement_percent is None
+            or comparison_max_rotation_degrees is None
+            or comparison_max_zoom_percent is None
+        ):
             settings = (
                 await self._duplicate_settings.get()
                 if self._duplicate_settings is not None
@@ -180,16 +186,23 @@ class SimilarityDetailRepository:
             if comparison_max_rotation_degrees is not None
             else settings.comparison_max_rotation_degrees if settings is not None else 0
         )
+        zoom = (
+            comparison_max_zoom_percent
+            if comparison_max_zoom_percent is not None
+            else settings.comparison_max_zoom_percent if settings is not None else 0
+        )
         return StoredDetailDiagnostics(
             diagnostics=detail_diagnostics(
                 selected_feature,
                 reference_feature,
                 max_shift_fraction=displacement / 100,
                 max_rotation_degrees=rotation,
+                max_zoom_percent=zoom,
             ),
             source=source,
             comparison_max_displacement_percent=displacement,
             comparison_max_rotation_degrees=rotation,
+            comparison_max_zoom_percent=zoom,
         )
 
     async def save(

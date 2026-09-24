@@ -48,6 +48,48 @@ def test_local_change_route_is_unavailable_without_database() -> None:
     assert response.json()["detail"] == "The companion database is not configured."
 
 
+def test_local_change_route_rejects_ranges_outside_supported_limits() -> None:
+    class Repository:
+        async def diagnostics(self, *_args, **_kwargs):
+            return None
+
+    app = FastAPI()
+    register_similarity_detail_routes(app, Repository())  # type: ignore[arg-type]
+    with TestClient(app) as client:
+        displacement = client.get(
+            _path()
+            + "&comparison_max_displacement_percent=51"
+            "&comparison_max_rotation_degrees=30&comparison_max_zoom_percent=50"
+        )
+        rotation = client.get(
+            _path()
+            + "&comparison_max_displacement_percent=50"
+            "&comparison_max_rotation_degrees=31&comparison_max_zoom_percent=50"
+        )
+        zoom = client.get(
+            _path()
+            + "&comparison_max_displacement_percent=50"
+            "&comparison_max_rotation_degrees=30&comparison_max_zoom_percent=51"
+        )
+    assert displacement.status_code == rotation.status_code == zoom.status_code == 422
+
+
+def test_local_change_route_names_all_settings_when_query_is_incomplete() -> None:
+    class Repository:
+        async def diagnostics(self, *_args, **_kwargs):
+            return None
+
+    app = FastAPI()
+    register_similarity_detail_routes(app, Repository())  # type: ignore[arg-type]
+    with TestClient(app) as client:
+        response = client.get(_path() + "&comparison_max_zoom_percent=10")
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == (
+        "All comparison alignment settings must be supplied together."
+    )
+
+
 def test_local_change_route_returns_unavailable_when_cached_pair_is_missing() -> None:
     class Repository:
         async def diagnostics(self, selected_asset_id, reference_asset_id):
@@ -77,9 +119,11 @@ def test_local_change_route_returns_unavailable_when_cached_pair_is_missing() ->
         "alignment_applied": False,
         "alignment_shift_percent": None,
         "alignment_rotation_degrees": 0,
+        "alignment_zoom_percent": 0.0,
         "alignment_overlap_percent": None,
         "comparison_max_displacement_percent": 10,
         "comparison_max_rotation_degrees": 0,
+        "comparison_max_zoom_percent": 0,
         "rows": 0,
         "columns": 0,
         "cells": [],
@@ -105,10 +149,12 @@ def test_local_change_route_serializes_cached_grid_and_source() -> None:
             columns=2,
             tile_changed_percents=((0.0, 25.0), (75.0, 100.0)),
             alignment_rotation_degrees=-2,
+            alignment_zoom_percent=4,
         ),
         source="transcoded",
         comparison_max_displacement_percent=15,
         comparison_max_rotation_degrees=3,
+        comparison_max_zoom_percent=8,
     )
 
     class Repository:
@@ -119,11 +165,13 @@ def test_local_change_route_serializes_cached_grid_and_source() -> None:
             *,
             comparison_max_displacement_percent=None,
             comparison_max_rotation_degrees=None,
+            comparison_max_zoom_percent=None,
         ):
             assert selected_asset_id == SELECTED
             assert reference_asset_id == REFERENCE
             assert comparison_max_displacement_percent == 15
             assert comparison_max_rotation_degrees == 3
+            assert comparison_max_zoom_percent is None
             return result
 
     app = FastAPI()
@@ -150,9 +198,11 @@ def test_local_change_route_serializes_cached_grid_and_source() -> None:
         "alignment_applied": True,
         "alignment_shift_percent": 3.12,
         "alignment_rotation_degrees": -2,
+        "alignment_zoom_percent": 4.0,
         "alignment_overlap_percent": 94.2,
         "comparison_max_displacement_percent": 15,
         "comparison_max_rotation_degrees": 3,
+        "comparison_max_zoom_percent": 8,
         "rows": 2,
         "columns": 2,
         "cells": [[0.0, 25.0], [75.0, 100.0]],

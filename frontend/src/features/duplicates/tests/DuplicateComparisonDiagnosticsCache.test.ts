@@ -30,6 +30,7 @@ const result = {
   source: 'original' as const,
   comparisonMaxDisplacementPercent: 10,
   comparisonMaxRotationDegrees: 0,
+  comparisonMaxZoomPercent: 0,
 };
 
 describe('duplicate comparison diagnostics cache', () => {
@@ -40,9 +41,9 @@ describe('duplicate comparison diagnostics cache', () => {
 
   it('recomputes the same pair after another client changes alignment settings', async () => {
     loadAlignmentSettings
-      .mockResolvedValueOnce({ maxDisplacementPercent: 10, maxRotationDegrees: 0 })
-      .mockResolvedValueOnce({ maxDisplacementPercent: 15, maxRotationDegrees: 0 })
-      .mockResolvedValueOnce({ maxDisplacementPercent: 15, maxRotationDegrees: 0 });
+      .mockResolvedValueOnce({ maxDisplacementPercent: 10, maxRotationDegrees: 0, maxZoomPercent: 0 })
+      .mockResolvedValueOnce({ maxDisplacementPercent: 15, maxRotationDegrees: 0, maxZoomPercent: 0 })
+      .mockResolvedValueOnce({ maxDisplacementPercent: 15, maxRotationDegrees: 0, maxZoomPercent: 0 });
     loadDiagnostics
       .mockResolvedValueOnce(result)
       .mockResolvedValueOnce({
@@ -63,14 +64,14 @@ describe('duplicate comparison diagnostics cache', () => {
       selected.id,
       reference.id,
       expect.any(AbortSignal),
-      { maxDisplacementPercent: 10, maxRotationDegrees: 0 },
+      { maxDisplacementPercent: 10, maxRotationDegrees: 0, maxZoomPercent: 0 },
     );
     expect(loadDiagnostics).toHaveBeenNthCalledWith(
       2,
       selected.id,
       reference.id,
       expect.any(AbortSignal),
-      { maxDisplacementPercent: 15, maxRotationDegrees: 0 },
+      { maxDisplacementPercent: 15, maxRotationDegrees: 0, maxZoomPercent: 0 },
     );
   });
 
@@ -79,8 +80,9 @@ describe('duplicate comparison diagnostics cache', () => {
       ...result,
       comparisonMaxDisplacementPercent: 15,
       comparisonMaxRotationDegrees: 2,
+      comparisonMaxZoomPercent: 12,
     };
-    loadAlignmentSettings.mockResolvedValue({ maxDisplacementPercent: 15, maxRotationDegrees: 2 });
+    loadAlignmentSettings.mockResolvedValue({ maxDisplacementPercent: 15, maxRotationDegrees: 2, maxZoomPercent: 12 });
     loadDiagnostics.mockResolvedValue(resultForCurrentSettings);
     const controller = new DuplicateComparisonDataController();
 

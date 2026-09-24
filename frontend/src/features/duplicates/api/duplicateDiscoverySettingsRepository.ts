@@ -8,6 +8,7 @@ type ApiDuplicateDiscoverySettings = {
   maximum_perceptual_distance?: number;
   comparison_max_displacement_percent?: number;
   comparison_max_rotation_degrees?: number;
+  comparison_max_zoom_percent?: number;
   validation_mode: SimilarityValidationMode;
   max_link_depth?: number;
   max_candidates: number;
@@ -21,6 +22,7 @@ export type DuplicateDiscoverySettings = {
   maximumPerceptualDistance: number;
   comparisonMaxDisplacementPercent: number;
   comparisonMaxRotationDegrees: number;
+  comparisonMaxZoomPercent: number;
   validationMode: SimilarityValidationMode;
   maxLinkDepth: number;
   maxCandidates: number;
@@ -47,6 +49,7 @@ function normalize(value: ApiDuplicateDiscoverySettings): DuplicateDiscoverySett
     maximumPerceptualDistance: value.maximum_perceptual_distance ?? 12,
     comparisonMaxDisplacementPercent: value.comparison_max_displacement_percent ?? 10,
     comparisonMaxRotationDegrees: value.comparison_max_rotation_degrees ?? 0,
+    comparisonMaxZoomPercent: value.comparison_max_zoom_percent ?? 0,
     validationMode: value.validation_mode,
     maxLinkDepth: value.max_link_depth ?? 2,
     maxCandidates: value.max_candidates,
@@ -62,6 +65,7 @@ function payload(value: DuplicateDiscoverySettings): ApiDuplicateDiscoverySettin
     maximum_perceptual_distance: value.maximumPerceptualDistance,
     comparison_max_displacement_percent: value.comparisonMaxDisplacementPercent,
     comparison_max_rotation_degrees: value.comparisonMaxRotationDegrees,
+    comparison_max_zoom_percent: value.comparisonMaxZoomPercent,
     validation_mode: value.validationMode,
     max_link_depth: value.maxLinkDepth,
     max_candidates: value.maxCandidates,

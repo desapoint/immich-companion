@@ -5,8 +5,8 @@ import { loadImmichLibraries } from '../../../lib/api/duplicatePolicyApi';
 import { comparisonAlignmentSettingsRepository } from '../api/comparisonAlignmentSettingsRepository';
 
 function assetSetKey(ids: readonly string[]): string { return [...ids].sort().join('\u0000'); }
-function diagnosticsPairKey(selectedId: string, referenceId: string, displacement: number, rotation: number): string {
-  return `${selectedId}\u0000${referenceId}\u0000${displacement}\u0000${rotation}`;
+function diagnosticsPairKey(selectedId: string, referenceId: string, displacement: number, rotation: number, zoom: number): string {
+  return `${selectedId}\u0000${referenceId}\u0000${displacement}\u0000${rotation}\u0000${zoom}`;
 }
 function identicalDiagnostics(assetId: string): LocalChangeDiagnostics {
   const side = 32;
@@ -88,6 +88,7 @@ export class DuplicateComparisonDataController {
         referenceId,
         settings.maxDisplacementPercent,
         settings.maxRotationDegrees,
+        settings.maxZoomPercent,
       );
       const cached = this.diagnosticsCache.get(key);
       if (cached) {
@@ -106,6 +107,7 @@ export class DuplicateComparisonDataController {
         referenceId,
         result.comparisonMaxDisplacementPercent ?? settings.maxDisplacementPercent,
         result.comparisonMaxRotationDegrees ?? settings.maxRotationDegrees,
+        result.comparisonMaxZoomPercent ?? settings.maxZoomPercent,
       );
       this.diagnosticsCache.set(resultKey, result);
       this.localDiagnostics = result;

@@ -631,6 +631,9 @@ class DuplicateDiscoverySettingsRecord(Base):
     comparison_max_rotation_degrees: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0
     )
+    comparison_max_zoom_percent: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     validation_mode: Mapped[str] = mapped_column(String(16), nullable=False)
     max_link_depth: Mapped[int] = mapped_column(Integer, nullable=False)
     max_candidates: Mapped[int] = mapped_column(Integer, nullable=False)
