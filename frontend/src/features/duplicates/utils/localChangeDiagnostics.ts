@@ -14,7 +14,12 @@ export type LocalChangeDiagnostics = {
   alignedSimilarityPercent?: number | null;
   alignmentApplied?: boolean;
   alignmentShiftPercent?: number | null;
+  alignmentRotationDegrees?: number;
+  alignmentZoomPercent?: number;
   alignmentOverlapPercent?: number | null;
+  comparisonMaxDisplacementPercent?: number;
+  comparisonMaxRotationDegrees?: number;
+  comparisonMaxZoomPercent?: number;
   rows: number;
   columns: number;
   cells: number[][];
@@ -35,7 +40,12 @@ type ApiLocalChangeDiagnostics = {
   aligned_similarity_percent?: number | null;
   alignment_applied?: boolean;
   alignment_shift_percent?: number | null;
+  alignment_rotation_degrees?: number;
+  alignment_zoom_percent?: number;
   alignment_overlap_percent?: number | null;
+  comparison_max_displacement_percent?: number;
+  comparison_max_rotation_degrees?: number;
+  comparison_max_zoom_percent?: number;
   rows: number;
   columns: number;
   cells: number[][];
@@ -46,11 +56,17 @@ export async function loadLocalChangeDiagnostics(
   selectedAssetId: string,
   referenceAssetId: string,
   signal?: AbortSignal,
+  settings?: { maxDisplacementPercent: number; maxRotationDegrees: number; maxZoomPercent: number },
 ): Promise<LocalChangeDiagnostics> {
   const params = new URLSearchParams({
     selected_asset_id: selectedAssetId,
     reference_asset_id: referenceAssetId,
   });
+  if (settings) {
+    params.set('comparison_max_displacement_percent', String(settings.maxDisplacementPercent));
+    params.set('comparison_max_rotation_degrees', String(settings.maxRotationDegrees));
+    params.set('comparison_max_zoom_percent', String(settings.maxZoomPercent));
+  }
   const value = await requestJson<ApiLocalChangeDiagnostics>(
     `/api/v2/duplicates/similarity-local-changes?${params.toString()}`,
     { signal },
@@ -69,7 +85,12 @@ export async function loadLocalChangeDiagnostics(
     alignedSimilarityPercent: value.aligned_similarity_percent ?? null,
     alignmentApplied: value.alignment_applied ?? false,
     alignmentShiftPercent: value.alignment_shift_percent ?? null,
+    alignmentRotationDegrees: value.alignment_rotation_degrees ?? 0,
+    alignmentZoomPercent: value.alignment_zoom_percent ?? 0,
     alignmentOverlapPercent: value.alignment_overlap_percent ?? null,
+    comparisonMaxDisplacementPercent: value.comparison_max_displacement_percent,
+    comparisonMaxRotationDegrees: value.comparison_max_rotation_degrees,
+    comparisonMaxZoomPercent: value.comparison_max_zoom_percent,
     rows: value.rows,
     columns: value.columns,
     cells: value.cells,

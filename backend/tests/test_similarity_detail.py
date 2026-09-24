@@ -11,11 +11,20 @@ from uuid import UUID
 import pytest
 from PIL import Image, ImageDraw
 
+from companion import similarity_detail
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
     DETAIL_GRID_SIDE,
     DETAIL_SAMPLE_BYTES,
     DetailFeature,
+    _aligned_detail_images,
+    _analyze_images,
+    _detail_images,
+    _DetailAlignment,
+    _estimate_alignment,
+    _estimate_legacy_alignment,
+    _inclusive_candidates,
+    _transform_alignment_frame,
     compare_detail_features,
     detail_diagnostics,
     extract_detail_feature,
@@ -25,6 +34,69 @@ from companion.task_coordinator import TaskPausedError
 
 ASSET = UUID(int=1)
 MODIFIED = datetime(2026, 9, 14, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    ("limit", "step"),
+    [(5, 4), (64, 12), (7, 3)],
+)
+def test_staged_translation_candidates_include_both_symmetric_limits(
+    limit: int, step: int
+) -> None:
+    candidates = _inclusive_candidates(limit, step)
+
+    assert candidates[0] == -limit
+    assert candidates[-1] == limit
+    assert -limit in candidates and limit in candidates
+    assert set(candidates) == {-candidate for candidate in candidates}
+
+
+def test_default_alignment_keeps_the_exact_legacy_estimator_result() -> None:
+    reference_image = _burst_scene().crop((48, 48, 560, 560))
+    selected_image = _burst_scene((5, 3)).crop((64, 56, 576, 568))
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    selected = extract_detail_feature(BytesIO(_encoded(selected_image)), "png")
+    assert reference is not None and selected is not None
+    left, right = _detail_images(reference, selected)
+
+    assert _estimate_alignment(left, right) == _estimate_legacy_alignment(left, right)
+
+
+def test_configured_local_alignment_does_not_flow_into_comparison_validation(
+    monkeypatch,
+) -> None:
+    reference_image = _burst_scene().crop((48, 48, 560, 560))
+    selected_image = _burst_scene((5, 3)).crop((64, 56, 576, 568))
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    selected = extract_detail_feature(BytesIO(_encoded(selected_image)), "png")
+    assert reference is not None and selected is not None
+    original = similarity_detail._estimate_alignment
+    calls: list[dict[str, object]] = []
+
+    def record_alignment(left_image, right_image, **settings):
+        calls.append(settings)
+        return original(left_image, right_image, **settings)
+
+    monkeypatch.setattr(similarity_detail, "_estimate_alignment", record_alignment)
+    compare_detail_features(reference, selected)
+    assert calls[-1] == {
+        "max_shift_fraction": similarity_detail.DETAIL_ALIGNMENT_MAX_SHIFT_FRACTION,
+        "max_rotation_degrees": similarity_detail.DETAIL_ALIGNMENT_MAX_ROTATION_DEGREES,
+        "max_zoom_percent": similarity_detail.DETAIL_ALIGNMENT_MAX_ZOOM_PERCENT,
+    }
+
+    detail_diagnostics(
+        reference,
+        selected,
+        max_shift_fraction=0.5,
+        max_rotation_degrees=30,
+        max_zoom_percent=50,
+    )
+    assert calls[-1] == {
+        "max_shift_fraction": 0.5,
+        "max_rotation_degrees": 30,
+        "max_zoom_percent": 50,
+    }
 
 
 def _encoded(image: Image.Image, image_format: str = "PNG") -> bytes:
@@ -132,13 +204,156 @@ def test_small_handheld_frame_shift_is_compensated_without_warping_raw_grid() ->
 
     assert diagnostics.alignment_applied is True
     assert 1 < diagnostics.alignment_shift_percent < 10
-    assert diagnostics.alignment_overlap_percent > 90
+    assert 90 < diagnostics.alignment_overlap_percent < 100
     assert diagnostics.changed_percent > diagnostics.aligned_changed_percent
     assert diagnostics.aligned_changed_percent < diagnostics.changed_percent / 2
     assert score.changed_percent == pytest.approx(diagnostics.aligned_changed_percent)
     assert diagnostics.raw_similarity_percent < diagnostics.aligned_similarity_percent
     assert diagnostics.aligned_similarity_percent == pytest.approx(score.similarity_percent)
     assert score.similarity_percent > 93
+
+
+def test_rotation_search_is_disabled_by_default_and_honors_configured_limit(monkeypatch) -> None:
+    reference_image = _burst_scene().crop((48, 48, 560, 560))
+    rolled_image = reference_image.rotate(3, resample=Image.Resampling.BICUBIC)
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    rolled = extract_detail_feature(BytesIO(_encoded(rolled_image)), "png")
+
+    assert reference is not None and rolled is not None
+
+    def unexpected_rotation(*_args, **_kwargs):
+        raise AssertionError("default comparison must not run rotational search")
+
+    monkeypatch.setattr(Image.Image, "rotate", unexpected_rotation)
+    default_diagnostics = detail_diagnostics(reference, rolled)
+    zero_limit_diagnostics = detail_diagnostics(reference, rolled, max_rotation_degrees=0)
+    assert default_diagnostics == zero_limit_diagnostics
+    assert default_diagnostics.alignment_rotation_degrees == 0
+
+    monkeypatch.undo()
+    configured_diagnostics = detail_diagnostics(
+        reference,
+        rolled,
+        max_rotation_degrees=3,
+    )
+
+    assert configured_diagnostics.alignment_rotation_degrees == -3
+    assert (
+        configured_diagnostics.aligned_changed_percent
+        < default_diagnostics.aligned_changed_percent
+    )
+    assert (
+        configured_diagnostics.aligned_similarity_percent
+        > default_diagnostics.aligned_similarity_percent
+    )
+    assert 0 < configured_diagnostics.alignment_overlap_percent < 100
+
+
+def test_rotation_padding_is_excluded_but_source_transparency_is_counted() -> None:
+    opaque = Image.new("RGBA", (512, 512), (40, 70, 100, 255))
+    opaque_feature = extract_detail_feature(BytesIO(_encoded(opaque)), "png")
+    assert opaque_feature is not None
+    left, right = _detail_images(opaque_feature, opaque_feature)
+    aligned_left, aligned_right, valid_pixels = _aligned_detail_images(
+        left,
+        right,
+        _DetailAlignment(rotation_degrees=3, applied=True),
+    )
+    assert valid_pixels is not None
+
+    unmasked = _analyze_images(aligned_left, aligned_right)
+    masked = _analyze_images(aligned_left, aligned_right, valid_pixels)
+    assert unmasked.changed_fraction > 0
+    assert masked.changed_fraction == 0
+
+    changed = opaque.copy()
+    changed.putalpha(255)
+    changed_draw = ImageDraw.Draw(changed)
+    changed_draw.rectangle((220, 220, 290, 290), fill=(40, 70, 100, 0))
+    changed_feature = extract_detail_feature(BytesIO(_encoded(changed)), "png")
+    assert changed_feature is not None
+    _, changed_image = _detail_images(opaque_feature, changed_feature)
+    _, aligned_changed, changed_validity = _aligned_detail_images(
+        left,
+        changed_image,
+        _DetailAlignment(rotation_degrees=3, applied=True),
+    )
+    assert changed_validity is not None
+    genuine_transparency = _analyze_images(left, aligned_changed, changed_validity)
+    assert genuine_transparency.changed_fraction > 0
+
+
+def test_scale_compensation_recovers_center_zoom_and_reports_zoom_and_overlap() -> None:
+    reference_image = _burst_scene().crop((64, 64, 576, 576))
+    enlarged = reference_image.resize((614, 614), Image.Resampling.BICUBIC).crop((51, 51, 563, 563))
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    zoomed = extract_detail_feature(BytesIO(_encoded(enlarged)), "png")
+    assert reference is not None and zoomed is not None
+
+    raw = detail_diagnostics(reference, zoomed)
+    aligned = detail_diagnostics(reference, zoomed, max_zoom_percent=20)
+
+    assert raw.alignment_zoom_percent == 0
+    assert aligned.alignment_applied is True
+    assert aligned.alignment_zoom_percent != 0
+    assert aligned.aligned_changed_percent < raw.changed_percent
+    assert 70 < aligned.alignment_overlap_percent < 100
+
+
+def test_zoom_padding_mask_excludes_synthetic_pixels_and_keeps_source_alpha() -> None:
+    opaque = Image.new("RGBA", (512, 512), (40, 70, 100, 255))
+    feature = extract_detail_feature(BytesIO(_encoded(opaque)), "png")
+    assert feature is not None
+    left, right = _detail_images(feature, feature)
+    aligned_left, aligned_right, mask = _aligned_detail_images(
+        left, right, _DetailAlignment(zoom_percent=-20, applied=True)
+    )
+    assert mask is not None
+    assert _analyze_images(aligned_left, aligned_right).changed_fraction > 0
+    assert _analyze_images(aligned_left, aligned_right, mask).changed_fraction == 0
+
+
+def test_combined_zoom_rotation_uses_estimator_transform_order_and_masks_padding() -> None:
+    reference_image = _burst_scene().crop((32, 32, 544, 544)).convert("RGBA")
+    draw = ImageDraw.Draw(reference_image)
+    draw.rectangle((0, 195, 24, 320), fill=(255, 210, 30, 255))
+    draw.rectangle((488, 170, 511, 340), fill=(20, 240, 240, 255))
+    transformed, _ = _transform_alignment_frame(
+        reference_image,
+        -15,
+        8,
+        resample=Image.Resampling.BICUBIC,
+        fillcolor=(0, 0, 0, 0),
+    )
+    reference = extract_detail_feature(BytesIO(_encoded(reference_image)), "png")
+    selected = extract_detail_feature(BytesIO(_encoded(transformed)), "png")
+    assert reference is not None and selected is not None
+
+    raw = detail_diagnostics(reference, selected)
+    aligned = detail_diagnostics(
+        reference,
+        selected,
+        max_rotation_degrees=12,
+        max_zoom_percent=20,
+    )
+    left, right = _detail_images(reference, selected)
+    alignment = similarity_detail._estimate_alignment(
+        left,
+        right,
+        max_rotation_degrees=12,
+        max_zoom_percent=20,
+    )
+    aligned_left, aligned_right, validity = _aligned_detail_images(left, right, alignment)
+
+    assert aligned.alignment_applied is True
+    assert aligned.alignment_rotation_degrees != 0
+    assert aligned.alignment_zoom_percent != 0
+    assert aligned.aligned_changed_percent < raw.changed_percent * 0.6
+    assert 0 < aligned.alignment_overlap_percent < 100
+    assert validity is not None and not validity.all()
+    assert _analyze_images(aligned_left, aligned_right, validity).changed_fraction < (
+        _analyze_images(aligned_left, aligned_right).changed_fraction
+    )
 
 
 def test_jpeg_transcode_of_same_scene_remains_high_similarity() -> None:

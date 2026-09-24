@@ -2,15 +2,21 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
 from companion.duplicate_discovery_settings import (
+    COMPARISON_ONLY_DISCOVERY_FIELDS,
     MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS,
     ORCHESTRATION_ONLY_DISCOVERY_FIELDS,
+    ComparisonAlignmentSettingsUpdate,
     DuplicateDiscoverySettings,
+    DuplicateDiscoverySettingsPatch,
     DuplicateDiscoverySettingsRepository,
     DuplicateDiscoverySettingsUpdate,
 )
+from companion.sync_settings_routes import register_sync_settings_routes
 
 
 def test_duplicate_discovery_settings_defaults_match_v2_discovery_defaults() -> None:
@@ -20,6 +26,9 @@ def test_duplicate_discovery_settings_defaults_match_v2_discovery_defaults() -> 
     assert settings.include_similar is True
     assert settings.similarity_threshold == 95.0
     assert settings.maximum_perceptual_distance == 12
+    assert settings.comparison_max_displacement_percent == 10
+    assert settings.comparison_max_rotation_degrees == 0
+    assert settings.comparison_max_zoom_percent == 0
     assert settings.validation_mode == "strict"
     assert settings.max_link_depth == 2
     assert settings.max_candidates == 8
@@ -30,9 +39,14 @@ def test_every_discovery_setting_is_explicitly_classified_for_generation_impact(
     assert MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS.isdisjoint(
         ORCHESTRATION_ONLY_DISCOVERY_FIELDS
     )
+    assert COMPARISON_ONLY_DISCOVERY_FIELDS.isdisjoint(
+        MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS | ORCHESTRATION_ONLY_DISCOVERY_FIELDS
+    )
     assert (
         set(DuplicateDiscoverySettings.model_fields)
-        == MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS | ORCHESTRATION_ONLY_DISCOVERY_FIELDS
+        == MEMBERSHIP_AFFECTING_DISCOVERY_FIELDS
+        | ORCHESTRATION_ONLY_DISCOVERY_FIELDS
+        | COMPARISON_ONLY_DISCOVERY_FIELDS
     )
 
 
@@ -43,6 +57,12 @@ def test_every_discovery_setting_is_explicitly_classified_for_generation_impact(
         ("similarity_threshold", 100.1),
         ("maximum_perceptual_distance", -1),
         ("maximum_perceptual_distance", 65),
+        ("comparison_max_displacement_percent", -1),
+        ("comparison_max_displacement_percent", 51),
+        ("comparison_max_rotation_degrees", -1),
+        ("comparison_max_rotation_degrees", 31),
+        ("comparison_max_zoom_percent", -1),
+        ("comparison_max_zoom_percent", 51),
         ("validation_mode", "unknown"),
         ("max_link_depth", -1),
         ("max_link_depth", 65),
@@ -104,6 +124,11 @@ def _record(**overrides):
         ("max_link_depth", 4),
         ("max_candidates", 12),
         ("maximum_matches", 12_000),
+        ("comparison_max_displacement_percent", 14),
+        ("comparison_max_rotation_degrees", 3),
+        ("comparison_max_displacement_percent", 50),
+        ("comparison_max_rotation_degrees", 30),
+        ("comparison_max_zoom_percent", 50),
     ],
 )
 async def test_membership_affecting_setting_change_only_persists_configuration(
@@ -158,3 +183,135 @@ async def test_first_persisted_nondefault_membership_configuration_only_persists
     assert database.session.added is not None
     assert saved.max_link_depth == 5
     assert database.session.record.max_link_depth == 5
+
+
+@pytest.mark.asyncio
+async def test_legacy_full_update_preserves_alignment_fields_omitted_from_payload() -> None:
+    database = _Database(
+        _record(
+            comparison_max_displacement_percent=17,
+            comparison_max_rotation_degrees=4,
+            comparison_max_zoom_percent=28,
+        )
+    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
+
+    saved = await repository.update(
+        DuplicateDiscoverySettingsUpdate(
+            include_exact=True,
+            include_similar=True,
+            similarity_threshold=95,
+            maximum_perceptual_distance=12,
+            validation_mode="strict",
+            max_link_depth=2,
+            max_candidates=8,
+            maximum_matches=5000,
+        )
+    )
+
+    assert saved.comparison_max_displacement_percent == 17
+    assert saved.comparison_max_rotation_degrees == 4
+    assert saved.comparison_max_zoom_percent == 28
+    assert database.session.record.comparison_max_displacement_percent == 17
+    assert database.session.record.comparison_max_rotation_degrees == 4
+    assert database.session.record.comparison_max_zoom_percent == 28
+
+
+@pytest.mark.asyncio
+async def test_full_update_can_explicitly_reset_alignment_fields_to_defaults() -> None:
+    database = _Database(
+        _record(comparison_max_displacement_percent=17, comparison_max_rotation_degrees=4)
+    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
+
+    saved = await repository.update(
+        DuplicateDiscoverySettingsUpdate(
+            comparison_max_displacement_percent=10,
+            comparison_max_rotation_degrees=0,
+        )
+    )
+
+    assert saved.comparison_max_displacement_percent == 10
+    assert saved.comparison_max_rotation_degrees == 0
+
+
+def test_legacy_discovery_put_preserves_custom_comparison_alignment_settings() -> None:
+    database = _Database(
+        _record(comparison_max_displacement_percent=17, comparison_max_rotation_degrees=4)
+    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
+    app = FastAPI()
+    register_sync_settings_routes(
+        app,
+        asset_sync=None,
+        database=None,
+        immich=None,  # type: ignore[arg-type]
+        runtime_settings=None,
+        similarity_runtime_settings_repository=None,
+        duplicate_discovery_settings_repository=repository,
+        duplicate_policy_repository=None,
+        task_coordinator=None,
+        require_asset_repository=lambda: None,
+        require_immich=lambda: None,  # type: ignore[arg-type]
+        require_immich_duplicate_sync_service=lambda: None,
+        map_immich_error=lambda error: error,  # type: ignore[return-value]
+    )
+    old_payload = {
+        "include_exact": True,
+        "include_similar": True,
+        "similarity_threshold": 95,
+        "maximum_perceptual_distance": 12,
+        "validation_mode": "strict",
+        "max_link_depth": 2,
+        "max_candidates": 8,
+        "maximum_matches": 5000,
+    }
+
+    with TestClient(app) as client:
+        response = client.put("/api/settings/duplicates/discovery", json=old_payload)
+
+    assert response.status_code == 200
+    assert response.json()["comparison_max_displacement_percent"] == 17
+    assert response.json()["comparison_max_rotation_degrees"] == 4
+    assert database.session.record.comparison_max_displacement_percent == 17
+    assert database.session.record.comparison_max_rotation_degrees == 4
+
+
+@pytest.mark.asyncio
+async def test_discovery_patch_preserves_newer_comparison_alignment_settings() -> None:
+    database = _Database(
+        _record(comparison_max_displacement_percent=17, comparison_max_rotation_degrees=4)
+    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
+
+    saved = await repository.update_discovery_settings(
+        DuplicateDiscoverySettingsPatch(
+            similarity_threshold=91.5,
+            maximum_perceptual_distance=15,
+        )
+    )
+
+    assert saved.similarity_threshold == 91.5
+    assert saved.maximum_perceptual_distance == 15
+    assert saved.comparison_max_displacement_percent == 17
+    assert saved.comparison_max_rotation_degrees == 4
+
+
+@pytest.mark.asyncio
+async def test_comparison_alignment_update_preserves_discovery_settings() -> None:
+    database = _Database(
+        _record(similarity_threshold=89.5, maximum_perceptual_distance=13)
+    )
+    repository = DuplicateDiscoverySettingsRepository(database)  # type: ignore[arg-type]
+
+    saved = await repository.update_comparison_alignment(
+        ComparisonAlignmentSettingsUpdate(
+            comparison_max_displacement_percent=16,
+            comparison_max_rotation_degrees=3,
+        )
+    )
+
+    assert saved.comparison_max_displacement_percent == 16
+    assert saved.comparison_max_rotation_degrees == 3
+    assert database.session.record.similarity_threshold == 89.5
+    assert database.session.record.maximum_perceptual_distance == 13

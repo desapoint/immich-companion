@@ -22,7 +22,12 @@ describe('localized change diagnostics API client', () => {
       aligned_similarity_percent: 97.2,
       alignment_applied: true,
       alignment_shift_percent: 3.12,
+      alignment_rotation_degrees: -2,
+      alignment_zoom_percent: -4,
       alignment_overlap_percent: 94.2,
+      comparison_max_displacement_percent: 15,
+      comparison_max_rotation_degrees: 3,
+      comparison_max_zoom_percent: 8,
       rows: 2,
       columns: 2,
       cells: [[0, 25.5], [84.75, 100]],
@@ -54,7 +59,12 @@ describe('localized change diagnostics API client', () => {
       alignedSimilarityPercent: 97.2,
       alignmentApplied: true,
       alignmentShiftPercent: 3.12,
+      alignmentRotationDegrees: -2,
+      alignmentZoomPercent: -4,
       alignmentOverlapPercent: 94.2,
+      comparisonMaxDisplacementPercent: 15,
+      comparisonMaxRotationDegrees: 3,
+      comparisonMaxZoomPercent: 8,
       rows: 2,
       columns: 2,
       cells: [[0, 25.5], [84.75, 100]],
@@ -106,5 +116,36 @@ describe('localized change diagnostics API client', () => {
       cells: [],
       source: null,
     });
+  });
+
+  it('sends and returns the exact comparison settings used for diagnostics', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      available: false,
+      selected_asset_id: 'selected-id',
+      reference_asset_id: 'reference-id',
+      changed_percent: null,
+      localized_changed_percent: null,
+      rows: 0,
+      columns: 0,
+      cells: [],
+      source: null,
+      comparison_max_displacement_percent: 14,
+      comparison_max_rotation_degrees: 2,
+      comparison_max_zoom_percent: 7,
+    }), { status: 200, headers: { 'content-type': 'application/json' } }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const diagnostics = await loadLocalChangeDiagnostics('selected-id', 'reference-id', undefined, {
+      maxDisplacementPercent: 14,
+      maxRotationDegrees: 2,
+      maxZoomPercent: 7,
+    });
+
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('comparison_max_displacement_percent=14');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('comparison_max_rotation_degrees=2');
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('comparison_max_zoom_percent=7');
+    expect(diagnostics.comparisonMaxDisplacementPercent).toBe(14);
+    expect(diagnostics.comparisonMaxRotationDegrees).toBe(2);
+    expect(diagnostics.comparisonMaxZoomPercent).toBe(7);
   });
 });
