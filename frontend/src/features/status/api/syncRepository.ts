@@ -42,6 +42,12 @@ type ApiRuntimeSettings = {
   full_batch_size: number;
   full_min_batch_delay_seconds: number;
   tag_association_concurrency: number;
+  metadata_request_concurrency: number;
+  page_prefetch: number;
+  api_page_size: number;
+  incremental_overlap_seconds: number;
+  incremental_strategy: 'automatic' | 'asset' | 'relation';
+  adaptive_throttling: boolean;
 };
 
 type ApiSchedule = {
@@ -103,6 +109,12 @@ function normalizeRuntime(value: ApiRuntimeSettings): SyncRuntimeSettings {
     fullBatchSize: value.full_batch_size,
     fullMinBatchDelaySeconds: value.full_min_batch_delay_seconds,
     tagAssociationConcurrency: value.tag_association_concurrency,
+    metadataRequestConcurrency: value.metadata_request_concurrency,
+    pagePrefetch: value.page_prefetch,
+    apiPageSize: value.api_page_size,
+    incrementalOverlapSeconds: value.incremental_overlap_seconds,
+    incrementalStrategy: value.incremental_strategy,
+    adaptiveThrottling: value.adaptive_throttling,
   };
 }
 
@@ -111,6 +123,12 @@ function runtimePayload(value: SyncRuntimeSettings): ApiRuntimeSettings {
     full_batch_size: value.fullBatchSize,
     full_min_batch_delay_seconds: value.fullMinBatchDelaySeconds,
     tag_association_concurrency: value.tagAssociationConcurrency,
+    metadata_request_concurrency: value.metadataRequestConcurrency,
+    page_prefetch: value.pagePrefetch,
+    api_page_size: value.apiPageSize,
+    incremental_overlap_seconds: value.incrementalOverlapSeconds,
+    incremental_strategy: value.incrementalStrategy,
+    adaptive_throttling: value.adaptiveThrottling,
   };
 }
 

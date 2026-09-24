@@ -16,7 +16,7 @@ from uuid import UUID
 from companion.adaptive_tag_sync import (
     finalize_incremental_asset_oriented_tags,
     generation_asset_ids,
-    reconcile_generation_asset_tags,
+    reconcile_generation_asset_relations,
 )
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import AssetSyncResult
@@ -122,6 +122,42 @@ async def _enumerate_async[T](
         index += 1
 
 
+async def prefetch_async[T](items: AsyncIterator[T], ahead: int) -> AsyncIterator[T]:
+    """Bound asynchronous lookahead so remote reads overlap current persistence."""
+
+    if ahead <= 0:
+        async for item in items:
+            yield item
+        return
+    queue: asyncio.Queue[tuple[bool, T | BaseException | None]] = asyncio.Queue(
+        maxsize=ahead
+    )
+
+    async def produce() -> None:
+        try:
+            async for item in items:
+                await queue.put((True, item))
+        except BaseException as error:
+            await queue.put((False, error))
+        finally:
+            await queue.put((False, None))
+
+    producer = asyncio.create_task(produce(), name="sync-page-prefetch")
+    try:
+        while True:
+            available, value = await queue.get()
+            if available:
+                yield value  # type: ignore[misc]
+                continue
+            if isinstance(value, BaseException):
+                raise value
+            return
+    finally:
+        producer.cancel()
+        with suppress(asyncio.CancelledError):
+            await producer
+
+
 class _CoordinatorSyncRepository:
     """Adapt generic task context checkpoints to the legacy sync internals."""
 
@@ -159,27 +195,24 @@ class AssetSyncTaskHandler:
         service = self._service
         mode = payload.get("mode", "incremental")
         if "generation" not in payload or "window_end" not in payload:
+            runtime = await service._runtime_sync_settings.get()
             (
                 generation,
                 window_start,
                 window_end,
             ) = await service._legacy_metadata.next_sync_metadata(
                 mode,
-                overlap=service._overlap,  # type: ignore[arg-type]
+                overlap=timedelta(seconds=runtime.incremental_overlap_seconds),  # type: ignore[arg-type]
             )
             if mode == "incremental" and window_start is None:
                 mode = "full"
-            full_batch_payload: dict[str, int] = {}
-            if mode == "full":
-                pacing = await service._runtime_sync_settings.get()
-                full_batch_payload = {"full_batch_size": pacing.full_batch_size}
             payload = {
                 **payload,
                 "mode": mode,
                 "generation": generation,
                 "window_start": window_start.isoformat() if window_start else None,
                 "window_end": window_end.isoformat(),
-                **full_batch_payload,
+                "full_batch_size": runtime.full_batch_size,
             }
             await context.update_payload(payload)
         checkpoint = context.task.checkpoint
@@ -199,7 +232,7 @@ class AssetSyncTaskHandler:
             id=context.task.id,
             full_batch_size=(
                 int(payload["full_batch_size"])
-                if mode == "full" and payload.get("full_batch_size") is not None
+                if payload.get("full_batch_size") is not None
                 else None
             ),
             mode=mode,  # type: ignore[arg-type]
@@ -606,7 +639,7 @@ class AssetSyncService:
             task_id=task.id,
             full_batch_size=(
                 int(payload["full_batch_size"])
-                if payload.get("mode") == "full" and payload.get("full_batch_size") is not None
+                if payload.get("full_batch_size") is not None
                 else None
             ),
             mode=payload.get("mode", "incremental"),
@@ -640,9 +673,8 @@ class AssetSyncService:
 
     @staticmethod
     def _full_batch_size(run: SyncRunStatus, settings: Settings) -> int:
-        if run.mode != "full":
-            return settings.sync_batch_size
-        return run.full_batch_size or settings.sync_full_batch_size
+        fallback = settings.sync_full_batch_size if run.mode == "full" else settings.sync_batch_size
+        return run.full_batch_size or fallback
 
     async def _pace_full_batch(self, run: SyncRunStatus, started: float) -> None:
         if run.mode != "full":
@@ -657,7 +689,9 @@ class AssetSyncService:
 
     async def _pace_runtime_batch(self, started: float) -> None:
         pacing = await self._runtime_sync_settings.get()
-        await asyncio.sleep(max(pacing.full_min_batch_delay_seconds, perf_counter() - started))
+        remaining = pacing.full_min_batch_delay_seconds - (perf_counter() - started)
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     def wake(self) -> None:
         if self._worker is None or self._worker.done():
@@ -710,8 +744,9 @@ class AssetSyncService:
             existing = await self._coordinator.find_active("asset_sync", requested_key)
             if existing is not None:
                 return self._status_from_task(existing)
+            runtime_pacing = await self._runtime_sync_settings.get()
             generation, window_start, window_end = await self._legacy_metadata.next_sync_metadata(
-                mode, overlap=self._overlap
+                mode, overlap=timedelta(seconds=runtime_pacing.incremental_overlap_seconds)
             )
             effective_mode: SyncMode = (
                 "full" if mode == "incremental" and window_start is None else mode
@@ -721,9 +756,6 @@ class AssetSyncService:
                 existing = await self._coordinator.find_active("asset_sync", deduplication_key)
                 if existing is not None:
                     return self._status_from_task(existing)
-            runtime_pacing = (
-                await self._runtime_sync_settings.get() if effective_mode == "full" else None
-            )
             task = await self._coordinator.submit(
                 "asset_sync",
                 {
@@ -731,11 +763,7 @@ class AssetSyncService:
                     "generation": generation,
                     "window_start": window_start.isoformat() if window_start else None,
                     "window_end": window_end.isoformat(),
-                    **(
-                        {"full_batch_size": runtime_pacing.full_batch_size}
-                        if runtime_pacing is not None
-                        else {}
-                    ),
+                    "full_batch_size": runtime_pacing.full_batch_size,
                 },
                 priority=100 if effective_mode == "full" else 10,
                 deduplication_key=deduplication_key,
@@ -743,8 +771,11 @@ class AssetSyncService:
             )
             await self._coordinator.start()
             return self._status_from_task(task)
+        runtime_pacing = await self._runtime_sync_settings.get()
         run = await self._syncs.enqueue(
-            mode, overlap=self._overlap, force_follow_up=force_follow_up
+            mode,
+            overlap=timedelta(seconds=runtime_pacing.incremental_overlap_seconds),
+            force_follow_up=force_follow_up,
         )
         self.wake()
         return run
@@ -985,9 +1016,15 @@ class AssetSyncService:
         include_stacks: bool = False,
     ) -> dict[str, int]:
         metrics = _repair_metric_defaults()
-        assets = await asyncio.gather(
-            *(self._immich.get_asset(identifier) for identifier in asset_ids)
-        )
+        runtime = await self._runtime_sync_settings.get()
+        assets: list[ImmichAsset] = []
+        for start in range(0, len(asset_ids), runtime.metadata_request_concurrency):
+            wave = asset_ids[start : start + runtime.metadata_request_concurrency]
+            assets.extend(
+                await asyncio.gather(
+                    *(self._immich.get_asset(identifier) for identifier in wave)
+                )
+            )
         stack_payload_by_asset: dict[UUID, dict[str, object]] = {}
         if include_stacks:
             for stack in await self._immich.list_stacks():
@@ -1165,6 +1202,10 @@ class AssetSyncService:
         )
 
     async def _execute(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
+        runtime = await self._runtime_sync_settings.get()
+        configure_throttling = getattr(self._immich, "configure_adaptive_throttling", None)
+        if configure_throttling is not None:
+            configure_throttling(runtime.adaptive_throttling)
         defaults: dict[str, int] = {
             "albums_seen": 0,
             "tags_seen": 0,
@@ -1183,6 +1224,7 @@ class AssetSyncService:
             "tag_association_concurrency": 0,
             "tag_strategy_asset_oriented": 0,
             "tag_strategy_asset_fallback": 0,
+            "album_strategy_asset_oriented": 0,
             "tag_asset_detail_payload": 0,
             "tag_asset_detail_fallback": 0,
             "assets_removed": 0,
@@ -1270,18 +1312,24 @@ class AssetSyncService:
             "generation-valid",
             self._progress("finalizing", 1, 1, "Finalizing synchronized state"),
         )
-        asset_oriented_incremental = (
+        album_asset_oriented = (
+            run.mode == "incremental" and counters["album_strategy_asset_oriented"] == 1
+        )
+        tag_asset_oriented = (
             run.mode == "incremental"
             and counters["tag_strategy_asset_oriented"] == 1
             and counters["tag_strategy_asset_fallback"] == 0
         )
+        asset_oriented_incremental = album_asset_oriented or tag_asset_oriented
         if asset_oriented_incremental:
             removed = await finalize_incremental_asset_oriented_tags(
                 self._assets,
                 run.generation,
-                batch_size=self._settings.sync_batch_size,
+                batch_size=self._full_batch_size(run, self._settings),
                 window_start=run.window_start,
                 window_end=run.window_end,
+                album_asset_oriented=album_asset_oriented,
+                tag_asset_oriented=tag_asset_oriented,
             )
         else:
             removed = await self._assets.finalize_generation(
@@ -1460,8 +1508,9 @@ class AssetSyncService:
         counters: dict[str, int],
         asset_total: int | None,
     ) -> None:
+        runtime = await self._runtime_sync_settings.get()
         batch_size = self._full_batch_size(run, self._settings)
-        page_size = self._settings.sync_media_page_size
+        page_size = runtime.api_page_size
         start_page = 1
         completed_page_batches = 0
         completed_batches = 0
@@ -1475,12 +1524,12 @@ class AssetSyncService:
                 completed_assets = completed_batches * batch_size
                 start_page = completed_assets // page_size + 1
                 completed_page_batches = (completed_assets % page_size) // batch_size
-        iterator = self._immich.iter_asset_pages(
+        iterator = prefetch_async(self._immich.iter_asset_pages(
             page_size=page_size,
             updated_after=run.window_start if run.mode == "incremental" else None,
             updated_before=run.window_end if run.mode == "incremental" else None,
             start_page=start_page,
-        )
+        ), runtime.page_prefetch)
         async for page_number, page in iterator:
             await self._commit_asset_page(
                 run,
@@ -1693,88 +1742,53 @@ class AssetSyncService:
             relation_kind, relation_text, page_text = run.cursor.split(":", 2)
             completed_relation = int(relation_text)
             completed_page = int(page_text)
-        for relation_index, album in enumerate(albums, start=1):
-            if relation_kind == "tags" or relation_index < completed_relation:
-                continue
-            start_page = (
-                completed_page + 1
-                if relation_kind == "albums" and relation_index == completed_relation
-                else 1
-            )
-            page_number = start_page
-            async for asset_ids, is_last_page in async_items_with_last(
-                self._immich.iter_album_asset_ids(
-                    album.id,
-                    page_size=self._settings.sync_relationship_page_size,
-                    start_page=start_page,
-                )
-            ):
-                started = perf_counter()
-                counters["album_memberships"] += await self._assets.upsert_album_memberships(
-                    album.id, asset_ids, run.generation
-                )
-                association_completed += len(asset_ids)
-                await self._checkpoint(
-                    run,
-                    owner,
-                    counters,
-                    "relationships",
-                    f"albums:{relation_index}:{page_number}",
-                    self._progress(
-                        "relationships",
-                        association_completed,
-                        membership_total,
-                        f"Album associations {relation_index}/{len(albums)} · "
-                        f"tag associations 0/{len(tags)}",
-                    ),
-                )
-                if not is_last_page:
-                    await self._pace_full_batch(run, started)
-                page_number += 1
-            if page_number == start_page == 1:
-                await self._checkpoint(
-                    run,
-                    owner,
-                    counters,
-                    "relationships",
-                    f"albums:{relation_index}:0",
-                    self._progress(
-                        "relationships",
-                        association_completed,
-                        membership_total,
-                        f"Album {relation_index}/{len(albums)} · "
-                        f"{association_completed} associations",
-                    ),
-                )
-
         runtime = await self._runtime_sync_settings.get()
-        concurrency = runtime.tag_association_concurrency
-        counters["tag_association_concurrency"] = concurrency
-        can_choose_asset_oriented = (
-            relation_kind != "tags"
-            and counters["tag_relationships_scanned"] == 0
-            and "assets_seen" in counters
+        relation_concurrency = runtime.tag_association_concurrency
+        page_size = runtime.api_page_size
+        prefetch = runtime.page_prefetch
+        counters["tag_association_concurrency"] = relation_concurrency
+        target_ids = (
+            await generation_asset_ids(self._assets, run.generation)
+            if run.mode == "incremental" and relation_kind == ""
+            else []
         )
-        use_asset_oriented = can_choose_asset_oriented and counters[
-            "assets_seen"
-        ] * concurrency <= len(tags)
+        use_asset_oriented = (
+            run.mode == "incremental"
+            and relation_kind == ""
+            and not target_ids
+            and runtime.incremental_strategy != "relation"
+        )
+        if target_ids:
+            if runtime.incremental_strategy == "asset":
+                use_asset_oriented = True
+            elif runtime.incremental_strategy == "automatic":
+                tag_counts = await self._assets.tag_asset_counts()
+                relation_requests = sum(
+                    max(1, (album.asset_count + page_size - 1) // page_size)
+                    for album in albums
+                ) + sum(
+                    max(1, (tag_counts.get(tag.id, 0) + page_size - 1) // page_size)
+                    for tag in tags
+                )
+                use_asset_oriented = len(target_ids) * 2 <= relation_requests
+
+        counters["album_strategy_asset_oriented"] = 1 if use_asset_oriented else 0
         counters["tag_strategy_asset_oriented"] = 1 if use_asset_oriented else 0
         counters["tag_strategy_asset_fallback"] = 0
-
         if use_asset_oriented:
-            target_ids = await generation_asset_ids(self._assets, run.generation)
-            links, payload_assets, fallback_assets = await reconcile_generation_asset_tags(
+            result = await reconcile_generation_asset_relations(
                 self._immich,
                 self._assets,
                 target_ids,
                 generation=run.generation,
-                concurrency=concurrency,
+                concurrency=runtime.metadata_request_concurrency,
             )
-            counters["tag_memberships"] += links
-            association_completed += links
-            counters["tag_asset_detail_payload"] += payload_assets
-            counters["tag_asset_detail_fallback"] += fallback_assets
-            if fallback_assets == 0:
+            counters["album_memberships"] += result.album_links
+            counters["tag_memberships"] += result.tag_links
+            association_completed += result.album_links + result.tag_links
+            counters["tag_asset_detail_payload"] += result.payload_assets
+            counters["tag_asset_detail_fallback"] += result.tag_fallback_assets
+            if result.tag_fallback_assets == 0:
                 await self._checkpoint(
                     run,
                     owner,
@@ -1787,11 +1801,59 @@ class AssetSyncService:
                         membership_total,
                         f"Associations complete · {counters['album_memberships']} "
                         f"album links · {counters['tag_memberships']} tag links · "
-                        "asset-oriented tags",
+                        "changed-asset strategy",
                     ),
                 )
                 return
             counters["tag_strategy_asset_fallback"] = 1
+
+        if not use_asset_oriented and relation_kind != "tags":
+            album_start = 0
+            resume_page = 1
+            if relation_kind == "albums":
+                album_start = (
+                    max(0, completed_relation - 1)
+                    if completed_page
+                    else completed_relation
+                )
+                resume_page = completed_page + 1 if completed_page else 1
+            for wave_start in range(album_start, len(albums), relation_concurrency):
+                wave = albums[wave_start : wave_start + relation_concurrency]
+                tasks: list[asyncio.Task[tuple[int, int]]] = []
+                async with asyncio.TaskGroup() as group:
+                    tasks = [
+                        group.create_task(
+                            self._sync_album_relationship(
+                                run,
+                                album,
+                                start_page=(
+                                    resume_page
+                                    if wave_start == album_start and index == 0
+                                    else 1
+                                ),
+                                page_size=page_size,
+                                prefetch=prefetch,
+                            )
+                        )
+                        for index, album in enumerate(wave)
+                    ]
+                results = [task.result() for task in tasks]
+                counters["album_memberships"] += sum(result[0] for result in results)
+                association_completed += sum(result[1] for result in results)
+                completed_albums = wave_start + len(wave)
+                await self._checkpoint(
+                    run,
+                    owner,
+                    counters,
+                    "relationships",
+                    f"albums:{completed_albums}:0",
+                    self._progress(
+                        "relationships",
+                        association_completed,
+                        membership_total,
+                        f"Album associations {completed_albums}/{len(albums)}",
+                    ),
+                )
 
         skipped_tags = 0
         tag_start = 0
@@ -1799,11 +1861,18 @@ class AssetSyncService:
             tag_start = (
                 completed_relation if completed_page == 0 else max(0, completed_relation - 1)
             )
-        for wave_start in range(tag_start, len(tags), concurrency):
-            wave = tags[wave_start : wave_start + concurrency]
+        for wave_start in range(tag_start, len(tags), relation_concurrency):
+            wave = tags[wave_start : wave_start + relation_concurrency]
             tasks: list[asyncio.Task[tuple[int, int, bool]]] = []
             async with asyncio.TaskGroup() as group:
-                tasks = [group.create_task(self._sync_tag_relationship(run, tag)) for tag in wave]
+                tasks = [
+                    group.create_task(
+                        self._sync_tag_relationship(
+                            run, tag, page_size=page_size, prefetch=prefetch
+                        )
+                    )
+                    for tag in wave
+                ]
             results = [task.result() for task in tasks]
             counters["tag_memberships"] += sum(result[0] for result in results)
             association_completed += sum(result[1] for result in results)
@@ -1841,18 +1910,53 @@ class AssetSyncService:
             ),
         )
 
+    async def _sync_album_relationship(
+        self,
+        run: SyncRunStatus,
+        album: ImmichAlbum,
+        *,
+        start_page: int,
+        page_size: int,
+        prefetch: int,
+    ) -> tuple[int, int]:
+        persisted = 0
+        observed = 0
+        pages = prefetch_async(
+            self._immich.iter_album_asset_ids(
+                album.id, page_size=page_size, start_page=start_page
+            ),
+            prefetch,
+        )
+        async for asset_ids, is_last_page in async_items_with_last(pages):
+            started = perf_counter()
+            if asset_ids:
+                persisted += await self._assets.upsert_album_memberships(
+                    album.id, asset_ids, run.generation
+                )
+            observed += len(asset_ids)
+            if not is_last_page:
+                await self._pace_full_batch(run, started)
+        return persisted, observed
+
     async def _sync_tag_relationship(
-        self, run: SyncRunStatus, tag: ImmichTag
+        self,
+        run: SyncRunStatus,
+        tag: ImmichTag,
+        *,
+        page_size: int,
+        prefetch: int,
     ) -> tuple[int, int, bool]:
         persisted = 0
         observed = 0
-        async for asset_ids, is_last_page in async_items_with_last(
+        pages = prefetch_async(
             self._immich.iter_tag_asset_ids(
                 tag.id,
-                page_size=self._settings.sync_relationship_page_size,
+                page_size=page_size,
                 start_page=1,
-            )
-        ):
+            ),
+            prefetch,
+        )
+        async for asset_ids, is_last_page in async_items_with_last(pages):
             started = perf_counter()
             if asset_ids:
                 persisted += await self._assets.upsert_tag_memberships(

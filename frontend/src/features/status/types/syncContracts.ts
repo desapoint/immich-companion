@@ -42,6 +42,12 @@ export interface SyncRuntimeSettings {
   fullBatchSize: number;
   fullMinBatchDelaySeconds: number;
   tagAssociationConcurrency: number;
+  metadataRequestConcurrency: number;
+  pagePrefetch: number;
+  apiPageSize: number;
+  incrementalOverlapSeconds: number;
+  incrementalStrategy: 'automatic' | 'asset' | 'relation';
+  adaptiveThrottling: boolean;
 }
 
 export interface SyncSchedule {

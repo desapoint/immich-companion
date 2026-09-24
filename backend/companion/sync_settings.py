@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from companion.config import Settings
 from companion.database import DatabaseManager
@@ -14,6 +16,12 @@ class SyncRuntimeSettings(BaseModel):
     full_batch_size: int = Field(ge=1, le=500)
     full_min_batch_delay_seconds: float = Field(ge=0, le=60)
     tag_association_concurrency: int = Field(default=4, ge=1, le=32)
+    metadata_request_concurrency: int = Field(default=4, ge=1, le=16)
+    page_prefetch: int = Field(default=1, ge=0, le=4)
+    api_page_size: int = Field(default=1000, ge=25, le=1000)
+    incremental_overlap_seconds: int = Field(default=300, ge=0, le=86400)
+    incremental_strategy: Literal["automatic", "asset", "relation"] = "automatic"
+    adaptive_throttling: bool = True
 
 
 class SyncRuntimeSettingsUpdate(SyncRuntimeSettings):
@@ -30,6 +38,12 @@ class SyncRuntimeSettingsRepository:
             full_batch_size=self._defaults.sync_full_batch_size,
             full_min_batch_delay_seconds=self._defaults.sync_full_min_batch_delay_seconds,
             tag_association_concurrency=self._defaults.sync_tag_association_concurrency,
+            metadata_request_concurrency=self._defaults.sync_metadata_request_concurrency,
+            page_prefetch=self._defaults.sync_page_prefetch,
+            api_page_size=self._defaults.sync_media_page_size,
+            incremental_overlap_seconds=self._defaults.sync_overlap_seconds,
+            incremental_strategy=self._defaults.sync_incremental_strategy,
+            adaptive_throttling=self._defaults.sync_adaptive_throttling,
         )
 
     async def get(self) -> SyncRuntimeSettings:
@@ -45,23 +59,26 @@ class SyncRuntimeSettingsRepository:
                     id=1,
                     full_batch_size=default.full_batch_size,
                     full_min_batch_delay_seconds=default.full_min_batch_delay_seconds,
+                    tag_association_concurrency=default.tag_association_concurrency,
+                    metadata_request_concurrency=default.metadata_request_concurrency,
+                    page_prefetch=default.page_prefetch,
+                    api_page_size=default.api_page_size,
+                    incremental_overlap_seconds=default.incremental_overlap_seconds,
+                    incremental_strategy=default.incremental_strategy,
+                    adaptive_throttling=default.adaptive_throttling,
                 )
                 session.add(record)
                 await session.flush()
-            tag_association_concurrency = await session.scalar(
-                text(
-                    "SELECT tag_association_concurrency "
-                    "FROM sync_runtime_settings WHERE id = 1"
-                )
-            )
             return SyncRuntimeSettings(
                 full_batch_size=record.full_batch_size,
                 full_min_batch_delay_seconds=record.full_min_batch_delay_seconds,
-                tag_association_concurrency=int(
-                    tag_association_concurrency
-                    if tag_association_concurrency is not None
-                    else self._defaults.sync_tag_association_concurrency
-                ),
+                tag_association_concurrency=record.tag_association_concurrency,
+                metadata_request_concurrency=record.metadata_request_concurrency,
+                page_prefetch=record.page_prefetch,
+                api_page_size=record.api_page_size,
+                incremental_overlap_seconds=record.incremental_overlap_seconds,
+                incremental_strategy=record.incremental_strategy,
+                adaptive_throttling=record.adaptive_throttling,
             )
 
     async def update(self, value: SyncRuntimeSettingsUpdate) -> SyncRuntimeSettings:
@@ -72,18 +89,29 @@ class SyncRuntimeSettingsRepository:
                 .with_for_update()
             )
             if record is None:
-                record = SyncRuntimeSettingsRecord(id=1)
+                record = SyncRuntimeSettingsRecord(
+                    id=1,
+                    full_batch_size=value.full_batch_size,
+                    full_min_batch_delay_seconds=value.full_min_batch_delay_seconds,
+                    tag_association_concurrency=value.tag_association_concurrency,
+                    metadata_request_concurrency=value.metadata_request_concurrency,
+                    page_prefetch=value.page_prefetch,
+                    api_page_size=value.api_page_size,
+                    incremental_overlap_seconds=value.incremental_overlap_seconds,
+                    incremental_strategy=value.incremental_strategy,
+                    adaptive_throttling=value.adaptive_throttling,
+                )
                 session.add(record)
-                await session.flush()
-            record.full_batch_size = value.full_batch_size
-            record.full_min_batch_delay_seconds = value.full_min_batch_delay_seconds
-            await session.execute(
-                text(
-                    "UPDATE sync_runtime_settings "
-                    "SET tag_association_concurrency = :concurrency WHERE id = 1"
-                ),
-                {"concurrency": value.tag_association_concurrency},
-            )
+            else:
+                record.full_batch_size = value.full_batch_size
+                record.full_min_batch_delay_seconds = value.full_min_batch_delay_seconds
+                record.tag_association_concurrency = value.tag_association_concurrency
+                record.metadata_request_concurrency = value.metadata_request_concurrency
+                record.page_prefetch = value.page_prefetch
+                record.api_page_size = value.api_page_size
+                record.incremental_overlap_seconds = value.incremental_overlap_seconds
+                record.incremental_strategy = value.incremental_strategy
+                record.adaptive_throttling = value.adaptive_throttling
             return SyncRuntimeSettings.model_validate(value)
 
 
@@ -95,6 +123,12 @@ class DefaultSyncRuntimeSettingsRepository:
             full_batch_size=defaults.sync_full_batch_size,
             full_min_batch_delay_seconds=defaults.sync_full_min_batch_delay_seconds,
             tag_association_concurrency=defaults.sync_tag_association_concurrency,
+            metadata_request_concurrency=defaults.sync_metadata_request_concurrency,
+            page_prefetch=defaults.sync_page_prefetch,
+            api_page_size=defaults.sync_media_page_size,
+            incremental_overlap_seconds=defaults.sync_overlap_seconds,
+            incremental_strategy=defaults.sync_incremental_strategy,
+            adaptive_throttling=defaults.sync_adaptive_throttling,
         )
 
     async def get(self) -> SyncRuntimeSettings:
