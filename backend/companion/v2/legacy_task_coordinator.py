@@ -20,7 +20,13 @@ from companion.models import (
     TaskRecord,
     TaskScheduleRecord,
 )
-from companion.task_schema import TaskEvent, TaskResult, TaskScheduleView, TaskStatusView
+from companion.task_schema import (
+    TaskErrorEvent,
+    TaskEvent,
+    TaskResult,
+    TaskScheduleView,
+    TaskStatusView,
+)
 
 TASK_UPDATE_CHANNEL = "companion_task_updates"
 
@@ -484,16 +490,22 @@ class TaskRepository:
                 )
                 .with_for_update()
             )
+            failure_details = {
+                **record.error,
+                "retryable": retryable,
+                "will_retry": should_retry,
+                "max_attempts": max_attempts,
+            }
             if attempt is not None:
                 attempt.status = record.status
                 attempt.completed_at = now
-                attempt.details = record.error
+                attempt.details = failure_details
             session.add(
                 TaskEventRecord(
                     task_id=task_id,
                     attempt=record.attempt,
                     kind="retry" if should_retry else record.status,
-                    details=record.error,
+                    details=failure_details,
                 )
             )
             await session.execute(
@@ -713,6 +725,39 @@ class TaskRepository:
                 .limit(limit)
             )
             return [_public_event(record) for record in records]
+
+    async def errors(self, *, limit: int = 100) -> list[TaskErrorEvent]:
+        """Return newest task failures without exposing task payloads."""
+
+        async with self._database.sessions() as session:
+            rows = await session.execute(
+                select(TaskEventRecord, TaskRecord.task_type)
+                .join(TaskRecord, TaskRecord.id == TaskEventRecord.task_id)
+                .where(TaskEventRecord.kind.in_(("retry", "failed")))
+                .order_by(TaskEventRecord.created_at.desc(), TaskEventRecord.id.desc())
+                .limit(limit)
+            )
+            errors: list[TaskErrorEvent] = []
+            for event, task_type in rows:
+                details = event.details or {}
+                retryable = details.get("retryable")
+                max_attempts = details.get("max_attempts")
+                errors.append(
+                    TaskErrorEvent(
+                        id=event.id,
+                        task_id=event.task_id,
+                        task_type=task_type,
+                        attempt=event.attempt,
+                        outcome="retrying" if event.kind == "retry" else "failed",
+                        error_type=str(details.get("type") or "UnknownError"),
+                        message=str(details.get("message") or "No error message was recorded."),
+                        retryable=retryable if isinstance(retryable, bool) else None,
+                        will_retry=event.kind == "retry",
+                        max_attempts=max_attempts if isinstance(max_attempts, int) else None,
+                        occurred_at=event.created_at,
+                    )
+                )
+            return errors
 
     async def release_worker_leases(self, worker_id: UUID) -> int:
         """Release or finalize every active lease owned by a shutting-down worker."""
@@ -1057,6 +1102,9 @@ class TaskCoordinator:
     async def task_events(self, task_id: UUID, *, limit: int = 1000) -> list[TaskEvent]:
         return await self._repository.events(task_id, limit=limit)
 
+    async def task_errors(self, *, limit: int = 100) -> list[TaskErrorEvent]:
+        return await self._repository.errors(limit=limit)
+
     async def cancel(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.cancel(task_id)
 
@@ -1254,13 +1302,12 @@ class TaskCoordinator:
             )
             await self._publish(task.id)
         except Exception as error:
-            delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
             await self._repository.fail(
                 task.id,
                 worker_id,
                 error,
-                retryable=True,
-                next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
+                retryable=False,
+                next_attempt_at=None,
                 max_attempts=self._max_attempts,
             )
             await self._publish(task.id)

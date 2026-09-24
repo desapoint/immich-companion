@@ -272,13 +272,12 @@ class TaskCoordinator(_TaskCoordinator):
             )
             await self._publish(task.id)
         except Exception as error:
-            delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
             await self._repository.fail(
                 task.id,
                 worker_id,
                 error,
-                retryable=True,
-                next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
+                retryable=False,
+                next_attempt_at=None,
                 max_attempts=self._max_attempts,
             )
             await self._publish(task.id)

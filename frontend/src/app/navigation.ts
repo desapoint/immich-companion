@@ -1,5 +1,6 @@
 export const PAGE_KEYS = [
   'status',
+  'errors',
   'assets',
   'restore',
   'duplicates',
