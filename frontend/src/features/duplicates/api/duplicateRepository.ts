@@ -4,6 +4,7 @@ import type {
   DuplicateDiscoveryOptions,
   DuplicateGroupRecord,
   DuplicateKeeperSelectionInput,
+  DuplicatePendingStack,
   DuplicatePreparedPlan,
   DuplicateRepository,
   DuplicateResolutionPlan,
@@ -43,10 +44,16 @@ function failureResult(groups: readonly ApiDuplicateGroup[], failedGroupIds: rea
   };
 }
 
+function stackSourceGroups(stack: DuplicatePendingStack): string[] {
+  return [...new Set(stack.sourceGroupIds?.length ? stack.sourceGroupIds : [stack.groupId])];
+}
+
 function stackOverrides(resolution: DuplicateResolutionPlan) {
   const grouped = new Map<string, Array<{ primary_asset_id: string; member_asset_ids: string[]; resolution: string }>>();
   for (const stack of resolution.stacks) {
     if (!stack.primaryAssetId || stack.assetIds.length < 2) continue;
+    const sourceGroups = stackSourceGroups(stack);
+    if (sourceGroups.length !== 1 || sourceGroups[0] !== stack.groupId) continue;
     const stacks = grouped.get(stack.groupId) ?? [];
     stacks.push({
       primary_asset_id: stack.primaryAssetId,
@@ -56,6 +63,46 @@ function stackOverrides(resolution: DuplicateResolutionPlan) {
     grouped.set(stack.groupId, stacks);
   }
   return Object.fromEntries(grouped);
+}
+
+function stackDestinations(resolution: DuplicateResolutionPlan) {
+  if (!resolution.stacks.some((stack) => stackSourceGroups(stack).length > 1)) return [];
+  return resolution.stacks.flatMap((stack) => {
+    if (!stack.primaryAssetId || stack.assetIds.length < 2) return [];
+    return [{
+      destination_id: stack.id,
+      source_group_ids: stackSourceGroups(stack),
+      primary_asset_id: stack.primaryAssetId,
+      member_asset_ids: [...stack.assetIds],
+      resolution: serializeStackResolution(stack.stackResolution),
+    }];
+  });
+}
+
+function frozenStacks(groups: NonNullable<PlanResponse['groups']>): DuplicatePendingStack[] {
+  const byId = new Map<string, DuplicatePendingStack>();
+  for (const group of groups) {
+    const followUps = group.follow_ups ?? (group.follow_up ? [group.follow_up] : []);
+    followUps.forEach((stack, index) => {
+      const id = stack.destination_id ?? `plan:${group.group_id}:${index + 1}`;
+      const sourceGroupIds = [...new Set(stack.source_group_ids?.length ? stack.source_group_ids : [group.group_id])];
+      const existing = byId.get(id);
+      if (existing) {
+        existing.sourceGroupIds = [...new Set([...(existing.sourceGroupIds ?? [existing.groupId]), ...sourceGroupIds])];
+        return;
+      }
+      byId.set(id, {
+        id,
+        groupId: sourceGroupIds[0] ?? group.group_id,
+        label: sourceGroupIds.length > 1 ? 'Merged stack' : `Frozen stack ${index + 1}`,
+        assetIds: [...stack.member_asset_ids],
+        primaryAssetId: stack.primary_asset_id,
+        ...(stack.resolution !== undefined ? { stackResolution: parseStackResolution(stack.resolution) } : {}),
+        sourceGroupIds,
+      });
+    });
+  }
+  return [...byId.values()];
 }
 
 export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepository {
@@ -268,18 +315,12 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
           all_eligible: false,
           workspace_selected: true,
           stack_overrides: stackOverrides(resolution),
+          stack_destinations: stackDestinations(resolution),
         }));
         const frozenGroups = plan.groups ?? [];
         const frozenResolution: DuplicateResolutionPlan = {
           decisions: Object.fromEntries(frozenGroups.flatMap((group) => group.members.map((member) => [member.asset_id, member.disposition]))),
-          stacks: frozenGroups.flatMap((group) => (group.follow_ups ?? (group.follow_up ? [group.follow_up] : [])).map((stack, index) => ({
-            id: `plan:${group.group_id}:${index + 1}`,
-            groupId: group.group_id,
-            label: `Frozen stack ${index + 1}`,
-            assetIds: stack.member_asset_ids,
-            primaryAssetId: stack.primary_asset_id,
-            ...(stack.resolution !== undefined ? { stackResolution: parseStackResolution(stack.resolution) } : {}),
-          }))),
+          stacks: frozenStacks(frozenGroups),
         };
         return {
           id: plan.id,
@@ -313,6 +354,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
         keeper_overrides,
         action_overrides,
         stack_overrides: stackOverrides(resolution),
+        stack_destinations: stackDestinations(resolution),
       }));
       return { id: plan.id, resolution, groupIds: groups.map((group) => group.group_id), destructive: plan.destructive };
     },
