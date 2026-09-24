@@ -160,14 +160,6 @@ export function createTagRepository(fetcher: TagApiFetcher = globalThis.fetch): 
     }
   }
 
-  async function resolveParentId(parentPath: string): Promise<string | null> {
-    const normalized = parentPath.trim();
-    if (!normalized) return null;
-    const parent = (await allTags()).find((item) => canonicalPath(item) === normalized);
-    if (!parent) throw new Error(`Parent tag “${normalized}” no longer exists.`);
-    return parent.id;
-  }
-
   return {
     search,
     async createSelection(){return normalizeSelection(await requestJson<ApiSelection>(fetcher,'/api/tags/selections',{method:'POST'}))},
@@ -207,9 +199,9 @@ export function createTagRepository(fetcher: TagApiFetcher = globalThis.fetch): 
             && (!excludedPath || !path.startsWith(`${excludedPath} / `));
         })
         .map((item) => ({
-          value: canonicalPath(item),
-          label: item.name,
-          subtitle: item.parent_path.length ? item.parent_path.join(' / ') : 'Root',
+          value: item.id,
+          label: canonicalPath(item),
+          subtitle: item.parent_path.length ? `Child of ${item.parent_path.join(' / ')}` : 'Root tag',
         }));
     },
     async getById(id) {
@@ -223,12 +215,11 @@ export function createTagRepository(fetcher: TagApiFetcher = globalThis.fetch): 
         throw error;
       }
     },
-    async create(name, color = null, parentPath = '') {
-      const parentId = await resolveParentId(parentPath);
+    async create(name, color = null, parentId = '') {
       return normalizeTag(await requestJson<TagManagementItem>(fetcher, '/api/tags/manage', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name, color, parent_id: parentId }),
+        body: JSON.stringify({ name, color, parent_id: parentId.trim() || null }),
       }));
     },
     async update(id, update) {

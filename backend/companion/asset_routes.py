@@ -17,6 +17,7 @@ from companion.asset_schema import (
     AssetSortDirection,
     AssetSortField,
     AssetSummary,
+    AssetSummaryBatchRequest,
     StructuredAssetSearchQuery,
 )
 from companion.duplicate_schema import DuplicateDiscoverySummary
@@ -178,6 +179,19 @@ def register_asset_routes(
             evidence_count=metadata.evidence_count,
             last_success_at=metadata.last_success_at,
         )
+
+    @app.post(
+        "/api/assets/summaries",
+        response_model=list[AssetSummary],
+    )
+    async def asset_summaries(request: AssetSummaryBatchRequest) -> list[AssetSummary]:
+        """Return active synchronized summaries in one bounded database lookup."""
+
+        repository = require_asset_repository()
+        return [
+            add_public_asset_url(summary)
+            for summary in await repository.get_asset_summaries(request.ids)
+        ]
 
     @app.get(
         "/api/assets/{asset_id}/summary",

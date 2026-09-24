@@ -148,15 +148,14 @@ describe('live V2 tag repository', () => {
     const repository = createTagRepository(fetcher);
 
     expect(await repository.parentOptions(child.id)).toEqual([
-      { value: 'Places', label: 'Places', subtitle: 'Root' },
+      { value: parent.id, label: 'Places', subtitle: 'Root tag' },
     ]);
   });
 
-  it('resolves canonical parent paths for creation and only sends color on update', async () => {
+  it('submits the selected parent ID directly and only sends color on update', async () => {
     const requests: Array<{ path: string; method: string; body: unknown }> = [];
     const fetcher = vi.fn<TagApiFetcher>(async (input, init) => {
       const path = String(input);
-      if (path.startsWith('/api/tags/manage?')) return jsonResponse(page());
       requests.push({
         path,
         method: init?.method ?? 'GET',
@@ -166,7 +165,7 @@ describe('live V2 tag repository', () => {
     });
     const repository = createTagRepository(fetcher);
 
-    expect(await repository.create('Montréal', '#68d391', 'Places')).toMatchObject({
+    expect(await repository.create('Montréal', '#68d391', parent.id)).toMatchObject({
       id: child.id,
       tag_name: 'Places / Montréal',
     });
@@ -186,6 +185,7 @@ describe('live V2 tag repository', () => {
         body: { color: '#334455' },
       },
     ]);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('connects detail and batch deletion while retaining failure context', async () => {

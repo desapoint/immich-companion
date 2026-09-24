@@ -24,6 +24,12 @@ AssetSortField = Literal[
 AssetSortDirection = Literal["asc", "desc"]
 
 
+class AssetSummaryBatchRequest(BaseModel):
+    """Bounded asset identifiers for one synchronized-summary lookup."""
+
+    ids: list[UUID] = Field(default_factory=list, max_length=2000)
+
+
 def parse_aspect_ratio(value: str | int | float) -> float:
     """Parse a positive decimal or fraction without accepting partial values."""
 

@@ -589,16 +589,33 @@ class AssetRepository(AssetSearchMixin, AssetSelectionMixin, AssetCatalogRelatio
             relations.setdefault(asset_id, (set(), set()))[1].add(tag_id)
         return relations
 
+    async def get_asset_summaries(self, asset_ids: list[UUID]) -> list[AssetSummary]:
+        """Return active synchronized summaries for a bounded identifier set."""
 
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if not unique_ids:
+            return []
+        async with self._database.sessions() as session:
+            records = list(
+                (
+                    await session.scalars(
+                        select(AssetRecord).where(
+                            AssetRecord.id.in_(unique_ids),
+                            AssetRecord.is_trashed.is_(False),
+                        )
+                    )
+                ).all()
+            )
+            records_by_id = {record.id: record for record in records}
+            ordered = [
+                records_by_id[asset_id]
+                for asset_id in unique_ids
+                if asset_id in records_by_id
+            ]
+            return await self._summaries_for_records(session, ordered)
 
     async def get_asset_summary(self, asset_id: UUID) -> AssetSummary | None:
         """Return one synchronized asset summary without applying search filters."""
 
-        async with self._database.sessions() as session:
-            record = await session.get(AssetRecord, asset_id)
-            if record is not None and record.is_trashed:
-                return None
-            if record is None:
-                return None
-            summaries = await self._summaries_for_records(session, [record])
+        summaries = await self.get_asset_summaries([asset_id])
         return summaries[0] if summaries else None
