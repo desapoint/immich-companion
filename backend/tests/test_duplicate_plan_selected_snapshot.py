@@ -67,7 +67,8 @@ def _service(
     discovery_source: str = "immich_duplicate",
     provider_group_id: str | None = None,
 ) -> tuple[CrossSourceDuplicateService, list[object]]:
-    asset_ids = [uuid4(), uuid4()]
+    asset_count = len(dispositions) if dispositions is not None else 2
+    asset_ids = [uuid4() for _ in range(asset_count)]
     members = [
         SimpleNamespace(id=asset_id, is_offline=offline_member and index == 1)
         for index, asset_id in enumerate(asset_ids)
@@ -179,3 +180,62 @@ async def test_reviewed_delete_allows_similarity_only_group_without_provider_id(
     assert plan.groups[0].provider_group_id is None
     assert plan.groups[0].keep_asset_ids == [asset_ids[0]]
     assert plan.groups[0].trash_asset_ids == [asset_ids[1]]
+
+
+@pytest.mark.asyncio
+async def test_workspace_plan_preserves_multiple_saved_stack_partitions() -> None:
+    group_id = "immich:multi-stack-review"
+    service, asset_ids = _service(
+        [group_id],
+        dispositions=["stack", "stack", "stack", "stack"],
+    )
+    decisions = service._reviews._record.member_decisions
+    for index, decision in enumerate(decisions):
+        decision["stack_id"] = "pending-1" if index < 2 else "pending-2"
+        decision["stack_primary"] = index in {0, 2}
+        decision["stack_resolution"] = (
+            "move_selected" if index == 0
+            else "include_existing" if index == 2
+            else None
+        )
+
+    plan = await service.plan(
+        DuplicateResolutionPlanRequest(
+            options=DuplicateAnalysisOptions(analyze_automatically=False),
+            workspace_selected=True,
+        )
+    )
+
+    assert len(plan.groups[0].follow_ups) == 2
+    first, second = plan.groups[0].follow_ups
+    assert set(first.member_asset_ids) == set(asset_ids[:2])
+    assert first.primary_asset_id == asset_ids[0]
+    assert first.resolution == "move_selected"
+    assert set(second.member_asset_ids) == set(asset_ids[2:])
+    assert second.primary_asset_id == asset_ids[2]
+    assert second.resolution == "include_existing"
+
+
+@pytest.mark.asyncio
+async def test_workspace_plan_rejects_saved_incomplete_pending_stack() -> None:
+    group_id = "immich:incomplete-stack-review"
+    service, _ = _service(
+        [group_id],
+        dispositions=["stack", "keep"],
+    )
+    decision = service._reviews._record.member_decisions[0]
+    decision.update(
+        {
+            "stack_id": "pending-1",
+            "stack_primary": True,
+            "stack_resolution": "move_selected",
+        }
+    )
+
+    with pytest.raises(Exception, match="fewer than two images"):
+        await service.plan(
+            DuplicateResolutionPlanRequest(
+                options=DuplicateAnalysisOptions(analyze_automatically=False),
+                workspace_selected=True,
+            )
+        )
