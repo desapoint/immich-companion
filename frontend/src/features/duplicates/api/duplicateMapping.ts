@@ -103,7 +103,7 @@ function savedStacks(draft: ApiDuplicateDraft | undefined, groupId: string): Non
     groups.set(decision.stack_id, {
       id: decision.stack_id,
       groupId,
-      label: existing?.label ?? `Stack ${decision.stack_id.match(/-stack-(\\d+)$/)?.[1] ?? groups.size + 1}`,
+      label: existing?.label ?? `Stack ${decision.stack_id.match(/-stack-(\d+)$/)?.[1] ?? groups.size + 1}`,
       assetIds: [...(existing?.assetIds ?? []), decision.asset_id],
       primaryAssetId: decision.stack_primary ? decision.asset_id : existing?.primaryAssetId ?? null,
       ...(resolution !== undefined ? { stackResolution: resolution } : {}),
