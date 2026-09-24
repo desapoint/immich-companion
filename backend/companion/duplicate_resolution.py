@@ -50,6 +50,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
+    DuplicateStackDestinationOverride,
     DuplicateStackPlanOverride,
 )
 from companion.immich import (
@@ -75,6 +76,183 @@ def _stack_follow_ups(planned: dict[str, Any]) -> list[dict[str, Any]]:
         return follow_ups
     follow_up = planned.get("follow_up")
     return [follow_up] if isinstance(follow_up, dict) else []
+
+
+def _destination_id(planned: dict[str, Any], follow_up: dict[str, Any], index: int) -> str:
+    value = follow_up.get("destination_id")
+    if isinstance(value, str) and value:
+        return value
+    return f"{planned['group_id']}:stack:{index + 1}"
+
+
+def _unique_stack_destinations(
+    groups: list[dict[str, Any]],
+) -> dict[str, tuple[dict[str, Any], set[str]]]:
+    destinations: dict[str, tuple[dict[str, Any], set[str]]] = {}
+    for planned in groups:
+        for index, follow_up in enumerate(_stack_follow_ups(planned)):
+            destination_id = _destination_id(planned, follow_up, index)
+            source_groups = {
+                str(value)
+                for value in follow_up.get("source_group_ids", [])
+                if value
+            } or {str(planned["group_id"])}
+            existing = destinations.get(destination_id)
+            if existing is None:
+                destinations[destination_id] = (follow_up, set(source_groups))
+                continue
+            previous, participants = existing
+            comparable = (
+                "primary_asset_id",
+                "member_asset_ids",
+                "resolution",
+                "source_fingerprint",
+                "conflict_fingerprint",
+            )
+            if any(previous.get(key) != follow_up.get(key) for key in comparable):
+                raise ActionPlanConflictError(
+                    "A shared proposed stack changed between duplicate groups"
+                )
+            participants.update(source_groups)
+    return destinations
+
+
+def _validate_stack_destination_topology(groups: list[dict[str, Any]]) -> None:
+    """Reject impossible final stack intent before any Immich mutation."""
+
+    destinations = _unique_stack_destinations(groups)
+    destination_by_asset: dict[str, str] = {}
+    for destination_id, (follow_up, _) in destinations.items():
+        for asset_id in follow_up.get("member_asset_ids", []):
+            previous = destination_by_asset.get(str(asset_id))
+            if previous is not None and previous != destination_id:
+                raise ActionPlanConflictError(
+                    "One asset is assigned to multiple proposed duplicate stacks"
+                )
+            destination_by_asset[str(asset_id)] = destination_id
+
+    deleted_assets = {
+        str(member.get("asset_id"))
+        for planned in groups
+        for member in planned.get("members", [])
+        if isinstance(member, dict) and member.get("disposition") == "delete"
+    }
+    conflicting = deleted_assets.intersection(destination_by_asset)
+    if conflicting:
+        raise ActionPlanConflictError(
+            "An asset cannot be deleted by one duplicate group and stacked by another"
+        )
+
+
+def _apply_stack_destination_overrides(
+    plan_groups: list[dict[str, Any]],
+    destinations: list[DuplicateStackDestinationOverride],
+    member_assets: dict[UUID, Any],
+) -> None:
+    """Replace group-local stack partitions with reviewed plan-wide destinations."""
+
+    if not destinations:
+        return
+    groups_by_id = {str(planned["group_id"]): planned for planned in plan_groups}
+    member_ids_by_group = {
+        group_id: {str(value) for value in planned.get("member_asset_ids", [])}
+        for group_id, planned in groups_by_id.items()
+    }
+    stack_ids_by_group = {
+        group_id: {
+            str(member["asset_id"])
+            for member in planned.get("members", [])
+            if isinstance(member, dict) and member.get("disposition") == "stack"
+        }
+        for group_id, planned in groups_by_id.items()
+    }
+    covered_by_group: dict[str, set[str]] = {
+        group_id: set() for group_id in groups_by_id
+    }
+    follow_ups_by_group: dict[str, list[dict[str, Any]]] = {
+        group_id: [] for group_id in groups_by_id
+    }
+    seen_destination_ids: set[str] = set()
+    destination_by_asset: dict[str, str] = {}
+
+    for destination in destinations:
+        if destination.destination_id in seen_destination_ids:
+            raise ActionPlanConflictError("Stack destination identifiers must be unique")
+        seen_destination_ids.add(destination.destination_id)
+        source_group_ids = list(dict.fromkeys(destination.source_group_ids))
+        missing_groups = [group_id for group_id in source_group_ids if group_id not in groups_by_id]
+        if missing_groups:
+            raise ActionPlanConflictError(
+                "A proposed stack destination references an unselected duplicate group"
+            )
+        allowed_assets = set().union(
+            *(member_ids_by_group[group_id] for group_id in source_group_ids)
+        )
+        requested_ids = [str(value) for value in destination.member_asset_ids]
+        if not set(requested_ids).issubset(allowed_assets):
+            raise ActionPlanConflictError(
+                "A proposed stack destination references an asset outside its source groups"
+            )
+        for asset_id in requested_ids:
+            previous = destination_by_asset.get(asset_id)
+            if previous is not None and previous != destination.destination_id:
+                raise ActionPlanConflictError(
+                    "One asset is assigned to multiple proposed duplicate stacks"
+                )
+            destination_by_asset[asset_id] = destination.destination_id
+
+        assets = [
+            member_assets[UUID(asset_id)]
+            for asset_id in requested_ids
+            if UUID(asset_id) in member_assets
+        ]
+        if len(assets) != len(requested_ids):
+            raise ActionPlanConflictError(
+                "A proposed stack destination contains an unavailable duplicate asset"
+            )
+        follow_up = {
+            "type": "stack",
+            "destination_id": destination.destination_id,
+            "source_group_ids": source_group_ids,
+            "primary_asset_id": str(destination.primary_asset_id),
+            "resolution": destination.resolution,
+            "member_asset_ids": [
+                str(destination.primary_asset_id),
+                *(
+                    asset_id
+                    for asset_id in requested_ids
+                    if asset_id != str(destination.primary_asset_id)
+                ),
+            ],
+            "source_fingerprint": _source_fingerprint(assets),
+            "conflict_fingerprint": None,
+        }
+        for group_id in source_group_ids:
+            relevant = set(requested_ids).intersection(stack_ids_by_group[group_id])
+            if not relevant:
+                continue
+            covered_by_group[group_id].update(relevant)
+            follow_ups_by_group[group_id].append(dict(follow_up))
+
+    for group_id, stack_ids in stack_ids_by_group.items():
+        if covered_by_group[group_id] != stack_ids:
+            raise ActionPlanConflictError(
+                "Reviewed stack destinations must cover every Stack decision exactly once"
+            )
+        planned = groups_by_id[group_id]
+        planned["follow_ups"] = follow_ups_by_group[group_id]
+        planned["follow_up"] = (
+            follow_ups_by_group[group_id][0]
+            if follow_ups_by_group[group_id]
+            else None
+        )
+        primary_ids = {
+            follow_up["primary_asset_id"]
+            for follow_up in follow_ups_by_group[group_id]
+        }
+        for member in planned.get("members", []):
+            if isinstance(member, dict) and member.get("disposition") == "stack":
+                member["primary"] = str(member.get("asset_id")) in primary_ids
 
 
 def _saved_stack_overrides(record: Any) -> list[DuplicateStackPlanOverride] | None:
@@ -164,6 +342,7 @@ class DuplicateResolutionMixin:
         )
         found_ids: set[str] = set()
         plan_groups: list[dict[str, Any]] = []
+        planned_member_assets: dict[UUID, Any] = {}
         for offset in range(0, len(target_ids), batch_size):
             batch_ids = target_ids[offset : offset + batch_size]
             discovered = await self._groups_by_ids(batch_ids)
@@ -178,6 +357,9 @@ class DuplicateResolutionMixin:
                 )
             ]
             found_ids.update(group.group_id for group in selected)
+            for group in selected:
+                for member in group.members:
+                    planned_member_assets.setdefault(member.id, member)
 
             review_records: dict[tuple[str, str], object] = {}
             if self._reviews is not None:
@@ -513,6 +695,20 @@ class DuplicateResolutionMixin:
 
         if not plan_groups:
             raise ValueError("No duplicate groups were selected")
+
+        for planned in plan_groups:
+            for index, follow_up in enumerate(_stack_follow_ups(planned)):
+                follow_up.setdefault(
+                    "destination_id",
+                    f"{planned['group_id']}:stack:{index + 1}",
+                )
+                follow_up.setdefault("source_group_ids", [planned["group_id"]])
+
+        _apply_stack_destination_overrides(
+            plan_groups,
+            request.stack_destinations,
+            planned_member_assets,
+        )
         if (
             not request.all_eligible
             and found_ids != set(requested_group_ids)
@@ -625,6 +821,37 @@ class DuplicateResolutionMixin:
                 },
             )
         raw_groups = [_normalize_plan_group(item) for item in persisted_groups]
+        try:
+            _validate_stack_destination_topology(raw_groups)
+        except ActionPlanConflictError:
+            result = {
+                "error": "stack_destination_conflict",
+                "group_count": len(raw_groups),
+                "processed_group_count": 0,
+                "resolved_group_count": 0,
+                "kept_all_group_count": 0,
+                "zero_survivor_group_count": 0,
+                "stacked_group_count": 0,
+                "failed_group_ids": [planned["group_id"] for planned in raw_groups],
+                "drifted_group_ids": [planned["group_id"] for planned in raw_groups],
+                "follow_up_pending_group_ids": [],
+                "trashed_asset_count": 0,
+                "verified": False,
+            }
+            await self._actions.finish_plan(plan_id, "drifted", result)
+            return TaskResult(
+                status="failed",
+                summary=result,
+                counters={
+                    "groups_processed": 0,
+                    "groups_resolved": 0,
+                    "groups_kept_all": 0,
+                    "groups_zero_survivor": 0,
+                    "groups_stacked": 0,
+                    "groups_failed": len(raw_groups),
+                    "assets_trashed": 0,
+                },
+            )
         options = DuplicateAnalysisOptions.model_validate(existing.relation_work.get("options", {}))
         stored_execution = dict(
             (getattr(existing, "result", None) or {}).get("group_execution") or {}

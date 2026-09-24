@@ -481,6 +481,16 @@ class DuplicateStackPlanOverride(BaseModel):
         return self
 
 
+class DuplicateStackDestinationOverride(DuplicateStackPlanOverride):
+    destination_id: str = Field(min_length=1, max_length=256)
+    source_group_ids: list[str] = Field(min_length=1, max_length=10_000)
+
+    @model_validator(mode="after")
+    def validate_sources(self) -> DuplicateStackDestinationOverride:
+        self.source_group_ids = list(dict.fromkeys(self.source_group_ids))
+        return self
+
+
 class DuplicateResolutionPlanRequest(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     group_ids: list[str] = Field(default_factory=list, max_length=10_000)
@@ -493,6 +503,10 @@ class DuplicateResolutionPlanRequest(BaseModel):
     ] = Field(default_factory=dict)
     stack_overrides: dict[str, list[DuplicateStackPlanOverride]] = Field(
         default_factory=dict
+    )
+    stack_destinations: list[DuplicateStackDestinationOverride] = Field(
+        default_factory=list,
+        max_length=10_000,
     )
 
     @model_validator(mode="after")
@@ -520,6 +534,8 @@ class DuplicatePlanFollowUp(BaseModel):
     primary_asset_id: UUID
     member_asset_ids: list[UUID]
     resolution: StackResolution = "move_selected"
+    destination_id: str | None = None
+    source_group_ids: list[str] = Field(default_factory=list)
     source_fingerprint: str | None = None
     conflict_fingerprint: str | None = None
 
@@ -608,12 +624,27 @@ class DuplicateResolutionPlanGroup(BaseModel):
                     len(follow_up_ids) < 2
                     or len(follow_up_ids) != len(set(follow_up_ids))
                     or follow_up.primary_asset_id not in follow_up_ids
-                    or assigned.intersection(follow_up_ids)
                 ):
                     raise ValueError(
                         "Stack follow-ups must exactly match the frozen Stack decisions"
                     )
-                assigned.update(follow_up_ids)
+                if follow_up.source_group_ids:
+                    if self.group_id not in follow_up.source_group_ids:
+                        raise ValueError(
+                            "A shared stack destination must reference every participating group"
+                        )
+                    relevant_ids = set(follow_up_ids).intersection(stack_ids)
+                else:
+                    if not set(follow_up_ids).issubset(members):
+                        raise ValueError(
+                            "A group-local stack follow-up cannot reference another group"
+                        )
+                    relevant_ids = set(follow_up_ids)
+                if assigned.intersection(relevant_ids):
+                    raise ValueError(
+                        "Stack follow-ups must exactly match the frozen Stack decisions"
+                    )
+                assigned.update(relevant_ids)
             if assigned != stack_ids:
                 raise ValueError("Stack follow-ups must exactly match the frozen Stack decisions")
         return self
