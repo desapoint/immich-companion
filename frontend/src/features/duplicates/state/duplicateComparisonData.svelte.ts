@@ -2,7 +2,6 @@ import type { AssetRecord, DuplicateSimilarityEvidence, MediaResource } from '..
 import { libraryData } from '../../../app/data/currentDataSource.svelte';
 import { loadLocalChangeDiagnostics, type LocalChangeDiagnostics } from '../utils/localChangeDiagnostics';
 import { loadImmichLibraries } from '../../../lib/api/duplicatePolicyApi';
-import { assetThumbnailUrl } from '../../../lib/utils/viewerMedia';
 
 function assetSetKey(ids: readonly string[]): string { return [...ids].sort().join('\u0000'); }
 function diagnosticsPairKey(selectedId: string, referenceId: string): string { return `${selectedId}\u0000${referenceId}`; }
@@ -32,20 +31,11 @@ export class DuplicateComparisonDataController {
       const url = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="960" height="640"><rect width="960" height="640" fill="#222831"/><circle cx="480" cy="320" r="82" fill="#ffffff22"/><path d="M455 270 545 320 455 370Z" fill="white"/><text x="480" y="450" text-anchor="middle" fill="white" font-family="sans-serif" font-size="34">Video asset</text></svg>');
       return { url, fallbackUrls: [], mimeType: 'image/svg+xml', posterUrl: null, delivery: 'preview', originalMimeType: null, expiresAt: null };
     }
-    // Comparison is a bounded review surface. Do not request originals or
-    // full-size derivatives for both panes: external/offline Immich assets can
-    // reject those requests, causing a burst of 502s before the preview
-    // fallback is reached. The preview is sufficient for side-by-side review,
-    // and the small thumbnail remains a second, cached fallback.
-    return {
-      url: assetThumbnailUrl(asset.id, 'preview'),
-      fallbackUrls: [assetThumbnailUrl(asset.id, 'thumbnail')],
-      mimeType: 'image/jpeg',
-      posterUrl: null,
-      delivery: 'preview',
-      originalMimeType: asset.original_mime_type,
-      expiresAt: null,
-    };
+    // Use the shared viewer media contract so browser-supported formats keep
+    // their original representation (including alpha) and fall back through
+    // Immich fullsize/preview derivatives only when the original cannot load.
+    // Unsupported formats still resolve to the bounded derivative chain.
+    return libraryData.media.view(asset);
   }
 
   async load(ids: readonly string[], open: boolean): Promise<void> {
