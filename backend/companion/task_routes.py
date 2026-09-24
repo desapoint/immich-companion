@@ -112,6 +112,17 @@ def register_task_routes(app: FastAPI, task_coordinator: TaskCoordinator | None)
             )
         return await task_coordinator.task_errors(limit=limit)
 
+    @app.delete("/api/errors")
+    async def clear_task_errors() -> dict[str, int]:
+        """Clear recorded failures without deleting their parent tasks."""
+
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return {"cleared": await task_coordinator.clear_task_errors()}
+
     @app.get("/api/settings/sync", response_model=list[TaskScheduleView])
     async def sync_schedule_settings() -> list[TaskScheduleView]:
         if task_coordinator is None:
