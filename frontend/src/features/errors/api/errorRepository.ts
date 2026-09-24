@@ -35,3 +35,8 @@ export async function loadTaskErrors(limit = 200, signal?: AbortSignal): Promise
   const errors = await requestJson<ApiTaskErrorEvent[]>(`/api/errors?limit=${limit}`, { signal });
   return errors.map(normalizeError);
 }
+
+export async function clearTaskErrors(): Promise<number> {
+  const result = await requestJson<{ cleared: number }>('/api/errors', { method: 'DELETE' });
+  return result.cleared;
+}

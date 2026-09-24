@@ -249,6 +249,9 @@ class TaskCoordinator:
     async def task_errors(self, *, limit: int = 100) -> list[TaskErrorEvent]:
         return await self._repository.errors(limit=limit)
 
+    async def clear_task_errors(self) -> int:
+        return await self._repository.clear_errors()
+
     async def cancel(self, task_id: UUID) -> TaskStatusView | None:
         return await self._repository.cancel(task_id)
 
