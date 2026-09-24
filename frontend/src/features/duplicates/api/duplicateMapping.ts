@@ -109,7 +109,7 @@ function savedStacks(draft: ApiDuplicateDraft | undefined, groupId: string): Non
       ...(resolution !== undefined ? { stackResolution: resolution } : {}),
     });
   }
-  return [...groups.values()];
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true }));
 }
 
 function groupState(group: ApiDuplicateGroup, draft: ApiDuplicateDraft | undefined): DuplicateState {
