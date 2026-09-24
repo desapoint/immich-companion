@@ -187,6 +187,70 @@ describe('live V2 duplicate repository', () => {
     });
   });
 
+  it('restores multiple saved stack partitions from workspace draft metadata', async () => {
+    const ids = [
+      ...ASSET_IDS,
+      '44444444-4444-4444-8444-444444444444',
+      '55555555-5555-4555-8555-555555555555',
+    ];
+    const multiStackGroup = {
+      ...group,
+      members: ids.map((id, index) => ({
+        ...group.members[index % group.members.length],
+        id,
+        original_file_name: `restored-${index}.jpg`,
+      })),
+    };
+    const workspace = {
+      ...emptyWorkspace,
+      drafts: [{
+        group_id: group.group_id,
+        member_fingerprint: group.member_fingerprint,
+        decisions: ids.map((asset_id, index) => ({
+          asset_id,
+          disposition: 'stack',
+          source: 'manual',
+          status: 'completed',
+          stack_id: index < 2 ? 'group-restored-stack-1' : 'group-restored-stack-2',
+          stack_primary: index === 0 || index === 2,
+          stack_resolution: index === 0 ? 'move_selected' : index === 2 ? 'include_existing' : null,
+        })),
+        stack_primary_asset_id: ids[0],
+        stack_resolution: 'move_selected',
+        status: 'completed',
+        stale: false,
+      }],
+    };
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.includes('/cross-source/page?')) return response(asPage({ group_count: 1, groups: [multiStackGroup] }));
+      if (path.endsWith('/workspace')) return response(workspace);
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+
+    const page = await repository.search({ page: 1, pageSize: 10 });
+
+    expect(page.items[0]?.savedStacks).toEqual([
+      {
+        id: 'group-restored-stack-1',
+        groupId: group.group_id,
+        label: 'Stack 1',
+        assetIds: ids.slice(0, 2),
+        primaryAssetId: ids[0],
+        stackResolution: 'move_selected',
+      },
+      {
+        id: 'group-restored-stack-2',
+        groupId: group.group_id,
+        label: 'Stack 2',
+        assetIds: ids.slice(2),
+        primaryAssetId: ids[2],
+        stackResolution: 'include_existing',
+      },
+    ]);
+  });
+
   it('uses server source filtering before pagination and includes overlapping sources', async () => {
     const similar = {
       ...group,
