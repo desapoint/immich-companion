@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from companion.action_service import ActionPlanConflictError
 from companion.duplicate_schema import DuplicateAnalysisOptions, DuplicateResolutionPlanRequest
 from companion.duplicate_service import CrossSourceDuplicateService
 
@@ -232,7 +233,7 @@ async def test_workspace_plan_rejects_saved_incomplete_pending_stack() -> None:
         }
     )
 
-    with pytest.raises(Exception, match="fewer than two images"):
+    with pytest.raises(ActionPlanConflictError, match="fewer than two images"):
         await service.plan(
             DuplicateResolutionPlanRequest(
                 options=DuplicateAnalysisOptions(analyze_automatically=False),
