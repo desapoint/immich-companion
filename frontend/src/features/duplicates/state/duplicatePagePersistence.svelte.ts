@@ -31,7 +31,7 @@ export class DuplicatePagePersistence {
       if (item.selected && !selected.includes(item.id)) selected.push(item.id);
       const stackIds = item.members.filter((entry) => item.savedDecisions[entry.asset.id] === 'stack').map((entry) => entry.asset.id);
       nextStacks = clearGroupStacks(nextStacks, item.id);
-      if (item.savedStacks.length) {
+      if (item.savedStacks?.length) {
         for (const savedStack of item.savedStacks) {
           nextStacks = createPendingStack(nextStacks, item.id);
           const restoredId = nextStacks.activeByGroup[item.id];
