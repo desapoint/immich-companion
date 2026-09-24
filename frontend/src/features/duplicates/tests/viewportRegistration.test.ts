@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 import { createViewportAttachment } from '../state/comparisonViewportAttachment';
 
@@ -35,5 +37,22 @@ describe('createViewportAttachment', () => {
     cleanup?.();
     expect(disconnect).toHaveBeenCalledTimes(1);
     vi.unstubAllGlobals();
+  });
+
+  it('keeps localized viewport registration outside the attachment effect graph', () => {
+    const attachmentSource = readFileSync(
+      fileURLToPath(new URL('../state/comparisonViewportAttachment.ts', import.meta.url)),
+      'utf8',
+    );
+    const localizedSource = readFileSync(
+      fileURLToPath(new URL('../components/DuplicateLocalChangesComparison.svelte', import.meta.url)),
+      'utf8',
+    );
+
+    expect(attachmentSource).toContain("import { untrack } from 'svelte';");
+    expect(attachmentSource).toContain('untrack(() => register(node))');
+    expect(attachmentSource).toContain('if (onresize) untrack(onresize)');
+    expect(localizedSource).toContain('let viewport: HTMLElement | null = null;');
+    expect(localizedSource).not.toContain('let viewport = $state<HTMLElement | null>(null);');
   });
 });

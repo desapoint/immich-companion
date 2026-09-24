@@ -55,7 +55,7 @@
     onviewport?: (node: HTMLElement | null) => void;
   } = $props();
 
-  let viewport = $state<HTMLElement | null>(null);
+  let viewport: HTMLElement | null = null;
   let selectedNaturalWidth = $state(0);
   let selectedNaturalHeight = $state(0);
   let viewportWidth = $state(0);

@@ -1,3 +1,5 @@
+import { untrack } from 'svelte';
+
 export type ViewportRegistration = (node: HTMLElement | null) => void;
 
 /**
@@ -12,18 +14,21 @@ export function createViewportAttachment(
   cleanup?: () => void,
 ): (node: HTMLElement) => void | (() => void) {
   return (node) => {
-    register(node);
+    // Attachments run in a reactive effect. Registration and initial measurement
+    // may read or update component state, but neither should become a dependency
+    // of the attachment itself or it can repeatedly detach and reattach.
+    untrack(() => register(node));
 
     const observer = onresize && typeof ResizeObserver !== 'undefined'
       ? new ResizeObserver(onresize)
       : null;
     observer?.observe(node);
-    onresize?.();
+    if (onresize) untrack(onresize);
 
     return () => {
       observer?.disconnect();
       cleanup?.();
-      register(null);
+      untrack(() => register(null));
     };
   };
 }
