@@ -2,10 +2,12 @@ import { libraryData } from '../../../app/data/currentDataSource.svelte';
 import type { DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan } from '../types/contracts';
 import {
   assignAssetToActiveStack,
+  clearGroupStacks,
   createDuplicateStackWorkspace,
   createPendingStack,
   removeAssetFromPendingStack,
   setPendingStackPrimary,
+  setPendingStackResolution,
   type DuplicateStackWorkspace,
 } from './duplicateStackResolution';
 
@@ -28,10 +30,25 @@ export class DuplicatePagePersistence {
       nextDecisions = { ...nextDecisions, ...item.savedDecisions };
       if (item.selected && !selected.includes(item.id)) selected.push(item.id);
       const stackIds = item.members.filter((entry) => item.savedDecisions[entry.asset.id] === 'stack').map((entry) => entry.asset.id);
-      if (stackIds.length) {
+      nextStacks = clearGroupStacks(nextStacks, item.id);
+      if (item.savedStacks.length) {
+        for (const savedStack of item.savedStacks) {
+          nextStacks = createPendingStack(nextStacks, item.id);
+          const restoredId = nextStacks.activeByGroup[item.id];
+          for (const id of savedStack.assetIds) nextStacks = assignAssetToActiveStack(nextStacks, item.id, id);
+          if (savedStack.primaryAssetId) nextStacks = setPendingStackPrimary(nextStacks, savedStack.primaryAssetId);
+          if (restoredId && savedStack.stackResolution !== undefined) {
+            nextStacks = setPendingStackResolution(nextStacks, restoredId, savedStack.stackResolution);
+          }
+        }
+      } else if (stackIds.length) {
+        // Legacy drafts did not retain partition membership. Preserve their historical
+        // single-stack behavior until the next write upgrades the draft metadata.
         nextStacks = createPendingStack(nextStacks, item.id);
         for (const id of stackIds) nextStacks = assignAssetToActiveStack(nextStacks, item.id, id);
         if (item.stackPrimaryAssetId) nextStacks = setPendingStackPrimary(nextStacks, item.stackPrimaryAssetId);
+        const restoredId = nextStacks.activeByGroup[item.id];
+        if (restoredId) nextStacks = setPendingStackResolution(nextStacks, restoredId, item.stackResolution);
       }
     }
     this.workspaceHydrated = true;
