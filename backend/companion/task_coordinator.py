@@ -1,8 +1,25 @@
-"""V2 compatibility import for durable task coordination.
+"""Stable public imports for the canonical task subsystem."""
 
-The V2 branch keeps the previous coordinator byte-for-byte in
-``companion.v2.legacy_task_coordinator``. Application code can keep importing this
-established module path while receiving the V2-owned coordinator/context implementation.
-"""
+from companion.tasks.coordinator import (
+    PermanentTaskError,
+    RetryableTaskError,
+    TaskCancelledError,
+    TaskContext,
+    TaskCoordinator,
+    TaskHandler,
+    TaskLeaseLostError,
+    TaskPausedError,
+    TaskRepository,
+)
 
-from companion.v2.task_coordinator import *  # noqa: F403
+__all__ = [
+    "PermanentTaskError",
+    "RetryableTaskError",
+    "TaskCancelledError",
+    "TaskContext",
+    "TaskCoordinator",
+    "TaskHandler",
+    "TaskLeaseLostError",
+    "TaskPausedError",
+    "TaskRepository",
+]

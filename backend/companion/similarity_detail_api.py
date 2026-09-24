@@ -15,7 +15,7 @@ from companion.similarity_detail_schema import (
 )
 from companion.similarity_detail_service import SimilarityDetailRepository
 from companion.similarity_generation import SIMILARITY_EVIDENCE_DESTROY_TASK_TYPE
-from companion.v2.task_coordinator import TaskCoordinator
+from companion.tasks.coordinator import TaskCoordinator
 
 
 def register_similarity_detail_routes(

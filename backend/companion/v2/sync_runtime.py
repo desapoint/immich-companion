@@ -7,6 +7,8 @@ from typing import Protocol
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichApiClient
 from companion.sync_schema import SyncMode
+from companion.tasks.contracts import TaskResult
+from companion.tasks.coordinator import TaskContext, TaskCoordinator
 from companion.v2.sync_steps import (
     CatalogSyncStep,
     SyncStepConditionals,
@@ -14,8 +16,6 @@ from companion.v2.sync_steps import (
     SyncStepContext,
     task_checkpoint_callback,
 )
-from companion.v2.task_coordinator import TaskContext, TaskCoordinator
-from companion.v2.task_schema import TaskResult
 
 
 class RuntimeSyncSettings(Protocol):
