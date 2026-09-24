@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags } from '@lucide/svelte';
+  import { Album, BookOpen, CircleGauge, Copy, Ellipsis, Images, RotateCcw, Settings, Tags, TriangleAlert } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
   import type { SyncRun } from '../../features/status/types/syncContracts';
   import { formatTaskProgressPercent } from '../../features/status/utils/taskProgress';
@@ -24,7 +24,7 @@
     {key:'duplicates',label:'Review'},
     {key:'albums',label:'Manage'},
   ].map((mobileItem)=>({ ...mobileItem, href:navItems.find((item)=>item.key===mobileItem.key)?.href??pagePath(mobileItem.key as Parameters<typeof pagePath>[0]) })));
-  const mobileMenuItems=$derived(navItems.filter((item)=>['restore','albums','tags','similarity-debug','settings','docs'].includes(item.key)));
+  const mobileMenuItems=$derived(navItems.filter((item)=>['restore','albums','tags','similarity-debug','errors','settings','docs'].includes(item.key)));
   const mobileMenuActive=$derived(mobileMenuItems.some((item)=>item.key===activeKey));
   const currentRun=$derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
   const progressKnown=$derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
@@ -92,7 +92,7 @@
 
 {#snippet navIcon(key:string)}
   <span class="v2-nav-icon" aria-hidden="true">
-    {#if key==='status'}<CircleGauge size={17}/>{:else if key==='assets'}<Images size={17}/>{:else if key==='restore'}<RotateCcw size={17}/>{:else if key==='duplicates'}<Copy size={17}/>{:else if key==='albums'}<Album size={17}/>{:else if key==='tags'}<Tags size={17}/>{:else if key==='settings'}<Settings size={17}/>{:else if key==='docs'}<BookOpen size={17}/>{:else}<CircleGauge size={17}/>{/if}
+    {#if key==='status'}<CircleGauge size={17}/>{:else if key==='errors'}<TriangleAlert size={17}/>{:else if key==='assets'}<Images size={17}/>{:else if key==='restore'}<RotateCcw size={17}/>{:else if key==='duplicates'}<Copy size={17}/>{:else if key==='albums'}<Album size={17}/>{:else if key==='tags'}<Tags size={17}/>{:else if key==='settings'}<Settings size={17}/>{:else if key==='docs'}<BookOpen size={17}/>{:else}<CircleGauge size={17}/>{/if}
   </span>
 {/snippet}
 

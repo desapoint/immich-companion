@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect, status
 
 from companion.task_coordinator import TaskCoordinator
-from companion.task_schema import TaskEvent, TaskScheduleView, TaskStatusView
+from companion.task_schema import TaskErrorEvent, TaskEvent, TaskScheduleView, TaskStatusView
 
 
 def register_task_routes(app: FastAPI, task_coordinator: TaskCoordinator | None) -> None:
@@ -98,6 +98,19 @@ def register_task_routes(app: FastAPI, task_coordinator: TaskCoordinator | None)
         return await task_coordinator.list_tasks(
             task_type=task_type, limit=limit, active_only=active_only
         )
+
+    @app.get("/api/errors", response_model=list[TaskErrorEvent])
+    async def list_task_errors(
+        limit: int = Query(default=100, ge=1, le=500),
+    ) -> list[TaskErrorEvent]:
+        """List durable task failures for operator diagnosis."""
+
+        if task_coordinator is None:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="The companion database is not configured.",
+            )
+        return await task_coordinator.task_errors(limit=limit)
 
     @app.get("/api/settings/sync", response_model=list[TaskScheduleView])
     async def sync_schedule_settings() -> list[TaskScheduleView]:

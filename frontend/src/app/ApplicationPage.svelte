@@ -8,6 +8,7 @@
   import AlbumsPage from '../features/albums/components/AlbumsPage.svelte';
   import V2AssetsPage from '../features/assets/components/AssetsPage.svelte';
   import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
+  import ErrorHubPage from '../features/errors/components/ErrorHubPage.svelte';
   import SimilarityDebugPage from '../features/similarity-debug/components/SimilarityDebugPage.svelte';
   import PlaygroundPage from '../features/playground/components/PlaygroundPage.svelte';
   import V2RestorePage from '../features/assets/components/RestorePage.svelte';
@@ -32,6 +33,7 @@
 
   const navItems: NavItem[] = [
     { key: 'status', label: 'Status', href: pagePath('status'), group: 'Library' },
+    { key: 'errors', label: 'Error Hub', href: pagePath('errors'), group: 'Library' },
     { key: 'assets', label: 'Assets', href: pagePath('assets'), group: 'Library' },
     { key: 'restore', label: 'Trash', href: pagePath('restore'), group: 'Library' },
     { key: 'duplicates', label: 'Duplicates', href: pagePath('duplicates'), group: 'Library' },
@@ -45,6 +47,7 @@
 
   const titles: Record<PageKey, string> = {
     status: 'Status',
+    errors: 'Error Hub',
     assets: 'Assets',
     restore: 'Trash',
     duplicates: 'Duplicates',
@@ -100,6 +103,8 @@
 <ApplicationShell {activeKey} title={titles[activeKey]} {navItems} onnavigate={navigate}>
   {#if activeKey === 'status'}
     <StatusPage />
+  {:else if activeKey === 'errors'}
+    <ErrorHubPage />
   {:else if activeKey === 'assets'}
     <V2AssetsPage selectionWorkspace={assetSelection} />
   {:else if activeKey === 'restore'}

@@ -49,6 +49,22 @@ class TaskEvent(BaseModel):
     created_at: datetime
 
 
+class TaskErrorEvent(BaseModel):
+    """A safe, durable task failure exposed by the Error Hub."""
+
+    id: UUID
+    task_id: UUID
+    task_type: str
+    attempt: int
+    outcome: Literal["retrying", "failed"]
+    error_type: str
+    message: str
+    retryable: bool | None = None
+    will_retry: bool
+    max_attempts: int | None = None
+    occurred_at: datetime
+
+
 class TaskStatusView(BaseModel):
     """Public task state returned by the coordinator."""
 

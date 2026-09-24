@@ -142,6 +142,11 @@ class PermanentHandler(RetryHandler):
         raise PermanentTaskError("invalid")
 
 
+class UnexpectedHandler(RetryHandler):
+    async def execute(self, _context, _payload):
+        raise TypeError("programming defect")
+
+
 class PausedHandler(RetryHandler):
     supports_pause = True
 
@@ -184,6 +189,32 @@ async def test_permanent_handler_is_not_retried() -> None:
     assert isinstance(failure["error"], PermanentTaskError)
     assert failure["retryable"] is False
     assert failure["next_attempt_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_unexpected_handler_error_is_not_retried() -> None:
+    coordinator = TaskCoordinator(None)  # type: ignore[arg-type]
+    repository = FakeRepository()
+    coordinator._repository = repository  # type: ignore[assignment]
+    coordinator.register_handler(UnexpectedHandler())
+
+    await coordinator._execute(task(), WORKER_ID)
+
+    failure = repository.failures[0]
+    assert isinstance(failure["error"], TypeError)
+    assert failure["retryable"] is False
+    assert failure["next_attempt_at"] is None
+
+
+def test_legacy_sync_retries_only_known_transient_immich_errors() -> None:
+    from companion.immich import ImmichApiError
+    from companion.v2.legacy_asset_service import _is_transient_sync_error
+
+    assert _is_transient_sync_error(ImmichApiError("network")) is True
+    assert _is_transient_sync_error(ImmichApiError("rate limit", 429)) is True
+    assert _is_transient_sync_error(ImmichApiError("server", 503)) is True
+    assert _is_transient_sync_error(ImmichApiError("missing", 404)) is False
+    assert _is_transient_sync_error(ValueError("bad state")) is False
 
 
 @pytest.mark.asyncio

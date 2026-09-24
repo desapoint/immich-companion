@@ -53,6 +53,14 @@ def _dedupe_digest(parts: list[str]) -> str:
     return sha256("\n".join(sorted(parts)).encode()).hexdigest()
 
 
+def _is_transient_sync_error(error: Exception) -> bool:
+    """Retry only known Immich transport/rate-limit/server failures."""
+
+    return isinstance(error, ImmichApiError) and (
+        error.status_code is None or error.status_code in {429, 500, 502, 503, 504}
+    )
+
+
 def _repair_metric_defaults() -> dict[str, int]:
     """Return counters that expose the cost of asset-oriented tag reconciliation."""
 
@@ -828,13 +836,7 @@ class AssetSyncService:
                 raise
             except Exception as error:
                 await self._syncs.fail(run.id, owner, error)
-                transient = not isinstance(error, ImmichApiError) or error.status_code in {
-                    429,
-                    500,
-                    502,
-                    503,
-                    504,
-                }
+                transient = _is_transient_sync_error(error)
                 if transient and run.attempts < self._settings.sync_max_attempts:
                     delay = min(
                         self._settings.sync_retry_backoff_seconds * (2 ** max(0, run.attempts - 1)),
