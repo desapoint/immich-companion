@@ -2,11 +2,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { AssetRecord, AssetRepository, DuplicatePreparedPlan, DuplicateRepository, DuplicateResolutionPlan } from '../types/contracts';
 import { withDuplicateStackConflictReview } from '../api/duplicateStackConflictReviewRepository';
 import { registerStackConflictReviewer } from '../state/stackConflictReviewBridge';
+import { registerDuplicateDestinationConflictReviewer } from '../state/duplicateDestinationConflictReviewBridge';
 
 let unregister: (() => void) | null = null;
+let unregisterDestination: (() => void) | null = null;
 afterEach(() => {
   unregister?.();
+  unregisterDestination?.();
   unregister = null;
+  unregisterDestination = null;
 });
 
 function asset(id: string, stack: AssetRecord['stack'] = null): AssetRecord {
@@ -51,6 +55,48 @@ function prepared(value: DuplicateResolutionPlan, groupIds: readonly string[]): 
 }
 
 describe('duplicate stack conflict review repository', () => {
+  it('merges overlapping proposed destinations before reviewing existing Immich stacks', async () => {
+    const calls: DuplicateResolutionPlan[] = [];
+    const frozen: DuplicateResolutionPlan = {
+      decisions: { a: 'stack', b: 'stack', c: 'stack' },
+      stacks: [
+        { id: 'g1-stack', groupId: 'group-1', label: 'Stack 1', assetIds: ['a', 'b'], primaryAssetId: 'a', sourceGroupIds: ['group-1'] },
+        { id: 'g2-stack', groupId: 'group-2', label: 'Stack 1', assetIds: ['b', 'c'], primaryAssetId: 'b', sourceGroupIds: ['group-2'] },
+      ],
+    };
+    const repository = {
+      async prepareDecisions(value: DuplicateResolutionPlan, groupIds: readonly string[]) {
+        calls.push(value);
+        return {
+          id: `plan-${calls.length}`,
+          resolution: calls.length === 1 ? frozen : value,
+          groupIds: ['group-1', 'group-2'],
+        } satisfies DuplicatePreparedPlan;
+      },
+    } as unknown as DuplicateRepository;
+    const unstacked = {
+      async getMany(ids: readonly string[]) {
+        return ids.map((id) => asset(id));
+      },
+    } as AssetRepository;
+    unregisterDestination = registerDuplicateDestinationConflictReviewer(async (targets) => ({
+      [targets[0].id]: 'g1-stack',
+    }));
+
+    const plan = await withDuplicateStackConflictReview(repository, unstacked)
+      .prepareDecisions({ decisions: {}, stacks: [] }, []);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1].stacks).toHaveLength(1);
+    expect(calls[1].stacks[0]).toMatchObject({
+      id: 'g1-stack',
+      assetIds: ['a', 'b', 'c'],
+      primaryAssetId: 'a',
+      sourceGroupIds: ['group-1', 'group-2'],
+    });
+    expect(plan.resolution.stacks).toHaveLength(1);
+  });
+
   it('reviews an explicit group before its immutable plan is created', async () => {
     const calls: DuplicateResolutionPlan[] = [];
     const repository = {

@@ -41,7 +41,7 @@ describe('duplicate review stack preflight', () => {
   it('reports the first Stack choice immediately as a singleton issue', () => {
     const workspace = assignAssetToActiveStack(createDuplicateStackWorkspace(), 'group-1', 'asset-1');
 
-    expect(duplicateReviewIssues(workspace, { 'asset-1': 'stack' })).toMatchObject([{
+    expect(duplicateReviewIssues(workspace, { 'group-1': { 'asset-1': 'stack' } })).toMatchObject([{
       kind: 'incomplete_stack',
       groupId: 'group-1',
       assetId: 'asset-1',
@@ -51,9 +51,9 @@ describe('duplicate review stack preflight', () => {
   it('reports a singleton after removing one member from a two-image stack', () => {
     let workspace = assignAssetToActiveStack(createDuplicateStackWorkspace(), 'group-1', 'asset-1');
     workspace = assignAssetToActiveStack(workspace, 'group-1', 'asset-2');
-    workspace = removeAssetFromPendingStack(workspace, 'asset-1');
+    workspace = removeAssetFromPendingStack(workspace, 'group-1', 'asset-1');
 
-    expect(duplicateReviewIssues(workspace, { 'asset-1': 'keep', 'asset-2': 'stack' })).toMatchObject([{
+    expect(duplicateReviewIssues(workspace, { 'group-1': { 'asset-1': 'keep', 'asset-2': 'stack' } })).toMatchObject([{
       kind: 'incomplete_stack',
       assetId: 'asset-2',
     }]);
@@ -70,19 +70,35 @@ describe('duplicate review stack preflight', () => {
     const workspace: DuplicateStackWorkspace = {
       activeByGroup: { 'group-1': 'stack-1' },
       nextOrdinalByGroup: { 'group-1': 2 },
-      assetToStack: { 'asset-1': 'stack-1', 'asset-2': 'stack-1' },
+      assetToStackByGroup: { 'group-1': { 'asset-1': 'stack-1', 'asset-2': 'stack-1' } },
       stacks: { 'stack-1': baseStack },
     };
 
-    expect(duplicateReviewIssues(workspace, { 'asset-1': 'stack', 'asset-2': 'stack' })[0]?.kind).toBe('primary_disposition');
+    expect(duplicateReviewIssues(workspace, { 'group-1': { 'asset-1': 'stack', 'asset-2': 'stack' } })[0]?.kind).toBe('primary_disposition');
     workspace.stacks['stack-1'].primaryAssetId = 'asset-1';
-    expect(duplicateReviewIssues(workspace, { 'asset-1': 'keep', 'asset-2': 'stack' })[0]?.kind).toBe('primary_disposition');
+    expect(duplicateReviewIssues(workspace, { 'group-1': { 'asset-1': 'keep', 'asset-2': 'stack' } })[0]?.kind).toBe('primary_disposition');
+  });
+
+  it('keeps review validation scoped when the same asset belongs to two groups', () => {
+    let workspace = assignAssetToActiveStack(createDuplicateStackWorkspace(), 'group-1', 'shared');
+    workspace = assignAssetToActiveStack(workspace, 'group-1', 'a');
+    workspace = assignAssetToActiveStack(workspace, 'group-2', 'shared');
+    workspace = assignAssetToActiveStack(workspace, 'group-2', 'b');
+
+    expect(duplicateReviewIssues(workspace, {
+      'group-1': { shared: 'stack', a: 'stack' },
+      'group-2': { shared: 'keep', b: 'stack' },
+    })).toMatchObject([{
+      groupId: 'group-2',
+      kind: 'primary_disposition',
+      assetId: 'shared',
+    }]);
   });
 
   it('accepts a complete stack whose primary and members all use Stack', () => {
     let workspace = assignAssetToActiveStack(createDuplicateStackWorkspace(), 'group-1', 'asset-1');
     workspace = assignAssetToActiveStack(workspace, 'group-1', 'asset-2');
 
-    expect(duplicateReviewIssues(workspace, { 'asset-1': 'stack', 'asset-2': 'stack' })).toEqual([]);
+    expect(duplicateReviewIssues(workspace, { 'group-1': { 'asset-1': 'stack', 'asset-2': 'stack' } })).toEqual([]);
   });
 });

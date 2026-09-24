@@ -5,6 +5,11 @@ import {
   duplicateStackReviewIsCurrent,
 } from '../state/duplicateStackConflictReview';
 import { requestStackConflictReview } from '../state/stackConflictReviewBridge';
+import {
+  applyDuplicateDestinationReview,
+  duplicateDestinationConflicts,
+} from '../state/duplicateDestinationConflictReview';
+import { requestDuplicateDestinationConflictReview } from '../state/duplicateDestinationConflictReviewBridge';
 import { conflictResolutionMap, sharedConflictIds, type StackConflictReviewTarget } from '../types/stackResolution';
 
 function reviewedTargetsAreSafe(targets: readonly StackConflictReviewTarget[]): boolean {
@@ -48,6 +53,15 @@ function sameReviewTopology(
   return reviewed.every((target) => currentById.get(target.id) === reviewTopology(target));
 }
 
+async function reviewProposedDestinations(
+  resolution: DuplicateResolutionPlan,
+): Promise<DuplicateResolutionPlan> {
+  const targets = duplicateDestinationConflicts(resolution.stacks);
+  if (!targets.length) return resolution;
+  const choices = await requestDuplicateDestinationConflictReview(targets);
+  return applyDuplicateDestinationReview(resolution, targets, choices);
+}
+
 async function reviewResolution(
   resolution: DuplicateResolutionPlan,
   assets: AssetRepository,
@@ -81,18 +95,30 @@ export function withDuplicateStackConflictReview(
         let reviewedResolution = resolution;
         let reviewedTargets: StackConflictReviewTarget[] = [];
 
-        // Explicit/current-group review already has every proposed destination locally, so
-        // resolve environmental stack conflicts before creating its immutable action plan.
+        // Phase 1 resolves conflicts between the proposed destinations themselves.
+        // For an explicit/current-group review all destinations are already local.
         if (groupIds.length) {
+          reviewedResolution = await reviewProposedDestinations(reviewedResolution);
           const reviewed = await reviewResolution(reviewedResolution, assets);
           reviewedResolution = reviewed.resolution;
           reviewedTargets = reviewed.targets;
         }
 
         // Bulk workspace review may include selected groups that are not loaded in the page.
-        // One bounded preview plan materializes those frozen destinations; it is never executed.
+        // First materialize every frozen destination, then resolve proposed/proposed overlaps,
+        // then re-plan once so the backend freezes the merged cross-group destination.
         let plan = await prepare(reviewedResolution, groupIds);
         if (!groupIds.length) {
+          const proposedResolution = await reviewProposedDestinations(plan.resolution);
+          if (proposedResolution !== plan.resolution) {
+            reviewedResolution = proposedResolution;
+            plan = await prepare(reviewedResolution, groupIds);
+            if (duplicateDestinationConflicts(plan.resolution.stacks).length) {
+              throw new Error('Proposed duplicate stacks still overlap after destination review. Refresh duplicates and review the actions again.');
+            }
+          } else {
+            reviewedResolution = plan.resolution;
+          }
           const reviewed = await reviewResolution(plan.resolution, assets);
           reviewedResolution = reviewed.resolution;
           reviewedTargets = reviewed.targets;

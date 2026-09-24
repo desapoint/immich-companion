@@ -191,8 +191,13 @@ def normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
     )
     if normalized["follow_up"] is None and normalized["follow_ups"]:
         normalized["follow_up"] = normalized["follow_ups"][0]
-    for follow_up in normalized["follow_ups"]:
+    for index, follow_up in enumerate(normalized["follow_ups"]):
         follow_up.setdefault("resolution", "move_selected")
+        follow_up.setdefault(
+            "destination_id",
+            f"{normalized['group_id']}:stack:{index + 1}",
+        )
+        follow_up.setdefault("source_group_ids", [normalized["group_id"]])
     normalized.setdefault("execution_state", "pending")
     normalized.setdefault("metadata_work", None)
     normalized.setdefault("member_fingerprint", member_set_key(member_ids))

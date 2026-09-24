@@ -1,4 +1,5 @@
-import type { DuplicateDecision, DuplicatePendingStack } from '../types/contracts';
+import type { DuplicatePendingStack } from '../types/contracts';
+import { decisionsForGroup, type DuplicateDecisionWorkspace } from './duplicateDecisionWorkspace';
 import type { DuplicateStackWorkspace } from './duplicateStackResolution';
 
 export type DuplicateReviewIssueKind = 'incomplete_stack' | 'primary_disposition' | 'member_disposition';
@@ -14,9 +15,10 @@ export type DuplicateReviewIssue = {
 
 function issueForStack(
   stack: DuplicatePendingStack,
-  decisions: Readonly<Record<string, DuplicateDecision>>,
+  decisions: Readonly<DuplicateDecisionWorkspace>,
 ): DuplicateReviewIssue | null {
   if (stack.assetIds.length === 0) return null;
+  const groupDecisions = decisionsForGroup(decisions, stack.groupId);
 
   if (stack.assetIds.length === 1) {
     return {
@@ -40,7 +42,7 @@ function issueForStack(
     };
   }
 
-  if (decisions[stack.primaryAssetId] !== 'stack') {
+  if (groupDecisions[stack.primaryAssetId] !== 'stack') {
     return {
       kind: 'primary_disposition',
       groupId: stack.groupId,
@@ -51,7 +53,7 @@ function issueForStack(
     };
   }
 
-  const invalidMember = stack.assetIds.find((assetId) => decisions[assetId] !== 'stack');
+  const invalidMember = stack.assetIds.find((assetId) => groupDecisions[assetId] !== 'stack');
   if (invalidMember) {
     return {
       kind: 'member_disposition',
@@ -68,7 +70,7 @@ function issueForStack(
 
 export function duplicateReviewIssues(
   workspace: DuplicateStackWorkspace,
-  decisions: Readonly<Record<string, DuplicateDecision>>,
+  decisions: Readonly<DuplicateDecisionWorkspace>,
 ): DuplicateReviewIssue[] {
   return Object.values(workspace.stacks)
     .sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true }))

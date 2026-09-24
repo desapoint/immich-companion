@@ -80,6 +80,7 @@ export async function duplicateStackConflictReviews(
       id: `duplicate-stack-review:${destination.id}`,
       targetCount: destination.assetIds.length,
       primaryAssetId: destination.primaryAssetId as string,
+      targetAssetIds: [...destination.assetIds],
       conflicts: [...touched.values()].sort((left, right) => left.stackId.localeCompare(right.stackId)),
     };
     const primary = byId.get(destination.primaryAssetId as string);

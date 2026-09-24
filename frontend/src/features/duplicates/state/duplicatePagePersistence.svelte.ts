@@ -1,5 +1,6 @@
 import { libraryData } from '../../../app/data/currentDataSource.svelte';
-import type { DuplicateDecision, DuplicateGroupRecord, DuplicateResolutionPlan } from '../types/contracts';
+import type { DuplicateGroupRecord, DuplicateResolutionPlan } from '../types/contracts';
+import { replaceGroupDecisions, type DuplicateDecisionWorkspace } from './duplicateDecisionWorkspace';
 import {
   assignAssetToActiveStack,
   clearGroupStacks,
@@ -19,15 +20,15 @@ export class DuplicatePagePersistence {
   hydrateWorkspace(
     items: DuplicateGroupRecord[],
     replace: boolean,
-    decisions: Record<string, DuplicateDecision>,
+    decisions: DuplicateDecisionWorkspace,
     stackWorkspace: DuplicateStackWorkspace,
     selectedGroups: string[],
-  ): { decisions: Record<string, DuplicateDecision>; stackWorkspace: DuplicateStackWorkspace; selectedGroups: string[] } {
+  ): { decisions: DuplicateDecisionWorkspace; stackWorkspace: DuplicateStackWorkspace; selectedGroups: string[] } {
     let nextDecisions = replace ? {} : { ...decisions };
     let nextStacks = replace ? createDuplicateStackWorkspace() : stackWorkspace;
     const selected = replace ? [...libraryData.duplicates.selectedGroupIds()] : [...selectedGroups];
     for (const item of items) {
-      nextDecisions = { ...nextDecisions, ...item.savedDecisions };
+      nextDecisions = replaceGroupDecisions(nextDecisions, item.id, item.savedDecisions);
       if (item.selected && !selected.includes(item.id)) selected.push(item.id);
       const stackIds = item.members.filter((entry) => item.savedDecisions[entry.asset.id] === 'stack').map((entry) => entry.asset.id);
       nextStacks = clearGroupStacks(nextStacks, item.id);
@@ -36,7 +37,7 @@ export class DuplicatePagePersistence {
           nextStacks = createPendingStack(nextStacks, item.id);
           const restoredId = nextStacks.activeByGroup[item.id];
           for (const id of savedStack.assetIds) nextStacks = assignAssetToActiveStack(nextStacks, item.id, id);
-          if (savedStack.primaryAssetId) nextStacks = setPendingStackPrimary(nextStacks, savedStack.primaryAssetId);
+          if (savedStack.primaryAssetId) nextStacks = setPendingStackPrimary(nextStacks, item.id, savedStack.primaryAssetId);
           if (restoredId && savedStack.stackResolution !== undefined) {
             nextStacks = setPendingStackResolution(nextStacks, restoredId, savedStack.stackResolution);
           }
@@ -46,7 +47,7 @@ export class DuplicatePagePersistence {
         // single-stack behavior until the next write upgrades the draft metadata.
         nextStacks = createPendingStack(nextStacks, item.id);
         for (const id of stackIds) nextStacks = assignAssetToActiveStack(nextStacks, item.id, id);
-        if (item.stackPrimaryAssetId) nextStacks = setPendingStackPrimary(nextStacks, item.stackPrimaryAssetId);
+        if (item.stackPrimaryAssetId) nextStacks = setPendingStackPrimary(nextStacks, item.id, item.stackPrimaryAssetId);
         const restoredId = nextStacks.activeByGroup[item.id];
         if (restoredId) nextStacks = setPendingStackResolution(nextStacks, restoredId, item.stackResolution);
       }

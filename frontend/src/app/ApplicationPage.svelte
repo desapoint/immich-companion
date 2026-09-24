@@ -5,6 +5,7 @@
   import ToastViewport from '../lib/components/app/ToastViewport.svelte';
   import V2ImplementationWarning from '../lib/components/ui/ImplementationWarning.svelte';
   import StackConflictReviewHost from '../features/duplicates/components/StackConflictReviewHost.svelte';
+  import DuplicateDestinationConflictReviewHost from '../features/duplicates/components/DuplicateDestinationConflictReviewHost.svelte';
   import AlbumsPage from '../features/albums/components/AlbumsPage.svelte';
   import V2AssetsPage from '../features/assets/components/AssetsPage.svelte';
   import DuplicatesPage from '../features/duplicates/components/DuplicatesPage.svelte';
@@ -130,5 +131,6 @@
     />
   {/if}
 </ApplicationShell>
+<DuplicateDestinationConflictReviewHost />
 <StackConflictReviewHost />
 <ToastViewport controller={toasts}/>

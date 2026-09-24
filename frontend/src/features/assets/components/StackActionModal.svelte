@@ -111,6 +111,27 @@
     }
   }
 
+  function projectedAssetIds(review: StackConflictReviewTarget): string[] {
+    if (!review.plan.targetAssetIds?.length) return [];
+    let ids = [...new Set(review.plan.targetAssetIds)];
+    const current = choices(review);
+    for (const conflict of review.plan.conflicts) {
+      const memberIds = membersForPreview(conflict);
+      const choice = current[conflict.stackId];
+      if (choice === 'keep_existing') {
+        const blocked = new Set(memberIds);
+        ids = ids.filter((id) => !blocked.has(id));
+      } else if (choice === 'include_existing') {
+        ids = [...new Set([...ids, ...memberIds])];
+      }
+    }
+    return ids;
+  }
+
+  function membersForPreview(conflict: StackConflict): string[] {
+    return conflict.memberAssetIds ?? conflict.selectedAssetIds ?? [];
+  }
+
   function resolutionWarning(review: StackConflictReviewTarget): string | null {
     const projected = projectedStackCount(review.plan, review.resolution);
     if (projected < 2) return 'This combination leaves fewer than two assets for the new stack.';
@@ -199,6 +220,20 @@
                 {/if}
               </article>
             {/each}
+            {#if review.plan.targetAssetIds?.length}
+              {@const previewIds = projectedAssetIds(review)}
+              <div class="v2-stack-result-preview">
+                <span><strong>Result preview</strong><small>{previewIds.length.toLocaleString()} assets in the destination with the current choices</small></span>
+                <div class="v2-stack-thumbnails" aria-label="Projected destination stack">
+                  {#each previewIds as assetId (assetId)}
+                    <div class="v2-stack-thumb" class:primary={review.plan.primaryAssetId === assetId}>
+                      <V2LazyAssetMedia cacheKey={`stack-result:${review.id}:${assetId}`} resolve={() => assetThumbnailUrl(assetId, 'thumbnail')} alt="" rootMargin="480px 0px"/>
+                      {#if review.plan.primaryAssetId === assetId}<span class="v2-stack-thumb-primary"><Star size={10} fill="currentColor" aria-hidden="true"/></span>{/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
             {#if warning}<p class="v2-stack-warning">{warning}</p>{/if}
           </section>
         {/each}
@@ -227,6 +262,9 @@
   .v2-stack-thumb.primary{outline:1px solid color-mix(in srgb,#f8d46e 75%,transparent);outline-offset:-3px}
   .v2-stack-thumb-primary{position:absolute;z-index:2;top:4px;left:4px;width:18px;height:18px;display:grid;place-items:center;border-radius:999px;background:rgba(7,12,18,.9);color:#f8d46e}
   .v2-stack-thumb-selected{position:absolute;z-index:2;right:4px;bottom:4px;display:flex;align-items:center;gap:3px;padding:3px 5px;border-radius:999px;background:rgba(7,12,18,.88);color:#fff;font-size:9px;font-weight:700}
+  .v2-stack-result-preview{display:grid;gap:7px;padding:9px;border:1px dashed var(--v2-line);border-radius:9px;background:var(--v2-surface-2)}
+  .v2-stack-result-preview>span{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .v2-stack-result-preview>span>small{max-width:60%;text-align:right}
   .v2-stack-warning{margin:0;padding:7px 8px;border-radius:7px;background:color-mix(in srgb,var(--v2-red) 12%,transparent);color:var(--v2-red);font-size:12px;line-height:1.35}
   .v2-stack-description,.v2-stack-visual-unavailable{margin:0;color:var(--v2-muted);font-size:12px;line-height:1.35}
   .sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
