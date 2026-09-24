@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { loadTaskErrors } from './errorRepository';
+import { clearTaskErrors, loadTaskErrors } from './errorRepository';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -33,5 +33,18 @@ describe('Error Hub repository', () => {
       retryable: true,
       maxAttempts: 5,
     })]);
+  });
+
+  it('clears durable errors', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ cleared: 7 }), {
+      headers: { 'content-type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(clearTaskErrors()).resolves.toBe(7);
+    expect(fetchMock).toHaveBeenCalledWith('/api/errors', expect.objectContaining({
+      method: 'DELETE',
+      headers: expect.any(Headers),
+    }));
   });
 });

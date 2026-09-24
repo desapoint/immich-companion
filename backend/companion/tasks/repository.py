@@ -7,7 +7,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from croniter import croniter
-from sqlalchemy import func, select, text
+from sqlalchemy import delete, func, select, text
 
 from companion.database import DatabaseManager
 from companion.models import (
@@ -835,6 +835,15 @@ class TaskRepository:
                     )
                 )
             return errors
+
+    async def clear_errors(self) -> int:
+        """Remove durable retry/failure events while preserving task records."""
+
+        async with self._database.sessions() as session, session.begin():
+            result = await session.execute(
+                delete(TaskEventRecord).where(TaskEventRecord.kind.in_(("retry", "failed")))
+            )
+            return int(result.rowcount or 0)
 
     async def release_worker_leases(self, worker_id: UUID) -> int:
         """Release or finalize every active lease owned by a shutting-down worker."""
