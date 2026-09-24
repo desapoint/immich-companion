@@ -709,6 +709,8 @@ class DuplicateResolutionMixin:
             request.stack_destinations,
             planned_member_assets,
         )
+        if request.stack_destinations:
+            _validate_stack_destination_topology(plan_groups)
         if (
             not request.all_eligible
             and found_ids != set(requested_group_ids)

@@ -633,6 +633,13 @@ class DuplicateResolutionPlanGroup(BaseModel):
                         raise ValueError(
                             "A shared stack destination must reference every participating group"
                         )
+                    if (
+                        len(follow_up.source_group_ids) == 1
+                        and not set(follow_up_ids).issubset(members)
+                    ):
+                        raise ValueError(
+                            "A group-local stack follow-up cannot reference another group"
+                        )
                     relevant_ids = set(follow_up_ids).intersection(stack_ids)
                 else:
                     if not set(follow_up_ids).issubset(members):
