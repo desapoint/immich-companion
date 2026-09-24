@@ -26,13 +26,23 @@ export function createDuplicateDraftController({
     const group = rawGroups.get(groupId);
     if (!group) throw new Error(`Duplicate group ${groupId} is no longer available.`);
     const scoped = groupResolution(resolution, group);
-    if (scoped.stacks.some((stack) => stack.assetIds.length === 1)) throw new Error('A stack needs at least two images.');
     const memberIds = group.members.map((member) => member.id);
     const primary = primaryFor(scoped, memberIds);
     const survivors = memberIds.filter((id) => scoped.decisions[id] !== 'delete');
+    const stackByAsset = new Map(scoped.stacks.flatMap((stack) => stack.assetIds.map((assetId) => [assetId, stack] as const)));
     const draft = await requestJson<ApiDuplicateDraft>('/api/assets/duplicates/workspace/group', jsonRequest('PUT', {
       group_id: groupId, member_fingerprint: group.member_fingerprint, options: analysisOptions,
-      decisions: Object.entries(scoped.decisions).map(([asset_id, disposition]) => ({ asset_id, disposition, source: 'manual', status: 'pending' })),
+      decisions: Object.entries(scoped.decisions).map(([asset_id, disposition]) => {
+        const stack = stackByAsset.get(asset_id);
+        return {
+          asset_id, disposition, source: 'manual', status: 'pending',
+          ...(stack ? {
+            stack_id: stack.id,
+            stack_primary: stack.primaryAssetId === asset_id,
+            stack_resolution: stack.primaryAssetId === asset_id ? serializeStackResolution(stack.stackResolution) : null,
+          } : {}),
+        };
+      }),
       stack_primary_asset_id: scoped.stacks[0]?.primaryAssetId ?? (Object.values(scoped.decisions).includes('stack') ? primary : null),
       stack_resolution: serializeStackResolution(scoped.stacks[0]?.stackResolution),
       metadata_keeper_asset_id: Object.values(scoped.decisions).includes('delete') && survivors.length === 1 ? survivors[0] : null,
@@ -51,9 +61,28 @@ export function createDuplicateDraftController({
     if (stack.stackResolution === undefined) return;
     const draft = draftFor(stack.groupId);
     if (!draft) throw new Error(`Duplicate group ${stack.groupId} no longer has a current saved draft.`);
+    const targetIds = [...stack.assetIds].sort().join('\n');
+    const grouped = new Map<string, string[]>();
+    for (const decision of draft.decisions) {
+      if (!decision.stack_id) continue;
+      grouped.set(decision.stack_id, [...(grouped.get(decision.stack_id) ?? []), decision.asset_id]);
+    }
+    const persistedId = [...grouped].find(([, ids]) => [...ids].sort().join('\n') === targetIds)?.[0] ?? stack.id;
+    const stackIds = new Set(stack.assetIds);
+    const serialized = serializeStackResolution(stack.stackResolution);
+    const decisions = draft.decisions.map((decision) => (
+      stackIds.has(decision.asset_id)
+        ? {
+            ...decision,
+            stack_id: persistedId,
+            stack_primary: decision.asset_id === stack.primaryAssetId,
+            stack_resolution: decision.asset_id === stack.primaryAssetId ? serialized : null,
+          }
+        : decision
+    ));
     const updated = await requestJson<ApiDuplicateDraft>('/api/assets/duplicates/workspace/group', jsonRequest('PUT', {
-      group_id: stack.groupId, member_fingerprint: draft.member_fingerprint, options: analysisOptions, decisions: draft.decisions,
-      stack_primary_asset_id: stack.primaryAssetId ?? draft.stack_primary_asset_id, stack_resolution: serializeStackResolution(stack.stackResolution),
+      group_id: stack.groupId, member_fingerprint: draft.member_fingerprint, options: analysisOptions, decisions,
+      stack_primary_asset_id: stack.primaryAssetId ?? draft.stack_primary_asset_id, stack_resolution: serialized,
       metadata_keeper_asset_id: draft.metadata_keeper_asset_id ?? null, status: draft.status,
     }));
     replaceDraft(updated);

@@ -94,6 +94,24 @@ function savedDecisions(draft: ApiDuplicateDraft | undefined): Record<string, Du
   return Object.fromEntries((draft?.decisions ?? []).map((decision) => [decision.asset_id, decision.disposition])) as Record<string, DuplicateDecision>;
 }
 
+function savedStacks(draft: ApiDuplicateDraft | undefined, groupId: string): NonNullable<DuplicateGroupRecord['savedStacks']> {
+  const groups = new Map<string, NonNullable<DuplicateGroupRecord['savedStacks']>[number]>();
+  for (const decision of draft?.decisions ?? []) {
+    if (decision.disposition !== 'stack' || !decision.stack_id) continue;
+    const existing = groups.get(decision.stack_id);
+    const resolution = decision.stack_resolution ? parseStackResolution(decision.stack_resolution) : existing?.stackResolution;
+    groups.set(decision.stack_id, {
+      id: decision.stack_id,
+      groupId,
+      label: existing?.label ?? `Stack ${decision.stack_id.match(/-stack-(\d+)$/)?.[1] ?? groups.size + 1}`,
+      assetIds: [...(existing?.assetIds ?? []), decision.asset_id],
+      primaryAssetId: decision.stack_primary ? decision.asset_id : existing?.primaryAssetId ?? null,
+      ...(resolution !== undefined ? { stackResolution: resolution } : {}),
+    });
+  }
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, undefined, { numeric: true }));
+}
+
 function groupState(group: ApiDuplicateGroup, draft: ApiDuplicateDraft | undefined): DuplicateState {
   if (!group.eligible || group.status === 'ineligible' || draft?.stale) return 'Blocked';
   const decisionCount = draft?.decisions.length ?? 0;
@@ -115,7 +133,7 @@ export function mapDuplicateGroup(
     similarityEngine: group.similarity_engine ?? null, similarityModelVersion: group.similarity_model_version ?? null,
     similarityFeatureVersion: group.similarity_feature_version ?? null, similarityComparisonVersion: group.similarity_comparison_version ?? null,
     similarityValidationMode: group.similarity_validation_mode ?? null, similarityThresholdPercent: group.similarity_threshold_percent ?? null,
-    memberFingerprint: group.member_fingerprint, selected, savedDecisions: savedDecisions(draft),
+    memberFingerprint: group.member_fingerprint, selected, savedDecisions: savedDecisions(draft), savedStacks: savedStacks(draft, group.group_id),
     stackPrimaryAssetId: draft?.stack_primary_asset_id ?? null, stackResolution: parseStackResolution(draft?.stack_resolution ?? 'move_selected'),
     members: referenceFirstDuplicateMembers(group.members.map((member) => ({
       asset: assetFromMember(member), similarity: similarity(member), similarityEvidence: similarityEvidence(member),

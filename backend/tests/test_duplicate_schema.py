@@ -7,6 +7,7 @@ import pytest
 
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
+    DuplicateMemberDraftDecision,
     DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
     DuplicateSearchPage,
@@ -139,3 +140,26 @@ def test_duplicate_search_page_accepts_the_largest_ui_page_size() -> None:
     assert page.page_size == 192
     with pytest.raises(ValueError):
         DuplicateSearchPage(items=[], total=0, page=1, page_size=201, pages=0)
+
+
+def test_stack_draft_decision_accepts_persisted_partition_metadata() -> None:
+    decision = DuplicateMemberDraftDecision(
+        asset_id=A,
+        disposition="stack",
+        stack_id="group-test-stack-1",
+        stack_primary=True,
+        stack_resolution="move_selected",
+    )
+
+    assert decision.stack_id == "group-test-stack-1"
+    assert decision.stack_primary is True
+    assert decision.stack_resolution == "move_selected"
+
+
+def test_non_stack_draft_decision_rejects_stack_partition_metadata() -> None:
+    with pytest.raises(ValueError, match="Only Stack decisions"):
+        DuplicateMemberDraftDecision(
+            asset_id=A,
+            disposition="keep",
+            stack_id="group-test-stack-1",
+        )

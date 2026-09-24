@@ -50,6 +50,7 @@ from companion.duplicate_schema import (
     DuplicateResolutionExecuteRequest,
     DuplicateResolutionPlan,
     DuplicateResolutionPlanRequest,
+    DuplicateStackPlanOverride,
 )
 from companion.immich import (
     ImmichApiError,
@@ -74,6 +75,57 @@ def _stack_follow_ups(planned: dict[str, Any]) -> list[dict[str, Any]]:
         return follow_ups
     follow_up = planned.get("follow_up")
     return [follow_up] if isinstance(follow_up, dict) else []
+
+
+def _saved_stack_overrides(record: Any) -> list[DuplicateStackPlanOverride] | None:
+    """Restore durable pending-stack partitions from member-level draft metadata."""
+
+    if record is None:
+        return None
+    decisions = [
+        item
+        for item in list(getattr(record, "member_decisions", []) or [])
+        if isinstance(item, dict) and item.get("disposition") == "stack"
+    ]
+    if not decisions or not any(item.get("stack_id") for item in decisions):
+        return None
+    if any(not item.get("stack_id") for item in decisions):
+        raise ActionPlanConflictError(
+            "Saved duplicate stack assignments are incomplete; review this group again"
+        )
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for item in decisions:
+        grouped.setdefault(str(item["stack_id"]), []).append(item)
+
+    overrides: list[DuplicateStackPlanOverride] = []
+    for members in grouped.values():
+        if len(members) < 2:
+            raise ActionPlanConflictError(
+                "A saved pending stack has fewer than two images; complete it before review"
+            )
+        primary_members = [item for item in members if item.get("stack_primary") is True]
+        if len(primary_members) != 1:
+            raise ActionPlanConflictError(
+                "A saved pending stack needs exactly one primary image"
+            )
+        primary = primary_members[0]
+        resolution = primary.get("stack_resolution") or next(
+            (
+                item.get("stack_resolution")
+                for item in members
+                if item.get("stack_resolution")
+            ),
+            getattr(record, "stack_resolution", "move_selected"),
+        )
+        overrides.append(
+            DuplicateStackPlanOverride(
+                primary_asset_id=UUID(str(primary["asset_id"])),
+                member_asset_ids=[UUID(str(item["asset_id"])) for item in members],
+                resolution=resolution,
+            )
+        )
+    return overrides
 
 
 class DuplicateResolutionMixin:
@@ -262,6 +314,8 @@ class DuplicateResolutionMixin:
                     "move_selected",
                 )
                 requested_stacks = request.stack_overrides.get(group.group_id)
+                if requested_stacks is None:
+                    requested_stacks = _saved_stack_overrides(record)
                 if requested_stacks is not None:
                     assigned_stack_ids: list[UUID] = []
                     for requested_stack in requested_stacks:

@@ -674,6 +674,35 @@ class DuplicateWorkspaceMixin:
                 raise ActionPlanConflictError(
                     "The stack primary must first have the Stack disposition"
                 )
+        persisted_stacks: dict[str, list[Any]] = {}
+        for decision in request.decisions:
+            if decision.stack_id is not None:
+                persisted_stacks.setdefault(decision.stack_id, []).append(decision)
+        if persisted_stacks:
+            if any(
+                decision.disposition == "stack" and decision.stack_id is None
+                for decision in request.decisions
+            ):
+                raise ActionPlanConflictError(
+                    "Every Stack decision must keep its pending-stack assignment"
+                )
+            for stack_members in persisted_stacks.values():
+                primaries = [
+                    decision for decision in stack_members if decision.stack_primary
+                ]
+                if len(primaries) != 1:
+                    raise ActionPlanConflictError(
+                        "Each pending stack must have exactly one primary image"
+                    )
+                resolutions = {
+                    decision.stack_resolution
+                    for decision in stack_members
+                    if decision.stack_resolution is not None
+                }
+                if len(resolutions) > 1:
+                    raise ActionPlanConflictError(
+                        "A pending stack cannot have conflicting saved resolutions"
+                    )
         stack_ids = [
             decision.asset_id for decision in request.decisions if decision.disposition == "stack"
         ]

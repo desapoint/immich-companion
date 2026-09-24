@@ -74,7 +74,18 @@ export function removeAssetFromPendingStack(workspace: DuplicateStackWorkspace, 
   const assetIds = stack.assetIds.filter((value) => value !== assetId);
   const assetToStack = { ...workspace.assetToStack };
   delete assetToStack[assetId];
-  const primaryAssetId = stack.primaryAssetId === assetId ? (assetIds[0] ?? null) : stack.primaryAssetId;
+  if (!assetIds.length) {
+    const stacks = { ...workspace.stacks };
+    delete stacks[id];
+    const activeByGroup = { ...workspace.activeByGroup };
+    if (activeByGroup[stack.groupId] === id) {
+      const replacement = Object.values(stacks).find((candidate) => candidate.groupId === stack.groupId);
+      if (replacement) activeByGroup[stack.groupId] = replacement.id;
+      else delete activeByGroup[stack.groupId];
+    }
+    return { ...workspace, assetToStack, stacks, activeByGroup };
+  }
+  const primaryAssetId = stack.primaryAssetId === assetId ? assetIds[0] : stack.primaryAssetId;
   return {
     ...workspace,
     assetToStack,
@@ -122,8 +133,10 @@ export function clearGroupStacks(workspace: DuplicateStackWorkspace, groupId: st
   const stacks = Object.fromEntries(Object.entries(workspace.stacks).filter(([id]) => !groupStackIds.has(id)));
   const assetToStack = Object.fromEntries(Object.entries(workspace.assetToStack).filter(([, id]) => !groupStackIds.has(id)));
   const activeByGroup = { ...workspace.activeByGroup };
+  const nextOrdinalByGroup = { ...workspace.nextOrdinalByGroup };
   delete activeByGroup[groupId];
-  return { ...workspace, stacks, assetToStack, activeByGroup };
+  delete nextOrdinalByGroup[groupId];
+  return { ...workspace, stacks, assetToStack, activeByGroup, nextOrdinalByGroup };
 }
 
 export function assignGroupToSingleStack(workspace: DuplicateStackWorkspace, group: DuplicateGroupRecord): DuplicateStackWorkspace {

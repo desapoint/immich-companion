@@ -651,6 +651,22 @@ class DuplicateMemberDraftDecision(BaseModel):
     disposition: DuplicateDraftDisposition
     source: DuplicateDraftDecisionSource = "manual"
     status: DuplicateDraftDecisionStatus = "pending"
+    stack_id: str | None = Field(default=None, max_length=256)
+    stack_primary: bool = False
+    stack_resolution: StackResolution | None = None
+
+    @model_validator(mode="after")
+    def validate_stack_metadata(self) -> DuplicateMemberDraftDecision:
+        has_stack_metadata = (
+            self.stack_id is not None
+            or self.stack_primary
+            or self.stack_resolution is not None
+        )
+        if has_stack_metadata and self.disposition != "stack":
+            raise ValueError("Only Stack decisions can carry pending-stack metadata")
+        if (self.stack_primary or self.stack_resolution is not None) and self.stack_id is None:
+            raise ValueError("Pending-stack primary and resolution require a stack identifier")
+        return self
 
 
 class DuplicateGroupDraftUpdate(BaseModel):
