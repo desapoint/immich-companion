@@ -6,8 +6,10 @@ import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
@@ -50,6 +52,11 @@ from companion.similarity_visual_normalization import (
 from companion.task_coordinator import TaskContext
 
 DETAIL_WORK_BATCH_SIZE = 8
+DETAIL_DIAGNOSTIC_CONCURRENCY = 2
+_DETAIL_DIAGNOSTIC_EXECUTOR = ThreadPoolExecutor(
+    max_workers=DETAIL_DIAGNOSTIC_CONCURRENCY,
+    thread_name_prefix="comparison-diagnostics",
+)
 logger = logging.getLogger("uvicorn.error")
 
 DetailEvidenceSource = Literal["original", "transcoded", "preview"]
@@ -82,6 +89,7 @@ class SimilarityDetailRepository:
         self._database = database
         self._evidence_epoch = SimilarityEvidenceEpochRepository(database)
         self._duplicate_settings = duplicate_settings
+        self._diagnostic_slots = asyncio.Semaphore(DETAIL_DIAGNOSTIC_CONCURRENCY)
 
     async def current_evidence_epoch(self) -> int:
         return await self._evidence_epoch.capture_epoch()
@@ -191,14 +199,20 @@ class SimilarityDetailRepository:
             if comparison_max_zoom_percent is not None
             else settings.comparison_max_zoom_percent if settings is not None else 0
         )
+        async with self._diagnostic_slots:
+            diagnostics = await asyncio.get_running_loop().run_in_executor(
+                _DETAIL_DIAGNOSTIC_EXECUTOR,
+                partial(
+                    detail_diagnostics,
+                    selected_feature,
+                    reference_feature,
+                    max_shift_fraction=displacement / 100,
+                    max_rotation_degrees=rotation,
+                    max_zoom_percent=zoom,
+                ),
+            )
         return StoredDetailDiagnostics(
-            diagnostics=detail_diagnostics(
-                selected_feature,
-                reference_feature,
-                max_shift_fraction=displacement / 100,
-                max_rotation_degrees=rotation,
-                max_zoom_percent=zoom,
-            ),
+            diagnostics=diagnostics,
             source=source,
             comparison_max_displacement_percent=displacement,
             comparison_max_rotation_degrees=rotation,

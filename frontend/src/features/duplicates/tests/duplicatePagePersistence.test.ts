@@ -74,6 +74,52 @@ describe('duplicate pending stack persistence', () => {
     expect(stacks.every((stack) => stack.assetIds.length > 0)).toBe(true);
   });
 
+  it('keeps multi-stack partitions while navigating and refreshing pagination pages', () => {
+    const persistence = new DuplicatePagePersistence();
+    const firstPage = groupWithSavedStacks();
+    const secondPage = {
+      ...groupWithSavedStacks(),
+      id: 'group-2',
+      savedDecisions: { e: 'stack', f: 'stack', g: 'stack', h: 'stack' },
+      savedStacks: [
+        { id: 'saved-3', groupId: 'group-2', label: 'Stack 1', assetIds: ['e', 'f'], primaryAssetId: 'e' },
+        { id: 'saved-4', groupId: 'group-2', label: 'Stack 2', assetIds: ['g', 'h'], primaryAssetId: 'g' },
+      ],
+      members: ['e', 'f', 'g', 'h'].map((id) => ({ asset: { id } })),
+    } as unknown as DuplicateGroupRecord;
+
+    const pageOne = persistence.hydrateWorkspace(
+      [firstPage],
+      true,
+      {},
+      createDuplicateStackWorkspace(),
+      [],
+    );
+    const pageTwo = persistence.hydrateWorkspace(
+      [secondPage],
+      false,
+      pageOne.decisions,
+      pageOne.stackWorkspace,
+      pageOne.selectedGroups,
+    );
+    const refreshedPageOne = persistence.hydrateWorkspace(
+      [firstPage],
+      false,
+      pageTwo.decisions,
+      pageTwo.stackWorkspace,
+      pageTwo.selectedGroups,
+    );
+
+    expect(stacksForGroup(refreshedPageOne.stackWorkspace, 'group-1').map((stack) => stack.assetIds)).toEqual([
+      ['a', 'b'],
+      ['c', 'd'],
+    ]);
+    expect(stacksForGroup(refreshedPageOne.stackWorkspace, 'group-2').map((stack) => stack.assetIds)).toEqual([
+      ['e', 'f'],
+      ['g', 'h'],
+    ]);
+  });
+
   it('removes a pending stack when its last member moves out', () => {
     let workspace = createPendingStack(createDuplicateStackWorkspace(), 'group-1');
     workspace = assignAssetToActiveStack(workspace, 'group-1', 'a');
