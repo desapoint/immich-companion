@@ -71,7 +71,12 @@ def _service(
     asset_count = len(dispositions) if dispositions is not None else 2
     asset_ids = [uuid4() for _ in range(asset_count)]
     members = [
-        SimpleNamespace(id=asset_id, is_offline=offline_member and index == 1)
+        SimpleNamespace(
+            id=asset_id,
+            is_offline=offline_member and index == 1,
+            file_modified_at=datetime(2026, 9, 1, 0, 0, index),
+            file_size_bytes=100 + index,
+        )
         for index, asset_id in enumerate(asset_ids)
     ]
     group = SimpleNamespace(
@@ -222,14 +227,27 @@ async def test_workspace_plan_rejects_saved_incomplete_pending_stack() -> None:
     group_id = "immich:incomplete-stack-review"
     service, _ = _service(
         [group_id],
-        dispositions=["stack", "keep"],
+        dispositions=["stack", "stack", "stack"],
     )
-    decision = service._reviews._record.member_decisions[0]
-    decision.update(
+    first, second, third = service._reviews._record.member_decisions
+    first.update(
         {
             "stack_id": "pending-1",
             "stack_primary": True,
             "stack_resolution": "move_selected",
+        }
+    )
+    second.update(
+        {
+            "stack_id": "pending-2",
+            "stack_primary": True,
+            "stack_resolution": "move_selected",
+        }
+    )
+    third.update(
+        {
+            "stack_id": "pending-2",
+            "stack_primary": False,
         }
     )
 
