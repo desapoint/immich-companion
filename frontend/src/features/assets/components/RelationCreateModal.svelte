@@ -13,7 +13,7 @@
   import type { RelationOption } from '../../../lib/types/libraryContracts';
 
   export type AlbumCreateDetails = { name:string; description:string };
-  export type TagCreateDetails = { name:string; color:string|null; parentPath:string };
+  export type TagCreateDetails = { name:string; color:string|null; parentId:string };
 
   let {
     kind,
@@ -36,10 +36,11 @@
   let name=$derived(initialName);
   let description=$state('');
   let color=$state<string|null>('#9A78FF');
-  let parentPath=$state('');
+  let parentId=$state('');
   let parentOptions=$state<Array<{value:string;label:string;subtitle?:string}>>([]);
   let saving=$state(false);
   let loadError=$state('');
+  const parentPath=$derived(parentOptions.find((option)=>option.value===parentId)?.label??'');
 
   async function loadParentOptions(){
     if(kind!=='tag')return;
@@ -53,7 +54,7 @@
   }
 
   async function defaultCreateTag(input:TagCreateDetails):Promise<RelationOption>{
-    const created=await libraryData.tags.create(input.name,input.color,input.parentPath);
+    const created=await libraryData.tags.create(input.name,input.color,input.parentId);
     if(!created)throw new Error('The tag was not created.');
     return{value:created.id,label:created.tag_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
   }
@@ -64,7 +65,7 @@
     try{
       const option=kind==='album'
         ?await(oncreatealbum??defaultCreateAlbum)({name:name.trim(),description})
-        :await(oncreatetag??defaultCreateTag)({name:name.trim(),color,parentPath});
+        :await(oncreatetag??defaultCreateTag)({name:name.trim(),color,parentId});
       await oncreated(option);
     }catch(error){loadError=errorMessage(error,`The ${kind} could not be created.`)}finally{saving=false}
   }
@@ -79,7 +80,7 @@
       <V2Field label="Description" value={description} multiline={true} disabled={saving||busy} onchange={(value)=>description=value}/>
     {:else}
       <ColorField id="asset-create-tag-color" label="Color" value={color} disabled={saving||busy} onchange={(value)=>color=value}/>
-      <SelectField id="asset-create-tag-parent" label="Parent" value={parentPath} options={parentOptions} allowEmpty searchable searchPlaceholder="Search parent tags or paths…" placeholder="No parent — root tag" disabled={saving||busy} onchange={(value)=>parentPath=value}/>
+      <SelectField id="asset-create-tag-parent" label="Parent" value={parentId} options={parentOptions} allowEmpty searchable searchPlaceholder="Search parent tags or paths…" placeholder="No parent — root tag" disabled={saving||busy} onchange={(value)=>parentId=value}/>
       <V2Section title="Hierarchy preview"><V2Card><span class="create-tag-preview"><V2ColorSwatch {color} size="sm"/><span class="v2-small">{parentPath?`${parentPath} / ${name||'New tag'}`:name||'Root tag'}</span></span></V2Card></V2Section>
     {/if}
     {#if loadError}<div class="v2-small create-error">{loadError}</div>{/if}

@@ -80,9 +80,9 @@ export class AssetRelationOptionsController{
   }
 
   async createTag(input:string|TagCreateDetails):Promise<RelationOption>{
-    const details:TagCreateDetails=typeof input==='string'?{name:input,color:null,parentPath:''}:input;
+    const details:TagCreateDetails=typeof input==='string'?{name:input,color:null,parentId:''}:input;
     try{
-      const created=await libraryData.tags.create(details.name.trim(),details.color,details.parentPath);
+      const created=await libraryData.tags.create(details.name.trim(),details.color,details.parentId);
       if(!created)throw new Error('The tag was not created.');
       const option:RelationOption={value:created.id,label:created.tag_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
       this.tagOptions=[option,...this.tagOptions.filter((item)=>item.value!==option.value)];

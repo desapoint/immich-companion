@@ -1,43 +1,32 @@
 <script lang="ts">
   import { onMount } from 'svelte';
 
-  import type { AssetRecord, TrashAssetRecord } from '../../../lib/types/libraryContracts';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
-  import {
-    duplicateResolutionHistoryDetail,
-    type DuplicateResolutionHistoryItem,
-  } from '../api/duplicateResolutionHistory';
+  import type { DuplicateHistoryRecord } from '../types/contracts';
+  import { resolveDuplicateHistoryAssets, type DuplicateHistoryAsset } from '../state/duplicateHistoryAssets';
   import { errorMessage } from '../../../lib/api/mutationFeedback';
   import V2Badge from '../../../lib/components/ui/Badge.svelte';
   import V2Button from '../../../lib/components/ui/Button.svelte';
   import V2LazyAssetMedia from '../../assets/components/LazyAssetMedia.svelte';
   import V2Modal from '../../../lib/components/ui/Modal.svelte';
 
-  type HistoryAsset = {
-    id: string;
-    state: 'active' | 'trash' | 'missing' | 'error';
-    asset: AssetRecord | TrashAssetRecord | null;
-    error: string | null;
-  };
-
   let {
-    resolutionId,
+    resolution,
     onclose,
   }: {
-    resolutionId: string;
+    resolution: DuplicateHistoryRecord;
     onclose: () => void;
   } = $props();
 
-  let detail = $state<DuplicateResolutionHistoryItem | null>(null);
-  let assets = $state<HistoryAsset[]>([]);
+  let assets = $state<DuplicateHistoryAsset[]>([]);
   let loading = $state(true);
   let loadError = $state('');
 
   const sourceLabel = $derived(
-    detail?.discovery_source === 'immich_duplicate' ? 'Immich duplicates' : 'Similarity engine',
+    resolution.discoverySource === 'immich_duplicate' ? 'Immich duplicates' : 'Similarity engine',
   );
 
-  function reviewLabel(value: DuplicateResolutionHistoryItem['review_status']): string {
+  function reviewLabel(value: DuplicateHistoryRecord['reviewStatus']): string {
     if (value === 'reviewed_keep_all') return 'Kept all';
     if (value === 'reviewed_stack_all') return 'Stacked all';
     if (value === 'reviewed_mixed') return 'Mixed resolution';
@@ -49,41 +38,14 @@
     return value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
   }
 
-  async function resolveAsset(id: string): Promise<HistoryAsset> {
-    try {
-      const trash = await libraryData.assets.getTrashById(id);
-      if (trash) return { id, state: 'trash', asset: trash, error: null };
-      const active = await libraryData.assets.getById(id);
-      if (active) return { id, state: 'active', asset: active, error: null };
-      return { id, state: 'missing', asset: null, error: null };
-    } catch (error) {
-      return {
-        id,
-        state: 'error',
-        asset: null,
-        error: errorMessage(error, 'Current asset state could not be loaded.'),
-      };
-    }
-  }
-
-  async function resolveAssets(ids: readonly string[]): Promise<HistoryAsset[]> {
-    const resolved: HistoryAsset[] = [];
-    for (let index = 0; index < ids.length; index += 8) {
-      resolved.push(...await Promise.all(ids.slice(index, index + 8).map(resolveAsset)));
-    }
-    return resolved;
-  }
-
   onMount(() => {
     let active = true;
     void (async () => {
       loading = true;
       loadError = '';
       try {
-        const loaded = await duplicateResolutionHistoryDetail(resolutionId);
-        const resolved = await resolveAssets(loaded.member_asset_ids);
+        const resolved = await resolveDuplicateHistoryAssets(resolution.memberAssetIds, libraryData.assets);
         if (!active) return;
-        detail = loaded;
         assets = resolved;
       } catch (error) {
         if (active) loadError = errorMessage(error, 'Resolution details could not be loaded.');
@@ -96,7 +58,7 @@
 </script>
 
 <V2Modal
-  id={`duplicate-resolution-history-${resolutionId}`}
+  id={`duplicate-resolution-history-${resolution.id}`}
   title="Resolution details"
   description="Recorded Companion resolution and the current availability of its affected assets."
   size="xl"
@@ -106,18 +68,18 @@
     <div class="v2-history-detail-state">Loading resolution details…</div>
   {:else if loadError}
     <div class="v2-history-detail-state" data-error="true">{loadError}</div>
-  {:else if detail}
+  {:else}
     <div class="v2-history-detail">
       <div class="v2-history-summary">
         <div class="v2-history-summary-badges">
-          <V2Badge text={reviewLabel(detail.review_status)} />
+          <V2Badge text={reviewLabel(resolution.reviewStatus)} />
           <V2Badge text={sourceLabel} />
-          <V2Badge text={`${detail.member_count} affected ${detail.member_count === 1 ? 'asset' : 'assets'}`} />
+          <V2Badge text={`${resolution.memberAssetIds.length} affected ${resolution.memberAssetIds.length === 1 ? 'asset' : 'assets'}`} />
         </div>
         <dl>
-          <div><dt>Resolved</dt><dd>{new Date(detail.occurred_at).toLocaleString()}</dd></div>
-          <div><dt>Action</dt><dd>{actionLabel(detail.manual_action)}</dd></div>
-          <div><dt>Provider group</dt><dd><code>{detail.provider_group_id}</code></dd></div>
+          <div><dt>Resolved</dt><dd>{new Date(resolution.occurredAt).toLocaleString()}</dd></div>
+          <div><dt>Action</dt><dd>{actionLabel(resolution.manualAction)}</dd></div>
+          <div><dt>Provider group</dt><dd><code>{resolution.providerGroupId}</code></dd></div>
         </dl>
       </div>
 

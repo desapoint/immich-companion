@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   clearAllDuplicateResolutionHistory,
   clearDuplicateResolutionHistory,
-  duplicateResolutionHistoryDetail,
 } from '../api/duplicateResolutionHistory';
 
 function jsonResponse(value: unknown): Response {
@@ -29,37 +28,6 @@ describe('duplicate resolution history helpers', () => {
     await clearDuplicateResolutionHistory('resolution/with spaces');
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('finds a history detail across paged history', async () => {
-    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes('page=1')) {
-        return jsonResponse({ items: [], total: 1, page: 1, page_size: 200, pages: 2 });
-      }
-      return jsonResponse({
-        items: [{
-          id: 'resolution-2',
-          occurred_at: '2026-09-16T10:00:00Z',
-          discovery_source: 'companion_similarity',
-          provider_group_id: 'provider-2',
-          review_status: 'reviewed_resolve',
-          manual_action: 'resolve',
-          member_count: 2,
-          member_asset_ids: ['asset-a', 'asset-b'],
-        }],
-        total: 1,
-        page: 2,
-        page_size: 200,
-        pages: 2,
-      });
-    });
-    vi.stubGlobal('fetch', fetcher);
-
-    const result = await duplicateResolutionHistoryDetail('resolution-2');
-
-    expect(result.member_asset_ids).toEqual(['asset-a', 'asset-b']);
-    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it('clears all history with one backend request', async () => {

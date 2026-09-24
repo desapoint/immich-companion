@@ -33,8 +33,8 @@
     return{value:created.id,label:created.album_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
   }
   async function defaultCreateTag(input:string|TagCreateDetails):Promise<RelationOption>{
-    const details=typeof input==='string'?{name:input,color:null,parentPath:''}:input;
-    const created=await libraryData.tags.create(details.name.trim(),details.color,details.parentPath);
+    const details=typeof input==='string'?{name:input,color:null,parentId:''}:input;
+    const created=await libraryData.tags.create(details.name.trim(),details.color,details.parentId);
     if(!created)throw new Error('The tag was not created.');
     return{value:created.id,label:created.tag_name,subtitle:`${created.asset_count.toLocaleString()} assets`};
   }

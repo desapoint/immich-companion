@@ -7,9 +7,10 @@
   import V2Inline from '../../../lib/components/layout/Inline.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
 
-  let { status, loading=false, onrefresh, onclear }: {
+  let { status, loading=false, error='', onrefresh, onclear }: {
     status: SimilarityCacheStatus|null;
     loading?: boolean;
+    error?: string;
     onrefresh:()=>void;
     onclear:(cache:SimilarityCacheKind)=>void;
   }=$props();
@@ -19,6 +20,7 @@
 
 <V2Card title="Disposable similarity cache">
   <V2Stack gap="md">
+    {#if error}<span class="cache-error" role="alert">{error}</span>{/if}
     {#if status}
       <V2Inline gap="sm" wrap={true}>
         <V2Badge text={`${status.featureCount.toLocaleString()} durable features`}/>
@@ -52,6 +54,8 @@
         </section>
       </div>
       <small class="v2-muted">These controls clear disposable previews, pair-result caches, hot in-memory groups, or abandoned decode files. They do not advance the evidence epoch or remove durable similarity evidence, review decisions, or resolution history.</small>
+    {:else if loading}
+      <span class="v2-muted" role="status">Loading cache telemetry…</span>
     {:else}
       <span class="v2-muted">Cache telemetry is unavailable for this data source. Evidence-epoch controls remain available separately.</span>
     {/if}
@@ -63,4 +67,5 @@
   .v2-cache-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
   section{display:flex;flex-direction:column;gap:7px;padding:12px;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:10px;background:var(--v2-surface,Canvas)}
   section small{opacity:.7}
+  .cache-error{color:var(--v2-red);font-size:12px}
 </style>

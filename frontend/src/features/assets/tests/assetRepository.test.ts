@@ -8,6 +8,20 @@ const detail={id,owner_id:'owner-1',library_id:'library-1',type:'IMAGE',original
 const response=(body:unknown,status=200)=>new Response(status===204?null:JSON.stringify(body),{status,headers:{'content-type':'application/json'}});
 
 describe('live V2 asset repository',()=>{
+  it('loads active asset summaries in one bounded request',async()=>{
+    const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{
+      expect(input).toBe('/api/assets/summaries');
+      expect(init?.method).toBe('POST');
+      expect(JSON.parse(String(init?.body))).toEqual({ids:[id,secondId]});
+      return response([summary]);
+    });
+
+    const result=await createAssetApiProfile(fetcher).assets.getMany([id,id,secondId]);
+
+    expect(result.map((item)=>item.id)).toEqual([id]);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
   it('maps simple search criteria to the structured backend query',async()=>{
     const fetcher=vi.fn<AssetApiFetcher>(async()=>response({items:[summary],total:49,page:2,page_size:24,pages:3}));
     const controller=new AbortController(),profile=createAssetApiProfile(fetcher);
