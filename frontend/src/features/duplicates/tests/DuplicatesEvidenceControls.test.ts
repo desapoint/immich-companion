@@ -15,6 +15,7 @@ describe('V2DuplicatesPage evidence controls', () => {
     const apply = source.indexOf('await applyGroupDecisionSet(review.groupId,review.plan)');
     expect(confirmation).toBeGreaterThan(apply);
     expect(source).toContain("pendingLabel={operations.phase==='reconciling'?'Refreshing results…':'Applying actions…'}");
+    expect(source).toContain('icon="check" size="lg"');
     expect(source).toContain('<DuplicateReviewProgress phase={reviewConfirmationPhase}/>');
   });
 
