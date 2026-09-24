@@ -94,8 +94,8 @@ function savedDecisions(draft: ApiDuplicateDraft | undefined): Record<string, Du
   return Object.fromEntries((draft?.decisions ?? []).map((decision) => [decision.asset_id, decision.disposition])) as Record<string, DuplicateDecision>;
 }
 
-function savedStacks(draft: ApiDuplicateDraft | undefined, groupId: string): DuplicateGroupRecord['savedStacks'] {
-  const groups = new Map<string, DuplicateGroupRecord['savedStacks'][number]>();
+function savedStacks(draft: ApiDuplicateDraft | undefined, groupId: string): NonNullable<DuplicateGroupRecord['savedStacks']> {
+  const groups = new Map<string, NonNullable<DuplicateGroupRecord['savedStacks']>[number]>();
   for (const decision of draft?.decisions ?? []) {
     if (decision.disposition !== 'stack' || !decision.stack_id) continue;
     const existing = groups.get(decision.stack_id);
