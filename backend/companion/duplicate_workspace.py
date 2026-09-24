@@ -674,7 +674,7 @@ class DuplicateWorkspaceMixin:
                 raise ActionPlanConflictError(
                     "The stack primary must first have the Stack disposition"
                 )
-        persisted_stacks: dict[str, list[object]] = {}
+        persisted_stacks: dict[str, list[Any]] = {}
         for decision in request.decisions:
             if decision.stack_id is not None:
                 persisted_stacks.setdefault(decision.stack_id, []).append(decision)
