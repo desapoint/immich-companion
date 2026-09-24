@@ -134,20 +134,24 @@ describe('live V2 duplicate repository', () => {
       })),
     };
     let planBody: Record<string, unknown> | null = null;
+    let draftBody: Record<string, unknown> | null = null;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
       if (path.includes('/cross-source/page?')) return response(asPage({ group_count: 1, groups: [multiStackGroup] }));
       if (path.endsWith('/workspace')) return response(emptyWorkspace);
-      if (path.endsWith('/workspace/group')) return response({
-        group_id: group.group_id,
-        member_fingerprint: group.member_fingerprint,
-        decisions: body.decisions,
-        stack_primary_asset_id: ids[0],
-        stack_resolution: 'move_selected',
-        status: 'completed',
-        stale: false,
-      });
+      if (path.endsWith('/workspace/group')) {
+        draftBody = body;
+        return response({
+          group_id: group.group_id,
+          member_fingerprint: group.member_fingerprint,
+          decisions: body.decisions,
+          stack_primary_asset_id: ids[0],
+          stack_resolution: 'move_selected',
+          status: 'completed',
+          stale: false,
+        });
+      }
       if (path.endsWith('/cross-source/plan')) {
         planBody = body;
         return response({ id: 'multi-stack-plan', destructive: false });
@@ -165,6 +169,14 @@ describe('live V2 duplicate repository', () => {
       ],
     }, [group.group_id])).resolves.toMatchObject({ id: 'multi-stack-plan' });
 
+    expect(draftBody).toMatchObject({
+      decisions: [
+        { asset_id: ids[0], stack_id: 'stack-1', stack_primary: true, stack_resolution: 'move_selected' },
+        { asset_id: ids[1], stack_id: 'stack-1', stack_primary: false },
+        { asset_id: ids[2], stack_id: 'stack-2', stack_primary: true, stack_resolution: 'move_selected' },
+        { asset_id: ids[3], stack_id: 'stack-2', stack_primary: false },
+      ],
+    });
     expect(planBody).toMatchObject({
       stack_overrides: {
         [group.group_id]: [
