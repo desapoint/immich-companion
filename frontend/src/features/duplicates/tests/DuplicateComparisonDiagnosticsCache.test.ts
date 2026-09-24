@@ -36,6 +36,7 @@ const result = {
 describe('duplicate comparison diagnostics cache', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    loadAlignmentSettings.mockResolvedValue({ maxDisplacementPercent: 10, maxRotationDegrees: 0, maxZoomPercent: 0 });
     loadDiagnostics.mockResolvedValue(result);
   });
 
@@ -91,5 +92,35 @@ describe('duplicate comparison diagnostics cache', () => {
 
     expect(loadDiagnostics).toHaveBeenCalledTimes(1);
     expect(controller.localDiagnostics).toEqual(resultForCurrentSettings);
+  });
+
+  it('drops cached diagnostics when the viewer lifecycle is invalidated', async () => {
+    const controller = new DuplicateComparisonDataController();
+
+    await controller.loadDiagnostics(selected, reference, true);
+    controller.invalidateDiagnostics();
+    await controller.loadDiagnostics(selected, reference, true);
+
+    expect(loadDiagnostics).toHaveBeenCalledTimes(2);
+  });
+
+  it('aborts a superseded diagnostics request', async () => {
+    let firstSignal: AbortSignal | undefined;
+    loadAlignmentSettings
+      .mockImplementationOnce((signal: AbortSignal) => new Promise((_resolve, reject) => {
+        firstSignal = signal;
+        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+      }))
+      .mockResolvedValueOnce({ maxDisplacementPercent: 10, maxRotationDegrees: 0, maxZoomPercent: 0 });
+    const controller = new DuplicateComparisonDataController();
+
+    const first = controller.loadDiagnostics(selected, reference, true);
+    await vi.waitFor(() => expect(firstSignal).toBeDefined());
+    const second = controller.loadDiagnostics(selected, reference, true);
+    await Promise.all([first, second]);
+
+    expect(firstSignal?.aborted).toBe(true);
+    expect(loadDiagnostics).toHaveBeenCalledTimes(1);
+    expect(controller.localDiagnostics).toEqual(result);
   });
 });

@@ -10,6 +10,8 @@ describe('duplicate comparison loading lifecycle', () => {
     expect(viewerSource).toContain('return () => comparisonData.invalidateDiagnostics()');
     expect(controllerSource).toContain('invalidateAssets(): void');
     expect(controllerSource).toContain('invalidateDiagnostics(): void');
+    expect(controllerSource).toContain('this.diagnosticsController?.abort();');
+    expect(controllerSource).toContain('this.diagnosticsCache.clear();');
   });
 
   it('deduplicates equivalent in-flight asset loads', () => {

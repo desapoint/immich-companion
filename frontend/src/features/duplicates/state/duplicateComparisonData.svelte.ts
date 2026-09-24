@@ -26,6 +26,7 @@ export class DuplicateComparisonDataController {
   private loadingAssetSetKey = '';
   private libraryNamesPromise: Promise<Map<string, string>> | null = null;
   private diagnosticsGeneration = 0;
+  private diagnosticsController: AbortController | null = null;
   private readonly diagnosticsCache = new Map<string, LocalChangeDiagnostics>();
 
   resource(asset: AssetRecord | undefined): MediaResource {
@@ -71,12 +72,15 @@ export class DuplicateComparisonDataController {
 
   async loadDiagnostics(selected: AssetRecord | undefined, reference: AssetRecord | undefined, open: boolean): Promise<void> {
     const selectedId = selected?.id ?? '', referenceId = reference?.id ?? '', generation = ++this.diagnosticsGeneration;
-    const controller = new AbortController();
+    this.diagnosticsController?.abort();
+    this.diagnosticsController = null;
     this.localDiagnostics = null;
     this.localDiagnosticsError = '';
     this.localDiagnosticsLoading = false;
     if (!open || !selectedId || !referenceId || selected?.asset_type !== 'IMAGE' || reference?.asset_type !== 'IMAGE') return;
     if (selectedId === referenceId) { this.localDiagnostics = identicalDiagnostics(selectedId); return; }
+    const controller = new AbortController();
+    this.diagnosticsController = controller;
     this.localDiagnosticsLoading = true;
     try {
       // Verify the server's current comparison limits before trusting a cached
@@ -116,11 +120,17 @@ export class DuplicateComparisonDataController {
       this.localDiagnosticsError = error instanceof Error ? error.message : 'Could not load localized change diagnostics.';
     } finally {
       if (generation === this.diagnosticsGeneration) this.localDiagnosticsLoading = false;
+      if (this.diagnosticsController === controller) this.diagnosticsController = null;
     }
   }
 
   invalidateAssets(): void { this.loadGeneration += 1; this.loadingAssetSetKey = ''; }
-  invalidateDiagnostics(): void { this.diagnosticsGeneration += 1; }
+  invalidateDiagnostics(): void {
+    this.diagnosticsGeneration += 1;
+    this.diagnosticsController?.abort();
+    this.diagnosticsController = null;
+    this.diagnosticsCache.clear();
+  }
   invalidate(): void { this.invalidateAssets(); this.invalidateDiagnostics(); }
 
   private getLibraryNames(): Promise<Map<string, string>> {

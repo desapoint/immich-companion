@@ -1,6 +1,7 @@
 """Local differences remain visible after bounded candidate-detail extraction."""
 
 import asyncio
+import threading
 import zlib
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -11,7 +12,7 @@ from uuid import UUID
 import pytest
 from PIL import Image, ImageDraw
 
-from companion import similarity_detail
+from companion import similarity_detail, similarity_detail_service
 from companion.similarity_detail import (
     DETAIL_FEATURE_VERSION,
     DETAIL_GRID_SIDE,
@@ -29,11 +30,66 @@ from companion.similarity_detail import (
     detail_diagnostics,
     extract_detail_feature,
 )
-from companion.similarity_detail_service import SimilarityDetailMaintainer
+from companion.similarity_detail_service import (
+    DETAIL_DIAGNOSTIC_CONCURRENCY,
+    SimilarityDetailMaintainer,
+    SimilarityDetailRepository,
+)
 from companion.task_coordinator import TaskPausedError
 
 ASSET = UUID(int=1)
 MODIFIED = datetime(2026, 9, 14, tzinfo=UTC)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_run_off_event_loop_with_bounded_concurrency(monkeypatch) -> None:
+    repository = SimilarityDetailRepository(SimpleNamespace())
+    selected_id, reference_id = UUID(int=11), UUID(int=12)
+    feature = SimpleNamespace(
+        width=512,
+        height=512,
+        sample=zlib.compress(bytes(DETAIL_SAMPLE_BYTES)),
+        origin="original",
+    )
+
+    async def current_features(_asset_ids):
+        return {selected_id: feature, reference_id: feature}
+
+    monkeypatch.setattr(repository, "get_current_many", current_features)
+    main_thread = threading.get_ident()
+    lock = threading.Lock()
+    release = threading.Event()
+    saturated = threading.Event()
+    active = 0
+    peak = 0
+    worker_threads: set[int] = set()
+
+    def blocking_diagnostics(*_args, **_kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+            worker_threads.add(threading.get_ident())
+            if active == DETAIL_DIAGNOSTIC_CONCURRENCY:
+                saturated.set()
+        assert release.wait(timeout=2)
+        with lock:
+            active -= 1
+        return SimpleNamespace()
+
+    monkeypatch.setattr(similarity_detail_service, "detail_diagnostics", blocking_diagnostics)
+    tasks = [
+        asyncio.create_task(repository.diagnostics(selected_id, reference_id))
+        for _ in range(DETAIL_DIAGNOSTIC_CONCURRENCY + 1)
+    ]
+    try:
+        assert await asyncio.to_thread(saturated.wait, 1)
+        await asyncio.sleep(0)
+        assert peak == DETAIL_DIAGNOSTIC_CONCURRENCY
+        assert main_thread not in worker_threads
+    finally:
+        release.set()
+    await asyncio.gather(*tasks)
 
 
 @pytest.mark.parametrize(
