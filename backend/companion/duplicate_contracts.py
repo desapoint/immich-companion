@@ -185,8 +185,14 @@ def normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         if action == "stack_all" and primary_id is not None
         else None,
     )
-    if normalized["follow_up"] is not None:
-        normalized["follow_up"].setdefault("resolution", "move_selected")
+    normalized.setdefault(
+        "follow_ups",
+        [normalized["follow_up"]] if normalized["follow_up"] is not None else [],
+    )
+    if normalized["follow_up"] is None and normalized["follow_ups"]:
+        normalized["follow_up"] = normalized["follow_ups"][0]
+    for follow_up in normalized["follow_ups"]:
+        follow_up.setdefault("resolution", "move_selected")
     normalized.setdefault("execution_state", "pending")
     normalized.setdefault("metadata_work", None)
     normalized.setdefault("member_fingerprint", member_set_key(member_ids))
@@ -194,7 +200,9 @@ def normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         keep_ids = {UUID(value) for value in normalized.get("keep_asset_ids", [])}
         trash_ids = {UUID(value) for value in normalized.get("trash_asset_ids", [])}
         stack_ids = {
-            UUID(value) for value in (normalized.get("follow_up") or {}).get("member_asset_ids", [])
+            UUID(value)
+            for follow_up in normalized.get("follow_ups", [])
+            for value in follow_up.get("member_asset_ids", [])
         }
         normalized["members"] = [
             {
@@ -227,7 +235,7 @@ def public_plan(record: ActionPlanRecord) -> DuplicateResolutionPlan:
         group_count=len(groups),
         resolve_group_count=sum(group.action == "resolve" for group in groups),
         keep_all_group_count=sum(group.action == "keep_all" for group in groups),
-        stack_group_count=sum(group.follow_up is not None for group in groups),
+        stack_group_count=sum(bool(group.follow_ups) for group in groups),
         mixed_group_count=sum(group.action == "mixed" for group in groups),
         trash_asset_count=sum(len(group.trash_asset_ids) for group in groups),
         retained_asset_count=sum(
