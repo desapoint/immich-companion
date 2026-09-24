@@ -1,6 +1,6 @@
-"""Compatibility imports for the canonical task subsystem."""
+"""Canonical durable task subsystem."""
 
-from companion.task_coordinator import (
+from companion.tasks.coordinator import (
     PermanentTaskError,
     RetryableTaskError,
     TaskCancelledError,

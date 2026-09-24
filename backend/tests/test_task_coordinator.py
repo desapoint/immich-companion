@@ -14,8 +14,8 @@ from companion.task_coordinator import (
     TaskPausedError,
 )
 from companion.task_schema import TaskResult, TaskStatusView
-from companion.v2 import task_coordinator as coordinator_module
-from companion.v2.legacy_task_coordinator import _shutdown_release_state
+from companion.tasks import coordinator as coordinator_module
+from companion.tasks.repository import _shutdown_release_state
 
 TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 WORKER_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")

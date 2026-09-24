@@ -88,3 +88,21 @@ def test_neutral_similarity_helper_is_runtime_importable() -> None:
     from companion.duplicate_contracts import same_normalized_pixels
 
     assert same_normalized_pixels(None, None) is False
+
+
+def test_task_subsystem_has_one_runtime_and_contract_owner() -> None:
+    from companion import task_coordinator, task_schema
+    from companion.tasks import contracts, coordinator
+    from companion.v2 import task_coordinator as v2_coordinator
+    from companion.v2 import task_schema as v2_schema
+
+    assert not (ROOT / "v2" / "legacy_task_coordinator.py").exists()
+    assert task_coordinator.TaskCoordinator is coordinator.TaskCoordinator
+    assert v2_coordinator.TaskCoordinator is coordinator.TaskCoordinator
+    assert task_schema.TaskStatusView is contracts.TaskStatusView
+    assert v2_schema.TaskStatusView is contracts.TaskStatusView
+
+    coordinator_source = (ROOT / "tasks" / "coordinator.py").read_text(encoding="utf-8")
+    assert "class TaskRepository" not in coordinator_source
+    assert "class TaskScheduler" not in coordinator_source
+    assert "class TaskUpdateBroker" not in coordinator_source

@@ -12,7 +12,7 @@ from time import perf_counter
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
 from companion.sync_schema import SyncMode
-from companion.v2.task_coordinator import TaskContext
+from companion.tasks.coordinator import TaskContext
 
 
 @dataclass(frozen=True, slots=True)

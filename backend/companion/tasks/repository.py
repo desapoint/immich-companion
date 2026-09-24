@@ -1,12 +1,9 @@
-"""Reusable PostgreSQL-backed task coordination and worker lifecycle."""
+"""PostgreSQL persistence for durable tasks, attempts, events, and schedules."""
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import suppress
 from datetime import UTC, datetime, timedelta
-from typing import Any, Protocol
+from typing import Any
 from uuid import UUID, uuid4
 
 from croniter import croniter
@@ -20,47 +17,20 @@ from companion.models import (
     TaskRecord,
     TaskScheduleRecord,
 )
-from companion.task_schema import (
+from companion.tasks.contracts import (
     TaskErrorEvent,
     TaskEvent,
     TaskResult,
     TaskScheduleView,
     TaskStatusView,
 )
+from companion.tasks.errors import (
+    TaskAlreadyActiveError,
+    TaskCancelledError,
+    TaskLeaseLostError,
+)
 
 TASK_UPDATE_CHANNEL = "companion_task_updates"
-
-
-class RetryableTaskError(RuntimeError):
-    """A handler failure that should be retried by the same task."""
-
-
-class PermanentTaskError(RuntimeError):
-    """A handler failure that must not be retried."""
-
-
-class TaskLeaseLostError(RuntimeError):
-    """Raised when a worker attempts to mutate a task it no longer owns."""
-
-
-class TaskCancelledError(RuntimeError):
-    """Raised when a handler observes a cancellation request."""
-
-
-class TaskAlreadyActiveError(RuntimeError):
-    """Raised when a scheduled submission coalesces with active work."""
-
-
-class TaskHandler(Protocol):
-    """Protocol implemented by each domain task type."""
-
-    task_type: str
-    lane_key: str
-    max_concurrency: int
-
-    async def execute(self, context: TaskContext, payload: dict[str, Any]) -> TaskResult:
-        """Execute one immutable task payload."""
-
 
 def _public(record: TaskRecord | None) -> TaskStatusView | None:
     if record is None:
@@ -136,6 +106,113 @@ class TaskRepository:
 
     def __init__(self, database: DatabaseManager) -> None:
         self._database = database
+
+    async def control_state(self, task_id: UUID, worker_id: UUID) -> str:
+        async with self._database.sessions() as session:
+            record = await session.get(TaskRecord, task_id)
+            if record is None or record.lease_owner != worker_id:
+                raise TaskLeaseLostError("The task lease is no longer owned")
+            return record.status
+
+    async def request_pause(self, task_id: UUID) -> TaskStatusView | None:
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(TaskRecord).where(TaskRecord.id == task_id).with_for_update()
+            )
+            if record is None:
+                return None
+            if record.status in ("queued", "retrying") or (
+                record.status == "recovering"
+                and (record.lease_expires_at is None or record.lease_expires_at <= now)
+            ):
+                record.status = "paused"
+                record.lease_owner = None
+                record.lease_expires_at = None
+                record.next_attempt_at = None
+            elif record.status in ("running", "recovering"):
+                record.status = "pause_requested"
+            else:
+                return _public(record)
+            session.add(
+                TaskEventRecord(
+                    task_id=task_id,
+                    attempt=record.attempt,
+                    kind="pause_requested",
+                    details={},
+                )
+            )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
+            )
+            return _public(record)
+
+    async def mark_paused(self, task_id: UUID, worker_id: UUID) -> TaskStatusView:
+        now = datetime.now(UTC)
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(TaskRecord).where(TaskRecord.id == task_id).with_for_update()
+            )
+            if record is None or record.lease_owner != worker_id:
+                raise TaskLeaseLostError("The task lease is no longer owned")
+            if record.status != "pause_requested":
+                raise TaskLeaseLostError("The task is no longer awaiting pause")
+            record.status = "paused"
+            record.lease_owner = None
+            record.lease_expires_at = None
+            record.next_attempt_at = None
+            attempt = await session.scalar(
+                select(TaskAttemptRecord)
+                .where(
+                    TaskAttemptRecord.task_id == task_id,
+                    TaskAttemptRecord.attempt == record.attempt,
+                )
+                .with_for_update()
+            )
+            if attempt is not None:
+                attempt.status = "paused"
+                attempt.completed_at = now
+            session.add(
+                TaskEventRecord(
+                    task_id=task_id,
+                    attempt=record.attempt,
+                    kind="paused",
+                    details={"checkpoint": record.checkpoint or {}},
+                )
+            )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
+            )
+            return _public(record)  # type: ignore[return-value]
+
+    async def resume(self, task_id: UUID) -> TaskStatusView | None:
+        async with self._database.sessions() as session, session.begin():
+            record = await session.scalar(
+                select(TaskRecord).where(TaskRecord.id == task_id).with_for_update()
+            )
+            if record is None:
+                return None
+            if record.status != "paused":
+                return _public(record)
+            record.status = "recovering"
+            record.next_attempt_at = datetime.now(UTC)
+            record.completed_at = None
+            record.error = None
+            session.add(
+                TaskEventRecord(
+                    task_id=task_id,
+                    attempt=record.attempt,
+                    kind="resumed",
+                    details={"checkpoint": record.checkpoint or {}},
+                )
+            )
+            await session.execute(
+                text("SELECT pg_notify(:channel, :payload)"),
+                {"channel": TASK_UPDATE_CHANNEL, "payload": str(task_id)},
+            )
+            return _public(record)
 
     async def submit(
         self,
@@ -869,458 +946,3 @@ class TaskRepository:
                 )
                 cancelled += 1
             return cancelled
-
-
-class TaskContext:
-    """Lease-bound handler context for durable progress and cancellation."""
-
-    def __init__(
-        self,
-        repository: TaskRepository,
-        task: TaskStatusView,
-        worker_id: UUID,
-        lease_duration: timedelta,
-        notify: Callable[[], Awaitable[None]] | None = None,
-    ) -> None:
-        self._repository = repository
-        self.task = task
-        self.worker_id = worker_id
-        self._lease_duration = lease_duration
-        self._notify = notify
-
-    async def checkpoint(
-        self, *, checkpoint: dict[str, Any], counters: dict[str, int], progress: dict[str, Any]
-    ) -> None:
-        await self._repository.checkpoint(
-            self.task.id,
-            self.worker_id,
-            checkpoint=checkpoint,
-            counters=counters,
-            progress=progress,
-            lease_duration=self._lease_duration,
-        )
-        if self._notify is not None:
-            await self._notify()
-
-    async def heartbeat(self) -> None:
-        await self._repository.heartbeat(
-            self.task.id, self.worker_id, lease_duration=self._lease_duration
-        )
-
-    async def update_payload(self, payload: dict[str, Any]) -> None:
-        """Persist handler-resolved payload fields used for status and recovery."""
-
-        await self._repository.update_payload(self.task.id, self.worker_id, payload)
-        self.task.payload = dict(payload)
-        if self._notify is not None:
-            await self._notify()
-
-    async def ensure_active(self) -> None:
-        if await self._repository.is_cancelled(self.task.id, self.worker_id):
-            raise TaskCancelledError("The task was cancelled")
-
-
-class TaskCoordinator:
-    """Register handlers and execute durable tasks with independent lanes."""
-
-    def __init__(
-        self,
-        database: DatabaseManager,
-        *,
-        lease_seconds: int = 60,
-        max_attempts: int = 5,
-        retry_backoff_seconds: float = 1.0,
-    ) -> None:
-        self._repository = TaskRepository(database)
-        self._lease_duration = timedelta(seconds=lease_seconds)
-        self._max_attempts = max_attempts
-        self._retry_backoff_seconds = retry_backoff_seconds
-        self._handlers: dict[str, TaskHandler] = {}
-        self._worker: asyncio.Task[None] | None = None
-        self._stopping = asyncio.Event()
-        self._running: set[asyncio.Task[None]] = set()
-        self._schedule_definitions: list[dict[str, Any]] = []
-        self._subscribers: dict[UUID, set[asyncio.Queue[TaskStatusView]]] = {}
-        self._global_subscribers: set[asyncio.Queue[TaskStatusView]] = set()
-        self._database = database
-        self._listener: asyncio.Task[None] | None = None
-        self._worker_id: UUID | None = None
-
-    def register_handler(self, handler: TaskHandler) -> None:
-        self._handlers[handler.task_type] = handler
-
-    def register_schedule(
-        self,
-        *,
-        name: str,
-        interval_seconds: int,
-        task_type: str,
-        payload: dict[str, Any],
-        priority: int = 0,
-        enabled: bool = True,
-        cron_expression: str | None = None,
-        deduplication_policy: str = "window",
-        blocked_by: list[str] | None = None,
-    ) -> None:
-        self._schedule_definitions.append(
-            {
-                "name": name,
-                "interval_seconds": interval_seconds,
-                "task_type": task_type,
-                "payload": dict(payload),
-                "priority": priority,
-                "enabled": enabled,
-                "cron_expression": cron_expression,
-                "deduplication_policy": deduplication_policy,
-                "blocked_by": list(blocked_by or []),
-            }
-        )
-
-    async def submit(
-        self,
-        task_type: str,
-        payload: dict[str, Any],
-        *,
-        priority: int = 0,
-        deduplication_key: str | None = None,
-        lane_key: str | None = None,
-        max_concurrency: int | None = None,
-        task_id: UUID | None = None,
-        schedule_name: str | None = None,
-    ) -> TaskStatusView:
-        handler = self._handlers.get(task_type)
-        if handler is None:
-            raise ValueError(f"No handler registered for task type {task_type}")
-        task = await self._repository.submit(
-            task_type,
-            payload,
-            priority=priority,
-            deduplication_key=deduplication_key,
-            lane_key=lane_key or handler.lane_key,
-            max_concurrency=max_concurrency or handler.max_concurrency,
-            task_id=task_id,
-            schedule_name=schedule_name,
-        )
-        await self._publish(task.id)
-        return task
-
-    async def get_status(self, task_id: UUID) -> TaskStatusView | None:
-        return await self._repository.get(task_id)
-
-    async def stream(self, task_id: UUID) -> AsyncIterator[TaskStatusView]:
-        """Yield an initial snapshot and coordinator-published task changes."""
-
-        queue: asyncio.Queue[TaskStatusView] = asyncio.Queue(maxsize=8)
-        subscribers = self._subscribers.setdefault(task_id, set())
-        subscribers.add(queue)
-        try:
-            current = await self.get_status(task_id)
-            if current is None:
-                return
-            yield current
-            if current.status in ("completed", "failed", "cancelled"):
-                return
-            while True:
-                try:
-                    current = await asyncio.wait_for(queue.get(), timeout=5)
-                except TimeoutError:
-                    current = await self.get_status(task_id)
-                    if current is None:
-                        return
-                yield current
-                if current.status in ("completed", "failed", "cancelled"):
-                    return
-        finally:
-            subscribers = self._subscribers.get(task_id)
-            if subscribers is not None:
-                subscribers.discard(queue)
-                if not subscribers:
-                    self._subscribers.pop(task_id, None)
-
-    async def stream_all(self) -> AsyncIterator[TaskStatusView]:
-        """Yield every committed task update, including newly submitted tasks."""
-
-        queue: asyncio.Queue[TaskStatusView] = asyncio.Queue(maxsize=32)
-        self._global_subscribers.add(queue)
-        try:
-            while True:
-                yield await queue.get()
-        finally:
-            self._global_subscribers.discard(queue)
-
-    async def _publish(self, task_id: UUID) -> None:
-        queues = tuple(self._subscribers.get(task_id, ()))
-        global_queues = tuple(self._global_subscribers)
-        if not queues and not global_queues:
-            return
-        task = await self.get_status(task_id)
-        if task is None:
-            return
-        # The global stream is only a coordination signal.  Never broadcast
-        # immutable task inputs (which may contain thousands of asset IDs) to
-        # every connected browser; per-task streams remain available for the
-        # client that owns a task.
-        global_result = task.result
-        if global_result is not None:
-            global_result = global_result.model_copy(
-                update={
-                    "summary": {
-                        key: value
-                        for key, value in global_result.summary.items()
-                        if key not in {"failed_ids", "missing_ids"}
-                    }
-                }
-            )
-        global_task = task.model_copy(
-            update={"payload": {}, "checkpoint": {}, "result": global_result}
-        )
-        for queue in (*queues, *global_queues):
-            if queue.full():
-                with suppress(asyncio.QueueEmpty):
-                    queue.get_nowait()
-            queue.put_nowait(task if queue in queues else global_task)
-
-    async def find_active(
-        self, task_type: str, deduplication_key: str
-    ) -> TaskStatusView | None:
-        """Find an active task for idempotent domain submissions."""
-
-        return await self._repository.find_active(task_type, deduplication_key)
-
-    async def find_active_by_type(self, task_type: str) -> TaskStatusView | None:
-        """Find active work before accepting incompatible domain submissions."""
-
-        return await self._repository.find_active_by_type(task_type)
-
-    async def list_tasks(
-        self, *, task_type: str | None = None, limit: int = 50, active_only: bool = False
-    ) -> list[TaskStatusView]:
-        return await self._repository.list(
-            task_type=task_type, limit=limit, active_only=active_only
-        )
-
-    async def task_events(self, task_id: UUID, *, limit: int = 1000) -> list[TaskEvent]:
-        return await self._repository.events(task_id, limit=limit)
-
-    async def task_errors(self, *, limit: int = 100) -> list[TaskErrorEvent]:
-        return await self._repository.errors(limit=limit)
-
-    async def cancel(self, task_id: UUID) -> TaskStatusView | None:
-        return await self._repository.cancel(task_id)
-
-    async def cancel_unfinished(self, task_type: str, *, reason: str) -> int:
-        """Prevent selected durable work from resuming merely because the process started."""
-
-        return await self._repository.cancel_unfinished(task_type, reason=reason)
-
-    async def list_schedules(self) -> list[TaskScheduleView]:
-        return await self._repository.list_schedules()
-
-    async def update_schedule(
-        self, name: str, *, enabled: bool, cron_expression: str
-    ) -> TaskScheduleView | None:
-        return await self._repository.update_schedule(
-            name, enabled=enabled, cron_expression=cron_expression
-        )
-
-    async def wait(self, task_id: UUID, *, poll_seconds: float = 0.25) -> TaskStatusView:
-        while True:
-            task = await self.get_status(task_id)
-            if task is None:
-                raise ValueError("The task was not found")
-            if task.status in ("completed", "failed", "cancelled"):
-                return task
-            await asyncio.sleep(poll_seconds)
-
-    async def start(self) -> None:
-        if self._worker is None or self._worker.done():
-            self._stopping.clear()
-            for definition in self._schedule_definitions:
-                await self._repository.ensure_schedule(**definition)
-            self._listener = asyncio.create_task(
-                self._listen_for_updates(), name="task-coordinator-listener"
-            )
-            self._worker = asyncio.create_task(self._run(), name="task-coordinator-worker")
-
-    async def stop(self) -> None:
-        self._stopping.set()
-        if self._worker is not None and not self._worker.done():
-            self._worker.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._worker
-        if self._listener is not None and not self._listener.done():
-            self._listener.cancel()
-            with suppress(asyncio.CancelledError):
-                await self._listener
-        running = tuple(self._running)
-        for execution in running:
-            execution.cancel()
-        if running:
-            await asyncio.gather(*running, return_exceptions=True)
-        if self._worker_id is not None:
-            await self._repository.release_worker_leases(self._worker_id)
-            self._worker_id = None
-
-    async def _run(self) -> None:
-        worker_id = uuid4()
-        self._worker_id = worker_id
-        scheduler = asyncio.create_task(self._schedule(), name="task-coordinator-scheduler")
-        try:
-            while not self._stopping.is_set():
-                if len(self._running) >= 16:
-                    done, pending = await asyncio.wait(
-                        self._running, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    self._running = set(pending)
-                    for task in done:
-                        task.result()
-                    continue
-                task = await self._repository.claim(worker_id, lease_duration=self._lease_duration)
-                if task is None:
-                    await asyncio.sleep(0.25)
-                    continue
-                await self._publish(task.id)
-                execution = asyncio.create_task(
-                    self._execute(task, worker_id), name=f"task-{task.id}"
-                )
-                self._running.add(execution)
-                execution.add_done_callback(self._running.discard)
-        finally:
-            scheduler.cancel()
-            with suppress(asyncio.CancelledError):
-                await scheduler
-
-    async def _schedule(self) -> None:
-        while not self._stopping.is_set():
-            for schedule in await self._repository.claim_due_schedules():
-                dedupe = (
-                    f"asset-sync:{schedule.payload['mode']}"
-                    if schedule.deduplication_policy == "coalesce"
-                    and schedule.task_type == "asset_sync"
-                    and isinstance(schedule.payload.get("mode"), str)
-                    else (
-                        f"schedule:{schedule.name}"
-                        if schedule.deduplication_policy == "coalesce"
-                        else f"schedule:{schedule.name}:{schedule.next_run_at.isoformat()}"
-                    )
-                )
-                blocked = False
-                for blocked_key in schedule.blocked_by or []:
-                    if await self._repository.find_active(
-                        schedule.task_type, blocked_key
-                    ):
-                        blocked = True
-                        break
-                if blocked:
-                    await self._repository.defer_schedule(schedule.name)
-                    continue
-                try:
-                    await self.submit(
-                        schedule.task_type,
-                        schedule.payload,
-                        priority=schedule.priority,
-                        deduplication_key=dedupe,
-                        schedule_name=schedule.name,
-                    )
-                except (TaskAlreadyActiveError, ValueError):
-                    # Handler registration may complete just after startup; the
-                    # same work may already be active. Defer without losing the tick.
-                    await self._repository.defer_schedule(schedule.name)
-                    continue
-            await asyncio.sleep(1)
-
-    async def _listen_for_updates(self) -> None:
-        """Fan out committed task changes from every coordinator replica."""
-
-        while not self._stopping.is_set():
-            try:
-                async for payload in self._database.listen(TASK_UPDATE_CHANNEL):
-                    if self._stopping.is_set():
-                        return
-                    try:
-                        await self._publish(UUID(payload))
-                    except ValueError:
-                        continue
-            except asyncio.CancelledError:
-                raise
-            except Exception:
-                # A transient database/listener failure must not stop task work;
-                # the stream timeout still refreshes durable state meanwhile.
-                await asyncio.sleep(1)
-
-    async def _execute(self, task: TaskStatusView, worker_id: UUID) -> None:
-        handler = self._handlers.get(task.task_type)
-        if handler is None:
-            await self._repository.fail(
-                task.id,
-                worker_id,
-                ValueError(f"No handler registered for {task.task_type}"),
-                retryable=False,
-                next_attempt_at=None,
-                max_attempts=self._max_attempts,
-            )
-            return
-        context = TaskContext(
-            self._repository,
-            task,
-            worker_id,
-            self._lease_duration,
-            notify=lambda: self._publish(task.id),
-        )
-        heartbeat = asyncio.create_task(self._heartbeat(context), name=f"heartbeat-{task.id}")
-        try:
-            result = await handler.execute(context, task.payload)
-        except TaskCancelledError as error:
-            await self._repository.fail(
-                task.id,
-                worker_id,
-                error,
-                retryable=False,
-                next_attempt_at=None,
-                max_attempts=self._max_attempts,
-            )
-            await self._publish(task.id)
-        except RetryableTaskError as error:
-            delay = min(self._retry_backoff_seconds * 2 ** max(0, task.attempt - 1), 300)
-            await self._repository.fail(
-                task.id,
-                worker_id,
-                error,
-                retryable=True,
-                next_attempt_at=datetime.now(UTC) + timedelta(seconds=delay),
-                max_attempts=self._max_attempts,
-            )
-            await self._publish(task.id)
-        except PermanentTaskError as error:
-            await self._repository.fail(
-                task.id,
-                worker_id,
-                error,
-                retryable=False,
-                next_attempt_at=None,
-                max_attempts=self._max_attempts,
-            )
-            await self._publish(task.id)
-        except Exception as error:
-            await self._repository.fail(
-                task.id,
-                worker_id,
-                error,
-                retryable=False,
-                next_attempt_at=None,
-                max_attempts=self._max_attempts,
-            )
-            await self._publish(task.id)
-        else:
-            await self._repository.complete(task.id, worker_id, result)
-            await self._publish(task.id)
-        finally:
-            heartbeat.cancel()
-            with suppress(asyncio.CancelledError):
-                await heartbeat
-
-    async def _heartbeat(self, context: TaskContext) -> None:
-        interval = max(1.0, self._lease_duration.total_seconds() / 3)
-        while True:
-            await asyncio.sleep(interval)
-            await context.heartbeat()

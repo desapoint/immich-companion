@@ -30,7 +30,7 @@ from companion.database import DatabaseManager
 from companion.models import TaskAttemptRecord, TaskLaneRecord, TaskRecord
 from companion.task_coordinator import TaskCancelledError
 from companion.task_schema import TaskResult
-from companion.v2.legacy_task_coordinator import TASK_UPDATE_CHANNEL
+from companion.tasks.repository import TASK_UPDATE_CHANNEL
 
 # Required broad compatibility kill-switch. Bump for any semantic Appearance-pipeline
 # change that can alter fingerprints, candidates, validation, scores, or grouping.

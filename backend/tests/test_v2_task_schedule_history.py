@@ -4,12 +4,9 @@ from uuid import UUID
 import pytest
 
 from companion.models import TaskLaneRecord, TaskRecord, TaskScheduleRecord
-from companion.v2.legacy_task_coordinator import (
-    TaskAlreadyActiveError,
-    TaskCoordinator,
-    TaskRepository,
-    _public_schedule,
-)
+from companion.tasks.coordinator import TaskCoordinator
+from companion.tasks.errors import TaskAlreadyActiveError
+from companion.tasks.repository import TaskRepository, _public_schedule
 
 
 class _Context:
@@ -197,11 +194,13 @@ async def test_scheduler_defers_a_tick_while_its_blocker_is_active(
         coordinator._stopping.set()
 
     monkeypatch.setattr(
-        "companion.v2.legacy_task_coordinator.asyncio.sleep",
+        "companion.tasks.scheduling.asyncio.sleep",
         stop_after_iteration,
     )
 
-    await coordinator._schedule()
+    await coordinator._scheduler.run(
+        coordinator._repository, coordinator.submit, coordinator._stopping
+    )
 
     assert repository.deferred == [schedule.name]
 
@@ -229,11 +228,13 @@ async def test_scheduler_labels_submitted_work_with_its_schedule(monkeypatch) ->
 
     monkeypatch.setattr(coordinator, "submit", submit)
     monkeypatch.setattr(
-        "companion.v2.legacy_task_coordinator.asyncio.sleep",
+        "companion.tasks.scheduling.asyncio.sleep",
         stop_after_iteration,
     )
 
-    await coordinator._schedule()
+    await coordinator._scheduler.run(
+        coordinator._repository, coordinator.submit, coordinator._stopping
+    )
 
     assert submissions[0]["schedule_name"] == schedule.name
     assert submissions[0]["deduplication_key"] == "asset-sync:full"
