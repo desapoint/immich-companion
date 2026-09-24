@@ -308,7 +308,9 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
       const uniqueGroupIds = [...new Set(groupIds)];
       if (!uniqueGroupIds.length) {
-        for (const stack of resolution.stacks) await saveWorkspaceStackResolution(stack);
+        for (const stack of resolution.stacks) {
+          if (stackSourceGroups(stack).length === 1) await saveWorkspaceStackResolution(stack);
+        }
         const plan = await requestJson<PlanResponse>('/api/assets/duplicates/cross-source/plan', jsonRequest('POST', {
           options: ANALYSIS_OPTIONS,
           group_ids: [],
