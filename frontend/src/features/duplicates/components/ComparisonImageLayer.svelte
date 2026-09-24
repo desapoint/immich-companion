@@ -5,14 +5,12 @@
     image,
     transform,
     top = false,
-    clipPath,
     opacity,
     visible = true,
   }: {
     image: ComparisonImageAsset;
     transform: string;
     top?: boolean;
-    clipPath?: string;
     opacity?: number;
     visible?: boolean;
   } = $props();
@@ -21,7 +19,6 @@
     top ? 'top' : '',
   ].filter(Boolean).join(' '));
   const layerStyle = $derived([
-    clipPath === undefined ? '' : `clip-path:${clipPath}`,
     opacity === undefined ? '' : `opacity:${opacity}`,
     `visibility:${visible ? 'visible' : 'hidden'}`,
   ].filter(Boolean).join(';'));

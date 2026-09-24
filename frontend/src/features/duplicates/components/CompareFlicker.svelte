@@ -16,6 +16,7 @@
   } = $props();
 
   let showReference = $state(false);
+  const activeImage = $derived(showReference ? pair.reference : pair.selected);
   const hold = new FlickerHoldController((active) => (showReference = active));
 
   function pointerDown(event: PointerEvent): void {
@@ -65,17 +66,7 @@
   role="group"
   aria-label="Flicker comparison"
 >
-  <ComparisonImageLayer
-    image={pair.selected}
-    {transform}
-    visible={!showReference}
-  />
-  <ComparisonImageLayer
-    image={pair.reference}
-    {transform}
-    top
-    visible={showReference}
-  />
+  <ComparisonImageLayer image={activeImage} {transform} />
 
   <div class="v2-compare-floating-controls v2-flicker-controls">
     <button

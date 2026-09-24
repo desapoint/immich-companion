@@ -9,13 +9,11 @@ describe('ComparisonImageLayer', () => {
         image: { src: '/selected.jpg', label: 'Selected image' },
         transform: 'translate(2px, 3px) scale(1.5)',
         top: true,
-        clipPath: 'inset(0 0 0 40%)',
         opacity: 0.5,
       },
     });
 
     expect(body).toContain('class="v2-compare-layer top"');
-    expect(body).toContain('clip-path:inset(0 0 0 40%)');
     expect(body).toContain('opacity:0.5');
     expect(body).toContain('visibility:visible');
     expect(body).toContain('style="transform:translate(2px, 3px) scale(1.5)"');
