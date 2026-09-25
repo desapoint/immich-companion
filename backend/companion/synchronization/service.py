@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import tracemalloc
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -28,7 +28,6 @@ from companion.immich import (
     ImmichApiError,
     ImmichAsset,
     ImmichStack,
-    ImmichStackAsset,
     ImmichTag,
 )
 from companion.sync_repository import SyncRepository, new_sync_owner
@@ -48,16 +47,15 @@ from companion.sync_telemetry import (
     reset_sync_telemetry,
 )
 from companion.synchronization.batching import (
-    async_batches_with_last,
     async_items_with_last,
-    enumerate_async,
     prefetch_async,
 )
-from companion.synchronization.scopes import AssetScope, CatalogScope
+from companion.synchronization.scopes import AssetScope, CatalogScope, StackScope
 from companion.synchronization.selections import AllSelection, WindowSelection
 from companion.synchronization.steps import (
     AssetSyncStep,
     CatalogSyncStep,
+    StackSyncStep,
     SyncStepConfig,
     SyncStepContext,
     SyncStepProgress,
@@ -137,6 +135,23 @@ class _PacedAssetSyncStep(AssetSyncStep):
 
     async def pace_page(self, _context: SyncStepContext) -> None:
         await self._page_pace_callback()
+
+
+
+class _PacedStackSyncStep(StackSyncStep):
+    """Preserve current full-sync batch pacing around the first-class stack step."""
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        pace_callback: Callable[[float], Awaitable[None]],
+    ) -> None:
+        super().__init__(immich, assets)
+        self._pace_callback = pace_callback
+
+    async def pace(self, _context: SyncStepContext, started: float) -> None:
+        await self._pace_callback(started)
 
 
 class _CoordinatorSyncRepository:
@@ -597,7 +612,7 @@ class AssetSyncService:
         payload_by_asset: dict[UUID, dict[str, object]] = {}
         current_stacks = stacks if stacks is not None else await self._immich.list_stacks()
         for stack in current_stacks:
-            payload, member_ids = self._stack_payload(stack)
+            payload, member_ids = StackSyncStep.stack_payload(stack)
             for member_id in member_ids:
                 if member_id in targets:
                     payload_by_asset[member_id] = payload
@@ -1178,7 +1193,7 @@ class AssetSyncService:
         stack_payload_by_asset: dict[UUID, dict[str, object]] = {}
         if include_stacks:
             for stack in await self._immich.list_stacks():
-                payload, member_ids = self._stack_payload(stack)
+                payload, member_ids = StackSyncStep.stack_payload(stack)
                 for member_id in member_ids:
                     stack_payload_by_asset[member_id] = payload
         for asset in assets:
@@ -1707,91 +1722,55 @@ class AssetSyncService:
             self._progress("stacks", 0, None, "Preparing stack traversal"),
         )
 
-    @staticmethod
-    def _stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
-        return AssetSyncService._stack_payload_from_members(
-            stack.id, stack.primary_asset_id, stack.assets
-        )
+    async def _sync_stacks(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+    ) -> None:
+        """Run stack synchronization through the canonical first-class step."""
 
-    @staticmethod
-    def _stack_payload_from_members(
-        stack_id: UUID,
-        primary_asset_id: UUID,
-        assets: list[ImmichAsset] | list[ImmichStackAsset],
-    ) -> tuple[dict[str, object], list[UUID]]:
-        members = [
-            {
-                "id": str(member.id),
-                "type": member.asset_type,
-                "originalFileName": member.original_file_name,
-                "originalMimeType": member.original_mime_type,
-                "width": member.width,
-                "height": member.height,
-                "fileCreatedAt": member.file_created_at.isoformat(),
-            }
-            for member in assets
-            if not member.is_trashed
-        ]
-        return (
-            {
-                "id": str(stack_id),
-                "primaryAssetId": str(primary_asset_id),
-                "assetCount": len(members),
-                "assets": members,
-            },
-            [member.id for member in assets],
-        )
-
-    async def _sync_stacks(self, run: SyncRunStatus, owner: UUID, counters: dict[str, int]) -> None:
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "stacks",
-            run.cursor if run.phase == "stacks" else None,
-            self._progress("stacks", counters["stacks_seen"], None, "Reading stacks"),
-        )
-        completed_batches = 0
-        if run.phase == "stacks" and run.cursor:
-            completed_batches = int(run.cursor.rsplit(":", 1)[1])
-
-        async def iter_stacks() -> AsyncIterator[ImmichStack]:
-            stream = getattr(self._immich, "iter_stacks", None)
-            if stream is not None:
-                async for stack in stream():
-                    yield stack
-                return
-            for stack in await self._immich.list_stacks():
-                yield stack
-
-        stack_size = self._full_batch_size(run, self._settings)
-        async for index, (stack_models, is_last) in enumerate_async(
-            async_batches_with_last(iter_stacks(), stack_size), start=1
-        ):
-            if index <= completed_batches:
-                continue
-            started = perf_counter()
-            stack_batch = [self._stack_payload(stack) for stack in stack_models]
-            counters["stack_members"] += await self._assets.apply_stack_batch(
-                stack_batch, run.generation
-            )
-            counters["stacks_seen"] += len(stack_batch)
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
             await self._checkpoint(
                 run,
                 owner,
-                counters,
+                step_counters,
                 "stacks",
-                f"stacks:{index}",
-                self._progress(
-                    "stacks",
-                    counters["stacks_seen"],
-                    None,
-                    f"Stacks {counters['stacks_seen']} processed · "
-                    f"{counters['stack_members']} members",
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
                 ),
             )
-            if not is_last:
-                await self._pace_full_batch(run, started)
+
+        step = _PacedStackSyncStep(
+            self._immich,
+            self._assets,
+            lambda started: self._pace_full_batch(run, started),
+        )
+        context = SyncStepContext(
+            mode=run.mode,
+            generation=run.generation,
+            config=SyncStepConfig(
+                batch_size=self._full_batch_size(run, self._settings),
+                concurrency=1,
+            ),
+            counters=counters,
+            cursor=run.cursor if run.phase == "stacks" else None,
+            window_start=run.window_start,
+            window_end=run.window_end,
+            manual=False,
+            respect_conditionals=True,
+            checkpoint_callback=checkpoint,
+        )
+        await step.run(context, StackScope(selection=AllSelection()))
         await self._checkpoint(
             run,
             owner,

@@ -107,30 +107,33 @@ async def test_stack_snapshot_updates_only_action_affected_assets() -> None:
         async def replace_asset_stack_snapshots(self, ids, payloads):
             self.updated = (ids, payloads)
 
+    stack = ImmichStack(
+        id=RUN_ID,
+        primaryAssetId=ASSET_ONE,
+        assets=[stack_asset(ASSET_ONE, "member.png")],
+    )
+
     class Immich:
         calls = 0
 
         async def list_stacks(self):
             self.calls += 1
-            return [SimpleNamespace(id=RUN_ID, assets=[SimpleNamespace(id=ASSET_ONE)])]
+            return [stack]
 
     assets = Assets()
     immich = Immich()
     service = object.__new__(AssetSyncService)
     service._immich = immich  # type: ignore[assignment]
     service._assets = assets  # type: ignore[assignment]
-    service._stack_payload = lambda _stack: ({"id": str(RUN_ID)}, [ASSET_ONE])  # type: ignore[method-assign]
 
     await service.apply_stack_snapshot_for_targets([ASSET_ONE, ASSET_TWO])
 
     assert assets.updated == (
         [ASSET_ONE, ASSET_TWO],
-        {ASSET_ONE: {"id": str(RUN_ID)}},
+        {ASSET_ONE: StackSyncStep.stack_payload(stack)[0]},
     )
     assert immich.calls == 1
-    await service.apply_stack_snapshot_for_targets(
-        [ASSET_ONE], [SimpleNamespace(id=RUN_ID, assets=[SimpleNamespace(id=ASSET_ONE)])]
-    )
+    await service.apply_stack_snapshot_for_targets([ASSET_ONE], [stack])
     assert immich.calls == 1
 
 

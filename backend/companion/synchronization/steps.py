@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
@@ -16,12 +16,24 @@ from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
+    ImmichStack,
+    ImmichStackAsset,
     ImmichTag,
 )
 from companion.sync_schema import SyncMode
-from companion.synchronization.batching import batches, prefetch_async
+from companion.synchronization.batching import (
+    async_batches_with_last,
+    batches,
+    enumerate_async,
+    prefetch_async,
+)
 from companion.synchronization.evidence import SyncAuthority, SyncEvidence
-from companion.synchronization.scopes import AssetScope, CatalogScope, SyncStepName
+from companion.synchronization.scopes import (
+    AssetScope,
+    CatalogScope,
+    StackScope,
+    SyncStepName,
+)
 from companion.synchronization.selections import (
     AllSelection,
     ExplicitIdsSelection,
@@ -692,6 +704,174 @@ class AssetSyncStep(SyncStep[AssetScope]):
                 phase=self.phase,
                 completed=completed,
                 total=total,
+                detail=detail,
+            ),
+        )
+
+
+
+class StackSyncStep(SyncStep[StackScope]):
+    """Synchronize complete Immich stack topology in bounded persistence batches."""
+
+    name = "stacks"
+    phase = "stacks"
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+    ) -> None:
+        self._immich = immich
+        self._assets = assets
+
+    async def run(
+        self,
+        context: SyncStepContext,
+        scope: StackScope,
+    ) -> SyncStepResult:
+        result = await super().run(context, scope)
+        if result.skipped:
+            return result
+        return SyncStepResult(
+            name=result.name,
+            phase=result.phase,
+            skipped=result.skipped,
+            completed=result.completed,
+            total=result.total,
+            counters=result.counters,
+            evidence=[
+                SyncEvidence(
+                    domain="stacks",
+                    authority=SyncAuthority.COMPLETE,
+                    selection=scope.selection,
+                    generation=context.generation,
+                )
+            ],
+            outputs=result.outputs,
+        )
+
+    async def execute(
+        self,
+        context: SyncStepContext,
+        scope: StackScope,
+    ) -> tuple[int, None]:
+        if context.config.batch_size is None:
+            raise ValueError("StackSyncStep requires config.batch_size")
+        if not isinstance(scope.selection, AllSelection):
+            raise ValueError(
+                "Targeted stack synchronization is not supported by the current "
+                "Immich API because stack resolution requires complete stack traversal"
+            )
+
+        context.counters.setdefault("stacks_seen", 0)
+        context.counters.setdefault("stack_members", 0)
+        await self._checkpoint(
+            context,
+            context.cursor,
+            context.counters["stacks_seen"],
+            (
+                f"Stacks {context.counters['stacks_seen']} processed · "
+                f"{context.counters['stack_members']} members"
+                if context.counters["stacks_seen"]
+                else "Reading stacks"
+            ),
+        )
+
+        completed_batches = 0
+        if context.cursor:
+            completed_batches = int(context.cursor.rsplit(":", 1)[1])
+
+        async for index, (stack_models, is_last) in enumerate_async(
+            async_batches_with_last(
+                self._iter_stacks(),
+                context.config.batch_size,
+            ),
+            start=1,
+        ):
+            if index <= completed_batches:
+                continue
+            started = perf_counter()
+            stack_batch = [self.stack_payload(stack) for stack in stack_models]
+            context.counters["stack_members"] += await self._assets.apply_stack_batch(
+                stack_batch,
+                context.generation,
+            )
+            context.counters["stacks_seen"] += len(stack_batch)
+            await self._checkpoint(
+                context,
+                f"stacks:{index}",
+                context.counters["stacks_seen"],
+                (
+                    f"Stacks {context.counters['stacks_seen']} processed · "
+                    f"{context.counters['stack_members']} members"
+                ),
+            )
+            if not is_last:
+                await self.pace(context, started)
+
+        return context.counters["stacks_seen"], None
+
+    async def _iter_stacks(self) -> AsyncIterator[ImmichStack]:
+        stream = getattr(self._immich, "iter_stacks", None)
+        if stream is not None:
+            async for stack in stream():
+                yield stack
+            return
+        for stack in await self._immich.list_stacks():
+            yield stack
+
+    @staticmethod
+    def stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
+        return StackSyncStep.stack_payload_from_members(
+            stack.id,
+            stack.primary_asset_id,
+            stack.assets,
+        )
+
+    @staticmethod
+    def stack_payload_from_members(
+        stack_id: UUID,
+        primary_asset_id: UUID,
+        assets: list[ImmichAsset] | list[ImmichStackAsset],
+    ) -> tuple[dict[str, object], list[UUID]]:
+        members = [
+            {
+                "id": str(member.id),
+                "type": member.asset_type,
+                "originalFileName": member.original_file_name,
+                "originalMimeType": member.original_mime_type,
+                "width": member.width,
+                "height": member.height,
+                "fileCreatedAt": member.file_created_at.isoformat(),
+            }
+            for member in assets
+            if not member.is_trashed
+        ]
+        return (
+            {
+                "id": str(stack_id),
+                "primaryAssetId": str(primary_asset_id),
+                "assetCount": len(members),
+                "assets": members,
+            },
+            [member.id for member in assets],
+        )
+
+    async def _checkpoint(
+        self,
+        context: SyncStepContext,
+        cursor: str | None,
+        completed: int,
+        detail: str,
+    ) -> None:
+        context.cursor = cursor
+        await context.checkpoint_callback(
+            cursor,
+            context.counters,
+            SyncStepProgress(
+                phase=self.phase,
+                completed=completed,
+                total=None,
                 detail=detail,
             ),
         )
