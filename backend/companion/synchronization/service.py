@@ -1423,6 +1423,196 @@ class AssetSyncService:
             phase=phase, completed=max(0, completed), total=total, percent=percent, detail=detail
         )
 
+    @staticmethod
+    def _resume_evidence(
+        run: SyncRunStatus,
+        start_phase: int,
+    ) -> list[SyncEvidence]:
+        if run.evidence:
+            return [SyncEvidence.model_validate(item) for item in run.evidence]
+
+        evidence: list[SyncEvidence] = []
+        if start_phase >= 1:
+            evidence.extend(
+                [
+                    SyncEvidence(
+                        domain="albums",
+                        authority=SyncAuthority.COMPLETE,
+                        selection=AllSelection(),
+                        generation=run.generation,
+                    ),
+                    SyncEvidence(
+                        domain="tags",
+                        authority=SyncAuthority.COMPLETE,
+                        selection=AllSelection(),
+                        generation=run.generation,
+                    ),
+                ]
+            )
+        if start_phase >= 2:
+            if run.mode == "full":
+                asset_selection = AllSelection()
+                asset_authority = SyncAuthority.COMPLETE
+            else:
+                if run.window_start is None:
+                    raise ValueError(
+                        "Incremental asset evidence requires a bounded window"
+                    )
+                asset_selection = WindowSelection(
+                    start=run.window_start,
+                    end=run.window_end,
+                )
+                asset_authority = SyncAuthority.WINDOW
+            evidence.append(
+                SyncEvidence(
+                    domain="assets",
+                    authority=asset_authority,
+                    selection=asset_selection,
+                    generation=run.generation,
+                )
+            )
+        if start_phase >= 3:
+            evidence.append(
+                SyncEvidence(
+                    domain="stacks",
+                    authority=SyncAuthority.COMPLETE,
+                    selection=AllSelection(),
+                    generation=run.generation,
+                )
+            )
+        if start_phase >= 4:
+            # Compatibility only for runs that entered finalizing before evidence
+            # persistence existed. New runs persist exact relationship evidence.
+            album_selected = (
+                run.mode == "incremental"
+                and run.counters.get("album_strategy_asset_oriented", 0) == 1
+            )
+            tag_selected = (
+                run.mode == "incremental"
+                and run.counters.get("tag_strategy_asset_oriented", 0) == 1
+                and run.counters.get("tag_strategy_asset_fallback", 0) == 0
+            )
+            for domain, selected in (
+                ("album_memberships", album_selected),
+                ("tag_memberships", tag_selected),
+            ):
+                evidence.append(
+                    SyncEvidence(
+                        domain=domain,
+                        authority=(
+                            SyncAuthority.SELECTED
+                            if selected
+                            else SyncAuthority.COMPLETE
+                        ),
+                        selection=(
+                            GenerationSelection(generation=run.generation)
+                            if selected
+                            else AllSelection()
+                        ),
+                        generation=run.generation,
+                    )
+                )
+        return evidence
+
+    async def _run_validation_step(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        evidence: list[SyncEvidence],
+    ) -> SyncStepResult:
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
+            await self._checkpoint(
+                run,
+                owner,
+                step_counters,
+                "finalizing",
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
+                ),
+                evidence=evidence,
+            )
+
+        return await ValidationSyncStep(self._assets).run(
+            SyncStepContext(
+                mode=run.mode,
+                generation=run.generation,
+                config=SyncStepConfig(),
+                counters=counters,
+                cursor=run.cursor if run.phase == "finalizing" else None,
+                window_start=run.window_start,
+                window_end=run.window_end,
+                evidence=evidence,
+                checkpoint_callback=checkpoint,
+            ),
+            ValidationScope(
+                generation=run.generation,
+                expected_domains={
+                    "albums",
+                    "tags",
+                    "assets",
+                    "stacks",
+                    "album_memberships",
+                    "tag_memberships",
+                },
+                allow_counter_repair=run.attempts > 1,
+            ),
+        )
+
+    async def _run_finalization_step(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        evidence: list[SyncEvidence],
+    ) -> SyncStepResult:
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
+            await self._checkpoint(
+                run,
+                owner,
+                step_counters,
+                "finalizing",
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
+                ),
+                evidence=evidence,
+            )
+
+        return await FinalizationSyncStep(self._assets).run(
+            SyncStepContext(
+                mode=run.mode,
+                generation=run.generation,
+                config=SyncStepConfig(
+                    batch_size=self._full_batch_size(run, self._settings)
+                ),
+                counters=counters,
+                cursor="generation-valid",
+                window_start=run.window_start,
+                window_end=run.window_end,
+                evidence=evidence,
+                checkpoint_callback=checkpoint,
+            ),
+            FinalizationScope(generation=run.generation),
+        )
+
     async def _execute(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
         runtime = await self._runtime_settings()
         configure_throttling = getattr(self._immich, "configure_adaptive_throttling", None)
@@ -1461,6 +1651,7 @@ class AssetSyncService:
             "finalizing": 4,
         }
         start_phase = phase_order.get(run.phase, 0)
+        evidence = self._resume_evidence(run, start_phase)
         if start_phase <= 0:
             await self._checkpoint(
                 run,
@@ -1488,72 +1679,28 @@ class AssetSyncService:
             except ImmichApiError:
                 asset_total = None
         if start_phase <= 0:
-            await self._sync_catalogs(run, owner, counters, asset_total)
+            result = await self._sync_catalogs(run, owner, counters, asset_total)
+            evidence.extend(result.evidence)
         if start_phase <= 1:
-            await self._sync_assets(run, owner, counters, asset_total)
+            result = await self._sync_assets(run, owner, counters, asset_total)
+            evidence.extend(result.evidence)
         if start_phase <= 2:
-            await self._sync_stacks(run, owner, counters)
+            result = await self._sync_stacks(run, owner, counters)
+            evidence.extend(result.evidence)
         if start_phase <= 3:
-            await self._sync_relationships(run, owner, counters)
-        await self._checkpoint(
+            result = await self._sync_relationships(run, owner, counters)
+            evidence.extend(result.evidence)
+        validation_result = await self._run_validation_step(
             run,
             owner,
             counters,
-            "finalizing",
-            None,
-            self._progress("finalizing", 0, 1, "Validating synchronized state"),
+            evidence,
         )
-        validated_counts = await self._assets.validate_generation(
-            run.generation,
-            counters,
-            full=run.mode == "full",
-            allow_counter_repair=run.attempts > 1,
-        )
-        counters.update(validated_counts)
-        await self._checkpoint(
+        await self._run_finalization_step(
             run,
             owner,
             counters,
-            "finalizing",
-            "generation-valid",
-            self._progress("finalizing", 1, 1, "Finalizing synchronized state"),
-        )
-        album_asset_oriented = (
-            run.mode == "incremental" and counters["album_strategy_asset_oriented"] == 1
-        )
-        tag_asset_oriented = (
-            run.mode == "incremental"
-            and counters["tag_strategy_asset_oriented"] == 1
-            and counters["tag_strategy_asset_fallback"] == 0
-        )
-        asset_oriented_incremental = album_asset_oriented or tag_asset_oriented
-        if asset_oriented_incremental:
-            removed = await finalize_incremental_asset_oriented_tags(
-                self._assets,
-                run.generation,
-                batch_size=self._full_batch_size(run, self._settings),
-                window_start=run.window_start,
-                window_end=run.window_end,
-                album_asset_oriented=album_asset_oriented,
-                tag_asset_oriented=tag_asset_oriented,
-            )
-        else:
-            removed = await self._assets.finalize_generation(
-                run.generation,
-                remove_assets=run.mode == "full",
-                batch_size=self._full_batch_size(run, self._settings),
-                window_start=run.window_start if run.mode == "incremental" else None,
-                window_end=run.window_end if run.mode == "incremental" else None,
-            )
-        counters.update(removed)
-        await self._assets.refresh_relation_counts()
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "finalizing",
-            "validated",
-            self._progress("finalizing", 1, 1, "Synchronization complete"),
+            validation_result.evidence,
         )
         logger.info(
             "Sync summary: trigger=staged mode=%s run_id=%s generation=%s "
