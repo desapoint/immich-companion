@@ -162,7 +162,7 @@ async def test_incremental_plan_omits_events_and_preserves_forced_relation_strat
 
 @pytest.mark.asyncio
 async def test_incremental_plan_maps_forced_asset_strategy_and_runtime_controls() -> None:
-    planner = SyncPlanner(FakeImmich(stream=False), Settings(sync_batch_size=17))
+    planner = SyncPlanner(FakeImmich(stream=False), Settings(sync_batch_size=25))
 
     plan = await planner.for_run(
         run("incremental"),
@@ -171,7 +171,7 @@ async def test_incremental_plan_maps_forced_asset_strategy_and_runtime_controls(
 
     assets = plan.steps[1]
     relationships = plan.steps[3]
-    assert assets.config.batch_size == 17
+    assert assets.config.batch_size == 25
     assert assets.config.page_size == 750
     assert assets.config.page_prefetch == 2
     assert assets.config.concurrency == 3
