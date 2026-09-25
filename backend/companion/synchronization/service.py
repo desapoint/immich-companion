@@ -27,7 +27,6 @@ from companion.immich import (
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
-    ImmichAssetSearchPage,
     ImmichStack,
     ImmichStackAsset,
     ImmichTag,
@@ -55,9 +54,10 @@ from companion.synchronization.batching import (
     enumerate_async,
     prefetch_async,
 )
-from companion.synchronization.scopes import CatalogScope
-from companion.synchronization.selections import AllSelection
+from companion.synchronization.scopes import AssetScope, CatalogScope
+from companion.synchronization.selections import AllSelection, WindowSelection
 from companion.synchronization.steps import (
+    AssetSyncStep,
     CatalogSyncStep,
     SyncStepConfig,
     SyncStepContext,
@@ -113,6 +113,28 @@ class _PacedCatalogSyncStep(CatalogSyncStep):
 
     async def pace(self, _context: SyncStepContext, started: float) -> None:
         await self._pace_callback(started)
+
+
+
+class _PacedAssetSyncStep(AssetSyncStep):
+    """Preserve current full-sync page pacing around the first-class asset step."""
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        page_prefetch: int,
+        page_pace_callback: Callable[[], Awaitable[None]],
+    ) -> None:
+        super().__init__(
+            immich,
+            assets,
+            page_prefetch=page_prefetch,
+        )
+        self._page_pace_callback = page_pace_callback
+
+    async def pace_page(self, _context: SyncStepContext) -> None:
+        await self._page_pace_callback()
 
 
 class _CoordinatorSyncRepository:
@@ -1386,20 +1408,10 @@ class AssetSyncService:
         )
         if capabilities is not None and capabilities.stream and run.mode == "incremental":
             await self._sync_events(run, owner, counters)
-        asset_total: int | None = None
-        count_assets = getattr(self._immich, "count_assets", None)
-        if count_assets is not None:
-            try:
-                asset_total = await count_assets(
-                    updated_after=run.window_start if run.mode == "incremental" else None,
-                    updated_before=run.window_end if run.mode == "incremental" else None,
-                )
-            except ImmichApiError:
-                asset_total = None
         if start_phase <= 0:
-            await self._sync_catalogs(run, owner, counters, asset_total)
+            await self._sync_catalogs(run, owner, counters)
         if start_phase <= 1:
-            await self._sync_assets(run, owner, counters, asset_total)
+            await self._sync_assets(run, owner, counters)
         if start_phase <= 2:
             await self._sync_stacks(run, owner, counters)
         if start_phase <= 3:
@@ -1545,7 +1557,6 @@ class AssetSyncService:
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
-        asset_total: int | None,
     ) -> None:
         """Run catalog synchronization through the canonical scoped step."""
 
@@ -1599,14 +1610,7 @@ class AssetSyncService:
             counters,
             "assets",
             None,
-            self._progress(
-                "assets",
-                0,
-                asset_total,
-                f"Preparing {asset_total} media items"
-                if asset_total is not None
-                else "Preparing media traversal",
-            ),
+            self._progress("assets", 0, None, "Preparing media traversal"),
         )
 
     async def _sync_assets(
@@ -1614,43 +1618,64 @@ class AssetSyncService:
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
-        asset_total: int | None,
     ) -> None:
+        """Run asset synchronization through the canonical first-class step."""
+
         runtime = await self._runtime_settings()
-        batch_size = self._full_batch_size(run, self._settings)
-        page_size = runtime.api_page_size
-        start_page = 1
-        completed_page_batches = 0
-        completed_batches = 0
-        if run.phase == "assets" and run.cursor:
-            cursor_parts = run.cursor.split(":")
-            if len(cursor_parts) == 3:
-                start_page = int(cursor_parts[1])
-                completed_page_batches = int(cursor_parts[2])
-            else:
-                completed_batches = int(cursor_parts[-1])
-                completed_assets = completed_batches * batch_size
-                start_page = completed_assets // page_size + 1
-                completed_page_batches = (completed_assets % page_size) // batch_size
-        iterator = prefetch_async(self._immich.iter_asset_pages(
-            page_size=page_size,
-            updated_after=run.window_start if run.mode == "incremental" else None,
-            updated_before=run.window_end if run.mode == "incremental" else None,
-            start_page=start_page,
-        ), runtime.page_prefetch)
-        async for page_number, page in iterator:
-            await self._commit_asset_page(
+
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
+            await self._checkpoint(
                 run,
                 owner,
-                counters,
-                page,
-                page_number,
-                completed_page_batches if page_number == start_page else 0,
-                batch_size,
-                asset_total,
+                step_counters,
+                "assets",
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
+                ),
             )
-            if page.next_page is not None:
-                await self._pace_full_page(run)
+
+        if run.mode == "incremental":
+            if run.window_start is None:
+                raise ValueError("Incremental asset sync requires window_start")
+            selection = WindowSelection(
+                start=run.window_start,
+                end=run.window_end,
+            )
+        else:
+            selection = AllSelection()
+
+        step = _PacedAssetSyncStep(
+            self._immich,
+            self._assets,
+            runtime.page_prefetch,
+            lambda: self._pace_full_page(run),
+        )
+        context = SyncStepContext(
+            mode=run.mode,
+            generation=run.generation,
+            config=SyncStepConfig(
+                batch_size=self._full_batch_size(run, self._settings),
+                page_size=runtime.api_page_size,
+                concurrency=runtime.metadata_request_concurrency,
+            ),
+            counters=counters,
+            cursor=run.cursor if run.phase == "assets" else None,
+            window_start=run.window_start,
+            window_end=run.window_end,
+            manual=False,
+            respect_conditionals=True,
+            checkpoint_callback=checkpoint,
+        )
+        await step.run(context, AssetScope(selection=selection))
         await self._checkpoint(
             run,
             owner,
@@ -1658,70 +1683,6 @@ class AssetSyncService:
             "stacks",
             None,
             self._progress("stacks", 0, None, "Preparing stack traversal"),
-        )
-
-    async def _commit_asset_page(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-        page: ImmichAssetSearchPage,
-        page_number: int,
-        completed_batches: int,
-        batch_size: int,
-        asset_total: int | None,
-    ) -> None:
-        for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
-            if batch_number <= completed_batches:
-                continue
-            await self._commit_asset_batch(
-                run, owner, counters, batch, f"assets:{page_number}:{batch_number}", asset_total
-            )
-
-    async def _commit_asset_batch(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-        batch: list[ImmichAsset],
-        cursor: str,
-        asset_total: int | None,
-    ) -> None:
-        counters["tag_cheap_path_eligible_assets"] += sum(
-            1 for asset in batch if asset.includes_tags
-        )
-        counters["tag_cheap_path_fallback_assets"] += sum(
-            1 for asset in batch if not asset.includes_tags
-        )
-        lightweight_batch = [
-            asset.model_copy(update={"exif_info": None, "people": [], "tags": [], "stack": None})
-            for asset in batch
-        ]
-        # Full and incremental syncs both keep per-image Appearance evidence warm.
-        # Candidate allocation and pair scoring remain explicit discovery work.
-        created, updated, unchanged = await self._assets.upsert_asset_batch(
-            lightweight_batch,
-            run.generation,
-            track_similarity_changes=True,
-        )
-        counters["assets_seen"] += created + updated + unchanged
-        counters["assets_created"] += created
-        counters["assets_updated"] += updated
-        counters["assets_unchanged"] += unchanged
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "assets",
-            cursor,
-            self._progress(
-                "assets",
-                counters["assets_seen"],
-                asset_total,
-                f"Media {counters['assets_seen']}/{asset_total}"
-                if asset_total is not None
-                else f"Media {counters['assets_seen']} processed",
-            ),
         )
 
     @staticmethod

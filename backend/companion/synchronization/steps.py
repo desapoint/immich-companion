@@ -11,15 +11,25 @@ from time import perf_counter
 from uuid import UUID
 
 from companion.asset_repository import AssetRepository
-from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
+from companion.immich import (
+    ImmichAlbum,
+    ImmichApiClient,
+    ImmichApiError,
+    ImmichAsset,
+    ImmichTag,
+)
 from companion.sync_schema import SyncMode
-from companion.synchronization.evidence import SyncEvidence
-from companion.synchronization.scopes import CatalogScope, SyncStepName
+from companion.synchronization.batching import batches, prefetch_async
+from companion.synchronization.evidence import SyncAuthority, SyncEvidence
+from companion.synchronization.scopes import AssetScope, CatalogScope, SyncStepName
 from companion.synchronization.selections import (
     AllSelection,
     ExplicitIdsSelection,
+    GenerationSelection,
     PersistedSelection,
+    RequestSelection,
     SyncSelectionResolver,
+    WindowSelection,
 )
 from companion.tasks.coordinator import TaskContext
 
@@ -372,6 +382,301 @@ class CatalogSyncStep(SyncStep[CatalogScope]):
         cursor: str | None,
         completed: int,
         total: int,
+        detail: str,
+    ) -> None:
+        context.cursor = cursor
+        await context.checkpoint_callback(
+            cursor,
+            context.counters,
+            SyncStepProgress(
+                phase=self.phase,
+                completed=completed,
+                total=total,
+                detail=detail,
+            ),
+        )
+
+
+
+class AssetSyncStep(SyncStep[AssetScope]):
+    """Synchronize assets from remote traversal or a typed selected-asset scope."""
+
+    name = "assets"
+    phase = "assets"
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        selections: SyncSelectionResolver | None = None,
+        *,
+        page_prefetch: int = 0,
+    ) -> None:
+        if page_prefetch < 0:
+            raise ValueError("page_prefetch cannot be negative")
+        self._immich = immich
+        self._assets = assets
+        self._selections = selections
+        self._page_prefetch = page_prefetch
+
+    async def run(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> SyncStepResult:
+        result = await super().run(context, scope)
+        if result.skipped:
+            return result
+
+        selection = scope.selection
+        if isinstance(selection, AllSelection):
+            authority = SyncAuthority.COMPLETE
+        elif isinstance(selection, WindowSelection):
+            authority = SyncAuthority.WINDOW
+        else:
+            authority = SyncAuthority.SELECTED
+
+        return SyncStepResult(
+            name=result.name,
+            phase=result.phase,
+            skipped=result.skipped,
+            completed=result.completed,
+            total=result.total,
+            counters=result.counters,
+            evidence=[
+                SyncEvidence(
+                    domain="assets",
+                    authority=authority,
+                    selection=selection,
+                    generation=context.generation,
+                )
+            ],
+            outputs=result.outputs,
+        )
+
+    async def execute(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> tuple[int, int | None]:
+        if context.config.batch_size is None:
+            raise ValueError("AssetSyncStep requires config.batch_size")
+
+        for counter in (
+            "assets_seen",
+            "assets_created",
+            "assets_updated",
+            "assets_unchanged",
+            "tag_cheap_path_eligible_assets",
+            "tag_cheap_path_fallback_assets",
+        ):
+            context.counters.setdefault(counter, 0)
+
+        if isinstance(scope.selection, (AllSelection, WindowSelection)):
+            return await self._execute_remote(context, scope)
+        return await self._execute_selected(context, scope)
+
+    async def _execute_remote(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> tuple[int, int | None]:
+        if context.config.page_size is None:
+            raise ValueError("AssetSyncStep remote traversal requires config.page_size")
+
+        updated_after = None
+        updated_before = None
+        if isinstance(scope.selection, WindowSelection):
+            updated_after = scope.selection.start
+            updated_before = scope.selection.end
+
+        total: int | None = None
+        count_assets = getattr(self._immich, "count_assets", None)
+        if count_assets is not None:
+            try:
+                total = await count_assets(
+                    updated_after=updated_after,
+                    updated_before=updated_before,
+                )
+            except ImmichApiError:
+                total = None
+
+        await self._checkpoint(
+            context,
+            context.cursor,
+            context.counters["assets_seen"],
+            total,
+            (
+                f"Preparing {total} media items"
+                if total is not None
+                else "Preparing media traversal"
+            ),
+        )
+
+        batch_size = context.config.batch_size
+        page_size = context.config.page_size
+        start_page = 1
+        completed_page_batches = 0
+        if context.cursor:
+            cursor_parts = context.cursor.split(":")
+            if len(cursor_parts) == 3:
+                start_page = int(cursor_parts[1])
+                completed_page_batches = int(cursor_parts[2])
+            else:
+                completed_batches = int(cursor_parts[-1])
+                completed_assets = completed_batches * batch_size
+                start_page = completed_assets // page_size + 1
+                completed_page_batches = (completed_assets % page_size) // batch_size
+
+        iterator = prefetch_async(
+            self._immich.iter_asset_pages(
+                page_size=page_size,
+                updated_after=updated_after,
+                updated_before=updated_before,
+                start_page=start_page,
+            ),
+            self._page_prefetch,
+        )
+        async for page_number, page in iterator:
+            for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
+                if page_number == start_page and batch_number <= completed_page_batches:
+                    continue
+                await self._commit_batch(
+                    context,
+                    batch,
+                    f"assets:{page_number}:{batch_number}",
+                    total,
+                )
+            if page.next_page is not None:
+                await self.pace_page(context)
+
+        return context.counters["assets_seen"], total
+
+    async def _execute_selected(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> tuple[int, int | None]:
+        if self._selections is None:
+            raise ValueError("Selected asset synchronization requires SyncSelectionResolver")
+
+        selection = scope.selection
+        assert isinstance(
+            selection,
+            (
+                ExplicitIdsSelection,
+                PersistedSelection,
+                RequestSelection,
+                GenerationSelection,
+            ),
+        )
+        total = (
+            len(dict.fromkeys(selection.ids))
+            if isinstance(selection, ExplicitIdsSelection)
+            else None
+        )
+        completed_batches = 0
+        if context.cursor:
+            cursor_parts = context.cursor.split(":")
+            if len(cursor_parts) == 3 and cursor_parts[1] == "0":
+                completed_batches = int(cursor_parts[2])
+
+        await self._checkpoint(
+            context,
+            context.cursor,
+            context.counters["assets_seen"],
+            total,
+            (
+                f"Preparing {total} selected media items"
+                if total is not None
+                else "Preparing selected media traversal"
+            ),
+        )
+
+        batch_number = 0
+        async for asset_ids in self._selections.iter_asset_ids(
+            selection,
+            batch_size=context.config.batch_size,
+        ):
+            batch_number += 1
+            if batch_number <= completed_batches:
+                continue
+            started = perf_counter()
+            details = await self._fetch_assets(context, asset_ids)
+            await self._commit_batch(
+                context,
+                details,
+                f"assets:0:{batch_number}",
+                total,
+            )
+            await self.pace(context, started)
+
+        return context.counters["assets_seen"], total
+
+    async def _fetch_assets(
+        self,
+        context: SyncStepContext,
+        asset_ids: list[UUID],
+    ) -> list[ImmichAsset]:
+        semaphore = asyncio.Semaphore(context.config.concurrency)
+
+        async def fetch(asset_id: UUID) -> ImmichAsset:
+            async with semaphore:
+                return await self._immich.get_asset(asset_id)
+
+        return list(await asyncio.gather(*(fetch(asset_id) for asset_id in asset_ids)))
+
+    async def _commit_batch(
+        self,
+        context: SyncStepContext,
+        batch: list[ImmichAsset],
+        cursor: str,
+        total: int | None,
+    ) -> None:
+        context.counters["tag_cheap_path_eligible_assets"] += sum(
+            1 for asset in batch if asset.includes_tags
+        )
+        context.counters["tag_cheap_path_fallback_assets"] += sum(
+            1 for asset in batch if not asset.includes_tags
+        )
+        lightweight_batch = [
+            asset.model_copy(
+                update={"exif_info": None, "people": [], "tags": [], "stack": None}
+            )
+            for asset in batch
+        ]
+        created, updated, unchanged = await self._assets.upsert_asset_batch(
+            lightweight_batch,
+            context.generation,
+            track_similarity_changes=True,
+        )
+        context.counters["assets_seen"] += created + updated + unchanged
+        context.counters["assets_created"] += created
+        context.counters["assets_updated"] += updated
+        context.counters["assets_unchanged"] += unchanged
+        await self._checkpoint(
+            context,
+            cursor,
+            context.counters["assets_seen"],
+            total,
+            (
+                f"Media {context.counters['assets_seen']}/{total}"
+                if total is not None
+                else f"Media {context.counters['assets_seen']} processed"
+            ),
+        )
+
+    async def pace_page(self, _context: SyncStepContext) -> None:
+        """Pace remote pages when the orchestrated runtime requests it."""
+
+        return None
+
+    async def _checkpoint(
+        self,
+        context: SyncStepContext,
+        cursor: str | None,
+        completed: int,
+        total: int | None,
         detail: str,
     ) -> None:
         context.cursor = cursor
