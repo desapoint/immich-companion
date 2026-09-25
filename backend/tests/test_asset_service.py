@@ -17,7 +17,7 @@ from companion.immich import (
     ImmichStackAsset,
     ImmichTag,
 )
-from companion.sync_schema import SyncRunStatus
+from companion.sync_schema import SyncCapabilities, SyncEvent, SyncRunStatus
 from companion.synchronization import relationships as relationship_module
 from companion.synchronization import service as asset_service_module
 from companion.synchronization.steps import StackSyncStep
@@ -560,6 +560,50 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
     assert all(item.total == 2 for item in media_progress)
     assert media_progress[-1].completed == 2
     assert media_progress[-1].percent == 100
+
+
+@pytest.mark.asyncio
+async def test_incremental_stream_events_run_before_catalogs_through_event_step() -> None:
+    members = [asset(ASSET_ONE, "primary.png")]
+    window_start = datetime(2026, 8, 24, 11, 55, tzinfo=UTC)
+    window_end = datetime(2026, 8, 24, 12, 5, tzinfo=UTC)
+
+    class StreamImmich(FakeImmich):
+        async def sync_capabilities(self):
+            return SyncCapabilities(stream=True, acknowledgements=True)
+
+        async def iter_sync_events(self, cursor=None):
+            assert cursor is None
+            self.calls.append("event")
+            yield SyncEvent(id="event-1", kind="reset")
+
+        async def acknowledge_sync_event(self, event_id):
+            assert event_id == "event-1"
+            self.calls.append("event_ack")
+
+    immich = StreamImmich(members, None)
+    assets = IncrementalFakeAssetRepository(window_start, window_end)
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_batch_size=25),
+    )
+    run = run_status().model_copy(
+        update={
+            "mode": "incremental",
+            "window_start": window_start,
+            "window_end": window_end,
+        }
+    )
+
+    counters = await service._execute(run, OWNER_ID)
+
+    assert counters["events_seen"] == 1
+    assert immich.calls.index("event") < immich.calls.index("album_catalog")
+    assert immich.calls.index("event_ack") < immich.calls.index("album_catalog")
+    assert ("catalogs", "event:event-1") in syncs.checkpoints
 
 
 @pytest.mark.asyncio
