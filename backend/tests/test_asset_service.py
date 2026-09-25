@@ -18,8 +18,8 @@ from companion.immich import (
     ImmichTag,
 )
 from companion.sync_schema import SyncRunStatus
+from companion.synchronization import service as asset_service_module
 from companion.task_schema import TaskStatusView
-from companion.v2 import legacy_asset_service as asset_service_module
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
 ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")

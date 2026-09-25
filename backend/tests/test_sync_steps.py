@@ -1,11 +1,11 @@
-"""Configurable V2 sync-step behavior."""
+"""Configurable synchronization-step behavior."""
 
 from uuid import UUID
 
 import pytest
 
 from companion.immich import ImmichAlbum, ImmichTag
-from companion.sync_steps import (
+from companion.synchronization.steps import (
     CatalogSyncInput,
     CatalogSyncStep,
     SyncStepConditionals,

@@ -1,4 +1,4 @@
-"""V2 registration/execution glue for independently runnable sync steps."""
+"""Registration and execution glue for independently runnable sync steps."""
 
 from __future__ import annotations
 
@@ -7,15 +7,15 @@ from typing import Protocol
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichApiClient
 from companion.sync_schema import SyncMode
-from companion.tasks.contracts import TaskResult
-from companion.tasks.coordinator import TaskContext, TaskCoordinator
-from companion.v2.sync_steps import (
+from companion.synchronization.steps import (
     CatalogSyncStep,
     SyncStepConditionals,
     SyncStepConfig,
     SyncStepContext,
     task_checkpoint_callback,
 )
+from companion.tasks.contracts import TaskResult
+from companion.tasks.coordinator import TaskContext, TaskCoordinator
 
 
 class RuntimeSyncSettings(Protocol):
@@ -29,7 +29,7 @@ class RuntimeSyncSettingsRepository(Protocol):
 
 
 class CatalogSyncTaskHandler:
-    """Run the first V2 sync step manually through the durable task lifecycle."""
+    """Run the catalog sync step manually through the durable task lifecycle."""
 
     task_type = "v2_sync_step_catalogs"
     lane_key = "v2_sync"
@@ -100,7 +100,7 @@ def register_sync_steps(
     assets: AssetRepository,
     runtime_settings: RuntimeSyncSettingsRepository,
 ) -> None:
-    """Register V2 sync-step handlers without changing V1 coordinator modules."""
+    """Register independently runnable synchronization-step handlers."""
 
     coordinator.register_handler(
         CatalogSyncTaskHandler(immich, assets, runtime_settings)
