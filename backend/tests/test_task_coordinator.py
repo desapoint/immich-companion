@@ -208,7 +208,7 @@ async def test_unexpected_handler_error_is_not_retried() -> None:
 
 def test_legacy_sync_retries_only_known_transient_immich_errors() -> None:
     from companion.immich import ImmichApiError
-    from companion.v2.legacy_asset_service import _is_transient_sync_error
+    from companion.synchronization.service import _is_transient_sync_error
 
     assert _is_transient_sync_error(ImmichApiError("network")) is True
     assert _is_transient_sync_error(ImmichApiError("rate limit", 429)) is True

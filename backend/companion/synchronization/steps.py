@@ -1,4 +1,4 @@
-"""Composable synchronization steps owned by V2."""
+"""Canonical composable synchronization-step contracts."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class SyncStepConditionals:
 
 @dataclass(frozen=True, slots=True)
 class SyncStepConfig:
-    """Standard V2 operational controls shared by all sync steps."""
+    """Standard operational controls shared by all sync steps."""
 
     batch_size: int | None = None
     page_size: int | None = None
@@ -86,7 +86,7 @@ async def _noop_checkpoint(
 
 
 def task_checkpoint_callback(task: TaskContext, step: str) -> CheckpointCallback:
-    """Bridge a V2 step to the durable task state consumed by the frontend."""
+    """Bridge a sync step to the durable task state consumed by the frontend."""
 
     async def checkpoint(
         cursor: str | None,
@@ -192,7 +192,7 @@ class CatalogSyncInput:
 
 
 class CatalogSyncStep(SyncStep[CatalogSyncInput]):
-    """V2 step 1: album/tag catalogs with resumable batch cursors."""
+    """Synchronize album/tag catalogs with resumable batch cursors."""
 
     name = "catalogs"
     phase = "catalogs"

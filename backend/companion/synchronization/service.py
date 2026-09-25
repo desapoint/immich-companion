@@ -1,4 +1,4 @@
-"""Persistent, non-overlapping staged synchronization coordinator."""
+"""Persistent, non-overlapping asset synchronization service."""
 
 from __future__ import annotations
 
@@ -48,6 +48,20 @@ from companion.sync_telemetry import (
     install_sync_telemetry,
     reset_sync_telemetry,
 )
+from companion.synchronization.batching import (
+    async_batches_with_last,
+    async_items_with_last,
+    batches,
+    enumerate_async,
+    prefetch_async,
+)
+from companion.synchronization.steps import (
+    CatalogSyncInput,
+    CatalogSyncStep,
+    SyncStepConfig,
+    SyncStepContext,
+    SyncStepProgress,
+)
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
@@ -55,6 +69,7 @@ logger = logging.getLogger("uvicorn.error")
 _SYNC_RUNTIME_OVERRIDE: ContextVar[SyncRuntimeSettings | None] = ContextVar(
     "sync_runtime_override", default=None
 )
+ALBUM_MEMBERSHIP_PAGE_SIZE = 1000
 
 
 def _dedupe_digest(parts: list[str]) -> str:
@@ -83,93 +98,23 @@ def _repair_metric_defaults() -> dict[str, int]:
     }
 
 
-def batches[T](items: list[T], size: int) -> list[list[T]]:
-    """Split an already compact collection into bounded persistence batches."""
+class _PacedCatalogSyncStep(CatalogSyncStep):
+    """Apply runtime pacing while using the independently runnable catalog step."""
 
-    return [items[index : index + size] for index in range(0, len(items), size)]
+    def __init__(
+        self,
+        assets: AssetRepository,
+        pace_callback: Callable[[float], Awaitable[None]],
+    ) -> None:
+        super().__init__(assets)
+        self._pace_callback = pace_callback
 
-
-async def async_batches_with_last[T](
-    items: AsyncIterator[T], size: int
-) -> AsyncIterator[tuple[list[T], bool]]:
-    """Yield bounded async batches and identify the final batch with one-item lookahead."""
-
-    batch: list[T] = []
-    async for item in items:
-        batch.append(item)
-        if len(batch) > size:
-            overflow = batch.pop()
-            yield batch, False
-            batch = [overflow]
-    if batch:
-        yield batch, True
-
-
-async def async_items_with_last[T](
-    items: AsyncIterator[T],
-) -> AsyncIterator[tuple[T, bool]]:
-    """Yield async items with one-item lookahead so final work is not paced."""
-
-    previous: T | None = None
-    has_previous = False
-    async for item in items:
-        if has_previous:
-            assert previous is not None
-            yield previous, False
-        previous = item
-        has_previous = True
-    if has_previous:
-        assert previous is not None
-        yield previous, True
-
-
-async def _enumerate_async[T](
-    items: AsyncIterator[T], start: int = 0
-) -> AsyncIterator[tuple[int, T]]:
-    index = start
-    async for item in items:
-        yield index, item
-        index += 1
-
-
-async def prefetch_async[T](items: AsyncIterator[T], ahead: int) -> AsyncIterator[T]:
-    """Bound asynchronous lookahead so remote reads overlap current persistence."""
-
-    if ahead <= 0:
-        async for item in items:
-            yield item
-        return
-    queue: asyncio.Queue[tuple[bool, T | BaseException | None]] = asyncio.Queue(
-        maxsize=ahead
-    )
-
-    async def produce() -> None:
-        try:
-            async for item in items:
-                await queue.put((True, item))
-        except BaseException as error:
-            await queue.put((False, error))
-        finally:
-            await queue.put((False, None))
-
-    producer = asyncio.create_task(produce(), name="sync-page-prefetch")
-    try:
-        while True:
-            available, value = await queue.get()
-            if available:
-                yield value  # type: ignore[misc]
-                continue
-            if isinstance(value, BaseException):
-                raise value
-            return
-    finally:
-        producer.cancel()
-        with suppress(asyncio.CancelledError):
-            await producer
+    async def pace(self, _context: SyncStepContext, started: float) -> None:
+        await self._pace_callback(started)
 
 
 class _CoordinatorSyncRepository:
-    """Adapt generic task context checkpoints to the legacy sync internals."""
+    """Adapt generic task checkpoints to synchronization checkpoints."""
 
     def __init__(self, context: TaskContext) -> None:
         self._context = context
@@ -215,7 +160,7 @@ class AssetSyncTaskHandler:
                 generation,
                 window_start,
                 window_end,
-            ) = await service._legacy_metadata.next_sync_metadata(
+            ) = await service._metadata.next_sync_metadata(
                 mode,
                 overlap=timedelta(seconds=runtime.incremental_overlap_seconds),  # type: ignore[arg-type]
             )
@@ -291,7 +236,7 @@ class AssetSyncTaskHandler:
             service._stop_sync_memory_diagnostics(owns_memory_trace)
             service._syncs = previous
         assert counters is not None
-        await service._legacy_metadata.record_success(
+        await service._metadata.record_success(
             mode=run.mode,
             generation=run.generation,
             watermark=run.window_end,
@@ -609,10 +554,102 @@ class AssetSyncService:
             if runtime_sync_settings is not None
             else DefaultSyncRuntimeSettingsRepository(settings)
         )
-        self._legacy_metadata = syncs
+        self._metadata = syncs
         self._worker: asyncio.Task[None] | None = None
         self._scheduler: asyncio.Task[None] | None = None
         self._last_full_sync = monotonic()
+
+    async def apply_stack_snapshot_for_targets(
+        self, asset_ids: list[UUID], stacks: list[ImmichStack] | None = None
+    ) -> list[ImmichStack]:
+        """Publish current Immich stack topology for one bounded action target set."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if not unique_ids:
+            return stacks or []
+        targets = set(unique_ids)
+        payload_by_asset: dict[UUID, dict[str, object]] = {}
+        current_stacks = stacks if stacks is not None else await self._immich.list_stacks()
+        for stack in current_stacks:
+            payload, member_ids = self._stack_payload(stack)
+            for member_id in member_ids:
+                if member_id in targets:
+                    payload_by_asset[member_id] = payload
+        await self._assets.replace_asset_stack_snapshots(unique_ids, payload_by_asset)
+        return current_stacks
+
+    async def album_reconciliation_will_cover(self, album_ids: list[UUID]) -> bool:
+        """Return whether the active global sync will still traverse every target album."""
+
+        unique_album_ids = list(dict.fromkeys(album_ids))
+        if not unique_album_ids:
+            return False
+        status = await self.status()
+        active = status.active
+        if active is None:
+            return False
+        if active.phase in {"catalogs", "assets", "stacks"}:
+            return True
+        if active.phase != "relationships" or not active.cursor:
+            return False
+        cursor_parts = active.cursor.split(":", 2)
+        if len(cursor_parts) < 2 or cursor_parts[0] != "albums":
+            return False
+        try:
+            current_album_index = int(cursor_parts[1])
+        except ValueError:
+            return False
+        catalog = await self._immich.list_album_catalog()
+        positions = {album.id: index for index, album in enumerate(catalog, start=1)}
+        return all(
+            (position := positions.get(album_id)) is not None
+            and position > current_album_index
+            for album_id in unique_album_ids
+        )
+
+    async def tag_reconciliation_will_cover(self, tag_ids: list[UUID]) -> bool:
+        """Return whether a full global sync definitely has tag work still ahead."""
+
+        if not list(dict.fromkeys(tag_ids)):
+            return False
+        status = await self.status()
+        active = status.active
+        return (
+            active is not None
+            and getattr(active, "mode", None) == "full"
+            and active.phase in {"catalogs", "assets", "stacks"}
+        )
+
+    async def _repair_tags_from_asset_details(self, asset_ids: list[UUID]) -> bool:
+        """Repair a bounded changed set directly from authoritative asset details."""
+
+        unique_asset_ids = list(dict.fromkeys(asset_ids))
+        if not unique_asset_ids:
+            return True
+        runtime = await self._runtime_sync_settings.get()
+        if len(unique_asset_ids) > runtime.full_batch_size:
+            return False
+        concurrency = max(1, runtime.tag_association_concurrency)
+        details: list[ImmichAsset | None] = []
+
+        async def fetch(identifier: UUID) -> ImmichAsset | None:
+            try:
+                return await self._immich.get_asset(identifier)
+            except ImmichApiError as error:
+                if error.status_code == 404:
+                    return None
+                raise
+
+        for start in range(0, len(unique_asset_ids), concurrency):
+            wave = unique_asset_ids[start : start + concurrency]
+            details.extend(await asyncio.gather(*(fetch(identifier) for identifier in wave)))
+        if any(detail is None or not detail.includes_tags for detail in details):
+            return False
+        for detail in details:
+            assert detail is not None
+            tag_ids = [UUID(str(tag["id"])) for tag in detail.tags if tag.get("id")]
+            await self._assets.replace_asset_tag_memberships(detail.id, tag_ids)
+        return True
 
     def _start_sync_memory_diagnostics(self) -> bool:
         """Start allocation tracing only while a sync is actually executing."""
@@ -783,7 +820,7 @@ class AssetSyncService:
             if existing is not None:
                 return self._status_from_task(existing)
             runtime_pacing = await self._runtime_settings()
-            generation, window_start, window_end = await self._legacy_metadata.next_sync_metadata(
+            generation, window_start, window_end = await self._metadata.next_sync_metadata(
                 mode, overlap=timedelta(seconds=runtime_pacing.incremental_overlap_seconds)
             )
             effective_mode: SyncMode = (
@@ -856,7 +893,7 @@ class AssetSyncService:
             task = await self._coordinator.get_status(run_id)
             if task is not None:
                 return self._status_from_task(task)
-            return await self._legacy_metadata.get_run(run_id)
+            return await self._metadata.get_run(run_id)
         return await self._syncs.get_run(run_id)
 
     async def wait(self, run_id: UUID) -> SyncRunStatus:
@@ -968,6 +1005,54 @@ class AssetSyncService:
         return True
 
     async def reconcile_targets(
+        self,
+        asset_ids: list[UUID],
+        relations: list[tuple[str, UUID]] | None = None,
+        include_stacks: bool = False,
+    ) -> None:
+        """Choose bounded targeted relation repair before the general repair path."""
+
+        if (
+            relations
+            and asset_ids
+            and all(kind == "tag" for kind, _ in relations)
+            and await self._repair_tags_from_asset_details(asset_ids)
+        ):
+            return
+        if relations and asset_ids and all(kind == "album" for kind, _ in relations):
+            unique_asset_ids = list(dict.fromkeys(asset_ids))
+            unique_relation_ids = list(
+                dict.fromkeys(relation_id for _, relation_id in relations)
+            )
+            catalog = await self._immich.list_album_catalog()
+            albums_by_id = {album.id: album for album in catalog}
+            affected_albums = [
+                albums_by_id[relation_id]
+                for relation_id in unique_relation_ids
+                if relation_id in albums_by_id
+            ]
+            if len(affected_albums) == len(unique_relation_ids):
+                album_calls = sum(
+                    max(1, (album.asset_count + 999) // 1000)
+                    for album in affected_albums
+                )
+                if album_calls >= len(unique_asset_ids):
+                    upsert_album_catalog = getattr(self._assets, "upsert_album_catalog", None)
+                    if upsert_album_catalog is not None:
+                        await upsert_album_catalog(affected_albums, 0)
+                    for asset_id in unique_asset_ids:
+                        albums = await self._immich.list_albums_for_asset(asset_id)
+                        await self._assets.replace_asset_album_memberships(
+                            asset_id, [album.id for album in albums]
+                        )
+                    return
+        await self._reconcile_targets_default(
+            asset_ids,
+            relations=relations,
+            include_stacks=include_stacks,
+        )
+
+    async def _reconcile_targets_default(
         self,
         asset_ids: list[UUID],
         relations: list[tuple[str, UUID]] | None = None,
@@ -1475,60 +1560,48 @@ class AssetSyncService:
         counters: dict[str, int],
         asset_total: int | None,
     ) -> None:
-        batch_size = self._full_batch_size(run, self._settings)
-        album_batches = batches(albums, batch_size)
-        tag_batches = batches(tags, batch_size)
-        completed_albums = 0
-        completed_tags = 0
-        if run.phase == "catalogs" and run.cursor:
-            kind, value = run.cursor.split(":", 1)
-            if kind == "albums":
-                completed_albums = int(value)
-            elif kind == "tags":
-                completed_albums = len(album_batches)
-                completed_tags = int(value)
-        for index, album_batch in enumerate(album_batches, start=1):
-            if index <= completed_albums:
-                continue
-            started = perf_counter()
-            created, observed = await self._assets.upsert_album_catalog(album_batch, run.generation)
-            counters["albums_seen"] += created + observed
+        """Run catalog synchronization through the canonical step contract."""
+
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
             await self._checkpoint(
                 run,
                 owner,
-                counters,
+                step_counters,
                 "catalogs",
-                f"albums:{index}",
-                self._progress(
-                    "catalogs",
-                    counters["albums_seen"],
-                    len(albums) + len(tags),
-                    f"Albums {min(counters['albums_seen'], len(albums))}/"
-                    f"{len(albums)} · tags 0/{len(tags)}",
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
                 ),
             )
-            await self._pace_full_batch(run, started)
-        for index, tag_batch in enumerate(tag_batches, start=1):
-            if index <= completed_tags:
-                continue
-            started = perf_counter()
-            created, observed = await self._assets.upsert_tag_catalog(tag_batch, run.generation)
-            counters["tags_seen"] += created + observed
-            await self._checkpoint(
-                run,
-                owner,
-                counters,
-                "catalogs",
-                f"tags:{index}",
-                self._progress(
-                    "catalogs",
-                    len(albums) + min(counters["tags_seen"], len(tags)),
-                    len(albums) + len(tags),
-                    f"Albums {len(albums)}/{len(albums)} · tags "
-                    f"{min(counters['tags_seen'], len(tags))}/{len(tags)}",
-                ),
-            )
-            await self._pace_full_batch(run, started)
+
+        step = _PacedCatalogSyncStep(
+            self._assets,
+            lambda started: self._pace_full_batch(run, started),
+        )
+        context = SyncStepContext(
+            mode=run.mode,
+            generation=run.generation,
+            config=SyncStepConfig(
+                batch_size=self._full_batch_size(run, self._settings),
+                concurrency=1,
+            ),
+            counters=counters,
+            cursor=run.cursor if run.phase == "catalogs" else None,
+            window_start=run.window_start,
+            window_end=run.window_end,
+            manual=False,
+            respect_conditionals=True,
+            checkpoint_callback=checkpoint,
+        )
+        await step.run(context, CatalogSyncInput(albums=albums, tags=tags))
         await self._checkpoint(
             run,
             owner,
@@ -1718,7 +1791,7 @@ class AssetSyncService:
                 yield stack
 
         stack_size = self._full_batch_size(run, self._settings)
-        async for index, (stack_models, is_last) in _enumerate_async(
+        async for index, (stack_models, is_last) in enumerate_async(
             async_batches_with_last(iter_stacks(), stack_size), start=1
         ):
             if index <= completed_batches:

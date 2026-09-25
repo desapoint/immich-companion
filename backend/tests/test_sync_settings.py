@@ -53,8 +53,8 @@ async def test_full_sync_pacing_waits_only_for_remaining_minimum_duration(monkey
     async def sleep(delay: float) -> None:
         sleeps.append(delay)
 
-    monkeypatch.setattr("companion.v2.legacy_asset_service.perf_counter", lambda: 3.0)
-    monkeypatch.setattr("companion.asset_service.asyncio.sleep", sleep)
+    monkeypatch.setattr("companion.synchronization.service.perf_counter", lambda: 3.0)
+    monkeypatch.setattr("companion.synchronization.service.asyncio.sleep", sleep)
 
     await service._pace_full_batch(full_run(), 1.0)
     await service._pace_full_batch(full_run(), 2.9)
@@ -76,7 +76,7 @@ async def test_media_page_pacing_uses_only_configured_delay(monkeypatch) -> None
     async def sleep(delay: float) -> None:
         sleeps.append(delay)
 
-    monkeypatch.setattr("companion.asset_service.asyncio.sleep", sleep)
+    monkeypatch.setattr("companion.synchronization.service.asyncio.sleep", sleep)
 
     await service._pace_full_page(full_run())
     await service._pace_full_page(full_run().model_copy(update={"mode": "incremental"}))

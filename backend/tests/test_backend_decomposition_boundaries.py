@@ -106,3 +106,22 @@ def test_task_subsystem_has_one_runtime_and_contract_owner() -> None:
     assert "class TaskRepository" not in coordinator_source
     assert "class TaskScheduler" not in coordinator_source
     assert "class TaskUpdateBroker" not in coordinator_source
+
+
+def test_asset_sync_has_one_canonical_non_legacy_owner() -> None:
+    facade = (ROOT / "asset_service.py").read_text(encoding="utf-8")
+    sync_root = ROOT / "synchronization"
+
+    assert not (ROOT / "v2" / "legacy_asset_service.py").exists()
+    assert not (ROOT / "v2" / "sync_steps.py").exists()
+    assert not (ROOT / "sync_steps.py").exists()
+    assert (sync_root / "service.py").exists()
+    assert (sync_root / "steps.py").exists()
+    assert (sync_root / "batching.py").exists()
+    assert "import *" not in facade
+    assert "class AssetSyncService" not in facade
+
+    from companion.asset_service import AssetSyncService
+    from companion.synchronization.service import AssetSyncService as CanonicalService
+
+    assert AssetSyncService is CanonicalService

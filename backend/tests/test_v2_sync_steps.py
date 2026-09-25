@@ -1,10 +1,10 @@
-"""V2 sync-step contracts stay isolated and frontend-progress compatible."""
+"""Sync-step contracts stay isolated and frontend-progress compatible."""
 
 import pytest
 
 from companion.asset_service import AssetSyncService
-from companion.v2.legacy_asset_service import AssetSyncService as LegacyAssetSyncService
-from companion.v2.sync_steps import (
+from companion.synchronization.service import AssetSyncService as CanonicalAssetSyncService
+from companion.synchronization.steps import (
     SyncStepConditionals,
     SyncStepConfig,
     SyncStepContext,
@@ -76,6 +76,6 @@ def test_progress_percent_is_derived_from_committed_work() -> None:
     assert progress.as_dict()["step"] == "catalogs"
 
 
-def test_live_v2_asset_sync_overrides_only_extracted_catalog_stage() -> None:
-    assert issubclass(AssetSyncService, LegacyAssetSyncService)
-    assert AssetSyncService._sync_catalogs is not LegacyAssetSyncService._sync_catalogs
+def test_public_asset_sync_service_is_the_canonical_implementation() -> None:
+    assert AssetSyncService is CanonicalAssetSyncService
+    assert "legacy" not in AssetSyncService.__module__
