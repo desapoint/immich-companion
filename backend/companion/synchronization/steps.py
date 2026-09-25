@@ -397,7 +397,6 @@ class CatalogSyncStep(SyncStep[CatalogScope]):
         )
 
 
-
 class AssetSyncStep(SyncStep[AssetScope]):
     """Synchronize assets from remote traversal or a typed selected-asset scope."""
 

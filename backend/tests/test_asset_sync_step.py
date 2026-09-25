@@ -157,6 +157,8 @@ async def test_asset_step_all_scope_preserves_page_batching_counters_and_evidenc
             mode="full",
             generation=7,
             config=SyncStepConfig(batch_size=1, page_size=2),
+            manual=True,
+            respect_conditionals=False,
             checkpoint_callback=checkpoint,
         ),
         AssetScope(selection=AllSelection()),
@@ -205,6 +207,8 @@ async def test_asset_step_window_scope_preserves_bounds_and_resume_cursor() -> N
             mode="incremental",
             generation=8,
             config=SyncStepConfig(batch_size=1, page_size=2),
+            manual=True,
+            respect_conditionals=False,
             counters={
                 "assets_seen": 1,
                 "assets_created": 1,

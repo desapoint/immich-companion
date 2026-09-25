@@ -115,7 +115,6 @@ class _PacedCatalogSyncStep(CatalogSyncStep):
         await self._pace_callback(started)
 
 
-
 class _PacedAssetSyncStep(AssetSyncStep):
     """Preserve current full-sync page pacing around the first-class asset step."""
 
