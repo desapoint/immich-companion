@@ -1,6 +1,7 @@
 """Companion similarity scan discovery publication regressions."""
 
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Literal
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from companion.discovery import (
     SimilarityDuplicateProvider,
 )
 from companion.discovery.similarity_duplicates import _similarity_group_ids
+from companion.duplicate_identity import member_set_key
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
 from companion.similarity_grouping import SimilarityGroupingEdge, ValidatedSimilarityGroup
@@ -213,7 +215,7 @@ async def test_similarity_group_id_remains_stable_across_equivalent_scans() -> N
     assert first_group.provider_group_id != second_group.provider_group_id
 
 
-def test_similarity_small_group_ids_keep_legacy_shape() -> None:
+def test_similarity_small_group_ids_use_compact_identity_shape() -> None:
     current = snapshot(SCAN_ONE)
     summary = SimilarityScanRunSummary(
         id=current.id,
@@ -236,13 +238,16 @@ def test_similarity_small_group_ids_keep_legacy_shape() -> None:
 
     group_id, provider_group_id = _similarity_group_ids(summary, validated)
 
-    member_key = f"{LOW}:{HIGH}"
+    members_digest = member_set_key((LOW, HIGH))
     version_key = (
         "companion-image-v1:1:1:"
         f"{current.parameters.config_fingerprint[:12]}:strict:"
     )
-    assert group_id == f"companion:{version_key}{member_key}"
-    assert provider_group_id == f"{SCAN_ONE}:{member_key}"
+    stable_digest = sha256(f"{version_key}pair:{members_digest}".encode()).hexdigest()
+    assert group_id == f"companion:sha256:{stable_digest}"
+    assert provider_group_id == f"{SCAN_ONE}:pair:sha256:{members_digest}"
+    assert str(LOW) not in group_id
+    assert str(HIGH) not in group_id
 
 
 def test_similarity_group_ids_stay_bounded_for_very_large_groups() -> None:
