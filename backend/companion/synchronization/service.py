@@ -14,7 +14,6 @@ from pathlib import Path
 from time import monotonic, perf_counter
 from uuid import UUID
 
-from companion.adaptive_tag_sync import finalize_incremental_asset_oriented_tags
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import AssetSyncResult
 from companion.config import Settings
@@ -39,14 +38,18 @@ from companion.sync_telemetry import (
     install_sync_telemetry,
     reset_sync_telemetry,
 )
+from companion.synchronization.evidence import SyncAuthority, SyncEvidence
 from companion.synchronization.events import EventSyncStep
+from companion.synchronization.finalization import FinalizationSyncStep
 from companion.synchronization.relationships import RelationshipSyncStep
 from companion.synchronization.scopes import (
     AssetScope,
     CatalogScope,
     EventScope,
+    FinalizationScope,
     RelationshipScope,
     StackScope,
+    ValidationScope,
 )
 from companion.synchronization.selections import (
     AllSelection,
@@ -61,7 +64,9 @@ from companion.synchronization.steps import (
     SyncStepConfig,
     SyncStepContext,
     SyncStepProgress,
+    SyncStepResult,
 )
+from companion.synchronization.validation import ValidationSyncStep
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
@@ -188,10 +193,22 @@ class _CoordinatorSyncRepository:
         self._context = context
 
     async def checkpoint(
-        self, _run_id, _owner, *, phase, cursor, counters, progress=None, **_kwargs
+        self,
+        _run_id,
+        _owner,
+        *,
+        phase,
+        cursor,
+        counters,
+        progress=None,
+        evidence=None,
+        **_kwargs,
     ):
+        checkpoint = {"phase": phase, "cursor": cursor}
+        if evidence is not None:
+            checkpoint["evidence"] = evidence
         await self._context.checkpoint(
-            checkpoint={"phase": phase, "cursor": cursor},
+            checkpoint=checkpoint,
             counters=counters,
             progress=(
                 progress.model_dump(mode="json") if progress is not None else {"phase": phase}
@@ -278,6 +295,7 @@ class AssetSyncTaskHandler:
             window_end=window_end,
             cursor=checkpoint.get("cursor"),
             counters=context.task.counters,
+            evidence=list(checkpoint.get("evidence", [])),
             attempts=context.task.attempt,
             error=None,
             created_at=context.task.created_at,
@@ -787,6 +805,7 @@ class AssetSyncService:
             window_end=window_end,
             cursor=checkpoint.get("cursor"),
             counters=task.counters,
+            evidence=list(checkpoint.get("evidence", [])),
             attempts=task.attempt,
             error=((task.error or {}).get("message") or (task.error or {}).get("type"))
             if task.error
@@ -1338,6 +1357,7 @@ class AssetSyncService:
         phase: str,
         cursor: str | None,
         progress: SyncProgress | None = None,
+        evidence: list[SyncEvidence] | None = None,
     ) -> None:
         telemetry = current_sync_telemetry()
         if telemetry is not None:
@@ -1353,6 +1373,11 @@ class AssetSyncService:
             cursor=cursor,
             counters=counters,
             progress=progress,
+            evidence=(
+                [item.model_dump(mode="json") for item in evidence]
+                if evidence is not None
+                else None
+            ),
             lease_duration=self._lease_duration,
         )
 
