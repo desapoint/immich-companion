@@ -1838,14 +1838,7 @@ class AssetSyncService:
             "relation": "by_relation",
             "automatic": "automatic",
         }[runtime.incremental_strategy]
-        if run.mode == "full":
-            scope = RelationshipScope(
-                kinds={"albums", "tags"},
-                strategy="by_relation",
-                albums=AllSelection(),
-                tags=AllSelection(),
-            )
-        elif strategy == "by_relation":
+        if run.mode == "full" or strategy == "by_relation":
             scope = RelationshipScope(
                 kinds={"albums", "tags"},
                 strategy="by_relation",
