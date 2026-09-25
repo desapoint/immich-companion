@@ -38,8 +38,8 @@ from companion.sync_telemetry import (
     install_sync_telemetry,
     reset_sync_telemetry,
 )
-from companion.synchronization.evidence import SyncAuthority, SyncEvidence
 from companion.synchronization.events import EventSyncStep
+from companion.synchronization.evidence import SyncAuthority, SyncEvidence
 from companion.synchronization.finalization import FinalizationSyncStep
 from companion.synchronization.relationships import RelationshipSyncStep
 from companion.synchronization.scopes import (
