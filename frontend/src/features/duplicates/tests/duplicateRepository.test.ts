@@ -197,6 +197,39 @@ describe('live V2 duplicate repository', () => {
     });
   });
 
+  it('uses a bounded local fallback when a frozen plan omits its destination id', async () => {
+    const longGroupId = 'companion:' + ('member-identity:' + ASSET_IDS.join(':')).repeat(8);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith('/workspace')) return response(emptyWorkspace);
+      if (path.includes('/cross-source/page?')) return response({
+        ...asPage(),
+        items: [{ ...group, group_id: longGroupId }],
+      });
+      if (path.endsWith('/cross-source/plan')) return response({
+        id: 'plan-1',
+        groups: [{
+          group_id: longGroupId,
+          members: ASSET_IDS.slice(0, 2).map((asset_id) => ({ asset_id, disposition: 'stack' })),
+          follow_ups: [{
+            primary_asset_id: ASSET_IDS[0],
+            member_asset_ids: ASSET_IDS.slice(0, 2),
+            resolution: 'move_selected',
+          }],
+        }],
+      });
+      throw new Error(`Unexpected request: ${path}`);
+    }));
+    const repository = createDuplicateRepository(tasks());
+    await repository.search({ page: 1, pageSize: 10 });
+
+    const plan = await repository.prepareDecisions({ decisions: {}, stacks: [] }, []);
+
+    expect(plan.resolution.stacks).toHaveLength(1);
+    expect(plan.resolution.stacks[0].id).toMatch(/^plan-stack-[0-9a-z]+-1$/);
+    expect(plan.resolution.stacks[0].id.length).toBeLessThanOrEqual(256);
+  });
+
   it('autosaves a one-image pending stack without treating it as a final stack plan', async () => {
     let draftBody: Record<string, unknown> | null = null;
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

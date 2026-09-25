@@ -46,6 +46,19 @@ function groupWithSavedStacks(): DuplicateGroupRecord {
 }
 
 describe('duplicate pending stack persistence', () => {
+  it('keeps generated stack identifiers bounded for long similarity group ids', () => {
+    const longGroupId = 'companion:appearance-normalized-v1:6:8:a546bb2e720b:linked:cohesion-4:0825b4c6-e946-414d-92d6-3583d0d518c5:7e4ea637-dd9d-49f8-834d-b07b96fb81ed:a6e34534-133b-4799-bda8-f64c91e7b698:b76b3bb2-06af-4881-9d59-d5e58a221b97:b7829690-9cf9-41c4-a370-f5fecf7ee834:c988ae86-7c99-467a-a97e-1c19990e393c:e2d32c35-5c2e-49f7-ac9f-a27ee98fc668';
+    let workspace = createPendingStack(createDuplicateStackWorkspace(), longGroupId);
+    const firstId = workspace.activeByGroup[longGroupId];
+    workspace = createPendingStack(workspace, longGroupId);
+    const secondId = workspace.activeByGroup[longGroupId];
+
+    expect(firstId.length).toBeLessThanOrEqual(256);
+    expect(firstId).toMatch(/^pending-stack-[0-9a-z]+-1$/);
+    expect(secondId).toMatch(/^pending-stack-[0-9a-z]+-2$/);
+    expect(secondId).not.toBe(firstId);
+  });
+
   it('rehydrates saved partitions without merging or accumulating empty stacks', () => {
     const persistence = new DuplicatePagePersistence();
     const item = groupWithSavedStacks();

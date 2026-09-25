@@ -44,6 +44,9 @@ from companion.duplicate_contracts import (
 from companion.duplicate_contracts import (
     stable_fingerprint as _stable_fingerprint,
 )
+from companion.duplicate_contracts import (
+    stack_destination_id as _stack_destination_id,
+)
 from companion.duplicate_schema import (
     CrossSourceDuplicateTaskStart,
     DuplicateAnalysisOptions,
@@ -82,7 +85,7 @@ def _destination_id(planned: dict[str, Any], follow_up: dict[str, Any], index: i
     value = follow_up.get("destination_id")
     if isinstance(value, str) and value:
         return value
-    return f"{planned['group_id']}:stack:{index + 1}"
+    return _stack_destination_id(str(planned["group_id"]), index)
 
 
 def _unique_stack_destinations(
@@ -700,7 +703,7 @@ class DuplicateResolutionMixin:
             for index, follow_up in enumerate(_stack_follow_ups(planned)):
                 follow_up.setdefault(
                     "destination_id",
-                    f"{planned['group_id']}:stack:{index + 1}",
+                    _stack_destination_id(str(planned["group_id"]), index),
                 )
                 follow_up.setdefault("source_group_ids", [planned["group_id"]])
 
