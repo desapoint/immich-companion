@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, HttpUrl, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -38,9 +39,13 @@ class Settings(BaseSettings):
     sync_lease_seconds: int = Field(default=60, ge=15, le=900)
     sync_incremental_interval_seconds: int = Field(default=900, ge=30, le=86400)
     sync_full_interval_seconds: int = Field(default=604800, ge=300, le=604800)
-    sync_full_batch_size: int = Field(default=50, ge=1, le=500)
+    sync_full_batch_size: int = Field(default=250, ge=1, le=500)
     sync_full_min_batch_delay_seconds: float = Field(default=0.2, ge=0, le=60)
     sync_tag_association_concurrency: int = Field(default=4, ge=1, le=32)
+    sync_metadata_request_concurrency: int = Field(default=4, ge=1, le=16)
+    sync_page_prefetch: int = Field(default=1, ge=0, le=4)
+    sync_incremental_strategy: Literal["automatic", "asset", "relation"] = "automatic"
+    sync_adaptive_throttling: bool = True
     sync_media_page_size: int = Field(default=1000, ge=25, le=1000)
     sync_relationship_page_size: int = Field(default=1000, ge=25, le=1000)
     sync_max_attempts: int = Field(default=5, ge=1, le=10)

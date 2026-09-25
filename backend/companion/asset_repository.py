@@ -545,6 +545,20 @@ class AssetRepository(AssetSearchMixin, AssetSelectionMixin, AssetCatalogRelatio
             rows = (await session.execute(select(TagRecord.id, TagRecord.asset_count))).all()
         return {identifier: count for identifier, count in rows}
 
+    async def generation_asset_ids(self, generation: int) -> list[UUID]:
+        """Return active asset IDs observed by one staged sync generation."""
+
+        statement = (
+            select(AssetRecord.id)
+            .where(
+                AssetRecord.sync_generation == generation,
+                AssetRecord.is_trashed.is_(False),
+            )
+            .order_by(AssetRecord.id)
+        )
+        async with self._database.sessions() as session:
+            return list((await session.scalars(statement)).all())
+
     async def has_asset(self, asset_id: UUID) -> bool:
         """Return whether an asset exists in the synchronized index."""
 

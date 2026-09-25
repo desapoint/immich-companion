@@ -261,6 +261,12 @@ class FakeAssetRepository:
         self.calls.append("tag_catalog")
         return len(tags), 0
 
+    async def generation_asset_ids(self, _generation):
+        return [current.id for current in self.assets]
+
+    async def tag_asset_counts(self):
+        return {TAG_ID: 1}
+
     async def upsert_asset_batch(
         self, assets, _generation, *, track_similarity_changes=True
     ):
@@ -506,7 +512,7 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
         immich,  # type: ignore[arg-type]
         assets,  # type: ignore[arg-type]
         syncs,  # type: ignore[arg-type]
-        Settings(sync_batch_size=25),
+        Settings(sync_full_batch_size=25, sync_batch_size=25),
     )
 
     counters = await service._execute(run_status(), OWNER_ID)

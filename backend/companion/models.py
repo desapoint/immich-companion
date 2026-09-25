@@ -598,6 +598,15 @@ class SyncRuntimeSettingsRecord(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
     full_batch_size: Mapped[int] = mapped_column(Integer, nullable=False)
     full_min_batch_delay_seconds: Mapped[float] = mapped_column(nullable=False)
+    tag_association_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    metadata_request_concurrency: Mapped[int] = mapped_column(Integer, nullable=False, default=4)
+    page_prefetch: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    api_page_size: Mapped[int] = mapped_column(Integer, nullable=False, default=1000)
+    incremental_overlap_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    incremental_strategy: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="automatic"
+    )
+    adaptive_throttling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )

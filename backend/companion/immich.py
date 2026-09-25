@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Mapping
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from json import JSONDecodeError, JSONDecoder
@@ -336,6 +336,22 @@ class ImmichApiClient:
         self._settings = settings
         self._transport = transport
         self._http_client: httpx.AsyncClient | None = None
+        self._adaptive_throttling = settings.sync_adaptive_throttling
+        self._adaptive_not_before = 0.0
+
+    def configure_adaptive_throttling(self, enabled: bool) -> None:
+        """Apply the live sync retry-cooldown policy to shared metadata requests."""
+
+        self._adaptive_throttling = enabled
+        if not enabled:
+            self._adaptive_not_before = 0.0
+
+    async def _wait_for_adaptive_cooldown(self) -> None:
+        if not self._adaptive_throttling:
+            return
+        remaining = self._adaptive_not_before - asyncio.get_running_loop().time()
+        if remaining > 0:
+            await asyncio.sleep(remaining)
 
     def _client(self) -> httpx.AsyncClient:
         if not self._settings.immich_configured:
@@ -371,6 +387,8 @@ class ImmichApiClient:
     ) -> httpx.Response:
         attempts = self._settings.immich_retry_attempts
         for attempt in range(attempts):
+            await self._wait_for_adaptive_cooldown()
+            response: httpx.Response | None = None
             try:
                 response = await self._client().request(method, path, **kwargs)
             except httpx.RequestError as error:
@@ -387,6 +405,15 @@ class ImmichApiClient:
                     raise ImmichApiError(operation, response.status_code)
 
             backoff = self._settings.immich_retry_backoff_seconds * (2**attempt)
+            if self._adaptive_throttling and response is not None:
+                retry_after = response.headers.get("retry-after")
+                if retry_after is not None:
+                    with suppress(ValueError):
+                        backoff = max(backoff, float(retry_after))
+                self._adaptive_not_before = max(
+                    self._adaptive_not_before,
+                    asyncio.get_running_loop().time() + backoff,
+                )
             if backoff:
                 await asyncio.sleep(backoff)
 

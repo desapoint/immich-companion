@@ -39,7 +39,7 @@ class RuntimeSettings:
 
 
 @pytest.mark.asyncio
-async def test_full_sync_pacing_uses_the_longer_of_minimum_delay_and_work_time(monkeypatch) -> None:
+async def test_full_sync_pacing_waits_only_for_remaining_minimum_duration(monkeypatch) -> None:
     service = AssetSyncService(
         None,  # type: ignore[arg-type]
         None,  # type: ignore[arg-type]
@@ -58,7 +58,7 @@ async def test_full_sync_pacing_uses_the_longer_of_minimum_delay_and_work_time(m
     await service._pace_full_batch(full_run(), 1.0)
     await service._pace_full_batch(full_run(), 2.9)
 
-    assert sleeps == [2.0, 0.2]
+    assert sleeps == [pytest.approx(0.1)]
 
 
 @pytest.mark.asyncio
@@ -97,6 +97,12 @@ async def test_environment_values_seed_runtime_settings_and_incremental_batch_si
         full_batch_size=50,
         full_min_batch_delay_seconds=0.2,
         tag_association_concurrency=4,
+        metadata_request_concurrency=4,
+        page_prefetch=1,
+        api_page_size=1000,
+        incremental_overlap_seconds=300,
+        incremental_strategy="automatic",
+        adaptive_throttling=True,
     )
     assert AssetSyncService._full_batch_size(full_run(), settings) == 50
     incremental = full_run().model_copy(update={"mode": "incremental"})
