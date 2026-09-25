@@ -147,6 +147,7 @@ class SyncStepContext:
     window_end: datetime | None = None
     manual: bool = False
     respect_conditionals: bool = True
+    evidence: list[SyncEvidence] = field(default_factory=list)
     checkpoint_callback: CheckpointCallback = _noop_checkpoint
 
 
@@ -233,6 +234,47 @@ class CatalogSyncStep(SyncStep[CatalogScope]):
         self._immich = immich
         self._assets = assets
         self._selections = selections
+
+    async def run(
+        self,
+        context: SyncStepContext,
+        scope: CatalogScope,
+    ) -> SyncStepResult:
+        result = await super().run(context, scope)
+        if result.skipped:
+            return result
+
+        evidence: list[SyncEvidence] = []
+        for domain, selection in (
+            ("albums", scope.albums),
+            ("tags", scope.tags),
+        ):
+            if selection is None:
+                continue
+            authority = (
+                SyncAuthority.COMPLETE
+                if isinstance(selection, AllSelection)
+                else SyncAuthority.SELECTED
+            )
+            evidence.append(
+                SyncEvidence(
+                    domain=domain,
+                    authority=authority,
+                    selection=selection,
+                    generation=context.generation,
+                )
+            )
+
+        return SyncStepResult(
+            name=result.name,
+            phase=result.phase,
+            skipped=result.skipped,
+            completed=result.completed,
+            total=result.total,
+            counters=result.counters,
+            evidence=evidence,
+            outputs=result.outputs,
+        )
 
     @staticmethod
     def _batches[T](items: Sequence[T], size: int) -> list[Sequence[T]]:
