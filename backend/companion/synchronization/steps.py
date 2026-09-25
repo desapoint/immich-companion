@@ -12,6 +12,8 @@ from time import perf_counter
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
 from companion.sync_schema import SyncMode
+from companion.synchronization.evidence import SyncEvidence
+from companion.synchronization.scopes import SyncStepName
 from companion.tasks.coordinator import TaskContext
 
 
@@ -121,16 +123,18 @@ class SyncStepContext:
 
 @dataclass(frozen=True, slots=True)
 class SyncStepResult:
-    name: str
+    name: SyncStepName
     phase: str
     skipped: bool
     completed: int
     total: int | None
     counters: dict[str, int]
+    evidence: list[SyncEvidence] = field(default_factory=list)
+    outputs: dict[str, object] = field(default_factory=dict)
 
 
-class SyncStep[InputT](ABC):
-    name: str
+class SyncStep[ScopeT](ABC):
+    name: SyncStepName
     phase: str
 
     def should_run(self, context: SyncStepContext) -> bool:
@@ -138,7 +142,7 @@ class SyncStep[InputT](ABC):
             return True
         return context.config.conditionals.allows(context.mode)
 
-    async def run(self, context: SyncStepContext, data: InputT) -> SyncStepResult:
+    async def run(self, context: SyncStepContext, data: ScopeT) -> SyncStepResult:
         if not self.should_run(context):
             return SyncStepResult(
                 name=self.name,
@@ -159,7 +163,7 @@ class SyncStep[InputT](ABC):
         )
 
     @abstractmethod
-    async def execute(self, context: SyncStepContext, data: InputT) -> tuple[int, int | None]:
+    async def execute(self, context: SyncStepContext, data: ScopeT) -> tuple[int, int | None]:
         raise NotImplementedError
 
     async def pace(self, context: SyncStepContext, started: float) -> None:
@@ -171,14 +175,14 @@ class SyncStep[InputT](ABC):
     async def bounded_map[ResultT](
         self,
         context: SyncStepContext,
-        items: Sequence[InputT],
-        worker: Callable[[InputT], Awaitable[ResultT]],
+        items: Sequence[ScopeT],
+        worker: Callable[[ScopeT], Awaitable[ResultT]],
     ) -> list[ResultT]:
         """Bound work while preserving result order for deterministic commits/checkpoints."""
 
         semaphore = asyncio.Semaphore(context.config.concurrency)
 
-        async def guarded(item: InputT) -> ResultT:
+        async def guarded(item: ScopeT) -> ResultT:
             async with semaphore:
                 return await worker(item)
 
