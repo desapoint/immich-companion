@@ -27,7 +27,6 @@ from companion.immich import (
 from companion.sync_repository import SyncRepository, new_sync_owner
 from companion.sync_schema import (
     SyncCoordinatorStatus,
-    SyncEvent,
     SyncMemorySnapshot,
     SyncMode,
     SyncProgress,
@@ -40,10 +39,12 @@ from companion.sync_telemetry import (
     install_sync_telemetry,
     reset_sync_telemetry,
 )
+from companion.synchronization.events import EventSyncStep
 from companion.synchronization.relationships import RelationshipSyncStep
 from companion.synchronization.scopes import (
     AssetScope,
     CatalogScope,
+    EventScope,
     RelationshipScope,
     StackScope,
 )
@@ -1450,7 +1451,7 @@ class AssetSyncService:
             else None
         )
         if capabilities is not None and capabilities.stream and run.mode == "incremental":
-            await self._sync_events(run, owner, counters)
+            await self._run_event_step(run, owner, counters)
         asset_total: int | None = None
         count_assets = getattr(self._immich, "count_assets", None)
         if count_assets is not None:
@@ -1570,37 +1571,45 @@ class AssetSyncService:
         )
         return counters
 
-    async def _sync_events(self, run: SyncRunStatus, owner: UUID, counters: dict[str, int]) -> None:
-        cursor = run.cursor if run.phase == "queued" else None
-        async for event in self._immich.iter_sync_events(cursor):
-            await self._apply_event(event)
-            if hasattr(self._immich, "acknowledge_sync_event"):
-                await self._immich.acknowledge_sync_event(event.id)
-            counters["events_seen"] = counters.get("events_seen", 0) + 1
-            await self._checkpoint(run, owner, counters, "catalogs", f"event:{event.id}")
+    async def _run_event_step(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+    ) -> None:
+        """Execute the optional event stream through the first-class event step."""
 
-    async def _apply_event(self, event: SyncEvent) -> None:
-        if event.kind == "asset_deleted" and event.entity_id is not None:
-            await self._assets.remove_asset(event.entity_id)
-            return
-        if event.kind == "asset" and event.payload:
-            await self._assets.refresh_asset(ImmichAsset.model_validate(event.payload))
-            return
-        if event.kind in {"album_membership", "tag_membership"}:
-            relation_id = event.payload.get("relationId") or event.payload.get(
-                "albumId" if event.kind == "album_membership" else "tagId"
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            _progress: SyncStepProgress,
+        ) -> None:
+            await self._checkpoint(
+                run,
+                owner,
+                step_counters,
+                "catalogs",
+                cursor,
             )
-            asset_id = event.payload.get("assetId") or event.entity_id
-            if relation_id is not None and asset_id is not None:
-                present = bool(
-                    event.payload.get("present", event.payload.get("action", "add") != "remove")
-                )
-                await self._assets.apply_membership_event(
-                    "album" if event.kind == "album_membership" else "tag",
-                    UUID(str(relation_id)),
-                    UUID(str(asset_id)),
-                    present,
-                )
+
+        scope = EventScope(
+            cursor=run.cursor if run.phase == "queued" else None,
+        )
+        await EventSyncStep(self._immich, self._assets).run(
+            SyncStepContext(
+                mode=run.mode,
+                generation=run.generation,
+                config=SyncStepConfig(),
+                counters=counters,
+                cursor=scope.cursor,
+                window_start=run.window_start,
+                window_end=run.window_end,
+                manual=False,
+                respect_conditionals=True,
+                checkpoint_callback=checkpoint,
+            ),
+            scope,
+        )
 
     async def _sync_catalogs(
         self,
