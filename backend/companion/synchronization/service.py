@@ -41,6 +41,8 @@ from companion.sync_telemetry import (
 from companion.synchronization.events import EventSyncStep
 from companion.synchronization.evidence import SyncAuthority, SyncEvidence
 from companion.synchronization.finalization import FinalizationSyncStep
+from companion.synchronization.planner import PlannedSyncStep, SyncPlanner
+from companion.synchronization.registry import SyncStepRegistry
 from companion.synchronization.relationships import RelationshipSyncStep
 from companion.synchronization.scopes import (
     AssetScope,
@@ -641,6 +643,19 @@ class AssetSyncService:
             else DefaultSyncRuntimeSettingsRepository(settings)
         )
         self._metadata = syncs
+        selections = SyncSelectionResolver(assets)
+        self._steps = SyncStepRegistry(
+            [
+                EventSyncStep(immich, assets),
+                CatalogSyncStep(immich, assets, selections),
+                AssetSyncStep(immich, assets, selections),
+                StackSyncStep(immich, assets),
+                RelationshipSyncStep(immich, assets, selections),
+                ValidationSyncStep(assets),
+                FinalizationSyncStep(assets),
+            ]
+        )
+        self._planner = SyncPlanner(immich, settings)
         self._worker: asyncio.Task[None] | None = None
         self._scheduler: asyncio.Task[None] | None = None
         self._last_full_sync = monotonic()
@@ -1618,6 +1633,7 @@ class AssetSyncService:
         configure_throttling = getattr(self._immich, "configure_adaptive_throttling", None)
         if configure_throttling is not None:
             configure_throttling(runtime.adaptive_throttling)
+
         defaults: dict[str, int] = {
             "albums_seen": 0,
             "tags_seen": 0,
@@ -1650,8 +1666,20 @@ class AssetSyncService:
             "relationships": 3,
             "finalizing": 4,
         }
+        step_order = {
+            "events": 0,
+            "catalogs": 0,
+            "assets": 1,
+            "stacks": 2,
+            "relationships": 3,
+            "validation": 4,
+            "finalization": 4,
+        }
         start_phase = phase_order.get(run.phase, 0)
         evidence = self._resume_evidence(run, start_phase)
+        plan = await self._planner.for_run(run, runtime)
+
+        current_phase = run.phase
         if start_phase <= 0:
             await self._checkpoint(
                 run,
@@ -1660,48 +1688,52 @@ class AssetSyncService:
                 "catalogs",
                 None,
                 self._progress("catalogs", 0, None, "Starting synchronization"),
+                evidence=evidence,
             )
-        capabilities = (
-            await self._immich.sync_capabilities()
-            if hasattr(self._immich, "sync_capabilities")
-            else None
-        )
-        if capabilities is not None and capabilities.stream and run.mode == "incremental":
-            await self._run_event_step(run, owner, counters)
-        asset_total: int | None = None
-        count_assets = getattr(self._immich, "count_assets", None)
-        if count_assets is not None:
-            try:
-                asset_total = await count_assets(
-                    updated_after=run.window_start if run.mode == "incremental" else None,
-                    updated_before=run.window_end if run.mode == "incremental" else None,
+            current_phase = "catalogs"
+
+        results: list[SyncStepResult] = []
+        for planned in plan.steps:
+            if step_order[planned.step] < start_phase:
+                continue
+
+            step = self._steps.get(planned.step)
+            if planned.step != "events" and step.phase != current_phase:
+                detail = {
+                    "assets": "Preparing media traversal",
+                    "stacks": "Preparing stack traversal",
+                    "relationships": "Preparing associations",
+                    "finalizing": "Validating synchronized state",
+                }.get(step.phase)
+                await self._checkpoint(
+                    run,
+                    owner,
+                    counters,
+                    step.phase,
+                    None,
+                    self._progress(step.phase, 0, None, detail),
+                    evidence=evidence,
                 )
-            except ImmichApiError:
-                asset_total = None
-        if start_phase <= 0:
-            result = await self._sync_catalogs(run, owner, counters, asset_total)
-            evidence.extend(result.evidence)
-        if start_phase <= 1:
-            result = await self._sync_assets(run, owner, counters, asset_total)
-            evidence.extend(result.evidence)
-        if start_phase <= 2:
-            result = await self._sync_stacks(run, owner, counters)
-            evidence.extend(result.evidence)
-        if start_phase <= 3:
-            result = await self._sync_relationships(run, owner, counters)
-            evidence.extend(result.evidence)
-        validation_result = await self._run_validation_step(
-            run,
-            owner,
-            counters,
-            evidence,
-        )
-        await self._run_finalization_step(
-            run,
-            owner,
-            counters,
-            validation_result.evidence,
-        )
+                current_phase = step.phase
+
+            context = self._context_for_planned_step(
+                run,
+                owner,
+                counters,
+                evidence,
+                planned,
+            )
+            result = await step.run(context, planned.scope)
+            counters.update(result.counters)
+            if planned.step in {
+                "catalogs",
+                "assets",
+                "stacks",
+                "relationships",
+            }:
+                evidence.extend(result.evidence)
+            results.append(result)
+
         logger.info(
             "Sync summary: trigger=staged mode=%s run_id=%s generation=%s "
             "window_start=%s window_end=%s duration_seconds=%.3f assets_seen=%s "
@@ -1742,6 +1774,77 @@ class AssetSyncService:
             counters["tag_asset_detail_fallback"],
         )
         return counters
+
+    def _context_for_planned_step(
+        self,
+        run: SyncRunStatus,
+        owner: UUID,
+        counters: dict[str, int],
+        evidence: list[SyncEvidence],
+        planned: PlannedSyncStep,
+    ) -> SyncStepContext:
+        override = planned.config
+        config = SyncStepConfig(
+            batch_size=override.batch_size if override is not None else None,
+            page_size=override.page_size if override is not None else None,
+            concurrency=(
+                override.concurrency
+                if override is not None and override.concurrency is not None
+                else 1
+            ),
+            page_prefetch=override.page_prefetch if override is not None else None,
+            metadata_concurrency=(
+                override.metadata_concurrency if override is not None else None
+            ),
+            min_batch_delay_seconds=(
+                override.min_batch_delay_seconds
+                if override is not None
+                and override.min_batch_delay_seconds is not None
+                else 0.0
+            ),
+        )
+
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
+            await self._checkpoint(
+                run,
+                owner,
+                step_counters,
+                progress.phase,
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
+                ),
+                evidence=evidence,
+            )
+
+        cursor = (
+            None
+            if planned.step == "validation"
+            else run.cursor
+            if run.phase == self._steps.get(planned.step).phase
+            else None
+        )
+        return SyncStepContext(
+            mode=run.mode,
+            generation=run.generation,
+            config=config,
+            counters=counters,
+            cursor=cursor,
+            window_start=run.window_start,
+            window_end=run.window_end,
+            manual=False,
+            respect_conditionals=True,
+            evidence=evidence,
+            checkpoint_callback=checkpoint,
+        )
 
     async def _run_event_step(
         self,
