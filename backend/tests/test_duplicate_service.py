@@ -2160,6 +2160,79 @@ async def test_workspace_restores_group_selection_and_member_draft() -> None:
 
 
 @pytest.mark.asyncio
+async def test_workspace_restores_selection_after_similarity_group_id_compaction() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    old_group_id = f"companion:legacy:{UPLOAD_1}:{EXTERNAL_1}"
+    compact_group_id = "companion:sha256:" + ("c" * 64)
+    discovered = DiscoveredGroup(
+        group_id=compact_group_id,
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id="scan:pair:sha256:" + ("d" * 64),
+        assets=tuple(candidate_group.assets),
+    )
+    assembled = CrossSourceDuplicateService.assemble(
+        [discovered],
+        {EXTERNAL_1: report(EXTERNAL_1, content)},
+        DuplicateAnalysisOptions(),
+    ).groups[0]
+    identity = SimpleNamespace(
+        group_id=compact_group_id,
+        discovery_source=DiscoverySource.COMPANION_SIMILARITY,
+        provider_group_id=discovered.provider_group_id,
+        stable_group_key=assembled.stable_group_key,
+        member_set_key=assembled.member_set_key,
+        member_fingerprint=assembled.member_fingerprint,
+    )
+
+    class PersistedDiscovery:
+        async def resolve_identities(self, *, group_ids=None, stable_group_keys=None):
+            if stable_group_keys is not None and assembled.stable_group_key in stable_group_keys:
+                return [identity]
+            if group_ids is not None and compact_group_id in group_ids:
+                return [identity]
+            return []
+
+    reviews = FakeReviews()
+    reviews.workspace_record = SimpleNamespace(
+        revision=2,
+        selected_groups=[{
+            "group_id": old_group_id,
+            "discovery_source": "companion_similarity",
+            "member_fingerprint": assembled.member_fingerprint,
+            "stable_group_key": assembled.stable_group_key,
+            "member_set_key": assembled.member_set_key,
+        }],
+        active_group={
+            "group_id": old_group_id,
+            "discovery_source": "companion_similarity",
+            "member_fingerprint": assembled.member_fingerprint,
+            "stable_group_key": assembled.stable_group_key,
+            "member_set_key": assembled.member_set_key,
+        },
+    )
+    service = make_service(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        reviews,
+        discovery=PersistedDiscovery(),
+    )
+
+    restored = await service.workspace()
+
+    assert restored.selected_group_ids == [compact_group_id]
+    assert restored.active_group_id == compact_group_id
+
+
+@pytest.mark.asyncio
 async def test_workspace_selection_maps_repository_revision_conflict() -> None:
     content = b"same"
     candidate_group = group(

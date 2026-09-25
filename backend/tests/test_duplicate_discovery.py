@@ -1,14 +1,17 @@
 """Tests for provider-neutral duplicate discovery snapshots."""
 
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
 
 from companion.discovery import ImmichDuplicateProvider
+from companion.discovery.similarity_duplicates import _similarity_group_ids
 from companion.group_decision import DiscoverySource
 from companion.immich import ImmichAsset
 from companion.immich_duplicate_repository import ImmichDuplicateSnapshotGroup
+from companion.similarity_grouping import ValidatedSimilarityGroup
 
 ASSET_1 = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 ASSET_2 = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
@@ -80,3 +83,82 @@ async def test_immich_provider_skips_snapshot_group_with_missing_local_member() 
     groups = await ImmichDuplicateProvider(Snapshots(), Assets(missing=ASSET_2)).discover()
 
     assert groups == []
+
+
+
+def _similarity_summary(scan_id: UUID = GROUP_1, *, config: str = "a" * 64):
+    return SimpleNamespace(
+        id=scan_id,
+        parameters=SimpleNamespace(
+            model_version="appearance-normalized-v1",
+            feature_version=6,
+            comparison_version=8,
+            config_fingerprint=config,
+            validation_mode="linked",
+        ),
+    )
+
+
+def _validated_similarity(*asset_ids: UUID) -> ValidatedSimilarityGroup:
+    return ValidatedSimilarityGroup(
+        asset_ids=asset_ids,
+        anchor_asset_id=asset_ids[0],
+        validation_mode="linked",
+        minimum_similarity_percent=96.0,
+        maximum_similarity_percent=99.0,
+        pair_count=max(1, len(asset_ids) - 1),
+        admission_evidence=(),
+    )
+
+
+def test_similarity_group_ids_are_always_compact_and_do_not_embed_members() -> None:
+    members = (
+        ASSET_1,
+        ASSET_2,
+        UUID("11111111-1111-4111-8111-111111111111"),
+        UUID("22222222-2222-4222-8222-222222222222"),
+        UUID("33333333-3333-4333-8333-333333333333"),
+        UUID("44444444-4444-4444-8444-444444444444"),
+        UUID("55555555-5555-4555-8555-555555555555"),
+    )
+
+    pair_id, pair_provider_id = _similarity_group_ids(
+        _similarity_summary(),
+        _validated_similarity(*members[:2]),
+    )
+    group_id, provider_id = _similarity_group_ids(
+        _similarity_summary(),
+        _validated_similarity(*members),
+    )
+
+    for value in (pair_id, group_id):
+        assert value.startswith("companion:sha256:")
+        assert len(value) == len("companion:sha256:") + 64
+        assert all(str(member) not in value for member in members)
+    for value in (pair_provider_id, provider_id):
+        assert len(value) < 160
+        assert all(str(member) not in value for member in members)
+
+
+def test_similarity_group_id_is_scan_independent_but_provider_id_tracks_scan() -> None:
+    validated = _validated_similarity(ASSET_1, ASSET_2)
+    first_group_id, first_provider_id = _similarity_group_ids(
+        _similarity_summary(GROUP_1),
+        validated,
+    )
+    second_scan = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
+    second_group_id, second_provider_id = _similarity_group_ids(
+        _similarity_summary(second_scan),
+        validated,
+    )
+
+    assert first_group_id == second_group_id
+    assert first_provider_id != second_provider_id
+
+
+def test_similarity_group_id_changes_when_identity_inputs_change() -> None:
+    validated = _validated_similarity(ASSET_1, ASSET_2)
+    first_group_id, _ = _similarity_group_ids(_similarity_summary(config="a" * 64), validated)
+    second_group_id, _ = _similarity_group_ids(_similarity_summary(config="b" * 64), validated)
+
+    assert first_group_id != second_group_id
