@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
@@ -47,6 +48,41 @@ class RelationSelectionRepository:
                     )
                 ).all()
             )
+
+    async def iter_ids(
+        self,
+        selection_id: UUID,
+        kind: RelationEntityKind,
+        *,
+        batch_size: int,
+    ) -> AsyncIterator[list[UUID]]:
+        """Iterate one active persisted relation selection in bounded pages."""
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        record = await self.get(selection_id, kind)
+        self._validate(record)
+        assert record is not None
+        revision = record.revision
+        cursor: UUID | None = None
+
+        while True:
+            self._validate(record, revision)
+            statement = select(SelectionSetKeyMemberRecord.entity_id).where(
+                SelectionSetKeyMemberRecord.selection_id == selection_id
+            )
+            if cursor is not None:
+                statement = statement.where(SelectionSetKeyMemberRecord.entity_id > cursor)
+            statement = statement.order_by(SelectionSetKeyMemberRecord.entity_id).limit(batch_size)
+            async with self._database.sessions() as session:
+                batch = list((await session.scalars(statement)).all())
+            if not batch:
+                return
+            yield batch
+            if len(batch) < batch_size:
+                return
+            cursor = batch[-1]
+            record = await self.get(selection_id, kind)
 
     async def membership(
         self, selection_id: UUID, kind: RelationEntityKind, entity_ids: list[UUID]

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
@@ -308,6 +308,125 @@ class AssetSelectionMixin:
     async def get_selection(self, selection_id: UUID) -> SelectionSetRecord | None:
         async with self._database.sessions() as session:
             return await session.get(SelectionSetRecord, selection_id)
+
+    @staticmethod
+    def _validate_asset_selection_record(
+        record: SelectionSetRecord | None,
+        revision: int | None = None,
+    ) -> None:
+        if record is None or record.entity_kind != "asset":
+            raise ValueError("Selection set was not found")
+        if record.status != "active" or record.expires_at <= datetime.now(UTC):
+            raise ValueError("Selection set has expired")
+        if revision is not None and record.revision != revision:
+            raise ValueError("Selection set changed; reload its membership")
+
+    async def iter_selection_ids(
+        self,
+        selection: AssetSelectionRequest,
+        *,
+        batch_size: int,
+    ) -> AsyncIterator[list[UUID]]:
+        """Iterate an action-compatible asset selection without action target limits."""
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+
+        if selection.selection_id is not None:
+            record = await self.get_selection(selection.selection_id)
+            self._validate_asset_selection_record(record)
+            assert record is not None
+            revision = record.revision
+            cursor: UUID | None = None
+            while True:
+                self._validate_asset_selection_record(record, revision)
+                statement = (
+                    select(SelectionSetMemberRecord.asset_id)
+                    .join(AssetRecord, AssetRecord.id == SelectionSetMemberRecord.asset_id)
+                    .where(
+                        SelectionSetMemberRecord.selection_id == selection.selection_id,
+                        AssetRecord.is_trashed.is_(False),
+                    )
+                )
+                if cursor is not None:
+                    statement = statement.where(SelectionSetMemberRecord.asset_id > cursor)
+                statement = statement.order_by(SelectionSetMemberRecord.asset_id).limit(batch_size)
+                async with self._database.sessions() as session:
+                    batch = list((await session.scalars(statement)).all())
+                if not batch:
+                    return
+                yield batch
+                if len(batch) < batch_size:
+                    return
+                cursor = batch[-1]
+                record = await self.get_selection(selection.selection_id)
+            return
+
+        if selection.mode == "explicit":
+            requested = list(dict.fromkeys(selection.ids))
+            for offset in range(0, len(requested), batch_size):
+                chunk = requested[offset : offset + batch_size]
+                statement = select(AssetRecord.id).where(
+                    AssetRecord.id.in_(chunk),
+                    AssetRecord.is_trashed.is_(False),
+                )
+                async with self._database.sessions() as session:
+                    existing = set((await session.scalars(statement)).all())
+                batch = [identifier for identifier in chunk if identifier in existing]
+                if batch:
+                    yield batch
+            return
+
+        assert selection.expression is not None
+        predicate = self._compile_group(selection.expression)
+        excluded = set(selection.excluded_ids)
+        cursor = None
+        while True:
+            statement = select(AssetRecord.id).where(
+                AssetRecord.is_trashed.is_(False),
+                predicate,
+            )
+            if excluded:
+                statement = statement.where(AssetRecord.id.not_in(excluded))
+            if cursor is not None:
+                statement = statement.where(AssetRecord.id > cursor)
+            statement = statement.order_by(AssetRecord.id).limit(batch_size)
+            async with self._database.sessions() as session:
+                batch = list((await session.scalars(statement)).all())
+            if not batch:
+                return
+            yield batch
+            if len(batch) < batch_size:
+                return
+            cursor = batch[-1]
+
+    async def iter_generation_asset_ids(
+        self,
+        generation: int,
+        *,
+        batch_size: int,
+    ) -> AsyncIterator[list[UUID]]:
+        """Iterate active assets observed by one sync generation in bounded pages."""
+
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
+        cursor: UUID | None = None
+        while True:
+            statement = select(AssetRecord.id).where(
+                AssetRecord.sync_generation == generation,
+                AssetRecord.is_trashed.is_(False),
+            )
+            if cursor is not None:
+                statement = statement.where(AssetRecord.id > cursor)
+            statement = statement.order_by(AssetRecord.id).limit(batch_size)
+            async with self._database.sessions() as session:
+                batch = list((await session.scalars(statement)).all())
+            if not batch:
+                return
+            yield batch
+            if len(batch) < batch_size:
+                return
+            cursor = batch[-1]
 
     async def selection_ids(self, selection_id: UUID) -> list[UUID]:
         record = await self.get_selection(selection_id)
