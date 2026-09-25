@@ -276,3 +276,90 @@ async def test_asset_strategy_tag_fallback_returns_complete_tag_evidence(
     assert result.counters["tag_strategy_asset_fallback"] == 1
     assert "tag_memberships" in immich.calls
     assert result.outputs == {"strategy": "by_asset", "tag_fallback": True}
+
+
+@pytest.mark.asyncio
+async def test_relationship_step_respects_normal_conditionals_without_remote_work() -> None:
+    immich = FakeImmich()
+    step = RelationshipSyncStep(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        FakeSelections(),  # type: ignore[arg-type]
+    )
+    skipped_context = SyncStepContext(
+        mode="full",
+        generation=42,
+        config=SyncStepConfig(
+            batch_size=25,
+            page_size=1000,
+            concurrency=4,
+            conditionals=SyncStepConditionals(enabled=False),
+        ),
+    )
+
+    result = await step.run(
+        skipped_context,
+        RelationshipScope(
+            kinds={"albums", "tags"},
+            strategy="by_relation",
+            albums=AllSelection(),
+            tags=AllSelection(),
+        ),
+    )
+
+    assert result.skipped is True
+    assert result.evidence == []
+    assert immich.calls == []
+
+
+@pytest.mark.asyncio
+async def test_relation_traversal_resumes_after_completed_album_cursor() -> None:
+    album_two = UUID("55555555-5555-4555-8555-555555555555")
+
+    class ResumeImmich(FakeImmich):
+        def __init__(self) -> None:
+            super().__init__()
+            self.album_catalog.append(
+                ImmichAlbum(
+                    id=album_two,
+                    albumName="Later",
+                    assetCount=1,
+                    createdAt="2026-09-25T10:00:00Z",
+                    updatedAt="2026-09-25T10:00:00Z",
+                )
+            )
+            self.album_ids: list[UUID] = []
+
+        async def iter_album_asset_ids(self, album_id, *, page_size, start_page):
+            assert page_size == 1000
+            assert start_page == 1
+            self.album_ids.append(album_id)
+            yield [ASSET_ONE]
+
+    immich = ResumeImmich()
+    assets = FakeAssets()
+    resume_context = context()
+    resume_context.cursor = "albums:1:0"
+    resume_context.counters = {
+        "album_memberships": 1,
+        "tag_memberships": 0,
+    }
+
+    result = await RelationshipSyncStep(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSelections(),  # type: ignore[arg-type]
+    ).run(
+        resume_context,
+        RelationshipScope(
+            kinds={"albums", "tags"},
+            strategy="by_relation",
+            albums=AllSelection(),
+            tags=AllSelection(),
+        ),
+    )
+
+    assert immich.album_ids == [album_two]
+    assert result.counters["album_memberships"] == 2
+    assert result.counters["tag_memberships"] == 1
+    assert result.evidence[0].authority == SyncAuthority.COMPLETE
