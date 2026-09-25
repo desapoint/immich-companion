@@ -39,11 +39,11 @@ ASSET_2 = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 TASK_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 
 
-def asset(asset_id: UUID) -> ImmichAsset:
+def asset(asset_id: UUID, *, asset_type: str = "IMAGE") -> ImmichAsset:
     return ImmichAsset.model_validate(
         {
             "id": str(asset_id),
-            "type": "IMAGE",
+            "type": asset_type,
             "originalFileName": f"{asset_id}.jpg",
             "originalMimeType": "image/jpeg",
             "fileCreatedAt": NOW.isoformat(),
@@ -138,6 +138,34 @@ async def test_persisted_provider_preserves_composite_contract_without_source_di
     assert groups[0].evidence == snapshot.evidence
     assert groups[0].similarity_validation == snapshot.similarity_validation
     assert [item.id for item in groups[0].assets] == [ASSET_1, ASSET_2]
+
+
+@pytest.mark.asyncio
+async def test_persisted_provider_hides_stale_groups_containing_video() -> None:
+    snapshot = CompositeDuplicateSnapshotGroup(
+        group_id="immich:video-provider",
+        discovery_source=DiscoverySource.IMMICH_DUPLICATE,
+        provider_group_id="video-provider",
+        asset_ids=(ASSET_1, ASSET_2),
+        provider_metadata={},
+        evidence=(),
+        similarity_validation=None,
+    )
+
+    class Snapshots:
+        async def groups(self):
+            return [snapshot]
+
+    class Assets:
+        async def get_immich_assets(self, asset_ids):
+            return {
+                ASSET_1: asset(ASSET_1),
+                ASSET_2: asset(ASSET_2, asset_type="VIDEO"),
+            }
+
+    groups = await PersistedCompositeDuplicateProvider(Snapshots(), Assets()).discover()
+
+    assert groups == []
 
 
 @pytest.mark.asyncio

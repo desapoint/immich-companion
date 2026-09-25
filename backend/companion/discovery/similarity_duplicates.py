@@ -112,7 +112,9 @@ class SimilarityDuplicateProvider:
         group_assets = tuple(
             assets[asset_id] for asset_id in ordered_ids if asset_id in assets
         )
-        if len(group_assets) != len(validated.asset_ids):
+        if len(group_assets) != len(validated.asset_ids) or any(
+            asset.asset_type == "VIDEO" for asset in group_assets
+        ):
             return None
 
         stable_id, provider_group_id = _similarity_group_ids(summary, validated)

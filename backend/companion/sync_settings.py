@@ -7,19 +7,35 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from companion.config import Settings
+from companion.config import (
+    SYNC_FULL_BATCH_SIZE_MAX,
+    SYNC_FULL_MIN_BATCH_DELAY_SECONDS_MAX,
+    SYNC_INCREMENTAL_OVERLAP_SECONDS_MAX,
+    SYNC_METADATA_REQUEST_CONCURRENCY_MAX,
+    SYNC_PAGE_PREFETCH_MAX,
+    SYNC_TAG_ASSOCIATION_CONCURRENCY_MAX,
+    Settings,
+)
 from companion.database import DatabaseManager
 from companion.models import SyncRuntimeSettingsRecord
 
 
 class SyncRuntimeSettings(BaseModel):
-    full_batch_size: int = Field(ge=1, le=500)
-    full_min_batch_delay_seconds: float = Field(ge=0, le=60)
-    tag_association_concurrency: int = Field(default=4, ge=1, le=32)
-    metadata_request_concurrency: int = Field(default=4, ge=1, le=16)
-    page_prefetch: int = Field(default=1, ge=0, le=4)
+    full_batch_size: int = Field(ge=1, le=SYNC_FULL_BATCH_SIZE_MAX)
+    full_min_batch_delay_seconds: float = Field(
+        ge=0, le=SYNC_FULL_MIN_BATCH_DELAY_SECONDS_MAX
+    )
+    tag_association_concurrency: int = Field(
+        default=4, ge=1, le=SYNC_TAG_ASSOCIATION_CONCURRENCY_MAX
+    )
+    metadata_request_concurrency: int = Field(
+        default=4, ge=1, le=SYNC_METADATA_REQUEST_CONCURRENCY_MAX
+    )
+    page_prefetch: int = Field(default=1, ge=0, le=SYNC_PAGE_PREFETCH_MAX)
     api_page_size: int = Field(default=1000, ge=25, le=1000)
-    incremental_overlap_seconds: int = Field(default=300, ge=0, le=86400)
+    incremental_overlap_seconds: int = Field(
+        default=300, ge=0, le=SYNC_INCREMENTAL_OVERLAP_SECONDS_MAX
+    )
     incremental_strategy: Literal["automatic", "asset", "relation"] = "automatic"
     adaptive_throttling: bool = True
 

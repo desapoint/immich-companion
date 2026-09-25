@@ -50,6 +50,16 @@ export interface SyncRuntimeSettings {
   adaptiveThrottling: boolean;
 }
 
+export const SYNC_RUNTIME_LIMITS = {
+  fullBatchSize: 2_000,
+  fullMinBatchDelaySeconds: 300,
+  tagAssociationConcurrency: 128,
+  metadataRequestConcurrency: 64,
+  pagePrefetch: 16,
+  apiPageSize: 1_000,
+  incrementalOverlapSeconds: 7 * 86_400,
+} as const;
+
 export type SyncHistoryFilter = 'all' | SyncMode;
 
 export interface SyncPhaseTelemetry {

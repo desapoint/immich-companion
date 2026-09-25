@@ -26,4 +26,10 @@ describe('application page composition', () => {
     expect(source).toContain("activeKey === 'playground'");
     expect(source).toContain('<PlaygroundPage />');
   });
+
+  it('keeps diagnostic tools in their own navigation group', () => {
+    const source = readFileSync(resolve(process.cwd(), 'src/app/ApplicationPage.svelte'), 'utf8');
+    expect(source).toContain("{ key: 'errors', label: 'Error Hub', href: pagePath('errors'), group: 'Diagnostics' }");
+    expect(source).toContain("{ key: 'similarity-debug', label: 'Similarity debug', href: pagePath('similarity-debug'), group: 'Diagnostics' }");
+  });
 });

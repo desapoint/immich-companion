@@ -9,23 +9,26 @@ import pytest
 from companion.discovery import ImmichDuplicateProvider
 from companion.discovery.similarity_duplicates import _similarity_group_ids
 from companion.group_decision import DiscoverySource
-from companion.immich import ImmichAsset
+from companion.immich import ImmichAsset, ImmichDuplicateGroup
 from companion.immich_duplicate_repository import ImmichDuplicateSnapshotGroup
 from companion.similarity_grouping import ValidatedSimilarityGroup
 
 ASSET_1 = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 ASSET_2 = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+ASSET_3 = UUID("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee")
 LIBRARY_ID = UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc")
 GROUP_1 = UUID("dddddddd-dddd-4ddd-8ddd-dddddddddddd")
 NOW = datetime(2026, 9, 14, tzinfo=UTC)
 
 
-def external_asset(asset_id: UUID, *, size: int = 123) -> ImmichAsset:
+def external_asset(
+    asset_id: UUID, *, size: int = 123, asset_type: str = "IMAGE"
+) -> ImmichAsset:
     return ImmichAsset.model_validate(
         {
             "id": str(asset_id),
             "libraryId": str(LIBRARY_ID),
-            "type": "IMAGE",
+            "type": asset_type,
             "originalFileName": f"{asset_id}.png",
             "originalPath": f"library/{asset_id}.png",
             "originalMimeType": "image/png",
@@ -83,6 +86,78 @@ async def test_immich_provider_skips_snapshot_group_with_missing_local_member() 
     groups = await ImmichDuplicateProvider(Snapshots(), Assets(missing=ASSET_2)).discover()
 
     assert groups == []
+
+
+@pytest.mark.asyncio
+async def test_immich_provider_removes_video_members_before_publication() -> None:
+    class MixedSnapshots:
+        async def groups(self):
+            return [
+                ImmichDuplicateSnapshotGroup(
+                    provider_group_id=str(GROUP_1),
+                    asset_ids=(ASSET_1, ASSET_2, ASSET_3),
+                )
+            ]
+
+    class MixedAssets:
+        async def get_immich_assets(self, asset_ids):
+            return {
+                ASSET_1: external_asset(ASSET_1),
+                ASSET_2: external_asset(ASSET_2),
+                ASSET_3: external_asset(ASSET_3, asset_type="VIDEO"),
+            }
+
+    groups = await ImmichDuplicateProvider(MixedSnapshots(), MixedAssets()).discover()
+
+    assert len(groups) == 1
+    assert [asset.id for asset in groups[0].assets] == [ASSET_1, ASSET_2]
+
+
+@pytest.mark.asyncio
+async def test_immich_provider_skips_groups_left_with_fewer_than_two_non_video_assets() -> None:
+    class VideoSnapshots:
+        async def groups(self):
+            return [
+                ImmichDuplicateSnapshotGroup(
+                    provider_group_id=str(GROUP_1),
+                    asset_ids=(ASSET_1, ASSET_2),
+                )
+            ]
+
+    class VideoAssets:
+        async def get_immich_assets(self, asset_ids):
+            return {
+                ASSET_1: external_asset(ASSET_1),
+                ASSET_2: external_asset(ASSET_2, asset_type="VIDEO"),
+            }
+
+    groups = await ImmichDuplicateProvider(VideoSnapshots(), VideoAssets()).discover()
+
+    assert groups == []
+
+
+@pytest.mark.asyncio
+async def test_live_immich_provider_excludes_video_without_hydrating_it() -> None:
+    class LiveImmich:
+        async def list_duplicate_groups(self):
+            return [
+                ImmichDuplicateGroup(
+                    duplicate_id=GROUP_1,
+                    assets=[
+                        external_asset(ASSET_1),
+                        external_asset(ASSET_2),
+                        external_asset(ASSET_3, asset_type="VIDEO"),
+                    ],
+                )
+            ]
+
+        async def get_asset(self, asset_id):
+            raise AssertionError(f"Video asset {asset_id} should not be hydrated")
+
+    groups = await ImmichDuplicateProvider(LiveImmich()).discover()
+
+    assert len(groups) == 1
+    assert [asset.id for asset in groups[0].assets] == [ASSET_1, ASSET_2]
 
 
 
