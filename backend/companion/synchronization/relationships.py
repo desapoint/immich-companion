@@ -605,11 +605,12 @@ class RelationshipSyncStep(SyncStep[RelationshipScope]):
                     "tag_fallback": False,
                 }
             context.counters["tag_strategy_asset_fallback"] = 1
-            tag_selection = AllSelection()
-            tags = await self._load_tags(
-                tag_selection,
-                batch_size=context.config.batch_size,
-            )
+            if not isinstance(tag_selection, AllSelection):
+                tag_selection = AllSelection()
+                tags = await self._load_tags(
+                    tag_selection,
+                    batch_size=context.config.batch_size,
+                )
 
         relation_kinds = {"tags"} if use_asset and tag_fallback else set(scope.kinds)
         traversal = RelationTraversalStrategy(
