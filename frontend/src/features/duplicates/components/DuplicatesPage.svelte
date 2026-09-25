@@ -50,7 +50,6 @@
     createPendingStack,
     removeAssetFromPendingStack,
     invalidPendingStacks,
-    resolutionStacks,
     selectPendingStack,
     setPendingStackPrimary,
     stackForAsset,
@@ -195,7 +194,7 @@
   async function reconcileGroups(action:string):Promise<void>{if(!await refreshGroups()&&groupRequests.error)throw new Error(groupRequests.error||`${action} was applied, but duplicate groups could not be refreshed.`)}
   function pending(action:string){return(phase:'applying'|'reconciling')=>pendingOperationFeedback(action,phase==='applying'?'applying':'refreshing')}
   async function loadMore(){if(!nextCursor||groupRequests.loading)return;collection.loadMore(total);await refreshGroups(false,true)}
-  function viewReviewIssue(issue:DuplicateReviewIssue|null=reviewIssue){
+  function viewReviewIssue(issue:DuplicateReviewIssue|null){
     if(!issue)return;
     tab='Review';
     requestAnimationFrame(()=>{
@@ -298,7 +297,6 @@
   }
   function requestReviewAll(){
     interactionError='';
-    if(blockForReviewIssue())return;
     // The durable workspace is authoritative for all-matching selections. A
     // page refresh can temporarily leave the local page model behind it, so
     // repair the local count before deciding that the action is unavailable.
@@ -308,7 +306,7 @@
     if(!selectedGroups.length){interactionError='Select at least one duplicate group to review.';return}
     void prepareReview('all',null,currentResolution(stackWorkspace,decisions))
   }
-  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';if(blockForReviewIssue())return;const label=duplicateGroupTitle(item);if(!groupComplete(item,decisions)){interactionError=`${label} still has assets without a decision.`;return}if(groupHasInvalidStack(stackWorkspace,item)){interactionError=`${label} has an incomplete one-asset stack.`;return}void prepareReview('group',item.id,groupResolution(stackWorkspace,item,decisions))}
+  function requestReviewGroup(item:DuplicateGroupRecord){interactionError='';const label=duplicateGroupTitle(item);if(!groupComplete(item,decisions)){interactionError=`${label} still has assets without a decision.`;return}void prepareReview('group',item.id,groupResolution(stackWorkspace,item,decisions))}
   async function refillAfterGroupReview(groupId:string,label:string):Promise<void>{
     const remaining=groups.filter((item)=>item.id!==groupId);
     const query=collection.resultMode==='Pagination'?{state:reviewFilter,source:sourceFilter,page:collection.page,pageSize:collection.pageSize}:{state:reviewFilter,source:sourceFilter,pageSize:collection.pageSize,cursor:null};
