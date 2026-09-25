@@ -564,7 +564,15 @@ async def test_global_sync_orders_catalogs_before_media_and_relations_after() ->
 
 @pytest.mark.asyncio
 async def test_incremental_stream_events_run_before_catalogs_through_event_step() -> None:
-    members = [asset(ASSET_ONE, "primary.png")]
+    members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "child.png")]
+    stack = ImmichStack(
+        id=STACK_ID,
+        primaryAssetId=ASSET_ONE,
+        assets=[
+            stack_asset(ASSET_ONE, "primary.png"),
+            stack_asset(ASSET_TWO, "child.png"),
+        ],
+    )
     window_start = datetime(2026, 8, 24, 11, 55, tzinfo=UTC)
     window_end = datetime(2026, 8, 24, 12, 5, tzinfo=UTC)
 
@@ -581,7 +589,7 @@ async def test_incremental_stream_events_run_before_catalogs_through_event_step(
             assert event_id == "event-1"
             self.calls.append("event_ack")
 
-    immich = StreamImmich(members, None)
+    immich = StreamImmich(members, stack)
     assets = IncrementalFakeAssetRepository(window_start, window_end)
     syncs = FakeSyncRepository()
     service = AssetSyncService(
