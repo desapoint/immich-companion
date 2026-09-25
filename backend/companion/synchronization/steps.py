@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
+from uuid import UUID
 
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
