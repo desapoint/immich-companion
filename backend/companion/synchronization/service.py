@@ -1548,7 +1548,7 @@ class AssetSyncService:
                 generation=run.generation,
                 config=SyncStepConfig(),
                 counters=counters,
-                cursor=run.cursor if run.phase == "finalizing" else None,
+                cursor=None,
                 window_start=run.window_start,
                 window_end=run.window_end,
                 evidence=evidence,
