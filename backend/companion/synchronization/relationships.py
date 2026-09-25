@@ -563,7 +563,11 @@ class RelationshipSyncStep(SyncStep[RelationshipScope]):
                 self._immich,
                 self._assets,
                 self._selections,
-                metadata_concurrency=self._metadata_concurrency,
+                metadata_concurrency=(
+                    context.config.metadata_concurrency
+                    if context.config.metadata_concurrency is not None
+                    else self._metadata_concurrency
+                ),
             )
             outcome = await asset_strategy.execute(
                 context,
@@ -616,7 +620,11 @@ class RelationshipSyncStep(SyncStep[RelationshipScope]):
         traversal = RelationTraversalStrategy(
             self._immich,
             self._assets,
-            page_prefetch=self._page_prefetch,
+            page_prefetch=(
+                context.config.page_prefetch
+                if context.config.page_prefetch is not None
+                else self._page_prefetch
+            ),
             pace_callback=self.pace,
             checkpoint_callback=lambda cursor, completed, detail: self._checkpoint(
                 context,
@@ -810,10 +818,10 @@ class RelationshipSyncStep(SyncStep[RelationshipScope]):
             )
         raise TypeError("Unsupported relationship evidence selection")
 
-    async def pace(self, _context: SyncStepContext, _started: float) -> None:
-        """Pace relation pages when the orchestrated runtime requests it."""
+    async def pace(self, context: SyncStepContext, started: float) -> None:
+        """Pace relation pages according to the run-specific operational config."""
 
-        return None
+        await super().pace(context, started)
 
     async def _checkpoint(
         self,
