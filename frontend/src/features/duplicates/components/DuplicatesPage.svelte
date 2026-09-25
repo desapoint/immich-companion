@@ -64,7 +64,7 @@
   import { duplicateViewerGroupNavigationPlan, type DuplicateViewerGroupDirection } from '../state/duplicateViewerGroupNavigation';
   import { errorMessage, mutationFeedback, pendingOperationFeedback } from '../../../lib/api/mutationFeedback';
   import type { DuplicateCapabilities, DuplicateDecision, DuplicateGroupRecord, DuplicateHistoryRecord, DuplicateKeeperSelectionResult, DuplicatePreparedPlan, DuplicateResolutionPlan, DuplicateSourceFilter, DuplicateState, SimilarityCacheKind, SimilarityCacheStatus, SimilarityValidationMode } from '../types/contracts';
-  import { currentResolution, groupComplete, groupHasInvalidStack, groupResolution } from '../state/duplicateReviewHelpers';
+  import { currentResolution, groupComplete, groupResolution } from '../state/duplicateReviewHelpers';
   import {
     clearGroupDecision,
     clearGroupDecisions,
@@ -203,7 +203,7 @@
       target?.focus({preventScroll:true});
     });
   }
-  function blockForReviewIssue():boolean{const issue=duplicateReviewIssues(stackWorkspace,decisions)[0]??null;if(!issue)return false;interactionError=issue.message;viewReviewIssue(issue);return true}
+  function blockForReviewIssue(groupIds:readonly string[]):boolean{const scope=new Set(groupIds);const issue=duplicateReviewIssues(stackWorkspace,decisions).find((candidate)=>scope.has(candidate.groupId))??null;if(!issue)return false;interactionError=issue.message;viewReviewIssue(issue);return true}
   function setPage(value:number){collection.setPage(value);void refreshGroups(true,true);document.querySelector<HTMLElement>('.v2-content')?.scrollTo({top:0,behavior:'auto'})}
   function setPageSize(value:number){collection.setPageSize(value,total);void refreshGroups(true,true)}
   function setMode(value:ResultMode){collection.setMode(value);void refreshGroups(true,true)}
@@ -284,7 +284,8 @@
   function toggleGroup(id:string,checked:boolean){selectedGroups=checked?[...new Set([...selectedGroups,id])]:selectedGroups.filter((value)=>value!==id);persistSelection();if(reviewFilter==='Selected'&&!checked){groups=groups.filter((item)=>item.id!==id);total=Math.max(0,total-1);collection.clampPage(total)}}
   function groupDisplayName(groupId:string|null):string{const item=groups.find((entry)=>entry.id===groupId);return item?duplicateGroupTitle(item):'duplicate group'}
   async function prepareReview(scope:'all'|'group',groupId:string|null,resolution:DuplicateResolutionPlan){
-    if(blockForReviewIssue())return;
+    const reviewGroupIds=scope==='group'&&groupId?[groupId]:selectedGroups;
+    if(blockForReviewIssue(reviewGroupIds))return;
     planPreparing=true;reviewProgressPhase='saving';
     try{
       await flushWorkspace();
