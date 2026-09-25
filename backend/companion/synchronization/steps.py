@@ -410,6 +410,7 @@ class AssetSyncStep(SyncStep[AssetScope]):
         selections: SyncSelectionResolver | None = None,
         *,
         page_prefetch: int = 0,
+        total_hint: int | None = None,
     ) -> None:
         if page_prefetch < 0:
             raise ValueError("page_prefetch cannot be negative")
@@ -417,6 +418,7 @@ class AssetSyncStep(SyncStep[AssetScope]):
         self._assets = assets
         self._selections = selections
         self._page_prefetch = page_prefetch
+        self._total_hint = total_hint
 
     async def run(
         self,
@@ -489,9 +491,9 @@ class AssetSyncStep(SyncStep[AssetScope]):
             updated_after = scope.selection.start
             updated_before = scope.selection.end
 
-        total: int | None = None
+        total = self._total_hint
         count_assets = getattr(self._immich, "count_assets", None)
-        if count_assets is not None:
+        if total is None and count_assets is not None:
             try:
                 total = await count_assets(
                     updated_after=updated_after,

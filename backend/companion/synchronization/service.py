@@ -124,11 +124,14 @@ class _PacedAssetSyncStep(AssetSyncStep):
         assets: AssetRepository,
         page_prefetch: int,
         page_pace_callback: Callable[[], Awaitable[None]],
+        *,
+        total_hint: int | None = None,
     ) -> None:
         super().__init__(
             immich,
             assets,
             page_prefetch=page_prefetch,
+            total_hint=total_hint,
         )
         self._page_pace_callback = page_pace_callback
 
@@ -1407,10 +1410,20 @@ class AssetSyncService:
         )
         if capabilities is not None and capabilities.stream and run.mode == "incremental":
             await self._sync_events(run, owner, counters)
+        asset_total: int | None = None
+        count_assets = getattr(self._immich, "count_assets", None)
+        if count_assets is not None:
+            try:
+                asset_total = await count_assets(
+                    updated_after=run.window_start if run.mode == "incremental" else None,
+                    updated_before=run.window_end if run.mode == "incremental" else None,
+                )
+            except ImmichApiError:
+                asset_total = None
         if start_phase <= 0:
-            await self._sync_catalogs(run, owner, counters)
+            await self._sync_catalogs(run, owner, counters, asset_total)
         if start_phase <= 1:
-            await self._sync_assets(run, owner, counters)
+            await self._sync_assets(run, owner, counters, asset_total)
         if start_phase <= 2:
             await self._sync_stacks(run, owner, counters)
         if start_phase <= 3:
@@ -1556,6 +1569,7 @@ class AssetSyncService:
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
+        asset_total: int | None,
     ) -> None:
         """Run catalog synchronization through the canonical scoped step."""
 
@@ -1609,7 +1623,14 @@ class AssetSyncService:
             counters,
             "assets",
             None,
-            self._progress("assets", 0, None, "Preparing media traversal"),
+            self._progress(
+                "assets",
+                0,
+                asset_total,
+                f"Preparing {asset_total} media items"
+                if asset_total is not None
+                else "Preparing media traversal",
+            ),
         )
 
     async def _sync_assets(
@@ -1617,6 +1638,7 @@ class AssetSyncService:
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
+        asset_total: int | None = None,
     ) -> None:
         """Run asset synchronization through the canonical first-class step."""
 
@@ -1657,6 +1679,7 @@ class AssetSyncService:
             self._assets,
             runtime.page_prefetch,
             lambda: self._pace_full_page(run),
+            total_hint=asset_total,
         )
         context = SyncStepContext(
             mode=run.mode,
