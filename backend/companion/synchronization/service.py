@@ -14,21 +14,15 @@ from pathlib import Path
 from time import monotonic, perf_counter
 from uuid import UUID
 
-from companion.adaptive_tag_sync import (
-    finalize_incremental_asset_oriented_tags,
-    generation_asset_ids,
-    reconcile_generation_asset_relations,
-)
+from companion.adaptive_tag_sync import finalize_incremental_asset_oriented_tags
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import AssetSyncResult
 from companion.config import Settings
 from companion.immich import (
-    ImmichAlbum,
     ImmichApiClient,
     ImmichApiError,
     ImmichAsset,
     ImmichStack,
-    ImmichTag,
 )
 from companion.sync_repository import SyncRepository, new_sync_owner
 from companion.sync_schema import (
@@ -46,12 +40,19 @@ from companion.sync_telemetry import (
     install_sync_telemetry,
     reset_sync_telemetry,
 )
-from companion.synchronization.batching import (
-    async_items_with_last,
-    prefetch_async,
+from companion.synchronization.relationships import RelationshipSyncStep
+from companion.synchronization.scopes import (
+    AssetScope,
+    CatalogScope,
+    RelationshipScope,
+    StackScope,
 )
-from companion.synchronization.scopes import AssetScope, CatalogScope, StackScope
-from companion.synchronization.selections import AllSelection, WindowSelection
+from companion.synchronization.selections import (
+    AllSelection,
+    GenerationSelection,
+    SyncSelectionResolver,
+    WindowSelection,
+)
 from companion.synchronization.steps import (
     AssetSyncStep,
     CatalogSyncStep,
@@ -147,6 +148,33 @@ class _PacedStackSyncStep(StackSyncStep):
         pace_callback: Callable[[float], Awaitable[None]],
     ) -> None:
         super().__init__(immich, assets)
+        self._pace_callback = pace_callback
+
+    async def pace(self, _context: SyncStepContext, started: float) -> None:
+        await self._pace_callback(started)
+
+
+
+class _PacedRelationshipSyncStep(RelationshipSyncStep):
+    """Preserve current relation page pacing around the first-class relationship step."""
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        selections: SyncSelectionResolver,
+        *,
+        page_prefetch: int,
+        metadata_concurrency: int,
+        pace_callback: Callable[[float], Awaitable[None]],
+    ) -> None:
+        super().__init__(
+            immich,
+            assets,
+            selections,
+            page_prefetch=page_prefetch,
+            metadata_concurrency=metadata_concurrency,
+        )
         self._pace_callback = pace_callback
 
     async def pace(self, _context: SyncStepContext, started: float) -> None:
@@ -1441,10 +1469,7 @@ class AssetSyncService:
         if start_phase <= 2:
             await self._sync_stacks(run, owner, counters)
         if start_phase <= 3:
-            albums, tags = await asyncio.gather(
-                self._immich.list_album_catalog(), self._immich.list_tag_catalog()
-            )
-            await self._sync_relationships(run, owner, albums, tags, counters)
+            await self._sync_relationships(run, owner, counters)
         await self._checkpoint(
             run,
             owner,
@@ -1783,255 +1808,76 @@ class AssetSyncService:
         self,
         run: SyncRunStatus,
         owner: UUID,
-        albums: list[ImmichAlbum],
-        tags: list[ImmichTag],
         counters: dict[str, int],
     ) -> None:
-        relation_kind = ""
-        completed_relation = 0
-        completed_page = 0
-        membership_total: int | None = None
-        association_completed = counters.get("album_memberships", 0) + counters.get(
-            "tag_memberships", 0
-        )
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "relationships",
-            run.cursor if run.phase == "relationships" else None,
-            self._progress(
-                "relationships",
-                association_completed,
-                membership_total,
-                f"Preparing {len(albums)} album and {len(tags)} tag associations",
-            ),
-        )
-        if run.phase == "relationships" and run.cursor:
-            relation_kind, relation_text, page_text = run.cursor.split(":", 2)
-            completed_relation = int(relation_text)
-            completed_page = int(page_text)
+        """Run relationship synchronization through the canonical first-class step."""
+
         runtime = await self._runtime_settings()
-        relation_concurrency = runtime.tag_association_concurrency
-        page_size = runtime.api_page_size
-        prefetch = runtime.page_prefetch
-        counters["tag_association_concurrency"] = relation_concurrency
-        target_ids = (
-            await generation_asset_ids(self._assets, run.generation)
-            if run.mode == "incremental" and relation_kind == ""
-            else []
-        )
-        use_asset_oriented = (
-            run.mode == "incremental"
-            and relation_kind == ""
-            and not target_ids
-            and runtime.incremental_strategy != "relation"
-        )
-        if target_ids:
-            if runtime.incremental_strategy == "asset":
-                use_asset_oriented = True
-            elif runtime.incremental_strategy == "automatic":
-                tag_counts = await self._assets.tag_asset_counts()
-                relation_requests = sum(
-                    max(1, (album.asset_count + page_size - 1) // page_size)
-                    for album in albums
-                ) + sum(
-                    max(1, (tag_counts.get(tag.id, 0) + page_size - 1) // page_size)
-                    for tag in tags
-                )
-                use_asset_oriented = len(target_ids) * 2 <= relation_requests
 
-        counters["album_strategy_asset_oriented"] = 1 if use_asset_oriented else 0
-        counters["tag_strategy_asset_oriented"] = 1 if use_asset_oriented else 0
-        counters["tag_strategy_asset_fallback"] = 0
-        if use_asset_oriented:
-            result = await reconcile_generation_asset_relations(
-                self._immich,
-                self._assets,
-                target_ids,
-                generation=run.generation,
-                concurrency=runtime.metadata_request_concurrency,
-            )
-            counters["album_memberships"] += result.album_links
-            counters["tag_memberships"] += result.tag_links
-            association_completed += result.album_links + result.tag_links
-            counters["tag_asset_detail_payload"] += result.payload_assets
-            counters["tag_asset_detail_fallback"] += result.tag_fallback_assets
-            if result.tag_fallback_assets == 0:
-                await self._checkpoint(
-                    run,
-                    owner,
-                    counters,
-                    "relationships",
-                    None,
-                    self._progress(
-                        "relationships",
-                        association_completed,
-                        membership_total,
-                        f"Associations complete · {counters['album_memberships']} "
-                        f"album links · {counters['tag_memberships']} tag links · "
-                        "changed-asset strategy",
-                    ),
-                )
-                return
-            counters["tag_strategy_asset_fallback"] = 1
-
-        if not use_asset_oriented and relation_kind != "tags":
-            album_start = 0
-            resume_page = 1
-            if relation_kind == "albums":
-                album_start = (
-                    max(0, completed_relation - 1)
-                    if completed_page
-                    else completed_relation
-                )
-                resume_page = completed_page + 1 if completed_page else 1
-            for wave_start in range(album_start, len(albums), relation_concurrency):
-                wave = albums[wave_start : wave_start + relation_concurrency]
-                tasks: list[asyncio.Task[tuple[int, int]]] = []
-                async with asyncio.TaskGroup() as group:
-                    tasks = [
-                        group.create_task(
-                            self._sync_album_relationship(
-                                run,
-                                album,
-                                start_page=(
-                                    resume_page
-                                    if wave_start == album_start and index == 0
-                                    else 1
-                                ),
-                                page_size=page_size,
-                                prefetch=prefetch,
-                            )
-                        )
-                        for index, album in enumerate(wave)
-                    ]
-                results = [task.result() for task in tasks]
-                counters["album_memberships"] += sum(result[0] for result in results)
-                association_completed += sum(result[1] for result in results)
-                completed_albums = wave_start + len(wave)
-                await self._checkpoint(
-                    run,
-                    owner,
-                    counters,
-                    "relationships",
-                    f"albums:{completed_albums}:0",
-                    self._progress(
-                        "relationships",
-                        association_completed,
-                        membership_total,
-                        f"Album associations {completed_albums}/{len(albums)}",
-                    ),
-                )
-
-        skipped_tags = 0
-        tag_start = 0
-        if relation_kind == "tags":
-            tag_start = (
-                completed_relation if completed_page == 0 else max(0, completed_relation - 1)
-            )
-        for wave_start in range(tag_start, len(tags), relation_concurrency):
-            wave = tags[wave_start : wave_start + relation_concurrency]
-            tasks: list[asyncio.Task[tuple[int, int, bool]]] = []
-            async with asyncio.TaskGroup() as group:
-                tasks = [
-                    group.create_task(
-                        self._sync_tag_relationship(
-                            run, tag, page_size=page_size, prefetch=prefetch
-                        )
-                    )
-                    for tag in wave
-                ]
-            results = [task.result() for task in tasks]
-            counters["tag_memberships"] += sum(result[0] for result in results)
-            association_completed += sum(result[1] for result in results)
-            empty_tags = sum(result[2] for result in results)
-            skipped_tags += empty_tags
-            counters["tag_relationships_scanned"] += len(wave)
-            counters["tag_empty_relationships"] += empty_tags
-            completed_tags = wave_start + len(wave)
+        async def checkpoint(
+            cursor: str | None,
+            step_counters: dict[str, int],
+            progress: SyncStepProgress,
+        ) -> None:
             await self._checkpoint(
                 run,
                 owner,
-                counters,
+                step_counters,
                 "relationships",
-                f"tags:{completed_tags}:0",
-                self._progress(
-                    "relationships",
-                    association_completed,
-                    membership_total,
-                    f"Tag associations {completed_tags}/{len(tags)}"
-                    + (f" · skipped {skipped_tags} empty" if skipped_tags else ""),
+                cursor,
+                SyncProgress(
+                    phase=progress.phase,
+                    completed=max(0, progress.completed),
+                    total=progress.total,
+                    percent=progress.percent,
+                    detail=progress.detail,
                 ),
             )
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "relationships",
-            None,
-            self._progress(
-                "relationships",
-                membership_total if membership_total is not None else association_completed,
-                membership_total,
-                f"Associations complete · {counters['album_memberships']} album links · "
-                f"{counters['tag_memberships']} tag links",
-            ),
-        )
 
-    async def _sync_album_relationship(
-        self,
-        run: SyncRunStatus,
-        album: ImmichAlbum,
-        *,
-        start_page: int,
-        page_size: int,
-        prefetch: int,
-    ) -> tuple[int, int]:
-        persisted = 0
-        observed = 0
-        pages = prefetch_async(
-            self._immich.iter_album_asset_ids(
-                album.id, page_size=page_size, start_page=start_page
-            ),
-            prefetch,
-        )
-        async for asset_ids, is_last_page in async_items_with_last(pages):
-            started = perf_counter()
-            if asset_ids:
-                persisted += await self._assets.upsert_album_memberships(
-                    album.id, asset_ids, run.generation
-                )
-            observed += len(asset_ids)
-            if not is_last_page:
-                await self._pace_full_batch(run, started)
-        return persisted, observed
+        strategy = {
+            "asset": "by_asset",
+            "relation": "by_relation",
+            "automatic": "automatic",
+        }[runtime.incremental_strategy]
+        if run.mode == "full":
+            scope = RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy="by_relation",
+                albums=AllSelection(),
+                tags=AllSelection(),
+            )
+        else:
+            scope = RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy=strategy,
+                assets=GenerationSelection(generation=run.generation),
+                albums=AllSelection(),
+                tags=AllSelection(),
+            )
 
-    async def _sync_tag_relationship(
-        self,
-        run: SyncRunStatus,
-        tag: ImmichTag,
-        *,
-        page_size: int,
-        prefetch: int,
-    ) -> tuple[int, int, bool]:
-        persisted = 0
-        observed = 0
-        pages = prefetch_async(
-            self._immich.iter_tag_asset_ids(
-                tag.id,
-                page_size=page_size,
-                start_page=1,
-            ),
-            prefetch,
+        step = _PacedRelationshipSyncStep(
+            self._immich,
+            self._assets,
+            SyncSelectionResolver(self._assets),
+            page_prefetch=runtime.page_prefetch,
+            metadata_concurrency=runtime.metadata_request_concurrency,
+            pace_callback=lambda started: self._pace_full_batch(run, started),
         )
-        async for asset_ids, is_last_page in async_items_with_last(pages):
-            started = perf_counter()
-            if asset_ids:
-                persisted += await self._assets.upsert_tag_memberships(
-                    tag.id, asset_ids, run.generation
-                )
-            observed += len(asset_ids)
-            if not is_last_page:
-                await self._pace_full_batch(run, started)
-        return persisted, observed, observed == 0
+        context = SyncStepContext(
+            mode=run.mode,
+            generation=run.generation,
+            config=SyncStepConfig(
+                batch_size=self._full_batch_size(run, self._settings),
+                page_size=runtime.api_page_size,
+                concurrency=runtime.tag_association_concurrency,
+            ),
+            counters=counters,
+            cursor=run.cursor if run.phase == "relationships" else None,
+            window_start=run.window_start,
+            window_end=run.window_end,
+            manual=False,
+            respect_conditionals=True,
+            checkpoint_callback=checkpoint,
+        )
+        await step.run(context, scope)
+
