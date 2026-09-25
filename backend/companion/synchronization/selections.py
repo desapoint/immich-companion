@@ -142,7 +142,7 @@ class SyncSelectionResolver:
     def __init__(
         self,
         assets: AssetSelectionIdRepository,
-        relations: RelationSelectionIdRepository,
+        relations: RelationSelectionIdRepository | None = None,
     ) -> None:
         self._assets = assets
         self._relations = relations
@@ -221,6 +221,10 @@ class SyncSelectionResolver:
             return
 
         if isinstance(selection, PersistedSelection):
+            if self._relations is None:
+                raise ValueError(
+                    "Persisted relation selection requires a relation selection repository"
+                )
             async for batch in self._relations.iter_ids(
                 selection.selection_id,
                 kind,
