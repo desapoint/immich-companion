@@ -154,7 +154,6 @@ class _PacedStackSyncStep(StackSyncStep):
         await self._pace_callback(started)
 
 
-
 class _PacedRelationshipSyncStep(RelationshipSyncStep):
     """Preserve current relation page pacing around the first-class relationship step."""
 
