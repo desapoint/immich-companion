@@ -986,3 +986,270 @@ async def test_restore_uses_immich_then_refreshes_asset_albums_and_tags() -> Non
         "replace_asset_album",
         "replace_asset_tag",
     ]
+
+
+def _incremental_relationship_run() -> SyncRunStatus:
+    return run_status().model_copy(
+        update={
+            "mode": "incremental",
+            "phase": "relationships",
+            "cursor": None,
+        }
+    )
+
+
+def _relationship_catalog() -> tuple[list[ImmichAlbum], list[ImmichTag]]:
+    return (
+        [
+            ImmichAlbum(
+                id=ALBUM_ID,
+                albumName="Review",
+                assetCount=1,
+                createdAt="2026-08-24T12:00:00Z",
+                updatedAt="2026-08-24T12:00:00Z",
+            )
+        ],
+        [ImmichTag(id=TAG_ID, name="Review", value="Review", assetCount=1)],
+    )
+
+
+def _relationship_strategy_counters() -> dict[str, int]:
+    return {
+        **relationship_counters(),
+        "tag_asset_detail_payload": 0,
+        "tag_asset_detail_fallback": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_incremental_relationship_strategy_forced_asset_uses_changed_assets(
+    monkeypatch,
+) -> None:
+    immich = FakeImmich([asset(ASSET_ONE, "changed.png")], None)
+    assets = FakeAssetRepository()
+    assets.assets = [asset(ASSET_ONE, "changed.png")]
+    syncs = FakeSyncRepository()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        syncs,  # type: ignore[arg-type]
+        Settings(sync_incremental_strategy="asset"),
+    )
+    reconciled: list[list[UUID]] = []
+
+    async def reconcile(_immich, _assets, target_ids, *, generation, concurrency):
+        assert generation == 3
+        assert concurrency == 4
+        reconciled.append(list(target_ids))
+        return SimpleNamespace(
+            album_links=1,
+            tag_links=1,
+            payload_assets=1,
+            tag_fallback_assets=0,
+        )
+
+    monkeypatch.setattr(
+        asset_service_module,
+        "reconcile_generation_asset_relations",
+        reconcile,
+    )
+    albums, tags = _relationship_catalog()
+    counters = _relationship_strategy_counters()
+
+    await service._sync_relationships(
+        _incremental_relationship_run(),
+        OWNER_ID,
+        albums,
+        tags,
+        counters,
+    )
+
+    assert reconciled == [[ASSET_ONE]]
+    assert counters["album_strategy_asset_oriented"] == 1
+    assert counters["tag_strategy_asset_oriented"] == 1
+    assert counters["tag_strategy_asset_fallback"] == 0
+    assert counters["album_memberships"] == 1
+    assert counters["tag_memberships"] == 1
+    assert "album_memberships" not in immich.calls
+    assert "tag_memberships" not in immich.calls
+    assert syncs.checkpoints[-1] == ("relationships", None)
+
+
+@pytest.mark.asyncio
+async def test_incremental_relationship_strategy_forced_relation_traverses_relations(
+    monkeypatch,
+) -> None:
+    immich = FakeImmich([asset(ASSET_ONE, "changed.png")], None)
+    assets = FakeAssetRepository()
+    assets.assets = [asset(ASSET_ONE, "changed.png")]
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_incremental_strategy="relation"),
+    )
+
+    async def unexpected_reconcile(*_args, **_kwargs):
+        raise AssertionError("forced relation strategy must not use changed-asset traversal")
+
+    monkeypatch.setattr(
+        asset_service_module,
+        "reconcile_generation_asset_relations",
+        unexpected_reconcile,
+    )
+    albums, tags = _relationship_catalog()
+    counters = _relationship_strategy_counters()
+
+    await service._sync_relationships(
+        _incremental_relationship_run(),
+        OWNER_ID,
+        albums,
+        tags,
+        counters,
+    )
+
+    assert counters["album_strategy_asset_oriented"] == 0
+    assert counters["tag_strategy_asset_oriented"] == 0
+    assert counters["tag_strategy_asset_fallback"] == 0
+    assert "album_memberships" in immich.calls
+    assert "tag_memberships" in immich.calls
+
+
+@pytest.mark.asyncio
+async def test_incremental_relationship_strategy_automatic_prefers_changed_assets_on_tie(
+    monkeypatch,
+) -> None:
+    immich = FakeImmich([asset(ASSET_ONE, "changed.png")], None)
+    assets = FakeAssetRepository()
+    assets.assets = [asset(ASSET_ONE, "changed.png")]
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_incremental_strategy="automatic"),
+    )
+    reconciled: list[list[UUID]] = []
+
+    async def reconcile(_immich, _assets, target_ids, *, generation, concurrency):
+        reconciled.append(list(target_ids))
+        return SimpleNamespace(
+            album_links=1,
+            tag_links=1,
+            payload_assets=1,
+            tag_fallback_assets=0,
+        )
+
+    monkeypatch.setattr(
+        asset_service_module,
+        "reconcile_generation_asset_relations",
+        reconcile,
+    )
+    albums, tags = _relationship_catalog()
+    counters = _relationship_strategy_counters()
+
+    await service._sync_relationships(
+        _incremental_relationship_run(),
+        OWNER_ID,
+        albums,
+        tags,
+        counters,
+    )
+
+    # One changed asset costs two metadata calls; one album page plus one tag page
+    # also costs two calls. Current automatic behavior intentionally favors assets
+    # on that tie.
+    assert reconciled == [[ASSET_ONE]]
+    assert counters["album_strategy_asset_oriented"] == 1
+    assert counters["tag_strategy_asset_oriented"] == 1
+
+
+@pytest.mark.asyncio
+async def test_incremental_relationship_strategy_automatic_prefers_relation_when_cheaper(
+    monkeypatch,
+) -> None:
+    immich = FakeImmich(
+        [asset(ASSET_ONE, "changed-one.png"), asset(ASSET_TWO, "changed-two.png")],
+        None,
+    )
+    assets = FakeAssetRepository()
+    assets.assets = [
+        asset(ASSET_ONE, "changed-one.png"),
+        asset(ASSET_TWO, "changed-two.png"),
+    ]
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_incremental_strategy="automatic"),
+    )
+
+    async def unexpected_reconcile(*_args, **_kwargs):
+        raise AssertionError("automatic strategy should choose cheaper relation traversal")
+
+    monkeypatch.setattr(
+        asset_service_module,
+        "reconcile_generation_asset_relations",
+        unexpected_reconcile,
+    )
+    albums, tags = _relationship_catalog()
+    counters = _relationship_strategy_counters()
+
+    await service._sync_relationships(
+        _incremental_relationship_run(),
+        OWNER_ID,
+        albums,
+        tags,
+        counters,
+    )
+
+    assert counters["album_strategy_asset_oriented"] == 0
+    assert counters["tag_strategy_asset_oriented"] == 0
+    assert "album_memberships" in immich.calls
+    assert "tag_memberships" in immich.calls
+
+
+@pytest.mark.asyncio
+async def test_incremental_relationship_asset_strategy_falls_back_to_tag_traversal(
+    monkeypatch,
+) -> None:
+    immich = FakeImmich([asset(ASSET_ONE, "changed.png")], None)
+    assets = FakeAssetRepository()
+    assets.assets = [asset(ASSET_ONE, "changed.png")]
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSyncRepository(),  # type: ignore[arg-type]
+        Settings(sync_incremental_strategy="asset"),
+    )
+
+    async def reconcile(_immich, _assets, _target_ids, *, generation, concurrency):
+        return SimpleNamespace(
+            album_links=1,
+            tag_links=0,
+            payload_assets=0,
+            tag_fallback_assets=1,
+        )
+
+    monkeypatch.setattr(
+        asset_service_module,
+        "reconcile_generation_asset_relations",
+        reconcile,
+    )
+    albums, tags = _relationship_catalog()
+    counters = _relationship_strategy_counters()
+
+    await service._sync_relationships(
+        _incremental_relationship_run(),
+        OWNER_ID,
+        albums,
+        tags,
+        counters,
+    )
+
+    assert counters["album_strategy_asset_oriented"] == 1
+    assert counters["tag_strategy_asset_oriented"] == 1
+    assert counters["tag_strategy_asset_fallback"] == 1
+    assert counters["tag_asset_detail_payload"] == 0
+    assert counters["tag_asset_detail_fallback"] == 1
+    assert "album_memberships" not in immich.calls
+    assert "tag_memberships" in immich.calls
