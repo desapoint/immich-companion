@@ -11,8 +11,17 @@ export function createDuplicateStackWorkspace(): DuplicateStackWorkspace {
   return { activeByGroup: {}, nextOrdinalByGroup: {}, assetToStackByGroup: {}, stacks: {} };
 }
 
+function groupToken(groupId: string): string {
+  let hash = 0xcbf29ce484222325n;
+  for (let index = 0; index < groupId.length; index += 1) {
+    hash ^= BigInt(groupId.charCodeAt(index));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return hash.toString(36).padStart(13, '0');
+}
+
 function stackId(groupId: string, ordinal: number): string {
-  return `group-${groupId}-stack-${ordinal}`;
+  return `pending-stack-${groupToken(groupId)}-${ordinal}`;
 }
 
 function assetStackId(workspace: DuplicateStackWorkspace, groupId: string, assetId: string): string | undefined {

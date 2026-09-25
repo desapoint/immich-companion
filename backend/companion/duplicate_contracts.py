@@ -39,6 +39,13 @@ def stable_fingerprint(value: Any) -> str:
     return sha256(raw.encode()).hexdigest()
 
 
+def stack_destination_id(group_id: str, index: int) -> str:
+    """Build a bounded internal stack destination identifier."""
+
+    digest = sha256(group_id.encode()).hexdigest()[:24]
+    return f"duplicate-stack:{digest}:{index + 1}"
+
+
 def source_fingerprint(assets: list[Any]) -> str:
     return stable_fingerprint(
         [
@@ -195,7 +202,7 @@ def normalize_plan_group(group: dict[str, Any]) -> dict[str, Any]:
         follow_up.setdefault("resolution", "move_selected")
         follow_up.setdefault(
             "destination_id",
-            f"{normalized['group_id']}:stack:{index + 1}",
+            stack_destination_id(str(normalized["group_id"]), index),
         )
         follow_up.setdefault("source_group_ids", [normalized["group_id"]])
     normalized.setdefault("execution_state", "pending")

@@ -6,6 +6,7 @@ from uuid import UUID
 import pytest
 
 from companion.action_service import ActionPlanConflictError
+from companion.duplicate_contracts import normalize_plan_group, stack_destination_id
 from companion.duplicate_resolution import (
     _apply_stack_destination_overrides,
     _validate_stack_destination_topology,
@@ -135,3 +136,53 @@ def test_reviewed_destination_merges_overlapping_group_stacks() -> None:
     assert groups[1]["follow_ups"][0]["destination_id"] == "merged"
     assert groups[0]["follow_ups"][0]["member_asset_ids"] == [str(A), str(B), str(C)]
     assert groups[1]["follow_ups"][0]["source_group_ids"] == ["g1", "g2"]
+
+
+
+def test_internal_destination_id_is_bounded_for_long_group_ids() -> None:
+    group_id = "companion:appearance-normalized-v1:6:8:a546bb2e720b:linked:cohesion-4:" + ":".join(
+        str(value)
+        for value in [
+            A,
+            B,
+            C,
+            UUID("44444444-4444-4444-8444-444444444444"),
+            UUID("55555555-5555-4555-8555-555555555555"),
+            UUID("66666666-6666-4666-8666-666666666666"),
+            UUID("77777777-7777-4777-8777-777777777777"),
+        ]
+    )
+
+    destination_id = stack_destination_id(group_id, 0)
+
+    assert len(destination_id) <= 256
+    assert destination_id.startswith("duplicate-stack:")
+
+
+def test_normalized_stack_follow_up_uses_bounded_destination_id() -> None:
+    group_id = "companion:" + ("very-long-group:" * 40)
+    normalized = normalize_plan_group(
+        {
+            "group_id": group_id,
+            "stable_group_key": "stable",
+            "member_set_key": "members",
+            "discovery_source": "companion_similarity",
+            "action": "stack_all",
+            "keeper_asset_id": str(A),
+            "member_asset_ids": [str(A), str(B)],
+            "keep_asset_ids": [str(A), str(B)],
+            "trash_asset_ids": [],
+            "follow_up": {
+                "type": "stack",
+                "primary_asset_id": str(A),
+                "member_asset_ids": [str(A), str(B)],
+            },
+            "member_fingerprint": "members",
+            "members": [
+                {"asset_id": str(A), "disposition": "stack", "primary": True},
+                {"asset_id": str(B), "disposition": "stack", "primary": False},
+            ],
+        }
+    )
+
+    assert len(normalized["follow_ups"][0]["destination_id"]) <= 256
