@@ -29,6 +29,11 @@ export function createDuplicateDraftController({
     const primary = primaryFor(scoped, memberIds);
     const survivors = memberIds.filter((id) => scoped.decisions[id] !== 'delete');
     const stackByAsset = new Map(scoped.stacks.flatMap((stack) => stack.assetIds.map((assetId) => [assetId, stack] as const)));
+    const stackTopologyComplete = scoped.stacks.every((stack) => (
+      stack.assetIds.length >= 2
+      && stack.primaryAssetId !== null
+      && stack.assetIds.includes(stack.primaryAssetId)
+    ));
     const draft = await requestJson<ApiDuplicateDraft>('/api/assets/duplicates/workspace/group', jsonRequest('PUT', {
       group_id: groupId, member_fingerprint: group.member_fingerprint, options: analysisOptions,
       decisions: Object.entries(scoped.decisions).map(([asset_id, disposition]) => {
@@ -47,7 +52,7 @@ export function createDuplicateDraftController({
       // cannot fail validation against stale/live Immich stack choices.
       stack_resolution: 'move_selected',
       metadata_keeper_asset_id: Object.values(scoped.decisions).includes('delete') && survivors.length === 1 ? survivors[0] : null,
-      status: Object.keys(scoped.decisions).length === memberIds.length ? 'completed' : 'pending',
+      status: Object.keys(scoped.decisions).length === memberIds.length && stackTopologyComplete ? 'completed' : 'pending',
     }));
     replaceDraft(draft);
   };
