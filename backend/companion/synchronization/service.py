@@ -1789,7 +1789,7 @@ class AssetSyncService:
         owner: UUID,
         counters: dict[str, int],
         asset_total: int | None,
-    ) -> None:
+    ) -> SyncStepResult:
         """Run catalog synchronization through the canonical scoped step."""
 
         async def checkpoint(
@@ -1832,7 +1832,7 @@ class AssetSyncService:
             respect_conditionals=True,
             checkpoint_callback=checkpoint,
         )
-        await step.run(
+        result = await step.run(
             context,
             CatalogScope(albums=AllSelection(), tags=AllSelection()),
         )
@@ -1851,6 +1851,7 @@ class AssetSyncService:
                 else "Preparing media traversal",
             ),
         )
+        return result
 
     async def _sync_assets(
         self,
@@ -1858,7 +1859,7 @@ class AssetSyncService:
         owner: UUID,
         counters: dict[str, int],
         asset_total: int | None = None,
-    ) -> None:
+    ) -> SyncStepResult:
         """Run asset synchronization through the canonical first-class step."""
 
         runtime = await self._runtime_settings()
@@ -1916,7 +1917,7 @@ class AssetSyncService:
             respect_conditionals=True,
             checkpoint_callback=checkpoint,
         )
-        await step.run(context, AssetScope(selection=selection))
+        result = await step.run(context, AssetScope(selection=selection))
         await self._checkpoint(
             run,
             owner,
@@ -1925,13 +1926,14 @@ class AssetSyncService:
             None,
             self._progress("stacks", 0, None, "Preparing stack traversal"),
         )
+        return result
 
     async def _sync_stacks(
         self,
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
-    ) -> None:
+    ) -> SyncStepResult:
         """Run stack synchronization through the canonical first-class step."""
 
         async def checkpoint(
@@ -1974,7 +1976,7 @@ class AssetSyncService:
             respect_conditionals=True,
             checkpoint_callback=checkpoint,
         )
-        await step.run(context, StackScope(selection=AllSelection()))
+        result = await step.run(context, StackScope(selection=AllSelection()))
         await self._checkpoint(
             run,
             owner,
@@ -1983,13 +1985,14 @@ class AssetSyncService:
             None,
             self._progress("relationships", 0, None, "Preparing associations"),
         )
+        return result
 
     async def _sync_relationships(
         self,
         run: SyncRunStatus,
         owner: UUID,
         counters: dict[str, int],
-    ) -> None:
+    ) -> SyncStepResult:
         """Run relationship synchronization through the canonical first-class step."""
 
         runtime = await self._runtime_settings()
@@ -2059,5 +2062,5 @@ class AssetSyncService:
             respect_conditionals=True,
             checkpoint_callback=checkpoint,
         )
-        await step.run(context, scope)
+        return await step.run(context, scope)
 
