@@ -79,12 +79,21 @@ function stackDestinations(resolution: DuplicateResolutionPlan) {
   });
 }
 
+function fallbackPlanStackId(groupId: string, index: number): string {
+  let hash = 0xcbf29ce484222325n;
+  for (let offset = 0; offset < groupId.length; offset += 1) {
+    hash ^= BigInt(groupId.charCodeAt(offset));
+    hash = BigInt.asUintN(64, hash * 0x100000001b3n);
+  }
+  return `plan-stack-${hash.toString(36).padStart(13, '0')}-${index + 1}`;
+}
+
 function frozenStacks(groups: NonNullable<PlanResponse['groups']>): DuplicatePendingStack[] {
   const byId = new Map<string, DuplicatePendingStack>();
   for (const group of groups) {
     const followUps = group.follow_ups ?? (group.follow_up ? [group.follow_up] : []);
     followUps.forEach((stack, index) => {
-      const id = stack.destination_id ?? `plan:${group.group_id}:${index + 1}`;
+      const id = stack.destination_id ?? fallbackPlanStackId(group.group_id, index);
       const sourceGroupIds = [...new Set(stack.source_group_ids?.length ? stack.source_group_ids : [group.group_id])];
       const existing = byId.get(id);
       if (existing) {

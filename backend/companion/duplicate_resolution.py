@@ -703,7 +703,7 @@ class DuplicateResolutionMixin:
             for index, follow_up in enumerate(_stack_follow_ups(planned)):
                 follow_up.setdefault(
                     "destination_id",
-                    f"{planned['group_id']}:stack:{index + 1}",
+                    _stack_destination_id(str(planned["group_id"]), index),
                 )
                 follow_up.setdefault("source_group_ids", [planned["group_id"]])
 
