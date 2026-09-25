@@ -13,7 +13,13 @@ from companion.asset_repository import AssetRepository
 from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
 from companion.sync_schema import SyncMode
 from companion.synchronization.evidence import SyncEvidence
-from companion.synchronization.scopes import SyncStepName
+from companion.synchronization.scopes import CatalogScope, SyncStepName
+from companion.synchronization.selections import (
+    AllSelection,
+    ExplicitIdsSelection,
+    PersistedSelection,
+    SyncSelectionResolver,
+)
 from companion.tasks.coordinator import TaskContext
 
 
@@ -189,40 +195,98 @@ class SyncStep[ScopeT](ABC):
         return list(await asyncio.gather(*(guarded(item) for item in items)))
 
 
-@dataclass(frozen=True, slots=True)
-class CatalogSyncInput:
-    albums: Sequence[ImmichAlbum]
-    tags: Sequence[ImmichTag]
-
-
-class CatalogSyncStep(SyncStep[CatalogSyncInput]):
-    """Synchronize album/tag catalogs with resumable batch cursors."""
+class CatalogSyncStep(SyncStep[CatalogScope]):
+    """Synchronize scoped album/tag catalogs with resumable batch cursors."""
 
     name = "catalogs"
     phase = "catalogs"
 
-    def __init__(self, assets: AssetRepository) -> None:
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        selections: SyncSelectionResolver | None = None,
+    ) -> None:
+        self._immich = immich
         self._assets = assets
-
-    @staticmethod
-    async def load(immich: ImmichApiClient) -> CatalogSyncInput:
-        albums, tags = await asyncio.gather(
-            immich.list_album_catalog(), immich.list_tag_catalog()
-        )
-        return CatalogSyncInput(albums=albums, tags=tags)
+        self._selections = selections
 
     @staticmethod
     def _batches[T](items: Sequence[T], size: int) -> list[Sequence[T]]:
         return [items[index : index + size] for index in range(0, len(items), size)]
 
+    async def _selected_ids(
+        self,
+        selection: ExplicitIdsSelection | PersistedSelection,
+        *,
+        relation: str,
+        batch_size: int,
+    ) -> set[UUID]:
+        if isinstance(selection, ExplicitIdsSelection):
+            return set(dict.fromkeys(selection.ids))
+        if self._selections is None:
+            raise ValueError(
+                f"Persisted {relation} catalog selection requires SyncSelectionResolver"
+            )
+
+        ids: set[UUID] = set()
+        iterator = (
+            self._selections.iter_album_ids(selection, batch_size=batch_size)
+            if relation == "album"
+            else self._selections.iter_tag_ids(selection, batch_size=batch_size)
+        )
+        async for batch in iterator:
+            ids.update(batch)
+        return ids
+
+    async def _load_albums(
+        self,
+        scope: CatalogScope,
+        *,
+        batch_size: int,
+    ) -> list[ImmichAlbum]:
+        if scope.albums is None:
+            return []
+        catalog = await self._immich.list_album_catalog()
+        if isinstance(scope.albums, AllSelection):
+            return catalog
+        selected = await self._selected_ids(
+            scope.albums,
+            relation="album",
+            batch_size=batch_size,
+        )
+        return [album for album in catalog if album.id in selected]
+
+    async def _load_tags(
+        self,
+        scope: CatalogScope,
+        *,
+        batch_size: int,
+    ) -> list[ImmichTag]:
+        if scope.tags is None:
+            return []
+        catalog = await self._immich.list_tag_catalog()
+        if isinstance(scope.tags, AllSelection):
+            return catalog
+        selected = await self._selected_ids(
+            scope.tags,
+            relation="tag",
+            batch_size=batch_size,
+        )
+        return [tag for tag in catalog if tag.id in selected]
+
     async def execute(
-        self, context: SyncStepContext, data: CatalogSyncInput
+        self,
+        context: SyncStepContext,
+        scope: CatalogScope,
     ) -> tuple[int, int]:
         if context.config.batch_size is None:
             raise ValueError("CatalogSyncStep requires config.batch_size")
 
-        albums = data.albums
-        tags = data.tags
+        albums, tags = await asyncio.gather(
+            self._load_albums(scope, batch_size=context.config.batch_size),
+            self._load_tags(scope, batch_size=context.config.batch_size),
+        )
         album_batches = self._batches(albums, context.config.batch_size)
         tag_batches = self._batches(tags, context.config.batch_size)
         total = len(albums) + len(tags)

@@ -7,6 +7,8 @@ from typing import Protocol
 from companion.asset_repository import AssetRepository
 from companion.immich import ImmichApiClient
 from companion.sync_schema import SyncMode
+from companion.synchronization.scopes import CatalogScope
+from companion.synchronization.selections import AllSelection
 from companion.synchronization.steps import (
     CatalogSyncStep,
     SyncStepConditionals,
@@ -41,8 +43,7 @@ class CatalogSyncTaskHandler:
         assets: AssetRepository,
         runtime_settings: RuntimeSyncSettingsRepository,
     ) -> None:
-        self._immich = immich
-        self._step = CatalogSyncStep(assets)
+        self._step = CatalogSyncStep(immich, assets)
         self._runtime_settings = runtime_settings
 
     async def execute(self, task: TaskContext, payload: dict[str, object]) -> TaskResult:
@@ -81,8 +82,10 @@ class CatalogSyncTaskHandler:
             respect_conditionals=respect_conditionals,
             checkpoint_callback=task_checkpoint_callback(task, self._step.name),
         )
-        data = await self._step.load(self._immich)
-        result = await self._step.run(context, data)
+        result = await self._step.run(
+            context,
+            CatalogScope(albums=AllSelection(), tags=AllSelection()),
+        )
         return TaskResult(
             summary={
                 "step": result.name,

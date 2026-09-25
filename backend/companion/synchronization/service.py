@@ -55,8 +55,9 @@ from companion.synchronization.batching import (
     enumerate_async,
     prefetch_async,
 )
+from companion.synchronization.scopes import CatalogScope
+from companion.synchronization.selections import AllSelection
 from companion.synchronization.steps import (
-    CatalogSyncInput,
     CatalogSyncStep,
     SyncStepConfig,
     SyncStepContext,
@@ -103,10 +104,11 @@ class _PacedCatalogSyncStep(CatalogSyncStep):
 
     def __init__(
         self,
+        immich: ImmichApiClient,
         assets: AssetRepository,
         pace_callback: Callable[[float], Awaitable[None]],
     ) -> None:
-        super().__init__(assets)
+        super().__init__(immich, assets)
         self._pace_callback = pace_callback
 
     async def pace(self, _context: SyncStepContext, started: float) -> None:
@@ -1384,9 +1386,6 @@ class AssetSyncService:
         )
         if capabilities is not None and capabilities.stream and run.mode == "incremental":
             await self._sync_events(run, owner, counters)
-        albums, tags = await asyncio.gather(
-            self._immich.list_album_catalog(), self._immich.list_tag_catalog()
-        )
         asset_total: int | None = None
         count_assets = getattr(self._immich, "count_assets", None)
         if count_assets is not None:
@@ -1398,25 +1397,15 @@ class AssetSyncService:
             except ImmichApiError:
                 asset_total = None
         if start_phase <= 0:
-            await self._checkpoint(
-                run,
-                owner,
-                counters,
-                "catalogs",
-                run.cursor if run.phase == "catalogs" else None,
-                self._progress(
-                    "catalogs",
-                    0,
-                    len(albums) + len(tags),
-                    f"Preparing {len(albums)} albums and {len(tags)} tags",
-                ),
-            )
-            await self._sync_catalogs(run, owner, albums, tags, counters, asset_total)
+            await self._sync_catalogs(run, owner, counters, asset_total)
         if start_phase <= 1:
             await self._sync_assets(run, owner, counters, asset_total)
         if start_phase <= 2:
             await self._sync_stacks(run, owner, counters)
         if start_phase <= 3:
+            albums, tags = await asyncio.gather(
+                self._immich.list_album_catalog(), self._immich.list_tag_catalog()
+            )
             await self._sync_relationships(run, owner, albums, tags, counters)
         await self._checkpoint(
             run,
@@ -1555,12 +1544,10 @@ class AssetSyncService:
         self,
         run: SyncRunStatus,
         owner: UUID,
-        albums: list[ImmichAlbum],
-        tags: list[ImmichTag],
         counters: dict[str, int],
         asset_total: int | None,
     ) -> None:
-        """Run catalog synchronization through the canonical step contract."""
+        """Run catalog synchronization through the canonical scoped step."""
 
         async def checkpoint(
             cursor: str | None,
@@ -1583,6 +1570,7 @@ class AssetSyncService:
             )
 
         step = _PacedCatalogSyncStep(
+            self._immich,
             self._assets,
             lambda started: self._pace_full_batch(run, started),
         )
@@ -1601,7 +1589,10 @@ class AssetSyncService:
             respect_conditionals=True,
             checkpoint_callback=checkpoint,
         )
-        await step.run(context, CatalogSyncInput(albums=albums, tags=tags))
+        await step.run(
+            context,
+            CatalogScope(albums=AllSelection(), tags=AllSelection()),
+        )
         await self._checkpoint(
             run,
             owner,
