@@ -65,6 +65,8 @@ class SyncStepConfig:
     batch_size: int | None = None
     page_size: int | None = None
     concurrency: int = 1
+    page_prefetch: int | None = None
+    metadata_concurrency: int | None = None
     min_batch_delay_seconds: float = 0.0
     conditionals: SyncStepConditionals = field(default_factory=SyncStepConditionals)
 
@@ -75,6 +77,10 @@ class SyncStepConfig:
             raise ValueError("page_size must be at least 1")
         if self.concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if self.page_prefetch is not None and self.page_prefetch < 0:
+            raise ValueError("page_prefetch cannot be negative")
+        if self.metadata_concurrency is not None and self.metadata_concurrency < 1:
+            raise ValueError("metadata_concurrency must be at least 1")
         if self.min_batch_delay_seconds < 0:
             raise ValueError("min_batch_delay_seconds cannot be negative")
 
@@ -593,7 +599,11 @@ class AssetSyncStep(SyncStep[AssetScope]):
                 updated_before=updated_before,
                 start_page=start_page,
             ),
-            self._page_prefetch,
+            (
+                context.config.page_prefetch
+                if context.config.page_prefetch is not None
+                else self._page_prefetch
+            ),
         )
         async for page_number, page in iterator:
             for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
@@ -725,10 +735,11 @@ class AssetSyncStep(SyncStep[AssetScope]):
             ),
         )
 
-    async def pace_page(self, _context: SyncStepContext) -> None:
-        """Pace remote pages when the orchestrated runtime requests it."""
+    async def pace_page(self, context: SyncStepContext) -> None:
+        """Pace remote pages according to the run-specific operational config."""
 
-        return None
+        if context.config.min_batch_delay_seconds > 0:
+            await asyncio.sleep(context.config.min_batch_delay_seconds)
 
     async def _checkpoint(
         self,
