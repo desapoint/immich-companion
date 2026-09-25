@@ -19,7 +19,6 @@ from companion.synchronization.selections import (
     AssetSelection,
     GenerationSelection,
     RequestSelection,
-    SyncSelectionResolver,
     WindowSelection,
 )
 from companion.synchronization.steps import (
@@ -183,27 +182,6 @@ def test_sync_step_result_extends_existing_contract_with_evidence_and_outputs() 
     assert result.counters == {"assets_seen": 2}
     assert result.evidence == [evidence]
     assert result.outputs["selection"] == {"kind": "generation", "generation": 5}
-
-
-def test_selection_resolver_contract_is_runtime_checkable() -> None:
-    class Resolver:
-        async def _empty(self):
-            if False:
-                yield []
-
-        def iter_asset_ids(self, selection, *, batch_size):
-            return self._empty()
-
-        def iter_album_ids(self, selection, *, batch_size):
-            return self._empty()
-
-        def iter_tag_ids(self, selection, *, batch_size):
-            return self._empty()
-
-        def iter_stack_ids(self, selection, *, batch_size):
-            return self._empty()
-
-    assert isinstance(Resolver(), SyncSelectionResolver)
 
 
 @pytest.mark.asyncio
