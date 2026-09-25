@@ -5,6 +5,7 @@ from uuid import UUID
 import pytest
 
 from companion.immich import ImmichAlbum, ImmichTag
+from companion.synchronization.evidence import SyncAuthority
 from companion.synchronization.scopes import CatalogScope
 from companion.synchronization.selections import (
     AllSelection,
@@ -113,6 +114,8 @@ async def test_catalog_step_reports_processed_and_total() -> None:
     assert assets.album_batches == [[ALBUM_ONE], [ALBUM_TWO]]
     assert assets.tag_batches == [[TAG_ONE], [TAG_TWO]]
     assert set(immich.calls) == {"albums", "tags"}
+    assert {item.domain for item in result.evidence} == {"albums", "tags"}
+    assert {item.authority for item in result.evidence} == {SyncAuthority.COMPLETE}
     assert progress[-1] == (None, 4, 4, 100.0)
 
 
@@ -179,6 +182,8 @@ async def test_catalog_step_supports_explicit_tag_only_scope() -> None:
     assert immich.calls == ["tags"]
     assert assets.album_batches == []
     assert assets.tag_batches == [[TAG_TWO]]
+    assert result.evidence[0].domain == "tags"
+    assert result.evidence[0].authority == SyncAuthority.SELECTED
 
 
 @pytest.mark.asyncio
