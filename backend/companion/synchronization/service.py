@@ -1845,6 +1845,13 @@ class AssetSyncService:
                 albums=AllSelection(),
                 tags=AllSelection(),
             )
+        elif strategy == "by_relation":
+            scope = RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy="by_relation",
+                albums=AllSelection(),
+                tags=AllSelection(),
+            )
         else:
             scope = RelationshipScope(
                 kinds={"albums", "tags"},
