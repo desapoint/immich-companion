@@ -7,10 +7,12 @@ import pytest
 
 from companion.duplicate_schema import (
     DuplicateAnalysisOptions,
+    DuplicateGroupDraftUpdate,
     DuplicateMemberDraftDecision,
     DuplicateResolutionPlanGroup,
     DuplicateResolutionPlanRequest,
     DuplicateSearchPage,
+    DuplicateStackPlanOverride,
     DuplicateWorkspaceSelectionDelta,
 )
 
@@ -162,4 +164,37 @@ def test_non_stack_draft_decision_rejects_stack_partition_metadata() -> None:
             asset_id=A,
             disposition="keep",
             stack_id="group-test-stack-1",
+        )
+
+
+def test_duplicate_draft_defers_stack_resolution_validation_until_planning() -> None:
+    draft = DuplicateGroupDraftUpdate(
+        group_id="group-1",
+        member_fingerprint="fingerprint",
+        decisions=[
+            DuplicateMemberDraftDecision(
+                asset_id=A,
+                disposition="stack",
+                stack_id="pending-1",
+                stack_primary=True,
+                stack_resolution="{}",
+            ),
+            DuplicateMemberDraftDecision(
+                asset_id=B,
+                disposition="stack",
+                stack_id="pending-1",
+            ),
+        ],
+        stack_primary_asset_id=A,
+        stack_resolution="{}",
+    )
+
+    assert draft.stack_resolution == "{}"
+    assert draft.decisions[0].stack_resolution == "{}"
+
+    with pytest.raises(ValueError, match="non-empty object"):
+        DuplicateStackPlanOverride(
+            primary_asset_id=A,
+            member_asset_ids=[A, B],
+            resolution="{}",
         )

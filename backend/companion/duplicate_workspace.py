@@ -690,9 +690,12 @@ class DuplicateWorkspaceMixin:
                 primaries = [
                     decision for decision in stack_members if decision.stack_primary
                 ]
-                if len(primaries) != 1:
+                # Drafts are autosaved while a stack is being assembled. A pending
+                # stack may temporarily have no explicit member-level primary; final
+                # planning still requires exactly one primary in _saved_stack_overrides.
+                if len(primaries) > 1:
                     raise ActionPlanConflictError(
-                        "Each pending stack must have exactly one primary image"
+                        "A pending stack cannot have more than one primary image"
                     )
                 resolutions = {
                     decision.stack_resolution

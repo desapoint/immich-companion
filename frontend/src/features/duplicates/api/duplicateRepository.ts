@@ -111,7 +111,7 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
   let visibleGroupIds = new Set<string>();
   let workspace: ApiDuplicateWorkspace = { initialized: false, revision: 0, selected_count: 0, selected_group_ids: [], active_group_id: null, stale_selected_groups: [], drafts: [] };
   const drafts = createDuplicateDraftController({ rawGroups, getWorkspace: () => workspace, setWorkspace: (next) => { workspace = next; }, analysisOptions: ANALYSIS_OPTIONS });
-  const { draftFor, saveDraft, flushDrafts, saveWorkspaceStackResolution, draftQueues, draftErrors } = drafts;
+  const { draftFor, saveDraft, flushDrafts, draftQueues, draftErrors } = drafts;
 
   const materialize = (group: ApiDuplicateGroup): DuplicateGroupRecord => {
     const draft = draftFor(group.group_id);
@@ -308,9 +308,6 @@ export function createDuplicateRepository(tasks: TaskRepository): DuplicateRepos
     async prepareDecisions(resolution: DuplicateResolutionPlan, groupIds: readonly string[]): Promise<DuplicatePreparedPlan> {
       const uniqueGroupIds = [...new Set(groupIds)];
       if (!uniqueGroupIds.length) {
-        for (const stack of resolution.stacks) {
-          if (stackSourceGroups(stack).length === 1) await saveWorkspaceStackResolution(stack);
-        }
         const plan = await requestJson<PlanResponse>('/api/assets/duplicates/cross-source/plan', jsonRequest('POST', {
           options: ANALYSIS_OPTIONS,
           group_ids: [],

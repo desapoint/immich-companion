@@ -691,7 +691,9 @@ class DuplicateMemberDraftDecision(BaseModel):
     status: DuplicateDraftDecisionStatus = "pending"
     stack_id: str | None = Field(default=None, max_length=256)
     stack_primary: bool = False
-    stack_resolution: StackResolution | None = None
+    # Draft autosave is mutable editing state, not an executable stack plan.
+    # Final review compiles this opaque value into the strict StackResolution type.
+    stack_resolution: str | None = None
 
     @model_validator(mode="after")
     def validate_stack_metadata(self) -> DuplicateMemberDraftDecision:
@@ -713,7 +715,7 @@ class DuplicateGroupDraftUpdate(BaseModel):
     options: DuplicateAnalysisOptions = Field(default_factory=DuplicateAnalysisOptions)
     decisions: list[DuplicateMemberDraftDecision] = Field(default_factory=list)
     stack_primary_asset_id: UUID | None = None
-    stack_resolution: StackResolution = "move_selected"
+    stack_resolution: str = "move_selected"
     metadata_keeper_asset_id: UUID | None = None
     status: DuplicateDraftStatus = "pending"
 
@@ -863,7 +865,7 @@ class DuplicateGroupDraft(BaseModel):
     member_fingerprint: str
     decisions: list[DuplicateMemberDraftDecision]
     stack_primary_asset_id: UUID | None = None
-    stack_resolution: StackResolution = "move_selected"
+    stack_resolution: str = "move_selected"
     metadata_keeper_asset_id: UUID | None = None
     status: DuplicateDraftStatus
     stale: bool = False

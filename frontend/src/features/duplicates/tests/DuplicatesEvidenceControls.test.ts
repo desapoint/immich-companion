@@ -19,18 +19,20 @@ describe('V2DuplicatesPage evidence controls', () => {
     expect(source).toContain('<DuplicateReviewProgress phase={reviewConfirmationPhase}/>');
   });
 
-  it('shows continuous preparation progress and blocks collection navigation for stack issues', () => {
+  it('shows continuous preparation progress without validating unfinished stacks during navigation', () => {
     expect(source).toContain("planPreparing=true;reviewProgressPhase='saving'");
     expect(source).toContain("reviewProgressPhase='planning'");
     expect(source).toContain('<DuplicateReviewProgress phase={reviewProgressPhase} overlay={true}/>');
-    expect(source).toContain('function setPage(value:number){if(blockForReviewIssue())return;');
-    expect(source).toContain('async function loadMore(){if(!nextCursor||groupRequests.loading||blockForReviewIssue())return;');
+    expect(source).toContain('function setPage(value:number){collection.setPage(value);');
+    expect(source).toContain('async function loadMore(){if(!nextCursor||groupRequests.loading)return;');
+    expect(source).toContain("const reviewGroupIds=scope==='group'&&groupId?[groupId]:selectedGroups;");
+    expect(source).toContain('if(blockForReviewIssue(reviewGroupIds))return;');
   });
 
-  it('renders a persistent issue notice with a focusable group anchor', () => {
-    expect(source).toContain('<DuplicateReviewIssueNotice issue={reviewIssue}');
-    expect(source).toContain('onview={()=>viewReviewIssue(reviewIssue)}');
-    expect(source).toContain('onkeep={()=>keepReviewIssue(reviewIssue)}');
+  it('surfaces stack issues only when review is requested and keeps the focusable group anchor', () => {
+    expect(source).not.toContain('<DuplicateReviewIssueNotice');
+    expect(source).toContain('function blockForReviewIssue(groupIds:readonly string[]):boolean{const scope=new Set(groupIds);');
+    expect(source).toContain('interactionError=issue.message;viewReviewIssue(issue);return true');
     expect(source).toContain('id={duplicateGroupAnchorId(item.id)}');
     expect(source).toContain('tabindex="-1"');
   });

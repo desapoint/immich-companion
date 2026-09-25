@@ -2311,6 +2311,53 @@ async def test_stack_draft_assigns_a_primary_when_client_omits_it() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stack_draft_accepts_transient_partition_without_member_primary() -> None:
+    content = b"same"
+    candidate_group = group(
+        asset(UPLOAD_1, external=False, checksum=immich_sha1(content), filename="one.jpg"),
+        asset(EXTERNAL_1, external=True, checksum="path", filename="two.jpg"),
+    )
+    service = make_service(
+        SimpleNamespace(action_plan_ttl_seconds=900),
+        FakeImmich(candidate_group),
+        FakeAssets(),
+        FakeReports([report(EXTERNAL_1, content)]),
+        FakeActions(),
+        SimpleNamespace(),
+        SimpleNamespace(),
+        FakeReviews(),
+    )
+    current = (await service.result()).groups[0]
+
+    saved = await service.save_group_draft(
+        DuplicateGroupDraftUpdate(
+            group_id=PUBLIC_GROUP_ID,
+            member_fingerprint=current.member_fingerprint,
+            decisions=[
+                DuplicateMemberDraftDecision(
+                    asset_id=UPLOAD_1,
+                    disposition="stack",
+                    stack_id="pending-stack-1",
+                ),
+                DuplicateMemberDraftDecision(
+                    asset_id=EXTERNAL_1,
+                    disposition="stack",
+                    stack_id="pending-stack-1",
+                ),
+            ],
+        )
+    )
+
+    assert saved.stack_primary_asset_id in {UPLOAD_1, EXTERNAL_1}
+    assert all(not decision.stack_primary for decision in saved.decisions)
+
+    with pytest.raises(ActionPlanConflictError, match="needs exactly one primary image"):
+        await service.plan(
+            DuplicateResolutionPlanRequest(group_ids=[PUBLIC_GROUP_ID])
+        )
+
+
+@pytest.mark.asyncio
 async def test_plan_compiles_saved_mixed_dispositions_into_both_phases() -> None:
     content = b"same"
     candidate_group = group(
