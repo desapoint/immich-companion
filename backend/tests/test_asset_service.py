@@ -18,6 +18,7 @@ from companion.immich import (
     ImmichTag,
 )
 from companion.sync_schema import SyncRunStatus
+from companion.synchronization import relationships as relationship_module
 from companion.synchronization import service as asset_service_module
 from companion.synchronization.steps import StackSyncStep
 from companion.task_schema import TaskStatusView
@@ -267,6 +268,11 @@ class FakeAssetRepository:
 
     async def generation_asset_ids(self, _generation):
         return [current.id for current in self.assets]
+
+    async def iter_generation_asset_ids(self, _generation, *, batch_size):
+        ids = [current.id for current in self.assets]
+        for offset in range(0, len(ids), batch_size):
+            yield ids[offset : offset + batch_size]
 
     async def tag_asset_counts(self):
         return {TAG_ID: 1}
@@ -784,6 +790,26 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
         album_page_size: int | None = None
         tag_page_size: int | None = None
 
+        async def list_album_catalog(self):
+            return [
+                ImmichAlbum(
+                    id=ALBUM_ID,
+                    albumName="Large album",
+                    createdAt="2026-08-24T12:00:00Z",
+                    updatedAt="2026-08-24T12:00:00Z",
+                )
+            ]
+
+        async def list_tag_catalog(self):
+            return [
+                ImmichTag(
+                    id=TAG_ID,
+                    name="Large tag",
+                    value="Large tag",
+                    assetCount=2,
+                )
+            ]
+
         async def iter_album_asset_ids(self, _album_id, *, page_size, start_page):
             assert start_page == 1
             self.album_page_size = page_size
@@ -812,20 +838,11 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
         paced.append(1)
 
     service._pace_full_batch = pace  # type: ignore[method-assign]
-    album = ImmichAlbum(
-        id=ALBUM_ID,
-        albumName="Large album",
-        createdAt="2026-08-24T12:00:00Z",
-        updatedAt="2026-08-24T12:00:00Z",
-    )
-    tag = ImmichTag(id=TAG_ID, name="Large tag", value="Large tag", assetCount=2)
     counters = relationship_counters()
 
     await service._sync_relationships(
         run_status().model_copy(update={"phase": "relationships"}),
         OWNER_ID,
-        [album],
-        [tag],
         counters,
     )
 
@@ -846,6 +863,12 @@ async def test_tag_relationships_skip_empty_tags_and_use_runtime_concurrency() -
             self.active = 0
             self.maximum_active = 0
             self.calls: list[UUID] = []
+
+        async def list_album_catalog(self):
+            return []
+
+        async def list_tag_catalog(self):
+            return tags
 
         async def iter_tag_asset_ids(self, tag_id, *, page_size, start_page):
             assert page_size == 1000
@@ -880,8 +903,6 @@ async def test_tag_relationships_skip_empty_tags_and_use_runtime_concurrency() -
     await service._sync_relationships(
         run_status().model_copy(update={"phase": "relationships"}),
         OWNER_ID,
-        [],
-        tags,
         counters,
     )
 
@@ -1002,21 +1023,6 @@ def _incremental_relationship_run() -> SyncRunStatus:
     )
 
 
-def _relationship_catalog() -> tuple[list[ImmichAlbum], list[ImmichTag]]:
-    return (
-        [
-            ImmichAlbum(
-                id=ALBUM_ID,
-                albumName="Review",
-                assetCount=1,
-                createdAt="2026-08-24T12:00:00Z",
-                updatedAt="2026-08-24T12:00:00Z",
-            )
-        ],
-        [ImmichTag(id=TAG_ID, name="Review", value="Review", assetCount=1)],
-    )
-
-
 def _relationship_strategy_counters() -> dict[str, int]:
     return {
         **relationship_counters(),
@@ -1053,18 +1059,15 @@ async def test_incremental_relationship_strategy_forced_asset_uses_changed_asset
         )
 
     monkeypatch.setattr(
-        asset_service_module,
+        relationship_module,
         "reconcile_generation_asset_relations",
         reconcile,
     )
-    albums, tags = _relationship_catalog()
     counters = _relationship_strategy_counters()
 
     await service._sync_relationships(
         _incremental_relationship_run(),
         OWNER_ID,
-        albums,
-        tags,
         counters,
     )
 
@@ -1097,18 +1100,15 @@ async def test_incremental_relationship_strategy_forced_relation_traverses_relat
         raise AssertionError("forced relation strategy must not use changed-asset traversal")
 
     monkeypatch.setattr(
-        asset_service_module,
+        relationship_module,
         "reconcile_generation_asset_relations",
         unexpected_reconcile,
     )
-    albums, tags = _relationship_catalog()
     counters = _relationship_strategy_counters()
 
     await service._sync_relationships(
         _incremental_relationship_run(),
         OWNER_ID,
-        albums,
-        tags,
         counters,
     )
 
@@ -1144,18 +1144,15 @@ async def test_incremental_relationship_strategy_automatic_prefers_changed_asset
         )
 
     monkeypatch.setattr(
-        asset_service_module,
+        relationship_module,
         "reconcile_generation_asset_relations",
         reconcile,
     )
-    albums, tags = _relationship_catalog()
     counters = _relationship_strategy_counters()
 
     await service._sync_relationships(
         _incremental_relationship_run(),
         OWNER_ID,
-        albums,
-        tags,
         counters,
     )
 
@@ -1191,18 +1188,15 @@ async def test_incremental_relationship_strategy_automatic_prefers_relation_when
         raise AssertionError("automatic strategy should choose cheaper relation traversal")
 
     monkeypatch.setattr(
-        asset_service_module,
+        relationship_module,
         "reconcile_generation_asset_relations",
         unexpected_reconcile,
     )
-    albums, tags = _relationship_catalog()
     counters = _relationship_strategy_counters()
 
     await service._sync_relationships(
         _incremental_relationship_run(),
         OWNER_ID,
-        albums,
-        tags,
         counters,
     )
 
@@ -1235,18 +1229,15 @@ async def test_incremental_relationship_asset_strategy_falls_back_to_tag_travers
         )
 
     monkeypatch.setattr(
-        asset_service_module,
+        relationship_module,
         "reconcile_generation_asset_relations",
         reconcile,
     )
-    albums, tags = _relationship_catalog()
     counters = _relationship_strategy_counters()
 
     await service._sync_relationships(
         _incremental_relationship_run(),
         OWNER_ID,
-        albums,
-        tags,
         counters,
     )
 
