@@ -95,6 +95,12 @@ class PersistedCompositeDuplicateProvider:
                     len(group.asset_ids),
                 )
                 continue
+            if any(asset.asset_type == "VIDEO" for asset in group_assets):
+                logger.warning(
+                    "Skipping persisted composite duplicate group %s because it contains video",
+                    group.group_id,
+                )
+                continue
             discovered.append(
                 DiscoveredGroup(
                     group_id=group.group_id,

@@ -102,17 +102,22 @@ class ImmichDuplicateProvider:
         assets = await self._assets.get_immich_assets(asset_ids)
         discovered: list[DiscoveredGroup] = []
         for group in snapshot:
-            group_assets = tuple(
+            hydrated_assets = tuple(
                 assets[asset_id] for asset_id in group.asset_ids if asset_id in assets
             )
-            if len(group_assets) != len(group.asset_ids):
+            if len(hydrated_assets) != len(group.asset_ids):
                 logger.warning(
                     "Skipping persisted Immich duplicate group %s because "
                     "%s/%s local members are available",
                     group.provider_group_id,
-                    len(group_assets),
+                    len(hydrated_assets),
                     len(group.asset_ids),
                 )
+                continue
+            group_assets = tuple(
+                asset for asset in hydrated_assets if asset.asset_type != "VIDEO"
+            )
+            if len(group_assets) < 2:
                 continue
             discovered.append(
                 DiscoveredGroup(
@@ -142,6 +147,8 @@ class ImmichDuplicateProvider:
         sparse: dict[UUID, list[ImmichAsset]] = {}
         for group in groups:
             for asset in group.assets:
+                if asset.asset_type == "VIDEO":
+                    continue
                 if asset.library_id is not None and asset.file_size_bytes is None:
                     sparse.setdefault(asset.id, []).append(asset)
 
@@ -185,6 +192,8 @@ class ImmichDuplicateProvider:
         for group in groups:
             assets: list[ImmichAsset] = []
             for asset in group.assets:
+                if asset.asset_type == "VIDEO":
+                    continue
                 if asset.library_id is not None and asset.file_size_bytes is None:
                     if asset.id in local_sizes:
                         asset = asset.model_copy(
@@ -198,6 +207,8 @@ class ImmichDuplicateProvider:
                     else:
                         asset = hydrated[asset.id]
                 assets.append(asset)
+            if len(group.assets) >= 2 and len(assets) < 2:
+                continue
             provider_id = str(group.duplicate_id)
             discovered.append(
                 DiscoveredGroup(

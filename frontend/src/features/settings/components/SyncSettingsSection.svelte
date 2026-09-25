@@ -13,7 +13,7 @@
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
   import { libraryData } from '../../../app/data/currentDataSource.svelte';
-  import type { SyncMode, SyncRun, SyncRuntimeSettings, SyncSchedule } from '../../status/types/syncContracts';
+  import { SYNC_RUNTIME_LIMITS, type SyncMode, type SyncRun, type SyncRuntimeSettings, type SyncSchedule } from '../../status/types/syncContracts';
   import { syncStatus } from '../../status/state/syncStatus.svelte';
   import { connectionLabel, connectionTone } from '../../status/utils/connectionPresentation';
   import SyncHistorySection from './SyncHistorySection.svelte';
@@ -34,13 +34,13 @@
   const progressKnown = $derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
   const runtimeDirty = $derived(Boolean(runtime && savedRuntime && JSON.stringify(runtime) !== JSON.stringify(savedRuntime)));
   const runtimeValid = $derived(Boolean(runtime
-    && Number.isInteger(runtime.fullBatchSize) && runtime.fullBatchSize >= 1 && runtime.fullBatchSize <= 500
-    && runtime.fullMinBatchDelaySeconds >= 0 && runtime.fullMinBatchDelaySeconds <= 60
-    && Number.isInteger(runtime.tagAssociationConcurrency) && runtime.tagAssociationConcurrency >= 1 && runtime.tagAssociationConcurrency <= 32
-    && Number.isInteger(runtime.metadataRequestConcurrency) && runtime.metadataRequestConcurrency >= 1 && runtime.metadataRequestConcurrency <= 16
-    && Number.isInteger(runtime.pagePrefetch) && runtime.pagePrefetch >= 0 && runtime.pagePrefetch <= 4
-    && Number.isInteger(runtime.apiPageSize) && runtime.apiPageSize >= 25 && runtime.apiPageSize <= 1000
-    && Number.isInteger(runtime.incrementalOverlapSeconds) && runtime.incrementalOverlapSeconds >= 0 && runtime.incrementalOverlapSeconds <= 86400));
+    && Number.isInteger(runtime.fullBatchSize) && runtime.fullBatchSize >= 1 && runtime.fullBatchSize <= SYNC_RUNTIME_LIMITS.fullBatchSize
+    && runtime.fullMinBatchDelaySeconds >= 0 && runtime.fullMinBatchDelaySeconds <= SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds
+    && Number.isInteger(runtime.tagAssociationConcurrency) && runtime.tagAssociationConcurrency >= 1 && runtime.tagAssociationConcurrency <= SYNC_RUNTIME_LIMITS.tagAssociationConcurrency
+    && Number.isInteger(runtime.metadataRequestConcurrency) && runtime.metadataRequestConcurrency >= 1 && runtime.metadataRequestConcurrency <= SYNC_RUNTIME_LIMITS.metadataRequestConcurrency
+    && Number.isInteger(runtime.pagePrefetch) && runtime.pagePrefetch >= 0 && runtime.pagePrefetch <= SYNC_RUNTIME_LIMITS.pagePrefetch
+    && Number.isInteger(runtime.apiPageSize) && runtime.apiPageSize >= 25 && runtime.apiPageSize <= SYNC_RUNTIME_LIMITS.apiPageSize
+    && Number.isInteger(runtime.incrementalOverlapSeconds) && runtime.incrementalOverlapSeconds >= 0 && runtime.incrementalOverlapSeconds <= SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds));
   const schedulesDirty = $derived(JSON.stringify(scheduleSnapshot(schedules)) !== JSON.stringify(scheduleSnapshot(savedSchedules)));
   const schedulesValid = $derived(schedules.every((item) => !item.enabled || Boolean(item.cronExpression)));
   const busy = $derived(pendingOperation !== null);
@@ -92,31 +92,31 @@
           <V2Notice tone="info" title="Changes apply to new synchronization work">All performance controls stay visible and are saved together; there are no presets. Running tasks keep their saved batch and window boundaries. EXIF remains excluded from inventory synchronization because fetching it for every asset previously made routine sync unnecessarily expensive; detailed metadata is requested only when a feature needs it.</V2Notice>
           <div class="sync-settings-grid">
             <div class="sync-setting">
-              <V2Field label="Persistence batch size" type="number" min="1" max="500" step="1" value={runtime.fullBatchSize} onchange={(value) => setRuntime('fullBatchSize', value)} />
+              <V2Field label="Persistence batch size" type="number" min="1" max={SYNC_RUNTIME_LIMITS.fullBatchSize} step="1" value={runtime.fullBatchSize} onchange={(value) => setRuntime('fullBatchSize', value)} />
               <p>Rows committed per database checkpoint in both global and incremental syncs. Larger batches reduce transaction overhead but use more memory and repeat more work after interruption. Start at 250; lower it if memory or retry cost matters more than throughput.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Minimum global-sync batch duration (seconds)" type="number" min="0" max="60" step="0.1" value={runtime.fullMinBatchDelaySeconds} onchange={(value) => setRuntime('fullMinBatchDelaySeconds', value)} />
+              <V2Field label="Minimum global-sync batch duration (seconds)" type="number" min="0" max={SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds} step="0.1" value={runtime.fullMinBatchDelaySeconds} onchange={(value) => setRuntime('fullMinBatchDelaySeconds', value)} />
               <p>Slows only global sync batches when they finish faster than this duration. It is a minimum total batch time, not an extra fixed delay. Start at 0.2 seconds; use zero for maximum throughput or increase it to leave more capacity for Immich.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Relationship concurrency" type="number" min="1" max="32" step="1" value={runtime.tagAssociationConcurrency} onchange={(value) => setRuntime('tagAssociationConcurrency', value)} />
+              <V2Field label="Relationship concurrency" type="number" min="1" max={SYNC_RUNTIME_LIMITS.tagAssociationConcurrency} step="1" value={runtime.tagAssociationConcurrency} onchange={(value) => setRuntime('tagAssociationConcurrency', value)} />
               <p>Album and tag membership traversals processed together. Higher values reduce relation-sync time but increase simultaneous Immich and PostgreSQL work. Start at 4 and reduce it if relation sync competes with normal Immich use.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Metadata request concurrency" type="number" min="1" max="16" step="1" value={runtime.metadataRequestConcurrency} onchange={(value) => setRuntime('metadataRequestConcurrency', value)} />
+              <V2Field label="Metadata request concurrency" type="number" min="1" max={SYNC_RUNTIME_LIMITS.metadataRequestConcurrency} step="1" value={runtime.metadataRequestConcurrency} onchange={(value) => setRuntime('metadataRequestConcurrency', value)} />
               <p>Total detailed asset and album requests allowed at once for incremental reconciliation and targeted repairs. It does not increase image download or decoding concurrency. Start at 4; raise it only when Immich has spare API capacity.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Pages to prefetch" type="number" min="0" max="4" step="1" value={runtime.pagePrefetch} onchange={(value) => setRuntime('pagePrefetch', value)} />
+              <V2Field label="Pages to prefetch" type="number" min="0" max={SYNC_RUNTIME_LIMITS.pagePrefetch} step="1" value={runtime.pagePrefetch} onchange={(value) => setRuntime('pagePrefetch', value)} />
               <p>Fetches upcoming Immich pages while the current page is written. Zero is fully sequential; one usually hides network latency without materially increasing memory. Values above one trade more memory and upstream pressure for additional overlap.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Immich API page size" type="number" min="25" max="1000" step="25" value={runtime.apiPageSize} onchange={(value) => setRuntime('apiPageSize', value)} />
+              <V2Field label="Immich API page size" type="number" min="25" max={SYNC_RUNTIME_LIMITS.apiPageSize} step="25" value={runtime.apiPageSize} onchange={(value) => setRuntime('apiPageSize', value)} />
               <p>Assets or relationship IDs requested per page. Start at 1,000 to minimize HTTP round trips. Smaller pages lower peak response memory, make retries cheaper and may behave better through restrictive proxies.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Incremental overlap (seconds)" type="number" min="0" max="86400" step="30" value={runtime.incrementalOverlapSeconds} onchange={(value) => setRuntime('incrementalOverlapSeconds', value)} />
+              <V2Field label="Incremental overlap (seconds)" type="number" min="0" max={SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds} step="30" value={runtime.incrementalOverlapSeconds} onchange={(value) => setRuntime('incrementalOverlapSeconds', value)} />
               <p>Rechecks this much time before the last successful watermark so boundary-time updates are not missed. Start at 300 seconds (5 minutes). More overlap is safer for clock skew and late updates but repeats more asset work.</p>
             </div>
             <div class="sync-setting">

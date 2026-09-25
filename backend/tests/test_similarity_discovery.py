@@ -34,10 +34,10 @@ SCAN_TWO = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 NOW = datetime(2026, 8, 31, tzinfo=UTC)
 
 
-def asset(identifier: UUID) -> ImmichAsset:
+def asset(identifier: UUID, *, asset_type: str = "IMAGE") -> ImmichAsset:
     return ImmichAsset(
         id=identifier,
-        asset_type="IMAGE",
+        asset_type=asset_type,
         original_file_name=f"{identifier}.jpg",
         original_mime_type="image/jpeg",
         file_created_at=NOW,
@@ -200,6 +200,16 @@ async def test_similarity_provider_ignores_pruned_pair_generation() -> None:
 
     assert groups == []
     assert scans.edge_batches == 0
+
+
+@pytest.mark.asyncio
+async def test_similarity_provider_rejects_stale_groups_containing_video() -> None:
+    groups = await SimilarityDuplicateProvider(
+        FakeScans(snapshot(SCAN_ONE)),
+        FakeAssets({LOW: asset(LOW), HIGH: asset(HIGH, asset_type="VIDEO")}),
+    ).discover()
+
+    assert groups == []
 
 
 @pytest.mark.asyncio

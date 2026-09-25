@@ -188,7 +188,11 @@ class ImmichDuplicateRepository:
         normalized: dict[str, list[UUID]] = {}
         for group in groups:
             provider_group_id = str(group.duplicate_id)
-            members = list(dict.fromkeys(asset.id for asset in group.assets))
+            members = list(
+                dict.fromkeys(
+                    asset.id for asset in group.assets if asset.asset_type != "VIDEO"
+                )
+            )
             if len(members) >= 2:
                 normalized[provider_group_id] = members
 

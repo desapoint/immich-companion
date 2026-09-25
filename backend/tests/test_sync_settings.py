@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 import pytest
+from pydantic import ValidationError
 
 from companion.asset_service import AssetSyncService
 from companion.config import Settings
@@ -110,3 +111,31 @@ async def test_environment_values_seed_runtime_settings_and_incremental_batch_si
     assert settings.sync_media_page_size == 1000
     assert settings.sync_relationship_page_size == 1000
     assert settings.sync_tag_association_concurrency == 4
+
+
+def test_runtime_settings_accept_expanded_safe_upper_bounds() -> None:
+    value = SyncRuntimeSettings(
+        full_batch_size=2_000,
+        full_min_batch_delay_seconds=300,
+        tag_association_concurrency=128,
+        metadata_request_concurrency=64,
+        page_prefetch=16,
+        api_page_size=1_000,
+        incremental_overlap_seconds=7 * 86_400,
+    )
+
+    assert value.full_batch_size == 2_000
+    assert value.incremental_overlap_seconds == 604_800
+
+
+def test_runtime_settings_still_reject_values_above_expanded_bounds() -> None:
+    with pytest.raises(ValidationError):
+        SyncRuntimeSettings(
+            full_batch_size=2_001,
+            full_min_batch_delay_seconds=300,
+            tag_association_concurrency=128,
+            metadata_request_concurrency=64,
+            page_prefetch=16,
+            api_page_size=1_000,
+            incremental_overlap_seconds=7 * 86_400,
+        )

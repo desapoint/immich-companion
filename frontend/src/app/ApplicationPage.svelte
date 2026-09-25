@@ -34,13 +34,13 @@
 
   const navItems: NavItem[] = [
     { key: 'status', label: 'Status', href: pagePath('status'), group: 'Library' },
-    { key: 'errors', label: 'Error Hub', href: pagePath('errors'), group: 'Library' },
     { key: 'assets', label: 'Assets', href: pagePath('assets'), group: 'Library' },
     { key: 'restore', label: 'Trash', href: pagePath('restore'), group: 'Library' },
     { key: 'duplicates', label: 'Duplicates', href: pagePath('duplicates'), group: 'Library' },
-    { key: 'similarity-debug', label: 'Similarity debug', href: pagePath('similarity-debug'), group: 'Library' },
     { key: 'albums', label: 'Albums', href: pagePath('albums'), group: 'Organize' },
     { key: 'tags', label: 'Tags', href: pagePath('tags'), group: 'Organize' },
+    { key: 'errors', label: 'Error Hub', href: pagePath('errors'), group: 'Diagnostics' },
+    { key: 'similarity-debug', label: 'Similarity debug', href: pagePath('similarity-debug'), group: 'Diagnostics' },
     { key: 'settings', label: 'Settings', href: pagePath('settings'), position: 'bottom' },
     { key: 'docs', label: 'API Docs', href: pagePath('docs'), position: 'bottom' },
     { key: 'playground', label: 'Playground', href: pagePath('playground'), position: 'bottom' },
