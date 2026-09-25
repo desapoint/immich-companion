@@ -411,6 +411,7 @@ class AssetSyncStep(SyncStep[AssetScope]):
         *,
         page_prefetch: int = 0,
         total_hint: int | None = None,
+        initial_checkpoint: bool = True,
     ) -> None:
         if page_prefetch < 0:
             raise ValueError("page_prefetch cannot be negative")
@@ -419,6 +420,7 @@ class AssetSyncStep(SyncStep[AssetScope]):
         self._selections = selections
         self._page_prefetch = page_prefetch
         self._total_hint = total_hint
+        self._initial_checkpoint = initial_checkpoint
 
     async def run(
         self,
@@ -502,17 +504,18 @@ class AssetSyncStep(SyncStep[AssetScope]):
             except ImmichApiError:
                 total = None
 
-        await self._checkpoint(
-            context,
-            context.cursor,
-            context.counters["assets_seen"],
-            total,
-            (
-                f"Preparing {total} media items"
-                if total is not None
-                else "Preparing media traversal"
-            ),
-        )
+        if self._initial_checkpoint:
+            await self._checkpoint(
+                context,
+                context.cursor,
+                context.counters["assets_seen"],
+                total,
+                (
+                    f"Preparing {total} media items"
+                    if total is not None
+                    else "Preparing media traversal"
+                ),
+            )
 
         batch_size = context.config.batch_size
         page_size = context.config.page_size
@@ -582,17 +585,18 @@ class AssetSyncStep(SyncStep[AssetScope]):
             if len(cursor_parts) == 3 and cursor_parts[1] == "0":
                 completed_batches = int(cursor_parts[2])
 
-        await self._checkpoint(
-            context,
-            context.cursor,
-            context.counters["assets_seen"],
-            total,
-            (
-                f"Preparing {total} selected media items"
-                if total is not None
-                else "Preparing selected media traversal"
-            ),
-        )
+        if self._initial_checkpoint:
+            await self._checkpoint(
+                context,
+                context.cursor,
+                context.counters["assets_seen"],
+                total,
+                (
+                    f"Preparing {total} selected media items"
+                    if total is not None
+                    else "Preparing selected media traversal"
+                ),
+            )
 
         batch_number = 0
         async for asset_ids in self._selections.iter_asset_ids(

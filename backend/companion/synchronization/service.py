@@ -132,6 +132,7 @@ class _PacedAssetSyncStep(AssetSyncStep):
             assets,
             page_prefetch=page_prefetch,
             total_hint=total_hint,
+            initial_checkpoint=False,
         )
         self._page_pace_callback = page_pace_callback
 
