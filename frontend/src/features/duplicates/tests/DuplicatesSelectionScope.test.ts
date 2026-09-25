@@ -4,6 +4,10 @@ import { describe, expect, it } from 'vitest';
 const pageSource = readFileSync(new URL('../components/DuplicatesPage.svelte', import.meta.url), 'utf8');
 
 describe('duplicate bulk-action scope', () => {
+  it('defaults the duplicate group filter to all groups', () => {
+    expect(pageSource).toContain("reviewFilter=$state<DuplicateState|'All groups'|'Auto-ready'|'Selected'>('All groups')");
+  });
+
   it('switches to all matching after selecting every group', () => {
     expect(pageSource).toContain('selectedGroups=[...await libraryData.duplicates.selectAllGroups()];\n      selectionScope=\'All matching\';');
   });
