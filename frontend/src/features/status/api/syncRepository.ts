@@ -1,5 +1,5 @@
 import { jsonRequest, requestJson } from '../../../lib/api/http';
-import type { SyncCoordinatorStatus, SyncDataRepository, SyncMode, SyncRun, SyncRunState, SyncRuntimeSettings, SyncSchedule } from '../types/syncContracts';
+import type { SyncCoordinatorStatus, SyncDataRepository, SyncHistoryItem, SyncHistoryPage, SyncMode, SyncRun, SyncRunState, SyncRuntimeSettings, SyncSchedule } from '../types/syncContracts';
 
 type ApiSyncProgress = {
   phase: string;
@@ -62,6 +62,49 @@ type ApiSchedule = {
   task_type: string;
   payload: Record<string, unknown>;
   priority: number;
+};
+
+type ApiPhaseTelemetry = {
+  phase: string;
+  duration_seconds: number;
+  processed_items: number;
+  api_requests: number;
+  api_retries: number;
+  rate_limits: number;
+  wait_seconds: number;
+  checkpoints: number;
+  counters: Record<string, number>;
+};
+
+type ApiHistoryItem = {
+  id: string;
+  mode: SyncMode;
+  status: string;
+  generation: number;
+  attempts: number;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  queue_seconds: number | null;
+  duration_seconds: number | null;
+  throughput_per_second: number | null;
+  api_requests: number;
+  api_retries: number;
+  rate_limits: number;
+  wait_seconds: number;
+  checkpoints: number;
+  counters: Record<string, number>;
+  settings: ApiRuntimeSettings | null;
+  phases: ApiPhaseTelemetry[];
+  error: string | null;
+  telemetry_available: boolean;
+};
+
+type ApiHistoryPage = {
+  items: ApiHistoryItem[];
+  total: number;
+  offset: number;
+  limit: number;
 };
 
 function normalizeRun(run: ApiSyncRun | null): SyncRun | null {
@@ -132,6 +175,51 @@ function runtimePayload(value: SyncRuntimeSettings): ApiRuntimeSettings {
   };
 }
 
+function normalizeHistoryItem(value: ApiHistoryItem): SyncHistoryItem {
+  return {
+    id: value.id,
+    mode: value.mode,
+    status: value.status,
+    generation: value.generation,
+    attempts: value.attempts,
+    createdAt: value.created_at,
+    startedAt: value.started_at,
+    completedAt: value.completed_at,
+    queueSeconds: value.queue_seconds,
+    durationSeconds: value.duration_seconds,
+    throughputPerSecond: value.throughput_per_second,
+    apiRequests: value.api_requests,
+    apiRetries: value.api_retries,
+    rateLimits: value.rate_limits,
+    waitSeconds: value.wait_seconds,
+    checkpoints: value.checkpoints,
+    counters: value.counters ?? {},
+    settings: value.settings ? normalizeRuntime(value.settings) : null,
+    phases: (value.phases ?? []).map((phase) => ({
+      phase: phase.phase,
+      durationSeconds: phase.duration_seconds,
+      processedItems: phase.processed_items,
+      apiRequests: phase.api_requests,
+      apiRetries: phase.api_retries,
+      rateLimits: phase.rate_limits,
+      waitSeconds: phase.wait_seconds,
+      checkpoints: phase.checkpoints,
+      counters: phase.counters ?? {},
+    })),
+    error: value.error,
+    telemetryAvailable: value.telemetry_available,
+  };
+}
+
+function normalizeHistory(value: ApiHistoryPage): SyncHistoryPage {
+  return {
+    items: value.items.map(normalizeHistoryItem),
+    total: value.total,
+    offset: value.offset,
+    limit: value.limit,
+  };
+}
+
 function normalizeSchedule(value: ApiSchedule): SyncSchedule {
   return {
     id: value.id,
@@ -154,6 +242,7 @@ export function createSyncRepository(): SyncDataRepository {
     start: async (mode) => normalizeRun(await requestJson<ApiSyncRun>('/api/assets/sync/start', jsonRequest('POST', { mode })))!,
     runtimeSettings: async (signal) => normalizeRuntime(await requestJson<ApiRuntimeSettings>('/api/settings/sync/runtime', { signal })),
     saveRuntimeSettings: async (value) => normalizeRuntime(await requestJson<ApiRuntimeSettings>('/api/settings/sync/runtime', jsonRequest('PUT', runtimePayload(value)))),
+    history: async (mode, offset = 0, limit = 25, signal) => normalizeHistory(await requestJson<ApiHistoryPage>(`/api/settings/sync/history?mode=${encodeURIComponent(mode)}&offset=${offset}&limit=${limit}`, { signal })),
     schedules: async (signal) => (await requestJson<ApiSchedule[]>('/api/settings/sync', { signal })).map(normalizeSchedule),
     saveSchedules: async (values) => {
       const saved: SyncSchedule[] = [];
