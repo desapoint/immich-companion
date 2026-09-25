@@ -50,7 +50,6 @@ from companion.sync_telemetry import (
 from companion.synchronization.batching import (
     async_batches_with_last,
     async_items_with_last,
-    batches,
     enumerate_async,
     prefetch_async,
 )
