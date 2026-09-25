@@ -459,7 +459,11 @@ class TaskRepository:
                     task_id=task_id,
                     attempt=record.attempt,
                     kind="checkpoint",
-                    details={"checkpoint": checkpoint, "progress": progress},
+                    details={
+                        "checkpoint": checkpoint,
+                        "progress": progress,
+                        "counters": counters,
+                    },
                 )
             )
             await session.execute(
@@ -484,6 +488,7 @@ class TaskRepository:
             now = datetime.now(UTC)
             record.status = "failed" if result.status == "failed" else "completed"
             record.result = result.model_dump(mode="json")
+            record.counters = dict(result.counters)
             if record.status == "completed":
                 progress = dict(record.progress or {})
                 total = progress.get("total")

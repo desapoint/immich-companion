@@ -17,6 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from companion.config import Settings
 from companion.sync_schema import SyncCapabilities, SyncEvent
+from companion.sync_telemetry import current_sync_telemetry
 
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 SUPPORTED_IMMICH_MAJOR = 3
@@ -351,6 +352,9 @@ class ImmichApiClient:
             return
         remaining = self._adaptive_not_before - asyncio.get_running_loop().time()
         if remaining > 0:
+            telemetry = current_sync_telemetry()
+            if telemetry is not None:
+                telemetry.wait(remaining)
             await asyncio.sleep(remaining)
 
     def _client(self) -> httpx.AsyncClient:
@@ -390,6 +394,9 @@ class ImmichApiClient:
             await self._wait_for_adaptive_cooldown()
             response: httpx.Response | None = None
             try:
+                telemetry = current_sync_telemetry()
+                if telemetry is not None:
+                    telemetry.api_request()
                 response = await self._client().request(method, path, **kwargs)
             except httpx.RequestError as error:
                 if attempt + 1 >= attempts:
@@ -405,6 +412,11 @@ class ImmichApiClient:
                     raise ImmichApiError(operation, response.status_code)
 
             backoff = self._settings.immich_retry_backoff_seconds * (2**attempt)
+            telemetry = current_sync_telemetry()
+            if telemetry is not None:
+                telemetry.api_retry(
+                    rate_limited=response is not None and response.status_code == 429
+                )
             if self._adaptive_throttling and response is not None:
                 retry_after = response.headers.get("retry-after")
                 if retry_after is not None:
@@ -415,6 +427,8 @@ class ImmichApiClient:
                     asyncio.get_running_loop().time() + backoff,
                 )
             if backoff:
+                if telemetry is not None:
+                    telemetry.wait(backoff)
                 await asyncio.sleep(backoff)
 
         raise ImmichApiError(operation)

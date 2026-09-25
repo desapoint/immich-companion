@@ -50,6 +50,51 @@ export interface SyncRuntimeSettings {
   adaptiveThrottling: boolean;
 }
 
+export type SyncHistoryFilter = 'all' | SyncMode;
+
+export interface SyncPhaseTelemetry {
+  phase: string;
+  durationSeconds: number;
+  processedItems: number;
+  apiRequests: number;
+  apiRetries: number;
+  rateLimits: number;
+  waitSeconds: number;
+  checkpoints: number;
+  counters: Record<string, number>;
+}
+
+export interface SyncHistoryItem {
+  id: string;
+  mode: SyncMode;
+  status: string;
+  generation: number;
+  attempts: number;
+  createdAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  queueSeconds: number | null;
+  durationSeconds: number | null;
+  throughputPerSecond: number | null;
+  apiRequests: number;
+  apiRetries: number;
+  rateLimits: number;
+  waitSeconds: number;
+  checkpoints: number;
+  counters: Record<string, number>;
+  settings: SyncRuntimeSettings | null;
+  phases: SyncPhaseTelemetry[];
+  error: string | null;
+  telemetryAvailable: boolean;
+}
+
+export interface SyncHistoryPage {
+  items: SyncHistoryItem[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
 export interface SyncSchedule {
   id: string;
   name: string;
@@ -114,6 +159,7 @@ export interface SyncDataRepository {
   start(mode: SyncMode): Promise<SyncRun>;
   runtimeSettings(signal?: AbortSignal): Promise<SyncRuntimeSettings>;
   saveRuntimeSettings(value: SyncRuntimeSettings): Promise<SyncRuntimeSettings>;
+  history(mode: SyncHistoryFilter, offset?: number, limit?: number, signal?: AbortSignal): Promise<SyncHistoryPage>;
   schedules(signal?: AbortSignal): Promise<SyncSchedule[]>;
   saveSchedules(values: Array<Pick<SyncSchedule, 'name' | 'enabled' | 'cronExpression'>>): Promise<SyncSchedule[]>;
 }

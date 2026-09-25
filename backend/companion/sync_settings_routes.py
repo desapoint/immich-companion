@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Annotated
 from uuid import UUID
 
 from croniter import CroniterBadCronError, croniter
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Query, status
 
 from companion.asset_schema import (
     AssetSyncResult,
@@ -27,6 +28,7 @@ from companion.immich_duplicate_sync import (
     ImmichDuplicateSyncTaskStart,
 )
 from companion.similarity_settings import SimilarityRuntimeSettingsUpdate
+from companion.sync_history import SyncHistoryMode, SyncHistoryPage, SyncHistoryRepository
 from companion.sync_schema import SyncCoordinatorStatus, SyncRunStatus, SyncStartRequest
 from companion.sync_settings import (
     SyncRuntimeSettingsRepository,
@@ -97,6 +99,20 @@ def register_sync_settings_routes(
         if database is None:
             raise HTTPException(status_code=503, detail="The companion database is not configured.")
         return (await SyncRuntimeSettingsRepository(database, runtime_settings).get()).model_dump()
+
+    @app.get("/api/settings/sync/history", response_model=SyncHistoryPage)
+    async def sync_run_history(
+        mode: Annotated[SyncHistoryMode, Query()] = "all",
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=100)] = 25,
+    ) -> SyncHistoryPage:
+        if database is None:
+            raise HTTPException(status_code=503, detail="The companion database is not configured.")
+        return await SyncHistoryRepository(database).list(
+            mode=mode,
+            offset=offset,
+            limit=limit,
+        )
 
     @app.get("/api/settings/duplicates/similarity-runtime")
     async def similarity_runtime_settings() -> dict[str, object]:

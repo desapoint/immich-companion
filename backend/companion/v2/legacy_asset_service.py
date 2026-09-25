@@ -7,6 +7,7 @@ import logging
 import tracemalloc
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import suppress
+from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from pathlib import Path
@@ -40,11 +41,20 @@ from companion.sync_schema import (
     SyncProgress,
     SyncRunStatus,
 )
-from companion.sync_settings import DefaultSyncRuntimeSettingsRepository
+from companion.sync_settings import DefaultSyncRuntimeSettingsRepository, SyncRuntimeSettings
+from companion.sync_telemetry import (
+    SyncTelemetryCollector,
+    current_sync_telemetry,
+    install_sync_telemetry,
+    reset_sync_telemetry,
+)
 from companion.task_coordinator import TaskContext, TaskCoordinator
 from companion.task_schema import TaskResult, TaskStatusView
 
 logger = logging.getLogger("uvicorn.error")
+_SYNC_RUNTIME_OVERRIDE: ContextVar[SyncRuntimeSettings | None] = ContextVar(
+    "sync_runtime_override", default=None
+)
 
 
 def _dedupe_digest(parts: list[str]) -> str:
@@ -194,8 +204,13 @@ class AssetSyncTaskHandler:
     async def execute(self, context: TaskContext, payload: dict[str, object]) -> TaskResult:
         service = self._service
         mode = payload.get("mode", "incremental")
+        raw_runtime = payload.get("runtime_settings")
+        runtime = (
+            SyncRuntimeSettings.model_validate(raw_runtime)
+            if isinstance(raw_runtime, dict)
+            else await service._runtime_settings()
+        )
         if "generation" not in payload or "window_end" not in payload:
-            runtime = await service._runtime_sync_settings.get()
             (
                 generation,
                 window_start,
@@ -213,6 +228,13 @@ class AssetSyncTaskHandler:
                 "window_start": window_start.isoformat() if window_start else None,
                 "window_end": window_end.isoformat(),
                 "full_batch_size": runtime.full_batch_size,
+                "runtime_settings": runtime.model_dump(mode="json"),
+            }
+            await context.update_payload(payload)
+        elif not isinstance(raw_runtime, dict):
+            payload = {
+                **payload,
+                "runtime_settings": runtime.model_dump(mode="json"),
             }
             await context.update_payload(payload)
         checkpoint = context.task.checkpoint
@@ -254,11 +276,21 @@ class AssetSyncTaskHandler:
         previous = service._syncs
         service._syncs = _CoordinatorSyncRepository(context)  # type: ignore[assignment]
         owns_memory_trace = service._start_sync_memory_diagnostics()
+        runtime_token = _SYNC_RUNTIME_OVERRIDE.set(runtime)
+        telemetry = SyncTelemetryCollector(context.task.counters, phase)
+        telemetry_token = install_sync_telemetry(telemetry)
+        counters: dict[str, int] | None = None
         try:
             counters = await service._execute(run, context.worker_id)
         finally:
+            if counters is not None:
+                telemetry.finish()
+                telemetry.write_into(counters, include_live_phase=False)
+            reset_sync_telemetry(telemetry_token)
+            _SYNC_RUNTIME_OVERRIDE.reset(runtime_token)
             service._stop_sync_memory_diagnostics(owns_memory_trace)
             service._syncs = previous
+        assert counters is not None
         await service._legacy_metadata.record_success(
             mode=run.mode,
             generation=run.generation,
@@ -676,6 +708,12 @@ class AssetSyncService:
         fallback = settings.sync_full_batch_size if run.mode == "full" else settings.sync_batch_size
         return run.full_batch_size or fallback
 
+    async def _runtime_settings(self) -> SyncRuntimeSettings:
+        override = _SYNC_RUNTIME_OVERRIDE.get()
+        if override is not None:
+            return override
+        return await self._runtime_sync_settings.get()
+
     async def _pace_full_batch(self, run: SyncRunStatus, started: float) -> None:
         if run.mode != "full":
             return
@@ -684,11 +722,11 @@ class AssetSyncService:
     async def _pace_full_page(self, run: SyncRunStatus) -> None:
         if run.mode != "full":
             return
-        pacing = await self._runtime_sync_settings.get()
+        pacing = await self._runtime_settings()
         await asyncio.sleep(pacing.full_min_batch_delay_seconds)
 
     async def _pace_runtime_batch(self, started: float) -> None:
-        pacing = await self._runtime_sync_settings.get()
+        pacing = await self._runtime_settings()
         remaining = pacing.full_min_batch_delay_seconds - (perf_counter() - started)
         if remaining > 0:
             await asyncio.sleep(remaining)
@@ -744,7 +782,7 @@ class AssetSyncService:
             existing = await self._coordinator.find_active("asset_sync", requested_key)
             if existing is not None:
                 return self._status_from_task(existing)
-            runtime_pacing = await self._runtime_sync_settings.get()
+            runtime_pacing = await self._runtime_settings()
             generation, window_start, window_end = await self._legacy_metadata.next_sync_metadata(
                 mode, overlap=timedelta(seconds=runtime_pacing.incremental_overlap_seconds)
             )
@@ -764,6 +802,7 @@ class AssetSyncService:
                     "window_start": window_start.isoformat() if window_start else None,
                     "window_end": window_end.isoformat(),
                     "full_batch_size": runtime_pacing.full_batch_size,
+                    "runtime_settings": runtime_pacing.model_dump(mode="json"),
                 },
                 priority=100 if effective_mode == "full" else 10,
                 deduplication_key=deduplication_key,
@@ -771,7 +810,7 @@ class AssetSyncService:
             )
             await self._coordinator.start()
             return self._status_from_task(task)
-        runtime_pacing = await self._runtime_sync_settings.get()
+        runtime_pacing = await self._runtime_settings()
         run = await self._syncs.enqueue(
             mode,
             overlap=timedelta(seconds=runtime_pacing.incremental_overlap_seconds),
@@ -1016,7 +1055,7 @@ class AssetSyncService:
         include_stacks: bool = False,
     ) -> dict[str, int]:
         metrics = _repair_metric_defaults()
-        runtime = await self._runtime_sync_settings.get()
+        runtime = await self._runtime_settings()
         assets: list[ImmichAsset] = []
         for start in range(0, len(asset_ids), runtime.metadata_request_concurrency):
             wave = asset_ids[start : start + runtime.metadata_request_concurrency]
@@ -1147,6 +1186,11 @@ class AssetSyncService:
         cursor: str | None,
         progress: SyncProgress | None = None,
     ) -> None:
+        telemetry = current_sync_telemetry()
+        if telemetry is not None:
+            telemetry.transition(phase)
+            telemetry.checkpoint()
+            telemetry.write_into(counters)
         if progress is not None and self._settings.sync_memory_diagnostics:
             progress = progress.model_copy(update={"memory": self._memory_snapshot(run, cursor)})
         await self._syncs.checkpoint(
@@ -1202,7 +1246,7 @@ class AssetSyncService:
         )
 
     async def _execute(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
-        runtime = await self._runtime_sync_settings.get()
+        runtime = await self._runtime_settings()
         configure_throttling = getattr(self._immich, "configure_adaptive_throttling", None)
         if configure_throttling is not None:
             configure_throttling(runtime.adaptive_throttling)
@@ -1335,7 +1379,7 @@ class AssetSyncService:
             removed = await self._assets.finalize_generation(
                 run.generation,
                 remove_assets=run.mode == "full",
-                batch_size=self._settings.sync_batch_size,
+                batch_size=self._full_batch_size(run, self._settings),
                 window_start=run.window_start if run.mode == "incremental" else None,
                 window_end=run.window_end if run.mode == "incremental" else None,
             )
@@ -1508,7 +1552,7 @@ class AssetSyncService:
         counters: dict[str, int],
         asset_total: int | None,
     ) -> None:
-        runtime = await self._runtime_sync_settings.get()
+        runtime = await self._runtime_settings()
         batch_size = self._full_batch_size(run, self._settings)
         page_size = runtime.api_page_size
         start_page = 1
@@ -1742,7 +1786,7 @@ class AssetSyncService:
             relation_kind, relation_text, page_text = run.cursor.split(":", 2)
             completed_relation = int(relation_text)
             completed_page = int(page_text)
-        runtime = await self._runtime_sync_settings.get()
+        runtime = await self._runtime_settings()
         relation_concurrency = runtime.tag_association_concurrency
         page_size = runtime.api_page_size
         prefetch = runtime.page_prefetch
