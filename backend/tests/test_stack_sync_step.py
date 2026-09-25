@@ -44,10 +44,7 @@ def stack(identifier: UUID, primary: UUID, *members: UUID) -> ImmichStack:
     return ImmichStack(
         id=identifier,
         primaryAssetId=primary,
-        assets=[
-            stack_asset(member, f"{member}.jpg")
-            for member in members
-        ],
+        assets=[stack_asset(member, f"{member}.jpg") for member in members],
     )
 
 

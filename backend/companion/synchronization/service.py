@@ -137,7 +137,6 @@ class _PacedAssetSyncStep(AssetSyncStep):
         await self._page_pace_callback()
 
 
-
 class _PacedStackSyncStep(StackSyncStep):
     """Preserve current full-sync batch pacing around the first-class stack step."""
 

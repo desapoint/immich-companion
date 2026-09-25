@@ -19,6 +19,7 @@ from companion.immich import (
 )
 from companion.sync_schema import SyncRunStatus
 from companion.synchronization import service as asset_service_module
+from companion.synchronization.steps import StackSyncStep
 from companion.task_schema import TaskStatusView
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")

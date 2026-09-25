@@ -709,7 +709,6 @@ class AssetSyncStep(SyncStep[AssetScope]):
         )
 
 
-
 class StackSyncStep(SyncStep[StackScope]):
     """Synchronize complete Immich stack topology in bounded persistence batches."""
 
