@@ -185,7 +185,8 @@ describe('live V2 duplicate repository', () => {
         { asset_id: ids[3], stack_id: 'stack-2', stack_primary: false },
       ],
     });
-    expect((draftBody?.decisions as Array<Record<string, unknown>>).every((decision) => !('stack_resolution' in decision))).toBe(true);
+    const savedDecisions = (draftBody as unknown as { decisions: Array<Record<string, unknown>> }).decisions;
+    expect(savedDecisions.every((decision) => !('stack_resolution' in decision))).toBe(true);
     expect(planBody).toMatchObject({
       stack_overrides: {
         [group.group_id]: [
@@ -241,7 +242,8 @@ describe('live V2 duplicate repository', () => {
         stack_primary: true,
       }],
     });
-    expect((draftBody?.decisions as Array<Record<string, unknown>>)[0]).not.toHaveProperty('stack_resolution');
+    const savedDecisions = (draftBody as unknown as { decisions: Array<Record<string, unknown>> }).decisions;
+    expect(savedDecisions[0]).not.toHaveProperty('stack_resolution');
   });
 
   it('restores multiple saved stack partitions from workspace draft metadata', async () => {
