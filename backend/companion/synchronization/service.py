@@ -1711,7 +1711,11 @@ class AssetSyncService:
                     counters,
                     step.phase,
                     None,
-                    self._progress(step.phase, 0, None, detail),
+                    (
+                        None
+                        if step.phase == "assets"
+                        else self._progress(step.phase, 0, None, detail)
+                    ),
                     evidence=evidence,
                 )
                 current_phase = step.phase
