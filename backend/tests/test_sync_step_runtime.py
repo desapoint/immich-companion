@@ -1,6 +1,5 @@
 """Generic durable manual synchronization-step runtime behavior."""
 
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -23,7 +22,6 @@ from companion.synchronization.scopes import (
     AssetScope,
     FinalizationScope,
     RelationshipScope,
-    ValidationScope,
 )
 from companion.synchronization.selections import (
     AllSelection,
@@ -208,7 +206,8 @@ async def test_manual_write_step_allocates_isolated_generation_and_persists_it()
     assert step.contexts[0].config.page_prefetch == 2
     assert result.summary["generation"] == 88
     assert result.summary["evidence"][0]["authority"] == "selected"
-    assert post.results == [result.model_copy(update={"summary": result.summary})] or len(post.results) == 1
+    assert len(post.results) == 1
+    assert post.results[0].name == "assets"
 
 
 @pytest.mark.asyncio
@@ -371,7 +370,7 @@ def test_generic_payload_accepts_typed_persistable_relationship_scope() -> None:
     payload = SyncStepTaskPayload(
         step="relationships",
         scope=RelationshipScope(
-            kinds={"assets"} if False else {"albums"},
+            kinds={"albums"},
             strategy="by_asset",
             assets=ExplicitIdsSelection(ids=[ASSET_ID]),
         ),
