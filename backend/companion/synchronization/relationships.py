@@ -327,6 +327,7 @@ class RelationTraversalStrategy:
                             context,
                             tag,
                             page_size=page_size,
+                            replace_snapshot=replace_tags,
                         )
                     )
                     for tag in wave
