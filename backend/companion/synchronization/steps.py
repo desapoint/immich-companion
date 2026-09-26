@@ -4,14 +4,46 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from time import perf_counter
+from uuid import UUID
 
 from companion.asset_repository import AssetRepository
-from companion.immich import ImmichAlbum, ImmichApiClient, ImmichTag
+from companion.immich import (
+    ImmichAlbum,
+    ImmichApiClient,
+    ImmichApiError,
+    ImmichAsset,
+    ImmichStack,
+    ImmichStackAsset,
+    ImmichTag,
+)
 from companion.sync_schema import SyncMode
+from companion.synchronization.batching import (
+    async_batches_with_last,
+    batches,
+    enumerate_async,
+    prefetch_async,
+)
+from companion.synchronization.evidence import SyncAuthority, SyncEvidence
+from companion.synchronization.scopes import (
+    AssetScope,
+    CatalogScope,
+    StackScope,
+    SyncStepName,
+)
+from companion.synchronization.selections import (
+    AffectedAssetsSelection,
+    AllSelection,
+    ExplicitIdsSelection,
+    GenerationSelection,
+    PersistedSelection,
+    RequestSelection,
+    SyncSelectionResolver,
+    WindowSelection,
+)
 from companion.tasks.coordinator import TaskContext
 
 
@@ -34,6 +66,8 @@ class SyncStepConfig:
     batch_size: int | None = None
     page_size: int | None = None
     concurrency: int = 1
+    page_prefetch: int | None = None
+    metadata_concurrency: int | None = None
     min_batch_delay_seconds: float = 0.0
     conditionals: SyncStepConditionals = field(default_factory=SyncStepConditionals)
 
@@ -44,6 +78,10 @@ class SyncStepConfig:
             raise ValueError("page_size must be at least 1")
         if self.concurrency < 1:
             raise ValueError("concurrency must be at least 1")
+        if self.page_prefetch is not None and self.page_prefetch < 0:
+            raise ValueError("page_prefetch cannot be negative")
+        if self.metadata_concurrency is not None and self.metadata_concurrency < 1:
+            raise ValueError("metadata_concurrency must be at least 1")
         if self.min_batch_delay_seconds < 0:
             raise ValueError("min_batch_delay_seconds cannot be negative")
 
@@ -116,21 +154,24 @@ class SyncStepContext:
     window_end: datetime | None = None
     manual: bool = False
     respect_conditionals: bool = True
+    evidence: list[SyncEvidence] = field(default_factory=list)
     checkpoint_callback: CheckpointCallback = _noop_checkpoint
 
 
 @dataclass(frozen=True, slots=True)
 class SyncStepResult:
-    name: str
+    name: SyncStepName
     phase: str
     skipped: bool
     completed: int
     total: int | None
     counters: dict[str, int]
+    evidence: list[SyncEvidence] = field(default_factory=list)
+    outputs: dict[str, object] = field(default_factory=dict)
 
 
-class SyncStep[InputT](ABC):
-    name: str
+class SyncStep[ScopeT](ABC):
+    name: SyncStepName
     phase: str
 
     def should_run(self, context: SyncStepContext) -> bool:
@@ -138,7 +179,7 @@ class SyncStep[InputT](ABC):
             return True
         return context.config.conditionals.allows(context.mode)
 
-    async def run(self, context: SyncStepContext, data: InputT) -> SyncStepResult:
+    async def run(self, context: SyncStepContext, data: ScopeT) -> SyncStepResult:
         if not self.should_run(context):
             return SyncStepResult(
                 name=self.name,
@@ -159,7 +200,7 @@ class SyncStep[InputT](ABC):
         )
 
     @abstractmethod
-    async def execute(self, context: SyncStepContext, data: InputT) -> tuple[int, int | None]:
+    async def execute(self, context: SyncStepContext, data: ScopeT) -> tuple[int, int | None]:
         raise NotImplementedError
 
     async def pace(self, context: SyncStepContext, started: float) -> None:
@@ -171,54 +212,153 @@ class SyncStep[InputT](ABC):
     async def bounded_map[ResultT](
         self,
         context: SyncStepContext,
-        items: Sequence[InputT],
-        worker: Callable[[InputT], Awaitable[ResultT]],
+        items: Sequence[ScopeT],
+        worker: Callable[[ScopeT], Awaitable[ResultT]],
     ) -> list[ResultT]:
         """Bound work while preserving result order for deterministic commits/checkpoints."""
 
         semaphore = asyncio.Semaphore(context.config.concurrency)
 
-        async def guarded(item: InputT) -> ResultT:
+        async def guarded(item: ScopeT) -> ResultT:
             async with semaphore:
                 return await worker(item)
 
         return list(await asyncio.gather(*(guarded(item) for item in items)))
 
 
-@dataclass(frozen=True, slots=True)
-class CatalogSyncInput:
-    albums: Sequence[ImmichAlbum]
-    tags: Sequence[ImmichTag]
-
-
-class CatalogSyncStep(SyncStep[CatalogSyncInput]):
-    """Synchronize album/tag catalogs with resumable batch cursors."""
+class CatalogSyncStep(SyncStep[CatalogScope]):
+    """Synchronize scoped album/tag catalogs with resumable batch cursors."""
 
     name = "catalogs"
     phase = "catalogs"
 
-    def __init__(self, assets: AssetRepository) -> None:
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        selections: SyncSelectionResolver | None = None,
+    ) -> None:
+        self._immich = immich
         self._assets = assets
+        self._selections = selections
 
-    @staticmethod
-    async def load(immich: ImmichApiClient) -> CatalogSyncInput:
-        albums, tags = await asyncio.gather(
-            immich.list_album_catalog(), immich.list_tag_catalog()
+    async def run(
+        self,
+        context: SyncStepContext,
+        scope: CatalogScope,
+    ) -> SyncStepResult:
+        result = await super().run(context, scope)
+        if result.skipped:
+            return result
+
+        evidence: list[SyncEvidence] = []
+        for domain, selection in (
+            ("albums", scope.albums),
+            ("tags", scope.tags),
+        ):
+            if selection is None:
+                continue
+            authority = (
+                SyncAuthority.COMPLETE
+                if isinstance(selection, AllSelection)
+                else SyncAuthority.SELECTED
+            )
+            evidence.append(
+                SyncEvidence(
+                    domain=domain,
+                    authority=authority,
+                    selection=selection,
+                    generation=context.generation,
+                )
+            )
+
+        return SyncStepResult(
+            name=result.name,
+            phase=result.phase,
+            skipped=result.skipped,
+            completed=result.completed,
+            total=result.total,
+            counters=result.counters,
+            evidence=evidence,
+            outputs=result.outputs,
         )
-        return CatalogSyncInput(albums=albums, tags=tags)
 
     @staticmethod
     def _batches[T](items: Sequence[T], size: int) -> list[Sequence[T]]:
         return [items[index : index + size] for index in range(0, len(items), size)]
 
+    async def _selected_ids(
+        self,
+        selection: ExplicitIdsSelection | PersistedSelection,
+        *,
+        relation: str,
+        batch_size: int,
+    ) -> set[UUID]:
+        if isinstance(selection, ExplicitIdsSelection):
+            return set(dict.fromkeys(selection.ids))
+        if self._selections is None:
+            raise ValueError(
+                f"Persisted {relation} catalog selection requires SyncSelectionResolver"
+            )
+
+        ids: set[UUID] = set()
+        iterator = (
+            self._selections.iter_album_ids(selection, batch_size=batch_size)
+            if relation == "album"
+            else self._selections.iter_tag_ids(selection, batch_size=batch_size)
+        )
+        async for batch in iterator:
+            ids.update(batch)
+        return ids
+
+    async def _load_albums(
+        self,
+        scope: CatalogScope,
+        *,
+        batch_size: int,
+    ) -> list[ImmichAlbum]:
+        if scope.albums is None:
+            return []
+        catalog = await self._immich.list_album_catalog()
+        if isinstance(scope.albums, AllSelection):
+            return catalog
+        selected = await self._selected_ids(
+            scope.albums,
+            relation="album",
+            batch_size=batch_size,
+        )
+        return [album for album in catalog if album.id in selected]
+
+    async def _load_tags(
+        self,
+        scope: CatalogScope,
+        *,
+        batch_size: int,
+    ) -> list[ImmichTag]:
+        if scope.tags is None:
+            return []
+        catalog = await self._immich.list_tag_catalog()
+        if isinstance(scope.tags, AllSelection):
+            return catalog
+        selected = await self._selected_ids(
+            scope.tags,
+            relation="tag",
+            batch_size=batch_size,
+        )
+        return [tag for tag in catalog if tag.id in selected]
+
     async def execute(
-        self, context: SyncStepContext, data: CatalogSyncInput
+        self,
+        context: SyncStepContext,
+        scope: CatalogScope,
     ) -> tuple[int, int]:
         if context.config.batch_size is None:
             raise ValueError("CatalogSyncStep requires config.batch_size")
 
-        albums = data.albums
-        tags = data.tags
+        albums, tags = await asyncio.gather(
+            self._load_albums(scope, batch_size=context.config.batch_size),
+            self._load_tags(scope, batch_size=context.config.batch_size),
+        )
         album_batches = self._batches(albums, context.config.batch_size)
         tag_batches = self._batches(tags, context.config.batch_size)
         total = len(albums) + len(tags)
@@ -313,6 +453,533 @@ class CatalogSyncStep(SyncStep[CatalogSyncInput]):
                 phase=self.phase,
                 completed=completed,
                 total=total,
+                detail=detail,
+            ),
+        )
+
+
+class AssetSyncStep(SyncStep[AssetScope]):
+    """Synchronize assets from remote traversal or a typed selected-asset scope."""
+
+    name = "assets"
+    phase = "assets"
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        selections: SyncSelectionResolver | None = None,
+        *,
+        page_prefetch: int = 0,
+        total_hint: int | None = None,
+        initial_checkpoint: bool = True,
+    ) -> None:
+        if page_prefetch < 0:
+            raise ValueError("page_prefetch cannot be negative")
+        self._immich = immich
+        self._assets = assets
+        self._selections = selections
+        self._page_prefetch = page_prefetch
+        self._total_hint = total_hint
+        self._initial_checkpoint = initial_checkpoint
+
+    async def run(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> SyncStepResult:
+        result = await super().run(context, scope)
+        if result.skipped:
+            return result
+
+        selection = scope.selection
+        if isinstance(selection, AllSelection):
+            authority = SyncAuthority.COMPLETE
+        elif isinstance(selection, WindowSelection):
+            authority = SyncAuthority.WINDOW
+        else:
+            authority = SyncAuthority.SELECTED
+
+        return SyncStepResult(
+            name=result.name,
+            phase=result.phase,
+            skipped=result.skipped,
+            completed=result.completed,
+            total=result.total,
+            counters=result.counters,
+            evidence=[
+                SyncEvidence(
+                    domain="assets",
+                    authority=authority,
+                    selection=selection,
+                    generation=context.generation,
+                )
+            ],
+            outputs=result.outputs,
+        )
+
+    async def execute(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> tuple[int, int | None]:
+        if context.config.batch_size is None:
+            raise ValueError("AssetSyncStep requires config.batch_size")
+
+        for counter in (
+            "assets_seen",
+            "assets_created",
+            "assets_updated",
+            "assets_unchanged",
+            "tag_cheap_path_eligible_assets",
+            "tag_cheap_path_fallback_assets",
+        ):
+            context.counters.setdefault(counter, 0)
+
+        if isinstance(scope.selection, (AllSelection, WindowSelection)):
+            return await self._execute_remote(context, scope)
+        return await self._execute_selected(context, scope)
+
+    async def _execute_remote(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> tuple[int, int | None]:
+        if context.config.page_size is None:
+            raise ValueError("AssetSyncStep remote traversal requires config.page_size")
+
+        updated_after = None
+        updated_before = None
+        if isinstance(scope.selection, WindowSelection):
+            updated_after = scope.selection.start
+            updated_before = scope.selection.end
+
+        total = self._total_hint
+        count_assets = getattr(self._immich, "count_assets", None)
+        if total is None and count_assets is not None:
+            try:
+                total = await count_assets(
+                    updated_after=updated_after,
+                    updated_before=updated_before,
+                )
+            except ImmichApiError:
+                total = None
+
+        if self._initial_checkpoint:
+            await self._checkpoint(
+                context,
+                context.cursor,
+                context.counters["assets_seen"],
+                total,
+                (
+                    f"Preparing {total} media items"
+                    if total is not None
+                    else "Preparing media traversal"
+                ),
+            )
+
+        batch_size = context.config.batch_size
+        page_size = context.config.page_size
+        start_page = 1
+        completed_page_batches = 0
+        if context.cursor:
+            cursor_parts = context.cursor.split(":")
+            if len(cursor_parts) == 3:
+                start_page = int(cursor_parts[1])
+                completed_page_batches = int(cursor_parts[2])
+            else:
+                completed_batches = int(cursor_parts[-1])
+                completed_assets = completed_batches * batch_size
+                start_page = completed_assets // page_size + 1
+                completed_page_batches = (completed_assets % page_size) // batch_size
+
+        iterator = prefetch_async(
+            self._immich.iter_asset_pages(
+                page_size=page_size,
+                updated_after=updated_after,
+                updated_before=updated_before,
+                start_page=start_page,
+            ),
+            (
+                context.config.page_prefetch
+                if context.config.page_prefetch is not None
+                else self._page_prefetch
+            ),
+        )
+        async for page_number, page in iterator:
+            for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
+                if page_number == start_page and batch_number <= completed_page_batches:
+                    continue
+                await self._commit_batch(
+                    context,
+                    batch,
+                    f"assets:{page_number}:{batch_number}",
+                    total,
+                )
+            if page.next_page is not None:
+                await self.pace_page(context)
+
+        return context.counters["assets_seen"], total
+
+    async def _execute_selected(
+        self,
+        context: SyncStepContext,
+        scope: AssetScope,
+    ) -> tuple[int, int | None]:
+        if self._selections is None:
+            raise ValueError("Selected asset synchronization requires SyncSelectionResolver")
+
+        selection = scope.selection
+        assert isinstance(
+            selection,
+            (
+                ExplicitIdsSelection,
+                PersistedSelection,
+                RequestSelection,
+                GenerationSelection,
+            ),
+        )
+        total = (
+            len(dict.fromkeys(selection.ids))
+            if isinstance(selection, ExplicitIdsSelection)
+            else None
+        )
+        completed_batches = 0
+        if context.cursor:
+            cursor_parts = context.cursor.split(":")
+            if len(cursor_parts) == 3 and cursor_parts[1] == "0":
+                completed_batches = int(cursor_parts[2])
+
+        if self._initial_checkpoint:
+            await self._checkpoint(
+                context,
+                context.cursor,
+                context.counters["assets_seen"],
+                total,
+                (
+                    f"Preparing {total} selected media items"
+                    if total is not None
+                    else "Preparing selected media traversal"
+                ),
+            )
+
+        batch_number = 0
+        async for asset_ids in self._selections.iter_asset_ids(
+            selection,
+            batch_size=context.config.batch_size,
+        ):
+            batch_number += 1
+            if batch_number <= completed_batches:
+                continue
+            started = perf_counter()
+            details = await self._fetch_assets(context, asset_ids)
+            await self._commit_batch(
+                context,
+                details,
+                f"assets:0:{batch_number}",
+                total,
+            )
+            await self.pace(context, started)
+
+        return context.counters["assets_seen"], total
+
+    async def _fetch_assets(
+        self,
+        context: SyncStepContext,
+        asset_ids: list[UUID],
+    ) -> list[ImmichAsset]:
+        semaphore = asyncio.Semaphore(context.config.concurrency)
+
+        async def fetch(asset_id: UUID) -> ImmichAsset:
+            async with semaphore:
+                return await self._immich.get_asset(asset_id)
+
+        return list(await asyncio.gather(*(fetch(asset_id) for asset_id in asset_ids)))
+
+    async def _commit_batch(
+        self,
+        context: SyncStepContext,
+        batch: list[ImmichAsset],
+        cursor: str,
+        total: int | None,
+    ) -> None:
+        context.counters["tag_cheap_path_eligible_assets"] += sum(
+            1 for asset in batch if asset.includes_tags
+        )
+        context.counters["tag_cheap_path_fallback_assets"] += sum(
+            1 for asset in batch if not asset.includes_tags
+        )
+        lightweight_batch = [
+            asset.model_copy(
+                update={"exif_info": None, "people": [], "tags": [], "stack": None}
+            )
+            for asset in batch
+        ]
+        created, updated, unchanged = await self._assets.upsert_asset_batch(
+            lightweight_batch,
+            context.generation,
+            track_similarity_changes=True,
+        )
+        context.counters["assets_seen"] += created + updated + unchanged
+        context.counters["assets_created"] += created
+        context.counters["assets_updated"] += updated
+        context.counters["assets_unchanged"] += unchanged
+        await self._checkpoint(
+            context,
+            cursor,
+            context.counters["assets_seen"],
+            total,
+            (
+                f"Media {context.counters['assets_seen']}/{total}"
+                if total is not None
+                else f"Media {context.counters['assets_seen']} processed"
+            ),
+        )
+
+    async def pace_page(self, context: SyncStepContext) -> None:
+        """Pace remote pages according to the run-specific operational config."""
+
+        if context.config.min_batch_delay_seconds > 0:
+            await asyncio.sleep(context.config.min_batch_delay_seconds)
+
+    async def _checkpoint(
+        self,
+        context: SyncStepContext,
+        cursor: str | None,
+        completed: int,
+        total: int | None,
+        detail: str,
+    ) -> None:
+        context.cursor = cursor
+        await context.checkpoint_callback(
+            cursor,
+            context.counters,
+            SyncStepProgress(
+                phase=self.phase,
+                completed=completed,
+                total=total,
+                detail=detail,
+            ),
+        )
+
+
+class StackSyncStep(SyncStep[StackScope]):
+    """Synchronize complete Immich stack topology in bounded persistence batches."""
+
+    name = "stacks"
+    phase = "stacks"
+
+    def __init__(
+        self,
+        immich: ImmichApiClient,
+        assets: AssetRepository,
+        selections: SyncSelectionResolver | None = None,
+    ) -> None:
+        self._immich = immich
+        self._assets = assets
+        self._selections = selections
+
+    async def run(
+        self,
+        context: SyncStepContext,
+        scope: StackScope,
+    ) -> SyncStepResult:
+        result = await super().run(context, scope)
+        if result.skipped:
+            return result
+        authority = (
+            SyncAuthority.COMPLETE
+            if isinstance(scope.selection, AllSelection)
+            else SyncAuthority.SELECTED
+        )
+        return SyncStepResult(
+            name=result.name,
+            phase=result.phase,
+            skipped=result.skipped,
+            completed=result.completed,
+            total=result.total,
+            counters=result.counters,
+            evidence=[
+                SyncEvidence(
+                    domain="stacks",
+                    authority=authority,
+                    selection=scope.selection,
+                    generation=context.generation,
+                )
+            ],
+            outputs=result.outputs,
+        )
+
+    async def execute(
+        self,
+        context: SyncStepContext,
+        scope: StackScope,
+    ) -> tuple[int, None]:
+        if context.config.batch_size is None:
+            raise ValueError("StackSyncStep requires config.batch_size")
+        if isinstance(scope.selection, AffectedAssetsSelection):
+            return await self._execute_affected_assets(context, scope.selection)
+        if not isinstance(scope.selection, AllSelection):
+            raise ValueError(
+                "Targeted stack synchronization requires an affected-assets selection"
+            )
+
+        context.counters.setdefault("stacks_seen", 0)
+        context.counters.setdefault("stack_members", 0)
+        await self._checkpoint(
+            context,
+            context.cursor,
+            context.counters["stacks_seen"],
+            (
+                f"Stacks {context.counters['stacks_seen']} processed · "
+                f"{context.counters['stack_members']} members"
+                if context.counters["stacks_seen"]
+                else "Reading stacks"
+            ),
+        )
+
+        completed_batches = 0
+        if context.cursor:
+            completed_batches = int(context.cursor.rsplit(":", 1)[1])
+
+        async for index, (stack_models, is_last) in enumerate_async(
+            async_batches_with_last(
+                self._iter_stacks(),
+                context.config.batch_size,
+            ),
+            start=1,
+        ):
+            if index <= completed_batches:
+                continue
+            started = perf_counter()
+            stack_batch = [self.stack_payload(stack) for stack in stack_models]
+            context.counters["stack_members"] += await self._assets.apply_stack_batch(
+                stack_batch,
+                context.generation,
+            )
+            context.counters["stacks_seen"] += len(stack_batch)
+            await self._checkpoint(
+                context,
+                f"stacks:{index}",
+                context.counters["stacks_seen"],
+                (
+                    f"Stacks {context.counters['stacks_seen']} processed · "
+                    f"{context.counters['stack_members']} members"
+                ),
+            )
+            if not is_last:
+                await self.pace(context, started)
+
+        return context.counters["stacks_seen"], None
+
+    async def _execute_affected_assets(
+        self,
+        context: SyncStepContext,
+        selection: AffectedAssetsSelection,
+    ) -> tuple[int, None]:
+        if self._selections is None:
+            raise ValueError("Affected-asset stack sync requires SyncSelectionResolver")
+        if isinstance(selection.assets, (AllSelection, WindowSelection)):
+            raise ValueError(
+                "Affected-asset stack sync requires a bounded local asset selection"
+            )
+
+        target_ids = [
+            asset_id
+            async for batch in self._selections.iter_asset_ids(
+                selection.assets,
+                batch_size=context.config.batch_size or 1,
+            )
+            for asset_id in batch
+        ]
+        targets = set(target_ids)
+        payload_by_asset: dict[UUID, dict[str, object]] = {}
+        scanned = 0
+        async for stack in self._iter_stacks():
+            scanned += 1
+            payload, member_ids = self.stack_payload(stack)
+            for member_id in member_ids:
+                if member_id in targets:
+                    payload_by_asset[member_id] = payload
+
+        await self._assets.replace_asset_stack_snapshots(
+            target_ids,
+            payload_by_asset,
+        )
+        context.counters["stacks_seen"] = scanned
+        context.counters["stack_members"] = len(payload_by_asset)
+        await self._checkpoint(
+            context,
+            None,
+            len(target_ids),
+            (
+                f"Refreshed stack snapshots for {len(target_ids)} selected assets · "
+                f"scanned {scanned} stacks"
+            ),
+        )
+        return len(target_ids), None
+
+    async def _iter_stacks(self) -> AsyncIterator[ImmichStack]:
+        stream = getattr(self._immich, "iter_stacks", None)
+        if stream is not None:
+            async for stack in stream():
+                yield stack
+            return
+        for stack in await self._immich.list_stacks():
+            yield stack
+
+    @staticmethod
+    def stack_payload(stack: ImmichStack) -> tuple[dict[str, object], list[UUID]]:
+        return StackSyncStep.stack_payload_from_members(
+            stack.id,
+            stack.primary_asset_id,
+            stack.assets,
+        )
+
+    @staticmethod
+    def stack_payload_from_members(
+        stack_id: UUID,
+        primary_asset_id: UUID,
+        assets: list[ImmichAsset] | list[ImmichStackAsset],
+    ) -> tuple[dict[str, object], list[UUID]]:
+        members = [
+            {
+                "id": str(member.id),
+                "type": member.asset_type,
+                "originalFileName": member.original_file_name,
+                "originalMimeType": member.original_mime_type,
+                "width": member.width,
+                "height": member.height,
+                "fileCreatedAt": member.file_created_at.isoformat(),
+            }
+            for member in assets
+            if not member.is_trashed
+        ]
+        return (
+            {
+                "id": str(stack_id),
+                "primaryAssetId": str(primary_asset_id),
+                "assetCount": len(members),
+                "assets": members,
+            },
+            [member.id for member in assets],
+        )
+
+    async def _checkpoint(
+        self,
+        context: SyncStepContext,
+        cursor: str | None,
+        completed: int,
+        detail: str,
+    ) -> None:
+        context.cursor = cursor
+        await context.checkpoint_callback(
+            cursor,
+            context.counters,
+            SyncStepProgress(
+                phase=self.phase,
+                completed=completed,
+                total=None,
                 detail=detail,
             ),
         )
