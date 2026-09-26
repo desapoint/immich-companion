@@ -79,11 +79,14 @@ class SyncStepTaskPayload(BaseModel):
             raise ValueError(
                 f"Sync step {self.step!r} cannot execute {self.scope.kind!r} scope"
             )
-        if isinstance(self.scope, (ValidationScope, FinalizationScope)):
-            if self.generation is not None and self.generation != self.scope.generation:
-                raise ValueError(
-                    "Task generation must match validation/finalization scope generation"
-                )
+        if (
+            isinstance(self.scope, (ValidationScope, FinalizationScope))
+            and self.generation is not None
+            and self.generation != self.scope.generation
+        ):
+            raise ValueError(
+                "Task generation must match validation/finalization scope generation"
+            )
         return self
 
 
