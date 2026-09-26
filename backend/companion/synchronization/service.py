@@ -660,6 +660,21 @@ class AssetSyncService:
         self._scheduler: asyncio.Task[None] | None = None
         self._last_full_sync = monotonic()
 
+    @property
+    def step_registry(self) -> SyncStepRegistry:
+        """Expose the canonical production registry to durable manual-step execution."""
+
+        return self._steps
+
+    async def allocate_manual_generation(self) -> int:
+        """Reserve an isolated generation without publishing normal sync success."""
+
+        generation, _window_start, _window_end = await self._metadata.next_sync_metadata(
+            "full",
+            overlap=timedelta(0),
+        )
+        return generation
+
     async def apply_stack_snapshot_for_targets(
         self, asset_ids: list[UUID], stacks: list[ImmichStack] | None = None
     ) -> list[ImmichStack]:
