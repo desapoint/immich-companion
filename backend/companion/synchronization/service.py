@@ -54,7 +54,9 @@ from companion.synchronization.scopes import (
     ValidationScope,
 )
 from companion.synchronization.selections import (
+    AffectedAssetsSelection,
     AllSelection,
+    ExplicitIdsSelection,
     GenerationSelection,
     SyncSelectionResolver,
     WindowSelection,
@@ -649,7 +651,7 @@ class AssetSyncService:
                 EventSyncStep(immich, assets),
                 CatalogSyncStep(immich, assets, selections),
                 AssetSyncStep(immich, assets, selections),
-                StackSyncStep(immich, assets),
+                StackSyncStep(immich, assets, selections),
                 RelationshipSyncStep(immich, assets, selections),
                 ValidationSyncStep(assets),
                 FinalizationSyncStep(assets),
@@ -674,6 +676,181 @@ class AssetSyncService:
             overlap=timedelta(0),
         )
         return generation
+
+    async def _repair_task_generation(
+        self,
+        context: TaskContext,
+        payload: dict[str, object],
+    ) -> int:
+        """Allocate once and persist the non-authoritative repair generation."""
+
+        if payload.get("generation") is not None:
+            return int(payload["generation"])
+        generation = await self.allocate_manual_generation()
+        updated = {**payload, "generation": generation}
+        await context.update_payload(updated)
+        return generation
+
+    async def _run_asset_repair_steps(
+        self,
+        asset_ids: list[UUID],
+        *,
+        generation: int,
+        include_stacks: bool,
+        counters: dict[str, int],
+        checkpoint_callback: Callable[
+            [str | None, dict[str, int], SyncStepProgress],
+            Awaitable[None],
+        ],
+    ) -> list[SyncStepResult]:
+        """Run targeted asset repair through canonical first-class steps."""
+
+        unique_ids = list(dict.fromkeys(asset_ids))
+        if not unique_ids:
+            return []
+        runtime = await self._runtime_settings()
+        selection = ExplicitIdsSelection(ids=unique_ids)
+        planned: list[tuple[str, object, SyncStepConfig]] = [
+            (
+                "assets",
+                AssetScope(selection=selection),
+                SyncStepConfig(
+                    batch_size=runtime.full_batch_size,
+                    concurrency=runtime.metadata_request_concurrency,
+                    min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                ),
+            ),
+            (
+                "relationships",
+                RelationshipScope(
+                    kinds={"albums", "tags"},
+                    strategy="by_asset",
+                    assets=selection,
+                ),
+                SyncStepConfig(
+                    batch_size=runtime.full_batch_size,
+                    page_size=runtime.api_page_size,
+                    concurrency=runtime.tag_association_concurrency,
+                    page_prefetch=runtime.page_prefetch,
+                    metadata_concurrency=runtime.metadata_request_concurrency,
+                    min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                ),
+            ),
+        ]
+        if include_stacks:
+            planned.append(
+                (
+                    "stacks",
+                    StackScope(
+                        selection=AffectedAssetsSelection(assets=selection),
+                    ),
+                    SyncStepConfig(
+                        batch_size=runtime.full_batch_size,
+                        min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                    ),
+                )
+            )
+
+        results: list[SyncStepResult] = []
+        for name, scope, config in planned:
+            step = self._steps.get(name)  # type: ignore[arg-type]
+            result = await step.run(
+                SyncStepContext(
+                    mode="full",
+                    generation=generation,
+                    config=config,
+                    counters=counters,
+                    manual=True,
+                    respect_conditionals=False,
+                    checkpoint_callback=checkpoint_callback,
+                ),
+                scope,
+            )
+            counters.update(result.counters)
+            results.append(result)
+        return results
+
+    async def _run_relation_repair_steps(
+        self,
+        relations: list[tuple[str, UUID]],
+        *,
+        generation: int,
+        counters: dict[str, int],
+        checkpoint_callback: Callable[
+            [str | None, dict[str, int], SyncStepProgress],
+            Awaitable[None],
+        ],
+    ) -> list[SyncStepResult]:
+        """Run selected relation repair through catalog + relationship steps."""
+
+        album_ids = list(
+            dict.fromkeys(identifier for kind, identifier in relations if kind == "album")
+        )
+        tag_ids = list(
+            dict.fromkeys(identifier for kind, identifier in relations if kind == "tag")
+        )
+        if not album_ids and not tag_ids:
+            return []
+
+        runtime = await self._runtime_settings()
+        album_selection = ExplicitIdsSelection(ids=album_ids) if album_ids else None
+        tag_selection = ExplicitIdsSelection(ids=tag_ids) if tag_ids else None
+        catalog_scope = CatalogScope(
+            albums=album_selection,
+            tags=tag_selection,
+        )
+        catalog_result = await self._steps.get("catalogs").run(
+            SyncStepContext(
+                mode="full",
+                generation=generation,
+                config=SyncStepConfig(
+                    batch_size=runtime.full_batch_size,
+                    min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                ),
+                counters=counters,
+                manual=True,
+                respect_conditionals=False,
+                checkpoint_callback=checkpoint_callback,
+            ),
+            catalog_scope,
+        )
+        expected_catalog = len(album_ids) + len(tag_ids)
+        if catalog_result.completed != expected_catalog:
+            missing_kind = "album" if album_ids and catalog_result.completed < len(album_ids) else "tag"
+            raise ImmichApiError(f"{missing_kind} catalog")
+        counters.update(catalog_result.counters)
+
+        kinds = {
+            kind
+            for kind, identifiers in (("albums", album_ids), ("tags", tag_ids))
+            if identifiers
+        }
+        relationship_result = await self._steps.get("relationships").run(
+            SyncStepContext(
+                mode="full",
+                generation=generation,
+                config=SyncStepConfig(
+                    batch_size=runtime.full_batch_size,
+                    page_size=runtime.api_page_size,
+                    concurrency=runtime.tag_association_concurrency,
+                    page_prefetch=runtime.page_prefetch,
+                    metadata_concurrency=runtime.metadata_request_concurrency,
+                    min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                ),
+                counters=counters,
+                manual=True,
+                respect_conditionals=False,
+                checkpoint_callback=checkpoint_callback,
+            ),
+            RelationshipScope(
+                kinds=kinds,  # type: ignore[arg-type]
+                strategy="by_relation",
+                albums=album_selection,
+                tags=tag_selection,
+            ),
+        )
+        counters.update(relationship_result.counters)
+        return [catalog_result, relationship_result]
 
     async def apply_stack_snapshot_for_targets(
         self, asset_ids: list[UUID], stacks: list[ImmichStack] | None = None
