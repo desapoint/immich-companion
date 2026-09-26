@@ -35,6 +35,7 @@ from companion.synchronization.scopes import (
     SyncStepName,
 )
 from companion.synchronization.selections import (
+    AffectedAssetsSelection,
     AllSelection,
     ExplicitIdsSelection,
     GenerationSelection,
@@ -772,9 +773,11 @@ class StackSyncStep(SyncStep[StackScope]):
         self,
         immich: ImmichApiClient,
         assets: AssetRepository,
+        selections: SyncSelectionResolver | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
+        self._selections = selections
 
     async def run(
         self,
@@ -784,6 +787,11 @@ class StackSyncStep(SyncStep[StackScope]):
         result = await super().run(context, scope)
         if result.skipped:
             return result
+        authority = (
+            SyncAuthority.COMPLETE
+            if isinstance(scope.selection, AllSelection)
+            else SyncAuthority.SELECTED
+        )
         return SyncStepResult(
             name=result.name,
             phase=result.phase,
@@ -794,7 +802,7 @@ class StackSyncStep(SyncStep[StackScope]):
             evidence=[
                 SyncEvidence(
                     domain="stacks",
-                    authority=SyncAuthority.COMPLETE,
+                    authority=authority,
                     selection=scope.selection,
                     generation=context.generation,
                 )
@@ -809,10 +817,11 @@ class StackSyncStep(SyncStep[StackScope]):
     ) -> tuple[int, None]:
         if context.config.batch_size is None:
             raise ValueError("StackSyncStep requires config.batch_size")
+        if isinstance(scope.selection, AffectedAssetsSelection):
+            return await self._execute_affected_assets(context, scope.selection)
         if not isinstance(scope.selection, AllSelection):
             raise ValueError(
-                "Targeted stack synchronization is not supported by the current "
-                "Immich API because stack resolution requires complete stack traversal"
+                "Targeted stack synchronization requires an affected-assets selection"
             )
 
         context.counters.setdefault("stacks_seen", 0)
@@ -862,6 +871,53 @@ class StackSyncStep(SyncStep[StackScope]):
                 await self.pace(context, started)
 
         return context.counters["stacks_seen"], None
+
+    async def _execute_affected_assets(
+        self,
+        context: SyncStepContext,
+        selection: AffectedAssetsSelection,
+    ) -> tuple[int, None]:
+        if self._selections is None:
+            raise ValueError("Affected-asset stack sync requires SyncSelectionResolver")
+        if isinstance(selection.assets, (AllSelection, WindowSelection)):
+            raise ValueError(
+                "Affected-asset stack sync requires a bounded local asset selection"
+            )
+
+        target_ids = [
+            asset_id
+            async for batch in self._selections.iter_asset_ids(
+                selection.assets,
+                batch_size=context.config.batch_size or 1,
+            )
+            for asset_id in batch
+        ]
+        targets = set(target_ids)
+        payload_by_asset: dict[UUID, dict[str, object]] = {}
+        scanned = 0
+        async for stack in self._iter_stacks():
+            scanned += 1
+            payload, member_ids = self.stack_payload(stack)
+            for member_id in member_ids:
+                if member_id in targets:
+                    payload_by_asset[member_id] = payload
+
+        await self._assets.replace_asset_stack_snapshots(
+            target_ids,
+            payload_by_asset,
+        )
+        context.counters["stacks_seen"] = scanned
+        context.counters["stack_members"] = len(payload_by_asset)
+        await self._checkpoint(
+            context,
+            None,
+            len(target_ids),
+            (
+                f"Refreshed stack snapshots for {len(target_ids)} selected assets · "
+                f"scanned {scanned} stacks"
+            ),
+        )
+        return len(target_ids), None
 
     async def _iter_stacks(self) -> AsyncIterator[ImmichStack]:
         stream = getattr(self._immich, "iter_stacks", None)
