@@ -128,6 +128,31 @@ def test_disposable_seed_state_is_available_only_in_test_environment(tmp_path: P
     assert missing.status_code == 404
 
 
+def test_manual_sync_step_openapi_exposes_typed_scope_and_route() -> None:
+    app = create_app(settings(), pong_transport())
+    schema = app.openapi()
+
+    assert "/api/sync/steps/{step}/start" in schema["paths"]
+    request = schema["components"]["schemas"]["ManualSyncStepRequest"]
+    scope = request["properties"]["scope"]
+    assert scope["discriminator"]["propertyName"] == "kind"
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/sync/steps/catalogs/start",
+            json={
+                "scope": {
+                    "kind": "catalogs",
+                    "albums": {"kind": "all"},
+                    "tags": {"kind": "all"},
+                }
+            },
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "The companion database is not configured."
+
+
 def test_frontend_assets_are_served_without_shadowing_api_routes(tmp_path: Path) -> None:
     (tmp_path / "static" / "assets").mkdir(parents=True)
     (tmp_path / "index.html").write_text("<h1>Compiled companion frontend</h1>")
