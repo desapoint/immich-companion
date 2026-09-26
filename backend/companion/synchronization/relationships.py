@@ -256,6 +256,8 @@ class RelationTraversalStrategy:
         completed_relation: int,
         completed_page: int,
         association_completed: int,
+        replace_albums: bool = False,
+        replace_tags: bool = False,
     ) -> int:
         if context.config.page_size is None:
             raise ValueError("RelationshipSyncStep requires config.page_size")
@@ -287,6 +289,7 @@ class RelationTraversalStrategy:
                                     else 1
                                 ),
                                 page_size=page_size,
+                                replace_snapshot=replace_albums,
                             )
                         )
                         for index, album in enumerate(wave)
@@ -351,9 +354,11 @@ class RelationTraversalStrategy:
         *,
         start_page: int,
         page_size: int,
+        replace_snapshot: bool = False,
     ) -> tuple[int, int]:
         persisted = 0
         observed = 0
+        snapshot_ids: list[UUID] = []
         pages = prefetch_async(
             self._immich.iter_album_asset_ids(
                 album.id,
@@ -364,7 +369,9 @@ class RelationTraversalStrategy:
         )
         async for asset_ids, is_last_page in async_items_with_last(pages):
             started = perf_counter()
-            if asset_ids:
+            if replace_snapshot:
+                snapshot_ids.extend(asset_ids)
+            elif asset_ids:
                 persisted += await self._assets.upsert_album_memberships(
                     album.id,
                     asset_ids,
@@ -373,6 +380,11 @@ class RelationTraversalStrategy:
             observed += len(asset_ids)
             if not is_last_page:
                 await self._pace_callback(context, started)
+        if replace_snapshot:
+            persisted = await self._assets.replace_album_memberships(
+                album.id,
+                list(dict.fromkeys(snapshot_ids)),
+            )
         return persisted, observed
 
     async def _sync_tag(
@@ -381,9 +393,11 @@ class RelationTraversalStrategy:
         tag: ImmichTag,
         *,
         page_size: int,
+        replace_snapshot: bool = False,
     ) -> tuple[int, int, bool]:
         persisted = 0
         observed = 0
+        snapshot_ids: list[UUID] = []
         pages = prefetch_async(
             self._immich.iter_tag_asset_ids(
                 tag.id,
@@ -394,7 +408,9 @@ class RelationTraversalStrategy:
         )
         async for asset_ids, is_last_page in async_items_with_last(pages):
             started = perf_counter()
-            if asset_ids:
+            if replace_snapshot:
+                snapshot_ids.extend(asset_ids)
+            elif asset_ids:
                 persisted += await self._assets.upsert_tag_memberships(
                     tag.id,
                     asset_ids,
@@ -403,6 +419,11 @@ class RelationTraversalStrategy:
             observed += len(asset_ids)
             if not is_last_page:
                 await self._pace_callback(context, started)
+        if replace_snapshot:
+            persisted = await self._assets.replace_tag_memberships(
+                tag.id,
+                list(dict.fromkeys(snapshot_ids)),
+            )
         return persisted, observed, observed == 0
 
 
@@ -642,6 +663,14 @@ class RelationshipSyncStep(SyncStep[RelationshipScope]):
             completed_relation=completed_relation,
             completed_page=completed_page,
             association_completed=association_completed,
+            replace_albums=(
+                "albums" in relation_kinds
+                and not isinstance(album_selection, AllSelection)
+            ),
+            replace_tags=(
+                "tags" in relation_kinds
+                and not isinstance(tag_selection, AllSelection)
+            ),
         )
 
         if "albums" in relation_kinds:
