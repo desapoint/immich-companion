@@ -22,6 +22,7 @@ from companion.synchronization.scopes import (
     AssetScope,
     FinalizationScope,
     RelationshipScope,
+    ValidationScope,
 )
 from companion.synchronization.selections import (
     AllSelection,
@@ -71,6 +72,30 @@ class RecordingStep(SyncStep[AssetScope]):
                     generation=context.generation,
                 )
             ],
+        )
+
+
+class RecordingValidationStep(SyncStep[ValidationScope]):
+    name = "validation"
+    phase = "finalizing"
+
+    def __init__(self) -> None:
+        self.contexts: list[SyncStepContext] = []
+
+    async def execute(self, context, scope):
+        self.contexts.append(context)
+        return 1, 1
+
+    async def run(self, context, scope):
+        await self.execute(context, scope)
+        return SyncStepResult(
+            name="validation",
+            phase="finalizing",
+            skipped=False,
+            completed=1,
+            total=1,
+            counters=dict(context.counters),
+            evidence=list(context.evidence),
         )
 
 
@@ -233,6 +258,51 @@ async def test_retry_reuses_persisted_manual_generation() -> None:
     assert generations.calls == 0
     assert task.updated_payloads == []
     assert step.contexts[0].generation == 91
+
+
+@pytest.mark.asyncio
+async def test_validation_loads_completed_step_evidence_for_target_generation() -> None:
+    evidence = SyncEvidence(
+        domain="assets",
+        authority=SyncAuthority.SELECTED,
+        selection=ExplicitIdsSelection(ids=[ASSET_ID]),
+        generation=54,
+    )
+    previous = SimpleNamespace(
+        id=UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
+        status="completed",
+        result=SimpleNamespace(
+            summary={
+                "step": "assets",
+                "generation": 54,
+                "evidence": [evidence.model_dump(mode="json")],
+            }
+        ),
+    )
+    coordinator = FakeCoordinator()
+    coordinator.tasks = [previous]
+    step = RecordingValidationStep()
+    payload = SyncStepTaskPayload(
+        step="validation",
+        scope=ValidationScope(
+            generation=54,
+            expected_domains={"assets"},
+        ),
+    ).model_dump(mode="json")
+    task = FakeTaskContext(payload=payload)
+    handler = SyncStepTaskHandler(
+        SyncStepRegistry([step]),  # type: ignore[list-item]
+        FakeGenerationAllocator(),
+        FakeRuntimeSettings(),
+        coordinator,  # type: ignore[arg-type]
+        FakePostProcessor(),  # type: ignore[arg-type]
+    )
+
+    result = await handler.execute(task, payload)  # type: ignore[arg-type]
+
+    assert step.contexts[0].evidence == [evidence]
+    assert result.summary["generation"] == 54
+    assert result.summary["evidence"] == [evidence.model_dump(mode="json")]
 
 
 @pytest.mark.asyncio
