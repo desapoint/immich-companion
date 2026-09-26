@@ -135,7 +135,18 @@ def test_manual_sync_step_openapi_exposes_typed_scope_and_route() -> None:
     assert "/api/sync/steps/{step}/start" in schema["paths"]
     request = schema["components"]["schemas"]["ManualSyncStepRequest"]
     scope = request["properties"]["scope"]
+    if "$ref" in scope:
+        scope = schema["components"]["schemas"][scope["$ref"].rsplit("/", 1)[-1]]
     assert scope["discriminator"]["propertyName"] == "kind"
+    assert set(scope["discriminator"]["mapping"]) == {
+        "events",
+        "catalogs",
+        "assets",
+        "stacks",
+        "relationships",
+        "validation",
+        "finalization",
+    }
 
     with TestClient(app) as client:
         response = client.post(
