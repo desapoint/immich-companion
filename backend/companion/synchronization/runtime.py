@@ -24,7 +24,7 @@ from companion.synchronization.steps import (
     SyncStepResult,
     task_checkpoint_callback,
 )
-from companion.tasks.contracts import TaskResult, TaskStatusView
+from companion.tasks.contracts import TaskResult
 from companion.tasks.coordinator import TaskContext, TaskCoordinator
 
 
