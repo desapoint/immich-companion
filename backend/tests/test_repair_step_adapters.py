@@ -48,8 +48,11 @@ class RecordingStep:
 
     async def run(self, context, scope):
         self.calls.append((context, scope))
+        completed = 1
         if self.name == "assets":
             context.counters["assets_seen"] = context.counters.get("assets_seen", 0) + 1
+        elif self.name == "catalogs":
+            completed = int(scope.albums is not None) + int(scope.tags is not None)
         elif self.name == "relationships":
             context.counters["album_memberships"] = (
                 context.counters.get("album_memberships", 0) + 1
@@ -61,7 +64,7 @@ class RecordingStep:
             name=self.name,  # type: ignore[arg-type]
             phase=self.phase,
             skipped=False,
-            completed=1,
+            completed=completed,
             total=1,
             counters=dict(context.counters),
         )
