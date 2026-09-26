@@ -78,11 +78,22 @@ class FakeAssets:
     def __init__(self) -> None:
         self.batches: list[list[tuple[dict[str, object], list[UUID]]]] = []
         self.generations: list[int] = []
+        self.targeted: tuple[list[UUID], dict[UUID, dict[str, object]]] | None = None
 
     async def apply_stack_batch(self, batch, generation):
         self.batches.append(list(batch))
         self.generations.append(generation)
         return sum(len(asset_ids) for _, asset_ids in batch)
+
+    async def replace_asset_stack_snapshots(self, asset_ids, payloads):
+        self.targeted = (list(asset_ids), dict(payloads))
+
+
+class FakeSelections:
+    async def iter_asset_ids(self, selection, *, batch_size):
+        assert batch_size == 10
+        assert isinstance(selection, ExplicitIdsSelection)
+        yield list(selection.ids)
 
 
 class CountingStackStep(StackSyncStep):
@@ -193,34 +204,60 @@ async def test_stack_step_preserves_list_stacks_compatibility_fallback() -> None
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "selection",
-    [
-        ExplicitIdsSelection(ids=[STACK_ONE]),
-        AffectedAssetsSelection(
-            assets=ExplicitIdsSelection(ids=[ASSET_ONE]),
+async def test_affected_asset_stack_scope_filters_complete_stream_and_replaces_targets() -> None:
+    immich = FakeImmich(
+        [
+            stack(STACK_ONE, ASSET_ONE, ASSET_ONE, ASSET_TWO),
+            stack(STACK_TWO, ASSET_TWO, ASSET_TWO),
+        ]
+    )
+    assets = FakeAssets()
+    selection = AffectedAssetsSelection(
+        assets=ExplicitIdsSelection(ids=[ASSET_ONE]),
+    )
+
+    result = await StackSyncStep(
+        immich,
+        assets,  # type: ignore[arg-type]
+        FakeSelections(),  # type: ignore[arg-type]
+    ).run(
+        SyncStepContext(
+            mode="full",
+            generation=34,
+            config=SyncStepConfig(batch_size=10),
+            manual=True,
+            respect_conditionals=False,
         ),
-    ],
-)
-async def test_targeted_stack_scopes_are_rejected_until_remote_semantics_are_safe(
-    selection,
-) -> None:
+        StackScope(selection=selection),
+    )
+
+    assert result.completed == 1
+    assert result.evidence[0].authority == SyncAuthority.SELECTED
+    assert result.evidence[0].selection == selection
+    assert assets.targeted is not None
+    assert assets.targeted[0] == [ASSET_ONE]
+    assert assets.targeted[1][ASSET_ONE]["id"] == str(STACK_ONE)
+    assert immich.stream_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_direct_stack_id_scope_remains_rejected() -> None:
     immich = FakeImmich([])
     assets = FakeAssets()
 
-    with pytest.raises(ValueError, match="complete stack traversal"):
+    with pytest.raises(ValueError, match="affected-assets selection"):
         await StackSyncStep(
             immich,
             assets,  # type: ignore[arg-type]
         ).run(
             SyncStepContext(
                 mode="full",
-                generation=34,
+                generation=35,
                 config=SyncStepConfig(batch_size=10),
                 manual=True,
                 respect_conditionals=False,
             ),
-            StackScope(selection=selection),
+            StackScope(selection=ExplicitIdsSelection(ids=[STACK_ONE])),
         )
 
     assert immich.stream_calls == 0
