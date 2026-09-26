@@ -38,7 +38,6 @@ from companion.synchronization.steps import (
 TASK_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 VALIDATION_TASK_ID = UUID("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
 ASSET_ID = UUID("11111111-1111-4111-8111-111111111111")
-NOW = datetime(2026, 9, 26, 18, 0, tzinfo=UTC)
 
 
 class RecordingStep(SyncStep[AssetScope]):
