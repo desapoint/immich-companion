@@ -13,6 +13,7 @@ from companion.synchronization.relationships import RelationshipSyncStep
 from companion.synchronization.scopes import RelationshipScope
 from companion.synchronization.selections import (
     AllSelection,
+    ExplicitIdsSelection,
     GenerationSelection,
     PersistedSelection,
     RequestSelection,
@@ -92,6 +93,14 @@ class FakeAssets:
     async def replace_asset_tag_memberships(self, _asset_id, _tag_ids):
         self.calls.append("replace_asset_tag")
 
+    async def replace_album_memberships(self, _album_id, ids):
+        self.calls.append("replace_album")
+        return len(ids)
+
+    async def replace_tag_memberships(self, _tag_id, ids):
+        self.calls.append("replace_tag")
+        return len(ids)
+
 
 class FakeSelections:
     def __init__(self) -> None:
@@ -153,6 +162,31 @@ async def test_full_relation_traversal_emits_complete_membership_evidence() -> N
     assert result.counters["album_memberships"] == 1
     assert result.counters["tag_memberships"] == 1
     assert result.outputs == {"strategy": "by_relation", "tag_fallback": False}
+
+
+@pytest.mark.asyncio
+async def test_selected_relation_scope_replaces_snapshot_after_full_traversal() -> None:
+    immich = FakeImmich()
+    assets = FakeAssets()
+    result = await RelationshipSyncStep(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSelections(),  # type: ignore[arg-type]
+    ).run(
+        context(),
+        RelationshipScope(
+            kinds={"albums", "tags"},
+            strategy="by_relation",
+            albums=ExplicitIdsSelection(ids=[ALBUM_ONE]),
+            tags=ExplicitIdsSelection(ids=[TAG_ONE]),
+        ),
+    )
+
+    assert "replace_album" in assets.calls
+    assert "replace_tag" in assets.calls
+    assert "album" not in assets.calls
+    assert "tag" not in assets.calls
+    assert {item.authority for item in result.evidence} == {SyncAuthority.SELECTED}
 
 
 @pytest.mark.asyncio
