@@ -892,7 +892,11 @@ class AssetSyncService:
         )
         expected_catalog = len(album_ids) + len(tag_ids)
         if catalog_result.completed != expected_catalog:
-            missing_kind = "album" if album_ids and catalog_result.completed < len(album_ids) else "tag"
+            missing_kind = (
+                "album"
+                if album_ids and catalog_result.completed < len(album_ids)
+                else "tag"
+            )
             raise ImmichApiError(f"{missing_kind} catalog")
         counters.update(catalog_result.counters)
 
