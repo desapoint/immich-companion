@@ -123,6 +123,10 @@ from companion.stack_service import StackService
 from companion.sync_repository import SyncRepository
 from companion.sync_settings import SyncRuntimeSettingsRepository
 from companion.sync_settings_routes import register_sync_settings_routes
+from companion.synchronization.runtime import (
+    register_sync_step_routes,
+    register_sync_steps,
+)
 from companion.task_coordinator import TaskCoordinator
 from companion.trash_purge_service import TrashPurgeService
 from companion.v2_duplicate_review_state import (
@@ -415,6 +419,20 @@ def create_app(
         if database is not None and asset_repository is not None
         else None
     )
+    sync_step_submission = None
+    if (
+        task_coordinator is not None
+        and asset_sync is not None
+        and runtime_sync_settings is not None
+        and asset_repository is not None
+    ):
+        sync_step_submission = register_sync_steps(
+            task_coordinator,
+            registry=asset_sync.step_registry,
+            generations=asset_sync,
+            runtime_settings=runtime_sync_settings,
+            assets=asset_repository,
+        )
     if task_coordinator is not None and asset_sync is not None:
         from companion.asset_service import (
             AssetRelationRepairTaskHandler,
@@ -652,6 +670,10 @@ def create_app(
                 "asset_sync",
                 reason="Asset sync does not resume automatically on container startup.",
             )
+            await task_coordinator.cancel_unfinished(
+                "sync_step",
+                reason="Manual sync steps do not resume automatically on container startup.",
+            )
             await task_coordinator.start()
             if similarity_maintenance_service is not None:
                 await similarity_maintenance_service.start_if_pending()
@@ -845,6 +867,8 @@ def create_app(
         if not runtime_settings.immich_configured:
             raise HTTPException(status_code=503, detail="Immich is not configured.")
         return immich
+
+    register_sync_step_routes(app, sync_step_submission)
 
     register_sync_settings_routes(
         app,
