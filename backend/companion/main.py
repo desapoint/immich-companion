@@ -415,6 +415,7 @@ def create_app(
             runtime_settings,
             task_coordinator,
             runtime_sync_settings,
+            relation_selections=relation_selection_repository,
         )
         if database is not None and asset_repository is not None
         else None
