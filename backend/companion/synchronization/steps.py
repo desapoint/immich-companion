@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -581,12 +582,15 @@ class AssetSyncStep(SyncStep[AssetScope]):
         batch_size = context.config.batch_size
         page_size = context.config.page_size
         start_page = 1
+        start_cursor: str | None = None
         completed_page_batches = 0
         if context.cursor:
             cursor_parts = context.cursor.split(":")
-            if len(cursor_parts) == 3:
+            if len(cursor_parts) >= 3:
                 start_page = int(cursor_parts[1])
                 completed_page_batches = int(cursor_parts[2])
+                if len(cursor_parts) == 4 and cursor_parts[3]:
+                    start_cursor = urlsafe_b64decode(cursor_parts[3]).decode()
             else:
                 completed_batches = int(cursor_parts[-1])
                 completed_assets = completed_batches * batch_size
@@ -599,6 +603,7 @@ class AssetSyncStep(SyncStep[AssetScope]):
                 updated_after=updated_after,
                 updated_before=updated_before,
                 start_page=start_page,
+                start_cursor=start_cursor,
             ),
             (
                 context.config.page_prefetch
@@ -610,13 +615,16 @@ class AssetSyncStep(SyncStep[AssetScope]):
             for batch_number, batch in enumerate(batches(page.items, batch_size), start=1):
                 if page_number == start_page and batch_number <= completed_page_batches:
                     continue
+                checkpoint = f"assets:{page_number}:{batch_number}"
+                if page.request_cursor:
+                    checkpoint += ":" + urlsafe_b64encode(page.request_cursor.encode()).decode()
                 await self._commit_batch(
                     context,
                     batch,
-                    f"assets:{page_number}:{batch_number}",
+                    checkpoint,
                     total,
                 )
-            if page.next_page is not None:
+            if page.next_cursor is not None:
                 await self.pace_page(context)
 
         return context.counters["assets_seen"], total

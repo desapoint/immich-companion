@@ -39,10 +39,13 @@ full-size fullscreen viewer. Checked, current-page, inverted-page, and
 all-matching selections can be resolved by the backend and sent through a
 reviewed bulk-action flow for multi-album/tag addition and removal, archive,
 favorite, trash, and restore. The
-reproducible integration environment is backed by real Immich v3.1.0 and seeds
+reproducible integration environment is backed by real Immich v3.2.0 and seeds
 66 unique images, producing three pages at the frontend's default 24-card size
 and still a second page at the 48-card option. Production defaults remain safe:
 trash is disabled unless `ALLOW_DESTRUCTIVE_ACTIONS` is explicitly enabled.
+
+Companion targets Immich 3.2.x. See the [3.2 API migration notes](docs/immich-3.2-migration.md)
+for search behavior and the deprecation audit.
 
 ## Quick start
 

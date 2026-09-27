@@ -125,7 +125,7 @@ async def test_asset_step_all_scope_preserves_page_batching_counters_and_evidenc
                         asset(ASSET_ONE, tags=[]),
                         asset(ASSET_TWO),
                     ],
-                    "nextPage": "2",
+                    "nextCursor": "page-two",
                 }
             ),
         ),
@@ -136,7 +136,8 @@ async def test_asset_step_all_scope_preserves_page_batching_counters_and_evidenc
                     "count": 1,
                     "total": 3,
                     "items": [asset(ASSET_THREE, tags=[])],
-                    "nextPage": None,
+                    "nextCursor": None,
+                    "request_cursor": "cursor-two",
                 }
             ),
         ),
@@ -176,11 +177,17 @@ async def test_asset_step_all_scope_preserves_page_batching_counters_and_evidenc
     assert all(batch[0].people == [] for batch in assets.batches)
     assert all(batch[0].tags == [] for batch in assets.batches)
     assert step.page_paces == 1
-    assert progress[-1][:3] == ("assets:2:1", 3, 3)
+    assert progress[-1][:3] == ("assets:2:1:Y3Vyc29yLXR3bw==", 3, 3)
 
 
+@pytest.mark.parametrize(
+    ("checkpoint", "expected_cursor"),
+    [("assets:2:1", None), ("assets:2:1:Y3Vyc29yLXR3bw==", "cursor-two")],
+)
 @pytest.mark.asyncio
-async def test_asset_step_window_scope_preserves_bounds_and_resume_cursor() -> None:
+async def test_asset_step_window_scope_preserves_bounds_and_resume_cursor(
+    checkpoint: str, expected_cursor: str | None
+) -> None:
     start = datetime(2026, 9, 25, 10, tzinfo=UTC)
     end = start + timedelta(hours=1)
     immich = FakeImmich()
@@ -192,7 +199,7 @@ async def test_asset_step_window_scope_preserves_bounds_and_resume_cursor() -> N
                     "count": 2,
                     "total": 2,
                     "items": [asset(ASSET_ONE), asset(ASSET_TWO)],
-                    "nextPage": None,
+                    "nextCursor": None,
                 }
             ),
         )
@@ -217,7 +224,7 @@ async def test_asset_step_window_scope_preserves_bounds_and_resume_cursor() -> N
                 "tag_cheap_path_eligible_assets": 0,
                 "tag_cheap_path_fallback_assets": 1,
             },
-            cursor="assets:2:1",
+            cursor=checkpoint,
         ),
         AssetScope(selection=WindowSelection(start=start, end=end)),
     )
@@ -228,6 +235,7 @@ async def test_asset_step_window_scope_preserves_bounds_and_resume_cursor() -> N
             "updated_after": start,
             "updated_before": end,
             "start_page": 2,
+            "start_cursor": expected_cursor,
         }
     ]
     assert len(assets.batches) == 1

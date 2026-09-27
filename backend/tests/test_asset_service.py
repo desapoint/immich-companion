@@ -211,7 +211,7 @@ class FakeImmich:
                     "count": len(self.assets),
                     "total": len(self.assets),
                     "items": self.assets,
-                    "nextPage": None,
+                    "nextCursor": None,
                 }
             ),
         )
