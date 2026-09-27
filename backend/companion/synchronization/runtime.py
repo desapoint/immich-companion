@@ -370,6 +370,14 @@ def register_sync_step_routes(
         "/api/sync/steps/{step}/start",
         response_model=SyncStepTaskStart,
         status_code=status.HTTP_202_ACCEPTED,
+        summary="Start a manual synchronization step",
+        description=(
+            "Schedule one typed synchronization step through the same durable "
+            "registry and asset_sync write lane used by normal synchronization. "
+            "Manual generations are isolated and non-authoritative; destructive "
+            "finalization requires validated same-generation evidence and explicit "
+            "confirmation."
+        ),
     )
     async def start_sync_step(
         step: SyncStepName,
