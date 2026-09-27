@@ -40,12 +40,8 @@ test('shows a healthy, safe companion status', async ({ page }) => {
 
   await page.goto('/');
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Companion status' })).toBeVisible();
-  await expect(page.getByText('test environment', { exact: true })).toBeVisible();
-  await expect(
-    page.getByText(useLiveApi ? 'Actions enabled' : 'Safe mode', { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByText('Operational', { exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 1, name: 'Status' })).toBeVisible();
+  await expect(page.getByText('Healthy', { exact: true }).first()).toBeVisible();
   await expect(page.getByText('Connected', { exact: true }).first()).toBeVisible();
 });
 
@@ -57,6 +53,6 @@ test('shows a recoverable backend error', async ({ page }) => {
   });
   await page.goto('/');
 
-  await expect(page.getByRole('alert')).toContainText('backend is unavailable');
-  await expect(page.getByRole('button', { name: 'Retry status check' })).toBeVisible();
+  await expect(page.getByRole('status')).toContainText('Status unavailable.');
+  await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
 });

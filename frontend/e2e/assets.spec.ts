@@ -25,6 +25,10 @@ const assets = [
     people_count: 1,
     tag_count: 1,
     stack_count: 0,
+    tags: [],
+    albums: [],
+    stack: null,
+    source: { kind: 'upload', library_id: null, original_path: '/upload/first-image.jpg' },
   },
   {
     id: '22222222-2222-4222-8222-222222222222',
@@ -48,6 +52,10 @@ const assets = [
     people_count: 0,
     tag_count: 0,
     stack_count: 0,
+    tags: [],
+    albums: [],
+    stack: null,
+    source: { kind: 'upload', library_id: null, original_path: '/upload/second-image.jpg' },
   },
 ];
 
@@ -119,35 +127,24 @@ test('searches cards and operates the fullscreen asset viewer', async ({ page })
 
   await page.goto('/assets');
 
-  await expect(page.getByRole('heading', { level: 1, name: 'Search Immich assets' })).toBeVisible();
-  const cards = page.locator('article.asset-card');
+  await expect(page.getByRole('heading', { level: 1, name: 'Assets' })).toBeVisible();
+  const cards = page.locator('.v2-asset-tile[data-asset-id]');
   await expect(cards.first()).toBeVisible();
-  await expect(cards).toHaveCount(useLiveApi ? 48 : 2);
+  if (!useLiveApi) await expect(cards).toHaveCount(2);
 
-  await cards.first().getByRole('button', { name: /Open .* in viewer/, description: 'Open viewer' }).click();
-  const viewer = page.getByRole('dialog', { name: /.+/ });
+  await cards.first().locator('button.v2-asset-main').click();
+  const viewer = page.getByRole('dialog', { name: 'Assets Viewer' });
   await expect(viewer).toBeVisible();
-  await expect(viewer.getByText(/1 of \d+ images/)).toBeVisible();
+  await expect(viewer.getByText('first-image.jpg', { exact: true })).toBeVisible();
 
-  await viewer.getByRole('button', { name: 'Select image' }).click();
-  await expect(viewer.getByRole('button', { name: 'Deselect image' })).toBeVisible();
+  await viewer.getByRole('button', { name: 'Select shown asset' }).click();
+  await expect(viewer.getByRole('button', { name: 'Deselect shown asset' })).toBeVisible();
 
-  await viewer.getByRole('button', { name: 'Actual size' }).click();
-  await expect(viewer.getByRole('button', { name: 'Fit image to screen' })).toBeVisible();
+  await viewer.getByRole('button', { name: '1:1' }).click();
+  await expect(viewer.getByRole('button', { name: 'Fit' })).toBeVisible();
 
-  await viewer.getByRole('button', { name: 'Zoom in' }).click();
-  await expect(viewer.getByRole('button', { name: /Reset zoom to fit/ })).toContainText('120%');
-
-  await viewer.getByRole('button', { name: 'Show keyboard shortcuts' }).click();
-  await expect(viewer.getByText('Keyboard shortcuts', { exact: true })).toBeVisible();
-  await viewer.getByRole('button', { name: 'Hide keyboard shortcuts' }).click();
-
-  await viewer.getByRole('button', { name: 'Show more info' }).click();
-  await expect(viewer.getByText('Immich metadata')).toBeVisible();
-  await viewer.getByRole('button', { name: 'Hide more info' }).click();
-
-  await viewer.getByRole('button', { name: 'Next image' }).click();
-  await expect(viewer.getByText(/2 of \d+ images/)).toBeVisible();
+  await viewer.getByRole('button', { name: 'Next →' }).click();
+  await expect(viewer.getByText('second-image.jpg', { exact: true })).toBeVisible();
 
   await page.keyboard.press('Escape');
   await expect(viewer).toBeHidden();

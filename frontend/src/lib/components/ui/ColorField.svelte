@@ -334,7 +334,7 @@
     <span class="v2-color-trigger-chevron" aria-hidden="true"></span>
   </button>
 
-  {#if open}<ColorPickerPopup {id} {popupTop} {popupLeft} {popupWidth} {popupMaxHeight} {popupPlacement} {popupAlignment} {pureHue} {hsv} {currentHex} {hexDraft} {copied} {normalizedPalette} {recentColors} {normalizedUsedColors} {recent} {allowEmpty} {usedColorsLabel} onplane={handlePlanePointerDown} onplanemove={handlePlanePointerMove} onplaneup={releasePlanePointer} onplanekeydown={handlePlaneKeydown} onhuedown={handleHuePointerDown} onhuemove={handleHuePointerMove} onhueup={releaseHuePointer} onhuekeydown={handleHueKeydown} onhexinput={handleHexInput} onhexkeydown={handleHexKeydown} onhexblur={commitHex} oncopy={copyColor} onclear={clearColor} onchoose={chooseHex} {paletteLabel} {normalizeHex} {wrapHue}/>{/if}
+  {#if open}<ColorPickerPopup {id} {popupTop} {popupLeft} {popupWidth} {popupMaxHeight} {popupPlacement} {popupAlignment} {pureHue} {hsv} {currentHex} {hexDraft} {copied} {normalizedPalette} {recentColors} {normalizedUsedColors} {recent} {allowEmpty} {usedColorsLabel} onpopupkeydown={handlePopupKeydown} onplane={handlePlanePointerDown} onplanemove={handlePlanePointerMove} onplaneup={releasePlanePointer} onplanekeydown={handlePlaneKeydown} onhuedown={handleHuePointerDown} onhuemove={handleHuePointerMove} onhueup={releaseHuePointer} onhuekeydown={handleHueKeydown} onhexinput={handleHexInput} onhexkeydown={handleHexKeydown} onhexblur={commitHex} oncopy={copyColor} onclear={clearColor} onchoose={chooseHex} {paletteLabel} {normalizeHex} {wrapHue}/>{/if}
 </div>
 
 <style>

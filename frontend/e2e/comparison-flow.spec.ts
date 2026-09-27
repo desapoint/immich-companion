@@ -118,28 +118,23 @@ test('adds two viewer assets to Similarity debug and verifies comparison modes',
   for (const mode of modeButtons) await expect(comparison.getByRole('button', { name: mode, exact: true })).toBeVisible();
 
   await comparison.getByRole('button', { name: 'Swipe', exact: true }).click();
-  let layers = comparison.locator('.v2-compare-layer');
-  await expect(layers).toHaveCount(2);
-  const swipeClips = await layers.evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).clipPath));
+  const masks = comparison.locator('.comparison-rect-mask');
+  await expect(masks).toHaveCount(2);
+  const swipeClips = await masks.evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).clipPath));
   expect(swipeClips[0]).toContain('inset');
   expect(swipeClips[1]).toContain('inset');
   expect(swipeClips[0]).not.toBe(swipeClips[1]);
 
   await comparison.getByRole('button', { name: 'Flicker', exact: true }).click();
-  layers = comparison.locator('.v2-compare-layer');
-  await expect(layers).toHaveCount(2);
-  // Flicker renders selected first and reference second; only one layer is visible at rest.
-  await expect(layers.nth(0)).toHaveAttribute('aria-hidden', 'false');
-  await expect(layers.nth(1)).toHaveAttribute('aria-hidden', 'true');
-  await expect(layers.nth(0)).toHaveCSS('visibility', 'visible');
-  await expect(layers.nth(1)).toHaveCSS('visibility', 'hidden');
+  let layers = comparison.locator('.v2-compare-layer');
+  await expect(layers).toHaveCount(1);
+  const selectedLabel = await layers.locator('img').getAttribute('alt');
+  expect([firstId, secondId]).toContain(selectedLabel);
   const hold = comparison.getByRole('button', { name: 'Hold to show reference' });
   await hold.dispatchEvent('pointerdown', { pointerId: 1, button: 0 });
-  await expect(layers.nth(0)).toHaveAttribute('aria-hidden', 'true');
-  await expect(layers.nth(1)).toHaveAttribute('aria-hidden', 'false');
-  await expect(layers.nth(0)).toHaveCSS('visibility', 'hidden');
-  await expect(layers.nth(1)).toHaveCSS('visibility', 'visible');
+  await expect(layers.locator('img')).not.toHaveAttribute('alt', selectedLabel!);
   await hold.dispatchEvent('pointerup', { pointerId: 1, button: 0 });
+  await expect(layers.locator('img')).toHaveAttribute('alt', selectedLabel!);
 
   await comparison.getByRole('button', { name: 'Transparency', exact: true }).click();
   layers = comparison.locator('.v2-compare-layer');
