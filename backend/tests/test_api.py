@@ -133,6 +133,9 @@ def test_manual_sync_step_openapi_exposes_typed_scope_and_route() -> None:
     schema = app.openapi()
 
     assert "/api/sync/steps/{step}/start" in schema["paths"]
+    operation = schema["paths"]["/api/sync/steps/{step}/start"]["post"]
+    assert operation["summary"] == "Start a manual synchronization step"
+    assert "isolated and non-authoritative" in operation["description"]
     request = schema["components"]["schemas"]["ManualSyncStepRequest"]
     scope = request["properties"]["scope"]
     if "$ref" in scope:
