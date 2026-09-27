@@ -132,10 +132,14 @@ test('searches cards and operates the fullscreen asset viewer', async ({ page })
   await expect(cards.first()).toBeVisible();
   if (!useLiveApi) await expect(cards).toHaveCount(2);
 
+  const firstName = (await cards.first().locator('button.v2-asset-main').getAttribute('aria-label'))?.replace(/^Preview /, '');
+  const secondName = (await cards.nth(1).locator('button.v2-asset-main').getAttribute('aria-label'))?.replace(/^Preview /, '');
+  expect(firstName).toBeTruthy();
+  expect(secondName).toBeTruthy();
   await cards.first().locator('button.v2-asset-main').click();
   const viewer = page.getByRole('dialog', { name: 'Assets Viewer' });
   await expect(viewer).toBeVisible();
-  await expect(viewer.getByText('first-image.jpg', { exact: true })).toBeVisible();
+  await expect(viewer.getByRole('region', { name: 'Image viewport' }).getByRole('img', { name: firstName })).toBeVisible();
 
   await viewer.getByRole('button', { name: 'Select shown asset' }).click();
   await expect(viewer.getByRole('button', { name: 'Deselect shown asset' })).toBeVisible();
@@ -144,7 +148,7 @@ test('searches cards and operates the fullscreen asset viewer', async ({ page })
   await expect(viewer.getByRole('button', { name: 'Fit' })).toBeVisible();
 
   await viewer.getByRole('button', { name: 'Next →' }).click();
-  await expect(viewer.getByText('second-image.jpg', { exact: true })).toBeVisible();
+  await expect(viewer.getByRole('region', { name: 'Image viewport' }).getByRole('img', { name: secondName })).toBeVisible();
 
   await page.keyboard.press('Escape');
   await expect(viewer).toBeHidden();
