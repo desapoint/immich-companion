@@ -158,7 +158,9 @@ class AssetSyncTaskHandler:
                 window_end,
             ) = await service._metadata.next_sync_metadata(
                 mode,
-                overlap=timedelta(seconds=runtime.incremental_overlap_seconds),  # type: ignore[arg-type]
+                overlap=timedelta(
+                    seconds=runtime.incremental_overlap_seconds
+                ),  # type: ignore[arg-type]
             )
             if mode == "incremental" and window_start is None:
                 mode = "full"
@@ -1576,6 +1578,8 @@ class AssetSyncService:
             "tag_cheap_path_eligible_assets": 0,
             "tag_cheap_path_fallback_assets": 0,
             "tag_association_concurrency": 0,
+            # Strategy counters are retained for telemetry only; authority comes
+            # from SyncEvidence and is never reconstructed from these values.
             "tag_strategy_asset_oriented": 0,
             "tag_strategy_asset_fallback": 0,
             "album_strategy_asset_oriented": 0,
