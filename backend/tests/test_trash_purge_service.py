@@ -153,6 +153,45 @@ async def test_complete_trash_uses_immich_empty_endpoint_after_drift_check() -> 
 
 
 @pytest.mark.asyncio
+async def test_empty_trash_reconciles_provider_error_after_successful_mutation() -> None:
+    class ResponseFailedImmich(FakeImmich):
+        async def empty_trash(self) -> int:
+            await super().empty_trash()
+            raise ImmichApiError("empty trash", 500)
+
+    immich = ResponseFailedImmich()
+    actions = FakeActions()
+    service = TrashPurgeService(immich, actions, settings())
+
+    plan = await service.plan(TrashPurgeSelection(all=True))
+    result = await service.execute(
+        TrashPurgeExecuteRequest(plan_id=plan.id, confirm=True)
+    )
+
+    assert result.status == "completed"
+    assert result.deleted == 2
+    assert immich.empty_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_empty_trash_preserves_provider_error_when_assets_remain() -> None:
+    class FailedImmich(FakeImmich):
+        async def empty_trash(self) -> int:
+            self.empty_calls += 1
+            raise ImmichApiError("empty trash", 500)
+
+    immich = FailedImmich()
+    actions = FakeActions()
+    service = TrashPurgeService(immich, actions, settings())
+
+    plan = await service.plan(TrashPurgeSelection(all=True))
+    with pytest.raises(ImmichApiError):
+        await service.execute(TrashPurgeExecuteRequest(plan_id=plan.id, confirm=True))
+
+    assert immich.trashed == {ASSET_ONE, ASSET_TWO}
+
+
+@pytest.mark.asyncio
 async def test_selective_all_with_exclusions_uses_force_delete() -> None:
     immich = FakeImmich()
     actions = FakeActions()

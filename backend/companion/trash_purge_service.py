@@ -203,7 +203,15 @@ class TrashPurgeService:
             ):
                 checkpoint = {"empty_attempted": True}
                 await self._checkpoint(record.id, checkpoint, lease_token)
-                reported = await self._immich.empty_trash()
+                try:
+                    reported = await self._immich.empty_trash()
+                except ImmichApiError:
+                    # The provider may have applied the mutation before its response
+                    # failed. Verify the reviewed trash before reporting failure.
+                    remaining_count, _ = await self._all_snapshot()
+                    if remaining_count:
+                        raise
+                    reported = 0
             else:
                 reported = prior.get("reported_deleted", 0)
             remaining_count, _ = await self._all_snapshot()
