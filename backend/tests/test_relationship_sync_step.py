@@ -1,5 +1,6 @@
 """First-class relationship synchronization behavior and authority evidence."""
 
+import asyncio
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -539,13 +540,12 @@ async def test_tag_relation_traversal_preserves_runtime_concurrency_and_empty_co
             assert start_page == 1
             self.active += 1
             self.maximum_active = max(self.maximum_active, self.active)
-            await __import__("asyncio").sleep(0)
+            await asyncio.sleep(0)
             yield [] if tag_id == tag_ids[0] else [ASSET_ONE]
             self.active -= 1
 
     immich = ConcurrentTagImmich()
     assets = FakeAssets()
-    assets.tag_asset_counts = lambda: None  # type: ignore[method-assign]
     result = await RelationshipSyncStep(
         immich,  # type: ignore[arg-type]
         assets,  # type: ignore[arg-type]
