@@ -566,6 +566,45 @@ async def test_tag_relation_traversal_preserves_runtime_concurrency_and_empty_co
 
 
 @pytest.mark.asyncio
+async def test_manual_selected_tag_fallback_stays_bounded_and_replaces_snapshot(
+    monkeypatch,
+) -> None:
+    immich = FakeImmich()
+    selections = FakeSelections()
+    selections.asset_batches = [[ASSET_ONE]]
+    selection = ExplicitIdsSelection(ids=[TAG_ONE])
+
+    async def reconcile(_immich, _assets, ids, *, generation, concurrency):
+        assert ids == [ASSET_ONE]
+        return 0, 0, 1
+
+    monkeypatch.setattr(
+        relationship_module,
+        "reconcile_generation_asset_tags",
+        reconcile,
+    )
+    assets = FakeAssets()
+    result = await RelationshipSyncStep(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        selections,  # type: ignore[arg-type]
+    ).run(
+        context(),
+        RelationshipScope(
+            kinds={"tags"},
+            strategy="by_asset",
+            assets=GenerationSelection(generation=41),
+            tags=selection,
+        ),
+    )
+
+    assert "replace_tag" in assets.calls
+    assert result.evidence[0].domain == "tag_memberships"
+    assert result.evidence[0].authority == SyncAuthority.SELECTED
+    assert result.evidence[0].selection == selection
+
+
+@pytest.mark.asyncio
 async def test_relationship_step_respects_normal_conditionals_without_remote_work() -> None:
     immich = FakeImmich()
     step = RelationshipSyncStep(
