@@ -1066,6 +1066,8 @@ class ImmichApiClient:
             "/api/trash/empty",
             operation="empty trash",
         )
+        if not response.content:
+            return 0
         payload = response.json()
         return int(payload.get("count", 0)) if isinstance(payload, dict) else 0
 

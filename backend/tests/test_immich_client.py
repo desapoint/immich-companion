@@ -821,6 +821,16 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_trash_accepts_success_without_response_body() -> None:
+    client = ImmichApiClient(
+        settings(),
+        transport=httpx.MockTransport(lambda _request: httpx.Response(204)),
+    )
+
+    assert await client.empty_trash() == 0
+
+
+@pytest.mark.asyncio
 async def test_duplicate_groups_and_resolution_use_immich_api_contract() -> None:
     duplicate_id = UUID("77777777-7777-4777-8777-777777777777")
     requests: list[tuple[str, str, dict[str, object] | None]] = []
