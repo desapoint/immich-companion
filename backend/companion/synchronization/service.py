@@ -49,6 +49,7 @@ from companion.synchronization.selections import (
     AffectedAssetsSelection,
     AllSelection,
     ExplicitIdsSelection,
+    RelationSelectionIdRepository,
     SyncSelectionResolver,
     WindowSelection,
 )
@@ -619,6 +620,7 @@ class AssetSyncService:
         settings: Settings,
         coordinator: TaskCoordinator | None = None,
         runtime_sync_settings: object | None = None,
+        relation_selections: RelationSelectionIdRepository | None = None,
     ) -> None:
         self._immich = immich
         self._assets = assets
@@ -631,7 +633,7 @@ class AssetSyncService:
             else DefaultSyncRuntimeSettingsRepository(settings)
         )
         self._metadata = syncs
-        selections = SyncSelectionResolver(assets)
+        selections = SyncSelectionResolver(assets, relation_selections)
         self._steps = SyncStepRegistry(
             [
                 EventSyncStep(immich, assets),
