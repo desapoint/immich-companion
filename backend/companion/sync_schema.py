@@ -107,6 +107,7 @@ class SyncRunStatus(BaseModel):
     window_end: datetime
     cursor: str | None
     counters: dict[str, int] = Field(default_factory=dict)
+    evidence: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
     attempts: int
     error: str | None
     created_at: datetime

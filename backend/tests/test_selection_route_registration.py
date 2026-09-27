@@ -1,5 +1,7 @@
 """Regression coverage for persisted selection route registration."""
 
+import inspect
+
 from fastapi.testclient import TestClient
 
 from companion.config import Settings
@@ -14,6 +16,12 @@ def settings() -> Settings:
         immich_api_key="test-key",
         allow_destructive_actions=False,
     )
+
+
+def test_asset_sync_composition_reuses_relation_selection_repository() -> None:
+    source = inspect.getsource(create_app)
+
+    assert "relation_selections=relation_selection_repository" in source
 
 
 def test_selection_routes_are_static_and_do_not_shadow_assets_or_duplicates() -> None:

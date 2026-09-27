@@ -68,13 +68,18 @@ class FakeAssets:
     async def replace_asset_album_memberships(self, asset_id: UUID, _album_ids):
         self.asset_repairs.append(asset_id)
 
+    async def upsert_album_memberships(self, _album_id, asset_ids, _generation):
+        return len(asset_ids)
+
     async def replace_album_memberships(self, _album_id: UUID, _asset_ids):
         self.album_repairs += 1
         return 0
 
 
 class FakeSyncRepository:
-    pass
+    async def next_sync_metadata(self, _mode, *, overlap):
+        assert overlap.total_seconds() == 0
+        return 17, None, None
 
 
 def service(asset_count: int) -> tuple[AssetSyncService, FakeImmich, FakeAssets]:

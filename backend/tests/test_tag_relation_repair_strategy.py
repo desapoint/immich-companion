@@ -61,6 +61,9 @@ class FakeAssets:
     async def replace_asset_tag_memberships(self, asset_id: UUID, tag_ids: list[UUID]):
         self.asset_tag_repairs.append((asset_id, tag_ids))
 
+    async def upsert_tag_memberships(self, _tag_id, asset_ids, _generation):
+        return len(asset_ids)
+
     async def upsert_tag_catalog(self, _tags, _generation):
         return 1, 0
 
@@ -70,7 +73,9 @@ class FakeAssets:
 
 
 class FakeSyncRepository:
-    pass
+    async def next_sync_metadata(self, _mode, *, overlap):
+        assert overlap.total_seconds() == 0
+        return 18, None, None
 
 
 def service() -> tuple[AssetSyncService, FakeImmich, FakeAssets]:

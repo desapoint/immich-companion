@@ -248,7 +248,8 @@ def register_media_restore_routes(
                 "asset_selection_sync",
                 {"asset_ids": [str(identifier) for identifier in task_ids]},
                 priority=90,
-                lane_key="asset_repair",
+                lane_key="asset_sync",
+                max_concurrency=1,
                 deduplication_key="asset-selection-sync:" + selection_digest(task_ids),
             )
             await task_coordinator.start()

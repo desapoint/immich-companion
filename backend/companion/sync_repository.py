@@ -86,6 +86,7 @@ class SyncRepository:
                 for key, value in (record.counters or {}).items()
                 if isinstance(value, int)
             },
+            evidence=list((record.progress or {}).get("_evidence", [])),
             attempts=record.attempts,
             error=record.error,
             created_at=record.created_at,
@@ -237,6 +238,7 @@ class SyncRepository:
         cursor: str | None,
         counters: dict[str, int],
         progress: SyncProgress | None = None,
+        evidence: list[dict[str, object]] | None = None,
         lease_duration: timedelta,
     ) -> SyncRunStatus:
         """Atomically renew ownership and persist the latest committed batch."""
@@ -260,8 +262,15 @@ class SyncRepository:
             run.phase = phase
             run.cursor = cursor
             run.counters = dict(counters)
-            if progress is not None:
-                run.progress = progress.model_dump(mode="json")
+            if progress is not None or evidence is not None:
+                progress_payload = (
+                    progress.model_dump(mode="json")
+                    if progress is not None
+                    else dict(run.progress or {"phase": phase})
+                )
+                if evidence is not None:
+                    progress_payload["_evidence"] = evidence
+                run.progress = progress_payload
             run.heartbeat_at = now
             public = self._public(run)
             assert public is not None
