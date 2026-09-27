@@ -4,9 +4,10 @@ from uuid import UUID
 
 import pytest
 
+from companion.asset_service import AssetSyncService
 from companion.immich import ImmichAlbum, ImmichTag
 from companion.synchronization.evidence import SyncAuthority
-from companion.synchronization.scopes import CatalogScope
+from companion.synchronization.scopes import CatalogScope, RelationshipScope
 from companion.synchronization.selections import (
     AllSelection,
     ExplicitIdsSelection,
@@ -54,6 +55,16 @@ class FakeImmich:
         self.calls.append("tags")
         return self.tags
 
+    async def iter_album_asset_ids(self, _album_id, *, page_size, start_page):
+        assert page_size == 1000
+        assert start_page == 1
+        yield [ALBUM_ONE]
+
+    async def iter_tag_asset_ids(self, _tag_id, *, page_size, start_page):
+        assert page_size == 1000
+        assert start_page == 1
+        yield [TAG_ONE]
+
 
 class FakeAssets:
     def __init__(self) -> None:
@@ -67,6 +78,21 @@ class FakeAssets:
     async def upsert_tag_catalog(self, items, _generation: int) -> tuple[int, int]:
         self.tag_batches.append([item.id for item in items])
         return 0, len(items)
+
+    async def replace_album_memberships(self, _album_id, ids):
+        return len(ids)
+
+    async def replace_tag_memberships(self, _tag_id, ids):
+        return len(ids)
+
+
+class FakeRelationSelections:
+    def __init__(self) -> None:
+        self.calls: list[tuple[UUID, str, int]] = []
+
+    async def iter_ids(self, selection_id, kind, *, batch_size):
+        self.calls.append((selection_id, kind, batch_size))
+        yield [ALBUM_ONE] if kind == "album" else [TAG_ONE]
 
 
 class FakeSelections:
@@ -231,6 +257,57 @@ async def test_catalog_step_requires_resolver_for_persisted_selection() -> None:
                 tags=None,
             ),
         )
+
+
+@pytest.mark.asyncio
+async def test_production_registry_resolves_persisted_album_and_tag_selections() -> None:
+    immich = FakeImmich()
+    assets = FakeAssets()
+    relations = FakeRelationSelections()
+    service = AssetSyncService(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        object(),  # type: ignore[arg-type]
+        runtime_sync_settings=object(),
+        relation_selections=relations,
+    )
+    selection = PersistedSelection(selection_id=SELECTION_ID)
+    context = SyncStepContext(
+        mode="full",
+        generation=13,
+        config=SyncStepConfig(batch_size=1, page_size=1000, concurrency=1),
+        manual=True,
+        respect_conditionals=False,
+    )
+
+    catalog_result = await service.step_registry.get("catalogs").run(
+        context,
+        CatalogScope(albums=selection, tags=selection),
+    )
+    relationship_result = await service.step_registry.get("relationships").run(
+        context,
+        RelationshipScope(
+            kinds={"albums", "tags"},
+            strategy="by_relation",
+            albums=selection,
+            tags=selection,
+        ),
+    )
+
+    assert catalog_result.completed == 2
+    assert {item.authority for item in catalog_result.evidence} == {
+        SyncAuthority.SELECTED
+    }
+    assert {item.authority for item in relationship_result.evidence} == {
+        SyncAuthority.SELECTED
+    }
+    assert relations.calls == [
+        (SELECTION_ID, "album", 1),
+        (SELECTION_ID, "tag", 1),
+        (SELECTION_ID, "album", 1),
+        (SELECTION_ID, "tag", 1),
+    ]
 
 
 @pytest.mark.asyncio
