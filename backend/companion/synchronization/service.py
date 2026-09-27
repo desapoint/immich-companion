@@ -107,89 +107,6 @@ def _repair_metric_defaults() -> dict[str, int]:
     }
 
 
-class _PacedCatalogSyncStep(CatalogSyncStep):
-    """Apply runtime pacing while using the independently runnable catalog step."""
-
-    def __init__(
-        self,
-        immich: ImmichApiClient,
-        assets: AssetRepository,
-        pace_callback: Callable[[float], Awaitable[None]],
-    ) -> None:
-        super().__init__(immich, assets)
-        self._pace_callback = pace_callback
-
-    async def pace(self, _context: SyncStepContext, started: float) -> None:
-        await self._pace_callback(started)
-
-
-class _PacedAssetSyncStep(AssetSyncStep):
-    """Preserve current full-sync page pacing around the first-class asset step."""
-
-    def __init__(
-        self,
-        immich: ImmichApiClient,
-        assets: AssetRepository,
-        page_prefetch: int,
-        page_pace_callback: Callable[[], Awaitable[None]],
-        *,
-        total_hint: int | None = None,
-    ) -> None:
-        super().__init__(
-            immich,
-            assets,
-            page_prefetch=page_prefetch,
-            total_hint=total_hint,
-            initial_checkpoint=False,
-        )
-        self._page_pace_callback = page_pace_callback
-
-    async def pace_page(self, _context: SyncStepContext) -> None:
-        await self._page_pace_callback()
-
-
-class _PacedStackSyncStep(StackSyncStep):
-    """Preserve current full-sync batch pacing around the first-class stack step."""
-
-    def __init__(
-        self,
-        immich: ImmichApiClient,
-        assets: AssetRepository,
-        pace_callback: Callable[[float], Awaitable[None]],
-    ) -> None:
-        super().__init__(immich, assets)
-        self._pace_callback = pace_callback
-
-    async def pace(self, _context: SyncStepContext, started: float) -> None:
-        await self._pace_callback(started)
-
-
-class _PacedRelationshipSyncStep(RelationshipSyncStep):
-    """Preserve current relation page pacing around the first-class relationship step."""
-
-    def __init__(
-        self,
-        immich: ImmichApiClient,
-        assets: AssetRepository,
-        selections: SyncSelectionResolver,
-        *,
-        page_prefetch: int,
-        metadata_concurrency: int,
-        pace_callback: Callable[[float], Awaitable[None]],
-    ) -> None:
-        super().__init__(
-            immich,
-            assets,
-            selections,
-            page_prefetch=page_prefetch,
-            metadata_concurrency=metadata_concurrency,
-        )
-        self._pace_callback = pace_callback
-
-    async def pace(self, _context: SyncStepContext, started: float) -> None:
-        await self._pace_callback(started)
-
-
 class _CoordinatorSyncRepository:
     """Adapt generic task checkpoints to synchronization checkpoints."""
 
@@ -993,37 +910,6 @@ class AssetSyncService:
             and active.phase in {"catalogs", "assets", "stacks"}
         )
 
-    async def _repair_tags_from_asset_details(self, asset_ids: list[UUID]) -> bool:
-        """Repair a bounded changed set directly from authoritative asset details."""
-
-        unique_asset_ids = list(dict.fromkeys(asset_ids))
-        if not unique_asset_ids:
-            return True
-        runtime = await self._runtime_sync_settings.get()
-        if len(unique_asset_ids) > runtime.full_batch_size:
-            return False
-        concurrency = max(1, runtime.tag_association_concurrency)
-        details: list[ImmichAsset | None] = []
-
-        async def fetch(identifier: UUID) -> ImmichAsset | None:
-            try:
-                return await self._immich.get_asset(identifier)
-            except ImmichApiError as error:
-                if error.status_code == 404:
-                    return None
-                raise
-
-        for start in range(0, len(unique_asset_ids), concurrency):
-            wave = unique_asset_ids[start : start + concurrency]
-            details.extend(await asyncio.gather(*(fetch(identifier) for identifier in wave)))
-        if any(detail is None or not detail.includes_tags for detail in details):
-            return False
-        for detail in details:
-            assert detail is not None
-            tag_ids = [UUID(str(tag["id"])) for tag in detail.tags if tag.get("id")]
-            await self._assets.replace_asset_tag_memberships(detail.id, tag_ids)
-        return True
-
     def _start_sync_memory_diagnostics(self) -> bool:
         """Start allocation tracing only while a sync is actually executing."""
 
@@ -1384,42 +1270,8 @@ class AssetSyncService:
         relations: list[tuple[str, UUID]] | None = None,
         include_stacks: bool = False,
     ) -> None:
-        """Choose bounded targeted relation repair before the general repair path."""
+        """Route targeted reconciliation through the first-class repair adapters."""
 
-        if (
-            relations
-            and asset_ids
-            and all(kind == "tag" for kind, _ in relations)
-            and await self._repair_tags_from_asset_details(asset_ids)
-        ):
-            return
-        if relations and asset_ids and all(kind == "album" for kind, _ in relations):
-            unique_asset_ids = list(dict.fromkeys(asset_ids))
-            unique_relation_ids = list(
-                dict.fromkeys(relation_id for _, relation_id in relations)
-            )
-            catalog = await self._immich.list_album_catalog()
-            albums_by_id = {album.id: album for album in catalog}
-            affected_albums = [
-                albums_by_id[relation_id]
-                for relation_id in unique_relation_ids
-                if relation_id in albums_by_id
-            ]
-            if len(affected_albums) == len(unique_relation_ids):
-                album_calls = sum(
-                    max(1, (album.asset_count + 999) // 1000)
-                    for album in affected_albums
-                )
-                if album_calls >= len(unique_asset_ids):
-                    upsert_album_catalog = getattr(self._assets, "upsert_album_catalog", None)
-                    if upsert_album_catalog is not None:
-                        await upsert_album_catalog(affected_albums, 0)
-                    for asset_id in unique_asset_ids:
-                        albums = await self._immich.list_albums_for_asset(asset_id)
-                        await self._assets.replace_asset_album_memberships(
-                            asset_id, [album.id for album in albums]
-                        )
-                    return
         await self._reconcile_targets_default(
             asset_ids,
             relations=relations,
@@ -1453,17 +1305,37 @@ class AssetSyncService:
                 await self._coordinator.wait(task.id)
                 return
             started = perf_counter()
-            counters = await self._repair_relations_now(unique_relations)
+            generation = await self.allocate_manual_generation()
+            counters: dict[str, int] = {}
+
+            async def checkpoint(
+                _cursor: str | None,
+                _step_counters: dict[str, int],
+                _progress: SyncStepProgress,
+            ) -> None:
+                return None
+
+            await self._run_relation_repair_steps(
+                unique_relations,
+                generation=generation,
+                counters=counters,
+                checkpoint_callback=checkpoint,
+            )
+            albums = sum(1 for kind, _identifier in unique_relations if kind == "album")
+            tags = sum(1 for kind, _identifier in unique_relations if kind == "tag")
+            memberships = counters.get("album_memberships", 0) + counters.get(
+                "tag_memberships", 0
+            )
             logger.info(
                 "Sync summary: trigger=direct_relation_repair requested=%s albums=%s "
                 "tags=%s memberships=%s duration_seconds=%.3f "
                 "tag_branch_relation_scan=%s",
                 len(unique_relations),
-                counters["albums"],
-                counters["tags"],
-                counters["memberships"],
+                albums,
+                tags,
+                memberships,
                 perf_counter() - started,
-                counters["tags"],
+                tags,
             )
             return
         if self._coordinator is not None:
@@ -1484,7 +1356,34 @@ class AssetSyncService:
             await self._coordinator.wait(task.id)
             return
         started = perf_counter()
-        counters = await self._repair_targets_now(asset_ids, include_stacks=include_stacks)
+        generation = await self.allocate_manual_generation()
+        counters = _repair_metric_defaults()
+
+        async def checkpoint(
+            _cursor: str | None,
+            _step_counters: dict[str, int],
+            _progress: SyncStepProgress,
+        ) -> None:
+            return None
+
+        await self._run_asset_repair_steps(
+            asset_ids,
+            generation=generation,
+            include_stacks=include_stacks,
+            counters=counters,
+            checkpoint_callback=checkpoint,
+        )
+        counters["tag_branch_asset_payload"] = counters.get(
+            "tag_asset_detail_payload", 0
+        )
+        counters["tag_branch_catalog_fallback"] = counters.get(
+            "tag_asset_detail_fallback", 0
+        )
+        counters["tag_links_resolved"] = counters.get("tag_memberships", 0)
+        if counters.get("tag_strategy_asset_fallback", 0):
+            counters["tag_fallback_catalog_tags"] = counters.get(
+                "tag_relationships_scanned", 0
+            )
         logger.info(
             "Sync summary: trigger=direct_asset_repair scope=%s requested=%s "
             "processed=%s include_stacks=%s duration_seconds=%.3f "
@@ -1506,110 +1405,6 @@ class AssetSyncService:
     async def restore_targets(self, asset_ids: list[UUID]) -> None:
         await self._immich.restore_assets(asset_ids)
         await self.reconcile_targets(asset_ids)
-
-    async def _repair_targets_now(
-        self,
-        asset_ids: list[UUID],
-        *,
-        include_stacks: bool = False,
-    ) -> dict[str, int]:
-        metrics = _repair_metric_defaults()
-        runtime = await self._runtime_settings()
-        assets: list[ImmichAsset] = []
-        for start in range(0, len(asset_ids), runtime.metadata_request_concurrency):
-            wave = asset_ids[start : start + runtime.metadata_request_concurrency]
-            assets.extend(
-                await asyncio.gather(
-                    *(self._immich.get_asset(identifier) for identifier in wave)
-                )
-            )
-        stack_payload_by_asset: dict[UUID, dict[str, object]] = {}
-        if include_stacks:
-            for stack in await self._immich.list_stacks():
-                payload, member_ids = StackSyncStep.stack_payload(stack)
-                for member_id in member_ids:
-                    stack_payload_by_asset[member_id] = payload
-        for asset in assets:
-            if include_stacks:
-                asset = asset.model_copy(update={"stack": stack_payload_by_asset.get(asset.id)})
-            await self._assets.refresh_asset(asset)
-            albums = await self._immich.list_albums_for_asset(asset.id)
-            await self._assets.replace_asset_album_memberships(
-                asset.id, [album.id for album in albums]
-            )
-            if asset.includes_tags:
-                tag_ids = [UUID(str(tag["id"])) for tag in asset.tags if tag.get("id")]
-                await self._assets.replace_asset_tag_memberships(asset.id, tag_ids)
-                metrics["tag_branch_asset_payload"] += 1
-                metrics["tag_links_resolved"] += len(tag_ids)
-            else:
-                metrics["tag_branch_catalog_fallback"] += 1
-                tags = await self._immich.list_tag_catalog()
-                metrics["tag_fallback_catalog_tags"] += len(tags)
-                present: list[UUID] = []
-                for tag in tags:
-                    async for page_ids in self._immich.iter_tag_asset_ids(tag.id):
-                        metrics["tag_fallback_pages"] += 1
-                        if asset.id in page_ids:
-                            present.append(tag.id)
-                            break
-                await self._assets.replace_asset_tag_memberships(asset.id, present)
-                metrics["tag_links_resolved"] += len(present)
-        if include_stacks:
-            await self._assets.replace_asset_stack_snapshots(
-                asset_ids,
-                stack_payload_by_asset,
-            )
-        return metrics
-
-    async def _repair_relations_now(self, relations: list[tuple[str, UUID]]) -> dict[str, int]:
-        counters = {"albums": 0, "tags": 0, "memberships": 0}
-        for kind, relation_id in relations:
-            if kind == "album":
-                album = next(
-                    (
-                        item
-                        for item in await self._immich.list_album_catalog()
-                        if item.id == relation_id
-                    ),
-                    None,
-                )
-                if album is None:
-                    raise ImmichApiError("album catalog")
-                upsert_album_catalog = getattr(self._assets, "upsert_album_catalog", None)
-                if upsert_album_catalog is not None:
-                    await upsert_album_catalog([album], 0)
-            else:
-                tag = next(
-                    (
-                        item
-                        for item in await self._immich.list_tag_catalog()
-                        if item.id == relation_id
-                    ),
-                    None,
-                )
-                if tag is None:
-                    raise ImmichApiError("tag catalog")
-                upsert_tag_catalog = getattr(self._assets, "upsert_tag_catalog", None)
-                if upsert_tag_catalog is not None:
-                    await upsert_tag_catalog([tag], 0)
-        for kind, relation_id in relations:
-            asset_ids: list[UUID] = []
-            iterator = (
-                self._immich.iter_album_asset_ids(relation_id)
-                if kind == "album"
-                else self._immich.iter_tag_asset_ids(relation_id)
-            )
-            async for page_ids in iterator:
-                asset_ids.extend(page_ids)
-            if kind == "album":
-                count = await self._assets.replace_album_memberships(relation_id, asset_ids)
-                counters["albums"] += 1
-            else:
-                count = await self._assets.replace_tag_memberships(relation_id, asset_ids)
-                counters["tags"] += 1
-            counters["memberships"] += count
-        return counters
 
     async def _execute_with_heartbeat(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
         owns_memory_trace = self._start_sync_memory_diagnostics()
@@ -1767,138 +1562,7 @@ class AssetSyncService:
                     generation=run.generation,
                 )
             )
-        if start_phase >= 4:
-            # Compatibility only for runs that entered finalizing before evidence
-            # persistence existed. New runs persist exact relationship evidence.
-            album_selected = (
-                run.mode == "incremental"
-                and run.counters.get("album_strategy_asset_oriented", 0) == 1
-            )
-            tag_selected = (
-                run.mode == "incremental"
-                and run.counters.get("tag_strategy_asset_oriented", 0) == 1
-                and run.counters.get("tag_strategy_asset_fallback", 0) == 0
-            )
-            for domain, selected in (
-                ("album_memberships", album_selected),
-                ("tag_memberships", tag_selected),
-            ):
-                evidence.append(
-                    SyncEvidence(
-                        domain=domain,
-                        authority=(
-                            SyncAuthority.SELECTED
-                            if selected
-                            else SyncAuthority.COMPLETE
-                        ),
-                        selection=(
-                            GenerationSelection(generation=run.generation)
-                            if selected
-                            else AllSelection()
-                        ),
-                        generation=run.generation,
-                    )
-                )
         return evidence
-
-    async def _run_validation_step(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-        evidence: list[SyncEvidence],
-    ) -> SyncStepResult:
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "finalizing",
-                cursor,
-                SyncProgress(
-                    phase=progress.phase,
-                    completed=max(0, progress.completed),
-                    total=progress.total,
-                    percent=progress.percent,
-                    detail=progress.detail,
-                ),
-                evidence=evidence,
-            )
-
-        return await ValidationSyncStep(self._assets).run(
-            SyncStepContext(
-                mode=run.mode,
-                generation=run.generation,
-                config=SyncStepConfig(),
-                counters=counters,
-                cursor=None,
-                window_start=run.window_start,
-                window_end=run.window_end,
-                evidence=evidence,
-                checkpoint_callback=checkpoint,
-            ),
-            ValidationScope(
-                generation=run.generation,
-                expected_domains={
-                    "albums",
-                    "tags",
-                    "assets",
-                    "stacks",
-                    "album_memberships",
-                    "tag_memberships",
-                },
-                allow_counter_repair=run.attempts > 1,
-            ),
-        )
-
-    async def _run_finalization_step(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-        evidence: list[SyncEvidence],
-    ) -> SyncStepResult:
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "finalizing",
-                cursor,
-                SyncProgress(
-                    phase=progress.phase,
-                    completed=max(0, progress.completed),
-                    total=progress.total,
-                    percent=progress.percent,
-                    detail=progress.detail,
-                ),
-                evidence=evidence,
-            )
-
-        return await FinalizationSyncStep(self._assets).run(
-            SyncStepContext(
-                mode=run.mode,
-                generation=run.generation,
-                config=SyncStepConfig(
-                    batch_size=self._full_batch_size(run, self._settings)
-                ),
-                counters=counters,
-                cursor="generation-valid",
-                window_start=run.window_start,
-                window_end=run.window_end,
-                evidence=evidence,
-                checkpoint_callback=checkpoint,
-            ),
-            FinalizationScope(generation=run.generation),
-        )
 
     async def _execute(self, run: SyncRunStatus, owner: UUID) -> dict[str, int]:
         runtime = await self._runtime_settings()
@@ -2121,325 +1785,4 @@ class AssetSyncService:
             evidence=evidence,
             checkpoint_callback=checkpoint,
         )
-
-    async def _run_event_step(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-    ) -> None:
-        """Execute the optional event stream through the first-class event step."""
-
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            _progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "catalogs",
-                cursor,
-            )
-
-        scope = EventScope(
-            cursor=run.cursor if run.phase == "queued" else None,
-        )
-        await EventSyncStep(self._immich, self._assets).run(
-            SyncStepContext(
-                mode=run.mode,
-                generation=run.generation,
-                config=SyncStepConfig(),
-                counters=counters,
-                cursor=scope.cursor,
-                window_start=run.window_start,
-                window_end=run.window_end,
-                manual=False,
-                respect_conditionals=True,
-                checkpoint_callback=checkpoint,
-            ),
-            scope,
-        )
-
-    async def _sync_catalogs(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-        asset_total: int | None,
-    ) -> SyncStepResult:
-        """Run catalog synchronization through the canonical scoped step."""
-
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "catalogs",
-                cursor,
-                SyncProgress(
-                    phase=progress.phase,
-                    completed=max(0, progress.completed),
-                    total=progress.total,
-                    percent=progress.percent,
-                    detail=progress.detail,
-                ),
-            )
-
-        step = _PacedCatalogSyncStep(
-            self._immich,
-            self._assets,
-            lambda started: self._pace_full_batch(run, started),
-        )
-        context = SyncStepContext(
-            mode=run.mode,
-            generation=run.generation,
-            config=SyncStepConfig(
-                batch_size=self._full_batch_size(run, self._settings),
-                concurrency=1,
-            ),
-            counters=counters,
-            cursor=run.cursor if run.phase == "catalogs" else None,
-            window_start=run.window_start,
-            window_end=run.window_end,
-            manual=False,
-            respect_conditionals=True,
-            checkpoint_callback=checkpoint,
-        )
-        result = await step.run(
-            context,
-            CatalogScope(albums=AllSelection(), tags=AllSelection()),
-        )
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "assets",
-            None,
-            self._progress(
-                "assets",
-                0,
-                asset_total,
-                f"Preparing {asset_total} media items"
-                if asset_total is not None
-                else "Preparing media traversal",
-            ),
-        )
-        return result
-
-    async def _sync_assets(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-        asset_total: int | None = None,
-    ) -> SyncStepResult:
-        """Run asset synchronization through the canonical first-class step."""
-
-        runtime = await self._runtime_settings()
-
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "assets",
-                cursor,
-                SyncProgress(
-                    phase=progress.phase,
-                    completed=max(0, progress.completed),
-                    total=progress.total,
-                    percent=progress.percent,
-                    detail=progress.detail,
-                ),
-            )
-
-        if run.mode == "incremental":
-            if run.window_start is None:
-                raise ValueError("Incremental asset sync requires window_start")
-            selection = WindowSelection(
-                start=run.window_start,
-                end=run.window_end,
-            )
-        else:
-            selection = AllSelection()
-
-        step = _PacedAssetSyncStep(
-            self._immich,
-            self._assets,
-            runtime.page_prefetch,
-            lambda: self._pace_full_page(run),
-            total_hint=asset_total,
-        )
-        context = SyncStepContext(
-            mode=run.mode,
-            generation=run.generation,
-            config=SyncStepConfig(
-                batch_size=self._full_batch_size(run, self._settings),
-                page_size=runtime.api_page_size,
-                concurrency=runtime.metadata_request_concurrency,
-            ),
-            counters=counters,
-            cursor=run.cursor if run.phase == "assets" else None,
-            window_start=run.window_start,
-            window_end=run.window_end,
-            manual=False,
-            respect_conditionals=True,
-            checkpoint_callback=checkpoint,
-        )
-        result = await step.run(context, AssetScope(selection=selection))
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "stacks",
-            None,
-            self._progress("stacks", 0, None, "Preparing stack traversal"),
-        )
-        return result
-
-    async def _sync_stacks(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-    ) -> SyncStepResult:
-        """Run stack synchronization through the canonical first-class step."""
-
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "stacks",
-                cursor,
-                SyncProgress(
-                    phase=progress.phase,
-                    completed=max(0, progress.completed),
-                    total=progress.total,
-                    percent=progress.percent,
-                    detail=progress.detail,
-                ),
-            )
-
-        step = _PacedStackSyncStep(
-            self._immich,
-            self._assets,
-            lambda started: self._pace_full_batch(run, started),
-        )
-        context = SyncStepContext(
-            mode=run.mode,
-            generation=run.generation,
-            config=SyncStepConfig(
-                batch_size=self._full_batch_size(run, self._settings),
-                concurrency=1,
-            ),
-            counters=counters,
-            cursor=run.cursor if run.phase == "stacks" else None,
-            window_start=run.window_start,
-            window_end=run.window_end,
-            manual=False,
-            respect_conditionals=True,
-            checkpoint_callback=checkpoint,
-        )
-        result = await step.run(context, StackScope(selection=AllSelection()))
-        await self._checkpoint(
-            run,
-            owner,
-            counters,
-            "relationships",
-            None,
-            self._progress("relationships", 0, None, "Preparing associations"),
-        )
-        return result
-
-    async def _sync_relationships(
-        self,
-        run: SyncRunStatus,
-        owner: UUID,
-        counters: dict[str, int],
-    ) -> SyncStepResult:
-        """Run relationship synchronization through the canonical first-class step."""
-
-        runtime = await self._runtime_settings()
-
-        async def checkpoint(
-            cursor: str | None,
-            step_counters: dict[str, int],
-            progress: SyncStepProgress,
-        ) -> None:
-            await self._checkpoint(
-                run,
-                owner,
-                step_counters,
-                "relationships",
-                cursor,
-                SyncProgress(
-                    phase=progress.phase,
-                    completed=max(0, progress.completed),
-                    total=progress.total,
-                    percent=progress.percent,
-                    detail=progress.detail,
-                ),
-            )
-
-        strategy = {
-            "asset": "by_asset",
-            "relation": "by_relation",
-            "automatic": "automatic",
-        }[runtime.incremental_strategy]
-        if run.mode == "full" or strategy == "by_relation":
-            scope = RelationshipScope(
-                kinds={"albums", "tags"},
-                strategy="by_relation",
-                albums=AllSelection(),
-                tags=AllSelection(),
-            )
-        else:
-            scope = RelationshipScope(
-                kinds={"albums", "tags"},
-                strategy=strategy,
-                assets=GenerationSelection(generation=run.generation),
-                albums=AllSelection(),
-                tags=AllSelection(),
-            )
-
-        step = _PacedRelationshipSyncStep(
-            self._immich,
-            self._assets,
-            SyncSelectionResolver(self._assets),
-            page_prefetch=runtime.page_prefetch,
-            metadata_concurrency=runtime.metadata_request_concurrency,
-            pace_callback=lambda started: self._pace_full_batch(run, started),
-        )
-        context = SyncStepContext(
-            mode=run.mode,
-            generation=run.generation,
-            config=SyncStepConfig(
-                batch_size=self._full_batch_size(run, self._settings),
-                page_size=runtime.api_page_size,
-                concurrency=runtime.tag_association_concurrency,
-            ),
-            counters=counters,
-            cursor=run.cursor if run.phase == "relationships" else None,
-            window_start=run.window_start,
-            window_end=run.window_end,
-            manual=False,
-            respect_conditionals=True,
-            checkpoint_callback=checkpoint,
-        )
-        return await step.run(context, scope)
 
