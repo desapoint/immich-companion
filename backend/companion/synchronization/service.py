@@ -1263,12 +1263,121 @@ class AssetSyncService:
         relations: list[tuple[str, UUID]] | None = None,
         include_stacks: bool = False,
     ) -> None:
-        """Route targeted reconciliation through the first-class repair adapters."""
+        """Preserve repair strategy decisions while using first-class steps."""
+
+        unique_asset_ids = list(dict.fromkeys(asset_ids))
+        if relations and unique_asset_ids and all(kind == "tag" for kind, _ in relations):
+            runtime = await self._runtime_settings()
+            if len(unique_asset_ids) <= runtime.full_batch_size:
+                generation = await self.allocate_manual_generation()
+                tag_ids = list(dict.fromkeys(identifier for _, identifier in relations))
+                await self._run_asset_relationship_repair_step(
+                    unique_asset_ids,
+                    kinds={"tags"},
+                    generation=generation,
+                    tags=ExplicitIdsSelection(ids=tag_ids),
+                )
+                return
+
+        if relations and unique_asset_ids and all(kind == "album" for kind, _ in relations):
+            unique_relation_ids = list(
+                dict.fromkeys(relation_id for _, relation_id in relations)
+            )
+            catalog = await self._immich.list_album_catalog()
+            albums_by_id = {album.id: album for album in catalog}
+            affected_albums = [
+                albums_by_id[relation_id]
+                for relation_id in unique_relation_ids
+                if relation_id in albums_by_id
+            ]
+            if len(affected_albums) == len(unique_relation_ids):
+                album_calls = sum(
+                    max(
+                        1,
+                        (
+                            album.asset_count
+                            + ALBUM_MEMBERSHIP_PAGE_SIZE
+                            - 1
+                        )
+                        // ALBUM_MEMBERSHIP_PAGE_SIZE,
+                    )
+                    for album in affected_albums
+                )
+                if album_calls >= len(unique_asset_ids):
+                    generation = await self.allocate_manual_generation()
+                    await self._run_catalog_repair_step(
+                        albums=ExplicitIdsSelection(ids=unique_relation_ids),
+                        tags=None,
+                        generation=generation,
+                    )
+                    await self._run_asset_relationship_repair_step(
+                        unique_asset_ids,
+                        kinds={"albums"},
+                        generation=generation,
+                    )
+                    return
 
         await self._reconcile_targets_default(
             asset_ids,
             relations=relations,
             include_stacks=include_stacks,
+        )
+
+    async def _run_catalog_repair_step(
+        self,
+        *,
+        albums: ExplicitIdsSelection | None,
+        tags: ExplicitIdsSelection | None,
+        generation: int,
+    ) -> SyncStepResult:
+        runtime = await self._runtime_settings()
+        return await self._steps.get("catalogs").run(
+            SyncStepContext(
+                mode="full",
+                generation=generation,
+                config=SyncStepConfig(
+                    batch_size=runtime.full_batch_size,
+                    min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                ),
+                counters={},
+                manual=True,
+                respect_conditionals=False,
+            ),
+            CatalogScope(albums=albums, tags=tags),
+        )
+
+    async def _run_asset_relationship_repair_step(
+        self,
+        asset_ids: list[UUID],
+        *,
+        kinds: set[str],
+        generation: int,
+        tags: ExplicitIdsSelection | None = None,
+    ) -> SyncStepResult:
+        runtime = await self._runtime_settings()
+        selection = ExplicitIdsSelection(ids=list(dict.fromkeys(asset_ids)))
+        return await self._steps.get("relationships").run(
+            SyncStepContext(
+                mode="full",
+                generation=generation,
+                config=SyncStepConfig(
+                    batch_size=runtime.full_batch_size,
+                    page_size=runtime.api_page_size,
+                    concurrency=runtime.tag_association_concurrency,
+                    page_prefetch=runtime.page_prefetch,
+                    metadata_concurrency=runtime.metadata_request_concurrency,
+                    min_batch_delay_seconds=runtime.full_min_batch_delay_seconds,
+                ),
+                counters={},
+                manual=True,
+                respect_conditionals=False,
+            ),
+            RelationshipScope(
+                kinds=kinds,  # type: ignore[arg-type]
+                strategy="by_asset",
+                assets=selection,
+                tags=tags,
+            ),
         )
 
     async def _reconcile_targets_default(
