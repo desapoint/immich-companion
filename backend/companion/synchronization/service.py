@@ -1891,4 +1891,3 @@ class AssetSyncService:
             evidence=evidence,
             checkpoint_callback=checkpoint,
         )
-
