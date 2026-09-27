@@ -136,6 +136,23 @@ sync. API clients can start a run with `POST /api/assets/sync/start`, inspect th
 coordinator with `GET /api/assets/sync/status`, and audit a specific persisted run
 with `GET /api/assets/sync/runs/{run_id}`.
 
+Synchronization is implemented as an explicit `SyncPlan` executed through one
+`SyncStepRegistry`. Full and incremental runs use the same catalog, asset, stack,
+relationship, validation, and finalization step implementations; incremental plans
+optionally insert the Immich event-stream step when the server advertises that
+capability. Step results carry synchronization authority evidence so destructive
+finalization is bounded by what was actually traversed rather than by strategy
+telemetry counters.
+
+Operators can also schedule one durable step with
+`POST /api/sync/steps/{step}/start`. The request body contains the typed scope for
+that step (for example all assets, an incremental window, explicit IDs, a persisted
+selection, or a request-backed asset selection). Manual write steps share the
+`asset_sync` lane with normal synchronization, receive isolated non-authoritative
+generations, and do not advance the normal successful watermark. Manual
+finalization requires a completed validation-task reference for the same generation
+plus explicit destructive confirmation.
+
 The seed includes exact-byte and pixel-identical variants, crops, edits,
 occlusions, alpha images, aspect-ratio and dimension variants, negative controls,
 overlapping albums, stacks, favorites, archived assets, and trashed assets. A
