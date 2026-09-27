@@ -18,7 +18,6 @@ from companion.immich import (
     ImmichTag,
 )
 from companion.sync_schema import SyncCapabilities, SyncEvent, SyncRunStatus
-from companion.synchronization import relationships as relationship_module
 from companion.synchronization import service as asset_service_module
 from companion.synchronization.steps import StackSyncStep
 from companion.task_schema import TaskStatusView
@@ -652,7 +651,7 @@ async def test_incremental_sync_finalizes_missing_assets_inside_completed_window
     assert syncs.checkpoints[-1] == ("finalizing", "validated")
 
 
-@pytest.mark.asyncio
+
 async def test_stack_sync_persists_bounded_batches_and_skips_final_pacing() -> None:
     stack_models = [
         ImmichStack(
@@ -703,7 +702,7 @@ async def test_stack_sync_persists_bounded_batches_and_skips_final_pacing() -> N
     assert syncs.checkpoints[-1] == ("relationships", None)
 
 
-@pytest.mark.asyncio
+
 async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> None:
     media = [asset(UUID(int=index + 1000), f"asset-{index}.png") for index in range(9)]
 
@@ -770,7 +769,7 @@ async def test_media_sync_uses_large_pages_bounded_writes_and_page_pacing() -> N
     assert syncs.checkpoints[-1] == ("stacks", None)
 
 
-@pytest.mark.asyncio
+
 async def test_media_sync_resumes_inside_large_api_page() -> None:
     media = [asset(UUID(int=index + 2000), f"resume-{index}.png") for index in range(5)]
 
@@ -836,7 +835,7 @@ async def test_media_sync_resumes_inside_large_api_page() -> None:
     assert syncs.checkpoints[-1] == ("stacks", None)
 
 
-@pytest.mark.asyncio
+
 async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() -> None:
     class RelationshipImmich:
         album_page_size: int | None = None
@@ -908,7 +907,7 @@ async def test_relationship_sync_uses_large_pages_and_skips_final_page_pacing() 
     assert syncs.checkpoints[-1] == ("relationships", None)
 
 
-@pytest.mark.asyncio
+
 async def test_tag_relationships_skip_empty_tags_and_use_runtime_concurrency() -> None:
     class ConcurrentTagImmich:
         def __init__(self) -> None:
@@ -966,7 +965,7 @@ async def test_tag_relationships_skip_empty_tags_and_use_runtime_concurrency() -
     assert assets.calls.count("tag_memberships") == 5
 
 
-@pytest.mark.asyncio
+
 async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traversal() -> None:
     members = [asset(ASSET_ONE, "primary.png")]
     stack = ImmichStack(
@@ -989,7 +988,7 @@ async def test_targeted_relation_repair_replaces_snapshot_only_after_full_traver
     assert assets.calls[-2:] == ["replace_album", "replace_tag"]
 
 
-@pytest.mark.asyncio
+
 async def test_targeted_asset_repair_persists_authoritative_stack_snapshots() -> None:
     members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "member.png")]
     stack = ImmichStack(
@@ -1017,7 +1016,7 @@ async def test_targeted_asset_repair_persists_authoritative_stack_snapshots() ->
     assert assets.calls[-1] == "replace_asset_stacks"
 
 
-@pytest.mark.asyncio
+
 async def test_targeted_asset_repair_clears_removed_stack_snapshots() -> None:
     immich = FakeImmich([asset(ASSET_ONE, "detached.png")], None)
     assets = FakeAssetRepository()
@@ -1065,25 +1064,8 @@ async def test_restore_uses_immich_then_refreshes_asset_albums_and_tags() -> Non
     ]
 
 
-def _incremental_relationship_run() -> SyncRunStatus:
-    return run_status().model_copy(
-        update={
-            "mode": "incremental",
-            "phase": "relationships",
-            "cursor": None,
-        }
-    )
 
 
-def _relationship_strategy_counters() -> dict[str, int]:
-    return {
-        **relationship_counters(),
-        "tag_asset_detail_payload": 0,
-        "tag_asset_detail_fallback": 0,
-    }
-
-
-@pytest.mark.asyncio
 async def test_incremental_relationship_strategy_forced_asset_uses_changed_assets(
     monkeypatch,
 ) -> None:
@@ -1134,7 +1116,7 @@ async def test_incremental_relationship_strategy_forced_asset_uses_changed_asset
     assert syncs.checkpoints[-1] == ("relationships", None)
 
 
-@pytest.mark.asyncio
+
 async def test_incremental_relationship_strategy_forced_relation_traverses_relations(
     monkeypatch,
 ) -> None:
@@ -1171,7 +1153,7 @@ async def test_incremental_relationship_strategy_forced_relation_traverses_relat
     assert "tag_memberships" in immich.calls
 
 
-@pytest.mark.asyncio
+
 async def test_incremental_relationship_strategy_automatic_prefers_changed_assets_on_tie(
     monkeypatch,
 ) -> None:
@@ -1216,7 +1198,7 @@ async def test_incremental_relationship_strategy_automatic_prefers_changed_asset
     assert counters["tag_strategy_asset_oriented"] == 1
 
 
-@pytest.mark.asyncio
+
 async def test_incremental_relationship_strategy_automatic_prefers_relation_when_cheaper(
     monkeypatch,
 ) -> None:
@@ -1258,7 +1240,7 @@ async def test_incremental_relationship_strategy_automatic_prefers_relation_when
     assert "tag_memberships" in immich.calls
 
 
-@pytest.mark.asyncio
+
 async def test_incremental_relationship_asset_strategy_falls_back_to_tag_traversal(
     monkeypatch,
 ) -> None:
