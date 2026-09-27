@@ -1,7 +1,7 @@
 """Architecture guards for the completed first-class synchronization refactor."""
 
-from datetime import UTC, datetime, timedelta
 import inspect
+from datetime import UTC, datetime, timedelta
 
 from companion.asset_service import AssetSyncService
 from companion.sync_schema import SyncRunStatus
