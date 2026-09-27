@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import datetime
 from json import JSONDecodeError, JSONDecoder
 from time import perf_counter
 from typing import Any, Literal
@@ -21,9 +21,8 @@ from companion.sync_telemetry import current_sync_telemetry
 
 TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 SUPPORTED_IMMICH_MAJOR = 3
-SUPPORTED_IMMICH_MINORS = frozenset({1, 2})
-SUPPORTED_IMMICH_API_VERSION = "3.1.x–3.2.x"
-TRASH_SEARCH_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+SUPPORTED_IMMICH_MINORS = frozenset({2})
+SUPPORTED_IMMICH_API_VERSION = "3.2.x"
 
 
 class ImmichApiError(RuntimeError):
@@ -216,7 +215,8 @@ class ImmichAssetSearchPage(ImmichModel):
     count: int
     total: int
     items: list[ImmichAsset]
-    next_page: str | None = Field(alias="nextPage")
+    next_cursor: str | None = Field(default=None, alias="nextCursor")
+    request_cursor: str | None = Field(default=None, exclude=True)
 
 
 class ImmichSearchResponse(ImmichModel):
@@ -548,9 +548,10 @@ class ImmichApiClient:
 
     async def search_assets_page(
         self,
-        page: int,
         *,
         size: int = 250,
+        cursor: str | None = None,
+        filter: Mapping[str, Any] | None = None,
         album_ids: list[UUID] | None = None,
         tag_ids: list[UUID] | None = None,
         trashed: bool | None = None,
@@ -558,38 +559,40 @@ class ImmichApiClient:
         updated_before: datetime | None = None,
         with_exif: bool = False,
     ) -> ImmichAssetSearchPage:
-        """Retrieve one lightweight active-asset metadata-search page."""
+        """Retrieve one Immich 3.2 structured-search page."""
 
+        search_filter: dict[str, Any] = dict(filter or {})
+        search_filter.setdefault("trashedAt", {"ne": None} if trashed else {"eq": None})
+        if album_ids:
+            search_filter["albumIds"] = {"any": [str(album_id) for album_id in album_ids]}
+        if tag_ids:
+            search_filter["tagIds"] = {"any": [str(tag_id) for tag_id in tag_ids]}
+        if updated_after or updated_before:
+            search_filter["updatedAt"] = {
+                **({"gt": updated_after.isoformat()} if updated_after else {}),
+                **({"lt": updated_before.isoformat()} if updated_before else {}),
+            }
         payload: dict[str, Any] = {
-            "page": page,
             "size": size,
-            "order": "asc",
+            "filter": search_filter,
+            "orderBy": {"field": "fileCreatedAt", "direction": "asc"},
             "withExif": with_exif,
             "withPeople": False,
             # Immich hides stack children when this is false. Keep the complete
             # inventory here; stack relationships are still synchronized by
             # the separate stack stage and stripped before asset persistence.
             "withStacked": True,
-            "withDeleted": bool(trashed),
-            "withArchived": True,
         }
-        if album_ids:
-            payload["albumIds"] = [str(album_id) for album_id in album_ids]
-        if tag_ids:
-            payload["tagIds"] = [str(tag_id) for tag_id in tag_ids]
-        if trashed:
-            payload["trashedAfter"] = TRASH_SEARCH_EPOCH.isoformat()
-        if updated_after:
-            payload["updatedAfter"] = updated_after.isoformat()
-        if updated_before:
-            payload["updatedBefore"] = updated_before.isoformat()
+        if cursor is not None:
+            payload["cursor"] = cursor
         response = await self._request(
             "POST",
             "/api/search/metadata",
             operation="search assets",
             json=payload,
         )
-        return ImmichSearchResponse.model_validate(response.json()).assets
+        page = ImmichSearchResponse.model_validate(response.json()).assets
+        return page.model_copy(update={"request_cursor": cursor})
 
     async def iter_assets(
         self,
@@ -617,54 +620,52 @@ class ImmichApiClient:
         updated_after: datetime | None = None,
         updated_before: datetime | None = None,
         start_page: int = 1,
+        start_cursor: str | None = None,
         with_exif: bool = False,
     ) -> AsyncIterator[tuple[int, ImmichAssetSearchPage]]:
         """Yield bounded active-asset pages with their durable page number."""
 
-        page_number = start_page
+        page_number = start_page if start_cursor is not None else 1
+        cursor = start_cursor
         seen_tokens: set[str] = set()
         while True:
             page = await self.search_assets_page(
-                page_number,
                 size=page_size,
+                cursor=cursor,
                 updated_after=updated_after,
                 updated_before=updated_before,
                 with_exif=with_exif,
             )
-            yield page_number, page
+            if page_number >= start_page:
+                yield page_number, page
 
-            token = page.next_page
+            token = page.next_cursor
             if token is None:
                 return
             if token in seen_tokens:
                 raise ImmichApiError("search assets pagination")
             seen_tokens.add(token)
-            try:
-                page_number = int(token)
-            except ValueError as error:
-                raise ImmichApiError("search assets pagination") from error
+            cursor = token
+            page_number += 1
 
     async def iter_trashed_assets(self, *, page_size: int = 1000) -> AsyncIterator[ImmichAsset]:
         """Yield the complete live Immich trash and reject leaked active results."""
 
-        page_number = 1
+        cursor: str | None = None
         seen_tokens: set[str] = set()
         while True:
-            page = await self.search_assets_page(page_number, size=page_size, trashed=True)
+            page = await self.search_assets_page(size=page_size, cursor=cursor, trashed=True)
             for asset in page.items:
                 if asset.is_trashed:
                     yield asset
 
-            token = page.next_page
+            token = page.next_cursor
             if token is None:
                 return
             if token in seen_tokens:
                 raise ImmichApiError("search trashed assets pagination")
             seen_tokens.add(token)
-            try:
-                page_number = int(token)
-            except ValueError as error:
-                raise ImmichApiError("search trashed assets pagination") from error
+            cursor = token
 
     async def count_assets(
         self,
@@ -1006,7 +1007,7 @@ class ImmichApiClient:
         """Set archive visibility for a batch through Immich."""
 
         await self._request(
-            "PUT",
+            "PATCH",
             "/api/assets",
             operation="archive assets" if archived else "unarchive assets",
             json={
@@ -1019,7 +1020,7 @@ class ImmichApiClient:
         """Set favorite state for a batch through Immich."""
 
         await self._request(
-            "PUT",
+            "PATCH",
             "/api/assets",
             operation="favorite assets" if favorite else "unfavorite assets",
             json={
@@ -1136,24 +1137,24 @@ class ImmichApiClient:
     ) -> AsyncIterator[list[UUID]]:
         """Yield bounded album-membership pages through metadata search."""
 
-        page_number = start_page
+        page_number = 1
+        cursor: str | None = None
         seen_tokens: set[str] = set()
         while True:
             page = await self.search_assets_page(
-                page_number,
                 size=page_size,
+                cursor=cursor,
                 album_ids=[album_id],
             )
-            yield [asset.id for asset in page.items]
-            if page.next_page is None:
+            if page_number >= start_page:
+                yield [asset.id for asset in page.items]
+            if page.next_cursor is None:
                 return
-            if page.next_page in seen_tokens:
+            if page.next_cursor in seen_tokens:
                 raise ImmichApiError("album membership pagination")
-            seen_tokens.add(page.next_page)
-            try:
-                page_number = int(page.next_page)
-            except ValueError as error:
-                raise ImmichApiError("album membership pagination") from error
+            seen_tokens.add(page.next_cursor)
+            cursor = page.next_cursor
+            page_number += 1
 
     async def list_albums(self, assets: list[ImmichAsset]) -> list[ImmichAlbum]:
         """Compatibility helper returning catalogs with resolved memberships."""
@@ -1226,7 +1227,7 @@ class ImmichApiClient:
         """Promote an existing member before removing a stack primary."""
 
         await self._request(
-            "PUT",
+            "PATCH",
             f"/api/stacks/{stack_id}",
             json={"primaryAssetId": str(asset_id)},
             operation="update stack primary",
@@ -1278,24 +1279,24 @@ class ImmichApiClient:
     ) -> AsyncIterator[list[UUID]]:
         """Yield bounded tag-membership pages through metadata search."""
 
-        page_number = start_page
+        page_number = 1
+        cursor: str | None = None
         seen_tokens: set[str] = set()
         while True:
             page = await self.search_assets_page(
-                page_number,
                 size=page_size,
+                cursor=cursor,
                 tag_ids=[tag_id],
             )
-            yield [asset.id for asset in page.items]
-            if page.next_page is None:
+            if page_number >= start_page:
+                yield [asset.id for asset in page.items]
+            if page.next_cursor is None:
                 return
-            if page.next_page in seen_tokens:
+            if page.next_cursor in seen_tokens:
                 raise ImmichApiError("tag membership pagination")
-            seen_tokens.add(page.next_page)
-            try:
-                page_number = int(page.next_page)
-            except ValueError as error:
-                raise ImmichApiError("tag membership pagination") from error
+            seen_tokens.add(page.next_cursor)
+            cursor = page.next_cursor
+            page_number += 1
 
     async def list_tags(self, assets: list[ImmichAsset]) -> list[ImmichTag]:
         """Compatibility helper returning catalogs with resolved memberships."""

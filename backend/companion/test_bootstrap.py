@@ -728,7 +728,7 @@ def main() -> None:
     manifest_hash = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     state = {
         "ready": True,
-        "immich_version": "v3.1.0",
+        "immich_version": "v3.2.0",
         "clean_reset": clean_reset,
         "manifest_sha256": manifest_hash,
         "source_files": source_files,

@@ -28,7 +28,7 @@ def pong_transport() -> httpx.MockTransport:
         if request.url.path == "/api/server/version":
             return httpx.Response(
                 200,
-                json={"major": 3, "minor": 1, "patch": 0, "prerelease": None},
+                json={"major": 3, "minor": 2, "patch": 0, "prerelease": None},
             )
         assert request.url.path == "/api/server/ping"
         return httpx.Response(200, json={"res": "pong"})
@@ -440,9 +440,9 @@ def test_restore_listing_is_paged_directly_from_immich() -> None:
         assert request.url.path == "/api/search/metadata"
         request_payload = json.loads(request.read())
         assert request_payload["size"] == 1000
-        assert request_payload["trashedAfter"] == "1970-01-01T00:00:00+00:00"
+        assert request_payload["filter"]["trashedAt"] == {"ne": None}
         assert "isTrashed" not in request_payload
-        page = request_payload["page"]
+        page = 2 if request_payload.get("cursor") == "trash-next" else 1
         items = (
             [
                 immich_asset_payload(active_id, trashed=False),
@@ -458,7 +458,7 @@ def test_restore_listing_is_paged_directly_from_immich() -> None:
                     "count": len(items),
                     "total": len(items),
                     "items": items,
-                    "nextPage": "2" if page == 1 else None,
+                    "nextCursor": "trash-next" if page == 1 else None,
                 }
             },
         )

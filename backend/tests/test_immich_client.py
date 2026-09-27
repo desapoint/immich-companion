@@ -201,9 +201,10 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
         assert body["withExif"] is False
         assert body["withPeople"] is False
         assert body["withStacked"] is True
-        assert body["withDeleted"] is False
-        assert body["withArchived"] is True
-        page = int(body["page"])
+        assert body["filter"] == {"trashedAt": {"eq": None}}
+        assert body["orderBy"] == {"field": "fileCreatedAt", "direction": "asc"}
+        assert "page" not in body and "withDeleted" not in body
+        page = 2 if body.get("cursor") == "opaque-next" else 1
         item = asset_payload(ASSET_ONE if page == 1 else ASSET_TWO, f"page-{page}.jpg")
         return httpx.Response(
             200,
@@ -213,7 +214,7 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
                     "total": 2,
                     "facets": [],
                     "items": [item],
-                    "nextPage": "2" if page == 1 else None,
+                    "nextCursor": "opaque-next" if page == 1 else None,
                 },
                 "albums": {"total": 0, "count": 0, "items": [], "facets": []},
             },
@@ -228,6 +229,77 @@ async def test_metadata_search_is_typed_authenticated_and_paginated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_structured_search_preserves_or_and_relation_match_operators() -> None:
+    requested_filter = {
+        "albumIds": {"any": [str(ALBUM_ONE)]},
+        "or": [
+            {"tagIds": {"all": [str(ASSET_ONE), str(ASSET_TWO)]}},
+            {"personIds": {"none": [str(ASSET_TWO)]}},
+        ],
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["filter"] == {
+            **requested_filter,
+            "trashedAt": {"eq": None},
+        }
+        assert "page" not in body and "tagIds" not in body
+        return httpx.Response(200, json={"assets": {"count": 0, "total": 0, "items": []}})
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    result = await client.search_assets_page(filter=requested_filter)
+
+    assert result.items == []
+
+
+@pytest.mark.asyncio
+async def test_resume_replays_cursor_pages_before_saved_page() -> None:
+    cursors: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        cursor = body.get("cursor")
+        cursors.append(cursor)
+        next_cursor = {
+            None: "cursor-two",
+            "cursor-two": "cursor-three",
+            "cursor-three": None,
+        }[cursor]
+        return httpx.Response(
+            200,
+            json={"assets": {"count": 0, "total": 0, "items": [], "nextCursor": next_cursor}},
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    pages = [number async for number, _ in client.iter_asset_pages(start_page=3)]
+
+    assert pages == [3]
+    assert cursors == [None, "cursor-two", "cursor-three"]
+
+
+@pytest.mark.asyncio
+async def test_resume_uses_saved_cursor_without_replaying_prior_pages() -> None:
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        seen.append(body.get("cursor"))
+        return httpx.Response(
+            200,
+            json={"assets": {"count": 0, "total": 0, "items": [], "nextCursor": None}},
+        )
+
+    client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
+    pages = [
+        number async for number, _ in client.iter_asset_pages(start_page=3, start_cursor="saved")
+    ]
+
+    assert pages == [3]
+    assert seen == ["saved"]
+
+
+@pytest.mark.asyncio
 async def test_on_demand_metadata_traversal_can_request_file_sizes() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
@@ -239,7 +311,7 @@ async def test_on_demand_metadata_traversal_can_request_file_sizes() -> None:
                     "count": 1,
                     "total": 1,
                     "items": [asset_payload(ASSET_ONE, "sized.jpg")],
-                    "nextPage": None,
+                    "nextCursor": None,
                 }
             },
         )
@@ -268,13 +340,13 @@ async def test_full_asset_count_uses_statistics_and_window_count_is_indeterminat
 
 
 @pytest.mark.asyncio
-async def test_trashed_assets_use_epoch_filter_and_drop_active_leaks() -> None:
+async def test_trashed_assets_use_structured_filter_and_drop_active_leaks() -> None:
     payloads: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
         payloads.append(body)
-        page = int(body["page"])
+        page = 2 if body.get("cursor") == "opaque-trash" else 1
         active = asset_payload(ASSET_ONE, "active.jpg")
         trashed = asset_payload(ASSET_TWO, "trashed.jpg")
         trashed["isTrashed"] = True
@@ -285,7 +357,7 @@ async def test_trashed_assets_use_epoch_filter_and_drop_active_leaks() -> None:
                     "count": 2 if page == 1 else 1,
                     "total": 2 if page == 1 else 1,
                     "items": [active, trashed] if page == 1 else [trashed],
-                    "nextPage": "2" if page == 1 else None,
+                    "nextCursor": "opaque-trash" if page == 1 else None,
                 }
             },
         )
@@ -296,26 +368,21 @@ async def test_trashed_assets_use_epoch_filter_and_drop_active_leaks() -> None:
     assert [asset.id for asset in assets] == [ASSET_TWO, ASSET_TWO]
     assert payloads == [
         {
-            "page": 1,
             "size": 48,
-            "order": "asc",
+            "filter": {"trashedAt": {"ne": None}},
+            "orderBy": {"field": "fileCreatedAt", "direction": "asc"},
             "withExif": False,
             "withPeople": False,
             "withStacked": True,
-            "withDeleted": True,
-            "withArchived": True,
-            "trashedAfter": "1970-01-01T00:00:00+00:00",
         },
         {
-            "page": 2,
             "size": 48,
-            "order": "asc",
+            "cursor": "opaque-trash",
+            "filter": {"trashedAt": {"ne": None}},
+            "orderBy": {"field": "fileCreatedAt", "direction": "asc"},
             "withExif": False,
             "withPeople": False,
             "withStacked": True,
-            "withDeleted": True,
-            "withArchived": True,
-            "trashedAfter": "1970-01-01T00:00:00+00:00",
         },
     ]
 
@@ -327,8 +394,7 @@ async def test_incremental_metadata_window_is_bounded_in_request_payload() -> No
 
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)
-        assert body["updatedAfter"] == lower.isoformat()
-        assert body["updatedBefore"] == upper.isoformat()
+        assert body["filter"]["updatedAt"] == {"gt": lower.isoformat(), "lt": upper.isoformat()}
         return httpx.Response(
             200,
             json={
@@ -336,7 +402,7 @@ async def test_incremental_metadata_window_is_bounded_in_request_payload() -> No
                     "count": 0,
                     "total": 0,
                     "items": [],
-                    "nextPage": None,
+                    "nextCursor": None,
                 }
             },
         )
@@ -380,7 +446,7 @@ async def test_optional_sync_stream_is_typed_and_acknowledged() -> None:
     assert requests[1].url.params["cursor"] == "cursor-1"
 
 
-@pytest.mark.parametrize("minor", [1, 2])
+@pytest.mark.parametrize("minor", [2])
 @pytest.mark.asyncio
 async def test_server_version_is_typed_and_reports_supported_api_line(minor: int) -> None:
     requests: list[httpx.Request] = []
@@ -410,6 +476,7 @@ async def test_server_version_is_typed_and_reports_supported_api_line(minor: int
     ("version_payload", "label"),
     [
         ({"major": 3, "minor": 3, "patch": 0, "prerelease": None}, "3.3.0"),
+        ({"major": 3, "minor": 1, "patch": 9, "prerelease": None}, "3.1.9"),
         ({"major": 3, "minor": 1, "patch": 9, "prerelease": 2}, "3.1.9-prerelease.2"),
         ({"major": 3, "minor": 2, "patch": 0, "prerelease": 1}, "3.2.0-prerelease.1"),
         ({"major": 4, "minor": 0, "patch": 0, "prerelease": None}, "4.0.0"),
@@ -432,7 +499,7 @@ async def test_server_version_report_marks_other_api_lines_incompatible(
     assert report.status == "incompatible"
     assert report.server_version is not None
     assert report.server_version.label == label
-    assert report.supported_api_version == "3.1.x–3.2.x"
+    assert report.supported_api_version == "3.2.x"
 
 
 @pytest.mark.asyncio
@@ -460,7 +527,7 @@ async def test_transient_retries_are_bounded_and_secrets_are_redacted() -> None:
     client = ImmichApiClient(settings(), transport=httpx.MockTransport(handler))
 
     with pytest.raises(ImmichApiError) as raised:
-        await client.search_assets_page(1)
+        await client.search_assets_page()
 
     assert attempts == 3
     assert raised.value.status_code == 503
@@ -579,7 +646,7 @@ async def test_album_memberships_use_paged_metadata_search() -> None:
                 ],
             )
         body = json.loads(request.content)
-        assert body["albumIds"] == [str(album_id)]
+        assert body["filter"]["albumIds"] == {"any": [str(album_id)]}
         assert body["size"] == 1000
         return httpx.Response(
             200,
@@ -588,7 +655,7 @@ async def test_album_memberships_use_paged_metadata_search() -> None:
                     "count": 1,
                     "total": 1,
                     "items": [asset_payload(ASSET_ONE, "album-member.png")],
-                    "nextPage": None,
+                    "nextCursor": None,
                 }
             },
         )
@@ -729,7 +796,7 @@ async def test_stack_mutations_use_supported_stack_routes() -> None:
 
     assert requests == [
         ("DELETE", f"/api/stacks/{stack_id}/assets/{ASSET_TWO}"),
-        ("PUT", f"/api/stacks/{stack_id}"),
+        ("PATCH", f"/api/stacks/{stack_id}"),
         ("DELETE", f"/api/stacks/{stack_id}"),
     ]
 
@@ -753,7 +820,7 @@ async def test_tag_memberships_use_paged_metadata_search() -> None:
                 ],
             )
         body = json.loads(request.content)
-        assert body["tagIds"] == [str(tag_id)]
+        assert body["filter"]["tagIds"] == {"any": [str(tag_id)]}
         assert body["size"] == 1000
         return httpx.Response(
             200,
@@ -762,7 +829,7 @@ async def test_tag_memberships_use_paged_metadata_search() -> None:
                     "count": 1,
                     "total": 1,
                     "items": [asset_payload(ASSET_ONE, "tagged.png")],
-                    "nextPage": None,
+                    "nextCursor": None,
                 }
             },
         )
@@ -809,10 +876,10 @@ async def test_bulk_mutations_use_supported_immich_endpoints() -> None:
         ("PUT", f"/api/albums/{album_id}/assets", {"ids": [str(ASSET_ONE)]}),
         ("DELETE", f"/api/tags/{tag_id}/assets", {"ids": [str(ASSET_TWO)]}),
         ("PUT", f"/api/tags/{tag_id}/assets", {"ids": [str(ASSET_TWO)]}),
-        ("PUT", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "archive"}),
-        ("PUT", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "timeline"}),
-        ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": True}),
-        ("PUT", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": False}),
+        ("PATCH", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "archive"}),
+        ("PATCH", "/api/assets", {"ids": [str(ASSET_ONE)], "visibility": "timeline"}),
+        ("PATCH", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": True}),
+        ("PATCH", "/api/assets", {"ids": [str(ASSET_TWO)], "isFavorite": False}),
         ("DELETE", "/api/assets", {"ids": [str(ASSET_ONE)], "force": False}),
         ("POST", "/api/trash/restore/assets", {"ids": [str(ASSET_ONE)]}),
         ("DELETE", "/api/assets", {"ids": [str(ASSET_TWO)], "force": True}),
