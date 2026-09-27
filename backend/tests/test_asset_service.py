@@ -1,6 +1,5 @@
 """Staged sync ordering, enrichment, and checkpoint coverage."""
 
-import asyncio
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import UUID
