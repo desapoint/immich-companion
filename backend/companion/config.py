@@ -7,7 +7,7 @@ from typing import Literal
 from pydantic import Field, HttpUrl, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-SYNC_FULL_BATCH_SIZE_MAX = 2_000
+SYNC_FULL_BATCH_SIZE_MAX = 1_000
 SYNC_FULL_MIN_BATCH_DELAY_SECONDS_MAX = 300
 SYNC_TAG_ASSOCIATION_CONCURRENCY_MAX = 128
 SYNC_METADATA_REQUEST_CONCURRENCY_MAX = 64
@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     allow_destructive_actions: bool = False
     action_max_targets: int = Field(default=5000, ge=1, le=50000)
     action_plan_ttl_seconds: int = Field(default=900, ge=30, le=86400)
-    sync_batch_size: int = Field(default=250, ge=25, le=2000)
+    sync_batch_size: int = Field(default=250, ge=25, le=SYNC_FULL_BATCH_SIZE_MAX)
     sync_overlap_seconds: int = Field(
         default=300, ge=0, le=SYNC_INCREMENTAL_OVERLAP_SECONDS_MAX
     )

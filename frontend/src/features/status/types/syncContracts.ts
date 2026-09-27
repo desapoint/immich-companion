@@ -51,7 +51,7 @@ export interface SyncRuntimeSettings {
 }
 
 export const SYNC_RUNTIME_LIMITS = {
-  fullBatchSize: 2_000,
+  fullBatchSize: 1_000,
   fullMinBatchDelaySeconds: 300,
   tagAssociationConcurrency: 128,
   metadataRequestConcurrency: 64,

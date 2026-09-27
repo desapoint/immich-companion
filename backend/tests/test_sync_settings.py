@@ -115,7 +115,7 @@ async def test_environment_values_seed_runtime_settings_and_incremental_batch_si
 
 def test_runtime_settings_accept_expanded_safe_upper_bounds() -> None:
     value = SyncRuntimeSettings(
-        full_batch_size=2_000,
+        full_batch_size=1_000,
         full_min_batch_delay_seconds=300,
         tag_association_concurrency=128,
         metadata_request_concurrency=64,
@@ -124,14 +124,14 @@ def test_runtime_settings_accept_expanded_safe_upper_bounds() -> None:
         incremental_overlap_seconds=7 * 86_400,
     )
 
-    assert value.full_batch_size == 2_000
+    assert value.full_batch_size == 1_000
     assert value.incremental_overlap_seconds == 604_800
 
 
 def test_runtime_settings_still_reject_values_above_expanded_bounds() -> None:
     with pytest.raises(ValidationError):
         SyncRuntimeSettings(
-            full_batch_size=2_001,
+            full_batch_size=1_001,
             full_min_batch_delay_seconds=300,
             tag_association_concurrency=128,
             metadata_request_concurrency=64,
@@ -139,3 +139,9 @@ def test_runtime_settings_still_reject_values_above_expanded_bounds() -> None:
             api_page_size=1_000,
             incremental_overlap_seconds=7 * 86_400,
         )
+
+
+def test_sync_run_status_accepts_current_and_historical_batch_sizes() -> None:
+    for batch_size in (1_000, 2_000):
+        run = full_run().model_copy(update={"full_batch_size": batch_size})
+        assert SyncRunStatus.model_validate(run.model_dump()).full_batch_size == batch_size

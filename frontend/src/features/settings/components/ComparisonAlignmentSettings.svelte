@@ -68,7 +68,7 @@
   function update(field: 'maxDisplacementPercent' | 'maxRotationDegrees' | 'maxZoomPercent', raw: string): void {
     const value = Number(raw);
     if (!settings || !Number.isFinite(value)) return;
-    settings[field] = Math.trunc(value);
+    settings[field] = value;
     success = '';
   }
 
@@ -101,6 +101,7 @@
         value={settings.maxDisplacementPercent}
         onchange={(value) => update('maxDisplacementPercent', value)}
       />
+      <span class="v2-small v2-muted">Accepted range: 0–50 whole percent.</span>
       <span class="v2-small v2-muted">
         Defaults to 10%. The comparison searches up to this fraction of the frame in each direction; 0 disables displacement compensation.
       </span>
@@ -113,6 +114,7 @@
         value={settings.maxRotationDegrees}
         onchange={(value) => update('maxRotationDegrees', value)}
       />
+      <span class="v2-small v2-muted">Accepted range: 0–30 whole degrees.</span>
       <span class="v2-small v2-muted">
         Defaults to 0° (off). When enabled, the comparison checks whole-degree rotations up to 30° in either direction. Higher limits add comparison work and can align away camera roll.
       </span>
@@ -125,6 +127,7 @@
         value={settings.maxZoomPercent}
         onchange={(value) => update('maxZoomPercent', value)}
       />
+      <span class="v2-small v2-muted">Accepted range: 0–50 whole percent.</span>
       <span class="v2-small v2-muted">
         Defaults to 0% (off). Allows the diagnostic to compensate for up to this much absolute scale difference, zooming the comparison frame in either direction.
       </span>

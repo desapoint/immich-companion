@@ -98,7 +98,8 @@ class SyncRunStatus(BaseModel):
 
     id: UUID
     task_id: UUID | None = None
-    full_batch_size: int | None = Field(default=None, ge=1, le=500)
+    # Historical runs can retain a batch size above the current editable limit.
+    full_batch_size: int | None = Field(default=None, ge=1)
     mode: SyncMode
     status: SyncStatus
     phase: SyncPhase

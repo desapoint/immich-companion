@@ -20,6 +20,23 @@ function errorKind(status: number): ApiErrorKind {
   return 'unknown';
 }
 
+function errorDetail(detail: unknown, status: number): string {
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) {
+    const issues = detail.flatMap((item: unknown) => {
+      if (!item || typeof item !== 'object') return [];
+      const issue = item as { loc?: unknown; msg?: unknown };
+      if (typeof issue.msg !== 'string') return [];
+      const field = Array.isArray(issue.loc)
+        ? issue.loc.filter((part): part is string | number => typeof part === 'string' || typeof part === 'number').filter((part) => part !== 'body').join('.')
+        : '';
+      return [field ? `${field}: ${issue.msg}` : issue.msg];
+    });
+    if (issues.length) return issues.join(' ');
+  }
+  return `Request failed with HTTP ${status}.`;
+}
+
 export async function request(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (!headers.has('accept')) headers.set('accept', 'application/json');
@@ -27,7 +44,7 @@ export async function request(input: RequestInfo | URL, init?: RequestInit): Pro
     const response = await fetch(input, { ...init, headers });
     if (response.ok) return response;
     const body = await response.json().catch(() => null) as { detail?: unknown } | null;
-    const detail = typeof body?.detail === 'string' ? body.detail : `Request failed with HTTP ${response.status}.`;
+    const detail = errorDetail(body?.detail, response.status);
     throw new ApiError(detail, errorKind(response.status), response.status);
   } catch (error) {
     if (error instanceof ApiError || error instanceof DOMException && error.name === 'AbortError') throw error;
