@@ -70,6 +70,7 @@ _SYNC_RUNTIME_OVERRIDE: ContextVar[SyncRuntimeSettings | None] = ContextVar(
     "sync_runtime_override", default=None
 )
 ALBUM_MEMBERSHIP_PAGE_SIZE = 1000
+ALBUM_MEMBERSHIP_PAGE_SIZE = 1000
 
 
 def _dedupe_digest(parts: list[str]) -> str:
