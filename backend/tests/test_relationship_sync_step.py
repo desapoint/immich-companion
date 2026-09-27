@@ -25,6 +25,7 @@ from companion.synchronization.steps import (
 )
 
 ASSET_ONE = UUID("11111111-1111-4111-8111-111111111111")
+ASSET_TWO = UUID("22222222-2222-4222-8222-222222222222")
 ALBUM_ONE = UUID("33333333-3333-4333-8333-333333333333")
 TAG_ONE = UUID("44444444-4444-4444-8444-444444444444")
 SELECTION_ID = UUID("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
@@ -310,6 +311,258 @@ async def test_asset_strategy_tag_fallback_returns_complete_tag_evidence(
     assert result.counters["tag_strategy_asset_fallback"] == 1
     assert "tag_memberships" in immich.calls
     assert result.outputs == {"strategy": "by_asset", "tag_fallback": True}
+
+
+@pytest.mark.asyncio
+async def test_forced_asset_strategy_uses_selected_assets() -> None:
+    immich = FakeImmich()
+    selections = FakeSelections()
+    selections.asset_batches = [[ASSET_ONE]]
+    reconciled: list[list[UUID]] = []
+
+    async def reconcile(_immich, _assets, ids, *, generation, concurrency):
+        assert generation == 41
+        assert concurrency == 1
+        reconciled.append(list(ids))
+        return SimpleNamespace(
+            album_links=1,
+            tag_links=1,
+            payload_assets=1,
+            tag_fallback_assets=0,
+        )
+
+    original = relationship_module.reconcile_generation_asset_relations
+    relationship_module.reconcile_generation_asset_relations = reconcile
+    try:
+        result = await RelationshipSyncStep(
+            immich,  # type: ignore[arg-type]
+            FakeAssets(),  # type: ignore[arg-type]
+            selections,  # type: ignore[arg-type]
+        ).run(
+            context(),
+            RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy="by_asset",
+                assets=GenerationSelection(generation=41),
+            ),
+        )
+    finally:
+        relationship_module.reconcile_generation_asset_relations = original
+
+    assert reconciled == [[ASSET_ONE]]
+    assert result.outputs["strategy"] == "by_asset"
+    assert "album_memberships" not in immich.calls
+    assert "tag_memberships" not in immich.calls
+
+
+@pytest.mark.asyncio
+async def test_forced_relation_strategy_traverses_relations() -> None:
+    immich = FakeImmich()
+
+    async def unexpected(*_args, **_kwargs):
+        raise AssertionError("forced relation strategy must not reconcile selected assets")
+
+    original = relationship_module.reconcile_generation_asset_relations
+    relationship_module.reconcile_generation_asset_relations = unexpected
+    try:
+        result = await RelationshipSyncStep(
+            immich,  # type: ignore[arg-type]
+            FakeAssets(),  # type: ignore[arg-type]
+            FakeSelections(),  # type: ignore[arg-type]
+        ).run(
+            context(),
+            RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy="by_relation",
+                albums=AllSelection(),
+                tags=AllSelection(),
+            ),
+        )
+    finally:
+        relationship_module.reconcile_generation_asset_relations = original
+
+    assert result.outputs["strategy"] == "by_relation"
+    assert "album_memberships" in immich.calls
+    assert "tag_memberships" in immich.calls
+
+
+@pytest.mark.asyncio
+async def test_automatic_strategy_prefers_assets_on_equal_cost() -> None:
+    immich = FakeImmich()
+    selections = FakeSelections()
+    selections.asset_batches = [[ASSET_ONE]]
+    reconciled: list[list[UUID]] = []
+
+    async def reconcile(_immich, _assets, ids, *, generation, concurrency):
+        reconciled.append(list(ids))
+        return SimpleNamespace(
+            album_links=1,
+            tag_links=1,
+            payload_assets=1,
+            tag_fallback_assets=0,
+        )
+
+    original = relationship_module.reconcile_generation_asset_relations
+    relationship_module.reconcile_generation_asset_relations = reconcile
+    try:
+        result = await RelationshipSyncStep(
+            immich,  # type: ignore[arg-type]
+            FakeAssets(),  # type: ignore[arg-type]
+            selections,  # type: ignore[arg-type]
+        ).run(
+            context(),
+            RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy="automatic",
+                assets=GenerationSelection(generation=41),
+                albums=AllSelection(),
+                tags=AllSelection(),
+            ),
+        )
+    finally:
+        relationship_module.reconcile_generation_asset_relations = original
+
+    assert reconciled == [[ASSET_ONE]]
+    assert result.outputs["strategy"] == "by_asset"
+
+
+@pytest.mark.asyncio
+async def test_automatic_strategy_prefers_relation_when_cheaper() -> None:
+    immich = FakeImmich()
+    selections = FakeSelections()
+    selections.asset_batches = [[ASSET_ONE, ASSET_TWO]]
+
+    async def unexpected(*_args, **_kwargs):
+        raise AssertionError("automatic strategy should choose relation traversal")
+
+    original = relationship_module.reconcile_generation_asset_relations
+    relationship_module.reconcile_generation_asset_relations = unexpected
+    try:
+        result = await RelationshipSyncStep(
+            immich,  # type: ignore[arg-type]
+            FakeAssets(),  # type: ignore[arg-type]
+            selections,  # type: ignore[arg-type]
+        ).run(
+            context(),
+            RelationshipScope(
+                kinds={"albums", "tags"},
+                strategy="automatic",
+                assets=GenerationSelection(generation=41),
+                albums=AllSelection(),
+                tags=AllSelection(),
+            ),
+        )
+    finally:
+        relationship_module.reconcile_generation_asset_relations = original
+
+    assert result.outputs["strategy"] == "by_relation"
+    assert "album_memberships" in immich.calls
+    assert "tag_memberships" in immich.calls
+
+
+@pytest.mark.asyncio
+async def test_relation_traversal_preserves_page_pacing_and_large_page_size() -> None:
+    class PagedImmich(FakeImmich):
+        def __init__(self) -> None:
+            super().__init__()
+            self.album_page_size: int | None = None
+            self.tag_page_size: int | None = None
+
+        async def iter_album_asset_ids(self, _album_id, *, page_size, start_page):
+            assert start_page == 1
+            self.album_page_size = page_size
+            yield [ASSET_ONE]
+            yield [ASSET_TWO]
+            yield [ASSET_ONE, ASSET_TWO]
+
+        async def iter_tag_asset_ids(self, _tag_id, *, page_size, start_page):
+            assert start_page == 1
+            self.tag_page_size = page_size
+            yield [ASSET_ONE]
+            yield [ASSET_TWO]
+
+    class PacedStep(RelationshipSyncStep):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            self.paced = 0
+
+        async def pace(self, _context, _started):
+            self.paced += 1
+
+    immich = PagedImmich()
+    step = PacedStep(
+        immich,  # type: ignore[arg-type]
+        FakeAssets(),  # type: ignore[arg-type]
+        FakeSelections(),  # type: ignore[arg-type]
+    )
+    result = await step.run(
+        context(),
+        RelationshipScope(
+            kinds={"albums", "tags"},
+            strategy="by_relation",
+            albums=AllSelection(),
+            tags=AllSelection(),
+        ),
+    )
+
+    assert immich.album_page_size == 1000
+    assert immich.tag_page_size == 1000
+    assert step.paced == 3
+    assert result.counters["album_memberships"] == 4
+    assert result.counters["tag_memberships"] == 2
+
+
+@pytest.mark.asyncio
+async def test_tag_relation_traversal_preserves_runtime_concurrency_and_empty_counts() -> None:
+    tag_ids = [
+        UUID(f"{index:08x}-0000-4000-8000-000000000000")
+        for index in range(1, 7)
+    ]
+
+    class ConcurrentTagImmich(FakeImmich):
+        def __init__(self) -> None:
+            super().__init__()
+            self.active = 0
+            self.maximum_active = 0
+            self.tag_catalog = [
+                ImmichTag(
+                    id=tag_id,
+                    name=f"Tag {index}",
+                    value=f"Tag {index}",
+                    assetCount=0 if index == 0 else 1,
+                )
+                for index, tag_id in enumerate(tag_ids)
+            ]
+
+        async def iter_tag_asset_ids(self, tag_id, *, page_size, start_page):
+            assert page_size == 1000
+            assert start_page == 1
+            self.active += 1
+            self.maximum_active = max(self.maximum_active, self.active)
+            await __import__("asyncio").sleep(0)
+            yield [] if tag_id == tag_ids[0] else [ASSET_ONE]
+            self.active -= 1
+
+    immich = ConcurrentTagImmich()
+    assets = FakeAssets()
+    assets.tag_asset_counts = lambda: None  # type: ignore[method-assign]
+    result = await RelationshipSyncStep(
+        immich,  # type: ignore[arg-type]
+        assets,  # type: ignore[arg-type]
+        FakeSelections(),  # type: ignore[arg-type]
+    ).run(
+        context(),
+        RelationshipScope(
+            kinds={"tags"},
+            strategy="by_relation",
+            tags=AllSelection(),
+        ),
+    )
+
+    assert immich.maximum_active == 4
+    assert result.counters["tag_memberships"] == 5
+    assert result.counters["tag_relationships_scanned"] == 6
+    assert result.counters["tag_empty_relationships"] == 1
 
 
 @pytest.mark.asyncio
