@@ -631,7 +631,12 @@ class RelationshipSyncStep(SyncStep[RelationshipScope]):
                     "tag_fallback": False,
                 }
             context.counters["tag_strategy_asset_fallback"] = 1
-            if not isinstance(tag_selection, AllSelection):
+            preserve_selected_tags = (
+                context.manual
+                and tag_selection is not None
+                and not isinstance(tag_selection, AllSelection)
+            )
+            if not isinstance(tag_selection, AllSelection) and not preserve_selected_tags:
                 tag_selection = AllSelection()
                 tags = await self._load_tags(
                     tag_selection,
