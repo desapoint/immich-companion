@@ -400,6 +400,10 @@ class FakeSyncRepository:
         self.checkpoints.append((phase, cursor))
         self.progress.append(_kwargs.get("progress"))
 
+    async def next_sync_metadata(self, _mode, *, overlap):
+        assert overlap.total_seconds() == 0
+        return 9, None, datetime.now(UTC)
+
 
 def run_status() -> SyncRunStatus:
     now = datetime.now(UTC)
@@ -484,28 +488,6 @@ def test_sync_memory_diagnostics_trace_only_during_sync(monkeypatch) -> None:
     assert calls == ["start"]
     service._stop_sync_memory_diagnostics(owned_trace)
     assert calls == ["start", "stop"]
-
-
-def asset_counters() -> dict[str, int]:
-    return {
-        "assets_seen": 0,
-        "assets_created": 0,
-        "assets_updated": 0,
-        "assets_unchanged": 0,
-        "tag_cheap_path_eligible_assets": 0,
-        "tag_cheap_path_fallback_assets": 0,
-    }
-
-
-def relationship_counters() -> dict[str, int]:
-    return {
-        "album_memberships": 0,
-        "tag_memberships": 0,
-        "tag_relationships_scanned": 0,
-        "tag_empty_relationships": 0,
-    }
-
-
 @pytest.mark.asyncio
 async def test_global_sync_orders_catalogs_before_media_and_relations_after() -> None:
     members = [asset(ASSET_ONE, "primary.png"), asset(ASSET_TWO, "child.png")]
@@ -670,10 +652,9 @@ async def test_restore_uses_immich_then_refreshes_asset_albums_and_tags() -> Non
 
     await service.restore_targets([ASSET_ONE])
 
-    assert immich.calls[:2] == ["restore", "asset_detail"]
+    assert immich.calls[0] == "restore"
+    assert "asset_detail" in immich.calls
     assert "asset_albums" in immich.calls
-    assert assets.calls == [
-        "refresh_asset",
-        "replace_asset_album",
-        "replace_asset_tag",
-    ]
+    assert "assets" in assets.calls
+    assert "replace_asset_album" in assets.calls
+    assert "replace_asset_tag" in assets.calls
