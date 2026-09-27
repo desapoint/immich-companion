@@ -17,12 +17,7 @@ from uuid import UUID
 from companion.asset_repository import AssetRepository
 from companion.asset_schema import AssetSyncResult
 from companion.config import Settings
-from companion.immich import (
-    ImmichApiClient,
-    ImmichApiError,
-    ImmichAsset,
-    ImmichStack,
-)
+from companion.immich import ImmichApiClient, ImmichApiError, ImmichStack
 from companion.sync_repository import SyncRepository, new_sync_owner
 from companion.sync_schema import (
     SyncCoordinatorStatus,
@@ -47,17 +42,13 @@ from companion.synchronization.relationships import RelationshipSyncStep
 from companion.synchronization.scopes import (
     AssetScope,
     CatalogScope,
-    EventScope,
-    FinalizationScope,
     RelationshipScope,
     StackScope,
-    ValidationScope,
 )
 from companion.synchronization.selections import (
     AffectedAssetsSelection,
     AllSelection,
     ExplicitIdsSelection,
-    GenerationSelection,
     SyncSelectionResolver,
     WindowSelection,
 )
@@ -78,7 +69,6 @@ logger = logging.getLogger("uvicorn.error")
 _SYNC_RUNTIME_OVERRIDE: ContextVar[SyncRuntimeSettings | None] = ContextVar(
     "sync_runtime_override", default=None
 )
-ALBUM_MEMBERSHIP_PAGE_SIZE = 1000
 
 
 def _dedupe_digest(parts: list[str]) -> str:
