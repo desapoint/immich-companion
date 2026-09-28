@@ -42,7 +42,7 @@
   function setPageSize(raw: string): void {
     const value = Number(raw);
     if (!Number.isFinite(value)) return;
-    pageSize = Math.trunc(value);
+    pageSize = value;
     success = '';
   }
 
@@ -95,6 +95,7 @@
         value={pageSize}
         onchange={setPageSize}
       />
+      <span class="v2-small v2-muted">Accepted range: 25–2,000 whole items.</span>
       <span class="v2-small v2-muted">
         Applies when the next similarity fingerprint maintenance run starts. Larger pages reduce work-selection and checkpoint overhead while the existing fetch/decode slots continue to bound active media processing.
       </span>

@@ -21,6 +21,7 @@
   type PendingOperation = 'starting' | 'cancelling' | 'runtime' | 'schedules' | null;
   let runtime = $state<SyncRuntimeSettings | null>(null);
   let savedRuntime = $state<SyncRuntimeSettings | null>(null);
+  let runtimeInputs = $state<Partial<Record<keyof SyncRuntimeSettings, string>>>({});
   let schedules = $state<SyncSchedule[]>([]);
   let savedSchedules = $state<SyncSchedule[]>([]);
   let loading = $state(true);
@@ -29,18 +30,37 @@
   let success = $state<string | null>(null);
   let active = true;
   const currentRun = $derived(syncStatus.status?.active ?? syncStatus.status?.pending ?? null);
+  const recentRun = $derived.by(() => {
+    const success = syncStatus.status?.lastSuccess ?? null;
+    const failure = syncStatus.status?.lastFailure ?? null;
+    if (!success) return failure;
+    if (!failure) return success;
+    return (success.completedAt ?? success.createdAt) >= (failure.completedAt ?? failure.createdAt) ? success : failure;
+  });
+  const displayRun = $derived(currentRun ?? recentRun);
   const fullSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-full') ?? null);
   const incrementalSchedule = $derived(schedules.find((item) => item.name === 'asset-sync-incremental') ?? null);
-  const progressKnown = $derived(currentRun?.progress.total != null && currentRun.progress.percent != null);
+  const progressKnown = $derived(displayRun?.progress.total != null && displayRun.progress.percent != null);
   const runtimeDirty = $derived(Boolean(runtime && savedRuntime && JSON.stringify(runtime) !== JSON.stringify(savedRuntime)));
-  const runtimeValid = $derived(Boolean(runtime
-    && Number.isInteger(runtime.fullBatchSize) && runtime.fullBatchSize >= 1 && runtime.fullBatchSize <= SYNC_RUNTIME_LIMITS.fullBatchSize
-    && runtime.fullMinBatchDelaySeconds >= 0 && runtime.fullMinBatchDelaySeconds <= SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds
-    && Number.isInteger(runtime.tagAssociationConcurrency) && runtime.tagAssociationConcurrency >= 1 && runtime.tagAssociationConcurrency <= SYNC_RUNTIME_LIMITS.tagAssociationConcurrency
-    && Number.isInteger(runtime.metadataRequestConcurrency) && runtime.metadataRequestConcurrency >= 1 && runtime.metadataRequestConcurrency <= SYNC_RUNTIME_LIMITS.metadataRequestConcurrency
-    && Number.isInteger(runtime.pagePrefetch) && runtime.pagePrefetch >= 0 && runtime.pagePrefetch <= SYNC_RUNTIME_LIMITS.pagePrefetch
-    && Number.isInteger(runtime.apiPageSize) && runtime.apiPageSize >= 25 && runtime.apiPageSize <= SYNC_RUNTIME_LIMITS.apiPageSize
-    && Number.isInteger(runtime.incrementalOverlapSeconds) && runtime.incrementalOverlapSeconds >= 0 && runtime.incrementalOverlapSeconds <= SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds));
+  function numericError(key: keyof SyncRuntimeSettings, label: string, min: number, max: number, integer = true): string | null {
+    if (!runtime) return null;
+    const raw = runtimeInputs[key];
+    const value = raw === undefined ? Number(runtime[key]) : Number(raw);
+    if ((raw !== undefined && raw.trim() === '') || !Number.isFinite(value) || (integer && !Number.isInteger(value)) || value < min || value > max) {
+      return `${label} must be ${integer ? 'a whole number' : 'a number'} from ${min.toLocaleString()} to ${max.toLocaleString()}.`;
+    }
+    return null;
+  }
+  const runtimeErrors = $derived([
+    numericError('fullBatchSize', 'Persistence batch size', 1, SYNC_RUNTIME_LIMITS.fullBatchSize),
+    numericError('fullMinBatchDelaySeconds', 'Minimum global-sync batch duration', 0, SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds, false),
+    numericError('tagAssociationConcurrency', 'Relationship concurrency', 1, SYNC_RUNTIME_LIMITS.tagAssociationConcurrency),
+    numericError('metadataRequestConcurrency', 'Metadata request concurrency', 1, SYNC_RUNTIME_LIMITS.metadataRequestConcurrency),
+    numericError('pagePrefetch', 'Pages to prefetch', 0, SYNC_RUNTIME_LIMITS.pagePrefetch),
+    numericError('apiPageSize', 'Immich API page size', 25, SYNC_RUNTIME_LIMITS.apiPageSize),
+    numericError('incrementalOverlapSeconds', 'Incremental overlap', 0, SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds),
+  ].filter((value): value is string => value !== null));
+  const runtimeValid = $derived(runtime !== null && runtimeErrors.length === 0);
   const schedulesDirty = $derived(JSON.stringify(scheduleSnapshot(schedules)) !== JSON.stringify(scheduleSnapshot(savedSchedules)));
   const schedulesValid = $derived(schedules.every((item) => !item.enabled || Boolean(item.cronExpression)));
   const busy = $derived(pendingOperation !== null);
@@ -53,12 +73,12 @@
   function runTone(run: SyncRun | null): 'default' | 'ok' | 'warn' | 'bad' { if (!run) return 'default'; if (run.status === 'failed') return 'bad'; if (run.status === 'cancelled') return 'warn'; return 'ok'; }
   async function refreshScheduleRunTimes() { try { const latest = await libraryData.sync.schedules(); if (!active) return; const byName = new Map(latest.map((item) => [item.name, item])); const merge = (item: SyncSchedule) => { const live = byName.get(item.name); return live ? { ...item, lastRunAt: live.lastRunAt, nextRunAt: live.nextRunAt } : item; }; schedules = schedules.map(merge); savedSchedules = savedSchedules.map(merge); } catch { /* status remains useful without schedule metadata */ } }
   async function refreshStatus() { await Promise.all([syncStatus.refresh(), refreshScheduleRunTimes()]); }
-  async function loadConfiguration() { loading = true; error = null; try { const [nextRuntime, nextSchedules] = await Promise.all([libraryData.sync.runtimeSettings(), libraryData.sync.schedules()]); if (!active) return; runtime = { ...nextRuntime }; savedRuntime = { ...nextRuntime }; schedules = nextSchedules.map((item) => ({ ...item })); savedSchedules = nextSchedules.map((item) => ({ ...item })); } catch (value) { if (active) error = message(value, 'Could not load live synchronization configuration.'); } finally { if (active) loading = false; } }
+  async function loadConfiguration() { loading = true; error = null; try { const [nextRuntime, nextSchedules] = await Promise.all([libraryData.sync.runtimeSettings(), libraryData.sync.schedules()]); if (!active) return; runtime = { ...nextRuntime }; savedRuntime = { ...nextRuntime }; runtimeInputs = {}; schedules = nextSchedules.map((item) => ({ ...item })); savedSchedules = nextSchedules.map((item) => ({ ...item })); } catch (value) { if (active) error = message(value, 'Could not load live synchronization configuration.'); } finally { if (active) loading = false; } }
   async function start(mode: SyncMode) { if (busy) return; pendingOperation = 'starting'; error = null; success = null; try { await libraryData.sync.start(mode); await refreshStatus(); if (active) success = `${mode === 'full' ? 'Global' : 'Incremental'} synchronization started.`; } catch (value) { if (active) error = message(value, 'Could not start synchronization.'); } finally { if (active) pendingOperation = null; } }
   async function cancelCurrent() { const run = currentRun; if (!run || busy) return; pendingOperation = 'cancelling'; error = null; success = null; try { await libraryData.tasks.cancel(run.taskId ?? run.id); await syncStatus.refresh(); if (active) success = 'Cancellation requested.'; } catch (value) { if (active) error = message(value, 'Could not cancel synchronization.'); } finally { if (active) pendingOperation = null; } }
-  function setRuntime<K extends keyof SyncRuntimeSettings>(key: K, raw: string) { if (!runtime) return; const value = Number(raw); if (Number.isFinite(value)) runtime = { ...runtime, [key]: value }; }
+  function setRuntime<K extends keyof SyncRuntimeSettings>(key: K, raw: string) { if (!runtime) return; runtimeInputs = { ...runtimeInputs, [key]: raw }; const value = Number(raw); if (raw.trim() !== '' && Number.isFinite(value)) runtime = { ...runtime, [key]: value }; }
   function setRuntimeValue<K extends keyof SyncRuntimeSettings>(key: K, value: SyncRuntimeSettings[K]) { if (runtime) runtime = { ...runtime, [key]: value }; }
-  async function saveRuntime() { if (!runtime || !runtimeDirty || busy) return; pendingOperation = 'runtime'; error = null; success = null; try { const saved = await libraryData.sync.saveRuntimeSettings({ ...runtime }); if (!active) return; runtime = { ...saved }; savedRuntime = { ...saved }; success = 'Synchronization runtime settings saved.'; } catch (value) { if (active) error = message(value, 'Could not save synchronization runtime settings. Your unsaved values are still shown.'); } finally { if (active) pendingOperation = null; } }
+  async function saveRuntime() { if (!runtime || !runtimeDirty || !runtimeValid || busy) return; pendingOperation = 'runtime'; error = null; success = null; try { const saved = await libraryData.sync.saveRuntimeSettings({ ...runtime }); if (!active) return; runtime = { ...saved }; savedRuntime = { ...saved }; runtimeInputs = {}; success = 'Synchronization runtime settings saved.'; } catch (value) { if (active) error = message(value, 'Could not save synchronization runtime settings. Your unsaved values are still shown.'); } finally { if (active) pendingOperation = null; } }
   function updateSchedule(name: string, patch: Partial<Pick<SyncSchedule, 'enabled' | 'cronExpression'>>) { schedules = schedules.map((item) => item.name === name ? { ...item, ...patch } : item); }
   async function saveSchedules() { if (!schedulesDirty || !schedulesValid || busy) return; pendingOperation = 'schedules'; error = null; success = null; const draft = schedules.map((item) => ({ ...item })); try { const saved = await libraryData.sync.saveSchedules(scheduleSnapshot(draft)); if (!active) return; const byName = new Map(saved.map((item) => [item.name, item])); schedules = draft.map((item) => byName.get(item.name) ?? item); savedSchedules = schedules.map((item) => ({ ...item })); success = 'Synchronization schedules saved.'; } catch (value) { if (!active) return; error = message(value, 'Could not save all synchronization schedules. Unsaved values are still shown.'); try { savedSchedules = (await libraryData.sync.schedules()).map((item) => ({ ...item })); } catch { /* retain last confirmed snapshot */ } } finally { if (active) pendingOperation = null; } }
   onMount(() => {
@@ -76,12 +96,12 @@
 {#if loading}<V2Notice>Loading live synchronization status and configuration…</V2Notice>
 {:else}<V2Stack gap="md">
   {#if error}<V2Notice tone="error" title="Synchronization request failed">{error}</V2Notice>{/if}
-  {#if syncStatus.error && !syncStatus.status}<V2Notice tone="error" title="Synchronization status unavailable">{syncStatus.error}</V2Notice>{/if}
+  {#if syncStatus.error}<V2Notice tone="error" title="Synchronization status unavailable">{syncStatus.error}</V2Notice>{/if}
   {#if success}<V2Notice tone="success">{success}</V2Notice>{/if}
   {#if syncStatus.connectionState === 'reconnecting' || syncStatus.connectionState === 'disconnected'}<V2Notice tone="warning" title="Live updates interrupted">The last known synchronization state is still shown. Live task updates are {syncStatus.connectionState === 'reconnecting' ? 'reconnecting automatically' : 'disconnected'}; shared status polling continues in the meantime.</V2Notice>{/if}
   <V2Card title="Current synchronization">
-    {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={runTone(currentRun)} text={runLabel(currentRun)} /><V2Badge tone={connectionTone(syncStatus.connectionState)} text={connectionLabel(syncStatus.connectionState)} /></span>{/snippet}
-    <V2Stack gap="sm">{#if currentRun}<div class="sync-run-summary"><div><span>Mode</span><strong>{currentRun.mode === 'full' ? 'Global' : 'Incremental'}</strong></div><div><span>Generation</span><strong>#{currentRun.generation}</strong></div><div><span>Phase</span><strong>{currentRun.progress.phase || currentRun.phase}</strong></div><div><span>Processed</span><strong>{formatNumber(currentRun.progress.completed)} / {formatNumber(currentRun.progress.total)}</strong></div></div><V2Progress value={progressKnown ? currentRun.progress.percent ?? undefined : undefined} indeterminate={!progressKnown} label={`Synchronization ${currentRun.progress.phase || currentRun.phase} progress`} /><div class="v2-small v2-muted">{currentRun.progress.detail ?? (progressKnown ? `${formatNumber(currentRun.progress.completed)} of ${formatNumber(currentRun.progress.total)} processed` : 'Synchronization is running; total work is not known yet.')}</div>{:else}<V2Notice tone="info">No synchronization is currently active or queued.</V2Notice>{/if}<div class="sync-run-actions"><V2Button variant="primary" disabled={busy || Boolean(currentRun)} onclick={() => void start('full')}>{#if pendingOperation === 'starting'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Starting…</span>{:else}Start global sync{/if}</V2Button><V2Button disabled={busy || Boolean(currentRun)} onclick={() => void start('incremental')}>Start incremental sync</V2Button><V2Button variant="danger" disabled={busy || !currentRun || ['completed', 'failed', 'cancelled'].includes(currentRun.status)} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button><V2Button disabled={busy || syncStatus.loading} onclick={() => void refreshStatus()}>Refresh</V2Button></div></V2Stack>
+    {#snippet actions()}<span class="sync-status-badges"><V2Badge tone={runTone(displayRun)} text={currentRun ? runLabel(currentRun) : recentRun ? `Last: ${runLabel(recentRun)}` : 'Idle'} /><V2Badge tone={connectionTone(syncStatus.connectionState)} text={connectionLabel(syncStatus.connectionState)} /></span>{/snippet}
+    <V2Stack gap="sm">{#if displayRun}{#if !currentRun}<span class="v2-small v2-muted">Last synchronization</span>{/if}<div class="sync-run-summary"><div><span>Mode</span><strong>{displayRun.mode === 'full' ? 'Global' : 'Incremental'}</strong></div><div><span>Generation</span><strong>#{displayRun.generation}</strong></div><div><span>Phase</span><strong>{displayRun.progress.phase || displayRun.phase}</strong></div><div><span>Processed</span><strong>{formatNumber(displayRun.progress.completed)} / {formatNumber(displayRun.progress.total)}</strong></div></div><V2Progress value={progressKnown ? displayRun.progress.percent ?? undefined : undefined} indeterminate={!progressKnown && Boolean(currentRun)} label={`Synchronization ${displayRun.progress.phase || displayRun.phase} progress`} /><div class="v2-small v2-muted">{displayRun.progress.detail ?? (progressKnown ? `${formatNumber(displayRun.progress.completed)} of ${formatNumber(displayRun.progress.total)} processed` : currentRun ? 'Synchronization is running; total work is not known yet.' : `Last synchronization ${displayRun.status}.`)}</div>{:else if syncStatus.loading}<V2Notice>Loading synchronization progress…</V2Notice>{:else}<V2Notice tone="info">No synchronization is currently active or queued.</V2Notice>{/if}<div class="sync-run-actions"><V2Button variant="primary" disabled={busy || Boolean(currentRun)} onclick={() => void start('full')}>{#if pendingOperation === 'starting'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Starting…</span>{:else}Start global sync{/if}</V2Button><V2Button disabled={busy || Boolean(currentRun)} onclick={() => void start('incremental')}>Start incremental sync</V2Button><V2Button variant="danger" disabled={busy || !currentRun || ['completed', 'failed', 'cancelled'].includes(currentRun.status)} onclick={() => void cancelCurrent()}>{pendingOperation === 'cancelling' ? 'Cancelling…' : 'Cancel sync'}</V2Button><V2Button onclick={() => void refreshStatus()}>Refresh</V2Button></div></V2Stack>
   </V2Card>
   <V2Card title="Run counters">{#if currentRun}<div class="sync-counter-grid">{#each visibleRunCounters(currentRun.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>{:else if syncStatus.status?.lastSuccess}<div class="sync-counter-grid">{#each visibleRunCounters(syncStatus.status.lastSuccess.counters) as [name, value] (name)}<div><strong>{formatNumber(value)}</strong><span>{name.replaceAll('_', ' ')}</span></div>{/each}</div>{:else}<span class="v2-small v2-muted">No completed synchronization counters are available yet.</span>{/if}</V2Card>
   <V2Section title="Live runtime configuration">
@@ -92,31 +112,45 @@
           <V2Notice tone="info" title="Changes apply to new synchronization work">All performance controls stay visible and are saved together; there are no presets. Running tasks keep their saved batch and window boundaries. EXIF remains excluded from inventory synchronization because fetching it for every asset previously made routine sync unnecessarily expensive; detailed metadata is requested only when a feature needs it.</V2Notice>
           <div class="sync-settings-grid">
             <div class="sync-setting">
-              <V2Field label="Persistence batch size" type="number" min="1" max={SYNC_RUNTIME_LIMITS.fullBatchSize} step="1" value={runtime.fullBatchSize} onchange={(value) => setRuntime('fullBatchSize', value)} />
+              <V2Field label="Persistence batch size" type="number" min="1" max={SYNC_RUNTIME_LIMITS.fullBatchSize} step="1" value={runtimeInputs.fullBatchSize ?? runtime.fullBatchSize} onvalueinput={(value) => setRuntime('fullBatchSize', value)} />
+              <p>Accepted range: 1–{SYNC_RUNTIME_LIMITS.fullBatchSize.toLocaleString()} whole rows.</p>
+              {#if numericError('fullBatchSize', 'Persistence batch size', 1, SYNC_RUNTIME_LIMITS.fullBatchSize)}<p class="setting-error" role="alert">{numericError('fullBatchSize', 'Persistence batch size', 1, SYNC_RUNTIME_LIMITS.fullBatchSize)}</p>{/if}
               <p>Rows committed per database checkpoint in both global and incremental syncs. Larger batches reduce transaction overhead but use more memory and repeat more work after interruption. Start at 250; lower it if memory or retry cost matters more than throughput.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Minimum global-sync batch duration (seconds)" type="number" min="0" max={SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds} step="0.1" value={runtime.fullMinBatchDelaySeconds} onchange={(value) => setRuntime('fullMinBatchDelaySeconds', value)} />
+              <V2Field label="Minimum global-sync batch duration (seconds)" type="number" min="0" max={SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds} step="0.1" value={runtimeInputs.fullMinBatchDelaySeconds ?? runtime.fullMinBatchDelaySeconds} onvalueinput={(value) => setRuntime('fullMinBatchDelaySeconds', value)} />
+              <p>Accepted range: 0–{SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds} seconds.</p>
+              {#if numericError('fullMinBatchDelaySeconds', 'Minimum global-sync batch duration', 0, SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds, false)}<p class="setting-error" role="alert">{numericError('fullMinBatchDelaySeconds', 'Minimum global-sync batch duration', 0, SYNC_RUNTIME_LIMITS.fullMinBatchDelaySeconds, false)}</p>{/if}
               <p>Slows only global sync batches when they finish faster than this duration. It is a minimum total batch time, not an extra fixed delay. Start at 0.2 seconds; use zero for maximum throughput or increase it to leave more capacity for Immich.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Relationship concurrency" type="number" min="1" max={SYNC_RUNTIME_LIMITS.tagAssociationConcurrency} step="1" value={runtime.tagAssociationConcurrency} onchange={(value) => setRuntime('tagAssociationConcurrency', value)} />
+              <V2Field label="Relationship concurrency" type="number" min="1" max={SYNC_RUNTIME_LIMITS.tagAssociationConcurrency} step="1" value={runtimeInputs.tagAssociationConcurrency ?? runtime.tagAssociationConcurrency} onvalueinput={(value) => setRuntime('tagAssociationConcurrency', value)} />
+              <p>Accepted range: 1–{SYNC_RUNTIME_LIMITS.tagAssociationConcurrency} whole workers.</p>
+              {#if numericError('tagAssociationConcurrency', 'Relationship concurrency', 1, SYNC_RUNTIME_LIMITS.tagAssociationConcurrency)}<p class="setting-error" role="alert">{numericError('tagAssociationConcurrency', 'Relationship concurrency', 1, SYNC_RUNTIME_LIMITS.tagAssociationConcurrency)}</p>{/if}
               <p>Album and tag membership traversals processed together. Higher values reduce relation-sync time but increase simultaneous Immich and PostgreSQL work. Start at 4 and reduce it if relation sync competes with normal Immich use.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Metadata request concurrency" type="number" min="1" max={SYNC_RUNTIME_LIMITS.metadataRequestConcurrency} step="1" value={runtime.metadataRequestConcurrency} onchange={(value) => setRuntime('metadataRequestConcurrency', value)} />
+              <V2Field label="Metadata request concurrency" type="number" min="1" max={SYNC_RUNTIME_LIMITS.metadataRequestConcurrency} step="1" value={runtimeInputs.metadataRequestConcurrency ?? runtime.metadataRequestConcurrency} onvalueinput={(value) => setRuntime('metadataRequestConcurrency', value)} />
+              <p>Accepted range: 1–{SYNC_RUNTIME_LIMITS.metadataRequestConcurrency} whole requests.</p>
+              {#if numericError('metadataRequestConcurrency', 'Metadata request concurrency', 1, SYNC_RUNTIME_LIMITS.metadataRequestConcurrency)}<p class="setting-error" role="alert">{numericError('metadataRequestConcurrency', 'Metadata request concurrency', 1, SYNC_RUNTIME_LIMITS.metadataRequestConcurrency)}</p>{/if}
               <p>Total detailed asset and album requests allowed at once for incremental reconciliation and targeted repairs. It does not increase image download or decoding concurrency. Start at 4; raise it only when Immich has spare API capacity.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Pages to prefetch" type="number" min="0" max={SYNC_RUNTIME_LIMITS.pagePrefetch} step="1" value={runtime.pagePrefetch} onchange={(value) => setRuntime('pagePrefetch', value)} />
+              <V2Field label="Pages to prefetch" type="number" min="0" max={SYNC_RUNTIME_LIMITS.pagePrefetch} step="1" value={runtimeInputs.pagePrefetch ?? runtime.pagePrefetch} onvalueinput={(value) => setRuntime('pagePrefetch', value)} />
+              <p>Accepted range: 0–{SYNC_RUNTIME_LIMITS.pagePrefetch} whole pages.</p>
+              {#if numericError('pagePrefetch', 'Pages to prefetch', 0, SYNC_RUNTIME_LIMITS.pagePrefetch)}<p class="setting-error" role="alert">{numericError('pagePrefetch', 'Pages to prefetch', 0, SYNC_RUNTIME_LIMITS.pagePrefetch)}</p>{/if}
               <p>Fetches upcoming Immich pages while the current page is written. Zero is fully sequential; one usually hides network latency without materially increasing memory. Values above one trade more memory and upstream pressure for additional overlap.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Immich API page size" type="number" min="25" max={SYNC_RUNTIME_LIMITS.apiPageSize} step="25" value={runtime.apiPageSize} onchange={(value) => setRuntime('apiPageSize', value)} />
+              <V2Field label="Immich API page size" type="number" min="25" max={SYNC_RUNTIME_LIMITS.apiPageSize} step="1" value={runtimeInputs.apiPageSize ?? runtime.apiPageSize} onvalueinput={(value) => setRuntime('apiPageSize', value)} />
+              <p>Accepted range: 25–{SYNC_RUNTIME_LIMITS.apiPageSize.toLocaleString()} whole items.</p>
+              {#if numericError('apiPageSize', 'Immich API page size', 25, SYNC_RUNTIME_LIMITS.apiPageSize)}<p class="setting-error" role="alert">{numericError('apiPageSize', 'Immich API page size', 25, SYNC_RUNTIME_LIMITS.apiPageSize)}</p>{/if}
               <p>Assets or relationship IDs requested per page. Start at 1,000 to minimize HTTP round trips. Smaller pages lower peak response memory, make retries cheaper and may behave better through restrictive proxies.</p>
             </div>
             <div class="sync-setting">
-              <V2Field label="Incremental overlap (seconds)" type="number" min="0" max={SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds} step="30" value={runtime.incrementalOverlapSeconds} onchange={(value) => setRuntime('incrementalOverlapSeconds', value)} />
+              <V2Field label="Incremental overlap (seconds)" type="number" min="0" max={SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds} step="1" value={runtimeInputs.incrementalOverlapSeconds ?? runtime.incrementalOverlapSeconds} onvalueinput={(value) => setRuntime('incrementalOverlapSeconds', value)} />
+              <p>Accepted range: 0–{SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds.toLocaleString()} whole seconds.</p>
+              {#if numericError('incrementalOverlapSeconds', 'Incremental overlap', 0, SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds)}<p class="setting-error" role="alert">{numericError('incrementalOverlapSeconds', 'Incremental overlap', 0, SYNC_RUNTIME_LIMITS.incrementalOverlapSeconds)}</p>{/if}
               <p>Rechecks this much time before the last successful watermark so boundary-time updates are not missed. Start at 300 seconds (5 minutes). More overlap is safer for clock skew and late updates but repeats more asset work.</p>
             </div>
             <div class="sync-setting">
@@ -138,7 +172,7 @@
               <p>Recommended on. It shares Retry-After and exponential cooldowns across concurrent metadata requests after rate limits or temporary Immich failures, preventing parallel workers from immediately adding more pressure. Turn it off only when diagnosing retry behavior.</p>
             </div>
           </div>
-          {#if !runtimeValid}<V2Notice tone="error">One or more performance values are outside the supported range.</V2Notice>{/if}
+          {#if !runtimeValid}<V2Notice tone="error">Fix the highlighted performance fields before saving.</V2Notice>{/if}
           <div><V2Button variant="primary" disabled={busy || !runtimeDirty || !runtimeValid} onclick={() => void saveRuntime()}>{#if pendingOperation === 'runtime'}<span class="pending-label"><LoadingSpinner size="0.9rem" thickness="0.11rem"/>Saving…</span>{:else}Save runtime settings{/if}</V2Button></div>
         </V2Stack>
       {:else}<V2Notice tone="error">Runtime settings were not available.</V2Notice>{/if}
@@ -149,5 +183,5 @@
 </V2Stack>{/if}
 
 <style>
-  .sync-run-actions,.sync-status-badges,.sync-section-save,.pending-label{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}.sync-section-save{justify-content:flex-end}.sync-run-summary,.sync-counter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.sync-run-summary>div,.sync-counter-grid>div{display:grid;gap:.15rem;padding:.7rem;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:.65rem}.sync-run-summary span,.sync-counter-grid span{font-size:.78rem;opacity:.7;text-transform:capitalize}.sync-control-grid,.sync-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.sync-setting{display:grid;align-content:start;gap:.4rem;padding:.85rem;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:.65rem}.sync-setting p{margin:0;color:var(--v2-muted);font-size:.78rem;line-height:1.45}.sync-setting-wide{grid-column:1/-1}@media(max-width:900px){.sync-control-grid,.sync-settings-grid,.sync-run-summary,.sync-counter-grid{grid-template-columns:1fr}.sync-setting-wide{grid-column:auto}}
+  .sync-run-actions,.sync-status-badges,.sync-section-save,.pending-label{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}.sync-section-save{justify-content:flex-end}.sync-run-summary,.sync-counter-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.65rem}.sync-run-summary>div,.sync-counter-grid>div{display:grid;gap:.15rem;padding:.7rem;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:.65rem}.sync-run-summary span,.sync-counter-grid span{font-size:.78rem;opacity:.7;text-transform:capitalize}.sync-control-grid,.sync-settings-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}.sync-setting{display:grid;align-content:start;gap:.4rem;padding:.85rem;border:1px solid var(--v2-border,rgba(127,127,127,.22));border-radius:.65rem}.sync-setting p{margin:0;color:var(--v2-muted);font-size:.78rem;line-height:1.45}.sync-setting p.setting-error{color:var(--v2-danger,#c33)}.sync-setting-wide{grid-column:1/-1}@media(max-width:900px){.sync-control-grid,.sync-settings-grid,.sync-run-summary,.sync-counter-grid{grid-template-columns:1fr}.sync-setting-wide{grid-column:auto}}
 </style>

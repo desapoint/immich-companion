@@ -2,9 +2,10 @@ import { expect, test } from '@playwright/test';
 
 const mobileDestinations = [
   { label: 'Trash', path: '/restore' },
-  { label: 'Similarity debug', path: '/similarity-debug' },
   { label: 'Albums', path: '/albums' },
   { label: 'Tags', path: '/tags' },
+  { label: 'Error Hub', path: '/errors' },
+  { label: 'Similarity debug', path: '/similarity-debug' },
   { label: 'Settings', path: '/settings' },
   { label: 'API Docs', path: '/docs' },
 ] as const;

@@ -116,7 +116,7 @@ test('opens the V2 asset viewer without a recursive Svelte effect failure', asyn
   await mockViewerAssetWorkspace(page);
   await page.goto('/assets');
 
-  await page.getByRole('button', { name: 'Preview viewer-regression.jpg' }).click();
+  await page.locator('.v2-asset-tile button.v2-asset-main').click();
   const viewer = page.getByRole('dialog', { name: 'Assets Viewer' });
   await expect(viewer).toBeVisible();
   await expect(viewer.getByRole('region', { name: 'Image viewport' })).toBeVisible();
