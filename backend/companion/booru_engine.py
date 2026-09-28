@@ -17,6 +17,15 @@ from PIL import Image
 from companion.config import Settings
 
 logger = logging.getLogger(__name__)
+MODEL_REVISIONS = {
+    "SmilingWolf/wd-swinv2-tagger-v3": "627aef95638667ddcaa3ac8ae625e88ea5b02f51",
+    "SmilingWolf/wd-convnext-tagger-v3": "d39e46de298d27340111b64965e20b8185c407e6",
+    "SmilingWolf/wd-vit-tagger-v3": "7f6b584d0bd3f55c4531f14ba3d4761b2bccdc0f",
+}
+
+
+class BooruModelError(RuntimeError):
+    """The selected model could not be downloaded or opened."""
 
 
 class BooruEngine:
@@ -61,16 +70,46 @@ class BooruEngine:
         self._repo = None
         gc.collect()
 
-    def _load(self, repo: str) -> None:
-        import onnxruntime as ort
+    def _paths(self, repo: str) -> dict[str, str]:
         from huggingface_hub import hf_hub_download
 
+        if repo not in MODEL_REVISIONS:
+            raise ValueError("Unsupported Booru model")
         cache = Path(self._settings.booru_model_cache_dir)
         cache.mkdir(parents=True, exist_ok=True)
-        paths = {
-            name: hf_hub_download(repo_id=repo, filename=name, cache_dir=str(cache))
+        return {
+            name: hf_hub_download(
+                repo_id=repo, filename=name, revision=MODEL_REVISIONS[repo], cache_dir=str(cache)
+            )
             for name in ("selected_tags.csv", "model.onnx")
         }
+
+    def status(self, repo: str) -> dict:
+        from huggingface_hub import try_to_load_from_cache
+
+        if repo not in MODEL_REVISIONS:
+            raise ValueError("Unsupported Booru model")
+        cached = all(
+            isinstance(try_to_load_from_cache(
+                repo_id=repo, filename=name, revision=MODEL_REVISIONS[repo],
+                cache_dir=str(self._settings.booru_model_cache_dir),
+            ), str)
+            for name in ("selected_tags.csv", "model.onnx")
+        )
+        return {"repo": repo, "revision": MODEL_REVISIONS[repo], "cached": cached,
+                "loaded": self._repo == repo and self._session is not None}
+
+    async def download(self, repo: str) -> None:
+        async with self._lock:
+            await asyncio.to_thread(self._paths, repo)
+
+    def _load(self, repo: str) -> None:
+        import onnxruntime as ort
+
+        try:
+            paths = self._paths(repo)
+        except Exception as error:
+            raise BooruModelError(f"Could not download model {repo}: {error}") from error
         with open(paths["selected_tags.csv"], newline="", encoding="utf-8") as source:
             rows = list(csv.DictReader(source))
         self._names = [row["name"].strip() for row in rows]
@@ -78,9 +117,12 @@ class BooruEngine:
         options = ort.SessionOptions()
         options.intra_op_num_threads = 2
         options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        session = ort.InferenceSession(
-            paths["model.onnx"], sess_options=options, providers=["CPUExecutionProvider"]
-        )
+        try:
+            session = ort.InferenceSession(
+                paths["model.onnx"], sess_options=options, providers=["CPUExecutionProvider"]
+            )
+        except Exception as error:
+            raise BooruModelError(f"Could not open model {repo}: {error}") from error
         model_input = session.get_inputs()[0]
         shape = model_input.shape
         if len(shape) != 4 or not isinstance(shape[1], int) or shape[1] != shape[2]:

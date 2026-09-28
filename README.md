@@ -215,17 +215,26 @@ than browser-native select or date-time inputs.
 
 Select images in Assets and choose **Tag with Booru model** from More actions.
 Settings → Booru controls the model, confidence thresholds, idle unload time,
-and an optional cron schedule (off by default). Scheduled runs tag up to 250
-unprocessed images at a time. Tags can be excluded from model assignment in
-Tags; use the Booru filter there to review exclusions. Settings → Booru lists
-runs and can undo only the tag associations added by each run.
+scheduled batch size, and an optional cron schedule (off by default). Failed
+images appear with their error and can be retried immediately. Scheduled runs
+prioritize new images and back off failed images from one hour up to 30 days.
+Tags can be excluded from model assignment in Tags; use the Booru filter there
+to review exclusions. Settings → Booru lists runs and can undo only the tag
+associations added by each run.
 
 The default `SmilingWolf/wd-swinv2-tagger-v3` is the same model used by the
 neighboring `immich-booru-tagger`, with its general, character, and rating
 thresholds. ConvNeXt v3 and ViT v3 have smaller ONNX files but can produce
 different predictions. The app downloads model files on first use into
 `/cache/booru-models` on the mapped cache volume; idle unload frees the loaded
-ONNX session while retaining those files. First use needs access to Hugging Face.
+ONNX session while retaining those files. Settings → Booru can download the
+selected model before a run. Each supported model is pinned to a fixed Hugging
+Face commit so updates do not silently change predictions. First download needs
+access to Hugging Face.
+
+Immich must be able to retain tag metadata for the asset. If an external
+library blocks its sidecar metadata write, the tagging run records that image
+as failed and leaves it available for manual retry after the library is fixed.
 
 ## Fast frontend iteration against the integration environment
 

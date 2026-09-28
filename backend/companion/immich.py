@@ -1003,6 +1003,18 @@ class ImmichApiClient:
             json={"ids": [str(asset_id) for asset_id in asset_ids]},
         )
 
+    async def add_tags_to_asset(self, asset_id: UUID, tag_ids: list[UUID]) -> None:
+        """Apply a tag set in one Immich transaction to avoid per-tag metadata races."""
+
+        if not tag_ids:
+            return
+        response = await self._request(
+            "PUT", "/api/tags/assets", operation="add tags to asset",
+            json={"assetIds": [str(asset_id)], "tagIds": [str(tag_id) for tag_id in tag_ids]},
+        )
+        if response.json().get("count") != len(tag_ids):
+            raise RuntimeError("Immich did not apply every Booru tag")
+
     async def set_assets_archived(self, asset_ids: list[UUID], archived: bool) -> None:
         """Set archive visibility for a batch through Immich."""
 

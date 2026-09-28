@@ -8,38 +8,57 @@
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
 
-  type Settings = {model_repo:string;idle_seconds:number;confidence_threshold:number;character_threshold:number;models:string[]};
+  type Settings = {model_repo:string;idle_seconds:number;confidence_threshold:number;character_threshold:number;batch_size:number;models:string[]};
   type Schedule = {name:string;enabled:boolean;cron_expression:string|null;last_run_at:string|null};
-  type Run = {id:string;created_at:string;undone_at:string|null};
-  let settings=$state<Settings|null>(null),schedule=$state<Schedule|null>(null),runs=$state<Run[]>([]),busy=$state(false),error=$state(''),message=$state('');
+  type Run = {id:string;created_at:string;undone_at:string|null;failures:number};
+  type Failure = {asset_id:string;error:string;attempts:number;next_retry_at:string};
+  type ModelStatus = {repo:string;revision:string;cached:boolean;loaded:boolean};
+  type Task = {id:string;status:string;progress:Record<string,unknown>|null;counters:Record<string,number>|null;error:{message:string}|null};
+  let settings=$state<Settings|null>(null),schedule=$state<Schedule|null>(null),runs=$state<Run[]>([]),models=$state<ModelStatus[]>([]),tasks=$state<Task[]>([]),failures=$state<Failure[]>([]),openRun=$state(''),downloadTask=$state(''),busy=$state(false),error=$state(''),message=$state('');
   const modelOptions=[
     {value:'SmilingWolf/wd-swinv2-tagger-v3',label:'SwinV2 v3 · same as existing tagger'},
     {value:'SmilingWolf/wd-convnext-tagger-v3',label:'ConvNeXt v3 · smaller model'},
     {value:'SmilingWolf/wd-vit-tagger-v3',label:'ViT v3 · smaller model'},
   ];
+  let currentModel=$derived(models.find((item)=>item.repo===settings?.model_repo));
+  let currentDownload=$derived(tasks.find((item)=>item.id===downloadTask));
   async function api<T>(path:string,init?:RequestInit):Promise<T>{const response=await fetch(path,init);if(!response.ok){const body=await response.json().catch(()=>null) as {detail?:string}|null;throw new Error(body?.detail??`Request failed (${response.status})`)}return response.json() as Promise<T>}
   function json(value:unknown):RequestInit{return{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(value)}}
-  async function load(){try{const [next,schedules,history]=await Promise.all([api<Settings>('/api/booru/settings'),api<Schedule[]>('/api/settings/sync'),api<Run[]>('/api/booru/runs')]);settings=next;schedule=schedules.find((item)=>item.name==='booru-tagging')??null;runs=history}catch(value){error=value instanceof Error?value.message:'Booru settings could not be loaded.'}}
+  async function refresh(){const [history,cached,recent]=await Promise.all([api<Run[]>('/api/booru/runs'),api<ModelStatus[]>('/api/booru/models/status'),api<Task[]>('/api/tasks?task_type=booru_tagging&limit=30')]);runs=history;models=cached;tasks=recent;if(openRun)failures=await api<Failure[]>(`/api/booru/runs/${openRun}/failures`)}
+  async function load(){try{const [next,schedules]=await Promise.all([api<Settings>('/api/booru/settings'),api<Schedule[]>('/api/settings/sync')]);settings=next;schedule=schedules.find((item)=>item.name==='booru-tagging')??null;await refresh()}catch(value){error=value instanceof Error?value.message:'Booru settings could not be loaded.'}}
   async function save(){if(!settings||!schedule||busy)return;busy=true;error='';message='';try{await api('/api/booru/settings',json(settings));schedule=await api<Schedule>(`/api/settings/sync/${schedule.name}`,json({enabled:schedule.enabled,cron_expression:schedule.cron_expression}));message='Booru settings saved.'}catch(value){error=value instanceof Error?value.message:'Booru settings could not be saved.'}finally{busy=false}}
-  async function undo(run:Run){if(busy)return;busy=true;error='';message='';try{const result=await api<{assets:number;tags:number}>(`/api/booru/runs/${run.id}/undo`,{method:'POST'});message=`Removed ${result.tags} Booru tags from ${result.assets} assets.`;runs=await api<Run[]>('/api/booru/runs')}catch(value){error=value instanceof Error?value.message:'Undo failed. Retry this run.'}finally{busy=false}}
-  onMount(()=>{void load()});
+  async function download(){if(busy||!settings)return;busy=true;error='';message='';try{await api('/api/booru/settings',json(settings));const result=await api<{task_id:string}>('/api/booru/models/download',{method:'POST'});downloadTask=result.task_id;message='Model download queued.';await refresh()}catch(value){error=value instanceof Error?value.message:'Model download could not be started.'}finally{busy=false}}
+  async function undo(run:Run){if(busy)return;busy=true;error='';message='';try{const result=await api<{assets:number;tags:number}>(`/api/booru/runs/${run.id}/undo`,{method:'POST'});message=`Removed ${result.tags} Booru tags from ${result.assets} assets.`;await refresh()}catch(value){error=value instanceof Error?value.message:'Undo failed. Retry this run.'}finally{busy=false}}
+  async function retry(run:Run){if(busy)return;busy=true;error='';message='';try{const result=await api<{selected_count:number}>(`/api/booru/runs/${run.id}/retry`,{method:'POST'});message=`Retry queued for ${result.selected_count} failed images.`;await refresh()}catch(value){error=value instanceof Error?value.message:'Retry could not be queued.'}finally{busy=false}}
+  async function toggleFailures(run:Run){if(openRun===run.id){openRun='';failures=[];return}openRun=run.id;try{failures=await api<Failure[]>(`/api/booru/runs/${run.id}/failures`)}catch(value){error=value instanceof Error?value.message:'Failures could not be loaded.'}}
+  onMount(()=>{void load();const timer=setInterval(()=>{void refresh().catch(()=>{})},5000);return()=>clearInterval(timer)});
 </script>
 
 <V2Section title="Booru model"><V2Card><V2Stack gap="sm">
   {#if settings}
     <V2SelectField id="booru-model" label="Model" value={settings.model_repo} options={modelOptions} onchange={(value)=>settings={...settings!,model_repo:value}}/>
+    <p class="v2-small v2-muted">{currentModel?.cached?'Downloaded':'Not downloaded'} · {currentModel?.loaded?'Loaded in memory':'Unloaded'}{#if currentModel} · Revision {currentModel.revision.slice(0,12)}{/if}</p>
+    <V2Button disabled={busy||currentDownload?.status==='running'||currentDownload?.status==='queued'} onclick={()=>void download()}>{currentModel?.cached?'Check and download model':'Download selected model'}</V2Button>
+    {#if currentDownload}<p role="status">Download: {currentDownload.status}{#if currentDownload.error} · {currentDownload.error.message}{/if}</p>{/if}
     <label for="booru-idle">Unload model after inactivity (seconds; 0 unloads after each image)</label>
     <input id="booru-idle" type="number" min="0" max="86400" value={settings.idle_seconds} oninput={(event)=>settings={...settings!,idle_seconds:Number(event.currentTarget.value)}}/>
-    <p class="v2-small v2-muted">Models download on first use to the mapped /cache/booru-models folder. SwinV2 keeps predictions comparable with immich-booru-tagger. Smaller models can change predictions.</p>
+    <p class="v2-small v2-muted">Models download to the mapped /cache/booru-models folder. SwinV2 keeps predictions comparable with immich-booru-tagger. Smaller models can change predictions.</p>
     <label for="booru-confidence">General and rating threshold</label><input id="booru-confidence" type="number" min="0" max="1" step="0.01" value={settings.confidence_threshold} oninput={(event)=>settings={...settings!,confidence_threshold:Number(event.currentTarget.value)}}/>
     <label for="booru-character">Character threshold</label><input id="booru-character" type="number" min="0" max="1" step="0.01" value={settings.character_threshold} oninput={(event)=>settings={...settings!,character_threshold:Number(event.currentTarget.value)}}/>
   {:else}<p>Loading Booru settings…</p>{/if}
 </V2Stack></V2Card></V2Section>
 <V2Section title="Automatic tagging"><V2Card><V2Stack gap="sm">
-  {#if schedule}<V2Checkbox label="Enable scheduled Booru tagging" checked={schedule.enabled} onchange={(value)=>schedule={...schedule!,enabled:value}}/><V2CronField id="booru-cron" label="Tag up to 250 unprocessed images per run" enabled={schedule.enabled} lastRunAt={schedule.last_run_at} value={schedule.cron_expression??'0 2 * * *'} onchange={(value)=>schedule={...schedule!,cron_expression:value}}/>{/if}
+  {#if schedule&&settings}<V2Checkbox label="Enable scheduled Booru tagging" checked={schedule.enabled} onchange={(value)=>schedule={...schedule!,enabled:value}}/><V2CronField id="booru-cron" label="Scheduled tagging" enabled={schedule.enabled} lastRunAt={schedule.last_run_at} value={schedule.cron_expression??'0 2 * * *'} onchange={(value)=>schedule={...schedule!,cron_expression:value}}/>
+    <label for="booru-batch">Images per scheduled run</label><input id="booru-batch" type="number" min="1" max="1000" value={settings.batch_size} oninput={(event)=>settings={...settings!,batch_size:Number(event.currentTarget.value)}}/>
+    <p class="v2-small v2-muted">Failed images wait at least one hour before another scheduled attempt. New images run first; you can retry failures immediately below.</p>
+  {/if}
   <V2Button variant="primary" disabled={busy||!settings||!schedule} onclick={()=>void save()}>Save Booru settings</V2Button>
   {#if error}<p role="alert">{error}</p>{/if}{#if message}<p role="status">{message}</p>{/if}
 </V2Stack></V2Card></V2Section>
-<V2Section title="Undo tagging runs"><V2Stack gap="sm">
-  {#each runs as run (run.id)}<V2Card><div style="display:flex;align-items:center;justify-content:space-between;gap:1rem"><span>{new Date(run.created_at).toLocaleString()}</span><V2Button disabled={busy||Boolean(run.undone_at)} onclick={()=>void undo(run)}>{run.undone_at?'Undone':'Undo added tags'}</V2Button></div></V2Card>{:else}<p class="v2-small v2-muted">No tagging runs yet.</p>{/each}
+<V2Section title="Tagging runs"><V2Stack gap="sm">
+  {#each runs as run (run.id)}<V2Card><V2Stack gap="sm">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap"><span>{new Date(run.created_at).toLocaleString()} · {tasks.find((task)=>task.id===run.id)?.status??'Finished'} · {tasks.find((task)=>task.id===run.id)?.counters?.completed??0} tagged · {tasks.find((task)=>task.id===run.id)?.counters?.failed??run.failures} failed</span><div style="display:flex;gap:.5rem;flex-wrap:wrap">{#if run.failures}<V2Button disabled={busy} onclick={()=>void toggleFailures(run)}>{openRun===run.id?'Hide failures':'Show failures'}</V2Button><V2Button disabled={busy} onclick={()=>void retry(run)}>Retry failed</V2Button>{/if}<V2Button disabled={busy||Boolean(run.undone_at)||!['completed','failed','cancelled'].includes(tasks.find((task)=>task.id===run.id)?.status??'completed')} onclick={()=>void undo(run)}>{run.undone_at?'Undone':'Undo added tags'}</V2Button></div></div>
+    {#if tasks.find((task)=>task.id===run.id)?.error}<p class="v2-small" role="status">{tasks.find((task)=>task.id===run.id)?.error?.message}</p>{/if}
+    {#if openRun===run.id}{#each failures as failure (failure.asset_id)}<p class="v2-small">{failure.asset_id}: {failure.error} · attempt {failure.attempts} · next scheduled retry {new Date(failure.next_retry_at).toLocaleString()}</p>{/each}{/if}
+  </V2Stack></V2Card>{:else}<p class="v2-small v2-muted">No tagging runs yet.</p>{/each}
 </V2Stack></V2Section>

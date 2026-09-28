@@ -62,6 +62,35 @@ def register_booru_routes(app: FastAPI, service: BooruService | None, assets, co
     async def booru_runs():
         return await require().recent_runs()
 
+    @app.get("/api/booru/runs/{run_id}/failures")
+    async def booru_run_failures(run_id: UUID):
+        return await require().failures(run_id)
+
+    @app.post("/api/booru/runs/{run_id}/retry")
+    async def retry_booru_run(run_id: UUID):
+        require()
+        task = await coordinator.get_status(run_id)
+        if task is not None and task.status not in {"completed", "failed", "cancelled"}:
+            raise HTTPException(409, "Wait for this tagging run to finish before retrying")
+        failures = await service.failures(run_id)
+        if not failures:
+            raise HTTPException(404, "No failed images remain in this run")
+        submitted = await coordinator.submit(
+            "booru_tagging", {"asset_ids": [item["asset_id"] for item in failures]},
+        )
+        return {"task_id": submitted.id, "selected_count": len(failures)}
+
+    @app.get("/api/booru/models/status")
+    async def booru_model_status():
+        require()
+        return [service.engine.status(repo) for repo in MODELS]
+
+    @app.post("/api/booru/models/download")
+    async def download_booru_model():
+        require()
+        task = await coordinator.submit("booru_tagging", {"mode": "download"})
+        return {"task_id": task.id}
+
     @app.post("/api/booru/runs/{run_id}/undo")
     async def undo_booru_run(run_id: UUID):
         require()

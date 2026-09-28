@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     booru_model_idle_seconds: int = Field(default=300, ge=0, le=86400)
     booru_confidence_threshold: float = Field(default=0.35, ge=0, le=1)
     booru_character_threshold: float = Field(default=0.9, ge=0, le=1)
+    booru_batch_size: int = Field(default=250, ge=1, le=1000)
     sync_batch_size: int = Field(default=250, ge=25, le=SYNC_FULL_BATCH_SIZE_MAX)
     sync_overlap_seconds: int = Field(
         default=300, ge=0, le=SYNC_INCREMENTAL_OVERLAP_SECONDS_MAX

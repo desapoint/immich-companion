@@ -2,21 +2,24 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 
-from companion.booru_engine import BooruEngine
+from companion.booru_engine import BooruEngine, BooruModelError
 from companion.config import Settings
 from companion.models import (
     AssetRecord,
+    BooruAssetFailureRecord,
     BooruSettingsRecord,
     BooruTaggedAssetRecord,
     BooruTagPolicyRecord,
     BooruTagRunRecord,
 )
+from companion.task_coordinator import PermanentTaskError
 from companion.tasks.contracts import TaskResult
 
 MODELS = (
@@ -31,6 +34,7 @@ class BooruSettingsView(BaseModel):
     idle_seconds: int = Field(ge=0, le=86400)
     confidence_threshold: float = Field(ge=0, le=1)
     character_threshold: float = Field(ge=0, le=1)
+    batch_size: int = Field(ge=1, le=1000)
 
 
 class BooruService:
@@ -49,12 +53,14 @@ class BooruService:
                     idle_seconds=self.defaults.booru_model_idle_seconds,
                     confidence_threshold=self.defaults.booru_confidence_threshold,
                     character_threshold=self.defaults.booru_character_threshold,
+                    batch_size=self.defaults.booru_batch_size,
                 )
             return BooruSettingsView(
                 model_repo=row.model_repo,
                 idle_seconds=row.idle_seconds,
                 confidence_threshold=row.confidence_threshold,
                 character_threshold=row.character_threshold,
+                batch_size=row.batch_size,
             )
 
     async def save_settings(self, value: BooruSettingsView) -> BooruSettingsView:
@@ -69,6 +75,7 @@ class BooruService:
             row.idle_seconds = value.idle_seconds
             row.confidence_threshold = value.confidence_threshold
             row.character_threshold = value.character_threshold
+            row.batch_size = value.batch_size
         return value
 
     async def disabled_tag_ids(self) -> set[UUID]:
@@ -94,9 +101,21 @@ class BooruService:
             )).all()
             return [
                 {"id": str(row.id), "created_at": row.created_at.isoformat(),
-                 "undone_at": row.undone_at.isoformat() if row.undone_at else None}
+                 "undone_at": row.undone_at.isoformat() if row.undone_at else None,
+                 "failures": (await session.scalar(select(func.count()).select_from(
+                     BooruAssetFailureRecord
+                 ).where(BooruAssetFailureRecord.run_id == row.id))) or 0}
                 for row in rows
             ]
+
+    async def failures(self, run_id: UUID) -> list[dict]:
+        async with self.database.sessions() as session:
+            rows = (await session.scalars(select(BooruAssetFailureRecord).where(
+                BooruAssetFailureRecord.run_id == run_id
+            ).order_by(BooruAssetFailureRecord.failed_at.desc()))).all()
+            return [{"asset_id": str(row.asset_id), "error": row.error,
+                     "attempts": row.attempts, "next_retry_at": row.next_retry_at.isoformat()}
+                    for row in rows]
 
     async def undo(self, run_id: UUID) -> dict[str, int]:
         async with self.database.sessions() as session:
@@ -110,43 +129,73 @@ class BooruService:
             )).all()
         assets = tags = 0
         for record in records:
-            # A failed removal remains in the ledger so retrying undo is safe.
-            remaining = list(record.added_tag_ids)
-            for value in list(remaining):
-                await self.immich.remove_assets_from_tag(UUID(value), [record.asset_id])
-                remaining.remove(value)
-                tags += 1
-                async with self.database.sessions.begin() as session:
-                    current = await session.get(BooruTaggedAssetRecord, record.asset_id)
-                    if current is not None and current.run_id == run_id:
-                        current.added_tag_ids = list(remaining)
-            async with self.database.sessions.begin() as session:
-                current = await session.get(BooruTaggedAssetRecord, record.asset_id)
-                if current is not None and current.run_id == run_id:
-                    await session.delete(current)
+            tags += await self._undo_asset(record.asset_id, run_id)
             assets += 1
         async with self.database.sessions.begin() as session:
             run = await session.get(BooruTagRunRecord, run_id)
             run.undone_at = datetime.now(UTC)
         return {"assets": assets, "tags": tags}
 
+    async def _undo_asset(self, asset_id: UUID, run_id: UUID) -> int:
+        async with self.database.sessions() as session:
+            record = await session.get(BooruTaggedAssetRecord, asset_id)
+            if record is None or record.run_id != run_id:
+                return 0
+            intended = {UUID(value) for value in record.added_tag_ids}
+        removed: set[UUID] = set()
+        for attempt in range(4):
+            current = await self.immich.get_asset(asset_id)
+            present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
+            remaining = intended & present
+            if not remaining:
+                async with self.database.sessions.begin() as session:
+                    record = await session.get(BooruTaggedAssetRecord, asset_id)
+                    if record is not None and record.run_id == run_id:
+                        await session.delete(record)
+                return len(removed)
+            for tag_id in remaining:
+                await self.immich.remove_assets_from_tag(tag_id, [asset_id])
+                removed.add(tag_id)
+            await asyncio.sleep(0.2 * (attempt + 1))
+        raise RuntimeError(f"Immich still reports Booru tags on asset {asset_id}; retry undo")
+
     async def _candidate_ids(self, limit: int) -> list[UUID]:
         async with self.database.sessions() as session:
             return list((await session.scalars(
                 select(AssetRecord.id)
+                .outerjoin(BooruAssetFailureRecord,
+                           BooruAssetFailureRecord.asset_id == AssetRecord.id)
                 .where(AssetRecord.asset_type == "IMAGE", AssetRecord.is_trashed.is_(False))
                 .where(~AssetRecord.id.in_(select(BooruTaggedAssetRecord.asset_id)))
-                .order_by(AssetRecord.id).limit(limit)
+                .where(or_(BooruAssetFailureRecord.asset_id.is_(None),
+                           BooruAssetFailureRecord.next_retry_at <= datetime.now(UTC)))
+                .order_by(func.coalesce(BooruAssetFailureRecord.attempts, 0), AssetRecord.id)
+                .limit(limit)
             )).all())
+
+    async def _record_failure(self, asset_id: UUID, run_id: UUID, error: Exception) -> None:
+        now = datetime.now(UTC)
+        message = f"{type(error).__name__}: {error}"[:512]
+        async with self.database.sessions.begin() as session:
+            row = await session.get(BooruAssetFailureRecord, asset_id)
+            if row is None:
+                row = BooruAssetFailureRecord(asset_id=asset_id, attempts=0)
+                session.add(row)
+            row.attempts += 1
+            row.run_id = run_id
+            row.error = message
+            row.failed_at = now
+            row.next_retry_at = now + timedelta(hours=min(2 ** min(row.attempts - 1, 10), 24 * 30))
 
     async def tag(self, ids: list[UUID] | None, context=None) -> TaskResult:
         config = await self.settings()
-        targets = ids if ids is not None else await self._candidate_ids(250)
+        targets = ids if ids is not None else await self._candidate_ids(config.batch_size)
         run_id = context.task.id if context is not None else uuid4()
         async with self.database.sessions.begin() as session:
             if await session.get(BooruTagRunRecord, run_id) is None:
                 session.add(BooruTagRunRecord(id=run_id))
         completed = failed = skipped = 0
+        model_error = False
         for index, asset_id in enumerate(targets):
             if context is not None:
                 await context.ensure_active()
@@ -170,19 +219,33 @@ class BooruService:
                         asset_id=asset_id, run_id=run_id, added_tag_ids=[],
                     ))
                 await self._apply(asset, predictions)
-                completed += 1
-            except Exception:
-                failed += 1
                 async with self.database.sessions.begin() as session:
-                    record = await session.get(BooruTaggedAssetRecord, asset_id)
-                    if record is not None and record.run_id == run_id and not record.added_tag_ids:
-                        await session.delete(record)
+                    failure = await session.get(BooruAssetFailureRecord, asset_id)
+                    if failure is not None:
+                        await session.delete(failure)
+                completed += 1
+            except Exception as error:
+                failed += 1
+                model_error = isinstance(error, BooruModelError)
+                try:
+                    await self._undo_asset(asset_id, run_id)
+                except Exception as rollback_error:
+                    error = RuntimeError(f"{error}; cleanup: {rollback_error}")
+                await self._record_failure(asset_id, run_id, error)
             if context is not None:
                 await context.checkpoint(
                     checkpoint={"cursor": str(index + 1), "run_id": str(run_id)},
                     counters={"completed": completed, "failed": failed, "skipped": skipped},
                     progress={"phase": "tagging", "completed": index + 1, "total": len(targets)},
                 )
+            if model_error:
+                break
+        if model_error:
+            raise PermanentTaskError(
+                "Booru model unavailable; check the failed image and model download"
+            )
+        if failed and not completed and not skipped:
+            raise PermanentTaskError(f"Booru tagging failed for all {failed} attempted images")
         return TaskResult(summary={"run_id": str(run_id)}, counters={
             "completed": completed, "failed": failed, "skipped": skipped,
         })
@@ -211,13 +274,18 @@ class BooruService:
                     by_name[name.casefold()] = tag
             if tag.id in disabled or tag.id in existing or tag.id in added:
                 continue
-            # Record the intended addition before the remote call. A retryable
-            # undo can then clean up even if the worker dies just after Immich writes.
-            async with self.database.sessions.begin() as session:
-                record = await session.get(BooruTaggedAssetRecord, asset.id)
-                record.added_tag_ids = [*record.added_tag_ids, str(tag.id)]
-            await self.immich.add_assets_to_tag(tag.id, [asset.id])
             added.append(tag.id)
+        # Record intent before the remote write so an interrupted run is undoable.
+        async with self.database.sessions.begin() as session:
+            record = await session.get(BooruTaggedAssetRecord, asset.id)
+            record.added_tag_ids = [str(tag_id) for tag_id in added]
+        await self.immich.add_tags_to_asset(asset.id, added)
+        if added:
+            await asyncio.sleep(0.2)
+            current = await self.immich.get_asset(asset.id)
+            present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
+            if not set(added).issubset(present):
+                raise RuntimeError("Immich did not retain every Booru tag on this asset")
         return added
 
 
@@ -230,6 +298,14 @@ class BooruTaskHandler:
         self.service = service
 
     async def execute(self, context, payload) -> TaskResult:
+        if payload.get("mode") == "download":
+            config = await self.service.settings()
+            await context.checkpoint(
+                checkpoint={"model": config.model_repo}, counters={},
+                progress={"phase": "downloading", "model": config.model_repo},
+            )
+            await self.service.engine.download(config.model_repo)
+            return TaskResult(summary={"model": config.model_repo, "cached": True})
         return await self.service.tag(
             [UUID(value) for value in payload["asset_ids"]] if "asset_ids" in payload else None,
             context,

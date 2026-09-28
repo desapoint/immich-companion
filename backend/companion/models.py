@@ -449,6 +449,7 @@ class BooruSettingsRecord(Base):
     idle_seconds: Mapped[int] = mapped_column(Integer)
     confidence_threshold: Mapped[float] = mapped_column(Float)
     character_threshold: Mapped[float] = mapped_column(Float)
+    batch_size: Mapped[int] = mapped_column(Integer, default=250)
 
 
 class BooruTagRunRecord(Base):
@@ -471,6 +472,23 @@ class BooruTaggedAssetRecord(Base):
     )
     run_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("booru_tag_runs.id"), index=True)
     added_tag_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class BooruAssetFailureRecord(Base):
+    """Retryable image failure; unattempted images take priority in cron runs."""
+
+    __tablename__ = "booru_asset_failures"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("booru_tag_runs.id", ondelete="CASCADE"), index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str] = mapped_column(String(512))
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    next_retry_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class SyncCoordinatorRecord(Base):
