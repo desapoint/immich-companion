@@ -2,6 +2,7 @@
   import GeneralSettingsSection from './GeneralSettingsSection.svelte';
   import DuplicateSettingsSection from './DuplicateSettingsSection.svelte';
   import SyncSettingsSection from './SyncSettingsSection.svelte';
+  import BooruSettingsSection from './BooruSettingsSection.svelte';
   import V2ActiveTasksSettings from './ActiveTasksSettings.svelte';
   import V2PageLayout from '../../../lib/components/layout/PageLayout.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
@@ -10,20 +11,22 @@
   import V2Zone from '../../../lib/components/layout/Zone.svelte';
   import { TOAST_POSITIONS, type ToastPosition } from '../../../app/state/toasts.svelte';
 
-  type SettingsTab = 'General' | 'Duplicates' | 'Sync' | 'Tasks';
+  type SettingsTab = 'General' | 'Duplicates' | 'Sync' | 'Booru' | 'Tasks';
   let { toastPosition = 'top-right', ontoastpositionchange, onopenplayground }: { toastPosition?: ToastPosition; ontoastpositionchange?: (position: ToastPosition) => void; onopenplayground?: () => void } = $props();
   let tab = $state<SettingsTab>('General');
-  const tabDescription = $derived(tab === 'General' ? 'Interface preferences and local tools.' : tab === 'Duplicates' ? 'Duplicate sources and similarity tuning.' : tab === 'Sync' ? 'Run, schedule, and tune synchronization.' : 'Monitor and control background work.');
+  const tabDescription = $derived(tab === 'General' ? 'Interface preferences and local tools.' : tab === 'Duplicates' ? 'Duplicate sources and similarity tuning.' : tab === 'Sync' ? 'Run, schedule, and tune synchronization.' : tab === 'Booru' ? 'Choose the model, schedule tagging, and undo runs.' : 'Monitor and control background work.');
 </script>
 
 <V2PageLayout title="Settings" description="Configure interface behavior and live synchronization controls.">
-  {#snippet tabs()}<V2Tabs items={['General', 'Duplicates', 'Sync', 'Tasks']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />{/snippet}
+  {#snippet tabs()}<V2Tabs items={['General', 'Duplicates', 'Sync', 'Booru', 'Tasks']} active={tab} ariaLabel="Settings sections" onselect={(value) => tab = value as SettingsTab} />{/snippet}
   <V2Zone>
     <V2Toolbar sticky={false}><div class="settings-tab-heading"><b>{tab}</b><span>{tabDescription}</span></div></V2Toolbar>
     {#if tab === 'General'}
       <GeneralSettingsSection {toastPosition} {ontoastpositionchange} {onopenplayground} />
     {:else if tab === 'Duplicates'}
       <DuplicateSettingsSection />
+    {:else if tab === 'Booru'}
+      <BooruSettingsSection />
     {:else if tab === 'Tasks'}
       <V2ActiveTasksSettings />
     {:else}

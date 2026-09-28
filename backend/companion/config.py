@@ -41,6 +41,15 @@ class Settings(BaseSettings):
     allow_destructive_actions: bool = False
     action_max_targets: int = Field(default=5000, ge=1, le=50000)
     action_plan_ttl_seconds: int = Field(default=900, ge=30, le=86400)
+    booru_model_repo: Literal[
+        "SmilingWolf/wd-swinv2-tagger-v3",
+        "SmilingWolf/wd-convnext-tagger-v3",
+        "SmilingWolf/wd-vit-tagger-v3",
+    ] = "SmilingWolf/wd-swinv2-tagger-v3"
+    booru_model_cache_dir: Path = Path("/cache/booru-models")
+    booru_model_idle_seconds: int = Field(default=300, ge=0, le=86400)
+    booru_confidence_threshold: float = Field(default=0.35, ge=0, le=1)
+    booru_character_threshold: float = Field(default=0.9, ge=0, le=1)
     sync_batch_size: int = Field(default=250, ge=25, le=SYNC_FULL_BATCH_SIZE_MAX)
     sync_overlap_seconds: int = Field(
         default=300, ge=0, le=SYNC_INCREMENTAL_OVERLAP_SECONDS_MAX

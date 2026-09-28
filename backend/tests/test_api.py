@@ -364,6 +364,7 @@ def test_managed_tag_detail_includes_its_live_hierarchy() -> None:
         "id": tag_id,
         "name": "Montréal",
         "color": "#68d391",
+        "booru_disabled": False,
         "parent_id": parent_id,
         "parent_path": ["Places"],
         "asset_count": 5,

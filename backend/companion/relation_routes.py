@@ -28,6 +28,7 @@ def register_relation_management_routes(
     require_immich: Callable[[], object],
     require_asset_repository: Callable[[], object],
     tag_subtree_ids: Callable[[list[ImmichTag]], dict[UUID, list[UUID]]],
+    booru_service=None,
 ) -> None:
     """Register album and tag catalog management endpoints."""
 
@@ -136,8 +137,10 @@ def register_relation_management_routes(
         direction: Literal["asc", "desc"] = "asc",
         flat: bool = False,
         include_hierarchy: bool = False,
+        booru_disabled: bool | None = None,
     ):
         catalog = await require_immich().list_tag_catalog()
+        disabled_ids = await booru_service.disabled_tag_ids() if booru_service else set()
         counts = await require_asset_repository().tag_asset_counts()
         tags_by_id = {tag.id: tag for tag in catalog}
         subtree_ids = tag_subtree_ids(catalog)
@@ -183,6 +186,7 @@ def register_relation_management_routes(
                 id=tag.id,
                 name=tag.name,
                 color=tag.color,
+                booru_disabled=tag.id in disabled_ids,
                 parent_id=tag.parent_id,
                 parent_path=parent_paths[tag.id],
                 asset_count=counts.get(tag.id, 0),
@@ -196,9 +200,12 @@ def register_relation_management_routes(
             matching_tags = [
                 tag
                 for tag in catalog
-                if not needle
-                or needle in tag.name.casefold()
-                or (include_hierarchy and needle in canonical_path(tag).casefold())
+                if (booru_disabled is None or (tag.id in disabled_ids) == booru_disabled)
+                and (
+                    not needle
+                    or needle in tag.name.casefold()
+                    or (include_hierarchy and needle in canonical_path(tag).casefold())
+                )
             ]
             matching_tags.sort(key=sort_key, reverse=direction == "desc")
             total = len(matching_tags)
@@ -211,7 +218,11 @@ def register_relation_management_routes(
                 pages=(total + page_size - 1) // page_size,
             )
 
-        matching_ids = {tag.id for tag in catalog if not needle or needle in tag.name.casefold()}
+        matching_ids = {
+            tag.id for tag in catalog
+            if (booru_disabled is None or (tag.id in disabled_ids) == booru_disabled)
+            and (not needle or needle in tag.name.casefold())
+        }
         included_ids = set(matching_ids)
         for tag in catalog:
             if tag.id not in matching_ids:

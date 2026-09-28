@@ -36,6 +36,8 @@ from companion.asset_schema import (
     AssetSummary,
 )
 from companion.asset_service import AssetSyncService, batches
+from companion.booru_routes import register_booru_routes
+from companion.booru_service import BooruService, BooruTaskHandler
 from companion.composite_duplicate_repository import CompositeDuplicateRepository
 from companion.composite_duplicate_sync import (
     CompositeDuplicateRebuildTaskHandler,
@@ -273,6 +275,17 @@ def create_app(
         if database is not None
         else None
     )
+    booru_service = (
+        BooruService(database, immich, runtime_settings)
+        if database is not None and immich is not None else None
+    )
+    if booru_service is not None and task_coordinator is not None:
+        task_coordinator.register_handler(BooruTaskHandler(booru_service))
+        task_coordinator.register_schedule(
+            name="booru-tagging", interval_seconds=86400, task_type="booru_tagging",
+            payload={}, enabled=False, cron_expression="0 2 * * *",
+            deduplication_policy="coalesce",
+        )
     immich_duplicate_repository = (
         ImmichDuplicateRepository(database) if database is not None else None
     )
@@ -667,6 +680,11 @@ def create_app(
         if database is not None:
             await asyncio.to_thread(run_migrations, runtime_settings)
         if task_coordinator is not None:
+            if booru_service is not None:
+                async def booru_idle_seconds() -> int:
+                    return (await booru_service.settings()).idle_seconds
+
+                booru_service.engine.start(booru_idle_seconds)
             await task_coordinator.cancel_unfinished(
                 "asset_sync",
                 reason="Asset sync does not resume automatically on container startup.",
@@ -683,6 +701,8 @@ def create_app(
         try:
             yield
         finally:
+            if booru_service is not None:
+                await booru_service.engine.stop()
             if task_coordinator is not None:
                 await task_coordinator.stop()
             await immich.aclose()
@@ -898,11 +918,14 @@ def create_app(
         composite_duplicate_repository=composite_duplicate_repository,
     )
 
+    register_booru_routes(app, booru_service, asset_repository, task_coordinator)
+
     register_relation_management_routes(
         app,
         require_immich=require_immich,
         require_asset_repository=require_asset_repository,
         tag_subtree_ids=tag_subtree_ids,
+        booru_service=booru_service,
     )
 
     register_action_duplicate_routes(

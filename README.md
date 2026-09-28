@@ -211,6 +211,22 @@ Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather
 than browser-native select or date-time inputs.
 
+### Booru image tagging
+
+Select images in Assets and choose **Tag with Booru model** from More actions.
+Settings → Booru controls the model, confidence thresholds, idle unload time,
+and an optional cron schedule (off by default). Scheduled runs tag up to 250
+unprocessed images at a time. Tags can be excluded from model assignment in
+Tags; use the Booru filter there to review exclusions. Settings → Booru lists
+runs and can undo only the tag associations added by each run.
+
+The default `SmilingWolf/wd-swinv2-tagger-v3` is the same model used by the
+neighboring `immich-booru-tagger`, with its general, character, and rating
+thresholds. ConvNeXt v3 and ViT v3 have smaller ONNX files but can produce
+different predictions. The app downloads model files on first use into
+`/cache/booru-models` on the mapped cache volume; idle unload frees the loaded
+ONNX session while retaining those files. First use needs access to Hugging Face.
+
 ## Fast frontend iteration against the integration environment
 
 Keep Immich and the backend running in Docker, then launch only Vite in WSL:
