@@ -23,6 +23,7 @@ class TagManagementItem(BaseModel):
     id: UUID
     name: str
     color: str | None = None
+    booru_disabled: bool = False
     parent_id: UUID | None = None
     parent_path: list[str] = Field(default_factory=list)
     asset_count: int = 0

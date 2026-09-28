@@ -103,6 +103,7 @@ describe('live V2 tag repository', () => {
     expect(result).toEqual({
       items: [{
         id: child.id,
+        booruDisabled: false,
         name: 'Montréal',
         path: 'Places / Montréal',
         parent: 'Places',
@@ -117,6 +118,21 @@ describe('live V2 tag repository', () => {
       page: 2,
       nextCursor: '3',
     });
+  });
+
+  it('filters tags disabled for Booru without losing their hierarchy path', async () => {
+    const fetcher = vi.fn<TagApiFetcher>(async () => jsonResponse({
+      items: [{ ...child, booru_disabled: true }], total: 1,
+      page: 1, page_size: 24, pages: 1,
+    }));
+    const repository = createTagRepository(fetcher);
+
+    const result = await repository.search({
+      pageSize: 24, booruDisabled: true, sort: { field: 'name', direction: 'asc' },
+    });
+
+    expect(String(fetcher.mock.calls[0]?.[0])).toContain('booru_disabled=true');
+    expect(result.items[0]).toMatchObject({ booruDisabled: true, path: 'Places / Montréal' });
   });
 
   it('uses cursor pages for searchable tag options', async () => {

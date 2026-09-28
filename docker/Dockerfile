@@ -36,6 +36,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     COMPANION_ENV=production \
     COMPANION_FRONTEND_DIR=/opt/immich-companion/frontend \
+    HF_HOME=/cache/huggingface \
+    XDG_CACHE_HOME=/cache \
     ALLOW_DESTRUCTIVE_ACTIONS=false
 
 RUN apt-get update \
@@ -58,6 +60,7 @@ CMD ["uvicorn", "companion.main:app", "--host", "0.0.0.0", "--port", "8080", "--
 FROM runtime-base AS development
 
 COPY --from=builder /opt/venv /opt/venv
+COPY --from=frontend-builder --chown=companion:companion /build/frontend/dist /opt/immich-companion/frontend
 
 
 FROM builder AS test

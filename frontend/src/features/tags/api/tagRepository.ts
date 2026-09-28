@@ -17,6 +17,7 @@ interface TagManagementItem {
   id: string;
   name: string;
   color: string | null;
+  booru_disabled?: boolean;
   parent_id: string | null;
   parent_path: string[];
   asset_count: number;
@@ -82,6 +83,7 @@ function normalizeTag(item: TagManagementItem): TagRecord {
 function normalizeRow(item: TagManagementItem): TagHierarchyRow {
   return {
     id: item.id,
+    booruDisabled: item.booru_disabled === true,
     name: item.name,
     path: canonicalPath(item),
     parent: item.parent_path.join(' / '),
@@ -114,6 +116,7 @@ function managementPath(query: TagSearchQuery, page: number): string {
     include_hierarchy: String(query.includeHierarchy === true),
   });
   if (query.query?.trim()) params.set('search', query.query.trim());
+  if (query.booruDisabled !== null && query.booruDisabled !== undefined) params.set('booru_disabled', String(query.booruDisabled));
   return `/api/tags/manage?${params}`;
 }
 

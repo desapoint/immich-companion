@@ -432,6 +432,73 @@ class TagAssetRecord(Base):
     sync_generation: Mapped[int] = mapped_column(BigInteger, default=0, index=True)
 
 
+class BooruTagPolicyRecord(Base):
+    """Companion-owned opt-out for a live Immich tag."""
+
+    __tablename__ = "booru_tag_policies"
+
+    tag_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    disabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class BooruSettingsRecord(Base):
+    __tablename__ = "booru_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    model_repo: Mapped[str] = mapped_column(String(128))
+    idle_seconds: Mapped[int] = mapped_column(Integer)
+    confidence_threshold: Mapped[float] = mapped_column(Float)
+    character_threshold: Mapped[float] = mapped_column(Float)
+    batch_size: Mapped[int] = mapped_column(Integer, default=250)
+    processed_tag_name: Mapped[str] = mapped_column(String(255), default="auto:processed")
+    content_rating_tag_name: Mapped[str] = mapped_column(String(255), default="content-rating")
+    target_albums: Mapped[str] = mapped_column(Text, default="")
+    max_batches_per_run: Mapped[int] = mapped_column(Integer, default=4)
+    unload_model_after_run: Mapped[bool] = mapped_column(Boolean, default=True)
+    failure_timeout: Mapped[int] = mapped_column(Integer, default=3)
+    tag_cache_ttl: Mapped[int] = mapped_column(Integer, default=300)
+    log_level: Mapped[str] = mapped_column(String(16), default="INFO")
+
+
+class BooruTagRunRecord(Base):
+    """A tagging batch whose exact additions can be undone."""
+
+    __tablename__ = "booru_tag_runs"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    undone_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class BooruTaggedAssetRecord(Base):
+    """Only tags added by one successful tagging run, never pre-existing tags."""
+
+    __tablename__ = "booru_tagged_assets"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    run_id: Mapped[UUID] = mapped_column(Uuid, ForeignKey("booru_tag_runs.id"), index=True)
+    added_tag_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+
+
+class BooruAssetFailureRecord(Base):
+    """Retryable image failure; unattempted images take priority in cron runs."""
+
+    __tablename__ = "booru_asset_failures"
+
+    asset_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("assets.id", ondelete="CASCADE"), primary_key=True
+    )
+    run_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("booru_tag_runs.id", ondelete="CASCADE"), index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, default=1)
+    error: Mapped[str] = mapped_column(String(512))
+    failed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    next_retry_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
 class SyncCoordinatorRecord(Base):
     """Singleton durable sync lease, queue, and successful checkpoints."""
 

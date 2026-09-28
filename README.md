@@ -211,6 +211,36 @@ Search, Expert rules, and pagination share fully styled Svelte select controls.
 Search date-times use the shared custom calendar and hour/minute picker rather
 than browser-native select or date-time inputs.
 
+### Booru image tagging
+
+Select images in Assets and choose **Tag with Booru model** from More actions,
+or use **Tag with Booru** in the image viewer. Settings → Booru controls the
+model, thresholds, processed marker, content rating parent, target albums,
+batch size and count, failure retry limit, tag catalog cache lifetime, log
+level, and model unloading. The default schedule is every two hours and is off
+until enabled. With no target albums, scheduled runs process images with no
+tags. With named albums, they process images in any named album that lack the
+processed marker. Failed images appear with their error and can be retried
+immediately. Scheduled retries back off from one hour up to 30 days and stop
+after the configured number of failed attempts.
+Tags can be excluded from model assignment in Tags; use the Booru filter there
+to review exclusions. Settings → Booru lists runs and can undo only the tag
+associations added by each run.
+
+The default `SmilingWolf/wd-swinv2-tagger-v3` is the same model used by the
+neighboring `immich-booru-tagger`, with its general, character, and rating
+thresholds. ConvNeXt v3 and ViT v3 have smaller ONNX files but can produce
+different predictions. The app downloads model files on first use into
+`/cache/booru-models` on the mapped cache volume; idle unload frees the loaded
+ONNX session while retaining those files. Settings → Booru can download the
+selected model before a run. Each supported model is pinned to a fixed Hugging
+Face commit so updates do not silently change predictions. First download needs
+access to Hugging Face.
+
+Immich must be able to retain tag metadata for the asset. If an external
+library blocks its sidecar metadata write, the tagging run records that image
+as failed and leaves it available for manual retry after the library is fixed.
+
 ## Fast frontend iteration against the integration environment
 
 Keep Immich and the backend running in Docker, then launch only Vite in WSL:

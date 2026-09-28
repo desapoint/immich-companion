@@ -28,6 +28,7 @@ export type BackgroundTaskPresentation = {
   completed: number;
   total: number | null;
   percent: number | null;
+  unit?: 'bytes';
 };
 
 function progressNumber(progress: Record<string, unknown>, key: string): number | null {
@@ -36,6 +37,24 @@ function progressNumber(progress: Record<string, unknown>, key: string): number 
 }
 
 export function backgroundTaskPresentation(task: TaskRecord): BackgroundTaskPresentation {
+  if (task.taskType === 'booru_tagging' && task.payload.mode === 'download') {
+    const model = typeof task.payload.model_repo === 'string'
+      ? task.payload.model_repo.split('/').at(-1) ?? 'Booru model'
+      : 'Booru model';
+    const completed = progressNumber(task.progress, 'completed') ?? 0;
+    const total = progressNumber(task.progress, 'total');
+    const detail = typeof task.progress.detail === 'string'
+      ? task.progress.detail
+      : task.status === 'queued' ? 'Waiting for the background worker…' : 'Preparing model files…';
+    return {
+      label: `Downloading ${model}`,
+      detail,
+      completed,
+      total,
+      percent: progressNumber(task.progress, 'percent'),
+      unit: 'bytes',
+    };
+  }
   const rawPhase = typeof task.progress.phase === 'string' ? task.progress.phase : '';
   const phases: Record<string, string> = {
     duplicate_fingerprints: 'Verifying file evidence',
@@ -60,6 +79,11 @@ export function backgroundTaskPresentation(task: TaskRecord): BackgroundTaskPres
     total: progressNumber(task.progress, 'total'),
     percent: progressNumber(task.progress, 'percent'),
   };
+}
+
+function isVisibleTask(task: TaskRecord): boolean {
+  return BACKGROUND_TASK_TYPES.includes(task.taskType as typeof BACKGROUND_TASK_TYPES[number])
+    || (task.taskType === 'booru_tagging' && task.payload.mode === 'download');
 }
 
 function newestFirst(left: TaskRecord, right: TaskRecord): number {
@@ -136,7 +160,7 @@ export class BackgroundTaskStatusController {
         if (generation !== this.refreshGeneration) return;
         this.tasks = tasks
           .filter((task) => (
-            BACKGROUND_TASK_TYPES.includes(task.taskType as typeof BACKGROUND_TASK_TYPES[number])
+            isVisibleTask(task)
             && ACTIVE_TASK_STATES.has(task.status)
           ))
           .sort(newestFirst);
@@ -165,7 +189,7 @@ export class BackgroundTaskStatusController {
 
   private applyTask(task: TaskRecord): void {
     this.recoverStream();
-    if (!BACKGROUND_TASK_TYPES.includes(task.taskType as typeof BACKGROUND_TASK_TYPES[number])) return;
+    if (!isVisibleTask(task)) return;
     if (!ACTIVE_TASK_STATES.has(task.status)) {
       this.tasks = this.tasks.filter((candidate) => candidate.id !== task.id);
       return;
