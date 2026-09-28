@@ -299,13 +299,33 @@ class BooruTaskHandler:
 
     async def execute(self, context, payload) -> TaskResult:
         if payload.get("mode") == "download":
-            config = await self.service.settings()
+            repo = payload.get("model_repo") or (await self.service.settings()).model_repo
+            if repo not in MODELS:
+                raise PermanentTaskError("Unsupported Booru model")
             await context.checkpoint(
-                checkpoint={"model": config.model_repo}, counters={},
-                progress={"phase": "downloading", "model": config.model_repo},
+                checkpoint={"model": repo}, counters={},
+                progress={"phase": "downloading", "model": repo,
+                          "detail": "Preparing model download…"},
             )
-            await self.service.engine.download(config.model_repo)
-            return TaskResult(summary={"model": config.model_repo, "cached": True})
+
+            async def report(filename: str, completed: int, total: int | None) -> None:
+                model_file = filename == "model.onnx"
+                percent = min(100.0, completed / total * 100) if model_file and total else None
+                detail = (
+                    f"Downloading model: {completed / 1048576:.1f} of {total / 1048576:.1f} MiB"
+                    if model_file and total else "Preparing model files…"
+                )
+                await context.checkpoint(
+                    checkpoint={"model": repo, "file": filename, "bytes": completed},
+                    counters={"downloaded_bytes": completed},
+                    progress={"phase": "downloading", "model": repo, "file": filename,
+                              "completed": completed if model_file else 0,
+                              "total": total if model_file else None,
+                              "percent": percent, "detail": detail},
+                )
+
+            await self.service.engine.download(repo, report)
+            return TaskResult(summary={"model": repo, "cached": True})
         return await self.service.tag(
             [UUID(value) for value in payload["asset_ids"]] if "asset_ids" in payload else None,
             context,

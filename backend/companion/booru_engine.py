@@ -7,12 +7,14 @@ import csv
 import gc
 import io
 import logging
+from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from pathlib import Path
 from time import monotonic
 
 import numpy as np
 from PIL import Image
+from tqdm import tqdm
 
 from companion.config import Settings
 
@@ -70,19 +72,36 @@ class BooruEngine:
         self._repo = None
         gc.collect()
 
-    def _paths(self, repo: str) -> dict[str, str]:
+    def _paths(
+        self, repo: str, on_progress: Callable[[str, int, int | None], None] | None = None
+    ) -> dict[str, str]:
         from huggingface_hub import hf_hub_download
 
         if repo not in MODEL_REVISIONS:
             raise ValueError("Unsupported Booru model")
         cache = Path(self._settings.booru_model_cache_dir)
         cache.mkdir(parents=True, exist_ok=True)
-        return {
-            name: hf_hub_download(
-                repo_id=repo, filename=name, revision=MODEL_REVISIONS[repo], cache_dir=str(cache)
+
+        def progress_class(filename: str):
+            class DownloadProgress(tqdm):
+                def update(self, amount=1):
+                    result = super().update(amount)
+                    if on_progress is not None and "downloading bytes" not in self.desc:
+                        on_progress(filename, int(self.n), int(self.total) if self.total else None)
+                    return result
+
+            return DownloadProgress
+
+        paths = {}
+        for name in ("selected_tags.csv", "model.onnx"):
+            paths[name] = hf_hub_download(
+                repo_id=repo, filename=name, revision=MODEL_REVISIONS[repo],
+                cache_dir=str(cache), tqdm_class=progress_class(name) if on_progress else None,
             )
-            for name in ("selected_tags.csv", "model.onnx")
-        }
+            if on_progress is not None:
+                size = Path(paths[name]).stat().st_size
+                on_progress(name, size, size)
+        return paths
 
     def status(self, repo: str) -> dict:
         from huggingface_hub import try_to_load_from_cache
@@ -99,9 +118,36 @@ class BooruEngine:
         return {"repo": repo, "revision": MODEL_REVISIONS[repo], "cached": cached,
                 "loaded": self._repo == repo and self._session is not None}
 
-    async def download(self, repo: str) -> None:
+    async def download(
+        self, repo: str,
+        report: Callable[[str, int, int | None], Awaitable[None]] | None = None,
+    ) -> None:
         async with self._lock:
-            await asyncio.to_thread(self._paths, repo)
+            progress: dict[str, str | int | None] = {
+                "name": "model.onnx", "completed": 0, "total": None,
+            }
+
+            def observe(name: str, completed: int, total: int | None) -> None:
+                progress.update(name=name, completed=completed, total=total)
+
+            download = asyncio.create_task(asyncio.to_thread(self._paths, repo, observe))
+            try:
+                while not download.done():
+                    if report is not None:
+                        await report(
+                            str(progress["name"]), int(progress["completed"]),
+                            progress["total"] if isinstance(progress["total"], int) else None,
+                        )
+                    await asyncio.wait({download}, timeout=0.5)
+                await download
+                if report is not None:
+                    await report(
+                        str(progress["name"]), int(progress["completed"]),
+                        progress["total"] if isinstance(progress["total"], int) else None,
+                    )
+            finally:
+                if not download.done():
+                    await download
 
     def _load(self, repo: str) -> None:
         import onnxruntime as ort

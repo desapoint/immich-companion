@@ -4,6 +4,7 @@
   import V2Card from '../../../lib/components/ui/Card.svelte';
   import V2Checkbox from '../../../lib/components/ui/Checkbox.svelte';
   import V2CronField from '../../../lib/components/ui/CronField.svelte';
+  import V2Progress from '../../../lib/components/ui/Progress.svelte';
   import V2SelectField from '../../../lib/components/ui/SimpleSelectField.svelte';
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
@@ -13,21 +14,24 @@
   type Run = {id:string;created_at:string;undone_at:string|null;failures:number};
   type Failure = {asset_id:string;error:string;attempts:number;next_retry_at:string};
   type ModelStatus = {repo:string;revision:string;cached:boolean;loaded:boolean};
-  type Task = {id:string;status:string;progress:Record<string,unknown>|null;counters:Record<string,number>|null;error:{message:string}|null};
-  let settings=$state<Settings|null>(null),schedule=$state<Schedule|null>(null),runs=$state<Run[]>([]),models=$state<ModelStatus[]>([]),tasks=$state<Task[]>([]),failures=$state<Failure[]>([]),openRun=$state(''),downloadTask=$state(''),busy=$state(false),error=$state(''),message=$state('');
+  type Task = {id:string;status:string;payload:Record<string,unknown>;progress:Record<string,unknown>|null;counters:Record<string,number>|null;error:{message:string}|null};
+  let settings=$state<Settings|null>(null),schedule=$state<Schedule|null>(null),runs=$state<Run[]>([]),models=$state<ModelStatus[]>([]),tasks=$state<Task[]>([]),failures=$state<Failure[]>([]),openRun=$state(''),busy=$state(false),error=$state(''),message=$state('');
   const modelOptions=[
     {value:'SmilingWolf/wd-swinv2-tagger-v3',label:'SwinV2 v3 · same as existing tagger'},
     {value:'SmilingWolf/wd-convnext-tagger-v3',label:'ConvNeXt v3 · smaller model'},
     {value:'SmilingWolf/wd-vit-tagger-v3',label:'ViT v3 · smaller model'},
   ];
   let currentModel=$derived(models.find((item)=>item.repo===settings?.model_repo));
-  let currentDownload=$derived(tasks.find((item)=>item.id===downloadTask));
+  let currentDownload=$derived(tasks.find((item)=>item.payload.mode==='download'&&item.payload.model_repo===settings?.model_repo));
+  let downloadActive=$derived(Boolean(currentDownload&&['queued','running','retrying','recovering','pause_requested','paused','cancel_requested'].includes(currentDownload.status)));
+  let downloadPercent=$derived(typeof currentDownload?.progress?.percent==='number'?currentDownload.progress.percent:null);
+  let downloadDetail=$derived(typeof currentDownload?.progress?.detail==='string'?currentDownload.progress.detail:'Preparing model files…');
   async function api<T>(path:string,init?:RequestInit):Promise<T>{const response=await fetch(path,init);if(!response.ok){const body=await response.json().catch(()=>null) as {detail?:string}|null;throw new Error(body?.detail??`Request failed (${response.status})`)}return response.json() as Promise<T>}
   function json(value:unknown):RequestInit{return{method:'PUT',headers:{'content-type':'application/json'},body:JSON.stringify(value)}}
   async function refresh(){const [history,cached,recent]=await Promise.all([api<Run[]>('/api/booru/runs'),api<ModelStatus[]>('/api/booru/models/status'),api<Task[]>('/api/tasks?task_type=booru_tagging&limit=30')]);runs=history;models=cached;tasks=recent;if(openRun)failures=await api<Failure[]>(`/api/booru/runs/${openRun}/failures`)}
   async function load(){try{const [next,schedules]=await Promise.all([api<Settings>('/api/booru/settings'),api<Schedule[]>('/api/settings/sync')]);settings=next;schedule=schedules.find((item)=>item.name==='booru-tagging')??null;await refresh()}catch(value){error=value instanceof Error?value.message:'Booru settings could not be loaded.'}}
   async function save(){if(!settings||!schedule||busy)return;busy=true;error='';message='';try{await api('/api/booru/settings',json(settings));schedule=await api<Schedule>(`/api/settings/sync/${schedule.name}`,json({enabled:schedule.enabled,cron_expression:schedule.cron_expression}));message='Booru settings saved.'}catch(value){error=value instanceof Error?value.message:'Booru settings could not be saved.'}finally{busy=false}}
-  async function download(){if(busy||!settings)return;busy=true;error='';message='';try{await api('/api/booru/settings',json(settings));const result=await api<{task_id:string}>('/api/booru/models/download',{method:'POST'});downloadTask=result.task_id;message='Model download queued.';await refresh()}catch(value){error=value instanceof Error?value.message:'Model download could not be started.'}finally{busy=false}}
+  async function download(){if(busy||!settings)return;busy=true;error='';message='';try{await api('/api/booru/settings',json(settings));await api<{task_id:string}>('/api/booru/models/download',{method:'POST'});message='Model download queued.';await refresh()}catch(value){error=value instanceof Error?value.message:'Model download could not be started.'}finally{busy=false}}
   async function undo(run:Run){if(busy)return;busy=true;error='';message='';try{const result=await api<{assets:number;tags:number}>(`/api/booru/runs/${run.id}/undo`,{method:'POST'});message=`Removed ${result.tags} Booru tags from ${result.assets} assets.`;await refresh()}catch(value){error=value instanceof Error?value.message:'Undo failed. Retry this run.'}finally{busy=false}}
   async function retry(run:Run){if(busy)return;busy=true;error='';message='';try{const result=await api<{selected_count:number}>(`/api/booru/runs/${run.id}/retry`,{method:'POST'});message=`Retry queued for ${result.selected_count} failed images.`;await refresh()}catch(value){error=value instanceof Error?value.message:'Retry could not be queued.'}finally{busy=false}}
   async function toggleFailures(run:Run){if(openRun===run.id){openRun='';failures=[];return}openRun=run.id;try{failures=await api<Failure[]>(`/api/booru/runs/${run.id}/failures`)}catch(value){error=value instanceof Error?value.message:'Failures could not be loaded.'}}
@@ -38,8 +42,16 @@
   {#if settings}
     <V2SelectField id="booru-model" label="Model" value={settings.model_repo} options={modelOptions} onchange={(value)=>settings={...settings!,model_repo:value}}/>
     <p class="v2-small v2-muted">{currentModel?.cached?'Downloaded':'Not downloaded'} · {currentModel?.loaded?'Loaded in memory':'Unloaded'}{#if currentModel} · Revision {currentModel.revision.slice(0,12)}{/if}</p>
-    <V2Button disabled={busy||currentDownload?.status==='running'||currentDownload?.status==='queued'} onclick={()=>void download()}>{currentModel?.cached?'Check and download model':'Download selected model'}</V2Button>
-    {#if currentDownload}<p role="status">Download: {currentDownload.status}{#if currentDownload.error} · {currentDownload.error.message}{/if}</p>{/if}
+    <V2Button disabled={busy||downloadActive} onclick={()=>void download()}>{currentModel?.cached?'Check and download model':'Download selected model'}</V2Button>
+    {#if currentDownload}
+      <div role="status" aria-live="polite" class="booru-download-progress">
+        <span>Model download: {currentDownload.status}{#if downloadPercent!==null} · {Math.round(downloadPercent)}%{/if}</span>
+        {#if downloadActive}
+          <V2Progress value={downloadPercent??undefined} indeterminate={downloadPercent===null} label="Booru model download progress"/>
+          <span class="v2-small v2-muted">{downloadDetail}</span>
+        {:else if currentDownload.error}<span class="v2-small">{currentDownload.error.message}</span>{/if}
+      </div>
+    {/if}
     <label for="booru-idle">Unload model after inactivity (seconds; 0 unloads after each image)</label>
     <input id="booru-idle" type="number" min="0" max="86400" value={settings.idle_seconds} oninput={(event)=>settings={...settings!,idle_seconds:Number(event.currentTarget.value)}}/>
     <p class="v2-small v2-muted">Models download to the mapped /cache/booru-models folder. SwinV2 keeps predictions comparable with immich-booru-tagger. Smaller models can change predictions.</p>
@@ -62,3 +74,7 @@
     {#if openRun===run.id}{#each failures as failure (failure.asset_id)}<p class="v2-small">{failure.asset_id}: {failure.error} · attempt {failure.attempts} · next scheduled retry {new Date(failure.next_retry_at).toLocaleString()}</p>{/each}{/if}
   </V2Stack></V2Card>{:else}<p class="v2-small v2-muted">No tagging runs yet.</p>{/each}
 </V2Stack></V2Section>
+
+<style>
+  .booru-download-progress{display:grid;gap:.35rem}
+</style>

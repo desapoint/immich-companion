@@ -87,8 +87,10 @@ def register_booru_routes(app: FastAPI, service: BooruService | None, assets, co
 
     @app.post("/api/booru/models/download")
     async def download_booru_model():
-        require()
-        task = await coordinator.submit("booru_tagging", {"mode": "download"})
+        current = await require().settings()
+        task = await coordinator.submit(
+            "booru_tagging", {"mode": "download", "model_repo": current.model_repo}
+        )
         return {"task_id": task.id}
 
     @app.post("/api/booru/runs/{run_id}/undo")

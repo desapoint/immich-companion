@@ -42,6 +42,34 @@ describe('background task status', () => {
     });
   });
 
+  it('shows model download bytes in the global task tray', async () => {
+    const download: TaskRecord = {
+      ...similarityTask,
+      id: 'model-download',
+      taskType: 'booru_tagging',
+      payload: { mode: 'download', model_repo: 'SmilingWolf/wd-swinv2-tagger-v3' },
+      progress: { phase: 'downloading', completed: 25, total: 100, percent: 25,
+        detail: 'Downloading model: 25 of 100 MiB' },
+    };
+    expect(backgroundTaskPresentation(download)).toEqual({
+      label: 'Downloading wd-swinv2-tagger-v3',
+      detail: 'Downloading model: 25 of 100 MiB',
+      completed: 25,
+      total: 100,
+      percent: 25,
+      unit: 'bytes',
+    });
+    const controller = new BackgroundTaskStatusController({
+      listActive: async () => [download, { ...download, id: 'tagging', payload: { asset_ids: ['x'] } }],
+      subscribe: () => ({ close: () => undefined }),
+    });
+    const release = controller.acquire();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(controller.tasks.map((task) => task.id)).toEqual(['model-download']);
+    release();
+  });
+
   it('hydrates active tasks once and applies live terminal updates', async () => {
     let handlers!: Parameters<TaskRepository['subscribe']>[0];
     const close = vi.fn();

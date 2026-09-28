@@ -67,6 +67,10 @@
     return `${run.progress.completed.toLocaleString()} processed · total work not known yet`;
   }
 
+  function taskQuantity(value:number, unit?:'bytes'):string{
+    return unit==='bytes' ? `${(value/1048576).toFixed(1)} MiB` : value.toLocaleString();
+  }
+
   onMount(()=>{
     const releaseSyncStatus=syncStatus.acquire();
     const releaseBackgroundTasks=backgroundTaskStatus.acquire();
@@ -158,7 +162,7 @@
             <div class="v2-task-copy"><span>{item.presentation.label}</span><small class="v2-muted">{item.presentation.detail}</small></div>
             <div class="v2-task-progress">
               <div class="v2-task-progress-meta">
-                <small>{item.presentation.total === null ? `${item.presentation.completed.toLocaleString()} processed` : `${item.presentation.completed.toLocaleString()} of ${item.presentation.total.toLocaleString()} processed`}</small>
+                <small>{item.presentation.total === null ? `${taskQuantity(item.presentation.completed,item.presentation.unit)} ${item.presentation.unit==='bytes'?'downloaded':'processed'}` : `${taskQuantity(item.presentation.completed,item.presentation.unit)} of ${taskQuantity(item.presentation.total,item.presentation.unit)} ${item.presentation.unit==='bytes'?'downloaded':'processed'}`}</small>
                 <small>{item.presentation.total !== null && item.presentation.percent !== null ? formatTaskProgressPercent(item.presentation.percent) : 'Unknown total'}</small>
               </div>
               <V2Progress
