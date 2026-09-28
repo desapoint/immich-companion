@@ -282,8 +282,8 @@ def create_app(
     if booru_service is not None and task_coordinator is not None:
         task_coordinator.register_handler(BooruTaskHandler(booru_service))
         task_coordinator.register_schedule(
-            name="booru-tagging", interval_seconds=86400, task_type="booru_tagging",
-            payload={}, enabled=False, cron_expression="0 2 * * *",
+            name="booru-tagging", interval_seconds=7200, task_type="booru_tagging",
+            payload={}, enabled=False, cron_expression="0 */2 * * *",
             deduplication_policy="coalesce",
         )
     immich_duplicate_repository = (

@@ -450,6 +450,14 @@ class BooruSettingsRecord(Base):
     confidence_threshold: Mapped[float] = mapped_column(Float)
     character_threshold: Mapped[float] = mapped_column(Float)
     batch_size: Mapped[int] = mapped_column(Integer, default=250)
+    processed_tag_name: Mapped[str] = mapped_column(String(255), default="auto:processed")
+    content_rating_tag_name: Mapped[str] = mapped_column(String(255), default="content-rating")
+    target_albums: Mapped[str] = mapped_column(Text, default="")
+    max_batches_per_run: Mapped[int] = mapped_column(Integer, default=4)
+    unload_model_after_run: Mapped[bool] = mapped_column(Boolean, default=True)
+    failure_timeout: Mapped[int] = mapped_column(Integer, default=3)
+    tag_cache_ttl: Mapped[int] = mapped_column(Integer, default=300)
+    log_level: Mapped[str] = mapped_column(String(16), default="INFO")
 
 
 class BooruTagRunRecord(Base):

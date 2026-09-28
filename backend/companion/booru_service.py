@@ -3,21 +3,28 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
+from time import monotonic
+from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 
 from companion.booru_engine import BooruEngine, BooruModelError
 from companion.config import Settings
 from companion.models import (
+    AlbumAssetRecord,
+    AlbumRecord,
     AssetRecord,
     BooruAssetFailureRecord,
     BooruSettingsRecord,
     BooruTaggedAssetRecord,
     BooruTagPolicyRecord,
     BooruTagRunRecord,
+    TagAssetRecord,
+    TagRecord,
 )
 from companion.task_coordinator import PermanentTaskError
 from companion.tasks.contracts import TaskResult
@@ -27,6 +34,7 @@ MODELS = (
     "SmilingWolf/wd-convnext-tagger-v3",
     "SmilingWolf/wd-vit-tagger-v3",
 )
+logger = logging.getLogger(__name__)
 
 
 class BooruSettingsView(BaseModel):
@@ -35,6 +43,22 @@ class BooruSettingsView(BaseModel):
     confidence_threshold: float = Field(ge=0, le=1)
     character_threshold: float = Field(ge=0, le=1)
     batch_size: int = Field(ge=1, le=1000)
+    processed_tag_name: str = Field(default="auto:processed", max_length=255)
+    content_rating_tag_name: str = Field(default="content-rating", max_length=255)
+    target_albums: str = Field(default="", max_length=2048)
+    max_batches_per_run: int = Field(default=4, ge=1, le=100)
+    unload_model_after_run: bool = True
+    failure_timeout: int = Field(default=3, ge=0, le=100)
+    tag_cache_ttl: int = Field(default=300, ge=1, le=86400)
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+
+    @field_validator("content_rating_tag_name")
+    @classmethod
+    def valid_rating_parent(cls, value: str) -> str:
+        value = value.strip()
+        if not value or "/" in value or any(char in value for char in "\r\n\t"):
+            raise ValueError("Content rating parent must be a single tag name")
+        return value
 
 
 class BooruService:
@@ -43,29 +67,60 @@ class BooruService:
         self.immich = immich
         self.defaults = settings
         self.engine = BooruEngine(settings)
+        self._tag_catalog = None
+        self._tag_catalog_expires = 0.0
 
     async def settings(self) -> BooruSettingsView:
         async with self.database.sessions() as session:
             row = await session.get(BooruSettingsRecord, 1)
             if row is None:
-                return BooruSettingsView(
+                view = BooruSettingsView(
                     model_repo=self.defaults.booru_model_repo,
                     idle_seconds=self.defaults.booru_model_idle_seconds,
                     confidence_threshold=self.defaults.booru_confidence_threshold,
                     character_threshold=self.defaults.booru_character_threshold,
                     batch_size=self.defaults.booru_batch_size,
+                    processed_tag_name="auto:processed",
+                    content_rating_tag_name="content-rating",
+                    target_albums="",
+                    max_batches_per_run=4,
+                    unload_model_after_run=True,
+                    failure_timeout=3,
+                    tag_cache_ttl=300,
+                    log_level="INFO",
                 )
-            return BooruSettingsView(
-                model_repo=row.model_repo,
-                idle_seconds=row.idle_seconds,
-                confidence_threshold=row.confidence_threshold,
-                character_threshold=row.character_threshold,
-                batch_size=row.batch_size,
-            )
+            else:
+                view = BooruSettingsView(
+                    model_repo=row.model_repo,
+                    idle_seconds=row.idle_seconds,
+                    confidence_threshold=row.confidence_threshold,
+                    character_threshold=row.character_threshold,
+                    batch_size=row.batch_size,
+                    processed_tag_name=row.processed_tag_name,
+                    content_rating_tag_name=row.content_rating_tag_name,
+                    target_albums=row.target_albums,
+                    max_batches_per_run=row.max_batches_per_run,
+                    unload_model_after_run=row.unload_model_after_run,
+                    failure_timeout=row.failure_timeout,
+                    tag_cache_ttl=row.tag_cache_ttl,
+                    log_level=row.log_level,
+                )
+        for name in (__name__, "companion.booru_engine"):
+            logging.getLogger(name).setLevel(view.log_level)
+        return view
 
     async def save_settings(self, value: BooruSettingsView) -> BooruSettingsView:
         if value.model_repo not in MODELS:
             raise ValueError("Unsupported Booru model")
+        value = value.model_copy(update={
+            "processed_tag_name": value.processed_tag_name.strip(),
+            "target_albums": ",".join(
+                name.strip() for name in value.target_albums.split(",") if name.strip()
+            ),
+        })
+        self._tag_catalog = None
+        for name in (__name__, "companion.booru_engine"):
+            logging.getLogger(name).setLevel(value.log_level)
         async with self.database.sessions.begin() as session:
             row = await session.get(BooruSettingsRecord, 1)
             if row is None:
@@ -76,6 +131,14 @@ class BooruService:
             row.confidence_threshold = value.confidence_threshold
             row.character_threshold = value.character_threshold
             row.batch_size = value.batch_size
+            row.processed_tag_name = value.processed_tag_name
+            row.content_rating_tag_name = value.content_rating_tag_name
+            row.target_albums = value.target_albums
+            row.max_batches_per_run = value.max_batches_per_run
+            row.unload_model_after_run = value.unload_model_after_run
+            row.failure_timeout = value.failure_timeout
+            row.tag_cache_ttl = value.tag_cache_ttl
+            row.log_level = value.log_level
         return value
 
     async def disabled_tag_ids(self) -> set[UUID]:
@@ -159,19 +222,42 @@ class BooruService:
             await asyncio.sleep(0.2 * (attempt + 1))
         raise RuntimeError(f"Immich still reports Booru tags on asset {asset_id}; retry undo")
 
-    async def _candidate_ids(self, limit: int) -> list[UUID]:
+    async def _candidate_ids(self, limit: int, config: BooruSettingsView) -> list[UUID]:
+        album_names = [name.casefold() for name in config.target_albums.split(",") if name]
         async with self.database.sessions() as session:
-            return list((await session.scalars(
+            query = (
                 select(AssetRecord.id)
                 .outerjoin(BooruAssetFailureRecord,
                            BooruAssetFailureRecord.asset_id == AssetRecord.id)
                 .where(AssetRecord.asset_type == "IMAGE", AssetRecord.is_trashed.is_(False))
                 .where(~AssetRecord.id.in_(select(BooruTaggedAssetRecord.asset_id)))
                 .where(or_(BooruAssetFailureRecord.asset_id.is_(None),
-                           BooruAssetFailureRecord.next_retry_at <= datetime.now(UTC)))
+                           (BooruAssetFailureRecord.attempts < config.failure_timeout)
+                           & (BooruAssetFailureRecord.next_retry_at <= datetime.now(UTC))))
                 .order_by(func.coalesce(BooruAssetFailureRecord.attempts, 0), AssetRecord.id)
                 .limit(limit)
-            )).all())
+            )
+            if album_names:
+                album_ids = select(AlbumRecord.id).where(
+                    func.lower(AlbumRecord.album_name).in_(album_names)
+                )
+                query = query.where(AssetRecord.id.in_(
+                    select(AlbumAssetRecord.asset_id).where(
+                        AlbumAssetRecord.album_id.in_(album_ids)
+                    )
+                ))
+                if config.processed_tag_name:
+                    processed_tags = select(TagRecord.id).where(
+                        func.lower(TagRecord.tag_name) == config.processed_tag_name.casefold()
+                    )
+                    query = query.where(~AssetRecord.id.in_(
+                        select(TagAssetRecord.asset_id).where(
+                            TagAssetRecord.tag_id.in_(processed_tags)
+                        )
+                    ))
+            else:
+                query = query.where(~AssetRecord.id.in_(select(TagAssetRecord.asset_id)))
+            return list((await session.scalars(query)).all())
 
     async def _record_failure(self, asset_id: UUID, run_id: UUID, error: Exception) -> None:
         now = datetime.now(UTC)
@@ -189,7 +275,9 @@ class BooruService:
 
     async def tag(self, ids: list[UUID] | None, context=None) -> TaskResult:
         config = await self.settings()
-        targets = ids if ids is not None else await self._candidate_ids(config.batch_size)
+        targets = ids if ids is not None else await self._candidate_ids(
+            config.batch_size * config.max_batches_per_run, config
+        )
         run_id = context.task.id if context is not None else uuid4()
         async with self.database.sessions.begin() as session:
             if await session.get(BooruTagRunRecord, run_id) is None:
@@ -209,6 +297,14 @@ class BooruService:
                 if asset.asset_type != "IMAGE" or asset.is_trashed:
                     skipped += 1
                     continue
+                if ids is None and not config.target_albums and asset.tags:
+                    skipped += 1
+                    continue
+                if ids is None and config.target_albums and config.processed_tag_name:
+                    marker = config.processed_tag_name.casefold()
+                    if any(str(tag.get("name", "")).casefold() == marker for tag in asset.tags):
+                        skipped += 1
+                        continue
                 media = await self.immich.get_thumbnail(asset_id, size="thumbnail")
                 predictions = await self.engine.predict(
                     media.content, config.model_repo, config.confidence_threshold,
@@ -218,7 +314,7 @@ class BooruService:
                     session.add(BooruTaggedAssetRecord(
                         asset_id=asset_id, run_id=run_id, added_tag_ids=[],
                     ))
-                await self._apply(asset, predictions)
+                await self._apply(asset, predictions, config)
                 async with self.database.sessions.begin() as session:
                     failure = await session.get(BooruAssetFailureRecord, asset_id)
                     if failure is not None:
@@ -250,18 +346,26 @@ class BooruService:
             "completed": completed, "failed": failed, "skipped": skipped,
         })
 
-    async def _apply(self, asset, predictions: list[str]) -> list[UUID]:
-        catalog = await self.immich.list_tag_catalog()
+    async def _apply(self, asset, predictions: list[str], config: BooruSettingsView) -> list[UUID]:
+        if self._tag_catalog is None or monotonic() >= self._tag_catalog_expires:
+            self._tag_catalog = await self.immich.list_tag_catalog()
+            self._tag_catalog_expires = monotonic() + config.tag_cache_ttl
+        catalog = self._tag_catalog
         disabled = await self.disabled_tag_ids()
         by_name = {tag.name.casefold(): tag for tag in catalog if tag.parent_id is None}
         existing = {UUID(str(tag["id"])) for tag in asset.tags if "id" in tag}
         added: list[UUID] = []
-        rating_parent = by_name.get("content-rating")
-        for name in [*predictions, "auto:processed"]:
+        rating_parent = by_name.get(config.content_rating_tag_name.casefold())
+        names = [*predictions]
+        if config.processed_tag_name:
+            names.append(config.processed_tag_name)
+        for name in names:
             rating = name.casefold() in {"general", "sensitive", "questionable", "explicit"}
             if rating:
                 if rating_parent is None:
-                    rating_parent = await self.immich.create_tag("content-rating")
+                    rating_parent = await self.immich.create_tag(config.content_rating_tag_name)
+                    catalog.append(rating_parent)
+                    by_name[config.content_rating_tag_name.casefold()] = rating_parent
                 tag = next((item for item in catalog if item.parent_id == rating_parent.id
                             and item.name.casefold() == name.casefold()), None)
                 if tag is None:
@@ -272,6 +376,7 @@ class BooruService:
                 if tag is None:
                     tag = await self.immich.create_tag(name)
                     by_name[name.casefold()] = tag
+                    catalog.append(tag)
             if tag.id in disabled or tag.id in existing or tag.id in added:
                 continue
             added.append(tag.id)
@@ -326,7 +431,12 @@ class BooruTaskHandler:
 
             await self.service.engine.download(repo, report)
             return TaskResult(summary={"model": repo, "cached": True})
-        return await self.service.tag(
-            [UUID(value) for value in payload["asset_ids"]] if "asset_ids" in payload else None,
-            context,
-        )
+        config = await self.service.settings()
+        try:
+            return await self.service.tag(
+                [UUID(value) for value in payload["asset_ids"]] if "asset_ids" in payload else None,
+                context,
+            )
+        finally:
+            if config.unload_model_after_run:
+                await self.service.engine.unload()

@@ -47,6 +47,7 @@
 
   let currentId=$state<string|null>(null),asset=$state<AssetDetailRecord|undefined>(),media=$state<MediaResource|null>(null),navigation=$state<ViewerNavigationWindow>(emptyNavigation());
   let loading=$state(false),navigationLoading=$state(false),assetError=$state(''),navigationError=$state(''),mediaError=$state(''),mediaRefreshing=$state(false),mediaAttempt=$state(0),loadRequest=0;
+  let booruBusy=$state(false);
   let relationDialog=$state<RelationDialog>(null),removeRelationDialog=$state<RemoveRelationDialog>(null),removeRelationValues=$state<string[]>([]),relationAlbum=$state(''),relationTags=$state<string[]>([]);
   let sessionInitialized=$state(false),sessionPage=$state(1),sessionPosition=$state<number|null>(null),sessionTotal=$state(0),sessionPages=$state<Record<number,string[]>>({}),sessionInfinite=$state<string[]>([]);
 
@@ -236,6 +237,17 @@
   async function favorite(){if(!asset)return;const next=!asset.is_favorite;await runAction(next?'Favorite':'Unfavorite',(id)=>libraryData.assets.setFavorite(target(id),next))}
   async function archive(){if(!asset)return;const next=!asset.is_archived;await runAction(next?'Archive':'Unarchive',(id)=>libraryData.assets.setArchived(target(id),next))}
   async function sync(){await runAction('Sync',(id)=>libraryData.assets.sync(target(id)))}
+  async function tagWithBooru(){
+    if(!asset||asset.asset_type!=='IMAGE'||actionBusy||booruBusy)return;
+    const id=asset.id;
+    booruBusy=true;
+    try{
+      const result=await libraryData.assets.tagWithBooru(target(id));
+      toasts?.push({tone:'success',title:'Booru tagging queued',message:`${result.selectedCount} image queued. Follow progress in Settings → Tasks.`});
+    }catch(error){
+      toasts?.push({tone:'error',title:'Booru tagging could not be queued',message:errorMessage(error,'Please try again.')});
+    }finally{booruBusy=false}
+  }
   async function removeAllTags(){await runAction('Remove all tags',(id)=>libraryData.assets.removeTags(target(id)))}
   async function removeAllAlbums(){await runAction('Remove all albums',(id)=>libraryData.assets.removeFromAlbums(target(id)))}
   function openRemoveRelationDialog(kind:Exclude<RemoveRelationDialog,null>){if(!asset)return;removeRelationDialog=kind;removeRelationValues=[];void removableRelations.load(target(asset.id))}
@@ -327,7 +339,7 @@
 
   {#snippet footer()}
     <div class="viewer-footer-prev"><V2Button disabled={!canPrevious||navigationLoading||actionBusy} onclick={previous}>← Previous</V2Button></div>
-    <div class="viewer-footer-actions"><V2Button disabled={!asset||loading||actionBusy} onclick={favorite}>{asset?.is_favorite?'Unfavorite':'Favorite'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={archive}>{asset?.is_archived?'Unarchive':'Archive'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('album')}>Album</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('tags')}>Tags</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={sync}>Sync</V2Button>{#if asset?.tags.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('tags')}>Remove tags…</V2Button><V2Button disabled={actionBusy} onclick={removeAllTags}>Remove all tags</V2Button>{/if}{#if asset?.albums.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('album')}>Remove from albums…</V2Button><V2Button disabled={actionBusy} onclick={removeAllAlbums}>Remove all albums</V2Button>{/if}<V2Button variant="danger" disabled={!asset||loading||actionBusy} onclick={trash}>Trash</V2Button></div>
+    <div class="viewer-footer-actions"><V2Button disabled={!asset||loading||actionBusy} onclick={favorite}>{asset?.is_favorite?'Unfavorite':'Favorite'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={archive}>{asset?.is_archived?'Unarchive':'Archive'}</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('album')}>Album</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={()=>openRelationDialog('tags')}>Tags</V2Button><V2Button disabled={!asset||loading||actionBusy} onclick={sync}>Sync</V2Button><V2Button disabled={!asset||asset.asset_type!=='IMAGE'||loading||actionBusy||booruBusy} onclick={tagWithBooru}>{booruBusy?'Queuing Booru…':'Tag with Booru'}</V2Button>{#if asset?.tags.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('tags')}>Remove tags…</V2Button><V2Button disabled={actionBusy} onclick={removeAllTags}>Remove all tags</V2Button>{/if}{#if asset?.albums.length}<V2Button disabled={actionBusy} onclick={()=>openRemoveRelationDialog('album')}>Remove from albums…</V2Button><V2Button disabled={actionBusy} onclick={removeAllAlbums}>Remove all albums</V2Button>{/if}<V2Button variant="danger" disabled={!asset||loading||actionBusy} onclick={trash}>Trash</V2Button></div>
     <div class="viewer-footer-next"><V2Button disabled={!canNext||navigationLoading||actionBusy} onclick={next}>Next →</V2Button></div>
   {/snippet}
 </V2ViewerShell>

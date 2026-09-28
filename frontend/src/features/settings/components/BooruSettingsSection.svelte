@@ -9,7 +9,7 @@
   import V2Section from '../../../lib/components/layout/Section.svelte';
   import V2Stack from '../../../lib/components/layout/Stack.svelte';
 
-  type Settings = {model_repo:string;idle_seconds:number;confidence_threshold:number;character_threshold:number;batch_size:number;models:string[]};
+  type Settings = {model_repo:string;idle_seconds:number;confidence_threshold:number;character_threshold:number;batch_size:number;processed_tag_name:string;content_rating_tag_name:string;target_albums:string;max_batches_per_run:number;unload_model_after_run:boolean;failure_timeout:number;tag_cache_ttl:number;log_level:string;models:string[]};
   type Schedule = {name:string;enabled:boolean;cron_expression:string|null;last_run_at:string|null};
   type Run = {id:string;created_at:string;undone_at:string|null;failures:number};
   type Failure = {asset_id:string;error:string;attempts:number;next_retry_at:string};
@@ -54,14 +54,24 @@
     {/if}
     <label for="booru-idle">Unload model after inactivity (seconds; 0 unloads after each image)</label>
     <input id="booru-idle" type="number" min="0" max="86400" value={settings.idle_seconds} oninput={(event)=>settings={...settings!,idle_seconds:Number(event.currentTarget.value)}}/>
+    <V2Checkbox label="Unload model after each tagging run" checked={settings.unload_model_after_run} onchange={(value)=>settings={...settings!,unload_model_after_run:value}}/>
     <p class="v2-small v2-muted">Models download to the mapped /cache/booru-models folder. SwinV2 keeps predictions comparable with immich-booru-tagger. Smaller models can change predictions.</p>
     <label for="booru-confidence">General and rating threshold</label><input id="booru-confidence" type="number" min="0" max="1" step="0.01" value={settings.confidence_threshold} oninput={(event)=>settings={...settings!,confidence_threshold:Number(event.currentTarget.value)}}/>
     <label for="booru-character">Character threshold</label><input id="booru-character" type="number" min="0" max="1" step="0.01" value={settings.character_threshold} oninput={(event)=>settings={...settings!,character_threshold:Number(event.currentTarget.value)}}/>
+    <label for="booru-processed-tag">Processed marker tag</label><input id="booru-processed-tag" type="text" maxlength="255" value={settings.processed_tag_name} oninput={(event)=>settings={...settings!,processed_tag_name:event.currentTarget.value}}/>
+    <p class="v2-small v2-muted">Added to each successfully tagged image so you can find it in Immich. Leave empty to skip the marker. Undo removes only markers added by that run.</p>
+    <label for="booru-rating-parent">Content rating parent tag</label><input id="booru-rating-parent" type="text" maxlength="255" value={settings.content_rating_tag_name} oninput={(event)=>settings={...settings!,content_rating_tag_name:event.currentTarget.value}}/>
   {:else}<p>Loading Booru settings…</p>{/if}
 </V2Stack></V2Card></V2Section>
 <V2Section title="Automatic tagging"><V2Card><V2Stack gap="sm">
-  {#if schedule&&settings}<V2Checkbox label="Enable scheduled Booru tagging" checked={schedule.enabled} onchange={(value)=>schedule={...schedule!,enabled:value}}/><V2CronField id="booru-cron" label="Scheduled tagging" enabled={schedule.enabled} lastRunAt={schedule.last_run_at} value={schedule.cron_expression??'0 2 * * *'} onchange={(value)=>schedule={...schedule!,cron_expression:value}}/>
-    <label for="booru-batch">Images per scheduled run</label><input id="booru-batch" type="number" min="1" max="1000" value={settings.batch_size} oninput={(event)=>settings={...settings!,batch_size:Number(event.currentTarget.value)}}/>
+  {#if schedule&&settings}<V2Checkbox label="Enable scheduled Booru tagging" checked={schedule.enabled} onchange={(value)=>schedule={...schedule!,enabled:value}}/><V2CronField id="booru-cron" label="Scheduled tagging" enabled={schedule.enabled} lastRunAt={schedule.last_run_at} value={schedule.cron_expression??'0 */2 * * *'} onchange={(value)=>schedule={...schedule!,cron_expression:value}}/>
+    <label for="booru-target-albums">Target albums (comma separated)</label><input id="booru-target-albums" type="text" value={settings.target_albums} placeholder="Anime,Hentai" oninput={(event)=>settings={...settings!,target_albums:event.currentTarget.value}}/>
+    <p class="v2-small v2-muted">Empty: process images with no tags. With albums: process images in any named album unless they already have the marker tag.</p>
+    <label for="booru-batch">Images per batch</label><input id="booru-batch" type="number" min="1" max="1000" value={settings.batch_size} oninput={(event)=>settings={...settings!,batch_size:Number(event.currentTarget.value)}}/>
+    <label for="booru-max-batches">Maximum batches per scheduled run</label><input id="booru-max-batches" type="number" min="1" max="100" value={settings.max_batches_per_run} oninput={(event)=>settings={...settings!,max_batches_per_run:Number(event.currentTarget.value)}}/>
+    <label for="booru-failure-timeout">Maximum failed attempts (0 disables scheduled retries)</label><input id="booru-failure-timeout" type="number" min="0" max="100" value={settings.failure_timeout} oninput={(event)=>settings={...settings!,failure_timeout:Number(event.currentTarget.value)}}/>
+    <label for="booru-tag-cache-ttl">Tag catalog cache (seconds)</label><input id="booru-tag-cache-ttl" type="number" min="1" max="86400" value={settings.tag_cache_ttl} oninput={(event)=>settings={...settings!,tag_cache_ttl:Number(event.currentTarget.value)}}/>
+    <V2SelectField id="booru-log-level" label="Booru log level" value={settings.log_level} options={['DEBUG','INFO','WARNING','ERROR','CRITICAL'].map((value)=>({value,label:value}))} onchange={(value)=>settings={...settings!,log_level:value}}/>
     <p class="v2-small v2-muted">Failed images wait at least one hour before another scheduled attempt. New images run first; you can retry failures immediately below.</p>
   {/if}
   <V2Button variant="primary" disabled={busy||!settings||!schedule} onclick={()=>void save()}>Save Booru settings</V2Button>

@@ -57,6 +57,10 @@ class BooruEngine:
         async with self._lock:
             self._unload()
 
+    async def unload(self) -> None:
+        async with self._lock:
+            self._unload()
+
     async def _evict_loop(self, idle_seconds) -> None:
         while True:
             await asyncio.sleep(5)

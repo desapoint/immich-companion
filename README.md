@@ -213,11 +213,16 @@ than browser-native select or date-time inputs.
 
 ### Booru image tagging
 
-Select images in Assets and choose **Tag with Booru model** from More actions.
-Settings → Booru controls the model, confidence thresholds, idle unload time,
-scheduled batch size, and an optional cron schedule (off by default). Failed
-images appear with their error and can be retried immediately. Scheduled runs
-prioritize new images and back off failed images from one hour up to 30 days.
+Select images in Assets and choose **Tag with Booru model** from More actions,
+or use **Tag with Booru** in the image viewer. Settings → Booru controls the
+model, thresholds, processed marker, content rating parent, target albums,
+batch size and count, failure retry limit, tag catalog cache lifetime, log
+level, and model unloading. The default schedule is every two hours and is off
+until enabled. With no target albums, scheduled runs process images with no
+tags. With named albums, they process images in any named album that lack the
+processed marker. Failed images appear with their error and can be retried
+immediately. Scheduled retries back off from one hour up to 30 days and stop
+after the configured number of failed attempts.
 Tags can be excluded from model assignment in Tags; use the Booru filter there
 to review exclusions. Settings → Booru lists runs and can undo only the tag
 associations added by each run.
