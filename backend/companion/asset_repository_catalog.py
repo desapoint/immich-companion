@@ -496,7 +496,8 @@ class AssetCatalogRelationMixin:
             unresolved = [tag_id for tag_id in missing_tag_ids if tag_id not in catalog_by_id]
             if unresolved:
                 raise SyncValidationError(
-                    f"Tag snapshot referenced {len(unresolved)} tag(s) missing from the Immich catalog"
+                    f"Tag snapshot referenced {len(unresolved)} tag(s) "
+                    "missing from the Immich catalog"
                 )
             if missing_tag_ids:
                 await session.execute(
