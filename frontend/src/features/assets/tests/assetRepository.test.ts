@@ -176,6 +176,27 @@ describe('live V2 asset repository',()=>{
     ]);
   });
 
+  it('waits for Booru handled-state reset before refreshing the UI',async()=>{
+    const calls:string[]=[];
+    const fetcher=vi.fn<AssetApiFetcher>(async(input)=>{
+      const path=String(input);calls.push(path);
+      if(path==='/api/assets/selection/resolve')return response({ids:[id],missing_ids:[]});
+      if(path==='/api/booru/reset')return response({task_id:'task-reset',selected_count:1});
+      if(path==='/api/tasks/task-reset')return response({status:'completed'});
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    await expect(createAssetApiProfile(fetcher).assets.resetBooru({kind:'ids',ids:[id]})).resolves.toEqual({
+      affectedIds:[id],
+      failed:[],
+    });
+    expect(calls).toEqual([
+      '/api/assets/selection/resolve',
+      '/api/booru/reset',
+      '/api/tasks/task-reset',
+    ]);
+  });
+
   it('uses capabilities and the existing plan-execute action flow',async()=>{
     const calls:string[]=[];
     const fetcher=vi.fn<AssetApiFetcher>(async(input,init)=>{const path=String(input);calls.push(path);if(path.endsWith('/capabilities'))return response({count:2,all_favorite:false,all_archived:true,has_tags:true,has_albums:true,has_stack_members:false,can_stack:true,single_asset_id:null,can_set_stack_primary:false,can_remove_complete_stack:false});if(path.endsWith('/plan')){const body=JSON.parse(String(init?.body));expect(body).toMatchObject({action:'remove_tag',relation_ids:[]});return response({id:'plan-1',applicable_count:2,skipped_count:0,missing_ids:[]})}return response({applied_ids:[id,secondId],failed_ids:[]})});
