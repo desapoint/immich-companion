@@ -276,7 +276,7 @@ def create_app(
         else None
     )
     booru_service = (
-        BooruService(database, immich, runtime_settings)
+        BooruService(database, immich, runtime_settings, asset_repository)
         if database is not None and immich is not None else None
     )
     if booru_service is not None and task_coordinator is not None:

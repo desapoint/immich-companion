@@ -60,6 +60,7 @@ class FakeAssets:
         self.relation_deltas: list[tuple[str, UUID, UUID, bool]] = []
         self.removed_batches: list[list[UUID]] = []
         self.relation_ids: list[UUID] = []
+        self.tag_snapshots: list[tuple[UUID, list[object]]] = []
         self.flag_events: list[tuple[str, list[UUID]]] = []
 
     async def resolve_selection(self, *_args, **_kwargs):
@@ -70,6 +71,14 @@ class FakeAssets:
 
     async def relation_ids_for_assets(self, *_args, **_kwargs):
         return self.relation_ids
+
+    async def refresh_asset_tag_snapshot(self, asset, catalog):
+        self.tag_snapshots.append((asset.id, list(catalog)))
+        for tag in asset.tags:
+            if isinstance(tag, dict) and tag.get("id"):
+                tag_id = UUID(str(tag["id"]))
+                if tag_id not in self.relation_ids:
+                    self.relation_ids.append(tag_id)
 
     async def stack_asset_ids(self, asset_id):
         return [asset_id]
@@ -142,6 +151,15 @@ class FakeActions:
 class FakeImmich:
     def __init__(self) -> None:
         self.calls: list[tuple[str, UUID | None, list[UUID]]] = []
+        self.asset_tags: dict[UUID, list[dict[str, str]]] = {}
+        self.asset_reads: list[UUID] = []
+
+    async def get_asset(self, asset_id):
+        self.asset_reads.append(asset_id)
+        return SimpleNamespace(id=asset_id, tags=list(self.asset_tags.get(asset_id, [])))
+
+    async def list_tag_catalog(self):
+        return []
 
     async def remove_assets_from_album(self, relation_id, ids):
         self.calls.append(("remove_album", relation_id, ids))
@@ -504,18 +522,26 @@ async def test_relation_action_skips_assets_already_in_the_requested_state(
 
 
 @pytest.mark.asyncio
-async def test_remove_all_relations_resolves_current_ids_before_planning() -> None:
+async def test_remove_all_tags_refreshes_live_memberships_before_planning() -> None:
     selection = AssetSelectionRequest(mode="explicit", ids=[ASSET_ONE, ASSET_TWO])
-    instance, actions, _, _ = service(resolution(), [{ASSET_ONE}, {ASSET_TWO}])
-    instance._assets.relation_ids = [RELATION_ID, RELATION_TWO]
+    instance, actions, immich, _ = service(
+        resolution(),
+        [{ASSET_ONE}, {ASSET_TWO}],
+    )
+    immich.asset_tags = {
+        ASSET_ONE: [{"id": str(RELATION_ID), "name": "live-one"}],
+        ASSET_TWO: [{"id": str(RELATION_TWO), "name": "live-two"}],
+    }
 
     plan = await instance.plan(
         AssetActionPlanRequest(selection=selection, action="remove_tag")
     )
 
-    assert plan.relation_ids == [RELATION_ID, RELATION_TWO]
+    assert set(plan.relation_ids) == {RELATION_ID, RELATION_TWO}
+    assert set(immich.asset_reads) == {ASSET_ONE, ASSET_TWO}
+    assert len(instance._assets.tag_snapshots) == 2
     assert actions.record is not None
-    assert actions.record.relation_ids == [str(RELATION_ID), str(RELATION_TWO)]
+    assert set(actions.record.relation_ids) == {str(RELATION_ID), str(RELATION_TWO)}
 
 
 @pytest.mark.asyncio

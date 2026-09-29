@@ -17,6 +17,13 @@ class FakeSession:
         return [np.array([[0.7, 0.34, 0.89, 0.95, 0.8, 0.5]], dtype=np.float32)]
 
 
+def test_known_tag_names_exposes_loaded_model_vocabulary() -> None:
+    engine = BooruEngine(Settings())
+    engine._names = ["Sky", "1girl", "General"]
+
+    assert engine.known_tag_names() == {"sky", "1girl", "general"}
+
+
 def test_predictions_match_wd_general_character_and_best_rating_rules() -> None:
     engine = BooruEngine(Settings())
     engine._session = FakeSession()

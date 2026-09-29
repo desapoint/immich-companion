@@ -109,6 +109,7 @@ export function createDemoLibraryDataSource():LibraryDataSource{
   async initialize(){initializeDemoAssetState();normalizeDemoStacks();initializeDuplicates();await delay()},
   assets:{
     async tagWithBooru(){return{taskId:'demo',selectedCount:0}},
+    async resetBooru(target){await delay();return result(resolveAssetTarget(target).map((asset)=>asset.id))},
     async getById(id){await delay();return demoAssetById(id) as AssetRecord|undefined},
     async details(id){await delay();return demoAssetDetails(id)},
     async getMany(ids){await delay();const set=new Set(ids);return(indexedDemoAssets() as AssetRecord[]).filter((asset)=>set.has(asset.id))},

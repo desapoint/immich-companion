@@ -62,10 +62,11 @@ class BooruSettingsView(BaseModel):
 
 
 class BooruService:
-    def __init__(self, database, immich, settings: Settings) -> None:
+    def __init__(self, database, immich, settings: Settings, assets=None) -> None:
         self.database = database
         self.immich = immich
         self.defaults = settings
+        self.assets = assets
         self.engine = BooruEngine(settings)
         self._tag_catalog = None
         self._tag_catalog_expires = 0.0
@@ -199,64 +200,108 @@ class BooruService:
             run.undone_at = datetime.now(UTC)
         return {"assets": assets, "tags": tags}
 
+    async def _remove_tag_ids_verified(
+        self,
+        asset_id: UUID,
+        intended: set[UUID],
+        *,
+        label: str,
+    ) -> tuple[set[UUID], object]:
+        """Remove tag memberships and wait until Immich reports the final state."""
+
+        removed: set[UUID] = set()
+        current = await self.immich.get_asset(asset_id)
+        for attempt in range(4):
+            present = {
+                UUID(str(tag["id"]))
+                for tag in current.tags
+                if isinstance(tag, dict) and tag.get("id")
+            }
+            remaining = intended & present
+            if not remaining:
+                return removed, current
+            for tag_id in remaining:
+                await self.immich.remove_assets_from_tag(tag_id, [asset_id])
+                removed.add(tag_id)
+            await asyncio.sleep(0.2 * (attempt + 1))
+            current = await self.immich.get_asset(asset_id)
+        present = {
+            UUID(str(tag["id"]))
+            for tag in current.tags
+            if isinstance(tag, dict) and tag.get("id")
+        }
+        remaining = intended & present
+        if not remaining:
+            return removed, current
+        raise RuntimeError(
+            f"Immich still reports {len(remaining)} {label} tag(s) "
+            f"on asset {asset_id}"
+        )
+
     async def _undo_asset(self, asset_id: UUID, run_id: UUID) -> int:
         async with self.database.sessions() as session:
             record = await session.get(BooruTaggedAssetRecord, asset_id)
             if record is None or record.run_id != run_id:
                 return 0
             intended = {UUID(value) for value in record.added_tag_ids}
-        removed: set[UUID] = set()
-        for attempt in range(4):
-            current = await self.immich.get_asset(asset_id)
-            present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
-            remaining = intended & present
-            if not remaining:
-                async with self.database.sessions.begin() as session:
-                    record = await session.get(BooruTaggedAssetRecord, asset_id)
-                    if record is not None and record.run_id == run_id:
-                        await session.delete(record)
-                return len(removed)
-            for tag_id in remaining:
-                await self.immich.remove_assets_from_tag(tag_id, [asset_id])
-                removed.add(tag_id)
-            await asyncio.sleep(0.2 * (attempt + 1))
-        raise RuntimeError(f"Immich still reports Booru tags on asset {asset_id}; retry undo")
+        removed, current = await self._remove_tag_ids_verified(
+            asset_id, intended, label="Booru"
+        )
+        await self._refresh_cached_asset_tags(current)
+        async with self.database.sessions.begin() as session:
+            record = await session.get(BooruTaggedAssetRecord, asset_id)
+            if record is not None and record.run_id == run_id:
+                await session.delete(record)
+        return len(removed)
 
     async def _candidate_ids(self, limit: int, config: BooruSettingsView) -> list[UUID]:
         album_names = [name.casefold() for name in config.target_albums.split(",") if name]
         async with self.database.sessions() as session:
             query = (
                 select(AssetRecord.id)
-                .outerjoin(BooruAssetFailureRecord,
-                           BooruAssetFailureRecord.asset_id == AssetRecord.id)
+                .outerjoin(
+                    BooruAssetFailureRecord,
+                    BooruAssetFailureRecord.asset_id == AssetRecord.id,
+                )
                 .where(AssetRecord.asset_type == "IMAGE", AssetRecord.is_trashed.is_(False))
-                .where(~AssetRecord.id.in_(select(BooruTaggedAssetRecord.asset_id)))
-                .where(or_(BooruAssetFailureRecord.asset_id.is_(None),
-                           (BooruAssetFailureRecord.attempts < config.failure_timeout)
-                           & (BooruAssetFailureRecord.next_retry_at <= datetime.now(UTC))))
-                .order_by(func.coalesce(BooruAssetFailureRecord.attempts, 0), AssetRecord.id)
-                .limit(limit)
+                .where(
+                    or_(
+                        BooruAssetFailureRecord.asset_id.is_(None),
+                        (BooruAssetFailureRecord.attempts < config.failure_timeout)
+                        & (BooruAssetFailureRecord.next_retry_at <= datetime.now(UTC)),
+                    )
+                )
             )
+            if config.processed_tag_name:
+                processed_tags = select(TagRecord.id).where(
+                    func.lower(TagRecord.tag_name) == config.processed_tag_name.casefold()
+                )
+                query = query.where(
+                    ~AssetRecord.id.in_(
+                        select(TagAssetRecord.asset_id).where(
+                            TagAssetRecord.tag_id.in_(processed_tags)
+                        )
+                    )
+                )
+            else:
+                query = query.where(
+                    ~AssetRecord.id.in_(select(BooruTaggedAssetRecord.asset_id))
+                )
             if album_names:
                 album_ids = select(AlbumRecord.id).where(
                     func.lower(AlbumRecord.album_name).in_(album_names)
                 )
-                query = query.where(AssetRecord.id.in_(
-                    select(AlbumAssetRecord.asset_id).where(
-                        AlbumAssetRecord.album_id.in_(album_ids)
-                    )
-                ))
-                if config.processed_tag_name:
-                    processed_tags = select(TagRecord.id).where(
-                        func.lower(TagRecord.tag_name) == config.processed_tag_name.casefold()
-                    )
-                    query = query.where(~AssetRecord.id.in_(
-                        select(TagAssetRecord.asset_id).where(
-                            TagAssetRecord.tag_id.in_(processed_tags)
+                query = query.where(
+                    AssetRecord.id.in_(
+                        select(AlbumAssetRecord.asset_id).where(
+                            AlbumAssetRecord.album_id.in_(album_ids)
                         )
-                    ))
-            else:
-                query = query.where(~AssetRecord.id.in_(select(TagAssetRecord.asset_id)))
+                    )
+                )
+            query = query.order_by(
+                func.coalesce(BooruAssetFailureRecord.attempts, 0),
+                AssetRecord.id,
+            ).limit(limit)
             return list((await session.scalars(query)).all())
 
     async def _record_failure(self, asset_id: UUID, run_id: UUID, error: Exception) -> None:
@@ -273,7 +318,145 @@ class BooruService:
             row.failed_at = now
             row.next_retry_at = now + timedelta(hours=min(2 ** min(row.attempts - 1, 10), 24 * 30))
 
-    async def tag(self, ids: list[UUID] | None, context=None) -> TaskResult:
+    async def _remove_manual_booru_tags(
+        self,
+        asset,
+        prior,
+        config: BooruSettingsView,
+    ) -> tuple[set[UUID], object]:
+        """Remove only Companion-managed/model-valid tags before an explicit re-tag."""
+
+        managed_ids = {
+            UUID(value)
+            for value in (prior.added_tag_ids if prior is not None else [])
+        }
+        known_names = self.engine.known_tag_names()
+        marker = config.processed_tag_name.casefold() if config.processed_tag_name else ""
+        for tag in asset.tags:
+            if not isinstance(tag, dict) or not tag.get("id"):
+                continue
+            name = str(tag.get("name", "")).casefold()
+            if name in known_names or (marker and name == marker):
+                managed_ids.add(UUID(str(tag["id"])))
+        if not managed_ids:
+            return set(), asset
+
+        removed, current = await self._remove_tag_ids_verified(
+            asset.id, managed_ids, label="old Booru"
+        )
+        await self._refresh_cached_asset_tags(current)
+        return removed, current
+
+    async def _restore_manual_retag(
+        self,
+        asset_id: UUID,
+        removed_ids: set[UUID],
+        prior_run_id: UUID | None,
+        prior_added_tag_ids: list[str],
+    ) -> None:
+        """Restore the pre-re-tag state when an explicit re-tag fails."""
+
+        if removed_ids:
+            await self.immich.add_tags_to_asset(asset_id, list(removed_ids))
+            await asyncio.sleep(0.2)
+            current = await self.immich.get_asset(asset_id)
+            present = {
+                UUID(str(tag["id"]))
+                for tag in current.tags
+                if isinstance(tag, dict) and tag.get("id")
+            }
+            if not removed_ids.issubset(present):
+                raise RuntimeError("Immich did not restore the previous Booru tags")
+            await self._refresh_cached_asset_tags(current)
+        if prior_run_id is not None:
+            async with self.database.sessions.begin() as session:
+                record = await session.get(BooruTaggedAssetRecord, asset_id)
+                if record is None:
+                    session.add(
+                        BooruTaggedAssetRecord(
+                            asset_id=asset_id,
+                            run_id=prior_run_id,
+                            added_tag_ids=list(prior_added_tag_ids),
+                        )
+                    )
+                else:
+                    record.run_id = prior_run_id
+                    record.added_tag_ids = list(prior_added_tag_ids)
+
+    async def reset_handled(self, ids: list[UUID], context=None) -> TaskResult:
+        """Clear the processed marker and local Booru state for explicit retries."""
+
+        config = await self.settings()
+        completed = failed = markers_removed = records_removed = 0
+        failed_ids: list[str] = []
+        marker = config.processed_tag_name.casefold() if config.processed_tag_name else ""
+        for index, asset_id in enumerate(ids):
+            if context is not None:
+                await context.ensure_active()
+            try:
+                current = await self.immich.get_asset(asset_id)
+                marker_ids = {
+                    UUID(str(tag["id"]))
+                    for tag in current.tags
+                    if isinstance(tag, dict)
+                    and tag.get("id")
+                    and marker
+                    and str(tag.get("name", "")).casefold() == marker
+                }
+                removed, current = await self._remove_tag_ids_verified(
+                    asset_id, marker_ids, label="processed marker"
+                )
+                markers_removed += len(removed)
+                await self._refresh_cached_asset_tags(current)
+                async with self.database.sessions.begin() as session:
+                    handled = await session.get(BooruTaggedAssetRecord, asset_id)
+                    failure = await session.get(BooruAssetFailureRecord, asset_id)
+                    if handled is not None:
+                        await session.delete(handled)
+                        records_removed += 1
+                    if failure is not None:
+                        await session.delete(failure)
+                completed += 1
+            except Exception as error:
+                failed += 1
+                failed_ids.append(str(asset_id))
+                logger.warning("Could not reset Booru state for asset %s: %s", asset_id, error)
+            if context is not None:
+                await context.checkpoint(
+                    checkpoint={"cursor": str(index + 1)},
+                    counters={
+                        "completed": completed,
+                        "failed": failed,
+                        "markers_removed": markers_removed,
+                        "records_removed": records_removed,
+                    },
+                    progress={
+                        "phase": "resetting",
+                        "completed": index + 1,
+                        "total": len(ids),
+                    },
+                )
+        if failed and not completed:
+            raise PermanentTaskError(
+                f"Booru reset failed for all {failed} selected images"
+            )
+        return TaskResult(
+            summary={"reset": True, "failed_ids": failed_ids},
+            counters={
+                "completed": completed,
+                "failed": failed,
+                "markers_removed": markers_removed,
+                "records_removed": records_removed,
+            },
+        )
+
+    async def tag(
+        self,
+        ids: list[UUID] | None,
+        context=None,
+        *,
+        manual_retag: bool = False,
+    ) -> TaskResult:
         config = await self.settings()
         targets = ids if ids is not None else await self._candidate_ids(
             config.batch_size * config.max_batches_per_run, config
@@ -287,33 +470,48 @@ class BooruService:
         for index, asset_id in enumerate(targets):
             if context is not None:
                 await context.ensure_active()
+            prior_run_id: UUID | None = None
+            prior_added_tag_ids: list[str] = []
+            removed_for_retag: set[UUID] = set()
             try:
                 async with self.database.sessions() as session:
                     prior = await session.get(BooruTaggedAssetRecord, asset_id)
                 if prior is not None:
-                    skipped += 1
-                    continue
+                    prior_run_id = prior.run_id
+                    prior_added_tag_ids = list(prior.added_tag_ids)
                 asset = await self.immich.get_asset(asset_id)
                 if asset.asset_type != "IMAGE" or asset.is_trashed:
                     skipped += 1
                     continue
-                if ids is None and not config.target_albums and asset.tags:
+                marker = config.processed_tag_name.casefold() if config.processed_tag_name else ""
+                marker_present = bool(marker) and any(
+                    str(tag.get("name", "")).casefold() == marker
+                    for tag in asset.tags
+                    if isinstance(tag, dict)
+                )
+                if not manual_retag and (
+                    marker_present or (not marker and prior is not None)
+                ):
                     skipped += 1
                     continue
-                if ids is None and config.target_albums and config.processed_tag_name:
-                    marker = config.processed_tag_name.casefold()
-                    if any(str(tag.get("name", "")).casefold() == marker for tag in asset.tags):
-                        skipped += 1
-                        continue
                 media = await self.immich.get_thumbnail(asset_id, size="thumbnail")
                 predictions = await self.engine.predict(
                     media.content, config.model_repo, config.confidence_threshold,
                     config.character_threshold, config.idle_seconds,
                 )
+                if manual_retag:
+                    removed_for_retag, asset = await self._remove_manual_booru_tags(
+                        asset, prior, config
+                    )
                 async with self.database.sessions.begin() as session:
-                    session.add(BooruTaggedAssetRecord(
-                        asset_id=asset_id, run_id=run_id, added_tag_ids=[],
-                    ))
+                    record = await session.get(BooruTaggedAssetRecord, asset_id)
+                    if record is None:
+                        session.add(BooruTaggedAssetRecord(
+                            asset_id=asset_id, run_id=run_id, added_tag_ids=[],
+                        ))
+                    else:
+                        record.run_id = run_id
+                        record.added_tag_ids = []
                 await self._apply(asset, predictions, config)
                 async with self.database.sessions.begin() as session:
                     failure = await session.get(BooruAssetFailureRecord, asset_id)
@@ -323,10 +521,23 @@ class BooruService:
             except Exception as error:
                 failed += 1
                 model_error = isinstance(error, BooruModelError)
+                cleanup_errors: list[str] = []
                 try:
                     await self._undo_asset(asset_id, run_id)
                 except Exception as rollback_error:
-                    error = RuntimeError(f"{error}; cleanup: {rollback_error}")
+                    cleanup_errors.append(f"cleanup: {rollback_error}")
+                if manual_retag and (removed_for_retag or prior_run_id is not None):
+                    try:
+                        await self._restore_manual_retag(
+                            asset_id,
+                            removed_for_retag,
+                            prior_run_id,
+                            prior_added_tag_ids,
+                        )
+                    except Exception as restore_error:
+                        cleanup_errors.append(f"restore: {restore_error}")
+                if cleanup_errors:
+                    error = RuntimeError(f"{error}; {'; '.join(cleanup_errors)}")
                 await self._record_failure(asset_id, run_id, error)
             if context is not None:
                 await context.checkpoint(
@@ -345,6 +556,26 @@ class BooruService:
         return TaskResult(summary={"run_id": str(run_id)}, counters={
             "completed": completed, "failed": failed, "skipped": skipped,
         })
+
+    async def _refresh_cached_asset_tags(self, asset, catalog=None) -> None:
+        """Write an authoritative Immich tag snapshot into the companion cache."""
+
+        if self.assets is None:
+            return
+        current_ids = {
+            UUID(str(tag["id"]))
+            for tag in asset.tags
+            if isinstance(tag, dict) and tag.get("id")
+        }
+        resolved_catalog = list(catalog) if catalog is not None else list(self._tag_catalog or [])
+        catalog_ids = {tag.id for tag in resolved_catalog}
+        if not current_ids.issubset(catalog_ids):
+            resolved_catalog = await self.immich.list_tag_catalog()
+            self._tag_catalog = resolved_catalog
+            catalog_ids = {tag.id for tag in resolved_catalog}
+        if not current_ids.issubset(catalog_ids):
+            raise RuntimeError("Immich tag catalog did not contain every tag on the asset")
+        await self.assets.refresh_asset_tag_snapshot(asset, resolved_catalog)
 
     async def _apply(self, asset, predictions: list[str], config: BooruSettingsView) -> list[UUID]:
         if self._tag_catalog is None or monotonic() >= self._tag_catalog_expires:
@@ -387,16 +618,20 @@ class BooruService:
         await self.immich.add_tags_to_asset(asset.id, added)
         if added:
             await asyncio.sleep(0.2)
-            current = await self.immich.get_asset(asset.id)
+        current = await self.immich.get_asset(asset.id)
+        if added:
             present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
             if not set(added).issubset(present):
                 raise RuntimeError("Immich did not retain every Booru tag on this asset")
+        await self._refresh_cached_asset_tags(current, catalog)
         return added
 
 
 class BooruTaskHandler:
     task_type = "booru_tagging"
-    lane_key = "booru_tagging"
+    # Tagging mutates the same asset/tag cache as synchronization. Keep it in
+    # the sync lane so a staged sync cannot race an out-of-band Booru write.
+    lane_key = "asset_sync"
     max_concurrency = 1
 
     def __init__(self, service: BooruService) -> None:
@@ -431,11 +666,17 @@ class BooruTaskHandler:
 
             await self.service.engine.download(repo, report)
             return TaskResult(summary={"model": repo, "cached": True})
+        if payload.get("mode") == "reset":
+            ids = [UUID(value) for value in payload.get("asset_ids", [])]
+            if not ids:
+                raise PermanentTaskError("Select at least one image to reset")
+            return await self.service.reset_handled(ids, context)
         config = await self.service.settings()
         try:
             return await self.service.tag(
                 [UUID(value) for value in payload["asset_ids"]] if "asset_ids" in payload else None,
                 context,
+                manual_retag=bool(payload.get("manual_retag", False)),
             )
         finally:
             if config.unload_model_after_run:

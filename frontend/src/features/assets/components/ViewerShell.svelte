@@ -23,6 +23,17 @@
   const headerClass = $derived(kind === 'compare' ? 'v2-compare-top' : 'v2-viewer-top');
   const footerClass = $derived(kind === 'compare' ? 'v2-compare-actions' : 'v2-viewer-bottom');
 
+  function focusViewer(node: HTMLElement) {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const frame = requestAnimationFrame(() => node.focus({ preventScroll: true }));
+    return {
+      destroy() {
+        cancelAnimationFrame(frame);
+        if (previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
+      },
+    };
+  }
+
   $effect(() => {
     if (!open) return;
     const previousOverflow = document.body.style.overflow;
@@ -37,7 +48,7 @@
 <svelte:body class:v2-overlay-open={open} />
 
 {#if open}
-  <div class={rootClass} role="dialog" aria-modal="true" aria-label={title}>
+  <div class={rootClass} role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:focusViewer>
     {#if header}
       <div class={headerClass}>{@render header()}</div>
     {/if}
