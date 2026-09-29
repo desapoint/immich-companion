@@ -8,6 +8,7 @@ import pytest
 
 from companion.booru_service import MODELS, BooruService, BooruSettingsView, BooruTaskHandler
 from companion.config import Settings
+from companion.models import BooruAssetFailureRecord, BooruTaggedAssetRecord, BooruTagRunRecord
 
 
 class FakeSession:
@@ -178,3 +179,172 @@ async def test_task_handler_forwards_manual_retag_flag():
     })
 
     assert calls == [([asset_id], True)]
+
+
+class MappingSession:
+    def __init__(self, records):
+        self.records = records
+
+    async def get(self, model, key):
+        return self.records.get(model)
+
+    def add(self, record):
+        return None
+
+    async def delete(self, record):
+        for model, value in list(self.records.items()):
+            if value is record:
+                self.records[model] = None
+
+
+class MappingSessions:
+    def __init__(self, records):
+        self.session = MappingSession(records)
+
+    @asynccontextmanager
+    async def __call__(self):
+        yield self.session
+
+    @asynccontextmanager
+    async def begin(self):
+        yield self.session
+
+
+@pytest.mark.asyncio
+async def test_processed_marker_removal_retries_asset_despite_prior_record(monkeypatch):
+    asset_id = uuid4()
+    prior = SimpleNamespace(run_id=uuid4(), added_tag_ids=[])
+    records = {
+        BooruTagRunRecord: None,
+        BooruTaggedAssetRecord: prior,
+        BooruAssetFailureRecord: None,
+    }
+    database = SimpleNamespace(sessions=MappingSessions(records))
+
+    class Immich:
+        async def get_asset(self, _asset_id):
+            return SimpleNamespace(
+                id=asset_id,
+                asset_type="IMAGE",
+                is_trashed=False,
+                tags=[],
+            )
+
+        async def get_thumbnail(self, _asset_id, size):
+            assert size == "thumbnail"
+            return SimpleNamespace(content=b"image")
+
+    service = BooruService(database, Immich(), Settings())
+    config = BooruSettingsView(
+        model_repo=MODELS[0],
+        idle_seconds=300,
+        confidence_threshold=0.35,
+        character_threshold=0.9,
+        batch_size=250,
+        processed_tag_name="auto:processed",
+        content_rating_tag_name="content-rating",
+    )
+
+    async def settings():
+        return config
+
+    async def candidates(_limit, _config):
+        return [asset_id]
+
+    async def predict(*_args):
+        return ["sky"]
+
+    applied = []
+
+    async def apply(asset, predictions, _config):
+        applied.append((asset.id, predictions))
+        return []
+
+    monkeypatch.setattr(service, "settings", settings)
+    monkeypatch.setattr(service, "_candidate_ids", candidates)
+    monkeypatch.setattr(service.engine, "predict", predict)
+    monkeypatch.setattr(service, "_apply", apply)
+
+    result = await service.tag(None)
+
+    assert result.counters == {"completed": 1, "failed": 0, "skipped": 0}
+    assert applied == [(asset_id, ["sky"])]
+
+
+@pytest.mark.asyncio
+async def test_processed_marker_still_blocks_scheduled_retry(monkeypatch):
+    asset_id = uuid4()
+    prior = SimpleNamespace(run_id=uuid4(), added_tag_ids=[])
+    records = {
+        BooruTagRunRecord: None,
+        BooruTaggedAssetRecord: prior,
+        BooruAssetFailureRecord: None,
+    }
+    database = SimpleNamespace(sessions=MappingSessions(records))
+
+    class Immich:
+        async def get_asset(self, _asset_id):
+            return SimpleNamespace(
+                id=asset_id,
+                asset_type="IMAGE",
+                is_trashed=False,
+                tags=[{"id": str(uuid4()), "name": "auto:processed"}],
+            )
+
+        async def get_thumbnail(self, _asset_id, size):
+            raise AssertionError("handled asset should not be downloaded")
+
+    service = BooruService(database, Immich(), Settings())
+    config = BooruSettingsView(
+        model_repo=MODELS[0],
+        idle_seconds=300,
+        confidence_threshold=0.35,
+        character_threshold=0.9,
+        batch_size=250,
+        processed_tag_name="auto:processed",
+        content_rating_tag_name="content-rating",
+    )
+
+    async def settings():
+        return config
+
+    async def candidates(_limit, _config):
+        return [asset_id]
+
+    monkeypatch.setattr(service, "settings", settings)
+    monkeypatch.setattr(service, "_candidate_ids", candidates)
+
+    result = await service.tag(None)
+
+    assert result.counters == {"completed": 0, "failed": 0, "skipped": 1}
+
+
+@pytest.mark.asyncio
+async def test_tag_removal_retries_until_immich_reports_membership_gone(monkeypatch):
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr("companion.booru_service.asyncio.sleep", no_delay)
+    asset_id = uuid4()
+    tag_id = uuid4()
+    remove_calls = 0
+
+    class DelayedImmich:
+        async def get_asset(self, _asset_id):
+            tags = [] if remove_calls >= 2 else [{"id": str(tag_id), "name": "sky"}]
+            return SimpleNamespace(id=asset_id, tags=tags)
+
+        async def remove_assets_from_tag(self, _tag_id, asset_ids):
+            nonlocal remove_calls
+            assert asset_ids == [asset_id]
+            remove_calls += 1
+
+    service = BooruService(SimpleNamespace(), DelayedImmich(), Settings())
+
+    removed, current = await service._remove_tag_ids_verified(
+        asset_id, {tag_id}, label="Booru"
+    )
+
+    assert removed == {tag_id}
+    assert current.tags == []
+    assert remove_calls == 2
