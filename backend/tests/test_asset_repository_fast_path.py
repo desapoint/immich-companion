@@ -89,6 +89,34 @@ async def test_timestamp_stable_asset_only_bumps_generation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_same_generation_fast_path_does_not_double_count_or_write() -> None:
+    stable = asset(ASSET_STABLE, updated_at="2026-09-28T13:00:00Z")
+    sessions = FakeSessions([
+        (
+            stable.id,
+            "existing-fingerprint",
+            5,
+            stable.file_size_bytes,
+            stable.file_modified_at,
+            stable.updated_at,
+        )
+    ])
+    repository = AssetRepository(SimpleNamespace(sessions=sessions))
+    fingerprinted = []
+    repository._fingerprint = lambda item: fingerprinted.append(item.id) or "unexpected"
+
+    result = await repository.upsert_asset_batch(
+        [stable],
+        generation=5,
+        track_similarity_changes=False,
+    )
+
+    assert result == (0, 0, 0)
+    assert fingerprinted == []
+    assert len(sessions.session.statements) == 1
+
+
+@pytest.mark.asyncio
 async def test_timestamp_change_uses_full_persistence_path() -> None:
     changed = asset(ASSET_CHANGED, updated_at="2026-09-28T14:00:00Z")
     sessions = FakeSessions([
