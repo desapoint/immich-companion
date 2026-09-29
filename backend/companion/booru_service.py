@@ -407,10 +407,10 @@ class BooruService:
             record = await session.get(BooruTaggedAssetRecord, asset.id)
             record.added_tag_ids = [str(tag_id) for tag_id in added]
         await self.immich.add_tags_to_asset(asset.id, added)
-        current = await self.immich.get_asset(asset.id)
         if added:
             await asyncio.sleep(0.2)
-            current = await self.immich.get_asset(asset.id)
+        current = await self.immich.get_asset(asset.id)
+        if added:
             present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
             if not set(added).issubset(present):
                 raise RuntimeError("Immich did not retain every Booru tag on this asset")
