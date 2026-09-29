@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    case,
     delete,
     func,
+    or_,
     select,
     true,
     update,
@@ -228,15 +230,20 @@ class AssetCatalogRelationMixin:
                         }
                     )
                 statement = insert(AssetRecord).values(rows)
-                update_columns = {
-                    name: getattr(statement.excluded, name)
-                    for name in rows[0]
-                    if name not in {"id", "stack", "stack_generation"}
-                }
-                if "file_size_bytes" in update_columns:
-                    update_columns["file_size_bytes"] = func.coalesce(
-                        statement.excluded.file_size_bytes,
-                        AssetRecord.file_size_bytes,
+                payload_changed = or_(
+                    AssetRecord.sync_fingerprint.is_(None),
+                    AssetRecord.sync_fingerprint != statement.excluded.sync_fingerprint,
+                )
+                update_columns = {"sync_generation": statement.excluded.sync_generation}
+                for name in rows[0]:
+                    if name in {"id", "sync_generation", "stack", "stack_generation"}:
+                        continue
+                    incoming = getattr(statement.excluded, name)
+                    if name == "file_size_bytes":
+                        incoming = func.coalesce(incoming, AssetRecord.file_size_bytes)
+                    update_columns[name] = case(
+                        (payload_changed, incoming),
+                        else_=getattr(AssetRecord, name),
                     )
                 await session.execute(
                     statement.on_conflict_do_update(
