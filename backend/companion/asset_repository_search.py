@@ -347,7 +347,7 @@ class AssetSearchMixin:
             AssetSummary.from_record(
                 record,
                 album_map.get(record.id, []),
-                tag_map.get(record.id, []),
+                tag_map.get(record.id) or None,
             )
             for record in records
         ]
