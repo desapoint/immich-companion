@@ -55,6 +55,8 @@ type ApiRestoreResult={restored:number;requested:number;failed_ids:string[]};
 type ApiTrashPurgePlan={id:string;mode:'empty_all'|'selected';target_count:number;expires_at:string;destructive:true};
 type ApiTrashPurgeResult={requested:number;deleted:number;failed_ids:string[];deleted_ids:string[];verified:boolean};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
+type ApiSelectionSyncResult={requested:number;synced:number;task_id:string|null};
+type ApiTaskStatus={status:string;error?:{message?:string}|null};
 type ApiSelectionWorkspace={id:string;entity_kind?:'asset'|'album'|'tag';revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
 type ApiSelectionMembership={selection:ApiSelectionWorkspace;selected_ids:string[]};
 type SearchNode={kind:'condition';field:string;operator:string;value:unknown}|SearchExpression;
@@ -138,6 +140,14 @@ function normalizeDetail(detail:ApiAssetDetail,summary:ApiAssetSummary|null):Ass
 function normalizeTrash(asset:ApiAssetSummary):TrashAssetRecord{return{id:asset.id,type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as TrashAssetRecord['type'],original_file_name:asset.original_file_name,original_mime_type:asset.original_mime_type,width:asset.width,height:asset.height,duration:asset.duration,taken_at:asset.taken_at,file_modified_at:asset.file_modified_at,is_favorite:asset.is_favorite,is_archived:asset.is_archived,restore_path:asset.restore_path??asset.source.original_path,file_size_bytes:asset.file_size_bytes,library_id:asset.source.library_id,is_offline:asset.is_offline}}
 function normalizeTrashDetail(asset:ApiAssetDetail):TrashAssetRecord{const exifSize=asset.exif_info?.fileSizeInByte;return{id:asset.id,type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as TrashAssetRecord['type'],original_file_name:asset.original_file_name,original_mime_type:asset.original_mime_type,width:asset.width,height:asset.height,duration:asset.duration,taken_at:asset.taken_at,file_modified_at:asset.file_modified_at,is_favorite:asset.is_favorite,is_archived:asset.is_archived,restore_path:asset.original_path,file_size_bytes:typeof exifSize==='number'&&exifSize>=0?exifSize:null,library_id:asset.library_id,is_offline:asset.is_offline}}
 function resultFromAction(result:ApiActionResult):MutationResult{return{affectedIds:result.affected_ids??result.applied_ids,failed:result.failed_ids.map((id)=>({id,reason:'Immich could not apply this action.'}))}}
+async function waitForTask(fetcher:AssetApiFetcher,taskId:string):Promise<void>{
+  while(true){
+    const task=await requestJson<ApiTaskStatus>(fetcher,`/api/tasks/${encodeURIComponent(taskId)}`);
+    if(task.status==='completed')return;
+    if(task.status==='failed'||task.status==='cancelled')throw new Error(task.error?.message??`Synchronization task ${task.status}.`);
+    await new Promise((resolve)=>setTimeout(resolve,250));
+  }
+}
 
 export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):{assets:AssetRepository;navigation:ViewerNavigationRepository;media:MediaRepository}{
   let lastKey='',lastQuery:AssetSearchQuery|null=null;const pages=new Map<number,AssetRecord[]>();let lastTotal=0;
@@ -163,7 +173,7 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
     async selectionCapabilities(target,signal){const value=await requestJson<ApiSelectionCapabilities>(fetcher,'/api/assets/selection/capabilities',{...json(selectionBody(target)),signal});return{count:value.count,allFavorite:value.all_favorite,allArchived:value.all_archived,hasTags:value.has_tags,hasAlbums:value.has_albums,hasStackMembers:value.has_stack_members,canStack:value.can_stack,singleAssetId:value.single_asset_id,canSetStackPrimary:value.can_set_stack_primary,canRemoveCompleteStack:value.can_remove_complete_stack}},
     async removableRelationships(target,signal){const value=await requestJson<ApiSelectionRelationships>(fetcher,'/api/assets/selection/relationships',{...json(selectionBody(target)),signal});const map=(item:{id:string;name:string;selected_asset_count:number})=>({value:item.id,label:item.name,subtitle:`Linked to ${item.selected_asset_count.toLocaleString()} selected asset${item.selected_asset_count===1?'':'s'}`,selectedAssetCount:item.selected_asset_count});return{albums:value.albums.map(map),tags:value.tags.map(map)}},
     setFavorite:(target)=>action(target,'favorite_toggle'),setArchived:(target)=>action(target,'archive_toggle'),
-    async sync(target){const resolution=await resolve(target);await requestJson(fetcher,'/api/assets/sync/selection',json(selectionBody(target)));return{affectedIds:resolution.ids,failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))}},
+    async sync(target){const resolution=await resolve(target);const submitted=await requestJson<ApiSelectionSyncResult>(fetcher,'/api/assets/sync/selection',json(selectionBody(target)));if(submitted.task_id)await waitForTask(fetcher,submitted.task_id);return{affectedIds:resolution.ids,failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))}},
     trash:(target)=>action(target,'trash'),
     async restore(target){const ids=target.kind==='ids'?[...new Set(target.ids)]:[];const body=target.kind==='ids'?{ids}:{all:true,excluded_ids:[...new Set(target.excludedIds)]};const result=await requestJson<ApiRestoreResult>(fetcher,'/api/restore',json(body));const failedIds=[...new Set(result.failed_ids??[])];return{affectedIds:ids.filter((id)=>!failedIds.includes(id)),failed:failedIds.map((id)=>({id,reason:'Asset could not be restored.'})),restoredCount:result.restored,requestedCount:result.requested}},
     async planTrashPurge(target){const body=target.kind==='ids'?{ids:[...new Set(target.ids)]}:{all:true,excluded_ids:[...new Set(target.excludedIds)]};const plan=await requestJson<ApiTrashPurgePlan>(fetcher,'/api/trash/purge/plan',json(body));return{id:plan.id,mode:plan.mode,targetCount:plan.target_count,expiresAt:plan.expires_at,destructive:true}},
