@@ -102,3 +102,79 @@ async def test_configured_marker_and_rating_parent_are_recorded_for_undo(
 
 def test_booru_tagging_shares_the_asset_sync_lane():
     assert BooruTaskHandler.lane_key == "asset_sync"
+
+
+@pytest.mark.asyncio
+async def test_manual_retag_removes_only_booru_managed_tags_and_marker(monkeypatch):
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr("companion.booru_service.asyncio.sleep", no_delay)
+    booru_id = uuid4()
+    marker_id = uuid4()
+    prior_id = uuid4()
+    user_id = uuid4()
+    asset_id = uuid4()
+    remaining = {
+        booru_id: {"id": str(booru_id), "name": "sky"},
+        marker_id: {"id": str(marker_id), "name": "custom:done"},
+        prior_id: {"id": str(prior_id), "name": "legacy-model-tag"},
+        user_id: {"id": str(user_id), "name": "vacation"},
+    }
+
+    class ManualImmich:
+        async def remove_assets_from_tag(self, tag_id, asset_ids):
+            assert asset_ids == [asset_id]
+            remaining.pop(tag_id, None)
+
+        async def get_asset(self, _asset_id):
+            return SimpleNamespace(id=asset_id, tags=list(remaining.values()))
+
+    service = BooruService(
+        SimpleNamespace(),
+        ManualImmich(),
+        Settings(),
+    )
+    service.engine.known_tag_names = lambda: {"sky", "general"}
+    config = BooruSettingsView(
+        model_repo=MODELS[0],
+        idle_seconds=300,
+        confidence_threshold=0.35,
+        character_threshold=0.9,
+        batch_size=250,
+        processed_tag_name="custom:done",
+        content_rating_tag_name="content-rating",
+    )
+    asset = SimpleNamespace(id=asset_id, tags=list(remaining.values()))
+    prior = SimpleNamespace(added_tag_ids=[str(prior_id)])
+
+    removed, current = await service._remove_manual_booru_tags(asset, prior, config)
+
+    assert removed == {booru_id, marker_id, prior_id}
+    assert current.tags == [{"id": str(user_id), "name": "vacation"}]
+
+
+@pytest.mark.asyncio
+async def test_task_handler_forwards_manual_retag_flag():
+    calls = []
+
+    class Service:
+        engine = SimpleNamespace(unload=lambda: None)
+
+        async def settings(self):
+            return SimpleNamespace(unload_model_after_run=False)
+
+        async def tag(self, ids, context, *, manual_retag=False):
+            calls.append((ids, manual_retag))
+            return SimpleNamespace()
+
+    service = Service()
+    handler = BooruTaskHandler(service)
+    asset_id = uuid4()
+
+    await handler.execute(SimpleNamespace(), {
+        "asset_ids": [str(asset_id)],
+        "manual_retag": True,
+    })
+
+    assert calls == [([asset_id], True)]
