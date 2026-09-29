@@ -54,7 +54,11 @@ def register_booru_routes(app: FastAPI, service: BooruService | None, assets, co
         if not resolution.ids:
             raise HTTPException(422, "Select at least one image")
         task = await coordinator.submit(
-            "booru_tagging", {"asset_ids": [str(value) for value in resolution.ids]},
+            "booru_tagging",
+            {
+                "asset_ids": [str(value) for value in resolution.ids],
+                "manual_retag": True,
+            },
         )
         return {"task_id": task.id, "selected_count": len(resolution.ids)}
 
