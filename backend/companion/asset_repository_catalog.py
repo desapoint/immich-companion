@@ -6,10 +6,8 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from sqlalchemy import (
-    case,
     delete,
     func,
-    or_,
     select,
     true,
     update,
@@ -155,22 +153,24 @@ class AssetCatalogRelationMixin:
         if not assets:
             return 0, 0, 0
         synced_at = datetime.now(UTC)
-        rows = []
         fingerprints: dict[UUID, str] = {}
-        for asset in assets:
-            fingerprint = self._fingerprint(asset)
-            fingerprints[asset.id] = fingerprint
-            rows.append(
-                {
-                    **self._values(asset, synced_at),
-                    "sync_fingerprint": fingerprint,
-                    "sync_generation": generation,
-                }
-            )
         async with self._database.sessions() as session, session.begin():
             existing = {
-                identifier: (fingerprint, previous_generation, file_size, modified_at)
-                for identifier, fingerprint, previous_generation, file_size, modified_at in (
+                identifier: (
+                    fingerprint,
+                    previous_generation,
+                    file_size,
+                    modified_at,
+                    updated_at,
+                )
+                for (
+                    identifier,
+                    fingerprint,
+                    previous_generation,
+                    file_size,
+                    modified_at,
+                    updated_at,
+                ) in (
                     await session.execute(
                         select(
                             AssetRecord.id,
@@ -178,45 +178,95 @@ class AssetCatalogRelationMixin:
                             AssetRecord.sync_generation,
                             AssetRecord.file_size_bytes,
                             AssetRecord.file_modified_at,
+                            AssetRecord.immich_updated_at,
                         ).where(AssetRecord.id.in_([asset.id for asset in assets]))
                     )
                 )
             }
-            statement = insert(AssetRecord).values(rows)
-            payload_changed = or_(
-                AssetRecord.sync_fingerprint.is_(None),
-                AssetRecord.sync_fingerprint != statement.excluded.sync_fingerprint,
-            )
-            update_columns = {"sync_generation": statement.excluded.sync_generation}
-            for name in rows[0]:
-                if name in {"id", "sync_generation", "stack", "stack_generation"}:
-                    continue
-                incoming = getattr(statement.excluded, name)
-                if name == "file_size_bytes":
-                    incoming = func.coalesce(incoming, AssetRecord.file_size_bytes)
-                update_columns[name] = case(
-                    (payload_changed, incoming),
-                    else_=getattr(AssetRecord, name),
+
+            fast_unchanged: list[ImmichAsset] = []
+            persist: list[ImmichAsset] = []
+            for asset in assets:
+                previous = existing.get(asset.id)
+                if (
+                    previous is not None
+                    and previous[0] is not None
+                    and asset.updated_at is not None
+                    and previous[4] == asset.updated_at
+                    and previous[3] == asset.file_modified_at
+                    and (
+                        asset.file_size_bytes is None
+                        or previous[2] == asset.file_size_bytes
+                    )
+                ):
+                    fast_unchanged.append(asset)
+                else:
+                    persist.append(asset)
+
+            generation_ids = [
+                asset.id
+                for asset in fast_unchanged
+                if existing[asset.id][1] != generation
+            ]
+            if generation_ids:
+                await session.execute(
+                    update(AssetRecord)
+                    .where(AssetRecord.id.in_(generation_ids))
+                    .values(sync_generation=generation)
                 )
-            await session.execute(
-                statement.on_conflict_do_update(
-                    index_elements=[AssetRecord.id],
-                    set_=update_columns,
+
+            if persist:
+                rows = []
+                for asset in persist:
+                    fingerprint = self._fingerprint(asset)
+                    fingerprints[asset.id] = fingerprint
+                    rows.append(
+                        {
+                            **self._values(asset, synced_at),
+                            "sync_fingerprint": fingerprint,
+                            "sync_generation": generation,
+                        }
+                    )
+                statement = insert(AssetRecord).values(rows)
+                update_columns = {
+                    name: getattr(statement.excluded, name)
+                    for name in rows[0]
+                    if name not in {"id", "stack", "stack_generation"}
+                }
+                if "file_size_bytes" in update_columns:
+                    update_columns["file_size_bytes"] = func.coalesce(
+                        statement.excluded.file_size_bytes,
+                        AssetRecord.file_size_bytes,
+                    )
+                await session.execute(
+                    statement.on_conflict_do_update(
+                        index_elements=[AssetRecord.id],
+                        set_=update_columns,
+                    )
                 )
-            )
-            if track_similarity_changes:
-                await self._queue_similarity_changes(
-                    session,
-                    similarity_upsert_changes(assets, existing),
-                )
-        created = len(rows) - len(existing)
+                if track_similarity_changes:
+                    similarity_existing = {
+                        asset.id: existing[asset.id][:4]
+                        for asset in persist
+                        if asset.id in existing
+                    }
+                    await self._queue_similarity_changes(
+                        session,
+                        similarity_upsert_changes(persist, similarity_existing),
+                    )
+
+        created = sum(1 for asset in persist if asset.id not in existing)
         changed = 0
-        unchanged = 0
-        for identifier, fingerprint in fingerprints.items():
-            previous = existing.get(identifier)
+        unchanged = sum(
+            1
+            for asset in fast_unchanged
+            if existing[asset.id][1] != generation
+        )
+        for asset in persist:
+            previous = existing.get(asset.id)
             if previous is None or previous[1] == generation:
                 continue
-            if previous[0] == fingerprint:
+            if previous[0] == fingerprints[asset.id]:
                 unchanged += 1
             else:
                 changed += 1
