@@ -222,6 +222,11 @@ class BooruEngine:
         result.sort(key=lambda item: item[1], reverse=True)
         return [name for name, _ in result]
 
+    def known_tag_names(self) -> set[str]:
+        """Return the tag vocabulary loaded by the most recent prediction."""
+
+        return {name.casefold() for name in self._names}
+
     async def predict(
         self, data: bytes, repo: str, confidence: float, character: float, idle_seconds: int
     ) -> list[str]:
