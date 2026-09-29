@@ -225,8 +225,16 @@ class BooruService:
                 removed.add(tag_id)
             await asyncio.sleep(0.2 * (attempt + 1))
             current = await self.immich.get_asset(asset_id)
+        present = {
+            UUID(str(tag["id"]))
+            for tag in current.tags
+            if isinstance(tag, dict) and tag.get("id")
+        }
+        remaining = intended & present
+        if not remaining:
+            return removed, current
         raise RuntimeError(
-            f"Immich still reports {len(intended & present)} {label} tag(s) "
+            f"Immich still reports {len(remaining)} {label} tag(s) "
             f"on asset {asset_id}"
         )
 
