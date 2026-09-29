@@ -62,10 +62,11 @@ class BooruSettingsView(BaseModel):
 
 
 class BooruService:
-    def __init__(self, database, immich, settings: Settings) -> None:
+    def __init__(self, database, immich, settings: Settings, assets=None) -> None:
         self.database = database
         self.immich = immich
         self.defaults = settings
+        self.assets = assets
         self.engine = BooruEngine(settings)
         self._tag_catalog = None
         self._tag_catalog_expires = 0.0
@@ -211,6 +212,7 @@ class BooruService:
             present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
             remaining = intended & present
             if not remaining:
+                await self._refresh_cached_asset_tags(current)
                 async with self.database.sessions.begin() as session:
                     record = await session.get(BooruTaggedAssetRecord, asset_id)
                     if record is not None and record.run_id == run_id:
@@ -346,6 +348,26 @@ class BooruService:
             "completed": completed, "failed": failed, "skipped": skipped,
         })
 
+    async def _refresh_cached_asset_tags(self, asset, catalog=None) -> None:
+        """Write an authoritative Immich tag snapshot into the companion cache."""
+
+        if self.assets is None:
+            return
+        current_ids = {
+            UUID(str(tag["id"]))
+            for tag in asset.tags
+            if isinstance(tag, dict) and tag.get("id")
+        }
+        resolved_catalog = list(catalog) if catalog is not None else list(self._tag_catalog or [])
+        catalog_ids = {tag.id for tag in resolved_catalog}
+        if not current_ids.issubset(catalog_ids):
+            resolved_catalog = await self.immich.list_tag_catalog()
+            self._tag_catalog = resolved_catalog
+            catalog_ids = {tag.id for tag in resolved_catalog}
+        if not current_ids.issubset(catalog_ids):
+            raise RuntimeError("Immich tag catalog did not contain every tag on the asset")
+        await self.assets.refresh_asset_tag_snapshot(asset, resolved_catalog)
+
     async def _apply(self, asset, predictions: list[str], config: BooruSettingsView) -> list[UUID]:
         if self._tag_catalog is None or monotonic() >= self._tag_catalog_expires:
             self._tag_catalog = await self.immich.list_tag_catalog()
@@ -385,18 +407,22 @@ class BooruService:
             record = await session.get(BooruTaggedAssetRecord, asset.id)
             record.added_tag_ids = [str(tag_id) for tag_id in added]
         await self.immich.add_tags_to_asset(asset.id, added)
+        current = await self.immich.get_asset(asset.id)
         if added:
             await asyncio.sleep(0.2)
             current = await self.immich.get_asset(asset.id)
             present = {UUID(str(tag["id"])) for tag in current.tags if "id" in tag}
             if not set(added).issubset(present):
                 raise RuntimeError("Immich did not retain every Booru tag on this asset")
+        await self._refresh_cached_asset_tags(current, catalog)
         return added
 
 
 class BooruTaskHandler:
     task_type = "booru_tagging"
-    lane_key = "booru_tagging"
+    # Tagging mutates the same asset/tag cache as synchronization. Keep it in
+    # the sync lane so a staged sync cannot race an out-of-band Booru write.
+    lane_key = "asset_sync"
     max_concurrency = 1
 
     def __init__(self, service: BooruService) -> None:
