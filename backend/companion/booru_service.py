@@ -388,6 +388,7 @@ class BooruService:
 
         config = await self.settings()
         completed = failed = markers_removed = records_removed = 0
+        failed_ids: list[str] = []
         marker = config.processed_tag_name.casefold() if config.processed_tag_name else ""
         for index, asset_id in enumerate(ids):
             if context is not None:
@@ -418,6 +419,7 @@ class BooruService:
                 completed += 1
             except Exception as error:
                 failed += 1
+                failed_ids.append(str(asset_id))
                 logger.warning("Could not reset Booru state for asset %s: %s", asset_id, error)
             if context is not None:
                 await context.checkpoint(
@@ -439,7 +441,7 @@ class BooruService:
                 f"Booru reset failed for all {failed} selected images"
             )
         return TaskResult(
-            summary={"reset": True},
+            summary={"reset": True, "failed_ids": failed_ids},
             counters={
                 "completed": completed,
                 "failed": failed,
