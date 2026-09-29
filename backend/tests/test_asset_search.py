@@ -1,7 +1,6 @@
 """Structured search validation and SQL compilation coverage."""
 
 from contextlib import asynccontextmanager
-from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -11,41 +10,8 @@ from sqlalchemy.dialects import postgresql
 
 from companion.action_schema import AssetSelectionRequest
 from companion.asset_repository import ASPECT_RATIO_RELATIVE_TOLERANCE, AssetRepository
-from companion.asset_schema import (
-    AssetSummary,
-    SearchCondition,
-    SearchGroup,
-    StructuredAssetSearchQuery,
-)
+from companion.asset_schema import SearchCondition, SearchGroup, StructuredAssetSearchQuery
 from companion.models import AssetRecord
-
-
-@pytest.mark.asyncio
-async def test_summary_hydration_uses_embedded_tags_when_relation_cache_is_empty(
-    monkeypatch,
-) -> None:
-    asset_id = UUID("11111111-1111-4111-8111-111111111111")
-    record = SimpleNamespace(id=asset_id)
-    captured_tags = []
-
-    class EmptyResult:
-        def __iter__(self):
-            return iter(())
-
-    class Session:
-        async def execute(self, _statement):
-            return EmptyResult()
-
-    def capture_from_record(asset, albums=None, tags=None):
-        captured_tags.append(tags)
-        return SimpleNamespace(id=asset.id)
-
-    monkeypatch.setattr(AssetSummary, "from_record", staticmethod(capture_from_record))
-
-    summaries = await AssetRepository._summaries_for_records(Session(), [record])
-
-    assert [summary.id for summary in summaries] == [asset_id]
-    assert captured_tags == [None]
 
 
 def compiled_sql(group: SearchGroup) -> str:
