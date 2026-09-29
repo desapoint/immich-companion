@@ -446,6 +446,117 @@ class AssetCatalogRelationMixin:
             )
             return int(count or 0)
 
+    async def refresh_asset_tag_snapshot(
+        self,
+        asset: ImmichAsset,
+        catalog: list[ImmichTag],
+    ) -> None:
+        """Persist one authoritative asset/tag snapshot after an out-of-band mutation."""
+
+        if not asset.includes_tags:
+            raise SyncValidationError(
+                f"Asset {asset.id} did not include an authoritative tag relationship"
+            )
+        await self.refresh_asset(asset, track_similarity_changes=False)
+        tag_ids = list(
+            dict.fromkeys(
+                UUID(str(tag["id"]))
+                for tag in asset.tags
+                if isinstance(tag, dict) and tag.get("id")
+            )
+        )
+        catalog_by_id = {tag.id: tag for tag in catalog}
+        synced_at = datetime.now(UTC)
+
+        async with self._database.sessions() as session, session.begin():
+            generation = await session.scalar(
+                select(AssetRecord.sync_generation).where(AssetRecord.id == asset.id)
+            )
+            if generation is None:
+                raise SyncValidationError(
+                    f"Tag snapshot referenced unsynchronized asset {asset.id}"
+                )
+            previous_tag_ids = set(
+                (
+                    await session.scalars(
+                        select(TagAssetRecord.tag_id).where(
+                            TagAssetRecord.asset_id == asset.id
+                        )
+                    )
+                ).all()
+            )
+            existing_tag_ids = set(
+                (
+                    await session.scalars(
+                        select(TagRecord.id).where(TagRecord.id.in_(tag_ids))
+                    )
+                ).all()
+            ) if tag_ids else set()
+            missing_tag_ids = [tag_id for tag_id in tag_ids if tag_id not in existing_tag_ids]
+            unresolved = [tag_id for tag_id in missing_tag_ids if tag_id not in catalog_by_id]
+            if unresolved:
+                raise SyncValidationError(
+                    f"Tag snapshot referenced {len(unresolved)} tag(s) missing from the Immich catalog"
+                )
+            if missing_tag_ids:
+                await session.execute(
+                    insert(TagRecord).values(
+                        [
+                            {
+                                "id": tag_id,
+                                "tag_name": catalog_by_id[tag_id].name,
+                                "tag_value": catalog_by_id[tag_id].value,
+                                "color": catalog_by_id[tag_id].color,
+                                "asset_count": 0,
+                                "synced_at": synced_at,
+                                "sync_generation": generation,
+                            }
+                            for tag_id in missing_tag_ids
+                        ]
+                    )
+                )
+
+            await session.execute(
+                delete(TagAssetRecord).where(TagAssetRecord.asset_id == asset.id)
+            )
+            if tag_ids:
+                await session.execute(
+                    insert(TagAssetRecord)
+                    .values(
+                        [
+                            {
+                                "tag_id": tag_id,
+                                "asset_id": asset.id,
+                                "sync_generation": generation,
+                            }
+                            for tag_id in tag_ids
+                        ]
+                    )
+                    .on_conflict_do_update(
+                        index_elements=[TagAssetRecord.tag_id, TagAssetRecord.asset_id],
+                        set_={"sync_generation": generation},
+                    )
+                )
+
+            affected_tag_ids = previous_tag_ids | set(tag_ids)
+            if affected_tag_ids:
+                active_count = (
+                    select(func.count())
+                    .select_from(TagAssetRecord)
+                    .join(AssetRecord, AssetRecord.id == TagAssetRecord.asset_id)
+                    .where(
+                        TagAssetRecord.tag_id == TagRecord.id,
+                        AssetRecord.is_trashed.is_(False),
+                    )
+                    .correlate(TagRecord)
+                    .scalar_subquery()
+                )
+                await session.execute(
+                    update(TagRecord)
+                    .where(TagRecord.id.in_(affected_tag_ids))
+                    .values(asset_count=active_count)
+                )
+
     async def replace_tag_memberships(self, tag_id: UUID, asset_ids: list[UUID]) -> int:
         """Replace one tag snapshot after its complete remote traversal succeeds."""
 
