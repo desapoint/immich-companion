@@ -62,6 +62,24 @@ def register_booru_routes(app: FastAPI, service: BooruService | None, assets, co
         )
         return {"task_id": task.id, "selected_count": len(resolution.ids)}
 
+    @app.post("/api/booru/reset")
+    async def reset_booru_selection(selection: AssetSelectionRequest):
+        require()
+        try:
+            resolution = await assets.resolve_selection(selection, max_targets=5000)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        if not resolution.ids:
+            raise HTTPException(422, "Select at least one image")
+        task = await coordinator.submit(
+            "booru_tagging",
+            {
+                "mode": "reset",
+                "asset_ids": [str(value) for value in resolution.ids],
+            },
+        )
+        return {"task_id": task.id, "selected_count": len(resolution.ids)}
+
     @app.get("/api/booru/runs")
     async def booru_runs():
         return await require().recent_runs()
