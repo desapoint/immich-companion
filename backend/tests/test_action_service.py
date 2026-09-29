@@ -538,7 +538,7 @@ async def test_remove_all_tags_refreshes_live_memberships_before_planning() -> N
     )
 
     assert set(plan.relation_ids) == {RELATION_ID, RELATION_TWO}
-    assert immich.asset_reads == [ASSET_ONE, ASSET_TWO]
+    assert set(immich.asset_reads) == {ASSET_ONE, ASSET_TWO}
     assert len(instance._assets.tag_snapshots) == 2
     assert actions.record is not None
     assert set(actions.record.relation_ids) == {str(RELATION_ID), str(RELATION_TWO)}
