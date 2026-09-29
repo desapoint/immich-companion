@@ -348,3 +348,57 @@ async def test_tag_removal_retries_until_immich_reports_membership_gone(monkeypa
     assert removed == {tag_id}
     assert current.tags == []
     assert remove_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_reset_handled_removes_marker_and_local_retry_state(monkeypatch):
+    async def no_delay(_seconds):
+        return None
+
+    monkeypatch.setattr("companion.booru_service.asyncio.sleep", no_delay)
+    asset_id = uuid4()
+    marker_id = uuid4()
+    handled = SimpleNamespace()
+    failure = SimpleNamespace()
+    records = {
+        BooruTaggedAssetRecord: handled,
+        BooruAssetFailureRecord: failure,
+    }
+    database = SimpleNamespace(sessions=MappingSessions(records))
+    tags = {marker_id: {"id": str(marker_id), "name": "auto:processed"}}
+
+    class Immich:
+        async def get_asset(self, _asset_id):
+            return SimpleNamespace(id=asset_id, tags=list(tags.values()))
+
+        async def remove_assets_from_tag(self, tag_id, asset_ids):
+            assert asset_ids == [asset_id]
+            tags.pop(tag_id, None)
+
+    service = BooruService(database, Immich(), Settings())
+    config = BooruSettingsView(
+        model_repo=MODELS[0],
+        idle_seconds=300,
+        confidence_threshold=0.35,
+        character_threshold=0.9,
+        batch_size=250,
+        processed_tag_name="auto:processed",
+        content_rating_tag_name="content-rating",
+    )
+
+    async def settings():
+        return config
+
+    monkeypatch.setattr(service, "settings", settings)
+
+    result = await service.reset_handled([asset_id])
+
+    assert result.counters == {
+        "completed": 1,
+        "failed": 0,
+        "markers_removed": 1,
+        "records_removed": 1,
+    }
+    assert records[BooruTaggedAssetRecord] is None
+    assert records[BooruAssetFailureRecord] is None
+    assert tags == {}
