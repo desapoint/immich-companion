@@ -89,7 +89,10 @@ def register_booru_routes(app: FastAPI, service: BooruService | None, assets, co
     async def download_booru_model():
         current = await require().settings()
         task = await coordinator.submit(
-            "booru_tagging", {"mode": "download", "model_repo": current.model_repo}
+            "booru_tagging",
+            {"mode": "download", "model_repo": current.model_repo},
+            lane_key="booru_model_download",
+            max_concurrency=1,
         )
         return {"task_id": task.id}
 
