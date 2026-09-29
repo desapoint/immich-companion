@@ -11,7 +11,12 @@ from sqlalchemy.dialects import postgresql
 
 from companion.action_schema import AssetSelectionRequest
 from companion.asset_repository import ASPECT_RATIO_RELATIVE_TOLERANCE, AssetRepository
-from companion.asset_schema import AssetSummary, SearchCondition, SearchGroup, StructuredAssetSearchQuery
+from companion.asset_schema import (
+    AssetSummary,
+    SearchCondition,
+    SearchGroup,
+    StructuredAssetSearchQuery,
+)
 from companion.models import AssetRecord
 
 
