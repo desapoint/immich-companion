@@ -418,7 +418,7 @@ class BooruService:
                 completed += 1
             except Exception as error:
                 failed += 1
-                await self._record_failure(asset_id, context.task.id if context else uuid4(), error)
+                logger.warning("Could not reset Booru state for asset %s: %s", asset_id, error)
             if context is not None:
                 await context.checkpoint(
                     checkpoint={"cursor": str(index + 1)},
