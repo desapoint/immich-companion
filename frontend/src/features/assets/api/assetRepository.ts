@@ -56,7 +56,7 @@ type ApiTrashPurgePlan={id:string;mode:'empty_all'|'selected';target_count:numbe
 type ApiTrashPurgeResult={requested:number;deleted:number;failed_ids:string[];deleted_ids:string[];verified:boolean};
 type ApiSelectionResolution={ids:string[];missing_ids:string[]};
 type ApiSelectionSyncResult={requested:number;synced:number;task_id:string|null};
-type ApiTaskStatus={status:string;error?:{message?:string}|null};
+type ApiTaskStatus={status:string;error?:{message?:string}|null;result?:{summary?:Record<string,unknown>}|null};
 type ApiSelectionWorkspace={id:string;entity_kind?:'asset'|'album'|'tag';revision:number;selected_count:number;status:'active'|'cancelled'|'expired';expires_at:string};
 type ApiSelectionMembership={selection:ApiSelectionWorkspace;selected_ids:string[]};
 type SearchNode={kind:'condition';field:string;operator:string;value:unknown}|SearchExpression;
@@ -140,10 +140,10 @@ function normalizeDetail(detail:ApiAssetDetail,summary:ApiAssetSummary|null):Ass
 function normalizeTrash(asset:ApiAssetSummary):TrashAssetRecord{return{id:asset.id,type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as TrashAssetRecord['type'],original_file_name:asset.original_file_name,original_mime_type:asset.original_mime_type,width:asset.width,height:asset.height,duration:asset.duration,taken_at:asset.taken_at,file_modified_at:asset.file_modified_at,is_favorite:asset.is_favorite,is_archived:asset.is_archived,restore_path:asset.restore_path??asset.source.original_path,file_size_bytes:asset.file_size_bytes,library_id:asset.source.library_id,is_offline:asset.is_offline}}
 function normalizeTrashDetail(asset:ApiAssetDetail):TrashAssetRecord{const exifSize=asset.exif_info?.fileSizeInByte;return{id:asset.id,type:(['IMAGE','VIDEO','AUDIO'].includes(asset.type)?asset.type:'OTHER') as TrashAssetRecord['type'],original_file_name:asset.original_file_name,original_mime_type:asset.original_mime_type,width:asset.width,height:asset.height,duration:asset.duration,taken_at:asset.taken_at,file_modified_at:asset.file_modified_at,is_favorite:asset.is_favorite,is_archived:asset.is_archived,restore_path:asset.original_path,file_size_bytes:typeof exifSize==='number'&&exifSize>=0?exifSize:null,library_id:asset.library_id,is_offline:asset.is_offline}}
 function resultFromAction(result:ApiActionResult):MutationResult{return{affectedIds:result.affected_ids??result.applied_ids,failed:result.failed_ids.map((id)=>({id,reason:'Immich could not apply this action.'}))}}
-async function waitForTask(fetcher:AssetApiFetcher,taskId:string):Promise<void>{
+async function waitForTask(fetcher:AssetApiFetcher,taskId:string):Promise<ApiTaskStatus>{
   while(true){
     const task=await requestJson<ApiTaskStatus>(fetcher,`/api/tasks/${encodeURIComponent(taskId)}`);
-    if(task.status==='completed')return;
+    if(task.status==='completed')return task;
     if(task.status==='failed'||task.status==='cancelled')throw new Error(task.error?.message??`Synchronization task ${task.status}.`);
     await new Promise((resolve)=>setTimeout(resolve,250));
   }
@@ -159,7 +159,7 @@ export function createAssetApiProfile(fetcher:AssetApiFetcher=globalThis.fetch):
   async function executeStack(planId:string):Promise<MutationResult>{return resultFromAction(await requestJson<ApiActionResult>(fetcher,'/api/assets/actions/execute',json({plan_id:planId,confirm:true})))}
   const assets:AssetRepository={
     async tagWithBooru(target){const result=await requestJson<{task_id:string;selected_count:number}>(fetcher,'/api/booru/tag',json(selectionBody(target)));return{taskId:result.task_id,selectedCount:result.selected_count}},
-    async resetBooru(target){const resolution=await resolve(target);const result=await requestJson<{task_id:string;selected_count:number}>(fetcher,'/api/booru/reset',json(selectionBody(target)));await waitForTask(fetcher,result.task_id);return{affectedIds:resolution.ids,failed:resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'}))}},
+    async resetBooru(target){const resolution=await resolve(target);const result=await requestJson<{task_id:string;selected_count:number}>(fetcher,'/api/booru/reset',json(selectionBody(target)));const task=await waitForTask(fetcher,result.task_id);const failedIds=Array.isArray(task.result?.summary?.failed_ids)?task.result.summary.failed_ids.filter((value):value is string=>typeof value==='string'):[];const failedSet=new Set(failedIds);return{affectedIds:resolution.ids.filter((id)=>!failedSet.has(id)),failed:[...resolution.missing_ids.map((id)=>({id,reason:'Asset is no longer synchronized.'})),...failedIds.map((id)=>({id,reason:'Booru handled state could not be reset.'}))]}},
     async getById(id){try{const item=await requestJson<ApiAssetSummary|null>(fetcher,`/api/assets/${encodeURIComponent(id)}/summary`);return item?normalizeAsset(item):undefined}catch(error){if(error instanceof AssetApiError&&error.status===404)return undefined;throw error}},
     async details(id){try{const encoded=encodeURIComponent(id);const [detail,summary]=await Promise.all([requestJson<ApiAssetDetail>(fetcher,`/api/assets/${encoded}`),requestJson<ApiAssetSummary|null>(fetcher,`/api/assets/${encoded}/summary`).catch((error)=>{if(error instanceof AssetApiError&&error.status===404)return null;throw error})]);return normalizeDetail(detail,summary)}catch(error){if(error instanceof AssetApiError&&error.status===404)return undefined;throw error}},
     async getMany(ids){const unique=[...new Set(ids)];if(!unique.length)return[];const batches:ApiAssetSummary[][]=[];for(let index=0;index<unique.length;index+=2000)batches.push(await requestJson<ApiAssetSummary[]>(fetcher,'/api/assets/summaries',json({ids:unique.slice(index,index+2000)})));return batches.flat().map(normalizeAsset)},
