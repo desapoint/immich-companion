@@ -126,6 +126,23 @@ class AssetActionService:
         else:
             await self._sync.synchronize()
 
+    async def _refresh_live_tag_snapshots(self, asset_ids: list[UUID]) -> None:
+        """Refresh selected assets' tag memberships from Immich before remove-all planning."""
+
+        if not asset_ids:
+            return
+        limit = max(1, self._settings.sync_metadata_request_concurrency)
+        semaphore = asyncio.Semaphore(limit)
+
+        async def load(asset_id: UUID):
+            async with semaphore:
+                return await self._immich.get_asset(asset_id)
+
+        live_assets = await asyncio.gather(*(load(asset_id) for asset_id in asset_ids))
+        catalog = await self._immich.list_tag_catalog()
+        for asset in live_assets:
+            await self._assets.refresh_asset_tag_snapshot(asset, catalog)
+
     async def resolve_selection(self, selection: AssetSelectionRequest) -> AssetSelectionResolution:
         """Expose exact backend selection resolution and mixed-state summary."""
 
@@ -205,6 +222,8 @@ class AssetActionService:
         original_target_digest = selection_digest(resolution.ids)
         operation = self._operation_for_request(request, resolution)
         if operation in {"remove_album", "remove_tag"} and not request.relation_ids:
+            if operation == "remove_tag":
+                await self._refresh_live_tag_snapshots(resolution.ids)
             request = request.model_copy(
                 update={
                     "relation_ids": await self._assets.relation_ids_for_assets(
