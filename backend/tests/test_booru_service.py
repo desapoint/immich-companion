@@ -6,7 +6,7 @@ from uuid import uuid4
 
 import pytest
 
-from companion.booru_service import MODELS, BooruService, BooruSettingsView
+from companion.booru_service import MODELS, BooruService, BooruSettingsView, BooruTaskHandler
 from companion.config import Settings
 
 
@@ -29,6 +29,14 @@ class FakeSessions:
     @asynccontextmanager
     async def begin(self):
         yield self.session
+
+
+class FakeAssetRepository:
+    def __init__(self):
+        self.snapshots = []
+
+    async def refresh_asset_tag_snapshot(self, asset, catalog):
+        self.snapshots.append((asset, list(catalog)))
 
 
 class FakeImmich:
@@ -63,7 +71,8 @@ async def test_configured_marker_and_rating_parent_are_recorded_for_undo(
     record = SimpleNamespace(added_tag_ids=[])
     database = SimpleNamespace(sessions=FakeSessions(record))
     immich = FakeImmich()
-    service = BooruService(database, immich, Settings())
+    assets = FakeAssetRepository()
+    service = BooruService(database, immich, Settings(), assets)
 
     async def no_disabled_tags():
         return set()
@@ -85,3 +94,11 @@ async def test_configured_marker_and_rating_parent_are_recorded_for_undo(
     rating = next(tag for tag in immich.catalog if tag.name == "general")
     assert rating.parent_id == rating_parent.id
     assert {str(tag_id) for tag_id in immich.assigned} == set(record.added_tag_ids)
+    assert len(assets.snapshots) == 1
+    snapshot_asset, snapshot_catalog = assets.snapshots[0]
+    assert snapshot_asset.tags == [{"id": str(tag_id)} for tag_id in immich.assigned]
+    assert {tag.id for tag in snapshot_catalog} == {tag.id for tag in immich.catalog}
+
+
+def test_booru_tagging_shares_the_asset_sync_lane():
+    assert BooruTaskHandler.lane_key == "asset_sync"
